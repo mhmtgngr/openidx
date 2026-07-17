@@ -374,6 +374,24 @@ func (rec *ZitiReconciler) ensurePolicies(ctx context.Context, zm *ZitiManager, 
 	return nil
 }
 
+// ensureTierDialPolicy upserts a Dial policy granting the tier identity role the
+// right to dial #<serviceName>. tierAttr is "enrolled-users" (Tier 1: any
+// enrolled OpenIDX user) or "device-trusted" (Tier 2: trusted device only) — see
+// the dark-platform spec. This is the identity-side gate for making OpenIDX's own
+// surfaces overlay-only; Bind is left to the existing #ziti-routers policy. It
+// uses EnsureServicePolicy (upsert), so it is idempotent/convergent like the
+// #browzer-users dial policy it mirrors.
+func (rec *ZitiReconciler) ensureTierDialPolicy(ctx context.Context, zm *ZitiManager, serviceName, tierAttr string) error {
+	svcRole := "#" + serviceName
+	_, err := zm.EnsureServicePolicy(ctx, serviceName+"-dial-"+tierAttr, "Dial",
+		[]string{svcRole}, []string{"#" + tierAttr})
+	if err != nil {
+		rec.logger.Warn("tier dial policy converge failed",
+			zap.String("svc", serviceName), zap.String("tier", tierAttr), zap.Error(err))
+	}
+	return err
+}
+
 // ensureHosting starts hosting for the route. identity mode uses SDK Listen
 // (HostService, idempotent). direct mode relies on the host.v1 config created
 // in ensureService and the router Bind created in ensurePolicies, so there is

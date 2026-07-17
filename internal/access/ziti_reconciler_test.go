@@ -502,3 +502,41 @@ func TestDeleteEdgeEntityByNameNoMatch(t *testing.T) {
 		t.Fatalf("expected nil error on no match, got %v", err)
 	}
 }
+
+func TestEnsureTierDialPolicyBindsAttribute(t *testing.T) {
+	// ensureTierDialPolicy must upsert a Dial policy granting #<tierAttr> the
+	// right to dial #<serviceName>. Assert the POST/PUT carries both the service
+	// role and the tier identity role.
+	var body []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/edge/management/v1/service-policies":
+			// none exist yet → force a create POST
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case r.Method == "POST" && r.URL.Path == "/edge/management/v1/service-policies":
+			body, _ = io.ReadAll(r.Body)
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"data":{"id":"pol-tier"}}`))
+		default:
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"data":{}}`))
+		}
+	}))
+	defer srv.Close()
+	zm := &ZitiManager{logger: zap.NewNop(), mgmtToken: "fake", mgmtClient: srv.Client(),
+		cfg: &config.Config{ZitiCtrlURL: srv.URL}, initialized: true}
+	rec := &ZitiReconciler{logger: zap.NewNop(), status: map[string]string{}}
+
+	if err := rec.ensureTierDialPolicy(context.Background(), zm, "openidx-admin-api", "device-trusted"); err != nil {
+		t.Fatalf("ensureTierDialPolicy: %v", err)
+	}
+	if !bytesContains(body, "device-trusted") {
+		t.Errorf("POST body missing #device-trusted identity role: %s", body)
+	}
+	if !bytesContains(body, "openidx-admin-api") {
+		t.Errorf("POST body missing #openidx-admin-api service role: %s", body)
+	}
+	if !bytesContains(body, "Dial") {
+		t.Errorf("POST body must be a Dial policy: %s", body)
+	}
+}
