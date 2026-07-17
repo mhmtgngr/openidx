@@ -171,6 +171,8 @@ dr-game-day:
 # For a live check: scripts/dark-mode.sh --verify --public-url ... --overlay-url ...
 dark-drill:
 	@bash deployments/apisix-edge/seed-edge-routes.test.sh
+	@bash scripts/register-console-dark-app.test.sh
+	@go test ./internal/access/ -run 'TestTier2ServicesRequireDeviceTrust|TestNoTier0SurfaceIsDarked|TestDarkServiceUpstreamsAreLoopback|TestDarkServiceNamesAreUnique|TestDefaultDarkServicesTiers|TestReconcileDarkServicesCreatesServiceAndTierPolicy' -count=1
 	@bash scripts/dark-mode.sh --self-test
 
 #---------------------------------------------------------------------------

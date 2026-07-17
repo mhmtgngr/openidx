@@ -519,7 +519,7 @@ Registers each dark OpenIDX surface as a managed Ziti service with its tier dial
 - Consumes: `ensureTierDialPolicy` (Task 2.2).
 - Produces: for each platform surface (`openidx-admin-api`→8005/tier2, `openidx-governance`→8002/tier2, `openidx-audit`→8004/tier2, `openidx-provisioning`→8003/tier2, `openidx-scim`→8003/tier2, `openidx-access`→8007/tier2, `openidx-identity-selfservice`→8001/tier1, `openidx-console`→SPA/tier1) the reconciler ensures a service + `host.v1` to its loopback upstream + a tier dial policy.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 func TestReconcileCreatesTier2PolicyForAdminAPI(t *testing.T) {
@@ -541,12 +541,12 @@ func TestReconcileTier1PolicyForConsole(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `go test ./internal/access/ -run 'TestReconcile(CreatesTier2|Tier1)' -v`
 Expected: FAIL.
 
-- [ ] **Step 3: Implement `defaultDarkServices()` + `reconcileDarkServices()`**
+- [x] **Step 3: Implement `defaultDarkServices()` + `reconcileDarkServices()`**
 
 ```go
 type darkService struct { name, upstream, tierAttr string }
@@ -577,12 +577,12 @@ func (rec *Reconciler) reconcileDarkServices() {
 ```
 Call `reconcileDarkServices()` from the main reconcile loop, gated so it only runs when `cfg.DarkModeTier1 || cfg.DarkModeTier2` (creating policies early is harmless, but gate to avoid noise). Use the existing service/host.v1 creation helper (match the real method name in the file — likely `EnsureService`/`CreateService` + host.v1 config; adapt `EnsureServiceWithHostV1` to it).
 
-- [ ] **Step 4: Run to verify it passes**
+- [x] **Step 4: Run to verify it passes**
 
 Run: `go test ./internal/access/ -run 'TestReconcile' -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 go build ./... && go vet ./internal/access/
@@ -600,20 +600,20 @@ git commit -m "ziti-reconciler: model OpenIDX surfaces as tier'd dark services (
 - Consumes: existing BrowZer app registration + APISIX route reconciler.
 - Produces: `console.<domain>` served via the BrowZer bootstrapper; its `/api/*` calls tunnel to the Tier-2 dark backends; console SPA itself is Tier 1.
 
-- [ ] **Step 1: Confirm the console uses same-origin API calls**
+- [x] **Step 1: Confirm the console uses same-origin API calls**
 
 Run: `grep -n "window.location.origin\|VITE_API" web/admin-console/src/lib/api.ts`
 Expected: `getAPIBaseURL()` returns `window.location.origin` in prod (already true) — so BrowZer same-origin works with no code change. If not, set the prod API base to same-origin.
 
-- [ ] **Step 2: Register the console BrowZer app (DB seed / reconcile)**
+- [x] **Step 2: Register the console BrowZer app (DB seed / reconcile)**
 
 Add a `proxy_routes` row (or console-app registration) for `console.<domain>` with `browzer_enabled=true`, `hosting_mode` matching the SPA, `to_url` = the console SPA upstream (`127.0.0.1:8090`). Let the reconciler converge the Ziti service + APISIX BrowZer route (no hand-config, per the reconciler-owns-mutations invariant).
 
-- [ ] **Step 3: Verify the reconcilers produce the route**
+- [x] **Step 3: Verify the reconcilers produce the route**
 
 Run the access-service locally with `APISIX_EDGE_ENABLED=false ZITI_RECONCILER=true` and a fake/mock ziti; assert (unit or log) that `openidx-console` service + BrowZer route are converged. (Full live verification happens in Phase 6 staging.)
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add internal/access/ (seed/reconcile changes) web/admin-console/ (if any)
