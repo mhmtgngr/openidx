@@ -481,7 +481,7 @@ func main() {
 	}
 
 	httpServer := &http.Server{
-		Addr:         fmt.Sprintf(":%d", port),
+		Addr:         fmt.Sprintf("%s:%d", cfg.BindAddr, port),
 		Handler:      router,
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 60 * time.Second,
