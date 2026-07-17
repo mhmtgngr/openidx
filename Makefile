@@ -1,7 +1,7 @@
 # OpenIDX Makefile
 # Build, test, and deploy automation
 
-.PHONY: all build test lint clean dev dev-infra docker helm docs smoke-test ha-drill dr-game-day dark-drill build-agent build-agent-all test-agent docker-build-agent ziti-quickstart ziti-down
+.PHONY: all build test lint clean dev dev-infra docker helm docs smoke-test ha-drill dr-game-day dark-drill dark-drill-live build-agent build-agent-all test-agent docker-build-agent ziti-quickstart ziti-down
 
 # Variables
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -174,6 +174,16 @@ dark-drill:
 	@bash scripts/register-console-dark-app.test.sh
 	@go test ./internal/access/ -run 'TestTier2ServicesRequireDeviceTrust|TestNoTier0SurfaceIsDarked|TestDarkServiceUpstreamsAreLoopback|TestDarkServiceNamesAreUnique|TestDefaultDarkServicesTiers|TestReconcileDarkServicesCreatesServiceAndTierPolicy' -count=1
 	@bash scripts/dark-mode.sh --self-test
+
+# Opt-in LIVE drill against the running edge (needs APISIX_ADMIN_KEY + a live
+# oidx-apisix). Self-restoring: darks the tier, measures per-service effect, then
+# reverts to the exact prior route set. DARK_TIER=tier1 to also dark self-service
+# + SPA (only the Tier-0 bootstrap stays public). NOT part of `dark-drill` — it
+# touches the live edge, so run it deliberately:
+#   APISIX_ADMIN_KEY=... make dark-drill-live            # tier2
+#   APISIX_ADMIN_KEY=... DARK_TIER=tier1 make dark-drill-live
+dark-drill-live:
+	@bash scripts/dark-drill-live.sh $(or $(DARK_TIER),tier2)
 
 #---------------------------------------------------------------------------
 # Linting
