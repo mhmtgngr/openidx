@@ -1,7 +1,7 @@
 # OpenIDX Makefile
 # Build, test, and deploy automation
 
-.PHONY: all build test lint clean dev dev-infra docker helm docs smoke-test ha-drill dr-game-day build-agent build-agent-all test-agent docker-build-agent ziti-quickstart ziti-down
+.PHONY: all build test lint clean dev dev-infra docker helm docs smoke-test ha-drill dr-game-day dark-drill build-agent build-agent-all test-agent docker-build-agent ziti-quickstart ziti-down
 
 # Variables
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -161,6 +161,17 @@ ha-drill:
 #       --provider rds --rds-instance openidx-staging
 dr-game-day:
 	@bash scripts/dr-game-day.sh --self-test
+
+#---------------------------------------------------------------------------
+# Dark-mode drill — verify the "dark platform" posture (docs/superpowers/specs/
+# 2026-07-17-dark-platform-ziti-first-design.md). Runs the dark-mode.sh self-test
+# (mock public + overlay, no infra) proving the two-sided invariant logic —
+# public refused / overlay reachable / tier gate holds — so a cutover can't be
+# green-lit on a false positive. Also runs the edge route-set assertions.
+# For a live check: scripts/dark-mode.sh --verify --public-url ... --overlay-url ...
+dark-drill:
+	@bash deployments/apisix-edge/seed-edge-routes.test.sh
+	@bash scripts/dark-mode.sh --self-test
 
 #---------------------------------------------------------------------------
 # Linting
