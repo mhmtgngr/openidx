@@ -10,11 +10,9 @@ to "installable + fully working (incl. OpenZiti)".
 > response examples and `file:line` backend citations. Read that first; this file is
 > the accounts/secrets/build handoff.
 >
-> **After the dark-platform hardening:**
-> [`docs/mobile-dark-platform-handoff.md`](../docs/mobile-dark-platform-handoff.md)
-> — what changed (nothing broke; the app uses the public edge), the new Tier-0
-> enroll door (`POST /api/v1/access/enroll`, wired as `requestZitiEnrollmentJwt()`),
-> and sample views to build against.
+> **Quick start for a new developer:**
+> [`docs/mobile-developer-guide-simple.md`](../docs/mobile-developer-guide-simple.md)
+> — set up in 5 minutes, the endpoints by feature, and sample screen patterns.
 
 ## 1. What this is / current state
 React Native + Expo (SDK 57, TypeScript, expo-router) companion app. **Feature-
