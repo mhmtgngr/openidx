@@ -15,6 +15,7 @@ import {
   getAgentIdentity,
   getZitiJwt,
   reportPosture,
+  requestZitiEnrollmentJwt,
 } from '@/features/ziti/device';
 import { zitiAvailable, zitiEnroll, zitiStatus } from '@/features/ziti/native';
 import { collectPosture, type PostureResult } from '@/features/ziti/posture';
@@ -30,8 +31,10 @@ export default function DeviceScreen() {
     mutationFn: async () => {
       await enrollDevice();
       // If the native Ziti module is present, enroll the overlay identity too.
+      // Prefer the JWT from the agent-enroll response; if absent (or the platform
+      // is dark), fall back to the Tier-0 enroll door: POST /api/v1/access/enroll.
       if (zitiAvailable()) {
-        const jwt = await getZitiJwt();
+        const jwt = (await getZitiJwt()) ?? (await requestZitiEnrollmentJwt());
         if (jwt) await zitiEnroll(jwt);
       }
     },
