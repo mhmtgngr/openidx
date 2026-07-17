@@ -832,6 +832,17 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		}
 	}
 
+	// Tier-0 "dark platform" enroll door: the ONLY access-service route that
+	// stays public when the platform goes dark. Trades an entitlement (session
+	// bearer / enrollment token) for a one-time Ziti enrollment JWT so a native
+	// client can join the overlay. It authenticates the request itself (verifies
+	// the bearer against JWKS, or validates the enrollment token), so it sits
+	// OUTSIDE the JWT middleware like the agent routes. Rate-limited + audited.
+	// See docs/superpowers/specs/2026-07-17-dark-platform-ziti-first-design.md §4.
+	router.POST("/api/v1/access/enroll",
+		middleware.RateLimit(20, time.Minute), // tight per-IP budget for the public gate
+		svc.handleEnroll)
+
 	// Public APK download for Android Enterprise provisioning. The device
 	// fetches this during factory-reset setup, before any auth context exists.
 	router.GET("/downloads/openidx-agent.apk", svc.handleAgentAPKDownload)
