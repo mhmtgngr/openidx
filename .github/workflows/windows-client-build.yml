@@ -72,11 +72,17 @@ jobs:
           set -x
           # pkg-config + mingw gcc for the vpx cgo binding.
           choco install -y pkgconfiglite mingw || true
-          # libvpx via the preinstalled vcpkg.
+          # libvpx via the preinstalled vcpkg. Use the MINGW triplet — the Go
+          # build links with mingw gcc, which cannot read vcpkg's default MSVC
+          # (x64-windows) import libs ("file format not recognized"). The mingw
+          # triplet builds gcc-linkable libs + pkgconfig.
           VCPKG="${VCPKG_INSTALLATION_ROOT:-C:/vcpkg}"
-          "$VCPKG/vcpkg" install libvpx:x64-windows
-          echo "VCPKG_INSTALLED=$VCPKG/installed" >> "$GITHUB_ENV"
-          ls "$VCPKG/installed/x64-windows/lib/pkgconfig" || true
+          "$VCPKG/vcpkg" install libvpx:x64-mingw-dynamic || "$VCPKG/vcpkg" install libvpx:x64-mingw-static
+          TRIPLET_DIR="$VCPKG/installed/x64-mingw-dynamic"
+          [ -d "$TRIPLET_DIR" ] || TRIPLET_DIR="$VCPKG/installed/x64-mingw-static"
+          echo "VCPKG_TRIPLET_DIR=$TRIPLET_DIR" >> "$GITHUB_ENV"
+          ls "$TRIPLET_DIR/lib/pkgconfig" || true
+          ls "$TRIPLET_DIR/lib" || true
 
       - name: Resolve version
         id: ver
@@ -106,16 +112,17 @@ jobs:
           set +e
           echo "Attempting screen-share (VP8 capture) build..."
           CGO_ENABLED=1 \
-          PKG_CONFIG_PATH="$VCPKG_INSTALLED/x64-windows/lib/pkgconfig" \
-          CGO_CFLAGS="-I$VCPKG_INSTALLED/x64-windows/include" \
-          CGO_LDFLAGS="-L$VCPKG_INSTALLED/x64-windows/lib" \
+          PKG_CONFIG_PATH="$VCPKG_TRIPLET_DIR/lib/pkgconfig" \
+          CGO_CFLAGS="-I$VCPKG_TRIPLET_DIR/include" \
+          CGO_LDFLAGS="-L$VCPKG_TRIPLET_DIR/lib" \
             go build -trimpath -tags screenshare -ldflags "$LDFLAGS" \
             -o dist/openidx-agent.exe ./cmd/openidx-agent
           if [ $? -eq 0 ]; then
             echo "SCREENSHARE_BUILD=on" >> "$GITHUB_ENV"
             echo "✓ built WITH real screen capture (VP8)"
-            # Copy the libvpx runtime DLL next to the exe (vcpkg builds a dynamic lib).
-            cp "$VCPKG_INSTALLED/x64-windows/bin/vpx"*.dll dist/ 2>/dev/null || true
+            # Copy the libvpx runtime DLL next to the exe (dynamic triplet).
+            cp "$VCPKG_TRIPLET_DIR/bin/"*vpx*.dll dist/ 2>/dev/null || \
+              cp "$VCPKG_TRIPLET_DIR/lib/"*vpx*.dll dist/ 2>/dev/null || true
           else
             echo "::warning::screenshare build failed; falling back to pure-Go (no video capture)"
             CGO_ENABLED=0 go build -trimpath -ldflags "$LDFLAGS" \
