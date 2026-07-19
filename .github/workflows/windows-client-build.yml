@@ -60,6 +60,24 @@ jobs:
           go-version: '1.25'
           cache-dependency-path: agent/go.sum
 
+      # Native deps for the real screen-share build (VP8 encode via libvpx +
+      # pkg-config + the mingw C toolchain the CGO binding uses). vcpkg is
+      # preinstalled on windows-latest at $VCPKG_INSTALLATION_ROOT. Best-effort:
+      # the build step falls back to a pure-Go exe if any of this is unavailable.
+      - name: Install libvpx + pkg-config (for screen capture)
+        id: nativedeps
+        shell: bash
+        continue-on-error: true
+        run: |
+          set -x
+          # pkg-config + mingw gcc for the vpx cgo binding.
+          choco install -y pkgconfiglite mingw || true
+          # libvpx via the preinstalled vcpkg.
+          VCPKG="${VCPKG_INSTALLATION_ROOT:-C:/vcpkg}"
+          "$VCPKG/vcpkg" install libvpx:x64-windows
+          echo "VCPKG_INSTALLED=$VCPKG/installed" >> "$GITHUB_ENV"
+          ls "$VCPKG/installed/x64-windows/lib/pkgconfig" || true
+
       - name: Resolve version
         id: ver
         shell: bash
@@ -78,9 +96,45 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          go build -trimpath \
-            -ldflags "-s -w -X main.Version=${{ steps.ver.outputs.version }} -X main.Commit=${{ github.sha }}" \
+          LDFLAGS="-s -w -X main.Version=${{ steps.ver.outputs.version }} -X main.Commit=${{ github.sha }}"
+
+          # Try the real screen-share build first: -tags screenshare needs CGO +
+          # libvpx (installed via vcpkg below). If anything about the native
+          # toolchain fails, fall back to the pure-Go build so the MSI is never
+          # blocked — that build negotiates remote-support sessions and honors
+          # input, it just sends no video frames.
+          set +e
+          echo "Attempting screen-share (VP8 capture) build..."
+          CGO_ENABLED=1 \
+          PKG_CONFIG_PATH="$VCPKG_INSTALLED/x64-windows/lib/pkgconfig" \
+          CGO_CFLAGS="-I$VCPKG_INSTALLED/x64-windows/include" \
+          CGO_LDFLAGS="-L$VCPKG_INSTALLED/x64-windows/lib" \
+            go build -trimpath -tags screenshare -ldflags "$LDFLAGS" \
             -o dist/openidx-agent.exe ./cmd/openidx-agent
+          if [ $? -eq 0 ]; then
+            echo "SCREENSHARE_BUILD=on" >> "$GITHUB_ENV"
+            echo "✓ built WITH real screen capture (VP8)"
+            # Copy the libvpx runtime DLL next to the exe (vcpkg builds a dynamic lib).
+            cp "$VCPKG_INSTALLED/x64-windows/bin/vpx"*.dll dist/ 2>/dev/null || true
+          else
+            echo "::warning::screenshare build failed; falling back to pure-Go (no video capture)"
+            CGO_ENABLED=0 go build -trimpath -ldflags "$LDFLAGS" \
+              -o dist/openidx-agent.exe ./cmd/openidx-agent
+            echo "SCREENSHARE_BUILD=off" >> "$GITHUB_ENV"
+          fi
+          set -e
+          ls -la dist/
+
+      - name: Report build variant
+        shell: bash
+        run: |
+          if [ "${SCREENSHARE_BUILD:-off}" = "on" ]; then
+            echo "### ✅ Screen-share build (real VP8 capture)" >> "$GITHUB_STEP_SUMMARY"
+            echo "Remote support streams the device screen." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### ⚠️ Pure-Go build (no video capture)" >> "$GITHUB_STEP_SUMMARY"
+            echo "Remote support negotiates + honors input, but sends no video (libvpx toolchain unavailable this run)." >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       # Authenticode signing (optional): set WINDOWS_CERT_PFX_BASE64 +
       # WINDOWS_CERT_PASSWORD repo secrets to enable. Decode the cert once and
@@ -126,10 +180,19 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
+          # Include the libvpx runtime DLL in the MSI only when the screenshare
+          # build produced one (pass -d VpxDll=<path> so the WiX <?ifdef?> fires).
+          VPX_ARG=""
+          VPX_DLL="$(ls agent/dist/vpx*.dll 2>/dev/null | head -1 || true)"
+          if [ -n "$VPX_DLL" ]; then
+            VPX_ARG="-d VpxDll=$VPX_DLL"
+            echo "Bundling libvpx runtime: $VPX_DLL"
+          fi
           wix build agent/packaging/wix/OpenIDX.wxs \
             -ext WixToolset.Util.wixext \
             -d Version=${{ steps.ver.outputs.version }} \
             -d ExePath=agent/dist/openidx-agent.exe \
+            $VPX_ARG \
             -arch x64 \
             -o dist/OpenIDX-${{ steps.ver.outputs.version }}.msi
 

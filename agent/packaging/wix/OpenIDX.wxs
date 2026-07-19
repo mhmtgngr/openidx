@@ -61,6 +61,15 @@
                         Wait="yes" />
       </Component>
 
+      <!-- Optional: the libvpx runtime DLL that the screen-share (VP8) build
+           links against. Included only when the build passes -d VpxDll=<path>
+           (the CI screenshare build does; the pure-Go build omits it). -->
+      <?ifdef VpxDll ?>
+      <Component Id="VpxRuntime">
+        <File Id="VpxDllFile" Source="$(var.VpxDll)" KeyPath="yes" />
+      </Component>
+      <?endif?>
+
       <!-- Launch the tray for the interactive user at login. -->
       <Component Id="TrayAutostart">
         <RegistryValue Root="HKMU"
