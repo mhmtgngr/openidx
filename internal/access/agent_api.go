@@ -74,10 +74,14 @@ func (h *AgentAPIHandler) logAuditEventToDB(ctx context.Context, action, agentID
 		"detail":   detail,
 	}
 	detailsJSON, _ := json.Marshal(details)
+	// user_id must be NULL for agent-lifecycle events: an agent_id is not a
+	// users.id, and unified_audit_events.user_id has an FK to users, so passing
+	// the agent_id here fails the constraint (the event was silently dropped).
+	// The agent_id is preserved in details.agent_id above.
 	_, err := h.db.Pool.Exec(ctx, `
 		INSERT INTO unified_audit_events (id, source, event_type, user_id, details, created_at)
-		VALUES ($1, 'access-service', $2, $3, $4, NOW())
-	`, uuid.New().String(), action, agentID, detailsJSON)
+		VALUES ($1, 'access-service', $2, NULL, $3, NOW())
+	`, uuid.New().String(), action, detailsJSON)
 	if err != nil {
 		h.logger.Warn("logAuditEventToDB: failed to persist audit event",
 			zap.String("action", action),
