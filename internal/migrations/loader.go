@@ -628,5 +628,12 @@ func allMigrations() []*Migration {
 			UpSQL:       auditIndexedAtUp,
 			DownSQL:     auditIndexedAtDown,
 		},
+		{
+			Version:     89,
+			Name:        "pam_entries_renderer",
+			Description: "Add pam_entries.renderer (guacamole|wasm-ssh|novnc|support) so a PAM entry can declare which clientless in-browser renderer opens it; backfill existing rows to 'guacamole' (no behavior change). The permission/approval gate is unchanged and applies to every renderer. Additive/idempotent.",
+			UpSQL:       pamEntryRendererUp,
+			DownSQL:     pamEntryRendererDown,
+		},
 	}
 }
