@@ -553,6 +553,7 @@ export interface PamEntry {
   require_approval: boolean
   record_session: boolean
   reach_mode: string
+  renderer?: string
   ziti_enabled: boolean
   favorite: boolean
   last_connected_at?: string
@@ -578,6 +579,7 @@ export interface PamEntryInput {
   allow_reveal?: boolean
   require_approval?: boolean
   record_session?: boolean
+  renderer?: string
 }
 
 export interface PamConnectResult {
