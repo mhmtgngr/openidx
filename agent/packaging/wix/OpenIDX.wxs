@@ -32,6 +32,9 @@
     <!-- Public properties usable from a silent msiexec command line. -->
     <Property Id="SERVER_URL" Secure="yes" />
     <Property Id="ENROLL_TOKEN" Secure="yes" Hidden="yes" />
+    <!-- Optional: the update manifest URL persisted at enroll so the service
+         self-updates. e.g. https://github.com/<owner>/<repo>/releases/latest/download/latest.json -->
+    <Property Id="UPDATE_MANIFEST_URL" Secure="yes" />
 
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="OpenIDX" />
@@ -116,7 +119,7 @@
     <SetProperty Id="EnrollDevice"
                  Sequence="execute"
                  Before="EnrollDevice"
-                 Value="&quot;[INSTALLFOLDER]openidx-agent.exe&quot; enroll --server &quot;[SERVER_URL]&quot; --token &quot;[ENROLL_TOKEN]&quot; --config-dir &quot;[CommonAppDataFolder]OpenIDX\agent&quot;"
+                 Value="&quot;[INSTALLFOLDER]openidx-agent.exe&quot; enroll --server &quot;[SERVER_URL]&quot; --token &quot;[ENROLL_TOKEN]&quot; --manifest-url &quot;[UPDATE_MANIFEST_URL]&quot; --config-dir &quot;[CommonAppDataFolder]OpenIDX\agent&quot;"
                  Condition="SERVER_URL AND ENROLL_TOKEN" />
     <CustomAction Id="EnrollDevice"
                   BinaryRef="Wix4UtilCA_X64"

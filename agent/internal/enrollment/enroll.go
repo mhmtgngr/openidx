@@ -23,6 +23,13 @@ type EnrollResult struct {
 
 // Enroll performs the full enrollment flow: HTTP enrollment + optional Ziti enrollment.
 func Enroll(logger *zap.Logger, serverURL, token, configDir string) (*EnrollResult, error) {
+	return EnrollWithManifest(logger, serverURL, token, configDir, "")
+}
+
+// EnrollWithManifest is Enroll plus an optional update_manifest_url persisted to
+// config so the service's self-updater is wired at enroll time (e.g. the MSI's
+// UPDATE_MANIFEST_URL property). Empty manifestURL keeps auto-update disabled.
+func EnrollWithManifest(logger *zap.Logger, serverURL, token, configDir, manifestURL string) (*EnrollResult, error) {
 	// Step 1: HTTP enrollment with server
 	client := transport.NewClient(serverURL, "", "")
 	resp, err := client.Enroll(token)
@@ -36,11 +43,12 @@ func Enroll(logger *zap.Logger, serverURL, token, configDir string) (*EnrollResu
 
 	// Step 2: Save agent config
 	cfg := &agent.AgentConfig{
-		ServerURL:  serverURL,
-		AgentID:    resp.AgentID,
-		DeviceID:   resp.DeviceID,
-		AuthToken:  resp.AuthToken,
-		EnrolledAt: time.Now().UTC().Format(time.RFC3339),
+		ServerURL:         serverURL,
+		AgentID:           resp.AgentID,
+		DeviceID:          resp.DeviceID,
+		AuthToken:         resp.AuthToken,
+		EnrolledAt:        time.Now().UTC().Format(time.RFC3339),
+		UpdateManifestURL: manifestURL,
 	}
 
 	if err := cfg.Save(configDir); err != nil {

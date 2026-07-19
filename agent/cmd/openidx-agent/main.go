@@ -99,13 +99,14 @@ resulting credentials in the config directory for subsequent runs.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		token, _ := cmd.Flags().GetString("token")
 		server, _ := cmd.Flags().GetString("server")
+		manifestURL, _ := cmd.Flags().GetString("manifest-url")
 
 		logger.Info("enrolling agent",
 			zap.String("server", server),
 			zap.String("config_dir", configDir),
 		)
 
-		result, err := enrollment.Enroll(logger, server, token, configDir)
+		result, err := enrollment.EnrollWithManifest(logger, server, token, configDir, manifestURL)
 		if err != nil {
 			return fmt.Errorf("enrollment failed: %w", err)
 		}
@@ -297,6 +298,7 @@ func init() {
 	// enroll-specific flags.
 	enrollCmd.Flags().String("token", "", "one-time enrollment token (required)")
 	enrollCmd.Flags().String("server", "https://openidx.example.com", "OpenIDX server URL")
+	enrollCmd.Flags().String("manifest-url", "", "update manifest URL to persist for self-update (optional)")
 	_ = enrollCmd.MarkFlagRequired("token")
 
 	serviceCmd.AddCommand(serviceRunCmd)
