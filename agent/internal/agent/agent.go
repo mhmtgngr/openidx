@@ -10,6 +10,7 @@ import (
 
 	"github.com/openidx/openidx/agent/internal/checks"
 	"github.com/openidx/openidx/agent/internal/plugin"
+	"github.com/openidx/openidx/agent/internal/remotesupport"
 	"github.com/openidx/openidx/agent/internal/transport"
 )
 
@@ -32,6 +33,13 @@ type Agent struct {
 	// handledConsent tracks session ids we have already answered so a repeated
 	// config poll does not re-submit a decision.
 	handledConsent map[string]bool
+	// handledSessions tracks session ids we have already begun streaming so a
+	// repeated config poll does not launch a second peer for the same session.
+	handledSessions map[string]bool
+	// RemoteInputSink, when set, receives inbound pointer/keyboard/control
+	// events for an active remote-support session (a Windows SendInput injector
+	// installs one). Nil = view-only (no input applied).
+	RemoteInputSink remotesupport.InputSink
 }
 
 // NewAgent loads the persisted agent config from configDir, creates a transport
@@ -145,10 +153,20 @@ func defaultConsentDecider(_ *RemoteSupportBlock) string { return "grant" }
 // device's half of the attended-support handshake.
 func (a *Agent) processRemoteSupportConsent(rs *RemoteSupportBlock) {
 	if rs == nil || !rs.ConsentRequired || rs.SessionID == "" {
+		// No consent required (or no session): if a session is present and
+		// already grantable, stream it directly.
+		if rs != nil && rs.SessionID != "" && rs.WSPath != "" &&
+			(!rs.ConsentRequired || rs.ConsentStatus == "granted") {
+			a.runRemoteSupport(rs)
+		}
+		return
+	}
+	if rs.ConsentStatus == "granted" {
+		a.runRemoteSupport(rs) // already granted (e.g. reconnect) — stream
 		return
 	}
 	if rs.ConsentStatus != "pending" {
-		return // already granted/denied
+		return // denied
 	}
 	if a.handledConsent == nil {
 		a.handledConsent = map[string]bool{}
@@ -172,6 +190,11 @@ func (a *Agent) processRemoteSupportConsent(rs *RemoteSupportBlock) {
 	a.handledConsent[rs.SessionID] = true
 	a.logger.Info("remote-support consent sent",
 		zap.String("session_id", rs.SessionID), zap.String("decision", decision))
+	// On grant, begin streaming immediately (don't wait for the next poll).
+	if decision == "grant" {
+		rs.ConsentStatus = "granted"
+		a.runRemoteSupport(rs)
+	}
 }
 
 // reportPayload is the JSON body sent to the report endpoint.

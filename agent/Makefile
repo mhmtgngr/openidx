@@ -16,11 +16,18 @@ LDFLAGS    := -s -w \
 
 OUT_DIR    := dist
 
-.PHONY: build test clean build-all
+.PHONY: build test clean build-all build-screenshare
 
 ## build: compile the agent for the current platform
 build:
 	go build -ldflags "$(LDFLAGS)" -o $(BINARY) $(CMD_PKG)
+
+## build-screenshare: compile WITH real screen capture + VP8 (remote support).
+## Requires CGO + libvpx (Linux: apt install libvpx-dev libx11-dev;
+## Windows CI: the toolchain ships libvpx). The default build uses a no-op
+## capture stub so it cross-compiles as pure Go.
+build-screenshare:
+	CGO_ENABLED=1 go build -tags screenshare -ldflags "$(LDFLAGS)" -o $(BINARY) $(CMD_PKG)
 
 ## test: run all unit tests
 test:

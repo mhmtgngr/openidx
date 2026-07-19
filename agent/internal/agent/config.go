@@ -22,6 +22,9 @@ type AgentConfig struct {
 	// UpdateManifestURL, when set, enables self-update: the service polls this
 	// JSON manifest and applies a newer published MSI. Empty disables it.
 	UpdateManifestURL string `json:"update_manifest_url,omitempty"`
+	// InsecureSkipVerify skips TLS verification for the signaling WebSocket
+	// (dev/self-signed only). Defaults false. Mirrors the HTTP client posture.
+	InsecureSkipVerify bool `json:"insecure_skip_verify,omitempty"`
 }
 
 // CheckConfig is an alias for checks.CheckConfig so callers that import the
@@ -40,13 +43,14 @@ type ServerConfig struct {
 // device. When ConsentRequired is true, the person at the device must grant the
 // session (via ConsentPath) before the admin can view/control.
 type RemoteSupportBlock struct {
-	SessionID       string `json:"session_id"`
-	Mode            string `json:"mode"`
-	WSPath          string `json:"ws_path"`
-	Recording       bool   `json:"recording"`
-	ConsentRequired bool   `json:"consent_required"`
-	ConsentStatus   string `json:"consent_status"`
-	ConsentPath     string `json:"consent_path"`
+	SessionID       string          `json:"session_id"`
+	Mode            string          `json:"mode"`
+	WSPath          string          `json:"ws_path"`
+	Recording       bool            `json:"recording"`
+	ConsentRequired bool            `json:"consent_required"`
+	ConsentStatus   string          `json:"consent_status"`
+	ConsentPath     string          `json:"consent_path"`
+	ICEServersRaw   json.RawMessage `json:"ice_servers,omitempty"`
 }
 
 // DefaultServerConfig returns a ServerConfig populated with sensible defaults.
