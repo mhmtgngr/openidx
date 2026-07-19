@@ -53,12 +53,18 @@ export function RemoteSupportViewer({
   const wsRef = useRef<WebSocket | null>(null)
   const pcRef = useRef<RTCPeerConnection | null>(null)
   const inputChannelRef = useRef<RTCDataChannel | null>(null)
+  const controlActiveRef = useRef<boolean>(mode === 'interactive')
   const recorderRef = useRef<MediaRecorder | null>(null)
   const chunkIndexRef = useRef<number>(0)
   const recordedStreamRef = useRef<MediaStream | null>(null)
   const [state, setState] = useState<ConnState>('connecting')
   const [errorMessage, setErrorMessage] = useState<string>('')
   const [recState, setRecState] = useState<RecState>('off')
+  // Live control toggle: in an interactive session the admin can hand control
+  // back and forth without restarting. When false, input is not forwarded and
+  // the device is told to drop its "being controlled" indicator. Starts true
+  // for interactive sessions (matches today's behavior), always false in view.
+  const [controlActive, setControlActive] = useState<boolean>(mode === 'interactive')
 
   useEffect(() => {
     const ws = openSignalingSocket(wsUrl)
@@ -167,9 +173,29 @@ export function RemoteSupportViewer({
   }, [wsUrl])
 
   function sendInput(event: Record<string, unknown>) {
+    if (!controlActiveRef.current) return
     const ch = inputChannelRef.current
     if (!ch || ch.readyState !== 'open') return
     ch.send(JSON.stringify(event))
+  }
+
+  // sendControlState notifies the device whether the admin currently holds
+  // control, so it can show/hide its "being controlled" banner. Sent over the
+  // same input channel as a distinct event the agent recognizes.
+  function sendControlState(active: boolean) {
+    const ch = inputChannelRef.current
+    if (ch && ch.readyState === 'open') {
+      ch.send(JSON.stringify({ event: 'control_state', active }))
+    }
+  }
+
+  function toggleControl() {
+    setControlActive((prev) => {
+      const next = !prev
+      controlActiveRef.current = next
+      sendControlState(next)
+      return next
+    })
   }
 
   /**
@@ -354,13 +380,21 @@ export function RemoteSupportViewer({
         <div className="flex items-center gap-2">
           {mode === 'interactive' && (
             <>
-              <Button variant="outline" size="sm" onClick={() => sendInput({ event: 'global_action', action: 'back' })}>
+              <Button
+                variant={controlActive ? 'default' : 'outline'}
+                size="sm"
+                onClick={toggleControl}
+                title={controlActive ? 'You are controlling the device — click to release' : 'View-only — click to take control'}
+              >
+                {controlActive ? 'Release control' : 'Take control'}
+              </Button>
+              <Button variant="outline" size="sm" disabled={!controlActive} onClick={() => sendInput({ event: 'global_action', action: 'back' })}>
                 Back
               </Button>
-              <Button variant="outline" size="sm" onClick={() => sendInput({ event: 'global_action', action: 'home' })}>
+              <Button variant="outline" size="sm" disabled={!controlActive} onClick={() => sendInput({ event: 'global_action', action: 'home' })}>
                 Home
               </Button>
-              <Button variant="outline" size="sm" onClick={() => sendInput({ event: 'global_action', action: 'recents' })}>
+              <Button variant="outline" size="sm" disabled={!controlActive} onClick={() => sendInput({ event: 'global_action', action: 'recents' })}>
                 Recents
               </Button>
             </>
