@@ -896,6 +896,13 @@ type agentRemoteSupportInfo struct {
 	WSPath     string          `json:"ws_path"`
 	ICEServers json.RawMessage `json:"ice_servers,omitempty"`
 	Recording  bool            `json:"recording"`
+	// ConsentRequired tells the device it must Allow the session before the
+	// admin can view/control; ConsentStatus is the current decision
+	// ('pending'|'granted'|'denied'). ConsentPath is where the device POSTs its
+	// grant/deny decision.
+	ConsentRequired bool   `json:"consent_required"`
+	ConsentStatus   string `json:"consent_status,omitempty"`
+	ConsentPath     string `json:"consent_path,omitempty"`
 }
 
 // defaultAgentConfig returns the built-in fallback configuration used when no
@@ -968,8 +975,7 @@ func (h *AgentAPIHandler) enforceExpiredGracePeriods(ctx context.Context) {
 	}
 }
 
-// HandleConfig returns the agent configuration, taking into account the agent's
-// enrollment status when an X-Agent-ID header (or query parameter) is supplied.
+// HandleConfig returns the agent configuration, taking into account the agent's enrollment status when an X-Agent-ID header (or query parameter) is supplied.
 //
 // Status-based behaviour:
 //   - revoked  → 403 Forbidden
@@ -977,6 +983,28 @@ func (h *AgentAPIHandler) enforceExpiredGracePeriods(ctx context.Context) {
 //   - pending  → minimal config (os_version only, 1 h interval)
 //   - active   → full config built from enabled posture_checks rows
 //
+// defaultConfigWithSupport returns the default agent config but ALSO embeds an
+// in-flight remote-support session pointer (with consent fields) if one is
+// active for the agent. Used by the config early-return paths (posture-check
+// query error, or no enabled checks) so a device without posture checks can
+// still learn about a support session and grant/deny attended-support consent.
+func (h *AgentAPIHandler) defaultConfigWithSupport(ctx context.Context, agentID string) agentConfigResponse {
+	cfg := defaultAgentConfig()
+	if info, ok := findActiveSessionForAgent(ctx, h.db, agentID); ok {
+		cfg.RemoteSupport = &agentRemoteSupportInfo{
+			SessionID:       info.SessionID,
+			Mode:            info.Mode,
+			WSPath:          "/api/v1/access/agent/remote-support/sessions/" + info.SessionID + "/ws",
+			ICEServers:      info.ICEServers,
+			Recording:       info.Recording,
+			ConsentRequired: info.ConsentRequired,
+			ConsentStatus:   info.ConsentStatus,
+			ConsentPath:     "/api/v1/access/agent/remote-support/sessions/" + info.SessionID + "/consent",
+		}
+	}
+	return cfg
+}
+
 // Falls back to defaultAgentConfig when no agent ID is given or the DB is nil.
 func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 	// 1. Resolve agent ID from header or query param.
@@ -1064,7 +1092,7 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 		if queryErr != nil {
 			h.logger.Warn("HandleConfig: could not query posture_checks",
 				zap.String("agent_id", agentID), zap.Error(queryErr))
-			c.JSON(http.StatusOK, defaultAgentConfig())
+			c.JSON(http.StatusOK, h.defaultConfigWithSupport(ctx, agentID))
 			return
 		}
 		defer rows.Close()
@@ -1088,9 +1116,13 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 			h.logger.Warn("HandleConfig: rows iteration error", zap.Error(rows.Err()))
 		}
 
-		// Fall back to defaults when no enabled checks exist.
+		// Fall back to a defaults-shaped config when no enabled checks exist —
+		// but STILL embed an in-flight remote-support session pointer if one is
+		// active, otherwise a device with no posture checks could never learn it
+		// has a support session (and, for attended support, could never grant
+		// consent). checks stays empty; the rest of the config is the default.
 		if len(checks) == 0 {
-			c.JSON(http.StatusOK, defaultAgentConfig())
+			c.JSON(http.StatusOK, h.defaultConfigWithSupport(ctx, agentID))
 			return
 		}
 
@@ -1114,11 +1146,14 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 		// exists for this agent so the device knows where to dial signaling.
 		if info, ok := findActiveSessionForAgent(ctx, h.db, agentID); ok {
 			cfg.RemoteSupport = &agentRemoteSupportInfo{
-				SessionID:  info.SessionID,
-				Mode:       info.Mode,
-				WSPath:     "/api/v1/access/agent/remote-support/sessions/" + info.SessionID + "/ws",
-				ICEServers: info.ICEServers,
-				Recording:  info.Recording,
+				SessionID:       info.SessionID,
+				Mode:            info.Mode,
+				WSPath:          "/api/v1/access/agent/remote-support/sessions/" + info.SessionID + "/ws",
+				ICEServers:      info.ICEServers,
+				Recording:       info.Recording,
+				ConsentRequired: info.ConsentRequired,
+				ConsentStatus:   info.ConsentStatus,
+				ConsentPath:     "/api/v1/access/agent/remote-support/sessions/" + info.SessionID + "/consent",
 			}
 		}
 

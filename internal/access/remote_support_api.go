@@ -691,10 +691,12 @@ func (h *RemoteSupportHandler) verifyAgentAuth(ctx context.Context, agentID, tok
 // recording flag is a fifth datum and the positional-return signature
 // was already noisy.
 type activeSessionInfo struct {
-	SessionID  string
-	Mode       string
-	ICEServers json.RawMessage
-	Recording  bool
+	SessionID       string
+	Mode            string
+	ICEServers      json.RawMessage
+	Recording       bool
+	ConsentRequired bool
+	ConsentStatus   string
 }
 
 // findActiveSessionForAgent — called from HandleConfig to embed an in-flight
@@ -707,12 +709,12 @@ func findActiveSessionForAgent(ctx context.Context, db *database.PostgresDB, age
 	}
 	var iceBytes []byte
 	err := db.Pool.QueryRow(ctx, `
-        SELECT id, mode, ice_servers, recording_enabled
+        SELECT id, mode, ice_servers, recording_enabled, consent_required, consent_status
           FROM remote_support_sessions
          WHERE agent_id = $1 AND status IN ('pending','active')
          ORDER BY started_at DESC
          LIMIT 1
-    `, agentID).Scan(&info.SessionID, &info.Mode, &iceBytes, &info.Recording)
+    `, agentID).Scan(&info.SessionID, &info.Mode, &iceBytes, &info.Recording, &info.ConsentRequired, &info.ConsentStatus)
 	if err != nil {
 		return activeSessionInfo{}, false
 	}
