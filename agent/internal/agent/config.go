@@ -30,8 +30,23 @@ type CheckConfig = checks.CheckConfig
 
 // ServerConfig holds the configuration delivered by the server to the agent.
 type ServerConfig struct {
-	Checks         []CheckConfig `json:"checks"`
-	ReportInterval string        `json:"report_interval"`
+	Checks         []CheckConfig       `json:"checks"`
+	ReportInterval string              `json:"report_interval"`
+	RemoteSupport  *RemoteSupportBlock `json:"remote_support,omitempty"`
+}
+
+// RemoteSupportBlock is the in-flight remote-support session pointer the server
+// embeds in the agent config when an admin has started a session for this
+// device. When ConsentRequired is true, the person at the device must grant the
+// session (via ConsentPath) before the admin can view/control.
+type RemoteSupportBlock struct {
+	SessionID       string `json:"session_id"`
+	Mode            string `json:"mode"`
+	WSPath          string `json:"ws_path"`
+	Recording       bool   `json:"recording"`
+	ConsentRequired bool   `json:"consent_required"`
+	ConsentStatus   string `json:"consent_status"`
+	ConsentPath     string `json:"consent_path"`
 }
 
 // DefaultServerConfig returns a ServerConfig populated with sensible defaults.

@@ -22,6 +22,16 @@ type Agent struct {
 	registry  *checks.Registry
 	engine    *checks.Engine
 	serverCfg *ServerConfig
+
+	// ConsentDecider decides how to answer a consent-required remote-support
+	// session. It returns "grant", "deny", or "" (defer — decide later, e.g.
+	// while a native Allow/Deny dialog is still open). The tray can install a
+	// prompt-backed decider; the default is policy-driven (see
+	// defaultConsentDecider). Called at most once per session id.
+	ConsentDecider func(rs *RemoteSupportBlock) string
+	// handledConsent tracks session ids we have already answered so a repeated
+	// config poll does not re-submit a decision.
+	handledConsent map[string]bool
 }
 
 // NewAgent loads the persisted agent config from configDir, creates a transport
@@ -118,7 +128,50 @@ func (a *Agent) SyncConfig(ctx context.Context) error {
 
 	a.serverCfg = &cfg
 	a.logger.Info("server config synced", zap.Int("checks", len(cfg.Checks)))
+	a.processRemoteSupportConsent(cfg.RemoteSupport)
 	return nil
+}
+
+// defaultConsentDecider is the fallback policy when no native prompt is wired.
+// A managed, enrolled device auto-grants (the admin already has an authorized
+// session and the device is under management); a real attended prompt can be
+// installed via Agent.ConsentDecider to require an explicit Allow/Deny click.
+func defaultConsentDecider(_ *RemoteSupportBlock) string { return "grant" }
+
+// processRemoteSupportConsent answers a consent-required remote-support session
+// that is still pending. It is a no-op when there is no session, consent is not
+// required, or the decision was already sent. The admin cannot view/control
+// until the device grants (server-enforced in HandleAdminWS), so this is the
+// device's half of the attended-support handshake.
+func (a *Agent) processRemoteSupportConsent(rs *RemoteSupportBlock) {
+	if rs == nil || !rs.ConsentRequired || rs.SessionID == "" {
+		return
+	}
+	if rs.ConsentStatus != "pending" {
+		return // already granted/denied
+	}
+	if a.handledConsent == nil {
+		a.handledConsent = map[string]bool{}
+	}
+	if a.handledConsent[rs.SessionID] {
+		return
+	}
+	decide := a.ConsentDecider
+	if decide == nil {
+		decide = defaultConsentDecider
+	}
+	decision := decide(rs)
+	if decision != "grant" && decision != "deny" {
+		return // deferred — a native prompt is still open; try again next poll
+	}
+	if err := a.client.SendConsent(rs.SessionID, decision); err != nil {
+		a.logger.Warn("remote-support consent send failed",
+			zap.String("session_id", rs.SessionID), zap.String("decision", decision), zap.Error(err))
+		return
+	}
+	a.handledConsent[rs.SessionID] = true
+	a.logger.Info("remote-support consent sent",
+		zap.String("session_id", rs.SessionID), zap.String("decision", decision))
 }
 
 // reportPayload is the JSON body sent to the report endpoint.

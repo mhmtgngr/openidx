@@ -75,3 +75,9 @@ func (c *ZitiClient) GetConfig() ([]byte, error) {
 	inner := &Client{baseURL: c.baseURL, authToken: c.authToken, agentID: c.agentID, httpClient: c.httpClient}
 	return inner.GetConfig()
 }
+
+// SendConsent delegates to the inner HTTP client over the Ziti-backed transport.
+func (c *ZitiClient) SendConsent(sessionID, decision string) error {
+	inner := &Client{baseURL: c.baseURL, authToken: c.authToken, agentID: c.agentID, httpClient: c.httpClient}
+	return inner.SendConsent(sessionID, decision)
+}

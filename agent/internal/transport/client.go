@@ -133,3 +133,30 @@ func (c *Client) GetConfig() ([]byte, error) {
 
 	return body, nil
 }
+
+// SendConsent posts the device's remote-support consent decision
+// (POST /api/v1/access/agent/remote-support/sessions/:id/consent). decision is
+// "grant" or "deny". The endpoint authenticates the device via X-Agent-ID +
+// X-Auth-Token (the agent's own auth token), so the admin can never view or
+// control until the device grants.
+func (c *Client) SendConsent(sessionID, decision string) error {
+	url := c.baseURL + "/api/v1/access/agent/remote-support/sessions/" + sessionID + "/consent"
+	body := []byte(`{"decision":"` + decision + `"}`)
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("creating consent request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Agent-ID", c.agentID)
+	req.Header.Set("X-Auth-Token", c.authToken)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("sending consent request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("consent request failed with status %d", resp.StatusCode)
+	}
+	return nil
+}

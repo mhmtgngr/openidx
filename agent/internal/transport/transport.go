@@ -6,4 +6,5 @@ type Transport interface {
 	Enroll(token string) (*EnrollResponse, error)
 	ReportResults(data []byte) error
 	GetConfig() ([]byte, error)
+	SendConsent(sessionID, decision string) error
 }
