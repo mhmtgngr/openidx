@@ -486,6 +486,7 @@ function StartSessionDialog({ onClose, onStarted }: StartSessionDialogProps) {
   const [mode, setMode] = useState<'interactive' | 'view'>('interactive')
   const [notes, setNotes] = useState('')
   const [record, setRecord] = useState(false)
+  const [consentRequired, setConsentRequired] = useState(false)
 
   const startMutation = useMutation({
     mutationFn: () =>
@@ -494,6 +495,7 @@ function StartSessionDialog({ onClose, onStarted }: StartSessionDialogProps) {
         mode,
         notes,
         record,
+        consent_required: consentRequired,
       }),
     onSuccess: (data) => {
       toast({ title: 'Session created' })
@@ -542,6 +544,15 @@ function StartSessionDialog({ onClose, onStarted }: StartSessionDialogProps) {
               placeholder="case ID, user-reported issue, etc."
             />
           </div>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={consentRequired}
+              onChange={(e) => setConsentRequired(e.target.checked)}
+            />
+            Require device consent (attended) — the user must click Allow before
+            you can view/control. Recommended for a person's own machine.
+          </label>
           <label className="flex items-center gap-2 text-sm">
             <input
               type="checkbox"
