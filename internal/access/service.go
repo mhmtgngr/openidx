@@ -598,6 +598,13 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.GET("/pam/entries/:id/ws", svc.handlePamWSConnect)
 		api.POST("/pam/entries/:id/reveal", svc.handlePamRevealEntry)
 		api.POST("/pam/entries/:id/request", svc.handlePamRequestAccess)
+
+		// Quick Links — admin-curated, user-searchable support/collaboration launcher.
+		api.GET("/quick-links/my", svc.handleMyQuickLinks)
+		api.GET("/quick-links", svc.requireAdminRole(), svc.handleListQuickLinks)
+		api.POST("/quick-links", svc.requireAdminRole(), svc.handleCreateQuickLink)
+		api.PUT("/quick-links/:id", svc.requireAdminRole(), svc.handleUpdateQuickLink)
+		api.DELETE("/quick-links/:id", svc.requireAdminRole(), svc.handleDeleteQuickLink)
 		api.GET("/pam/entries/:id/grants", svc.requireAdminRole(), svc.handlePamListEntryGrants)
 		api.POST("/pam/entries/:id/grants", svc.requireAdminRole(), svc.handlePamAddEntryGrant)
 		api.DELETE("/pam/entries/:id/grants/:grantId", svc.requireAdminRole(), svc.handlePamRemoveEntryGrant)

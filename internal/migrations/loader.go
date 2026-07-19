@@ -635,5 +635,12 @@ func allMigrations() []*Migration {
 			UpSQL:       pamEntryRendererUp,
 			DownSQL:     pamEntryRendererDown,
 		},
+		{
+			Version:     90,
+			Name:        "quick_links",
+			Description: "Add quick_links: an admin-curated, user-searchable launcher for support/collaboration systems. type='external' opens a URL; type='pam' references a pam_entries row and launches it clientlessly via the entry's renderer (guacamole/wasm-ssh) under the existing PAM permission gate. Org-scoped + forced RLS; role-gated by min_role. Additive/idempotent.",
+			UpSQL:       quickLinksUp,
+			DownSQL:     quickLinksDown,
+		},
 	}
 }
