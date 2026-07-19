@@ -642,5 +642,12 @@ func allMigrations() []*Migration {
 			UpSQL:       quickLinksUp,
 			DownSQL:     quickLinksDown,
 		},
+		{
+			Version:     91,
+			Name:        "remote_support_consent",
+			Description: "Add remote_support_sessions.consent_required/consent_status/consent_decided_at so an attended support session can require the person at the device to click Allow before the admin can view/control. Existing sessions default consent_required=false (no behavior change for unattended/server support). Additive/idempotent.",
+			UpSQL:       remoteSupportConsentUp,
+			DownSQL:     remoteSupportConsentDown,
+		},
 	}
 }

@@ -149,6 +149,9 @@ func (h *RemoteSupportHandler) RegisterRemoteSupportAdminRoutes(r *gin.RouterGro
 // /agent/report) since agents don't have a tenant JWT.
 func (h *RemoteSupportHandler) RegisterRemoteSupportPublicRoutes(r *gin.RouterGroup) {
 	r.GET("/agent/remote-support/sessions/:id/ws", h.HandleAgentWS)
+	// Device consent (attended support): the agent Allows/Denies before the
+	// admin can view/control. Agent-authenticated (X-Agent-ID + X-Auth-Token).
+	r.POST("/agent/remote-support/sessions/:id/consent", h.HandleAgentConsent)
 }
 
 // startSessionRequest is the body accepted by HandleStartSession.
@@ -158,6 +161,10 @@ type startSessionRequest struct {
 	ICEServers json.RawMessage `json:"ice_servers"` // optional override
 	Notes      string          `json:"notes"`
 	Record     bool            `json:"record"` // opt-in MediaRecorder capture
+	// ConsentRequired: when true, the person at the device must Allow the
+	// session (attended support) before the admin can view/control. Servers /
+	// unattended targets leave this false (today's behavior).
+	ConsentRequired bool `json:"consent_required"`
 	// RecordingRetentionDays: per-session retention override. nil means
 	// "use the per-org policy or default". 0 means "infinite". Positive
 	// values cap the recording lifetime to that many days.
@@ -264,11 +271,13 @@ func (h *RemoteSupportHandler) HandleStartSession(c *gin.Context) {
 	_, err := h.db.Pool.Exec(c.Request.Context(), `
         INSERT INTO remote_support_sessions
             (id, agent_id, admin_user_id, status, mode, ice_servers, notes,
-             recording_enabled, org_id, recording_retention_days)
+             recording_enabled, org_id, recording_retention_days,
+             consent_required, consent_status)
         VALUES ($1, $2, NULLIF($3,'')::uuid, 'pending', $4, $5::jsonb, $6,
-                $7, $8::uuid, $9)
+                $7, $8::uuid, $9, $10, $11)
     `, id, req.AgentID, adminID, mode, string(ice), req.Notes,
-		recordingEnabled, orgArg, retentionArg)
+		recordingEnabled, orgArg, retentionArg,
+		req.ConsentRequired, consentStatusFor(req.ConsentRequired))
 	if err != nil {
 		h.logger.Error("HandleStartSession: insert failed", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to start session"})
@@ -293,7 +302,78 @@ func (h *RemoteSupportHandler) HandleStartSession(c *gin.Context) {
 		"agent_ws":          "/api/v1/access/agent/remote-support/sessions/" + id + "/ws",
 		"ice_servers":       ice,
 		"recording_enabled": recordingEnabled,
+		"consent_required":  req.ConsentRequired,
+		"consent_status":    consentStatusFor(req.ConsentRequired),
 	})
+}
+
+// consentStatusFor returns the initial consent_status for a session: 'pending'
+// when the device must Allow first, otherwise 'granted' (unattended/server —
+// no behavior change).
+func consentStatusFor(required bool) string {
+	if required {
+		return "pending"
+	}
+	return "granted"
+}
+
+// consentDecisionRequest is the body of the agent accept/decline call.
+type consentDecisionRequest struct {
+	Decision string `json:"decision"` // "grant" | "deny"
+}
+
+// HandleAgentConsent is the DEVICE side of attended-support consent:
+// POST /api/v1/access/agent/remote-support/sessions/:id/consent {decision}.
+// The agent proves ownership with X-Agent-ID + X-Auth-Token (same as the agent
+// WS). It flips consent_status to granted/denied; a denial also ends the
+// session so the admin can never view/control without an explicit Allow.
+func (h *RemoteSupportHandler) HandleAgentConsent(c *gin.Context) {
+	id := c.Param("id")
+	row, err := h.fetchSession(c.Request.Context(), id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "session not found"})
+		return
+	}
+	agentID := c.GetHeader("X-Agent-ID")
+	authToken := c.GetHeader("X-Auth-Token")
+	if agentID != row.AgentID || authToken == "" || !h.verifyAgentAuth(c.Request.Context(), agentID, authToken) {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "agent credentials invalid"})
+		return
+	}
+	var req consentDecisionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		return
+	}
+	var newStatus string
+	switch req.Decision {
+	case "grant":
+		newStatus = "granted"
+	case "deny":
+		newStatus = "denied"
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "decision must be 'grant' or 'deny'"})
+		return
+	}
+
+	if newStatus == "denied" {
+		// A denial ends the session immediately (fail-closed).
+		_, _ = h.db.Pool.Exec(c.Request.Context(), `
+            UPDATE remote_support_sessions
+               SET consent_status='denied', consent_decided_at=NOW(),
+                   status='ended', ended_at=NOW(), end_reason='consent denied by device'
+             WHERE id=$1`, id)
+		h.audit(c.Request.Context(), "remote_support.consent_denied", id, "success", "agent="+agentID)
+		c.JSON(http.StatusOK, gin.H{"consent_status": "denied", "status": "ended"})
+		return
+	}
+
+	_, _ = h.db.Pool.Exec(c.Request.Context(), `
+        UPDATE remote_support_sessions
+           SET consent_status='granted', consent_decided_at=NOW()
+         WHERE id=$1`, id)
+	h.audit(c.Request.Context(), "remote_support.consent_granted", id, "success", "agent="+agentID)
+	c.JSON(http.StatusOK, gin.H{"consent_status": "granted"})
 }
 
 // HandleListSessions returns recent sessions, newest first.
@@ -371,6 +451,23 @@ func (h *RemoteSupportHandler) HandleAdminWS(c *gin.Context) {
 	if _, err := h.fetchSession(c.Request.Context(), id); err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "session not found"})
 		return
+	}
+	// Consent gate (attended support): if the session requires device consent
+	// and the device has not yet granted it, the admin must NOT be able to
+	// view/control. Refuse the WS until consent is 'granted' (fail-closed). A
+	// 'denied' session has already been ended by HandleAgentConsent.
+	var consentRequired bool
+	var consentStatus string
+	if err := h.db.Pool.QueryRow(c.Request.Context(),
+		`SELECT consent_required, consent_status FROM remote_support_sessions WHERE id=$1`, id).
+		Scan(&consentRequired, &consentStatus); err == nil {
+		if consentRequired && consentStatus != "granted" {
+			c.JSON(http.StatusForbidden, gin.H{
+				"error":          "awaiting device consent",
+				"consent_status": consentStatus,
+			})
+			return
+		}
 	}
 	conn, err := h.upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
