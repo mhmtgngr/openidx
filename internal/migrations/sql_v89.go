@@ -15,10 +15,16 @@ package migrations
 // permission/approval gate (pamEntryAllowed) is unchanged and applies to every
 // renderer. Additive + idempotent; backfills existing rows to 'guacamole' so
 // there is no behavior change.
+//
+// NOTE: the migration runner's statement splitter only recognizes a
+// dollar-quoted block when `$$` begins a line (see migration.go splitSQL), so
+// the DO block below is written with `$$` at the start of its own line. Do not
+// collapse it back onto the `DO` line or the runner will split on the inner `;`.
 var pamEntryRendererUp = `-- Migration 089: pam_entries.renderer (clientless renderer selection).
 ALTER TABLE pam_entries ADD COLUMN IF NOT EXISTS renderer VARCHAR(16) NOT NULL DEFAULT 'guacamole';
 UPDATE pam_entries SET renderer = 'guacamole' WHERE renderer IS NULL OR renderer = '';
-DO $$
+DO
+$$
 BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM pg_constraint WHERE conname = 'pam_entries_renderer_check'
@@ -27,7 +33,8 @@ BEGIN
             ADD CONSTRAINT pam_entries_renderer_check
             CHECK (renderer IN ('guacamole', 'wasm-ssh', 'novnc', 'support'));
     END IF;
-END $$;`
+END
+$$;`
 
 var pamEntryRendererDown = `-- Rollback 089.
 ALTER TABLE pam_entries DROP CONSTRAINT IF EXISTS pam_entries_renderer_check;
