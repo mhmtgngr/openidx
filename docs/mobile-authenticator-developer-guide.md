@@ -514,3 +514,30 @@ Checklist:
 **[verified]** were exercised live against `https://openidx.tdv.org` on
 2026-07-17. Known backend gaps to plan around: real push delivery (FCM v1 + APNs
 provider-token) and the native Ziti `dial()` loopback bridge.*
+
+---
+
+## Remote-support & clientless access — device-side hooks (remaining native work)
+
+The server, admin console, and Go agent are complete for these flows. Two hooks
+remain, both inside the not-yet-compiled native WebRTC/screen module:
+
+1. **`control_state` receiver.** The admin viewer sends
+   `{event:"control_state", active:<bool>}` over the `openidx-input` WebRTC data
+   channel when it takes or releases control (see
+   `web/admin-console/src/components/remote-support/remote-support-viewer.tsx`).
+   The device receiver should show/hide a "being controlled" banner accordingly.
+   Input events (`event:"global_action"`, pointer, keyboard) already flow on the
+   same channel — only honor them while control is active.
+
+2. **Attended consent prompt (optional upgrade).** The device already answers
+   consent automatically via the Go agent's `ConsentDecider` (default: grant for
+   a managed device). For a real Allow/Deny dialog, install a decider that shows
+   a native prompt and returns `"grant"`, `"deny"`, or `""` (defer — keep the
+   dialog open, decided on a later `/agent/config` poll). Contract:
+   `POST /api/v1/access/agent/remote-support/sessions/:id/consent {"decision":"grant|deny"}`
+   with `X-Agent-ID` + `X-Auth-Token`. Until the device grants, the admin
+   WebSocket is refused server-side (403 "awaiting device consent").
+
+Everything else — session start, ICE/TURN, signaling, recording, the view<->control
+toggle, and the consent gate — is implemented and live-verified.
