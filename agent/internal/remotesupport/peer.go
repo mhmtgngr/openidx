@@ -57,14 +57,21 @@ type icePayload struct {
 }
 
 // InputEvent is an inbound control message from the admin (pointer/keyboard/
-// global action). Applied by an InputSink when the admin holds control.
+// global action). Applied by an InputSink when the admin holds control. The
+// admin viewer sends normalized coordinates in the 0..1000 range (x/y), so a
+// desktop sink scales them to the real screen size.
 type InputEvent struct {
-	Event  string  `json:"event"`
-	Action string  `json:"action,omitempty"`
-	X      float64 `json:"x,omitempty"`
-	Y      float64 `json:"y,omitempty"`
-	Key    string  `json:"key,omitempty"`
-	Active *bool   `json:"active,omitempty"` // for event=="control_state"
+	Event      string  `json:"event"` // tap|swipe|text|key|clipboard|global_action|control_state
+	Action     string  `json:"action,omitempty"`
+	X          float64 `json:"x,omitempty"`
+	Y          float64 `json:"y,omitempty"`
+	X2         float64 `json:"x2,omitempty"`         // swipe end x
+	Y2         float64 `json:"y2,omitempty"`         // swipe end y
+	DurationMS int     `json:"duration_ms,omitempty"`
+	Text       string  `json:"text,omitempty"`
+	KeyName    string  `json:"key_name,omitempty"`
+	KeyCode    int     `json:"key_code,omitempty"`
+	Active     *bool   `json:"active,omitempty"` // for event=="control_state"
 }
 
 // InputSink applies inbound input to the device. A headless build uses a no-op.

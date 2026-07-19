@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sync"
 	"time"
 
 	"go.uber.org/zap"
@@ -32,12 +33,20 @@ func (h *handler) statusProvider() ipc.Status {
 			zitiUp = true
 		}
 	}
+	var rsActive, rsControlled bool
+	h.mu.Lock()
+	if h.agent != nil {
+		rsActive, rsControlled = h.agent.RemoteSupportState()
+	}
+	h.mu.Unlock()
 	return ipc.Status{
-		Enrolled:     cfg.AgentID != "",
-		AgentID:      cfg.AgentID,
-		DeviceID:     cfg.DeviceID,
-		ServerURL:    cfg.ServerURL,
-		ZitiEnrolled: zitiUp,
+		Enrolled:                cfg.AgentID != "",
+		AgentID:                 cfg.AgentID,
+		DeviceID:                cfg.DeviceID,
+		ServerURL:               cfg.ServerURL,
+		ZitiEnrolled:            zitiUp,
+		RemoteSupportActive:     rsActive,
+		RemoteSupportControlled: rsControlled,
 	}
 }
 
@@ -52,6 +61,9 @@ type handler struct {
 	logger    *zap.Logger
 	configDir string
 	version   string
+
+	mu    sync.Mutex
+	agent *agent.Agent // the running agent, for live status (remote-support banner)
 }
 
 // Execute implements svc.Handler.
@@ -71,6 +83,9 @@ func (h *handler) Execute(_ []string, r <-chan svc.ChangeRequest, s chan<- svc.S
 		}
 		a.RegisterBuiltinChecks()
 		a.LoadPlugins()
+		h.mu.Lock()
+		h.agent = a
+		h.mu.Unlock()
 		if err := a.Run(ctx); err != nil && err != context.Canceled {
 			h.logger.Error("service: agent run failed", zap.Error(err))
 		}

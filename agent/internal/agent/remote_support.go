@@ -87,13 +87,52 @@ func (a *Agent) streamRemoteSupport(ctx context.Context, rs *RemoteSupportBlock)
 	peer := remotesupport.NewPeer(remotesupport.PeerConfig{
 		ICEServers: parseICEServers(rs.ICEServersRaw),
 		Source:     src,
-		Input:      a.inputSink(), // OS input injector, or no-op
+		Input:      a.trackingInputSink(), // wraps the OS sink to track control state
 		Logger:     a.logger,
 	})
 	defer peer.Close()
 
+	// Banner state for the tray: active for the session's lifetime.
+	a.remoteSupportActive.Store(true)
+	defer func() {
+		a.remoteSupportActive.Store(false)
+		a.remoteSupportControlled.Store(false)
+	}()
+
 	a.logger.Info("remote-support: streaming screen", zap.String("session_id", rs.SessionID), zap.String("mode", rs.Mode))
 	return peer.Run(sig)
+}
+
+// RemoteSupportState returns the live banner flags for the tray IPC status:
+// active (a session is streaming) and controlled (the admin currently holds
+// control). Safe to call from any goroutine.
+func (a *Agent) RemoteSupportState() (active, controlled bool) {
+	return a.remoteSupportActive.Load(), a.remoteSupportControlled.Load()
+}
+
+// trackingInputSink wraps the OS input sink so the agent can mirror the admin's
+// control_state into remoteSupportControlled (for the tray banner) while still
+// delegating actual input to the underlying sink.
+func (a *Agent) trackingInputSink() remotesupport.InputSink {
+	return &controlTrackingSink{agent: a, inner: a.inputSink()}
+}
+
+type controlTrackingSink struct {
+	agent *Agent
+	inner remotesupport.InputSink
+}
+
+func (s *controlTrackingSink) Apply(ev remotesupport.InputEvent) {
+	if s.inner != nil {
+		s.inner.Apply(ev)
+	}
+}
+
+func (s *controlTrackingSink) SetControlActive(active bool) {
+	s.agent.remoteSupportControlled.Store(active)
+	if s.inner != nil {
+		s.inner.SetControlActive(active)
+	}
 }
 
 // signalURL turns the server-relative ws_path into an absolute ws(s):// URL
@@ -114,13 +153,14 @@ func (a *Agent) signalURL(wsPath string) (string, error) {
 // remoteSupportFPS is the capture frame rate (overridable later via config).
 func (a *Agent) remoteSupportFPS() int { return 10 }
 
-// inputSink returns the OS input injector when one is wired, else a no-op.
-// (A Windows SendInput-backed sink can be installed via Agent.RemoteInputSink.)
+// inputSink returns the input injector for an active session: an explicitly
+// installed RemoteInputSink, else the OS injector (Windows SendInput), else nil
+// (view-only — the peer still streams, input is simply not applied).
 func (a *Agent) inputSink() remotesupport.InputSink {
 	if a.RemoteInputSink != nil {
 		return a.RemoteInputSink
 	}
-	return nil // NewPeer defaults to a no-op sink
+	return remotesupport.NewWindowsInputSink() // nil off Windows
 }
 
 // parseICEServers converts the raw ice_servers JSON (array of {urls,...}) from

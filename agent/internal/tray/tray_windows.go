@@ -28,6 +28,7 @@ type app struct {
 	configDir string
 	serverURL string
 
+	mBanner   *systray.MenuItem
 	mStatus   *systray.MenuItem
 	mSignIn   *systray.MenuItem
 	mSignOut  *systray.MenuItem
@@ -50,6 +51,14 @@ func (a *app) onReady() {
 	systray.SetIcon(assets.OpenIDXICO)
 	systray.SetTitle("OpenIDX")
 	systray.SetTooltip("OpenIDX")
+
+	// Remote-support banner: hidden until a session is live, then shown at the
+	// very top so the user always sees "An OpenIDX admin can see and control
+	// this device."
+	a.mBanner = systray.AddMenuItem("", "")
+	a.mBanner.Disable()
+	a.mBanner.Hide()
+	systray.AddSeparator()
 
 	a.mStatus = systray.AddMenuItem("Not signed in", "")
 	a.mStatus.Disable()
@@ -100,8 +109,30 @@ func (a *app) updateStatus() {
 		} else {
 			devPart = "device: not enrolled"
 		}
+		a.updateBanner(st.RemoteSupportActive, st.RemoteSupportControlled)
 	}
 	a.mStatus.SetTitle(signPart + " · " + devPart)
+}
+
+// updateBanner raises or clears the remote-support notice at the top of the
+// tray menu and reflects it in the tooltip, so the person at the device always
+// knows when an admin can see/control it.
+func (a *app) updateBanner(active, controlled bool) {
+	if a.mBanner == nil {
+		return
+	}
+	if !active {
+		a.mBanner.Hide()
+		systray.SetTooltip("OpenIDX")
+		return
+	}
+	msg := "🔴 An OpenIDX admin can see this device"
+	if controlled {
+		msg = "🔴 An OpenIDX admin can see and CONTROL this device"
+	}
+	a.mBanner.SetTitle(msg)
+	a.mBanner.Show()
+	systray.SetTooltip(msg)
 }
 
 func (a *app) statusTicker() {

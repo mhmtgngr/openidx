@@ -5,6 +5,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/agent/internal/remotesupport"
 	"github.com/openidx/openidx/agent/internal/transport"
 )
 
@@ -106,4 +107,26 @@ func TestProcessConsent_DeferRetries(t *testing.T) {
 	if len(m.sent) != 1 || m.sent[0] != "s3:grant" {
 		t.Fatalf("retry must grant after defer, got %v", m.sent)
 	}
+}
+
+// TestControlTrackingSinkMirrorsControlState verifies the agent's banner
+// "controlled" flag follows the admin's control_state, and that Apply is
+// gated by nothing here (delegates to inner, which is nil in this test).
+func TestControlTrackingSinkMirrorsControlState(t *testing.T) {
+	a := &Agent{logger: zap.NewNop()}
+	sink := a.trackingInputSink()
+
+	if _, controlled := a.RemoteSupportState(); controlled {
+		t.Fatal("controlled should start false")
+	}
+	sink.SetControlActive(true)
+	if _, controlled := a.RemoteSupportState(); !controlled {
+		t.Error("controlled should be true after SetControlActive(true)")
+	}
+	sink.SetControlActive(false)
+	if _, controlled := a.RemoteSupportState(); controlled {
+		t.Error("controlled should be false after SetControlActive(false)")
+	}
+	// Apply must not panic with a nil inner sink (non-windows: inputSink()=nil).
+	sink.Apply(remotesupport.InputEvent{Event: "tap", X: 500, Y: 500})
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"go.uber.org/zap"
@@ -40,6 +41,11 @@ type Agent struct {
 	// events for an active remote-support session (a Windows SendInput injector
 	// installs one). Nil = view-only (no input applied).
 	RemoteInputSink remotesupport.InputSink
+	// remoteSupportActive/Controlled expose live session state for the tray
+	// banner ("An OpenIDX admin can see and control this device"). Set while a
+	// session streams; controlled follows the admin's control_state toggle.
+	remoteSupportActive     atomic.Bool
+	remoteSupportControlled atomic.Bool
 }
 
 // NewAgent loads the persisted agent config from configDir, creates a transport

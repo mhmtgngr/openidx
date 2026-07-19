@@ -16,4 +16,10 @@ type Status struct {
 	ZitiEnrolled     bool   `json:"ziti_enrolled"`
 	ComplianceStatus string `json:"compliance_status,omitempty"`
 	LastReportAt     string `json:"last_report_at,omitempty"`
+	// RemoteSupportActive is true while an admin remote-support session is live
+	// for this device. The tray raises the "An OpenIDX admin can see and control
+	// this device" banner when set. RemoteSupportControlled adds that the admin
+	// currently holds control (view vs control).
+	RemoteSupportActive     bool `json:"remote_support_active,omitempty"`
+	RemoteSupportControlled bool `json:"remote_support_controlled,omitempty"`
 }
