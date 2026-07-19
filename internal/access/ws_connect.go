@@ -29,6 +29,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -48,6 +49,45 @@ var wsRelayUpgrader = websocket.Upgrader{
 	ReadBufferSize:  4096,
 	WriteBufferSize: 4096,
 	CheckOrigin:     func(r *http.Request) bool { return true },
+}
+
+// promoteWebSocketBearer copies a `bearer.<jwt>` (or `access_token_<jwt>`)
+// WebSocket subprotocol into the Authorization header for upgrade requests that
+// arrive WITHOUT one. Browsers cannot set Authorization on a WebSocket, so the
+// SPA sends the token as a subprotocol; this makes the standard bearer auth
+// middleware validate it exactly like a normal request. Non-WS requests and
+// requests that already carry an Authorization header are untouched.
+func promoteWebSocketBearer(c *gin.Context) {
+	if c.GetHeader("Authorization") != "" {
+		c.Next()
+		return
+	}
+	if !strings.EqualFold(c.GetHeader("Upgrade"), "websocket") {
+		c.Next()
+		return
+	}
+	proto := c.GetHeader("Sec-WebSocket-Protocol")
+	if proto == "" {
+		c.Next()
+		return
+	}
+	for _, p := range strings.Split(proto, ",") {
+		p = strings.TrimSpace(p)
+		var tok string
+		switch {
+		case strings.HasPrefix(p, "bearer."):
+			tok = strings.TrimPrefix(p, "bearer.")
+		case strings.HasPrefix(p, "access_token_"):
+			tok = strings.TrimPrefix(p, "access_token_")
+		}
+		if tok != "" {
+			c.Request.Header.Set("Authorization", "Bearer "+tok)
+			// Remember which subprotocol to echo on a successful upgrade.
+			c.Set("ws_bearer_subprotocol", p)
+			break
+		}
+	}
+	c.Next()
 }
 
 // wsClientMessage is a control/data frame sent by the browser terminal.
@@ -162,7 +202,13 @@ func (s *Service) handlePamWSConnect(c *gin.Context) {
 	defer sshClient.Close()
 
 	// Everything below is committed: upgrade the socket and bridge.
-	wsConn, upErr := wsRelayUpgrader.Upgrade(c.Writer, c.Request, nil)
+	// Echo the token subprotocol the client offered (browsers require the server
+	// to select one of the offered subprotocols to complete the handshake).
+	var respHeader http.Header
+	if sub := c.GetString("ws_bearer_subprotocol"); sub != "" {
+		respHeader = http.Header{"Sec-WebSocket-Protocol": []string{sub}}
+	}
+	wsConn, upErr := wsRelayUpgrader.Upgrade(c.Writer, c.Request, respHeader)
 	if upErr != nil {
 		return // Upgrade writes its own error
 	}

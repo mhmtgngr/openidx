@@ -362,6 +362,12 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 
 	// Admin API for route management (requires auth)
 	api := router.Group("/api/v1/access")
+	// WebSocket auth promotion MUST run before the bearer auth middleware:
+	// browsers cannot set an Authorization header on a WebSocket, so the token
+	// rides as a `bearer.<jwt>` subprotocol. This copies it into the header so the
+	// standard auth middleware validates it exactly like any other request (and
+	// makes WS auth independent of edge/APISIX behavior).
+	api.Use(promoteWebSocketBearer)
 	if len(authMiddleware) > 0 {
 		api.Use(authMiddleware...)
 	}
