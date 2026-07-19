@@ -503,6 +503,43 @@ export const api = {
     disableZiti: (id: string) =>
       api.post<{ reach_mode: string }>(`/api/v1/access/pam/entries/${id}/ziti/disable`),
   },
+  quickLinks: {
+    listMine: () => api.get<{ quick_links: QuickLink[] }>('/api/v1/access/quick-links/my'),
+    list: () => api.get<{ quick_links: QuickLink[] }>('/api/v1/access/quick-links'),
+    create: (body: QuickLinkInput) => api.post<{ id: string }>('/api/v1/access/quick-links', body),
+    update: (id: string, body: QuickLinkInput) => api.put<{ status: string }>(`/api/v1/access/quick-links/${id}`, body),
+    remove: (id: string) => api.delete<void>(`/api/v1/access/quick-links/${id}`),
+  },
+}
+
+export interface QuickLink {
+  id: string
+  title: string
+  description: string
+  category: string
+  icon: string
+  type: 'external' | 'pam'
+  url?: string
+  pam_entry_id?: string
+  pam_renderer?: string
+  min_role: string
+  sort_order: number
+  enabled: boolean
+  open_in_new: boolean
+}
+
+export interface QuickLinkInput {
+  title: string
+  description?: string
+  category?: string
+  icon?: string
+  type: 'external' | 'pam'
+  url?: string
+  pam_entry_id?: string
+  min_role?: string
+  sort_order?: number
+  enabled?: boolean
+  open_in_new?: boolean
 }
 
 export interface PamBrokerStatus {

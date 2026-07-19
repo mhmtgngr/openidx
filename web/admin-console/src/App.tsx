@@ -33,6 +33,8 @@ import {
   Settings,
   Applications,
   AppLauncher,
+  QuickLinks,
+  QuickLinksAdmin,
   AppPublish,
   ZeroTrust,
   IdentityProviders,
@@ -204,6 +206,8 @@ function App() {
         {/* My Pages (user-facing) */}
         <Route path="profile" element={<UserProfile />} />
         <Route path="app-launcher" element={<AppLauncher />} />
+        <Route path="quick-links" element={<QuickLinks />} />
+        <Route path="quick-links-admin" element={<AdminRoute><QuickLinksAdmin /></AdminRoute>} />
         <Route path="my-access" element={<MyAccess />} />
         <Route path="my-privileged-access" element={<MyPrivilegedAccess />} />
         <Route path="my-devices" element={<MyDevices />} />
