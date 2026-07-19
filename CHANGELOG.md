@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Clientless remote access + Quick Links launcher + attended-support consent.**
+  A user can now reach support/collaboration systems and remote connections with
+  no installed client, and admins manage it centrally. (1) **In-browser SSH**
+  ("wasm-ssh" renderer): a PAM SSH entry opens an xterm.js terminal in the
+  browser over a WebSocket->TCP relay (`GET /api/v1/access/pam/entries/:id/ws`)
+  that dials the target over the Ziti overlay — no PuTTY/guacd, the browser tab
+  is the SSH client. Reuses the existing PAM permission/approval gate (enforced
+  before the socket upgrade) and credential vault; the token rides as a
+  `bearer.<jwt>` WS subprotocol. `pam_entries.renderer` (migration v89) selects
+  guacamole (default, unchanged) vs wasm-ssh. (2) **Quick Links** (migration
+  v90): an admin-curated, user-searchable launcher. `type=external` opens a safe
+  URL (Teams/Zoom/status/ticketing); `type=pam` references a connection and
+  launches it clientlessly via its renderer. Org-scoped + forced RLS, role-gated
+  by `min_role`, unsafe URLs rejected. New user page (`/quick-links`) + admin
+  CRUD (`/quick-links-admin`). (3) **Attended-support consent** (migration v91):
+  a remote-support session can require the person at the device to Allow it
+  before the admin can view/control — the admin WebSocket is refused (403
+  "awaiting device consent") until the device grants via
+  `POST /agent/remote-support/sessions/:id/consent`; a denial ends the session.
+  Plus a **live view<->control toggle** in the support viewer (hand control back
+  and forth without restarting). Verified live end-to-end (real SSH handshake;
+  quick-links create/list/reject; consent 403->101). Also fixed a pre-existing
+  bug where `remote_support_sessions` lacked `org_id`/`recording_retention_days`
+  (referenced by session-start but never migrated), and a migration-runner
+  dollar-quote splitter bug that broke fresh `migrate` on v89.
+
 - **Dark platform (Ziti-first / overlay-only posture) — Phases 1-6, fully opt-in.**
   A staged path to make OpenIDX's own surfaces reachable only over the OpenZiti
   overlay, defaults preserving today's public behavior at every step. (1)
