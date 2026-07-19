@@ -589,6 +589,7 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.POST("/pam/entries/:id/favorite", svc.handlePamFavoriteEntry)
 		api.DELETE("/pam/entries/:id/favorite", svc.handlePamUnfavoriteEntry)
 		api.POST("/pam/entries/:id/connect", svc.handlePamConnect)
+		api.GET("/pam/entries/:id/ws", svc.handlePamWSConnect)
 		api.POST("/pam/entries/:id/reveal", svc.handlePamRevealEntry)
 		api.POST("/pam/entries/:id/request", svc.handlePamRequestAccess)
 		api.GET("/pam/entries/:id/grants", svc.requireAdminRole(), svc.handlePamListEntryGrants)
