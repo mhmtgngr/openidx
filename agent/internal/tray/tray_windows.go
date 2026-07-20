@@ -99,22 +99,31 @@ func (a *app) onReady() {
 // harmless (idempotent), and this keeps the user from ever having to launch the
 // agent by hand: the tray auto-starts at login and remote support "just works".
 func (a *app) runRemoteSupportAgent() {
-	defer func() {
-		if r := recover(); r != nil {
-			a.logger.Error("tray remote-support agent panicked", zap.Any("recover", r))
-		}
-	}()
-	ag, err := agent.NewAgent(a.logger, a.configDir)
-	if err != nil {
-		a.logger.Warn("tray: could not start remote-support agent", zap.Error(err))
-		return
-	}
-	ag.RegisterBuiltinChecks()
-	a.mu.Lock()
-	a.rsAgent = ag
-	a.mu.Unlock()
-	if err := ag.Run(context.Background()); err != nil && err != context.Canceled {
-		a.logger.Warn("tray remote-support agent stopped", zap.Error(err))
+	// Never let a transient failure permanently stop remote-support handling —
+	// that would leave the operator with the "start a new session but it won't
+	// stream until I restart the client" symptom. Recover from panics and
+	// restart the agent loop with a short backoff if Run ever returns.
+	for {
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					a.logger.Error("tray remote-support agent panicked", zap.Any("recover", r))
+				}
+			}()
+			ag, err := agent.NewAgent(a.logger, a.configDir)
+			if err != nil {
+				a.logger.Warn("tray: could not start remote-support agent", zap.Error(err))
+				return
+			}
+			ag.RegisterBuiltinChecks()
+			a.mu.Lock()
+			a.rsAgent = ag
+			a.mu.Unlock()
+			if err := ag.Run(context.Background()); err != nil && err != context.Canceled {
+				a.logger.Warn("tray remote-support agent stopped; will restart", zap.Error(err))
+			}
+		}()
+		time.Sleep(3 * time.Second)
 	}
 }
 
