@@ -836,6 +836,16 @@ func bindEnvVars(v *viper.Viper) {
 		"rate_limit_auth_window":       "RATE_LIMIT_AUTH_WINDOW",
 		"rate_limit_per_user":          "RATE_LIMIT_PER_USER",
 		"audit_stream_allowed_origins": "AUDIT_STREAM_ALLOWED_ORIGINS",
+		"recordings_storage_path":      "RECORDINGS_STORAGE_PATH",
+		"recordings_default_retention_days": "RECORDINGS_DEFAULT_RETENTION_DAYS",
+		"recordings_encryption_key":    "RECORDINGS_ENCRYPTION_KEY",
+		"recordings_s3_endpoint":       "RECORDINGS_S3_ENDPOINT",
+		"recordings_s3_bucket":         "RECORDINGS_S3_BUCKET",
+		"recordings_s3_region":         "RECORDINGS_S3_REGION",
+		"recordings_s3_prefix":         "RECORDINGS_S3_PREFIX",
+		"recordings_s3_access_key":     "RECORDINGS_S3_ACCESS_KEY",
+		"recordings_s3_secret_key":     "RECORDINGS_S3_SECRET_KEY",
+		"recordings_s3_use_ssl":        "RECORDINGS_S3_USE_SSL",
 	}
 
 	for key, env := range envMappings {
