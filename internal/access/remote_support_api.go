@@ -27,6 +27,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -496,7 +497,21 @@ func (h *RemoteSupportHandler) HandleAdminWS(c *gin.Context) {
 			return
 		}
 	}
-	conn, err := h.upgrader.Upgrade(c.Writer, c.Request, nil)
+	// Echo the token subprotocol the browser offered. A browser WebSocket that
+	// opens with a subprotocol (we send `bearer.<jwt>` because browsers can't
+	// set an Authorization header on WS) REQUIRES the server to select one of
+	// the offered subprotocols in the handshake response; otherwise the browser
+	// rejects the upgrade and closes the socket immediately (observed as a
+	// ~30ms admin WS that dropped before it could answer the device's offer).
+	var respHeader http.Header
+	if proto := c.GetHeader("Sec-WebSocket-Protocol"); proto != "" {
+		// The client may offer a comma-separated list; select the first token.
+		sub := strings.TrimSpace(strings.Split(proto, ",")[0])
+		if sub != "" {
+			respHeader = http.Header{"Sec-WebSocket-Protocol": []string{sub}}
+		}
+	}
+	conn, err := h.upgrader.Upgrade(c.Writer, c.Request, respHeader)
 	if err != nil {
 		h.logger.Warn("HandleAdminWS: upgrade failed", zap.Error(err))
 		return
