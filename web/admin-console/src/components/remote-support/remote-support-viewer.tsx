@@ -77,6 +77,10 @@ export function RemoteSupportViewer({
       const stream = e.streams[0] ?? new MediaStream([e.track])
       if (videoRef.current) {
         videoRef.current.srcObject = stream
+        // Re-attaching a track (e.g. after the device renegotiated) can leave
+        // the element paused; nudge playback so the new stream renders instead
+        // of showing a frozen/black last frame.
+        videoRef.current.play?.().catch(() => { /* autoplay policy; ignored */ })
         setState('streaming')
       }
       recordedStreamRef.current = stream
