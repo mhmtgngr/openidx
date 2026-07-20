@@ -272,10 +272,28 @@ func (p *Peer) Run(conn SignalConn) error {
 		return fmt.Errorf("send offer: %w", err)
 	}
 
-	// Start streaming frames once the source is ready.
+	// Start streaming frames once the source is ready. pumpDone is closed when
+	// the pump goroutine has fully returned, so we can guarantee it is no longer
+	// inside a (CGO/libvpx) NextFrame() read before anything closes the source.
+	// Closing the encoder while a read is in flight deadlocks libvpx — that was
+	// the "client hangs after the session ends, must Ctrl+C" bug.
 	stopPump := make(chan struct{})
-	go p.pumpFrames(track, stopPump)
-	defer close(stopPump)
+	pumpDone := make(chan struct{})
+	go func() {
+		defer close(pumpDone)
+		p.pumpFrames(track, stopPump)
+	}()
+	defer func() {
+		close(stopPump)
+		// Wait for the pump to stop touching the encoder, but bound the wait so
+		// a wedged CGO read can never hang teardown forever (we'd rather leak a
+		// frame read than freeze the whole client).
+		select {
+		case <-pumpDone:
+		case <-time.After(2 * time.Second):
+			p.logger.Warn("remote-support: frame pump did not stop in time")
+		}
+	}()
 
 	// Signaling read loop.
 	readErr := make(chan error, 1)
