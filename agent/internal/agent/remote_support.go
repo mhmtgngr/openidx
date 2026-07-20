@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/pion/webrtc/v4"
@@ -50,10 +51,49 @@ func (a *Agent) runRemoteSupport(rs *RemoteSupportBlock) {
 	a.handledSessions[rs.SessionID] = true
 
 	go func() {
-		if err := a.streamRemoteSupport(context.Background(), rs); err != nil {
-			a.logger.Warn("remote-support session ended", zap.String("session_id", rs.SessionID), zap.Error(err))
+		// Reconnect loop. The device typically discovers a session (via its 5s
+		// config poll) and dials in BEFORE the admin has opened the viewer. In
+		// that case the peer connects to the broker, emits its offer, and — with
+		// no admin peer to answer — eventually closes. A one-shot stream would
+		// then give up forever, so a viewer that opens a moment later finds no
+		// device peer. Instead, re-establish the peer as long as the session is
+		// still being served in /agent/config, with a short backoff. The loop
+		// ends when the session disappears from config (ended/expired) or the
+		// agent shuts down.
+		const backoff = 3 * time.Second
+		for {
+			err := a.streamRemoteSupport(context.Background(), rs)
+			if err != nil {
+				a.logger.Info("remote-support peer closed; will re-check session",
+					zap.String("session_id", rs.SessionID), zap.Error(err))
+			}
+			// Stop retrying once the server no longer advertises this session.
+			if !a.remoteSupportSessionLive(rs.SessionID) {
+				a.logger.Info("remote-support session no longer live; stopping",
+					zap.String("session_id", rs.SessionID))
+				break
+			}
+			time.Sleep(backoff)
 		}
+		// Allow a future session with the same id to be handled again (ids are
+		// unique per session, so this mainly guards against map growth).
+		delete(a.handledSessions, rs.SessionID)
 	}()
+}
+
+// remoteSupportSessionLive reports whether the server is still advertising the
+// given remote-support session in the agent config. Used by the reconnect loop
+// to decide whether to re-dial after the peer closes.
+func (a *Agent) remoteSupportSessionLive(sessionID string) bool {
+	data, err := a.client.GetConfig()
+	if err != nil {
+		return false
+	}
+	var cfg ServerConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return false
+	}
+	return cfg.RemoteSupport != nil && cfg.RemoteSupport.SessionID == sessionID
 }
 
 // streamRemoteSupport dials the signaling WS (auth via agent headers) and runs

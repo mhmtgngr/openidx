@@ -649,11 +649,15 @@ func (h *RemoteSupportHandler) bindPeer(sessionID string, conn *websocket.Conn, 
 			_ = sess.adminConn.Close()
 		}
 		sess.adminConn = conn
+		// Fresh connection: drop this peer's stale replay so only its new
+		// signaling (a fresh offer/answer + ICE) is replayed to the other side.
+		sess.adminReplay = nil
 	case peerAgent:
 		if sess.agentConn != nil {
 			_ = sess.agentConn.Close()
 		}
 		sess.agentConn = conn
+		sess.agentReplay = nil
 	}
 	return sess
 }
