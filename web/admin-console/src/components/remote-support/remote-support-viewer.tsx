@@ -306,18 +306,49 @@ export function RemoteSupportViewer({
 
   /**
    * Translate a pointer event on the overlay to normalized device-screen
-   * coordinates. The Android side scales these to the actual screen size,
-   * so we pass through fractional x/y in the 0..1 range plus the absolute
-   * dimensions of the overlay so the device can interpret pixel offsets if
-   * it prefers.
+   * coordinates in the 0..1000 range the device expects.
+   *
+   * The <video> is rendered with object-contain, so the actual picture is
+   * letterboxed inside the overlay: it fills one axis and leaves black bars on
+   * the other. Mapping the click against the raw overlay rect therefore lands
+   * in the wrong spot (offset by the bar size and scaled wrong). We reconstruct
+   * the real content rectangle from the video's intrinsic aspect ratio and map
+   * the pointer relative to THAT, clamping to the picture so clicks on the bars
+   * don't send out-of-range coordinates.
    */
   function pointerCoords(e: React.PointerEvent<HTMLDivElement>) {
     const rect = overlayRef.current?.getBoundingClientRect()
     if (!rect) return { x: 0, y: 0 }
-    return {
-      x: ((e.clientX - rect.left) / rect.width) * 1000,
-      y: ((e.clientY - rect.top) / rect.height) * 1000,
+    const vid = videoRef.current
+    const vw = vid?.videoWidth || 0
+    const vh = vid?.videoHeight || 0
+
+    // Content rect defaults to the full overlay (before metadata / for square).
+    let cx = rect.left
+    let cy = rect.top
+    let cw = rect.width
+    let ch = rect.height
+    if (vw > 0 && vh > 0 && rect.width > 0 && rect.height > 0) {
+      const videoAR = vw / vh
+      const boxAR = rect.width / rect.height
+      if (videoAR > boxAR) {
+        // Video is wider than the box: full width, letterbox top/bottom.
+        cw = rect.width
+        ch = rect.width / videoAR
+        cx = rect.left
+        cy = rect.top + (rect.height - ch) / 2
+      } else {
+        // Video is taller: full height, pillarbox left/right.
+        ch = rect.height
+        cw = rect.height * videoAR
+        cy = rect.top
+        cx = rect.left + (rect.width - cw) / 2
+      }
     }
+    const fx = (e.clientX - cx) / cw
+    const fy = (e.clientY - cy) / ch
+    const clamp = (v: number) => Math.max(0, Math.min(1, v))
+    return { x: clamp(fx) * 1000, y: clamp(fy) * 1000 }
   }
 
   const pointerDownAt = useRef<{ x: number; y: number; t: number } | null>(null)
