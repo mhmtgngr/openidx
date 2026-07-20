@@ -178,7 +178,14 @@ func (p *Peer) Run(conn SignalConn) error {
 	pc.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
 		p.logger.Info("remote-support peer state", zap.String("state", s.String()))
 		switch s {
-		case webrtc.PeerConnectionStateFailed, webrtc.PeerConnectionStateClosed, webrtc.PeerConnectionStateDisconnected:
+		case webrtc.PeerConnectionStateFailed, webrtc.PeerConnectionStateClosed:
+			// Only Failed/Closed are terminal. Disconnected is TRANSIENT in
+			// WebRTC — ICE frequently recovers it back to Connected after a
+			// brief network blip. Treating Disconnected as fatal tore down a
+			// working stream and triggered the reconnect loop, whose fresh
+			// offer then confused the already-connected browser and blanked the
+			// video ("works once, then black on the next connection"). Let ICE
+			// try to recover; if it can't, it transitions to Failed and we exit.
 			select {
 			case connd <- fmt.Errorf("peer connection %s", s):
 			default:
