@@ -229,6 +229,22 @@ func (p *Peer) Run(conn SignalConn) error {
 	pc.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
 		p.logger.Info("remote-support peer state", zap.String("state", s.String()))
 		switch s {
+		case webrtc.PeerConnectionStateConnected:
+			// Force a keyframe as soon as the peer connects. A viewer that joins
+			// an already-running encoder has no keyframe to decode, so it shows
+			// black until the next scheduled one — the "I must reopen the viewer
+			// to see the screen" symptom. Relying on the browser's PLI alone is
+			// racy (it may fire before our RTCP reader is up). Pushing several
+			// keyframes over the first ~1.5s guarantees the picture paints
+			// promptly regardless of PLI timing.
+			if kf, ok := p.cfg.Source.(interface{ ForceKeyFrame() }); ok {
+				go func() {
+					for i := 0; i < 4; i++ {
+						kf.ForceKeyFrame()
+						time.Sleep(400 * time.Millisecond)
+					}
+				}()
+			}
 		case webrtc.PeerConnectionStateFailed, webrtc.PeerConnectionStateClosed:
 			// Only Failed/Closed are terminal. Disconnected is TRANSIENT in
 			// WebRTC — ICE frequently recovers it back to Connected after a
