@@ -9,6 +9,7 @@ import (
 	"unicode/utf16"
 	"unsafe"
 
+	"github.com/kbinani/screenshot"
 	"golang.org/x/sys/windows"
 )
 
@@ -20,11 +21,13 @@ type windowsInputSink struct {
 	controlActive atomic.Bool
 	screenW       int32
 	screenH       int32
+	originX       int32 // top-left of the captured display (multi-monitor)
+	originY       int32
 
-	user32       *windows.LazyDLL
-	pSendInput   *windows.LazyProc
-	pSetCursor   *windows.LazyProc
-	pGetSystemM  *windows.LazyProc
+	user32      *windows.LazyDLL
+	pSendInput  *windows.LazyProc
+	pSetCursor  *windows.LazyProc
+	pGetSystemM *windows.LazyProc
 }
 
 // NewWindowsInputSink builds the OS input injector. It is wired into the agent
@@ -37,8 +40,20 @@ func NewWindowsInputSink() InputSink {
 		pSetCursor:  u.NewProc("SetCursorPos"),
 		pGetSystemM: u.NewProc("GetSystemMetrics"),
 	}
-	s.screenW = int32(s.metric(0)) // SM_CXSCREEN
-	s.screenH = int32(s.metric(1)) // SM_CYSCREEN
+	// Match the captured display (kbinani/screenshot GetDisplayBounds(0)) so
+	// normalized click coordinates map to the SAME rectangle the admin sees.
+	// On a single monitor this equals the primary metrics; on multi-monitor it
+	// carries the display's origin offset so clicks don't land on the wrong
+	// screen. Falls back to SM_CXSCREEN/SM_CYSCREEN if bounds are unavailable.
+	if b := screenshot.GetDisplayBounds(0); b.Dx() > 0 && b.Dy() > 0 {
+		s.screenW = int32(b.Dx())
+		s.screenH = int32(b.Dy())
+		s.originX = int32(b.Min.X)
+		s.originY = int32(b.Min.Y)
+	} else {
+		s.screenW = int32(s.metric(0)) // SM_CXSCREEN
+		s.screenH = int32(s.metric(1)) // SM_CYSCREEN
+	}
 	if s.screenW == 0 {
 		s.screenW = 1920
 	}
@@ -87,13 +102,13 @@ func (s *windowsInputSink) Apply(ev InputEvent) {
 // moveTo scales 0..1000 normalized coords to screen pixels and positions the
 // cursor.
 func (s *windowsInputSink) moveTo(x, y float64) {
-	px := int32(x / 1000.0 * float64(s.screenW))
-	py := int32(y / 1000.0 * float64(s.screenH))
-	if px < 0 {
-		px = 0
+	px := s.originX + int32(x/1000.0*float64(s.screenW))
+	py := s.originY + int32(y/1000.0*float64(s.screenH))
+	if px < s.originX {
+		px = s.originX
 	}
-	if py < 0 {
-		py = 0
+	if py < s.originY {
+		py = s.originY
 	}
 	s.pSetCursor.Call(uintptr(px), uintptr(py))
 }
@@ -128,8 +143,8 @@ type mouseInput struct {
 }
 
 type keybdInputRec struct {
-	typ uint32
-	_   uint32
+	typ         uint32
+	_           uint32
 	wVk         uint16
 	wScan       uint16
 	dwFlags     uint32
