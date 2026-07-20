@@ -116,11 +116,30 @@ export function RemoteSupportViewer({
       // which side wins the implicit race.
       const ch = pc.createDataChannel('openidx-input', { ordered: true })
       inputChannelRef.current = ch
-      ch.onopen = () => { /* ready to send */ }
+      // The device gates ALL input on the admin's control_state and starts
+      // OFF. The viewer defaults to control-active for interactive sessions,
+      // so we must announce that state as soon as the channel opens — otherwise
+      // the device silently drops every tap/key until the admin toggles control
+      // off then on. (This was why "I can't control it": video worked, input
+      // was dropped device-side because control_state was never sent.)
+      ch.onopen = () => {
+        if (controlActiveRef.current) {
+          try { ch.send(JSON.stringify({ event: 'control_state', active: true })) } catch { /* not open yet */ }
+        }
+      }
     }
     pc.ondatachannel = (e) => {
       if (e.channel.label === 'openidx-input') {
         inputChannelRef.current = e.channel
+        // Same initial-control announcement for the device-created channel.
+        const dc = e.channel
+        const announce = () => {
+          if (controlActiveRef.current) {
+            try { dc.send(JSON.stringify({ event: 'control_state', active: true })) } catch { /* not open */ }
+          }
+        }
+        if (dc.readyState === 'open') announce()
+        else dc.onopen = announce
       }
     }
 
@@ -331,7 +350,7 @@ export function RemoteSupportViewer({
     } else {
       sendInput({
         event: 'swipe',
-        x: start.x, y: start.y, x_end: x, y_end: y,
+        x: start.x, y: start.y, x2: x, y2: y,
         duration_ms: Math.max(100, duration),
       })
     }
