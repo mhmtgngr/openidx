@@ -617,9 +617,22 @@ function normalizeIce(raw: unknown): RTCIceServer[] {
   for (const entry of raw) {
     if (typeof entry === 'string') {
       out.push({ urls: entry })
-    } else if (entry && typeof entry === 'object' && 'url' in entry) {
-      const e = entry as { url: string; username?: string; credential?: string }
-      out.push({ urls: e.url, username: e.username, credential: e.credential })
+    } else if (entry && typeof entry === 'object') {
+      // Accept both the WebRTC-native shape ({ urls: string | string[] }) and
+      // the legacy singular ({ url: string }) form. The server emits `urls`
+      // (plural, per the RTCIceServer spec) for STUN/TURN, so handling only
+      // `url` here silently dropped every ICE server and left the browser with
+      // no candidates to negotiate — the media path never came up.
+      const e = entry as {
+        urls?: string | string[]
+        url?: string
+        username?: string
+        credential?: string
+      }
+      const urls = e.urls ?? e.url
+      if (urls) {
+        out.push({ urls, username: e.username, credential: e.credential })
+      }
     }
   }
   return out
