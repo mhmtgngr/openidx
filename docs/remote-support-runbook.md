@@ -107,3 +107,40 @@ go run ./agent/cmd/e2e-screenshare -host 127.0.0.1:8007 \
 | Session starts but device **never joins** (no `HandleAgentWS` in logs) | Old agent without the WebRTC peer (pre-`feat(agent): device-side WebRTC screen-share`). Update the agent. |
 | Control does nothing | `view` mode, or control not taken (click **Take control**), or a non-Windows agent (input injector is Windows-only). |
 | `unified_audit_events` FK error | Fixed in `fix(access): agent-lifecycle audit events dropped by users FK`; ensure the access-service is current. |
+
+## Process model & operational invariants
+
+The Windows client is **two cooperating processes**, deliberately split:
+
+| Process | Runs in | Responsibilities |
+|---|---|---|
+| **Service** (`OpenIDXAgent`, `service run`) | Session 0 (no desktop) | Posture reporting, enrollment, self-update. `DisableRemoteSupport=true` — it never captures the screen (session 0 has no interactive desktop, so capture would be black and input would go nowhere). |
+| **Tray** (`openidx-agent tray`) | The interactive user session | Owns remote support: screen capture + input + the "being controlled" banner. Auto-starts at login (HKMU Run key) and immediately post-install (MSI `LaunchTray`). Its remote-support agent loop auto-restarts on any failure. |
+
+`openidx-agent run` (foreground) is a **dev/debug escape hatch** that does
+everything in one process (posture + remote support). Not used in production.
+
+Invariants a change must preserve:
+
+- **One identity per device.** Enrollment sends a hashed `device_fingerprint`
+  (Windows MachineGuid + hostname); `issueAgentCredentials` upserts by it, so a
+  re-install reuses the same `agent_id`/`device_id` and only rotates the auth
+  token. Never mint a new agent per process/install. (migration v92)
+- **Poll cadences.** `/agent/config` returns `report_interval` = 5s while a
+  remote-support session is attached, 30s baseline otherwise. The 30s baseline
+  is what lets a *new* session connect without restarting the client.
+- **Keyframes.** VP8 `KeyFrameInterval = 2*fps`; the device forces keyframes on
+  peer-connect and on RTCP PLI, so a joining viewer paints within ~1s (no
+  close/reopen). The viewer also auto-reconnects if no track arrives in 4s.
+- **Teardown ordering.** The frame pump goroutine is joined (bounded 2s) BEFORE
+  the libvpx encoder is closed — closing the encoder mid-read deadlocks the
+  process ("client hangs on session end, must Ctrl+C").
+- **Signaling / SDP.** The DEVICE creates both the video track and the
+  `openidx-input` data channel BEFORE its offer (an SDP answer cannot add an
+  m-line the offer omitted, or input silently never negotiates). The broker
+  echoes the browser's `Sec-WebSocket-Protocol` (bearer subprotocol) or the
+  admin WS is rejected. The broker replays only the agent's CURRENT offer to a
+  late-joining admin — never a stale answer (old ICE ufrag → ICE never
+  completes).
+- **ICE.** Default is public STUN (same-LAN / VPN). Cross-internet needs a real
+  TURN server (the minter is wired but unprovisioned here).
