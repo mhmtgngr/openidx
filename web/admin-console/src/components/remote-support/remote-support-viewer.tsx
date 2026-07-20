@@ -110,29 +110,19 @@ export function RemoteSupportViewer({
         setErrorMessage(`peer connection ${pc.connectionState}`)
       }
     }
-    if (mode === 'interactive') {
-      // The agent side creates the channel and we receive it via ondatachannel;
-      // we also create our own as a fallback so input flows regardless of
-      // which side wins the implicit race.
-      const ch = pc.createDataChannel('openidx-input', { ordered: true })
-      inputChannelRef.current = ch
-      // The device gates ALL input on the admin's control_state and starts
-      // OFF. The viewer defaults to control-active for interactive sessions,
-      // so we must announce that state as soon as the channel opens — otherwise
-      // the device silently drops every tap/key until the admin toggles control
-      // off then on. (This was why "I can't control it": video worked, input
-      // was dropped device-side because control_state was never sent.)
-      ch.onopen = () => {
-        if (controlActiveRef.current) {
-          try { ch.send(JSON.stringify({ event: 'control_state', active: true })) } catch { /* not open yet */ }
-        }
-      }
-    }
+    // NOTE: we deliberately do NOT createDataChannel here. The browser is the
+    // ANSWERER (the device sends the offer), and an SDP answer cannot introduce
+    // a data-channel m-line the offer omitted — a channel created on this side
+    // would never be negotiated, so input silently failed. The device now
+    // creates the "openidx-input" channel before its offer; we receive it via
+    // ondatachannel below and send input + control_state on it.
     pc.ondatachannel = (e) => {
       if (e.channel.label === 'openidx-input') {
         inputChannelRef.current = e.channel
-        // Same initial-control announcement for the device-created channel.
         const dc = e.channel
+        // The device gates ALL input on control_state and starts OFF, so we
+        // announce our (default-on for interactive) control state the moment
+        // the channel opens; otherwise the device drops every tap/key.
         const announce = () => {
           if (controlActiveRef.current) {
             try { dc.send(JSON.stringify({ event: 'control_state', active: true })) } catch { /* not open */ }

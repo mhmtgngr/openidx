@@ -138,23 +138,44 @@ func (p *Peer) Run(conn SignalConn) error {
 	}
 	p.track = track
 
-	// Inbound control data channel (admin -> device). The admin creates
-	// "openidx-input"; we receive it via OnDataChannel.
+	// Inbound control data channel (admin -> device). The DEVICE creates it
+	// here, BEFORE building the offer, so the data-channel m-line is present in
+	// the offer's SDP. Previously the browser (the answerer) tried to create the
+	// channel, but an SDP answer cannot introduce an m-line the offer omitted,
+	// so the channel was never negotiated and NO input ever reached the device
+	// (video worked, control silently did nothing). With the device as the
+	// creator, the browser receives it via ondatachannel and input flows.
+	inputHandler := func(msg webrtc.DataChannelMessage) {
+		var ev InputEvent
+		if json.Unmarshal(msg.Data, &ev) != nil {
+			p.logger.Warn("remote-support input: bad json", zap.ByteString("data", msg.Data))
+			return
+		}
+		if ev.Event == "control_state" && ev.Active != nil {
+			p.logger.Info("remote-support control_state", zap.Bool("active", *ev.Active))
+			sink.SetControlActive(*ev.Active)
+			return
+		}
+		p.logger.Info("remote-support input event",
+			zap.String("event", ev.Event), zap.Float64("x", ev.X), zap.Float64("y", ev.Y))
+		sink.Apply(ev)
+	}
+	inputCh, err := pc.CreateDataChannel("openidx-input", &webrtc.DataChannelInit{Ordered: boolPtr(true)})
+	if err != nil {
+		return fmt.Errorf("create input channel: %w", err)
+	}
+	inputCh.OnOpen(func() {
+		p.logger.Info("remote-support input channel opened (device-created)")
+	})
+	inputCh.OnMessage(inputHandler)
+	// Also accept a browser-created channel (back-compat with older viewers that
+	// still create their own) so input flows regardless of which side made it.
 	pc.OnDataChannel(func(dc *webrtc.DataChannel) {
 		if dc.Label() != "openidx-input" {
 			return
 		}
-		dc.OnMessage(func(msg webrtc.DataChannelMessage) {
-			var ev InputEvent
-			if json.Unmarshal(msg.Data, &ev) != nil {
-				return
-			}
-			if ev.Event == "control_state" && ev.Active != nil {
-				sink.SetControlActive(*ev.Active)
-				return
-			}
-			sink.Apply(ev)
-		})
+		p.logger.Info("remote-support input channel opened (admin-created)")
+		dc.OnMessage(inputHandler)
 	})
 
 	// Trickle ICE -> admin.
@@ -301,3 +322,6 @@ func (p *Peer) Close() {
 func NewPeer(cfg PeerConfig) *Peer {
 	return &Peer{cfg: cfg, logger: cfg.Logger}
 }
+
+// boolPtr returns a pointer to b, for optional webrtc init fields.
+func boolPtr(b bool) *bool { return &b }
