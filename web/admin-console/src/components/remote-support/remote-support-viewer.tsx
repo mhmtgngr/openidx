@@ -66,6 +66,12 @@ export function RemoteSupportViewer({
   // the device is told to drop its "being controlled" indicator. Starts true
   // for interactive sessions (matches today's behavior), always false in view.
   const [controlActive, setControlActive] = useState<boolean>(mode === 'interactive')
+  // reconnectNonce forces the connect effect to tear down and re-run. A
+  // watchdog bumps it when the viewer connects but no video arrives (the device
+  // peer wasn't ready yet, so our offer was missed) — automating the manual
+  // "close and reopen the viewer" the operator had to do.
+  const [reconnectNonce, setReconnectNonce] = useState(0)
+  const gotVideoRef = useRef(false)
 
   useEffect(() => {
     const ws = openSignalingSocket(wsUrl)
@@ -76,6 +82,7 @@ export function RemoteSupportViewer({
 
     pc.ontrack = (e) => {
       const stream = e.streams[0] ?? new MediaStream([e.track])
+      gotVideoRef.current = true
       liveStreamRef.current = stream
       attachStream(stream)
       setState('streaming')
@@ -184,15 +191,28 @@ export function RemoteSupportViewer({
       }
     }
 
+    // Watchdog: if we don't receive a video track within a few seconds, the
+    // device peer probably wasn't connected when we sent our answer (so our
+    // signaling was missed). Rather than sit on a black screen until the
+    // operator manually closes + reopens, bump reconnectNonce to tear this
+    // connection down and try again. Retries a handful of times, then gives up.
+    gotVideoRef.current = false
+    const watchdog = setTimeout(() => {
+      if (!gotVideoRef.current && reconnectNonce < 6) {
+        setReconnectNonce((n) => n + 1)
+      }
+    }, 4000)
+
     return () => {
       // Best-effort teardown — each may already be closed; ignore throws.
+      clearTimeout(watchdog)
       try { stopRecording() } catch { /* already stopped */ }
       try { ws.close() } catch { /* already closed */ }
       try { pc.close() } catch { /* already closed */ }
       setState('closed')
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wsUrl])
+  }, [wsUrl, reconnectNonce])
 
   // attachStream binds a MediaStream to the <video> and forces playback. The
   // ontrack event can fire before the browser has a keyframe to paint, or while
