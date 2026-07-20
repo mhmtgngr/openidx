@@ -46,6 +46,14 @@ type Agent struct {
 	// session streams; controlled follows the admin's control_state toggle.
 	remoteSupportActive     atomic.Bool
 	remoteSupportControlled atomic.Bool
+
+	// DisableRemoteSupport gates the remote-support screen-share + input path.
+	// The Windows SERVICE runs in session 0, which has no interactive desktop,
+	// so a capture there is black and input goes nowhere. The service sets this
+	// true and the TRAY (running in the user session) runs remote-support
+	// instead. Posture reporting still runs in both; only the screen-share is
+	// gated. Default false = enabled (single-process / foreground `run`).
+	DisableRemoteSupport bool
 }
 
 // NewAgent loads the persisted agent config from configDir, creates a transport
@@ -142,7 +150,9 @@ func (a *Agent) SyncConfig(ctx context.Context) error {
 
 	a.serverCfg = &cfg
 	a.logger.Info("server config synced", zap.Int("checks", len(cfg.Checks)))
-	a.processRemoteSupportConsent(cfg.RemoteSupport)
+	if !a.DisableRemoteSupport {
+		a.processRemoteSupportConsent(cfg.RemoteSupport)
+	}
 	return nil
 }
 

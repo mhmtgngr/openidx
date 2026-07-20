@@ -81,6 +81,11 @@ func (h *handler) Execute(_ []string, r <-chan svc.ChangeRequest, s chan<- svc.S
 			cancel()
 			return
 		}
+		// The service runs in session 0 (no interactive desktop), so screen
+		// capture would be black and injected input would go nowhere. Remote
+		// support runs in the TRAY (user session) instead; the service only does
+		// posture/enrollment/self-update.
+		a.DisableRemoteSupport = true
 		a.RegisterBuiltinChecks()
 		a.LoadPlugins()
 		h.mu.Lock()

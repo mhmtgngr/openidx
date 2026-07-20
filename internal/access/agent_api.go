@@ -915,6 +915,14 @@ type agentRemoteSupportInfo struct {
 // the normal posture reporting interval.
 const remoteSupportPollInterval = "5s"
 
+// baselinePollInterval is the /agent/config cadence used when NO remote-support
+// session is active. It must stay short enough that a device notices a NEWLY
+// created support session on its own — otherwise, after one session ends the
+// interval would revert to a long posture cadence and the operator would have
+// to restart the agent before a second session could ever connect. 30s trades
+// a little extra config traffic for "just works" reconnects.
+const baselinePollInterval = "30s"
+
 // defaultAgentConfig returns the built-in fallback configuration used when no
 // agent ID is provided or the database is unavailable.
 func defaultAgentConfig() agentConfigResponse {
@@ -924,7 +932,7 @@ func defaultAgentConfig() agentConfigResponse {
 			{Name: "disk_encryption", Enabled: true},
 			{Name: "process_running", Enabled: true},
 		},
-		ReportInterval:    "1h",
+		ReportInterval:    baselinePollInterval,
 		EnforcementPolicy: "monitor",
 	}
 }
@@ -1140,7 +1148,7 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 
 		cfg := agentConfigResponse{
 			Checks:            checks,
-			ReportInterval:    "15m",
+			ReportInterval:    baselinePollInterval,
 			EnforcementPolicy: "enforce",
 		}
 
