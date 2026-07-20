@@ -506,6 +506,14 @@ function isOnline(a: AgentSummary): boolean {
   return Date.now() - new Date(a.last_seen_at).getTime() < 120_000
 }
 
+// isRecent keeps a device in the default picker if it has been seen in the last
+// 24h — recent enough to be a real, reachable target rather than a stale
+// duplicate from a long-ago install.
+function isRecent(a: AgentSummary): boolean {
+  if (!a.last_seen_at) return false
+  return Date.now() - new Date(a.last_seen_at).getTime() < 24 * 60 * 60 * 1000
+}
+
 // onlineRank sorts online devices first, then by most-recently-seen.
 function onlineRank(a: AgentSummary): number {
   const seen = a.last_seen_at ? new Date(a.last_seen_at).getTime() : 0
@@ -527,7 +535,14 @@ function StartSessionDialog({ onClose, onStarted }: StartSessionDialogProps) {
     queryFn: () => api.get<AgentSummary[]>('/api/v1/access/agents'),
     refetchInterval: 10000,
   })
-  const sortedAgents = [...agents].sort((a, b) => onlineRank(a) - onlineRank(b))
+  const [showAll, setShowAll] = useState(false)
+  // By default show only usable targets: active devices that have reported
+  // recently. Revoked/stale duplicate registrations are hidden (a "show all"
+  // toggle reveals everything). Online devices sort first.
+  const visibleAgents = agents.filter(
+    (a) => showAll || (a.status !== 'revoked' && isRecent(a)),
+  )
+  const sortedAgents = [...visibleAgents].sort((a, b) => onlineRank(a) - onlineRank(b))
 
   const startMutation = useMutation({
     mutationFn: () =>
@@ -578,13 +593,21 @@ function StartSessionDialog({ onClose, onStarted }: StartSessionDialogProps) {
                 )
               })}
             </select>
-            <div className="mt-1 flex items-center gap-2">
+            <div className="mt-1 flex items-center justify-between gap-2">
               <Input
                 value={agentId}
                 onChange={(e) => setAgentId(e.target.value)}
                 placeholder="or type an agent id: agent-xxxxxxxx"
                 className="text-xs"
               />
+              <label className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+                <input
+                  type="checkbox"
+                  checked={showAll}
+                  onChange={(e) => setShowAll(e.target.checked)}
+                />
+                show all
+              </label>
             </div>
           </div>
           <div>
