@@ -73,6 +73,17 @@
       </Component>
       <?endif?>
 
+      <!-- Optional: the MinGW pthread runtime DLL. The CGO/MinGW screen-share
+           build normally static-links this (see windows-client-build.yml), but
+           when it is shipped as a fallback the build passes -d PthreadDll=<path>
+           so a clean box without a MinGW toolchain can still launch the exe
+           (missing libwinpthread-1.dll -> 0xC0000135 -> service 1920 -> 1603). -->
+      <?ifdef PthreadDll ?>
+      <Component Id="PthreadRuntime">
+        <File Id="PthreadDllFile" Source="$(var.PthreadDll)" KeyPath="yes" />
+      </Component>
+      <?endif?>
+
       <!-- Launch the tray for the interactive user at login. -->
       <Component Id="TrayAutostart">
         <RegistryValue Root="HKMU"

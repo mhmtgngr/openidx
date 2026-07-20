@@ -111,10 +111,17 @@ jobs:
           # input, it just sends no video frames.
           set +e
           echo "Attempting screen-share (VP8 capture) build..."
+          # Static-link the MinGW GCC runtime (libwinpthread / libgcc / libstdc++)
+          # into the exe. The screenshare build uses CGO via MinGW-w64, which by
+          # default DYNAMICALLY links libwinpthread-1.dll — a DLL that only exists
+          # on machines with a MinGW/Git toolchain. On a clean Windows box the exe
+          # then fails to launch with 0xC0000135 (STATUS_DLL_NOT_FOUND), the
+          # service can't start (1920), and the MSI rolls back (1603). Linking the
+          # GCC runtime statically removes that external dependency entirely.
           CGO_ENABLED=1 \
           PKG_CONFIG_PATH="$VCPKG_TRIPLET_DIR/lib/pkgconfig" \
           CGO_CFLAGS="-I$VCPKG_TRIPLET_DIR/include" \
-          CGO_LDFLAGS="-L$VCPKG_TRIPLET_DIR/lib" \
+          CGO_LDFLAGS="-L$VCPKG_TRIPLET_DIR/lib -static-libgcc -static-libstdc++ -Wl,-Bstatic -lwinpthread -Wl,-Bdynamic" \
             go build -trimpath -tags screenshare -ldflags "$LDFLAGS" \
             -o dist/openidx-agent.exe ./cmd/openidx-agent
           if [ $? -eq 0 ]; then
@@ -123,6 +130,12 @@ jobs:
             # Copy the libvpx runtime DLL next to the exe (dynamic triplet).
             cp "$VCPKG_TRIPLET_DIR/bin/"*vpx*.dll dist/ 2>/dev/null || \
               cp "$VCPKG_TRIPLET_DIR/lib/"*vpx*.dll dist/ 2>/dev/null || true
+            # Belt-and-suspenders: if libwinpthread somehow remained dynamically
+            # linked (older MinGW), ship the DLL next to the exe so a clean box
+            # still launches. Static linking above normally makes this a no-op.
+            for d in /mingw64/bin /c/ProgramData/chocolatey/lib/mingw/tools/install/mingw64/bin; do
+              [ -f "$d/libwinpthread-1.dll" ] && cp "$d/libwinpthread-1.dll" dist/ 2>/dev/null && break
+            done || true
           else
             echo "::warning::screenshare build failed; falling back to pure-Go (no video capture)"
             CGO_ENABLED=0 go build -trimpath -ldflags "$LDFLAGS" \
@@ -195,11 +208,20 @@ jobs:
             VPX_ARG="-d VpxDll=$VPX_DLL"
             echo "Bundling libvpx runtime: $VPX_DLL"
           fi
+          # Include the MinGW pthread runtime only if the build shipped it as a
+          # fallback (normally it's static-linked, so this is absent).
+          PTHREAD_ARG=""
+          PTHREAD_DLL="$(ls agent/dist/libwinpthread*.dll 2>/dev/null | head -1 || true)"
+          if [ -n "$PTHREAD_DLL" ]; then
+            PTHREAD_ARG="-d PthreadDll=$PTHREAD_DLL"
+            echo "Bundling MinGW pthread runtime: $PTHREAD_DLL"
+          fi
           wix build agent/packaging/wix/OpenIDX.wxs \
             -ext WixToolset.Util.wixext \
             -d Version=${{ steps.ver.outputs.version }} \
             -d ExePath=agent/dist/openidx-agent.exe \
             $VPX_ARG \
+            $PTHREAD_ARG \
             -arch x64 \
             -o dist/OpenIDX-${{ steps.ver.outputs.version }}.msi
 
