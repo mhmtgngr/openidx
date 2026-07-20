@@ -125,13 +125,12 @@ type signalingSession struct {
 	adminConn *websocket.Conn
 	agentConn *websocket.Conn
 
-	// replay buffers the most recent signaling messages from each peer so a
-	// late-joining peer receives the SDP offer/answer + ICE candidates that
-	// were sent before it connected. Without this, the device (which emits its
-	// OFFER immediately on connect) would have that OFFER dropped whenever the
-	// admin viewer joins later, and the viewer would never negotiate.
+	// agentReplay buffers the agent's SDP offer + ICE candidates so an admin
+	// viewer that connects a moment after the device can still receive the
+	// offer and negotiate. Only the agent side is buffered (see recordReplay):
+	// the admin's answer is bound to a specific offer's ICE ufrag and must never
+	// be replayed to a reconnected device. Reset on every fresh agent bind.
 	agentReplay [][]byte
-	adminReplay [][]byte
 }
 
 // maxReplayMessages caps the per-peer signaling replay buffer. SDP + a modest
@@ -649,14 +648,16 @@ func (h *RemoteSupportHandler) bindPeer(sessionID string, conn *websocket.Conn, 
 			_ = sess.adminConn.Close()
 		}
 		sess.adminConn = conn
-		// Fresh connection: drop this peer's stale replay so only its new
-		// signaling (a fresh offer/answer + ICE) is replayed to the other side.
-		sess.adminReplay = nil
 	case peerAgent:
 		if sess.agentConn != nil {
 			_ = sess.agentConn.Close()
 		}
 		sess.agentConn = conn
+		// A fresh agent connection begins a NEW negotiation with a new ICE
+		// ufrag. Drop the previous offer/ICE buffer so a late-joining admin is
+		// never handed a stale offer from a prior agent incarnation (which would
+		// carry an old ufrag and make ICE fail). The buffer refills from this
+		// connection's fresh offer via recordReplay.
 		sess.agentReplay = nil
 	}
 	return sess
@@ -698,38 +699,37 @@ func (s *signalingSession) otherPeer(role peerRole) *websocket.Conn {
 	return s.adminConn
 }
 
-// recordReplay appends a signaling message to the sending role's replay buffer
-// so a peer that joins later can be caught up. Bounded by maxReplayMessages.
+// recordReplay buffers the AGENT's signaling (its SDP offer + ICE candidates)
+// so an admin viewer that connects slightly later still receives the offer and
+// can negotiate. Only the agent side is buffered: the admin's answer/ICE are
+// tied to a specific offer's ICE ufrag and must never be replayed to a
+// reconnected agent (doing so causes stable->SetRemote(answer)->stable and
+// dropped candidates). The agent buffer is reset on every fresh agent bind.
 func (s *signalingSession) recordReplay(role peerRole, data []byte) {
+	if role != peerAgent {
+		return
+	}
 	buf := make([]byte, len(data))
 	copy(buf, data)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if role == peerAgent {
-		s.agentReplay = append(s.agentReplay, buf)
-		if len(s.agentReplay) > maxReplayMessages {
-			s.agentReplay = s.agentReplay[len(s.agentReplay)-maxReplayMessages:]
-		}
-	} else {
-		s.adminReplay = append(s.adminReplay, buf)
-		if len(s.adminReplay) > maxReplayMessages {
-			s.adminReplay = s.adminReplay[len(s.adminReplay)-maxReplayMessages:]
-		}
+	s.agentReplay = append(s.agentReplay, buf)
+	if len(s.agentReplay) > maxReplayMessages {
+		s.agentReplay = s.agentReplay[len(s.agentReplay)-maxReplayMessages:]
 	}
 }
 
-// replayFor returns a copy of the OTHER peer's buffered signaling messages so
-// the joining peer (identified by role) can catch up on the offer/answer/ICE
-// it missed.
+// replayFor returns a copy of the buffered agent offer/ICE for a joining admin
+// so it can catch up on signaling the agent sent before the admin connected.
+// Only the admin receives a replay; the agent never does (nothing is buffered
+// for it), which keeps every agent (re)connection a clean, fresh negotiation.
 func (s *signalingSession) replayFor(role peerRole) [][]byte {
+	if role != peerAdmin {
+		return nil
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	var src [][]byte
-	if role == peerAdmin {
-		src = s.agentReplay
-	} else {
-		src = s.adminReplay
-	}
+	src := s.agentReplay
 	out := make([][]byte, len(src))
 	copy(out, src)
 	return out

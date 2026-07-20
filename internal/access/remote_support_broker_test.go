@@ -115,6 +115,48 @@ func TestBrokerLiveRelayBothPresent(t *testing.T) {
 	}
 }
 
+// TestBrokerAgentReconnectNoStaleReplay is the regression test for the bug
+// where a reconnecting device received STALE signaling from a previous
+// negotiation carrying an old ICE ufrag, making ICE reject the answer
+// (stable->SetRemote(answer)->stable) and drop every candidate so the peer
+// looped forever. Only the agent's CURRENT offer may be replayed, and only to
+// a joining admin; a reconnecting agent gets a clean slate.
+func TestBrokerAgentReconnectNoStaleReplay(t *testing.T) {
+	_, srv := newBrokerTestServer(t)
+	sid := "sess-reconnect"
+
+	// First negotiation: device sends offer#1, admin answers.
+	dev1 := dialWS(t, srv, "/agent/"+sid)
+	_ = dev1.WriteMessage(websocket.TextMessage, []byte(`{"type":"sdp","payload":"OFFER1"}`))
+	time.Sleep(50 * time.Millisecond)
+	adm := dialWS(t, srv, "/admin/"+sid)
+	_ = readN(t, adm, 1) // consumes OFFER1
+	_ = adm.WriteMessage(websocket.TextMessage, []byte(`{"type":"sdp","payload":"ANSWER1"}`))
+	_ = readN(t, dev1, 1) // dev1 gets ANSWER1
+	_ = dev1.Close()      // device's peer closes (ICE timeout)
+	time.Sleep(100 * time.Millisecond)
+
+	// Device reconnects: it must receive NO replayed signaling (a stale ANSWER1
+	// would carry an old ufrag). The agent side is never replayed to.
+	dev2 := dialWS(t, srv, "/agent/"+sid)
+	_ = dev2.SetReadDeadline(time.Now().Add(400 * time.Millisecond))
+	if _, data, err := dev2.ReadMessage(); err == nil {
+		t.Errorf("reconnected device received unexpected replayed signaling: %q", string(data))
+	}
+
+	// A fresh admin joining now must get the CURRENT OFFER2, never the stale one.
+	_ = dev2.WriteMessage(websocket.TextMessage, []byte(`{"type":"sdp","payload":"OFFER2"}`))
+	time.Sleep(50 * time.Millisecond)
+	adm2 := dialWS(t, srv, "/admin/"+sid)
+	got := readN(t, adm2, 1)
+	if !containsMsg(got, "OFFER2") {
+		t.Errorf("fresh admin did not get the current OFFER2; got %v", got)
+	}
+	if containsMsg(got, "OFFER1") {
+		t.Errorf("fresh admin got the STALE OFFER1; got %v", got)
+	}
+}
+
 func readN(t *testing.T, c *websocket.Conn, n int) []string {
 	t.Helper()
 	var out []string
