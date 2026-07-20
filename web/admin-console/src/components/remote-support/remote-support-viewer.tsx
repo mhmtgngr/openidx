@@ -122,9 +122,16 @@ export function RemoteSupportViewer({
 
     ws.onopen = () => setState('awaiting-offer')
     ws.onclose = () => {
-      if (state !== 'closed') {
-        setState('error')
-        setErrorMessage('signaling channel closed')
+      // Signaling is only needed to negotiate + trickle ICE. Once the peer
+      // connection is established, video + input flow directly peer-to-peer
+      // over WebRTC, so a signaling WS close (e.g. proxy idle timeout) must NOT
+      // tear down a live session. pcRef is always current (unlike the captured
+      // `state`), so gate the error on whether we reached a usable peer.
+      const pcState = pcRef.current?.connectionState
+      const live = pcState === 'connected' || pcState === 'connecting'
+      if (!live) {
+        setState((prev) => (prev === 'closed' || prev === 'streaming' ? prev : 'error'))
+        setErrorMessage((prev) => (prev ? prev : 'signaling channel closed'))
       }
     }
     ws.onerror = () => {

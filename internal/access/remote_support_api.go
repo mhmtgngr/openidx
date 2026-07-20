@@ -138,6 +138,15 @@ type signalingSession struct {
 // on a chatty or stuck peer.
 const maxReplayMessages = 64
 
+// defaultSTUNServers returns the ICE server list handed to both peers when no
+// admin override or minted TURN credential is present. Public STUN lets each
+// peer discover its server-reflexive (public) address so WebRTC can establish
+// a direct path across typical NAT. Overridable per-session via the start
+// request's ice_servers, or globally by wiring a TURN minter.
+func defaultSTUNServers() json.RawMessage {
+	return json.RawMessage(`[{"urls":["stun:stun.l.google.com:19302","stun:stun1.l.google.com:19302"]}]`)
+}
+
 // RegisterRemoteSupportAdminRoutes mounts the admin (and admin-WS) surface.
 // MUST go behind middleware.Auth.
 func (h *RemoteSupportHandler) RegisterRemoteSupportAdminRoutes(r *gin.RouterGroup) {
@@ -252,7 +261,12 @@ func (h *RemoteSupportHandler) HandleStartSession(c *gin.Context) {
 	// Resolve ice_servers in priority order:
 	//   1. Admin-supplied (verbatim, back-compat).
 	//   2. Minted per-session TURN credentials when the minter is wired.
-	//   3. Empty array — LAN / Ziti-overlay-only mode.
+	//   3. Default public STUN servers so peers can gather server-reflexive
+	//      candidates and connect across NAT. (Host candidates alone only work
+	//      when both peers share a subnet with no NAT/firewall in between; STUN
+	//      is cheap and makes the common case — LAN + remote — just work. A
+	//      TURN relay, wired via SetTurnMinter, is still needed for symmetric
+	//      NAT, but STUN covers the vast majority.)
 	ice := req.ICEServers
 	mintedTurn := false
 	if len(ice) == 0 {
@@ -267,7 +281,7 @@ func (h *RemoteSupportHandler) HandleStartSession(c *gin.Context) {
 			}
 		}
 		if len(ice) == 0 {
-			ice = json.RawMessage(`[]`)
+			ice = defaultSTUNServers()
 		}
 	}
 
