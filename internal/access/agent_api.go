@@ -136,6 +136,11 @@ type enrollRequest struct {
 	Platform       string `json:"platform"`
 	FormFactor     string `json:"form_factor"`
 	ManagementMode string `json:"management_mode"` // device_owner | profile_owner | unmanaged
+	// DeviceFingerprint is a stable per-machine identifier (e.g. Windows
+	// MachineGuid, else a hostname-derived fallback). When present, enrollment
+	// reuses the existing agent_id/auth_token for that device instead of minting
+	// a new row on every install — so one physical machine maps to one agent.
+	DeviceFingerprint string `json:"device_fingerprint"`
 }
 
 // enrollResponse is returned by HandleEnroll on success.
@@ -240,25 +245,67 @@ func (h *AgentAPIHandler) issueAgentCredentials(
 	})
 
 	if h.db != nil && h.db.Pool != nil {
+		// Stable-identity path: if this device has enrolled before (same
+		// device_fingerprint), reuse its agent_id/device_id and just rotate the
+		// auth token + refresh metadata, instead of creating a duplicate row.
+		// This makes re-installs / upgrades idempotent — one physical machine
+		// stays one agent. Falls through to a fresh INSERT when the device is
+		// new or sends no fingerprint (legacy clients).
+		if fp := strings.TrimSpace(req.DeviceFingerprint); fp != "" {
+			var existingAgentID, existingDeviceID string
+			err := h.db.Pool.QueryRow(ctx, `
+                SELECT agent_id, device_id FROM enrolled_agents
+                WHERE device_fingerprint = $1
+            `, fp).Scan(&existingAgentID, &existingDeviceID)
+			if err == nil && existingAgentID != "" {
+				_, upErr := h.db.Pool.Exec(ctx, `
+                    UPDATE enrolled_agents
+                       SET auth_token_hash = $2, status = 'active', metadata = $3,
+                           platform = COALESCE(NULLIF($4,''), platform),
+                           form_factor = COALESCE(NULLIF($5,''), form_factor),
+                           enrollment_method = COALESCE(NULLIF($6,''), enrollment_method),
+                           management_mode = COALESCE(NULLIF($7,''), management_mode),
+                           is_device_owner = $8, last_seen_at = NOW()
+                     WHERE agent_id = $1
+                `, existingAgentID, authTokenHash, metadata,
+					platform, formFactor, method, managementMode, isDeviceOwner)
+				if upErr != nil {
+					h.logger.Error("Failed to refresh existing agent enrollment", zap.Error(upErr))
+				} else {
+					h.logger.Info("Re-enrolled existing device (stable identity)",
+						zap.String("agent_id", existingAgentID), zap.String("fingerprint", fp))
+					return issuedAgentCredentials{
+						AgentID:   existingAgentID,
+						DeviceID:  existingDeviceID,
+						AuthToken: authToken,
+					}
+				}
+			}
+		}
+
 		// Use NULLIF so empty string columns don't leak past the platform check;
 		// platform stays NULL for legacy callers that omit it.
 		var userIDArg interface{}
 		if enrolledByUserID != "" {
 			userIDArg = enrolledByUserID
 		}
+		var fpArg interface{}
+		if fp := strings.TrimSpace(req.DeviceFingerprint); fp != "" {
+			fpArg = fp
+		}
 		_, err := h.db.Pool.Exec(ctx, `
             INSERT INTO enrolled_agents (
                 agent_id, device_id, status, auth_token_hash,
                 enrolled_at, compliance_status, metadata,
                 platform, form_factor, enrollment_method, enrolled_by_user_id,
-                management_mode, is_device_owner
+                management_mode, is_device_owner, device_fingerprint
             )
             VALUES ($1,$2,$3,$4, NOW(), 'unknown', $5,
                     NULLIF($6,''), NULLIF($7,''), NULLIF($8,''), $9,
-                    NULLIF($10,''), $11)
+                    NULLIF($10,''), $11, $12)
         `, agentID, deviceID, status, authTokenHash, metadata,
 			platform, formFactor, method, userIDArg,
-			managementMode, isDeviceOwner)
+			managementMode, isDeviceOwner, fpArg)
 		if err != nil {
 			h.logger.Error("Failed to persist agent enrollment", zap.Error(err))
 		}

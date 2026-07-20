@@ -47,11 +47,12 @@ func (c *Client) Enroll(token string) (*EnrollResponse, error) {
 
 	hostname, _ := os.Hostname()
 	body, _ := json.Marshal(map[string]string{
-		"token":    token,
-		"hostname": hostname,
-		"os":       runtime.GOOS,
-		"arch":     runtime.GOARCH,
-		"platform": runtime.GOOS + "/" + runtime.GOARCH,
+		"token":              token,
+		"hostname":           hostname,
+		"os":                 runtime.GOOS,
+		"arch":               runtime.GOARCH,
+		"platform":           runtime.GOOS + "/" + runtime.GOARCH,
+		"device_fingerprint": deviceFingerprint(hostname),
 	})
 
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))

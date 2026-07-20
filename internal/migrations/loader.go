@@ -649,5 +649,12 @@ func allMigrations() []*Migration {
 			UpSQL:       remoteSupportConsentUp,
 			DownSQL:     remoteSupportConsentDown,
 		},
+		{
+			Version:     92,
+			Name:        "device_fingerprint",
+			Description: "Add enrolled_agents.device_fingerprint + a partial unique index so re-enrollment of the same physical device reuses one agent_id/auth_token instead of minting a new row every install. Existing rows keep fingerprint NULL and are unaffected. Additive/idempotent.",
+			UpSQL:       deviceFingerprintUp,
+			DownSQL:     deviceFingerprintDown,
+		},
 	}
 }
