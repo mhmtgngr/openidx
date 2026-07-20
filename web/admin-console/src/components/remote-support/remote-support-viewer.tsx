@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Button } from '../ui/button'
 import { Badge } from '../ui/badge'
-import { Circle, Square, WifiOff } from 'lucide-react'
+import { Circle, Maximize, Square, WifiOff } from 'lucide-react'
 import { api } from '../../lib/api'
 
 /**
@@ -230,6 +230,19 @@ export function RemoteSupportViewer({
       })
     }
     tryPlay(5)
+  }
+
+  // enterFullscreen makes the video overlay fill the screen — the most reliable
+  // way to control at 1:1 pixel accuracy (the letterbox math is exact and the
+  // pointer has the whole display to aim in). Esc exits (browser default). We
+  // focus the overlay so keyboard input keeps flowing in fullscreen.
+  function enterFullscreen() {
+    const el = overlayRef.current
+    if (!el) return
+    const req = el.requestFullscreen?.bind(el)
+    if (req) {
+      req().then(() => el.focus()).catch(() => { /* user gesture / policy */ })
+    }
   }
 
   // Whenever we enter the streaming state (or the element remounts), make sure
@@ -501,6 +514,14 @@ export function RemoteSupportViewer({
               </Button>
             </>
           )}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={enterFullscreen}
+            title="Fullscreen (Esc to exit) — best for pixel-accurate control"
+          >
+            <Maximize className="mr-1 h-3 w-3" /> Fullscreen
+          </Button>
           <Button variant="destructive" size="sm" onClick={onEnd}>
             <Square className="mr-1 h-3 w-3" /> End session
           </Button>
@@ -520,7 +541,7 @@ export function RemoteSupportViewer({
         // drags as scroll/gestures.
         onClick={(e) => e.stopPropagation()}
         style={{ touchAction: 'none' }}
-        className="relative bg-black rounded-md aspect-video overflow-hidden focus:outline-none focus:ring-2 focus:ring-primary cursor-crosshair"
+        className="relative bg-black rounded-md aspect-video overflow-hidden focus:outline-none focus:ring-2 focus:ring-primary cursor-crosshair fullscreen:aspect-auto fullscreen:h-screen fullscreen:w-screen fullscreen:rounded-none"
       >
         <video
           ref={videoRef}

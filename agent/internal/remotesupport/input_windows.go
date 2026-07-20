@@ -23,6 +23,12 @@ type windowsInputSink struct {
 	screenH       int32
 	originX       int32 // top-left of the captured display (multi-monitor)
 	originY       int32
+	// Virtual-desktop extent (bounding box of all monitors), for absolute
+	// SendInput coordinates (0..65535) that are DPI-independent.
+	virtLeft   int32
+	virtTop    int32
+	virtWidth  int32
+	virtHeight int32
 
 	user32      *windows.LazyDLL
 	pSendInput  *windows.LazyProc
@@ -33,6 +39,12 @@ type windowsInputSink struct {
 // NewWindowsInputSink builds the OS input injector. It is wired into the agent
 // on Windows so remote control actually moves the mouse / types.
 func NewWindowsInputSink() InputSink {
+	// Make the process per-monitor DPI aware so GetDisplayBounds / capture and
+	// input coordinates all speak PHYSICAL pixels. Without this, a scaled
+	// display (e.g. 150%) reports logical pixels and injected clicks drift from
+	// where the admin aims. Best-effort: ignore failures on older Windows.
+	setProcessDPIAware()
+
 	u := windows.NewLazySystemDLL("user32.dll")
 	s := &windowsInputSink{
 		user32:      u,
@@ -60,7 +72,29 @@ func NewWindowsInputSink() InputSink {
 	if s.screenH == 0 {
 		s.screenH = 1080
 	}
+	// Virtual-desktop bounding box (all monitors): SM_XVIRTUALSCREEN=76,
+	// SM_YVIRTUALSCREEN=77, SM_CXVIRTUALSCREEN=78, SM_CYVIRTUALSCREEN=79.
+	s.virtLeft = int32(s.metric(76))
+	s.virtTop = int32(s.metric(77))
+	s.virtWidth = int32(s.metric(78))
+	s.virtHeight = int32(s.metric(79))
 	return s
+}
+
+// setProcessDPIAware marks the process per-monitor DPI aware (best effort).
+func setProcessDPIAware() {
+	// Prefer the modern per-monitor-v2 context; fall back to the legacy call.
+	if u := windows.NewLazySystemDLL("user32.dll"); u != nil {
+		if p := u.NewProc("SetProcessDpiAwarenessContext"); p.Find() == nil {
+			// DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = (HANDLE)-4
+			if r, _, _ := p.Call(uintptr(^uintptr(3))); r != 0 {
+				return
+			}
+		}
+		if p := u.NewProc("SetProcessDPIAware"); p.Find() == nil {
+			p.Call()
+		}
+	}
 }
 
 func (s *windowsInputSink) metric(idx int) int {
@@ -99,18 +133,43 @@ func (s *windowsInputSink) Apply(ev InputEvent) {
 	}
 }
 
-// moveTo scales 0..1000 normalized coords to screen pixels and positions the
-// cursor.
+// moveTo positions the cursor from 0..1000 normalized coordinates (relative to
+// the captured display) using SendInput with ABSOLUTE + VIRTUALDESK flags. The
+// absolute range is a fixed 0..65535 mapped across the whole virtual desktop by
+// Windows regardless of per-monitor DPI scaling — so this lands accurately even
+// when the process/display is DPI-scaled (SetCursorPos took logical pixels,
+// which drifted on scaled displays). We convert the captured-display pixel
+// target into virtual-desktop-normalized coordinates.
 func (s *windowsInputSink) moveTo(x, y float64) {
-	px := s.originX + int32(x/1000.0*float64(s.screenW))
-	py := s.originY + int32(y/1000.0*float64(s.screenH))
-	if px < s.originX {
-		px = s.originX
+	// Target pixel on the captured display (its own origin + scaled offset).
+	px := float64(s.originX) + x/1000.0*float64(s.screenW)
+	py := float64(s.originY) + y/1000.0*float64(s.screenH)
+
+	// Virtual desktop extent (all monitors). Fall back to the captured display.
+	vx, vy := float64(s.virtLeft), float64(s.virtTop)
+	vw, vh := float64(s.virtWidth), float64(s.virtHeight)
+	if vw <= 0 || vh <= 0 {
+		vx, vy, vw, vh = float64(s.originX), float64(s.originY), float64(s.screenW), float64(s.screenH)
 	}
-	if py < s.originY {
-		py = s.originY
+
+	// Normalize to 0..65535 across the virtual desktop.
+	nx := (px - vx) / vw * 65535.0
+	ny := (py - vy) / vh * 65535.0
+	clamp := func(v float64) int32 {
+		if v < 0 {
+			return 0
+		}
+		if v > 65535 {
+			return 65535
+		}
+		return int32(v)
 	}
-	s.pSetCursor.Call(uintptr(px), uintptr(py))
+
+	in := inputUnion{typ: inputMouse}
+	in.mi.dx = clamp(nx)
+	in.mi.dy = clamp(ny)
+	in.mi.dwFlags = mouseEventMove | mouseEventAbsolute | mouseEventVirtualDesk
+	s.pSendInput.Call(1, uintptr(unsafe.Pointer(&in)), unsafe.Sizeof(in))
 }
 
 // --- SendInput plumbing -----------------------------------------------------
@@ -119,8 +178,11 @@ const (
 	inputMouse    = 0
 	inputKeyboard = 1
 
-	mouseEventLeftDown = 0x0002
-	mouseEventLeftUp   = 0x0004
+	mouseEventLeftDown    = 0x0002
+	mouseEventLeftUp      = 0x0004
+	mouseEventMove        = 0x0001
+	mouseEventAbsolute    = 0x8000
+	mouseEventVirtualDesk = 0x4000
 
 	keyEventKeyUp   = 0x0002
 	keyEventUnicode = 0x0004
