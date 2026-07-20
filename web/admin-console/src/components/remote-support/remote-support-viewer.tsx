@@ -434,17 +434,26 @@ export function RemoteSupportViewer({
       <div
         ref={overlayRef}
         tabIndex={0}
-        onPointerDown={onPointerDown}
+        onPointerDown={(e) => { e.currentTarget.focus(); onPointerDown(e) }}
         onPointerUp={onPointerUp}
         onKeyDown={onKeyDown}
-        className="relative bg-black rounded-md aspect-video overflow-hidden focus:outline-none focus:ring-2 focus:ring-primary"
+        // The video is the interactive control surface. Stop pointer events from
+        // bubbling to the surrounding Radix Dialog (which otherwise treats a
+        // click as an outside-interaction / focus change and blurs or dismisses
+        // the surface). style touch-none prevents the browser from hijacking
+        // drags as scroll/gestures.
+        onClick={(e) => e.stopPropagation()}
+        style={{ touchAction: 'none' }}
+        className="relative bg-black rounded-md aspect-video overflow-hidden focus:outline-none focus:ring-2 focus:ring-primary cursor-crosshair"
       >
         <video
           ref={videoRef}
           autoPlay
           playsInline
           muted
-          className="absolute inset-0 h-full w-full object-contain"
+          // pointer-events-none so clicks land on the capturing overlay div, not
+          // the <video> element (which would swallow them).
+          className="absolute inset-0 h-full w-full object-contain pointer-events-none"
         />
         {state !== 'streaming' && (
           <div className="absolute inset-0 flex items-center justify-center text-white/80 text-sm">

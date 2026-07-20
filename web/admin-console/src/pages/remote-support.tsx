@@ -283,7 +283,17 @@ export function RemoteSupportPage() {
 
       {viewerSession && (
         <Dialog open onOpenChange={(o) => !o && setViewerSession(null)}>
-          <DialogContent className="max-w-5xl">
+          <DialogContent
+            className="max-w-5xl"
+            // The viewer is an interactive control surface: clicking / dragging
+            // on the remote screen and typing must go to the video overlay, not
+            // dismiss the dialog or get swallowed by Radix's focus trap. Disable
+            // outside-interaction auto-close and focus-steal so pointer + key
+            // events reach the RemoteSupportViewer.
+            onPointerDownOutside={(e) => e.preventDefault()}
+            onInteractOutside={(e) => e.preventDefault()}
+            onOpenAutoFocus={(e) => e.preventDefault()}
+          >
             <DialogHeader>
               <DialogTitle>
                 Live session — {viewerSession.agentId}
