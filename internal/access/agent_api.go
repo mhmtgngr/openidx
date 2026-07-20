@@ -909,6 +909,12 @@ type agentRemoteSupportInfo struct {
 	ConsentPath     string `json:"consent_path,omitempty"`
 }
 
+// remoteSupportPollInterval is the shortened /agent/config poll cadence used
+// while a remote-support session is in flight, so the device notices consent
+// prompts and (dis)connect transitions within seconds instead of waiting out
+// the normal posture reporting interval.
+const remoteSupportPollInterval = "5s"
+
 // defaultAgentConfig returns the built-in fallback configuration used when no
 // agent ID is provided or the database is unavailable.
 func defaultAgentConfig() agentConfigResponse {
@@ -1005,6 +1011,8 @@ func (h *AgentAPIHandler) defaultConfigWithSupport(ctx context.Context, agentID 
 			ConsentStatus:   info.ConsentStatus,
 			ConsentPath:     "/api/v1/access/agent/remote-support/sessions/" + info.SessionID + "/consent",
 		}
+		// Fast-poll while a support session is in flight (see HandleConfig).
+		cfg.ReportInterval = remoteSupportPollInterval
 	}
 	return cfg
 }
@@ -1159,6 +1167,10 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 				ConsentStatus:   info.ConsentStatus,
 				ConsentPath:     "/api/v1/access/agent/remote-support/sessions/" + info.SessionID + "/consent",
 			}
+			// Fast-poll while a support session is in flight so the device
+			// picks up the (dis)connect + consent transitions in seconds
+			// instead of waiting out the normal posture interval.
+			cfg.ReportInterval = remoteSupportPollInterval
 		}
 
 		c.JSON(http.StatusOK, cfg)

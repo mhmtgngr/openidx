@@ -123,7 +123,20 @@ type signalingSession struct {
 	mu        sync.Mutex
 	adminConn *websocket.Conn
 	agentConn *websocket.Conn
+
+	// replay buffers the most recent signaling messages from each peer so a
+	// late-joining peer receives the SDP offer/answer + ICE candidates that
+	// were sent before it connected. Without this, the device (which emits its
+	// OFFER immediately on connect) would have that OFFER dropped whenever the
+	// admin viewer joins later, and the viewer would never negotiate.
+	agentReplay [][]byte
+	adminReplay [][]byte
 }
+
+// maxReplayMessages caps the per-peer signaling replay buffer. SDP + a modest
+// number of ICE candidates fit comfortably; the cap prevents unbounded growth
+// on a chatty or stuck peer.
+const maxReplayMessages = 64
 
 // RegisterRemoteSupportAdminRoutes mounts the admin (and admin-WS) surface.
 // MUST go behind middleware.Auth.
@@ -523,10 +536,46 @@ func (h *RemoteSupportHandler) runPeer(ctx context.Context, sessionID string, co
 	sess := h.bindPeer(sessionID, conn, role)
 	defer h.unbindPeer(sess, role)
 
+	// Replay the other peer's buffered signaling to this (possibly late-joining)
+	// connection so a viewer that connects after the device already sent its
+	// OFFER + ICE still gets them and can negotiate. Best-effort: a write error
+	// here is handled by the read loop below.
+	for _, msg := range sess.replayFor(role) {
+		sess.mu.Lock()
+		err := conn.WriteMessage(websocket.TextMessage, msg)
+		sess.mu.Unlock()
+		if err != nil {
+			return
+		}
+	}
+
 	// If both peers are now connected, flip status → active.
 	if sess.hasBothPeers() {
 		h.markActive(ctx, sessionID)
 	}
+
+	// Keepalive: proxies (APISIX) drop idle WebSockets after ~60s. While a peer
+	// waits for the other side to join it sends no application traffic, so ping
+	// periodically to keep the tunnel open. Stops when the read loop returns.
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		t := time.NewTicker(25 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-t.C:
+				sess.mu.Lock()
+				err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(5*time.Second))
+				sess.mu.Unlock()
+				if err != nil {
+					return
+				}
+			}
+		}
+	}()
 
 	for {
 		mt, data, err := conn.ReadMessage()
@@ -537,8 +586,14 @@ func (h *RemoteSupportHandler) runPeer(ctx context.Context, sessionID string, co
 			continue
 		}
 		h.touchSession(ctx, sessionID)
+		// Buffer for replay to a peer that joins later, then relay to the peer
+		// that's already connected (if any).
+		sess.recordReplay(role, data)
 		if target := sess.otherPeer(role); target != nil {
-			if writeErr := target.WriteMessage(mt, data); writeErr != nil {
+			sess.mu.Lock()
+			writeErr := target.WriteMessage(mt, data)
+			sess.mu.Unlock()
+			if writeErr != nil {
 				h.logger.Warn("relay write failed", zap.String("session", sessionID), zap.Error(writeErr))
 				return
 			}
@@ -608,6 +663,43 @@ func (s *signalingSession) otherPeer(role peerRole) *websocket.Conn {
 		return s.agentConn
 	}
 	return s.adminConn
+}
+
+// recordReplay appends a signaling message to the sending role's replay buffer
+// so a peer that joins later can be caught up. Bounded by maxReplayMessages.
+func (s *signalingSession) recordReplay(role peerRole, data []byte) {
+	buf := make([]byte, len(data))
+	copy(buf, data)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if role == peerAgent {
+		s.agentReplay = append(s.agentReplay, buf)
+		if len(s.agentReplay) > maxReplayMessages {
+			s.agentReplay = s.agentReplay[len(s.agentReplay)-maxReplayMessages:]
+		}
+	} else {
+		s.adminReplay = append(s.adminReplay, buf)
+		if len(s.adminReplay) > maxReplayMessages {
+			s.adminReplay = s.adminReplay[len(s.adminReplay)-maxReplayMessages:]
+		}
+	}
+}
+
+// replayFor returns a copy of the OTHER peer's buffered signaling messages so
+// the joining peer (identified by role) can catch up on the offer/answer/ICE
+// it missed.
+func (s *signalingSession) replayFor(role peerRole) [][]byte {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var src [][]byte
+	if role == peerAdmin {
+		src = s.agentReplay
+	} else {
+		src = s.adminReplay
+	}
+	out := make([][]byte, len(src))
+	copy(out, src)
+	return out
 }
 
 // markActive flips a pending session to active when both peers connect.
