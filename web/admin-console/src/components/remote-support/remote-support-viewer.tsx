@@ -135,8 +135,14 @@ export function RemoteSupportViewer({
       }
     }
     ws.onerror = () => {
-      setState('error')
-      setErrorMessage('signaling error')
+      // Same rationale as onclose: a signaling-transport error must not tear
+      // down a session whose media path is already (or nearly) up.
+      const pcState = pcRef.current?.connectionState
+      const live = pcState === 'connected' || pcState === 'connecting'
+      if (!live) {
+        setState((prev) => (prev === 'closed' || prev === 'streaming' ? prev : 'error'))
+        setErrorMessage((prev) => (prev ? prev : 'signaling error'))
+      }
     }
     ws.onmessage = async (ev) => {
       const envelope = parseEnvelope(ev.data)
