@@ -1194,6 +1194,8 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 type agentRecord struct {
 	AgentID          string     `json:"agent_id"`
 	DeviceID         string     `json:"device_id"`
+	Hostname         string     `json:"hostname"`
+	Platform         string     `json:"platform"`
 	Status           string     `json:"status"`
 	ComplianceStatus string     `json:"compliance_status"`
 	ComplianceScore  float64    `json:"compliance_score"`
@@ -1211,9 +1213,11 @@ func (h *AgentAPIHandler) HandleListAgents(c *gin.Context) {
 
 	ctx := c.Request.Context()
 	rows, err := h.db.Pool.Query(ctx, `
-		SELECT agent_id, device_id, status, compliance_status, compliance_score, last_seen_at, enrolled_at
+		SELECT agent_id, device_id,
+		       COALESCE(metadata->>'hostname',''), COALESCE(platform, metadata->>'platform',''),
+		       status, compliance_status, compliance_score, last_seen_at, enrolled_at
 		FROM enrolled_agents
-		ORDER BY enrolled_at DESC
+		ORDER BY last_seen_at DESC NULLS LAST, enrolled_at DESC
 	`)
 	if err != nil {
 		h.logger.Error("HandleListAgents: failed to query enrolled_agents", zap.Error(err))
@@ -1228,6 +1232,8 @@ func (h *AgentAPIHandler) HandleListAgents(c *gin.Context) {
 		if scanErr := rows.Scan(
 			&rec.AgentID,
 			&rec.DeviceID,
+			&rec.Hostname,
+			&rec.Platform,
 			&rec.Status,
 			&rec.ComplianceStatus,
 			&rec.ComplianceScore,

@@ -490,6 +490,28 @@ interface StartSessionDialogProps {
   onStarted: (resp: StartSessionResponse) => void
 }
 
+// AgentSummary is the subset of the /agents list the picker needs.
+interface AgentSummary {
+  agent_id: string
+  hostname?: string
+  platform?: string
+  status?: string
+  last_seen_at?: string | null
+}
+
+// isOnline treats a device as online if it reported within the last ~2 minutes
+// (the agent baseline poll is 30s, so this tolerates a couple of missed beats).
+function isOnline(a: AgentSummary): boolean {
+  if (!a.last_seen_at) return false
+  return Date.now() - new Date(a.last_seen_at).getTime() < 120_000
+}
+
+// onlineRank sorts online devices first, then by most-recently-seen.
+function onlineRank(a: AgentSummary): number {
+  const seen = a.last_seen_at ? new Date(a.last_seen_at).getTime() : 0
+  return (isOnline(a) ? 0 : 1e15) - seen
+}
+
 function StartSessionDialog({ onClose, onStarted }: StartSessionDialogProps) {
   const { toast } = useToast()
   const [agentId, setAgentId] = useState('')
@@ -497,6 +519,15 @@ function StartSessionDialog({ onClose, onStarted }: StartSessionDialogProps) {
   const [notes, setNotes] = useState('')
   const [record, setRecord] = useState(false)
   const [consentRequired, setConsentRequired] = useState(false)
+
+  // Load enrolled agents so the admin can pick a device by hostname instead of
+  // pasting an opaque agent id. Online devices (seen recently) float to the top.
+  const { data: agents = [] } = useQuery<AgentSummary[]>({
+    queryKey: ['agents-for-support'],
+    queryFn: () => api.get<AgentSummary[]>('/api/v1/access/agents'),
+    refetchInterval: 10000,
+  })
+  const sortedAgents = [...agents].sort((a, b) => onlineRank(a) - onlineRank(b))
 
   const startMutation = useMutation({
     mutationFn: () =>
@@ -528,12 +559,33 @@ function StartSessionDialog({ onClose, onStarted }: StartSessionDialogProps) {
         </DialogHeader>
         <div className="space-y-4">
           <div>
-            <label className="text-sm font-medium">Target agent ID</label>
-            <Input
+            <label className="text-sm font-medium">Target device</label>
+            <select
               value={agentId}
               onChange={(e) => setAgentId(e.target.value)}
-              placeholder="agent-xxxxxxxx"
-            />
+              className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+            >
+              <option value="">Select a device…</option>
+              {sortedAgents.map((a) => {
+                const online = isOnline(a)
+                const label = a.hostname
+                  ? `${online ? '🟢' : '⚪'} ${a.hostname}${a.platform ? ` (${a.platform})` : ''} — ${a.agent_id}`
+                  : `${online ? '🟢' : '⚪'} ${a.agent_id}`
+                return (
+                  <option key={a.agent_id} value={a.agent_id}>
+                    {label}
+                  </option>
+                )
+              })}
+            </select>
+            <div className="mt-1 flex items-center gap-2">
+              <Input
+                value={agentId}
+                onChange={(e) => setAgentId(e.target.value)}
+                placeholder="or type an agent id: agent-xxxxxxxx"
+                className="text-xs"
+              />
+            </div>
           </div>
           <div>
             <label className="text-sm font-medium">Mode</label>
