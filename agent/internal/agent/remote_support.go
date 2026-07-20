@@ -82,9 +82,23 @@ func (a *Agent) runRemoteSupport(rs *RemoteSupportBlock) {
 }
 
 // remoteSupportSessionLive reports whether the server is still advertising the
-// given remote-support session in the agent config. Used by the reconnect loop
-// to decide whether to re-dial after the peer closes.
+// given remote-support session. It reads the agent's cached serverCfg — kept
+// fresh by the main SyncConfig loop (which polls every 5s while a session is
+// attached) — instead of issuing its own /agent/config fetch on every reconnect
+// cycle. That avoids doubling the config request rate during the pending-session
+// reconnect churn. Falls back to a direct fetch only if the cache is empty
+// (e.g. the very first cycle before the main loop has synced).
 func (a *Agent) remoteSupportSessionLive(sessionID string) bool {
+	if a.serverCfg != nil {
+		if rs := a.serverCfg.RemoteSupport; rs != nil {
+			return rs.SessionID == sessionID
+		}
+		// Cache is populated but shows no session — trust it (session ended).
+		if len(a.serverCfg.Checks) > 0 {
+			return false
+		}
+	}
+	// Cold cache: do a one-off direct fetch.
 	data, err := a.client.GetConfig()
 	if err != nil {
 		return false
