@@ -42,6 +42,14 @@ func NewScreenSource(fps int) (VideoSource, error) {
 		return nil, fmt.Errorf("vp8 params: %w", err)
 	}
 	params.BitRate = 1_500_000 // ~1.5 Mbps; tune for the link
+	// Emit a keyframe roughly every 2 seconds (kf_max_dist = 2 * fps). The
+	// default is 60 frames (6s at 10fps), which meant a viewer joining
+	// mid-stream saw a black frame for up to 6s until the next keyframe — the
+	// "video only appears after I close and reopen the viewer" symptom. A 2s
+	// cap bounds that wait; on-demand PLI (see peer.go) makes it near-instant.
+	if fps > 0 {
+		params.KeyFrameInterval = 2 * fps
+	}
 	enc, err := params.BuildVideoEncoder(reader, prop.Media{
 		Video: prop.Video{Width: w, Height: h, FrameRate: float32(fps)},
 	})
@@ -51,12 +59,14 @@ func NewScreenSource(fps int) (VideoSource, error) {
 
 	return &realVideoSource{
 		enc:      enc,
+		ctrl:     enc.Controller(),
 		interval: time.Second / time.Duration(fps),
 	}, nil
 }
 
 type realVideoSource struct {
 	enc      codec.ReadCloser
+	ctrl     codec.EncoderController
 	interval time.Duration
 }
 
@@ -73,6 +83,16 @@ func (s *realVideoSource) NextFrame() ([]byte, error) {
 }
 
 func (s *realVideoSource) FrameInterval() time.Duration { return s.interval }
+
+// ForceKeyFrame asks the encoder to emit a keyframe on the next frame. Called
+// when the browser sends an RTCP PLI (it has no keyframe to decode yet), so a
+// (re)joining viewer paints almost immediately instead of waiting for the next
+// scheduled keyframe.
+func (s *realVideoSource) ForceKeyFrame() {
+	if kfc, ok := s.ctrl.(interface{ ForceKeyFrame() error }); ok {
+		_ = kfc.ForceKeyFrame()
+	}
+}
 
 func (s *realVideoSource) Close() {
 	if s.enc != nil {

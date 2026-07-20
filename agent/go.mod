@@ -9,6 +9,7 @@ require (
 	github.com/kbinani/screenshot v0.0.0-20250624051815-089614a94018
 	github.com/openziti/sdk-golang v1.7.0
 	github.com/pion/mediadevices v0.10.0
+	github.com/pion/rtcp v1.2.17
 	github.com/pion/webrtc/v4 v4.2.17
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
@@ -95,7 +96,6 @@ require (
 	github.com/pion/logging v0.2.4 // indirect
 	github.com/pion/mdns/v2 v2.1.0 // indirect
 	github.com/pion/randutil v0.1.0 // indirect
-	github.com/pion/rtcp v1.2.17 // indirect
 	github.com/pion/rtp v1.10.4 // indirect
 	github.com/pion/sctp v1.11.0 // indirect
 	github.com/pion/sdp/v3 v3.0.19 // indirect

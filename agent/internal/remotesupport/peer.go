@@ -8,7 +8,7 @@
 //   - peer.go       — signaling + WebRTC peer + track pump. Pure Go (pion).
 //   - source.go     — the VideoSource interface + a synthetic test source.
 //   - capture_*.go  — real screen capture + VP8 encode, behind the `screenshare`
-//                     build tag (CGO/libvpx). A no-op stub otherwise.
+//     build tag (CGO/libvpx). A no-op stub otherwise.
 //
 // The admin viewer (web/admin-console/.../remote-support-viewer.tsx) is the
 // OFFER-receiver, so the DEVICE creates the offer. Signaling envelopes on the
@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pion/rtcp"
 	"github.com/pion/webrtc/v4"
 	"github.com/pion/webrtc/v4/pkg/media"
 	"go.uber.org/zap"
@@ -65,8 +66,8 @@ type InputEvent struct {
 	Action     string  `json:"action,omitempty"`
 	X          float64 `json:"x,omitempty"`
 	Y          float64 `json:"y,omitempty"`
-	X2         float64 `json:"x2,omitempty"`         // swipe end x
-	Y2         float64 `json:"y2,omitempty"`         // swipe end y
+	X2         float64 `json:"x2,omitempty"` // swipe end x
+	Y2         float64 `json:"y2,omitempty"` // swipe end y
 	DurationMS int     `json:"duration_ms,omitempty"`
 	Text       string  `json:"text,omitempty"`
 	KeyName    string  `json:"key_name,omitempty"`
@@ -84,8 +85,8 @@ type InputSink interface {
 // noopSink drops all input (used when no OS input injector is wired).
 type noopSink struct{}
 
-func (noopSink) Apply(InputEvent)         {}
-func (noopSink) SetControlActive(bool)    {}
+func (noopSink) Apply(InputEvent)      {}
+func (noopSink) SetControlActive(bool) {}
 
 // PeerConfig configures a device peer.
 type PeerConfig struct {
@@ -133,10 +134,39 @@ func (p *Peer) Run(conn SignalConn) error {
 	if err != nil {
 		return fmt.Errorf("new video track: %w", err)
 	}
-	if _, err = pc.AddTrack(track); err != nil {
+	sender, err := pc.AddTrack(track)
+	if err != nil {
 		return fmt.Errorf("add track: %w", err)
 	}
 	p.track = track
+
+	// Read RTCP from the sender and force a keyframe whenever the browser sends
+	// a PLI (Picture Loss Indication) or Full Intra Request. A viewer that joins
+	// mid-stream has no keyframe to decode, so it PLIs; without honoring it the
+	// picture stays black until the next scheduled keyframe (the "only shows
+	// after I reopen the viewer" symptom). Forcing a keyframe on PLI makes the
+	// first frame appear almost immediately.
+	if kf, ok := p.cfg.Source.(interface{ ForceKeyFrame() }); ok {
+		go func() {
+			buf := make([]byte, 1500)
+			for {
+				n, _, rtcpErr := sender.Read(buf)
+				if rtcpErr != nil {
+					return
+				}
+				pkts, perr := rtcp.Unmarshal(buf[:n])
+				if perr != nil {
+					continue
+				}
+				for _, pkt := range pkts {
+					switch pkt.(type) {
+					case *rtcp.PictureLossIndication, *rtcp.FullIntraRequest:
+						kf.ForceKeyFrame()
+					}
+				}
+			}
+		}()
+	}
 
 	// Inbound control data channel (admin -> device). The DEVICE creates it
 	// here, BEFORE building the offer, so the data-channel m-line is present in

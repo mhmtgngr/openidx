@@ -49,6 +49,7 @@ export function RemoteSupportViewer({
   onEnd,
 }: Props) {
   const videoRef = useRef<HTMLVideoElement | null>(null)
+  const liveStreamRef = useRef<MediaStream | null>(null)
   const overlayRef = useRef<HTMLDivElement | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
   const pcRef = useRef<RTCPeerConnection | null>(null)
@@ -75,14 +76,9 @@ export function RemoteSupportViewer({
 
     pc.ontrack = (e) => {
       const stream = e.streams[0] ?? new MediaStream([e.track])
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream
-        // Re-attaching a track (e.g. after the device renegotiated) can leave
-        // the element paused; nudge playback so the new stream renders instead
-        // of showing a frozen/black last frame.
-        videoRef.current.play?.().catch(() => { /* autoplay policy; ignored */ })
-        setState('streaming')
-      }
+      liveStreamRef.current = stream
+      attachStream(stream)
+      setState('streaming')
       recordedStreamRef.current = stream
       if (recordingEnabled && !recorderRef.current) {
         try { startMediaRecorder(stream) }
@@ -197,6 +193,35 @@ export function RemoteSupportViewer({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wsUrl])
+
+  // attachStream binds a MediaStream to the <video> and forces playback. The
+  // ontrack event can fire before the browser has a keyframe to paint, or while
+  // the element is still behind the "connecting" overlay, leaving a black frame
+  // until the viewer is reopened. Re-attaching + play() (and retrying a few
+  // times) makes the first frame render as soon as it arrives, without needing
+  // a manual close/reopen.
+  function attachStream(stream: MediaStream) {
+    const v = videoRef.current
+    if (!v) return
+    if (v.srcObject !== stream) v.srcObject = stream
+    const tryPlay = (n: number) => {
+      v.play?.().catch(() => {
+        if (n > 0) setTimeout(() => tryPlay(n - 1), 200)
+      })
+    }
+    tryPlay(5)
+  }
+
+  // Whenever we enter the streaming state (or the element remounts), make sure
+  // the live stream is actually attached and playing. This catches the race
+  // where ontrack fired before the <video> ref existed or before the overlay
+  // revealed it.
+  useEffect(() => {
+    if (state === 'streaming' && liveStreamRef.current) {
+      attachStream(liveStreamRef.current)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state])
 
   function sendInput(event: Record<string, unknown>) {
     if (!controlActiveRef.current) return
