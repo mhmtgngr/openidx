@@ -51,6 +51,18 @@ func EnrollWithManifest(logger *zap.Logger, serverURL, token, configDir, manifes
 		UpdateManifestURL: manifestURL,
 	}
 
+	// If the server advertises a Ziti overlay service and an identity file is
+	// already present on disk (the device enrolled its identity on a prior run),
+	// wire the Ziti transport now — even without a fresh JWT. Otherwise a device
+	// that already enrolled its identity would keep dialing an empty service.
+	identityPath := filepath.Join(configDir, "ziti-identity.json")
+	if resp.ZitiService != "" {
+		if _, statErr := os.Stat(identityPath); statErr == nil {
+			cfg.ZitiIdentityFile = identityPath
+			cfg.ZitiServiceName = resp.ZitiService
+		}
+	}
+
 	if err := cfg.Save(configDir); err != nil {
 		return nil, fmt.Errorf("save config: %w", err)
 	}
@@ -68,8 +80,14 @@ func EnrollWithManifest(logger *zap.Logger, serverURL, token, configDir, manifes
 			logger.Warn("Failed to save Ziti JWT", zap.Error(err))
 		} else {
 			logger.Info("Ziti enrollment JWT saved", zap.String("path", jwtPath))
-			identityPath := filepath.Join(configDir, "ziti-identity.json")
 			cfg.ZitiIdentityFile = identityPath
+			// Persist the base-API service so the Ziti transport dials the right
+			// service (defaults to openidx-access when the server didn't say).
+			if resp.ZitiService != "" {
+				cfg.ZitiServiceName = resp.ZitiService
+			} else {
+				cfg.ZitiServiceName = "openidx-access"
+			}
 			if err := cfg.Save(configDir); err != nil {
 				logger.Warn("Failed to update config with Ziti identity path", zap.Error(err))
 			}

@@ -19,6 +19,10 @@ type EnrollResponse struct {
 	AuthToken string `json:"auth_token"`
 	Status    string `json:"status"`
 	ZitiJWT   string `json:"ziti_jwt,omitempty"`
+	// ZitiService is the Ziti overlay service fronting the base agent API. When
+	// set (alongside ZitiJWT), the agent routes config/report/consent over the
+	// overlay by dialing this service instead of the public HTTPS endpoint.
+	ZitiService string `json:"ziti_service,omitempty"`
 }
 
 // Client is an HTTP client for communicating with the OpenIDX access API.

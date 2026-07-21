@@ -199,11 +199,12 @@ func normalizeManagementMode(m string) string {
 // HandleEnrollOAuth) needs to assemble a response after the agent record is
 // persisted.
 type issuedAgentCredentials struct {
-	AgentID   string
-	DeviceID  string
-	AuthToken string
-	Status    string
-	ZitiJWT   string
+	AgentID     string
+	DeviceID    string
+	AuthToken   string
+	Status      string
+	ZitiJWT     string
+	ZitiService string
 }
 
 // issueAgentCredentials performs the credential-minting half of enrollment
@@ -357,6 +358,9 @@ func (h *AgentAPIHandler) ensureAgentZitiIdentity(ctx context.Context, agentID s
 		if err := h.db.Pool.QueryRow(ctx,
 			`SELECT COALESCE(ziti_identity_id,'') FROM enrolled_agents WHERE agent_id = $1`,
 			agentID).Scan(&existing); err == nil && existing != "" {
+			// The agent has an identity, so it can route the base API over the
+			// overlay: always advertise the service, even when already enrolled.
+			result.ZitiService = remoteSupportZitiService
 			if jwt, jerr := h.zm.GetIdentityEnrollmentJWT(ctx, existing); jerr == nil && jwt != "" {
 				result.ZitiJWT = jwt
 				h.logger.Info("Re-issued pending Ziti enrollment JWT for agent",
@@ -392,6 +396,7 @@ func (h *AgentAPIHandler) ensureAgentZitiIdentity(ctx context.Context, agentID s
 			zitiID, agentID)
 	}
 	result.ZitiJWT = zitiJWT
+	result.ZitiService = remoteSupportZitiService
 	h.logger.Info("Ziti identity created for agent",
 		zap.String("agent_id", agentID), zap.String("ziti_id", zitiID))
 }
@@ -527,6 +532,13 @@ func writeEnrollResponse(c *gin.Context, creds issuedAgentCredentials, method st
 	}
 	if creds.ZitiJWT != "" {
 		response["ziti_jwt"] = creds.ZitiJWT
+	}
+	// Tell the agent which Ziti service fronts the base agent API so it can route
+	// config/report/consent over the overlay. Advertised whenever the agent has a
+	// Ziti identity (even when re-enrolling without a fresh JWT), so a device that
+	// enrolled its identity earlier still learns the service to dial.
+	if creds.ZitiService != "" {
+		response["ziti_service"] = creds.ZitiService
 	}
 	c.JSON(http.StatusOK, response)
 }
