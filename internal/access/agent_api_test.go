@@ -111,7 +111,7 @@ func TestAgentConfig_ReturnsDefaults(t *testing.T) {
 
 	assert.NotEmpty(t, resp.Checks)
 	assert.Equal(t, 3, len(resp.Checks))
-	assert.Equal(t, "1h", resp.ReportInterval)
+	assert.Equal(t, "30s", resp.ReportInterval) // baselinePollInterval
 }
 
 // TestAgentConfig_DefaultsWhenNoAgentID verifies that a GET to /agent/config
@@ -139,7 +139,7 @@ func TestAgentConfig_DefaultsWhenNoAgentID(t *testing.T) {
 
 	// Must return the three default checks.
 	assert.Equal(t, 3, len(resp.Checks), "expected 3 default checks when no agent_id provided")
-	assert.Equal(t, "1h", resp.ReportInterval)
+	assert.Equal(t, "30s", resp.ReportInterval) // baselinePollInterval
 	assert.Equal(t, "monitor", resp.EnforcementPolicy)
 
 	// Verify specific check names match the built-in defaults.

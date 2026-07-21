@@ -1053,6 +1053,38 @@ func (zm *ZitiManager) DeleteIdentity(ctx context.Context, zitiID string) error 
 	return nil
 }
 
+// FindIdentityIDByName returns the controller-side identity ID whose name
+// exactly matches the given name, or "" if none is found. Uses the controller's
+// server-side name filter so it doesn't depend on identity-list paging.
+func (zm *ZitiManager) FindIdentityIDByName(ctx context.Context, name string) string {
+	path := fmt.Sprintf(`/edge/management/v1/identities?filter=%s`,
+		url.QueryEscape(fmt.Sprintf(`name="%s"`, name)))
+	respData, statusCode, err := zm.mgmtRequest("GET", path, nil)
+	if err != nil || statusCode != http.StatusOK {
+		zm.logger.Warn("FindIdentityIDByName request failed",
+			zap.String("name", name), zap.Int("status", statusCode), zap.Error(err))
+		return ""
+	}
+	var resp struct {
+		Data []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(respData, &resp); err != nil {
+		zm.logger.Warn("FindIdentityIDByName decode failed", zap.String("name", name), zap.Error(err))
+		return ""
+	}
+	for _, id := range resp.Data {
+		if id.Name == name {
+			return id.ID
+		}
+	}
+	zm.logger.Debug("FindIdentityIDByName no match",
+		zap.String("name", name), zap.Int("returned", len(resp.Data)))
+	return ""
+}
+
 // GetIdentityEnrollmentJWT retrieves the enrollment JWT for an identity
 func (zm *ZitiManager) GetIdentityEnrollmentJWT(ctx context.Context, zitiID string) (string, error) {
 	respData, statusCode, err := zm.mgmtRequest("GET",
