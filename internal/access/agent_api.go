@@ -274,11 +274,19 @@ func (h *AgentAPIHandler) issueAgentCredentials(
 				} else {
 					h.logger.Info("Re-enrolled existing device (stable identity)",
 						zap.String("agent_id", existingAgentID), zap.String("fingerprint", fp))
-					return issuedAgentCredentials{
+					reused := issuedAgentCredentials{
 						AgentID:   existingAgentID,
 						DeviceID:  existingDeviceID,
 						AuthToken: authToken,
+						Status:    "active",
 					}
+					// Provision a Ziti identity on re-enroll too, if the device
+					// doesn't have one yet (e.g. it first enrolled before overlay
+					// was enabled). Without this, a returning device would never
+					// get an overlay identity and remote-support-over-Ziti would
+					// stay off for it.
+					h.ensureAgentZitiIdentity(ctx, existingAgentID, &reused)
+					return reused
 				}
 			}
 		}
@@ -318,29 +326,49 @@ func (h *AgentAPIHandler) issueAgentCredentials(
 		Status:    status,
 	}
 
-	if status == "active" && h.zm != nil && agentZitiOverlayEnabled() {
-		zitiID, zitiJWT, err := h.zm.CreateIdentity(ctx, agentID, "Device", []string{"openidx-agent"})
-		if err != nil {
-			h.logger.Warn("Failed to create Ziti identity for agent",
-				zap.String("agent_id", agentID), zap.Error(err))
-		} else {
-			if h.db != nil && h.db.Pool != nil {
-				h.db.Pool.Exec(ctx,
-					"UPDATE enrolled_agents SET ziti_identity_id = $1 WHERE agent_id = $2",
-					zitiID, agentID)
-			}
-			result.ZitiJWT = zitiJWT
-			h.logger.Info("Ziti identity created for agent",
-				zap.String("agent_id", agentID),
-				zap.String("ziti_id", zitiID))
-		}
-	} else if status == "active" && h.zm != nil {
+	h.ensureAgentZitiIdentity(ctx, agentID, &result)
+	return result
+}
+
+// ensureAgentZitiIdentity provisions a Ziti (OpenZiti) identity for the agent
+// tagged "openidx-agent" and stamps it on the enrolled_agents row, returning the
+// enrollment JWT on the result. No-op when overlay is disabled, the Ziti manager
+// is absent, the credential isn't active, or the agent already has an identity.
+// Called on both fresh enroll and fingerprint re-enroll so a returning device
+// (that first enrolled before overlay was on) still gets an identity.
+func (h *AgentAPIHandler) ensureAgentZitiIdentity(ctx context.Context, agentID string, result *issuedAgentCredentials) {
+	if result.Status != "active" || h.zm == nil {
+		return
+	}
+	if !agentZitiOverlayEnabled() {
 		h.logger.Debug("Ziti overlay for agents disabled; enrolling over HTTPS only "+
 			"(set ZITI_AGENT_OVERLAY_ENABLED=true when the controller is reachable from agents)",
 			zap.String("agent_id", agentID))
+		return
 	}
-
-	return result
+	// Skip if the agent already has a Ziti identity.
+	if h.db != nil && h.db.Pool != nil {
+		var existing string
+		if err := h.db.Pool.QueryRow(ctx,
+			`SELECT COALESCE(ziti_identity_id,'') FROM enrolled_agents WHERE agent_id = $1`,
+			agentID).Scan(&existing); err == nil && existing != "" {
+			return
+		}
+	}
+	zitiID, zitiJWT, err := h.zm.CreateIdentity(ctx, agentID, "Device", []string{"openidx-agent"})
+	if err != nil {
+		h.logger.Warn("Failed to create Ziti identity for agent",
+			zap.String("agent_id", agentID), zap.Error(err))
+		return
+	}
+	if h.db != nil && h.db.Pool != nil {
+		h.db.Pool.Exec(ctx,
+			"UPDATE enrolled_agents SET ziti_identity_id = $1 WHERE agent_id = $2",
+			zitiID, agentID)
+	}
+	result.ZitiJWT = zitiJWT
+	h.logger.Info("Ziti identity created for agent",
+		zap.String("agent_id", agentID), zap.String("ziti_id", zitiID))
 }
 
 // agentZitiOverlayEnabled reports whether newly-enrolled agents should be issued
