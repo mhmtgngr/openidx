@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Video, Play, Square, MonitorPlay, Eye, MousePointer2, Clock,
   CheckCircle2, XCircle, AlertCircle, Download, Trash2, Infinity as InfinityIcon,
-  Lock, Unlock,
+  Lock, Unlock, Shield, Globe,
 } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -162,6 +162,7 @@ export function RemoteSupportPage() {
                   <TableHead>Session</TableHead>
                   <TableHead>Agent</TableHead>
                   <TableHead>Mode</TableHead>
+                  <TableHead>Connection</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Started</TableHead>
                   <TableHead className="w-48" />
@@ -173,6 +174,7 @@ export function RemoteSupportPage() {
                     <TableCell className="font-mono text-xs">{s.id.slice(0, 8)}…</TableCell>
                     <TableCell className="font-mono">{s.agent_id}</TableCell>
                     <TableCell><ModeBadge mode={s.mode} /></TableCell>
+                    <TableCell><TransportBadge transport={s.transport} /></TableCell>
                     <TableCell><StatusBadge status={s.status} reason={s.end_reason} /></TableCell>
                     <TableCell className="text-muted-foreground text-sm">
                       {new Date(s.started_at).toLocaleString()}
@@ -313,6 +315,23 @@ export function RemoteSupportPage() {
               <RelayRenderer
                 wsUrl={(baseURL.replace(/^http/, 'ws') + viewerSession.wsPath)}
                 mode={viewerSession.mode}
+                onPopOut={() => {
+                  // Open the session in a dedicated window (second-monitor
+                  // friendly). The dialog stays open so the End button and
+                  // session state remain here; closing the popout just stops
+                  // viewing. Relay-only (reconstructable from a URL).
+                  const q = new URLSearchParams({
+                    session: viewerSession.id,
+                    ws: viewerSession.wsPath,
+                    mode: viewerSession.mode,
+                  })
+                  window.open(
+                    `${window.location.origin}/remote-support/live?${q.toString()}`,
+                    `oidx-rs-${viewerSession.id}`,
+                    'noopener,width=1280,height=800',
+                  )
+                  setViewerSession(null)
+                }}
                 onEnd={() => {
                   endMutation.mutate(viewerSession.id)
                   setViewerSession(null)
@@ -483,6 +502,25 @@ function ModeBadge({ mode }: { mode: 'interactive' | 'view' }) {
   return <Badge variant="secondary"><Eye className="mr-1 h-3 w-3" /> view</Badge>
 }
 
+// TransportBadge shows how the session's media travels. Relay is the zero-trust
+// path (media + control over the Ziti overlay through the broker); WebRTC is
+// direct P2P. Makes "did it go over Ziti?" answerable at a glance.
+function TransportBadge({ transport }: { transport?: 'webrtc' | 'relay' }) {
+  if (transport === 'relay')
+    return (
+      <Badge className="bg-emerald-600 hover:bg-emerald-600" title="Media + control over the Ziti overlay (no P2P/STUN)">
+        <Shield className="mr-1 h-3 w-3" /> Zero-trust relay
+      </Badge>
+    )
+  if (transport === 'webrtc')
+    return (
+      <Badge variant="secondary" title="Direct peer-to-peer (WebRTC/STUN)">
+        <Globe className="mr-1 h-3 w-3" /> Direct P2P
+      </Badge>
+    )
+  return <span className="text-muted-foreground text-xs">—</span>
+}
+
 function StatusBadge({ status, reason }: { status: RemoteSession['status']; reason?: string }) {
   switch (status) {
     case 'active':
@@ -498,6 +536,13 @@ function StatusBadge({ status, reason }: { status: RemoteSession['status']; reas
     default:
       return <Badge variant="secondary">{status}</Badge>
   }
+}
+
+// supportsRelay reports whether this browser can decode the relay transport's
+// VP8 stream (WebCodecs). Chromium-based browsers can; Firefox/Safari currently
+// cannot, so we transparently prefer WebRTC there.
+function supportsRelay(): boolean {
+  return typeof window !== 'undefined' && 'VideoDecoder' in window
 }
 
 interface StartSessionDialogProps {
@@ -542,7 +587,12 @@ function StartSessionDialog({ onClose, onStarted }: StartSessionDialogProps) {
   const [notes, setNotes] = useState('')
   const [record, setRecord] = useState(false)
   const [consentRequired, setConsentRequired] = useState(false)
-  const [transport, setTransport] = useState<'' | 'webrtc' | 'relay'>('')
+  // Default to the zero-trust relay transport on browsers that can decode it
+  // (Chromium). It carries media over the Ziti overlay too and enables pop-out.
+  // Falls back to WebRTC automatically on browsers without WebCodecs.
+  const [transport, setTransport] = useState<'' | 'webrtc' | 'relay'>(
+    supportsRelay() ? 'relay' : 'webrtc',
+  )
 
   // Load enrolled agents so the admin can pick a device by hostname instead of
   // pasting an opaque agent id. Online devices (seen recently) float to the top.
@@ -639,16 +689,25 @@ function StartSessionDialog({ onClose, onStarted }: StartSessionDialogProps) {
             </select>
           </div>
           <div>
-            <label className="text-sm font-medium">Transport</label>
+            <label className="text-sm font-medium">Connection</label>
             <select
               value={transport}
               onChange={(e) => setTransport(e.target.value as '' | 'webrtc' | 'relay')}
               className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
             >
-              <option value="">server default</option>
-              <option value="webrtc">WebRTC — P2P (any browser, uses STUN)</option>
-              <option value="relay">Relay — through broker (full Ziti, Chromium only)</option>
+              <option value="relay" disabled={!supportsRelay()}>
+                Zero-trust relay{supportsRelay() ? ' (recommended)' : ' — needs Chrome/Edge'}
+              </option>
+              <option value="webrtc">Direct P2P (WebRTC) — works in any browser</option>
+              <option value="">Server default</option>
             </select>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {transport === 'relay'
+                ? 'Video and control travel over the Ziti overlay through the broker — no direct connection or STUN. Best for locked-down networks.'
+                : transport === 'webrtc'
+                  ? 'Peer-to-peer media (uses STUN). Works everywhere, but needs a direct network path.'
+                  : 'Let the server pick the configured default transport.'}
+            </p>
           </div>
           <div>
             <label className="text-sm font-medium">Notes</label>

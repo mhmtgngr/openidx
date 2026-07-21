@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Button } from '../ui/button'
-import { Maximize, Square, WifiOff } from 'lucide-react'
+import { Maximize, Square, WifiOff, ExternalLink } from 'lucide-react'
 
 /**
  * RelayRenderer is the admin-side view for a remote-support session whose
@@ -14,6 +14,12 @@ interface Props {
   wsUrl: string
   mode: 'interactive' | 'view'
   onEnd: () => void
+  // onPopOut, when provided, shows a "Pop out" button that opens the session in
+  // a dedicated window (only meaningful in the embedded/dialog context).
+  onPopOut?: () => void
+  // autoFullscreen requests fullscreen automatically once streaming starts.
+  // Used by the standalone pop-out window.
+  autoFullscreen?: boolean
 }
 
 type RelayState = 'connecting' | 'streaming' | 'error' | 'closed'
@@ -21,7 +27,7 @@ type RelayState = 'connecting' | 'streaming' | 'error' | 'closed'
 // A 1-byte header precedes each VP8 frame: bit0 = keyframe.
 const RELAY_FLAG_KEYFRAME = 0x01
 
-export function RelayRenderer({ wsUrl, mode, onEnd }: Props) {
+export function RelayRenderer({ wsUrl, mode, onEnd, onPopOut, autoFullscreen }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const overlayRef = useRef<HTMLDivElement | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
@@ -172,6 +178,17 @@ export function RelayRenderer({ wsUrl, mode, onEnd }: Props) {
     overlayRef.current?.requestFullscreen?.().then(() => overlayRef.current?.focus()).catch(() => {})
   }
 
+  // Auto-fullscreen once the stream is live (pop-out window only). Guarded so it
+  // only fires on the first transition into streaming.
+  const autoFsDone = useRef(false)
+  useEffect(() => {
+    if (autoFullscreen && state === 'streaming' && !autoFsDone.current) {
+      autoFsDone.current = true
+      enterFullscreen()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoFullscreen, state])
+
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
@@ -189,6 +206,11 @@ export function RelayRenderer({ wsUrl, mode, onEnd }: Props) {
             </>
           )}
           <Button variant="outline" size="sm" onClick={enterFullscreen}><Maximize className="mr-1 h-3 w-3" /> Fullscreen</Button>
+          {onPopOut && (
+            <Button variant="outline" size="sm" onClick={onPopOut} title="Open in a separate window (great for a second monitor)">
+              <ExternalLink className="mr-1 h-3 w-3" /> Pop out
+            </Button>
+          )}
           <Button variant="destructive" size="sm" onClick={onEnd}><Square className="mr-1 h-3 w-3" /> End session</Button>
         </div>
       </div>

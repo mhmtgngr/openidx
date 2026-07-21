@@ -40,6 +40,7 @@ export const Devices = lazy(() => import('./devices').then((m) => ({ default: m.
 export const AgentFleet = lazy(() => import('./agent-fleet').then((m) => ({ default: m.AgentFleetPage })))
 export const KioskPolicies = lazy(() => import('./kiosk-policies').then((m) => ({ default: m.KioskPoliciesPage })))
 export const RemoteSupport = lazy(() => import('./remote-support').then((m) => ({ default: m.RemoteSupportPage })))
+export const RemoteSupportPopout = lazy(() => import('./remote-support-popout').then((m) => ({ default: m.RemoteSupportPopout })))
 
 // Governance
 export const ApprovalPolicies = lazy(() => import('./approval-policies').then((m) => ({ default: m.ApprovalPoliciesPage })))
