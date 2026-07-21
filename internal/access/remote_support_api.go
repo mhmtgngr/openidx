@@ -644,8 +644,13 @@ func (h *RemoteSupportHandler) runPeer(ctx context.Context, sessionID string, co
 		}
 		h.touchSession(ctx, sessionID)
 		// Buffer for replay to a peer that joins later, then relay to the peer
-		// that's already connected (if any).
-		sess.recordReplay(role, data)
+		// that's already connected (if any). Only TEXT signaling is buffered:
+		// binary frames are relay-transport VP8 video, which must never be
+		// replayed (a late viewer waits for a fresh keyframe) and would otherwise
+		// balloon the replay buffer with stale frames at video frame rates.
+		if mt == websocket.TextMessage {
+			sess.recordReplay(role, data)
+		}
 		if target := sess.otherPeer(role); target != nil {
 			sess.mu.Lock()
 			writeErr := target.WriteMessage(mt, data)

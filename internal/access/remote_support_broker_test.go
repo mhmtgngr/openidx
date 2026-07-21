@@ -157,6 +157,89 @@ func TestBrokerAgentReconnectNoStaleReplay(t *testing.T) {
 	}
 }
 
+// TestBrokerRelayForwardsBinaryVideo proves the broker forwards binary frames
+// (the relay transport's VP8 video) device->admin verbatim, preserving the
+// binary opcode. This is the core of the relay transport that the admin console
+// now defaults to on Chromium.
+func TestBrokerRelayForwardsBinaryVideo(t *testing.T) {
+	_, srv := newBrokerTestServer(t)
+	sid := "sess-relay-video"
+
+	adm := dialWS(t, srv, "/admin/"+sid)
+	dev := dialWS(t, srv, "/agent/"+sid)
+	time.Sleep(50 * time.Millisecond)
+
+	// Device sends a binary VP8 keyframe: [flags byte][payload].
+	frame := append([]byte{0x01}, []byte("VP8-KEYFRAME-BYTES")...)
+	if err := dev.WriteMessage(websocket.BinaryMessage, frame); err != nil {
+		t.Fatalf("device write binary: %v", err)
+	}
+
+	_ = adm.SetReadDeadline(time.Now().Add(3 * time.Second))
+	mt, data, err := adm.ReadMessage()
+	if err != nil {
+		t.Fatalf("admin read binary: %v", err)
+	}
+	if mt != websocket.BinaryMessage {
+		t.Fatalf("expected binary opcode, got %d", mt)
+	}
+	if string(data) != string(frame) {
+		t.Fatalf("binary frame corrupted in relay: got %q want %q", data, frame)
+	}
+
+	// Input travels the other way as text JSON (admin->device).
+	if err := adm.WriteMessage(websocket.TextMessage, []byte(`{"event":"tap","x":500,"y":500}`)); err != nil {
+		t.Fatalf("admin write input: %v", err)
+	}
+	if !containsMsg(readN(t, dev, 1), "tap") {
+		t.Error("device did not receive relayed input JSON")
+	}
+}
+
+// TestBrokerDoesNotReplayBinaryVideo proves binary video frames are NOT buffered
+// for replay: a late-joining admin must not receive a burst of stale VP8 frames
+// (it waits for a fresh keyframe), and the replay buffer must not grow with
+// video. Only text signaling is replayed.
+func TestBrokerDoesNotReplayBinaryVideo(t *testing.T) {
+	_, srv := newBrokerTestServer(t)
+	sid := "sess-no-binary-replay"
+
+	// Device connects first and streams several binary frames + one text control
+	// message before any admin is present.
+	dev := dialWS(t, srv, "/agent/"+sid)
+	for i := 0; i < 5; i++ {
+		frame := append([]byte{0x00}, []byte("DELTA")...)
+		if err := dev.WriteMessage(websocket.BinaryMessage, frame); err != nil {
+			t.Fatalf("device write binary %d: %v", i, err)
+		}
+	}
+	if err := dev.WriteMessage(websocket.TextMessage, []byte(`{"type":"hello","payload":"READY"}`)); err != nil {
+		t.Fatalf("device write text: %v", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+
+	// Admin joins late. It must receive the replayed TEXT signaling but NONE of
+	// the stale binary frames.
+	adm := dialWS(t, srv, "/admin/"+sid)
+	_ = adm.SetReadDeadline(time.Now().Add(1 * time.Second))
+	sawText := false
+	for {
+		mt, data, err := adm.ReadMessage()
+		if err != nil {
+			break // deadline: no more buffered messages
+		}
+		if mt == websocket.BinaryMessage {
+			t.Fatalf("late admin received a STALE binary video frame (%q); binary must not be replayed", data)
+		}
+		if mt == websocket.TextMessage && strings.Contains(string(data), "READY") {
+			sawText = true
+		}
+	}
+	if !sawText {
+		t.Error("late admin did not receive the replayed text signaling")
+	}
+}
+
 func readN(t *testing.T, c *websocket.Conn, n int) []string {
 	t.Helper()
 	var out []string
