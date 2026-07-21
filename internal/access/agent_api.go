@@ -959,6 +959,9 @@ type agentRemoteSupportInfo struct {
 	// device opens the same WSPath over that overlay connection. Empty = dial
 	// the public WSS via ServerURL (same-LAN / edge fallback).
 	ZitiService string `json:"ziti_service,omitempty"`
+	// Transport selects the media path: "webrtc" (P2P, default) or "relay"
+	// (VP8 frames streamed through the broker over this WS — full-Ziti, no STUN).
+	Transport string `json:"transport,omitempty"`
 }
 
 // zitiServiceForAgent returns the Ziti overlay service the device should dial
@@ -1089,6 +1092,7 @@ func (h *AgentAPIHandler) defaultConfigWithSupport(ctx context.Context, agentID 
 			ConsentStatus:   info.ConsentStatus,
 			ConsentPath:     "/api/v1/access/agent/remote-support/sessions/" + info.SessionID + "/consent",
 			ZitiService:     h.zitiServiceForAgent(ctx, agentID),
+			Transport:       info.Transport,
 		}
 		// Fast-poll while a support session is in flight (see HandleConfig).
 		cfg.ReportInterval = remoteSupportPollInterval
@@ -1246,6 +1250,7 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 				ConsentStatus:   info.ConsentStatus,
 				ConsentPath:     "/api/v1/access/agent/remote-support/sessions/" + info.SessionID + "/consent",
 				ZitiService:     h.zitiServiceForAgent(ctx, agentID),
+				Transport:       info.Transport,
 			}
 			// Fast-poll while a support session is in flight so the device
 			// picks up the (dis)connect + consent transitions in seconds

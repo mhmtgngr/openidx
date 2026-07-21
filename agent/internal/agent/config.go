@@ -55,6 +55,9 @@ type RemoteSupportBlock struct {
 	// device should dial to reach the signaling broker (zero-trust). Empty =
 	// dial the public WSS via ServerURL.
 	ZitiService string `json:"ziti_service,omitempty"`
+	// Transport selects the media path: "webrtc" (default) or "relay" (VP8
+	// frames streamed through the broker over the same WS — full-Ziti, no STUN).
+	Transport string `json:"transport,omitempty"`
 }
 
 // DefaultServerConfig returns a ServerConfig populated with sensible defaults.

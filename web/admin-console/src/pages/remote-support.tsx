@@ -20,6 +20,7 @@ import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { api, baseURL } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 import { RemoteSupportViewer } from '../components/remote-support/remote-support-viewer'
+import { RelayRenderer } from '../components/remote-support/relay-renderer'
 
 /**
  * Remote support admin page (Phase 4). Lists sessions, lets an admin start
@@ -34,6 +35,7 @@ interface RemoteSession {
   admin_user_id: string
   status: 'pending' | 'active' | 'ended' | 'expired' | 'declined'
   mode: 'interactive' | 'view'
+  transport?: 'webrtc' | 'relay'
   ice_servers: unknown
   end_reason?: string
   recording_url?: string
@@ -68,6 +70,7 @@ export function RemoteSupportPage() {
     id: string
     agentId: string
     mode: 'interactive' | 'view'
+    transport: 'webrtc' | 'relay'
     wsPath: string
     iceServers: unknown
     recordingEnabled: boolean
@@ -122,6 +125,7 @@ export function RemoteSupportPage() {
       id: session.id,
       agentId: session.agent_id,
       mode: session.mode,
+      transport: session.transport === 'relay' ? 'relay' : 'webrtc',
       wsPath,
       iceServers: session.ice_servers,
       recordingEnabled: session.recording_enabled,
@@ -305,18 +309,29 @@ export function RemoteSupportPage() {
                 The user sees a non-suppressible banner on the device while you are connected.
               </DialogDescription>
             </DialogHeader>
-            <RemoteSupportViewer
-              wsUrl={(baseURL.replace(/^http/, 'ws') + viewerSession.wsPath)}
-              mode={viewerSession.mode}
-              iceServers={normalizeIce(viewerSession.iceServers)}
-              sessionId={viewerSession.id}
-              recordingEnabled={viewerSession.recordingEnabled}
-              onClose={() => setViewerSession(null)}
-              onEnd={() => {
-                endMutation.mutate(viewerSession.id)
-                setViewerSession(null)
-              }}
-            />
+            {viewerSession.transport === 'relay' ? (
+              <RelayRenderer
+                wsUrl={(baseURL.replace(/^http/, 'ws') + viewerSession.wsPath)}
+                mode={viewerSession.mode}
+                onEnd={() => {
+                  endMutation.mutate(viewerSession.id)
+                  setViewerSession(null)
+                }}
+              />
+            ) : (
+              <RemoteSupportViewer
+                wsUrl={(baseURL.replace(/^http/, 'ws') + viewerSession.wsPath)}
+                mode={viewerSession.mode}
+                iceServers={normalizeIce(viewerSession.iceServers)}
+                sessionId={viewerSession.id}
+                recordingEnabled={viewerSession.recordingEnabled}
+                onClose={() => setViewerSession(null)}
+                onEnd={() => {
+                  endMutation.mutate(viewerSession.id)
+                  setViewerSession(null)
+                }}
+              />
+            )}
           </DialogContent>
         </Dialog>
       )}
@@ -527,6 +542,7 @@ function StartSessionDialog({ onClose, onStarted }: StartSessionDialogProps) {
   const [notes, setNotes] = useState('')
   const [record, setRecord] = useState(false)
   const [consentRequired, setConsentRequired] = useState(false)
+  const [transport, setTransport] = useState<'' | 'webrtc' | 'relay'>('')
 
   // Load enrolled agents so the admin can pick a device by hostname instead of
   // pasting an opaque agent id. Online devices (seen recently) float to the top.
@@ -552,6 +568,7 @@ function StartSessionDialog({ onClose, onStarted }: StartSessionDialogProps) {
         notes,
         record,
         consent_required: consentRequired,
+        ...(transport ? { transport } : {}),
       }),
     onSuccess: (data) => {
       toast({ title: 'Session created' })
@@ -619,6 +636,18 @@ function StartSessionDialog({ onClose, onStarted }: StartSessionDialogProps) {
             >
               <option value="interactive">interactive — view + control</option>
               <option value="view">view-only — no input dispatch</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-sm font-medium">Transport</label>
+            <select
+              value={transport}
+              onChange={(e) => setTransport(e.target.value as '' | 'webrtc' | 'relay')}
+              className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+            >
+              <option value="">server default</option>
+              <option value="webrtc">WebRTC — P2P (any browser, uses STUN)</option>
+              <option value="relay">Relay — through broker (full Ziti, Chromium only)</option>
             </select>
           </div>
           <div>

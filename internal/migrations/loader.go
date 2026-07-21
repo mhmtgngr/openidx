@@ -656,5 +656,12 @@ func allMigrations() []*Migration {
 			UpSQL:       deviceFingerprintUp,
 			DownSQL:     deviceFingerprintDown,
 		},
+		{
+			Version:     93,
+			Name:        "remote_support_transport",
+			Description: "Add remote_support_sessions.transport (webrtc|relay) so a session can use a fully server-relayed VP8-over-WebSocket media path instead of peer-to-peer WebRTC. Defaults to 'webrtc' (no behavior change). Enables full-Ziti, no-STUN remote support.",
+			UpSQL:       remoteSupportTransportUp,
+			DownSQL:     remoteSupportTransportDown,
+		},
 	}
 }

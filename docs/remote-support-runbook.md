@@ -183,3 +183,34 @@ Verify: after enabling, a device that re-enrolls gets a `ziti_identity_id`, and
 its agent log shows `remote-support: signaling over Ziti overlay` when a session
 starts. `openidx-access` appears in `ziti edge list services` with the
 `openidx-access-dial-openidx-agent` Dial policy.
+
+## Media transports: WebRTC (P2P) vs Relay (full Ziti)
+
+A session's `transport` selects how media flows:
+
+| transport | media path | STUN/TURN | browser | Ziti end-to-end |
+|---|---|---|---|---|
+| `webrtc` (default) | peer-to-peer device↔browser | STUN | any | signaling only |
+| `relay` | VP8 frames through the broker | none | Chromium (WebCodecs VP8) | yes |
+
+Relay mode makes ALL traffic transit the broker, so with device-leg Ziti the
+device streams video + receives control entirely over the overlay — no P2P, no
+STUN/TURN, no public media path.
+
+Wire protocol (relay):
+- Device → admin: binary WebSocket messages `[1-byte flags][VP8 frame]`, flags
+  bit0 = keyframe (`agent/internal/remotesupport/relay_peer.go`).
+- Admin → device: text JSON on the same socket — input events (tap/swipe/key/
+  global_action), `{event:"control_state",active}`, `{event:"request_keyframe"}`.
+- Browser decodes with WebCodecs `VideoDecoder('vp8')` → canvas
+  (`web/admin-console/src/components/remote-support/relay-renderer.tsx`); waits
+  for the first keyframe, re-requests on decode error.
+
+Enable:
+- Per session: start-session `{"transport":"relay"}` (or pick it in the Start
+  dialog's Transport dropdown).
+- Deployment default: `REMOTE_SUPPORT_TRANSPORT=relay` (else `webrtc`).
+
+Fallback: `webrtc` remains the default and the cross-browser path (Safari/
+Firefox have no WebCodecs VP8). The device runs the WebRTC peer unless the
+session says relay, so nothing regresses.

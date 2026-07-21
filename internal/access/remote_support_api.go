@@ -26,6 +26,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -183,6 +184,10 @@ type startSessionRequest struct {
 	ICEServers json.RawMessage `json:"ice_servers"` // optional override
 	Notes      string          `json:"notes"`
 	Record     bool            `json:"record"` // opt-in MediaRecorder capture
+	// Transport selects the media path: "webrtc" (default, P2P) or "relay"
+	// (VP8 frames streamed through the broker — full-Ziti, no STUN). Empty uses
+	// the server default (REMOTE_SUPPORT_TRANSPORT).
+	Transport string `json:"transport"`
 	// ConsentRequired: when true, the person at the device must Allow the
 	// session (attended support) before the admin can view/control. Servers /
 	// unattended targets leave this false (today's behavior).
@@ -200,6 +205,7 @@ type remoteSessionRow struct {
 	AdminUserID          string          `json:"admin_user_id,omitempty"`
 	Status               string          `json:"status"`
 	Mode                 string          `json:"mode"`
+	Transport            string          `json:"transport"`
 	ICEServers           json.RawMessage `json:"ice_servers"`
 	EndReason            string          `json:"end_reason,omitempty"`
 	RecordingURL         string          `json:"recording_url,omitempty"`
@@ -236,6 +242,17 @@ func (h *RemoteSupportHandler) HandleStartSession(c *gin.Context) {
 	}
 	if h.db == nil || h.db.Pool == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "database unavailable"})
+		return
+	}
+
+	// Resolve the media transport: explicit request wins, else the server
+	// default (REMOTE_SUPPORT_TRANSPORT), else 'webrtc'.
+	transport := strings.ToLower(strings.TrimSpace(req.Transport))
+	if transport == "" {
+		transport = defaultRemoteSupportTransport()
+	}
+	if transport != "webrtc" && transport != "relay" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "transport must be 'webrtc' or 'relay'"})
 		return
 	}
 
@@ -299,12 +316,12 @@ func (h *RemoteSupportHandler) HandleStartSession(c *gin.Context) {
         INSERT INTO remote_support_sessions
             (id, agent_id, admin_user_id, status, mode, ice_servers, notes,
              recording_enabled, org_id, recording_retention_days,
-             consent_required, consent_status)
+             consent_required, consent_status, transport)
         VALUES ($1, $2, NULLIF($3,'')::uuid, 'pending', $4, $5::jsonb, $6,
-                $7, $8::uuid, $9, $10, $11)
+                $7, $8::uuid, $9, $10, $11, $12)
     `, id, req.AgentID, adminID, mode, string(ice), req.Notes,
 		recordingEnabled, orgArg, retentionArg,
-		req.ConsentRequired, consentStatusFor(req.ConsentRequired))
+		req.ConsentRequired, consentStatusFor(req.ConsentRequired), transport)
 	if err != nil {
 		h.logger.Error("HandleStartSession: insert failed", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to start session"})
@@ -329,9 +346,20 @@ func (h *RemoteSupportHandler) HandleStartSession(c *gin.Context) {
 		"agent_ws":          "/api/v1/access/agent/remote-support/sessions/" + id + "/ws",
 		"ice_servers":       ice,
 		"recording_enabled": recordingEnabled,
+		"transport":         transport,
 		"consent_required":  req.ConsentRequired,
 		"consent_status":    consentStatusFor(req.ConsentRequired),
 	})
+}
+
+// defaultRemoteSupportTransport returns the media transport used when a
+// start-session request doesn't specify one: "relay" when
+// REMOTE_SUPPORT_TRANSPORT=relay, else "webrtc".
+func defaultRemoteSupportTransport() string {
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("REMOTE_SUPPORT_TRANSPORT")), "relay") {
+		return "relay"
+	}
+	return "webrtc"
 }
 
 // consentStatusFor returns the initial consent_status for a session: 'pending'
@@ -411,6 +439,7 @@ func (h *RemoteSupportHandler) HandleListSessions(c *gin.Context) {
 	}
 	rows, err := h.db.Pool.Query(c.Request.Context(), `
         SELECT s.id, s.agent_id, COALESCE(s.admin_user_id::text,''), s.status, s.mode,
+               COALESCE(s.transport,'webrtc'),
                s.ice_servers, COALESCE(s.end_reason,''), COALESCE(s.recording_url,''),
                s.recording_enabled, s.recording_size_bytes, s.recording_chunk_count,
                s.recording_finalized_at,
@@ -822,6 +851,7 @@ type activeSessionInfo struct {
 	Recording       bool
 	ConsentRequired bool
 	ConsentStatus   string
+	Transport       string
 }
 
 // findActiveSessionForAgent — called from HandleConfig to embed an in-flight
@@ -834,12 +864,13 @@ func findActiveSessionForAgent(ctx context.Context, db *database.PostgresDB, age
 	}
 	var iceBytes []byte
 	err := db.Pool.QueryRow(ctx, `
-        SELECT id, mode, ice_servers, recording_enabled, consent_required, consent_status
+        SELECT id, mode, ice_servers, recording_enabled, consent_required, consent_status,
+               COALESCE(transport,'webrtc')
           FROM remote_support_sessions
          WHERE agent_id = $1 AND status IN ('pending','active')
          ORDER BY started_at DESC
          LIMIT 1
-    `, agentID).Scan(&info.SessionID, &info.Mode, &iceBytes, &info.Recording, &info.ConsentRequired, &info.ConsentStatus)
+    `, agentID).Scan(&info.SessionID, &info.Mode, &iceBytes, &info.Recording, &info.ConsentRequired, &info.ConsentStatus, &info.Transport)
 	if err != nil {
 		return activeSessionInfo{}, false
 	}
@@ -854,6 +885,7 @@ func (h *RemoteSupportHandler) fetchSession(ctx context.Context, id string) (rem
 	}
 	row := h.db.Pool.QueryRow(ctx, `
         SELECT s.id, s.agent_id, COALESCE(s.admin_user_id::text,''), s.status, s.mode,
+               COALESCE(s.transport,'webrtc'),
                s.ice_servers, COALESCE(s.end_reason,''), COALESCE(s.recording_url,''),
                s.recording_enabled, s.recording_size_bytes, s.recording_chunk_count,
                s.recording_finalized_at,
@@ -872,6 +904,7 @@ func scanRemoteSessionRow(r rowScanner) (remoteSessionRow, error) {
 	var iceBytes []byte
 	err := r.Scan(
 		&rec.ID, &rec.AgentID, &rec.AdminUserID, &rec.Status, &rec.Mode,
+		&rec.Transport,
 		&iceBytes, &rec.EndReason, &rec.RecordingURL,
 		&rec.RecordingEnabled, &rec.RecordingSizeBytes, &rec.RecordingChunkCount,
 		&rec.RecordingFinalizedAt,

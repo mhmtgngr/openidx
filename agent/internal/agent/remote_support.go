@@ -32,6 +32,31 @@ func (w *wsSignalConn) WriteJSON(v interface{}) error {
 }
 func (w *wsSignalConn) Close() error { return w.conn.Close() }
 
+// The relay peer uses the same socket for binary video + text input.
+func (w *wsSignalConn) WriteBinary(b []byte) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.conn.WriteMessage(websocket.BinaryMessage, b)
+}
+func (w *wsSignalConn) WriteText(b []byte) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.conn.WriteMessage(websocket.TextMessage, b)
+}
+
+// ReadText returns the next text message payload, skipping non-text frames.
+func (w *wsSignalConn) ReadText() ([]byte, error) {
+	for {
+		mt, data, err := w.conn.ReadMessage()
+		if err != nil {
+			return nil, err
+		}
+		if mt == websocket.TextMessage {
+			return data, nil
+		}
+	}
+}
+
 // runRemoteSupport dials the agent signaling WebSocket for the given session and
 // streams the screen to the admin. It is a no-op in builds without a capture
 // stack (NewScreenSource returns a stub that sends no frames), but the peer
@@ -135,6 +160,27 @@ func (a *Agent) streamRemoteSupport(ctx context.Context, rs *RemoteSupportBlock)
 		return err
 	}
 
+	// Banner state for the tray: active for the session's lifetime.
+	a.remoteSupportActive.Store(true)
+	defer func() {
+		a.remoteSupportActive.Store(false)
+		a.remoteSupportControlled.Store(false)
+	}()
+
+	// Relay transport: stream VP8 frames through the broker (no WebRTC/STUN), so
+	// the device leg can ride Ziti end to end. Falls through to WebRTC otherwise.
+	if rs.Transport == "relay" {
+		relay := remotesupport.NewRelayPeer(remotesupport.RelayConfig{
+			Source: src,
+			Input:  a.trackingInputSink(),
+			Logger: a.logger,
+		})
+		defer relay.Close()
+		a.logger.Info("remote-support: streaming screen (relay)",
+			zap.String("session_id", rs.SessionID), zap.String("mode", rs.Mode))
+		return relay.Run(sig)
+	}
+
 	peer := remotesupport.NewPeer(remotesupport.PeerConfig{
 		ICEServers: parseICEServers(rs.ICEServersRaw),
 		Source:     src,
@@ -142,13 +188,6 @@ func (a *Agent) streamRemoteSupport(ctx context.Context, rs *RemoteSupportBlock)
 		Logger:     a.logger,
 	})
 	defer peer.Close()
-
-	// Banner state for the tray: active for the session's lifetime.
-	a.remoteSupportActive.Store(true)
-	defer func() {
-		a.remoteSupportActive.Store(false)
-		a.remoteSupportControlled.Store(false)
-	}()
 
 	a.logger.Info("remote-support: streaming screen", zap.String("session_id", rs.SessionID), zap.String("mode", rs.Mode))
 	return peer.Run(sig)
