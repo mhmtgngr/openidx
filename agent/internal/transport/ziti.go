@@ -81,3 +81,12 @@ func (c *ZitiClient) SendConsent(sessionID, decision string) error {
 	inner := &Client{baseURL: c.baseURL, authToken: c.authToken, agentID: c.agentID, httpClient: c.httpClient}
 	return inner.SendConsent(sessionID, decision)
 }
+
+// DialServiceConn opens a raw overlay connection to the named Ziti service.
+// Used to carry the remote-support signaling WebSocket over the overlay.
+func (c *ZitiClient) DialServiceConn(serviceName string) (net.Conn, error) {
+	if c.zitiCtx == nil {
+		return nil, fmt.Errorf("ziti context not initialised")
+	}
+	return c.zitiCtx.Dial(serviceName)
+}

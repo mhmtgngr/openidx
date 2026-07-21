@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"net"
 	"testing"
 
 	"go.uber.org/zap"
@@ -19,6 +20,7 @@ type consentMock struct {
 func (m *consentMock) Enroll(string) (*transport.EnrollResponse, error) { return nil, nil }
 func (m *consentMock) ReportResults([]byte) error                       { return nil }
 func (m *consentMock) GetConfig() ([]byte, error)                       { return nil, nil }
+func (m *consentMock) DialServiceConn(string) (net.Conn, error)         { return nil, errConsent }
 func (m *consentMock) SendConsent(sessionID, decision string) error {
 	if m.failNext {
 		m.failNext = false

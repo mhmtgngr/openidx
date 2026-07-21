@@ -51,6 +51,10 @@ type RemoteSupportBlock struct {
 	ConsentStatus   string          `json:"consent_status"`
 	ConsentPath     string          `json:"consent_path"`
 	ICEServersRaw   json.RawMessage `json:"ice_servers,omitempty"`
+	// ZitiService, when set by the server, is the Ziti overlay service the
+	// device should dial to reach the signaling broker (zero-trust). Empty =
+	// dial the public WSS via ServerURL.
+	ZitiService string `json:"ziti_service,omitempty"`
 }
 
 // DefaultServerConfig returns a ServerConfig populated with sensible defaults.

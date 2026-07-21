@@ -954,6 +954,29 @@ type agentRemoteSupportInfo struct {
 	ConsentRequired bool   `json:"consent_required"`
 	ConsentStatus   string `json:"consent_status,omitempty"`
 	ConsentPath     string `json:"consent_path,omitempty"`
+	// ZitiService, when non-empty, is the Ziti overlay service the device should
+	// dial to reach the signaling broker (zero-trust, no public port). The
+	// device opens the same WSPath over that overlay connection. Empty = dial
+	// the public WSS via ServerURL (same-LAN / edge fallback).
+	ZitiService string `json:"ziti_service,omitempty"`
+}
+
+// zitiServiceForAgent returns the Ziti overlay service the device should dial
+// for remote-support signaling, or "" to use the public WSS. Non-empty only
+// when REMOTE_SUPPORT_OVER_ZITI is enabled AND this agent has a provisioned Ziti
+// identity (so it can actually dial the overlay).
+func (h *AgentAPIHandler) zitiServiceForAgent(ctx context.Context, agentID string) string {
+	if !remoteSupportOverZitiEnabled() || h.db == nil || h.db.Pool == nil {
+		return ""
+	}
+	var zitiID string
+	err := h.db.Pool.QueryRow(ctx,
+		`SELECT COALESCE(ziti_identity_id,'') FROM enrolled_agents WHERE agent_id = $1`,
+		agentID).Scan(&zitiID)
+	if err != nil || zitiID == "" {
+		return ""
+	}
+	return remoteSupportZitiService
 }
 
 // remoteSupportPollInterval is the shortened /agent/config poll cadence used
@@ -1065,6 +1088,7 @@ func (h *AgentAPIHandler) defaultConfigWithSupport(ctx context.Context, agentID 
 			ConsentRequired: info.ConsentRequired,
 			ConsentStatus:   info.ConsentStatus,
 			ConsentPath:     "/api/v1/access/agent/remote-support/sessions/" + info.SessionID + "/consent",
+			ZitiService:     h.zitiServiceForAgent(ctx, agentID),
 		}
 		// Fast-poll while a support session is in flight (see HandleConfig).
 		cfg.ReportInterval = remoteSupportPollInterval
@@ -1221,6 +1245,7 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 				ConsentRequired: info.ConsentRequired,
 				ConsentStatus:   info.ConsentStatus,
 				ConsentPath:     "/api/v1/access/agent/remote-support/sessions/" + info.SessionID + "/consent",
+				ZitiService:     h.zitiServiceForAgent(ctx, agentID),
 			}
 			// Fast-poll while a support session is in flight so the device
 			// picks up the (dis)connect + consent transitions in seconds

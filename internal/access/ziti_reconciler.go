@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -568,5 +569,64 @@ func (rec *ZitiReconciler) reconcileOnce(ctx context.Context) {
 	if len(rec.darkServices) > 0 {
 		rec.reconcileDarkServices(ctx, zm)
 	}
+	// Remote-support signaling over Ziti: ensure the access-service (broker) is
+	// reachable by enrolled agent identities over the overlay, independent of
+	// dark mode. Gated by REMOTE_SUPPORT_OVER_ZITI so it's inert unless opted in.
+	if remoteSupportOverZitiEnabled() {
+		rec.reconcileRemoteSupportZiti(ctx, zm)
+	}
 	rec.logger.Info("reconcile pass complete", zap.Int("routes", len(desired)))
+}
+
+// remoteSupportZitiService is the Ziti service name agents dial to reach the
+// access-service signaling broker over the overlay.
+const remoteSupportZitiService = "openidx-access"
+
+// remoteSupportOverZitiEnabled reports whether remote-support signaling should
+// be reachable over the Ziti overlay (device leg). Opt-in so deployments that
+// don't want it keep the plain-WSS behavior.
+func remoteSupportOverZitiEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("REMOTE_SUPPORT_OVER_ZITI"))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+// reconcileRemoteSupportZiti ensures the access-service signaling broker is an
+// overlay service (host.v1 → its loopback 127.0.0.1:8007) that enrolled agent
+// identities (role "openidx-agent") may Dial. This lets the device dial the
+// remote-support signaling WebSocket over Ziti with no public port. Admin-side
+// signaling still terminates at the edge (Option B); only the device leg is
+// zero-trust here. Idempotent; failures are logged and retried next pass.
+func (rec *ZitiReconciler) reconcileRemoteSupportZiti(ctx context.Context, zm *ZitiManager) {
+	const svc = remoteSupportZitiService
+	if existing, _ := zm.GetServiceByName(svc); existing == nil {
+		cfgID, cerr := zm.CreateHostV1ConfigFixed(ctx, svc+"-host", "127.0.0.1", 8007)
+		if cerr != nil {
+			rec.logger.Warn("remote-support ziti: host.v1 create failed", zap.Error(cerr))
+			return
+		}
+		if _, err := zm.createServiceWithConfigID(ctx, svc, []string{svc}, cfgID); err != nil {
+			rec.logger.Warn("remote-support ziti: service create failed", zap.Error(err))
+			return
+		}
+	}
+	// Routers host the service (Bind); agent identities may Dial it.
+	if err := zm.EnsureRouterRoleAttribute(ctx); err != nil {
+		rec.logger.Warn("remote-support ziti: tag routers failed", zap.Error(err))
+	}
+	if _, err := zm.EnsureServicePolicy(ctx, "openidx-bind-"+svc, "Bind",
+		[]string{"#" + svc}, []string{"#ziti-routers"}); err != nil {
+		rec.logger.Warn("remote-support ziti: bind policy failed", zap.Error(err))
+	}
+	if _, err := zm.EnsureServicePolicy(ctx, svc+"-dial-openidx-agent", "Dial",
+		[]string{"#" + svc}, []string{"#openidx-agent"}); err != nil {
+		rec.logger.Warn("remote-support ziti: agent dial policy failed", zap.Error(err))
+	}
+	if err := zm.EnsureServiceEdgeRouterPolicy(ctx, "openidx-serp-"+svc,
+		[]string{"#" + svc}, []string{"#all"}); err != nil {
+		rec.logger.Debug("remote-support ziti: serp (may exist)", zap.Error(err))
+	}
 }

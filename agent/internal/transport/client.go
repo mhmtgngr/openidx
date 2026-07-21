@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"runtime"
@@ -160,4 +161,10 @@ func (c *Client) SendConsent(sessionID, decision string) error {
 		return fmt.Errorf("consent request failed with status %d", resp.StatusCode)
 	}
 	return nil
+}
+
+// DialServiceConn is not supported over the plain HTTPS transport; remote
+// support falls back to a public WebSocket dial when this returns an error.
+func (c *Client) DialServiceConn(serviceName string) (net.Conn, error) {
+	return nil, fmt.Errorf("ziti service dial not supported on HTTPS transport")
 }

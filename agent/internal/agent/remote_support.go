@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -122,11 +123,7 @@ func (a *Agent) streamRemoteSupport(ctx context.Context, rs *RemoteSupportBlock)
 	hdr.Set("X-Agent-ID", a.config.AgentID)
 	hdr.Set("X-Auth-Token", a.config.AuthToken)
 
-	dialer := *websocket.DefaultDialer
-	if strings.HasPrefix(wsURL, "wss://") {
-		dialer.TLSClientConfig = &tls.Config{InsecureSkipVerify: a.config.InsecureSkipVerify}
-	}
-	conn, _, err := dialer.DialContext(ctx, wsURL, hdr)
+	conn, err := a.dialSignaling(ctx, rs, wsURL, hdr)
 	if err != nil {
 		return err
 	}
@@ -202,6 +199,47 @@ func (a *Agent) signalURL(wsPath string) (string, error) {
 	}
 	u := url.URL{Scheme: scheme, Host: base.Host, Path: wsPath}
 	return u.String(), nil
+}
+
+// dialSignaling opens the remote-support signaling WebSocket. When the server
+// advertised a Ziti service (rs.ZitiService) and the agent has a Ziti-backed
+// transport, it dials the broker over the OVERLAY (zero-trust, no public port):
+// zitiCtx.Dial(service) yields a net.Conn on which we run the WebSocket
+// handshake. On any Ziti failure — or when no service is advertised — it falls
+// back to the public WSS dial, so same-LAN / edge deployments are unchanged.
+func (a *Agent) dialSignaling(ctx context.Context, rs *RemoteSupportBlock, wsURL string, hdr http.Header) (*websocket.Conn, error) {
+	if rs.ZitiService != "" && a.client != nil {
+		if netConn, derr := a.client.DialServiceConn(rs.ZitiService); derr == nil {
+			// The overlay terminates at the broker; use a fixed host in the URL
+			// (the connection is already routed by Ziti, not by DNS/TLS SNI).
+			ovURL := "ws://openidx-access" + rs.WSPath
+			d := websocket.Dialer{
+				NetDial: func(network, addr string) (net.Conn, error) { return netConn, nil },
+			}
+			conn, _, werr := d.DialContext(ctx, ovURL, hdr)
+			if werr == nil {
+				a.logger.Info("remote-support: signaling over Ziti overlay",
+					zap.String("service", rs.ZitiService), zap.String("session_id", rs.SessionID))
+				return conn, nil
+			}
+			_ = netConn.Close()
+			a.logger.Warn("remote-support: Ziti signaling dial failed; falling back to public WSS",
+				zap.String("service", rs.ZitiService), zap.Error(werr))
+		} else {
+			a.logger.Warn("remote-support: Ziti service dial unavailable; falling back to public WSS",
+				zap.String("service", rs.ZitiService), zap.Error(derr))
+		}
+	}
+
+	dialer := *websocket.DefaultDialer
+	if strings.HasPrefix(wsURL, "wss://") {
+		dialer.TLSClientConfig = &tls.Config{InsecureSkipVerify: a.config.InsecureSkipVerify}
+	}
+	conn, _, err := dialer.DialContext(ctx, wsURL, hdr)
+	if err != nil {
+		return nil, err
+	}
+	return conn, nil
 }
 
 // remoteSupportFPS is the capture frame rate (overridable later via config).

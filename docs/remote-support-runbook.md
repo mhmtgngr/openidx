@@ -144,3 +144,42 @@ Invariants a change must preserve:
   completes).
 - **ICE.** Default is public STUN (same-LAN / VPN). Cross-internet needs a real
   TURN server (the minter is wired but unprovisioned here).
+
+## Remote support over Ziti (device-leg zero-trust)
+
+Signaling can ride the OpenZiti overlay instead of a public WSS, so the DEVICE
+reaches the broker with no inbound port and enforced device-trust. Opt-in.
+
+Enable (access-service env):
+
+```
+ZITI_ENABLED=true
+ZITI_AGENT_OVERLAY_ENABLED=true    # issue Ziti identities to agents at enroll
+REMOTE_SUPPORT_OVER_ZITI=true      # provision the openidx-access dial + advertise it
+```
+
+How it works:
+
+- Reconciler ensures a Ziti service `openidx-access` (host.v1 → 127.0.0.1:8007)
+  bound by the routers, with a Dial policy `openidx-access-dial-openidx-agent`
+  granting the `#openidx-agent` role. (`internal/access/ziti_reconciler.go` →
+  `reconcileRemoteSupportZiti`.)
+- Enroll issues each device a Ziti identity tagged `openidx-agent`
+  (`issueAgentCredentials`, gated by ZITI_AGENT_OVERLAY_ENABLED).
+- `/agent/config`'s remote_support block carries `ziti_service: "openidx-access"`
+  for agents that have a Ziti identity (`zitiServiceForAgent`).
+- The device dials the signaling WebSocket over the overlay:
+  `zitiCtx.Dial("openidx-access")` → net.Conn → gorilla websocket handshake
+  (`agent/internal/agent/remote_support.go` → `dialSignaling`). Any Ziti failure
+  or a device without an identity falls back to the public WSS — so same-LAN /
+  edge deployments are unchanged.
+
+Scope: this is the DEVICE leg only (Option B). The admin browser still reaches
+the broker via the edge (a browser can't dial Ziti natively without BrowZer).
+The WebRTC MEDIA remains peer-to-peer over STUN (same-LAN / VPN); routing media
+over the overlay or a TURN server is a future step.
+
+Verify: after enabling, a device that re-enrolls gets a `ziti_identity_id`, and
+its agent log shows `remote-support: signaling over Ziti overlay` when a session
+starts. `openidx-access` appears in `ziti edge list services` with the
+`openidx-access-dial-openidx-agent` Dial policy.
