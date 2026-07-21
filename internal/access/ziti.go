@@ -1824,6 +1824,39 @@ func (zm *ZitiManager) GetDB() *database.PostgresDB {
 	return zm.db
 }
 
+// EnsureEdgeRouterPolicy creates an edge-router-policy (which routers an
+// identity may use) if one with this name doesn't already exist. Idempotent:
+// a name match is treated as success. Without such a policy an identity is
+// assigned zero routers and every dial fails with NO_EDGE_ROUTERS_AVAILABLE.
+func (zm *ZitiManager) EnsureEdgeRouterPolicy(ctx context.Context, name string, edgeRouterRoles, identityRoles []string) error {
+	filter := url.QueryEscape(fmt.Sprintf(`name="%s"`, name))
+	if data, status, err := zm.mgmtRequest("GET",
+		"/edge/management/v1/edge-router-policies?filter="+filter, nil); err == nil && status == http.StatusOK {
+		var resp struct {
+			Data []struct {
+				ID string `json:"id"`
+			} `json:"data"`
+		}
+		if json.Unmarshal(data, &resp) == nil && len(resp.Data) > 0 {
+			return nil // already exists
+		}
+	}
+	body, _ := json.Marshal(map[string]interface{}{
+		"name":            name,
+		"semantic":        "AnyOf",
+		"edgeRouterRoles": edgeRouterRoles,
+		"identityRoles":   identityRoles,
+	})
+	_, status, err := zm.mgmtRequest("POST", "/edge/management/v1/edge-router-policies", body)
+	if err != nil {
+		return err
+	}
+	if status != http.StatusCreated && status != http.StatusOK {
+		return fmt.Errorf("unexpected status %d creating edge-router policy", status)
+	}
+	return nil
+}
+
 // EnsureServiceEdgeRouterPolicy creates a service-edge-router policy if it doesn't already exist.
 func (zm *ZitiManager) EnsureServiceEdgeRouterPolicy(ctx context.Context, name string, serviceRoles, edgeRouterRoles []string) error {
 	body, _ := json.Marshal(map[string]interface{}{

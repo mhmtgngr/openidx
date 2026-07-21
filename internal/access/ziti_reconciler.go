@@ -625,6 +625,13 @@ func (rec *ZitiReconciler) reconcileRemoteSupportZiti(ctx context.Context, zm *Z
 		[]string{"#" + svc}, []string{"#openidx-agent"}); err != nil {
 		rec.logger.Warn("remote-support ziti: agent dial policy failed", zap.Error(err))
 	}
+	// Agent identities need an edge-router-policy or they get zero routers and
+	// every dial fails with NO_EDGE_ROUTERS_AVAILABLE. Grant #openidx-agent all
+	// routers (the service-edge-router-policy below already scopes the service).
+	if err := zm.EnsureEdgeRouterPolicy(ctx, "openidx-agent-all-routers",
+		[]string{"#all"}, []string{"#openidx-agent"}); err != nil {
+		rec.logger.Warn("remote-support ziti: agent edge-router policy failed", zap.Error(err))
+	}
 	if err := zm.EnsureServiceEdgeRouterPolicy(ctx, "openidx-serp-"+svc,
 		[]string{"#" + svc}, []string{"#all"}); err != nil {
 		rec.logger.Debug("remote-support ziti: serp (may exist)", zap.Error(err))
