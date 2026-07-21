@@ -261,6 +261,27 @@ jobs:
           $manifest | ConvertTo-Json | Set-Content -Path dist/latest.json -Encoding utf8
           Get-Content dist/latest.json
 
+      - name: Stamp install script
+        if: steps.ver.outputs.release == 'true'
+        shell: pwsh
+        run: |
+          $ver     = "${{ steps.ver.outputs.version }}"
+          $repo    = "${{ github.repository }}"
+          $tag     = "${{ github.ref_name }}"
+          $msiUrl  = "https://github.com/$repo/releases/download/$tag/OpenIDX-$ver.msi"
+          $manUrl  = "https://github.com/$repo/releases/latest/download/latest.json"
+          # Deployment defaults come from repo variables so the published script
+          # is a true one-liner. Blank values stay as safe placeholders that the
+          # operator overrides with -Server/-Token/-ServerIP.
+          $server  = "${{ vars.AGENT_DEFAULT_SERVER_URL }}"
+          $token   = "${{ vars.AGENT_DEFAULT_ENROLL_TOKEN }}"
+          $serverIp= "${{ vars.AGENT_DEFAULT_SERVER_IP }}"
+          $src = Get-Content agent/scripts/install-openidx-agent.ps1 -Raw
+          $src = $src.Replace('__MSI_URL__', $msiUrl).Replace('__MANIFEST_URL__', $manUrl)
+          $src = $src.Replace('__SERVER_URL__', $server).Replace('__ENROLL_TOKEN__', $token).Replace('__SERVER_IP__', $serverIp)
+          Set-Content -Path dist/install-openidx-agent.ps1 -Value $src -Encoding utf8
+          Write-Host "Stamped install script (server=$server ip=$serverIp)"
+
       - name: Publish release
         if: steps.ver.outputs.release == 'true'
         uses: softprops/action-gh-release@v2
@@ -270,4 +291,5 @@ jobs:
           files: |
             dist/OpenIDX-${{ steps.ver.outputs.version }}.msi
             dist/latest.json
+            dist/install-openidx-agent.ps1
           fail_on_unmatched_files: true
