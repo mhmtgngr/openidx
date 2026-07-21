@@ -346,20 +346,45 @@ func (h *AgentAPIHandler) ensureAgentZitiIdentity(ctx context.Context, agentID s
 			zap.String("agent_id", agentID))
 		return
 	}
-	// Skip if the agent already has a Ziti identity.
+	// If the agent already has a Ziti identity, decide based on whether it has
+	// actually completed enrollment. A common case: the identity was created on a
+	// prior enroll but the device never consumed the one-time-token (e.g. it
+	// couldn't reach the controller), so the OTT is still pending. In that case we
+	// must re-hand the device the pending JWT, otherwise it can never enroll. If
+	// the identity is already enrolled (no pending OTT), leave it alone.
 	if h.db != nil && h.db.Pool != nil {
 		var existing string
 		if err := h.db.Pool.QueryRow(ctx,
 			`SELECT COALESCE(ziti_identity_id,'') FROM enrolled_agents WHERE agent_id = $1`,
 			agentID).Scan(&existing); err == nil && existing != "" {
+			if jwt, jerr := h.zm.GetIdentityEnrollmentJWT(ctx, existing); jerr == nil && jwt != "" {
+				result.ZitiJWT = jwt
+				h.logger.Info("Re-issued pending Ziti enrollment JWT for agent",
+					zap.String("agent_id", agentID), zap.String("ziti_id", existing))
+			}
 			return
 		}
 	}
 	zitiID, zitiJWT, err := h.zm.CreateIdentity(ctx, agentID, "Device", []string{"openidx-agent"})
 	if err != nil {
-		h.logger.Warn("Failed to create Ziti identity for agent",
-			zap.String("agent_id", agentID), zap.Error(err))
-		return
+		// The DB row lost its ziti_identity_id but an identity with this name
+		// still exists in the controller (orphan). Delete it and recreate so the
+		// device gets a fresh, un-enrolled JWT it can enroll with.
+		if strings.Contains(err.Error(), "duplicate value") {
+			if orphanID := h.findZitiIdentityByName(ctx, agentID); orphanID != "" {
+				if delErr := h.zm.DeleteIdentity(ctx, orphanID); delErr == nil {
+					zitiID, zitiJWT, err = h.zm.CreateIdentity(ctx, agentID, "Device", []string{"openidx-agent"})
+				} else {
+					h.logger.Warn("Failed to delete orphan Ziti identity",
+						zap.String("agent_id", agentID), zap.Error(delErr))
+				}
+			}
+		}
+		if err != nil {
+			h.logger.Warn("Failed to create Ziti identity for agent",
+				zap.String("agent_id", agentID), zap.Error(err))
+			return
+		}
 	}
 	if h.db != nil && h.db.Pool != nil {
 		h.db.Pool.Exec(ctx,
@@ -369,6 +394,17 @@ func (h *AgentAPIHandler) ensureAgentZitiIdentity(ctx context.Context, agentID s
 	result.ZitiJWT = zitiJWT
 	h.logger.Info("Ziti identity created for agent",
 		zap.String("agent_id", agentID), zap.String("ziti_id", zitiID))
+}
+
+// findZitiIdentityByName returns the controller-side identity ID whose name
+// matches agentID, or "" if none. Used to reclaim an orphaned identity when the
+// DB lost the mapping but the controller still holds it. Queries the controller
+// with a name filter so it doesn't depend on identity-list paging.
+func (h *AgentAPIHandler) findZitiIdentityByName(ctx context.Context, agentID string) string {
+	if h.zm == nil {
+		return ""
+	}
+	return h.zm.FindIdentityIDByName(ctx, agentID)
 }
 
 // agentZitiOverlayEnabled reports whether newly-enrolled agents should be issued
