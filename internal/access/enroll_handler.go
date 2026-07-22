@@ -158,6 +158,7 @@ func (s *Service) mintZitiEnrollmentJWT(ctx context.Context, subject string) (jw
 	var zitiID string
 	var stored *string
 	lookupErr := s.db.Pool.QueryRow(ctx,
+		//orgscope:ignore ziti_identities is keyed by the globally-unique user_id (OIDC subject); a Ziti identity is per-user, not per-org
 		"SELECT ziti_id, enrollment_jwt FROM ziti_identities WHERE user_id = $1",
 		subject).Scan(&zitiID, &stored)
 
@@ -170,6 +171,7 @@ func (s *Service) mintZitiEnrollmentJWT(ctx context.Context, subject string) (jw
 		zitiID = res.ZitiID
 		// re-read the freshly stored JWT if present
 		_ = s.db.Pool.QueryRow(ctx,
+			//orgscope:ignore ziti_identities.ziti_id is a globally-unique controller identity id, not org-scoped
 			"SELECT enrollment_jwt FROM ziti_identities WHERE ziti_id = $1", zitiID).Scan(&stored)
 	}
 
