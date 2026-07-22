@@ -33,12 +33,10 @@ const apnsTokenTTL = 45 * time.Minute
 
 // fcmProvider holds a cached FCM HTTP v1 token source and the resolved project ID.
 type fcmProvider struct {
-	once       sync.Once
-	err        error
-	tokenSrc   oauth2.TokenSource
-	projectID  string
-	credFile   string
-	projConfig string
+	once      sync.Once
+	err       error
+	tokenSrc  oauth2.TokenSource
+	projectID string
 }
 
 // apnsProvider caches a minted APNS provider token until it needs refreshing.
@@ -76,7 +74,10 @@ func (p *fcmProvider) getToken(ctx context.Context, credFile, projectID string) 
 			p.err = fmt.Errorf("read FCM credentials file: %w", err)
 			return
 		}
-		creds, err := google.CredentialsFromJSON(ctx, raw, fcmMessagingScope)
+		// The credentials JSON is an operator-supplied service-account file from
+		// our own config (not untrusted input), so the validation caveat behind
+		// the SA1019 deprecation does not apply here.
+		creds, err := google.CredentialsFromJSON(ctx, raw, fcmMessagingScope) //nolint:staticcheck // operator-supplied, trusted service-account file
 		if err != nil {
 			p.err = fmt.Errorf("parse FCM credentials: %w", err)
 			return
