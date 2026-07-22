@@ -12,6 +12,25 @@ import (
 	"testing"
 )
 
+// serviceBlock returns the YAML text for a single compose service, from the
+// service key up to (but not including) the next top-level service definition.
+// This is robust against services growing new env vars, unlike a fixed-size
+// window (which silently truncated SMTP/JWT config once the Ziti and
+// remote-support env blocks were added, causing false-negative failures).
+func serviceBlock(content, service string) string {
+	start := strings.Index(content, service)
+	if start == -1 {
+		return ""
+	}
+	// The next service is a 2-space-indented `  name:` line at the same level.
+	nextSvc := regexp.MustCompile(`\n  [a-zA-Z0-9_-]+:\n`)
+	rest := content[start+len(service):]
+	if loc := nextSvc.FindStringIndex(rest); loc != nil {
+		return content[start : start+len(service)+loc[0]]
+	}
+	return content[start:]
+}
+
 // TestComposeProductionServiceEnvironment validates production environment variables
 func TestComposeProductionServiceEnvironment(t *testing.T) {
 	composePath := "docker-compose.prod.yml"
@@ -397,7 +416,7 @@ func TestComposeSMTPConfiguration(t *testing.T) {
 			continue
 		}
 
-		serviceSection := contentStr[serviceIndex : serviceIndex+800]
+		serviceSection := serviceBlock(contentStr, service)
 
 		// Validate SMTP configuration
 		if !strings.Contains(serviceSection, "SMTP_HOST=") {
@@ -435,7 +454,8 @@ func TestComposeOAuthConfiguration(t *testing.T) {
 		t.Fatal("oauth-service not found")
 	}
 
-	oauthSection := contentStr[oauthIndex : oauthIndex+800]
+	oauthSection := serviceBlock(contentStr, "oauth-service:")
+	_ = oauthIndex
 
 	// Validate JWT secret requirement
 	if !strings.Contains(oauthSection, "${JWT_SECRET:?JWT_SECRET required}") {
@@ -472,7 +492,8 @@ func TestComposeZitiConfiguration(t *testing.T) {
 		return
 	}
 
-	accessSection := contentStr[accessIndex : accessIndex+1500]
+	accessSection := serviceBlock(contentStr, "access-service:")
+	_ = accessIndex
 
 	// Validate Ziti configuration
 	if strings.Contains(accessSection, "ZITI_ENABLED") {
