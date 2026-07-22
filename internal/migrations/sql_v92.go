@@ -1,29 +1,45 @@
 package migrations
 
-// Migration v92 — stable per-device enrollment identity.
+// Migration v92 — remote-support device consent (attended support).
 //
-// Before this, every call to /agent/enroll minted a brand-new
-// agent-<rand>/device-<rand> pair, so a single physical machine that was
-// re-installed or re-enrolled (which happened on every MSI upgrade) accumulated
-// many enrolled_agents rows. Operators then could not tell which agent_id to
-// target for remote support, and the device picker was cluttered with stale
-// duplicates.
+// Adds an explicit consent gate to a remote-support session so a support
+// session can require the person at the device to click Allow before the admin
+// can view/control. Fields:
+//   - consent_required: when true, the session stays consent-blocked until the
+//     device accepts (attended support of a user's own machine). Servers /
+//     unattended targets leave this false and behave exactly as today.
+//   - consent_status: 'pending' | 'granted' | 'denied' (only meaningful when
+//     consent_required). Set by the device via the accept/decline endpoint.
+//   - consent_decided_at: when the device decided (for deny-on-timeout + audit).
 //
-// This adds a nullable device_fingerprint column (a stable client-supplied
-// identifier: Windows MachineGuid, else a hostname-derived fallback) plus a
-// partial UNIQUE index over the non-null values. Enrollment can then upsert by
-// fingerprint and hand back the SAME agent_id/auth_token for a device it has
-// seen before. Existing rows keep fingerprint NULL and are unaffected (the
-// partial index ignores NULLs), so this is additive + idempotent with no
-// behavior change until the enrollment handler starts sending a fingerprint.
-var deviceFingerprintUp = `-- Migration 092: stable per-device enrollment identity.
-ALTER TABLE enrolled_agents ADD COLUMN IF NOT EXISTS device_fingerprint TEXT;
-CREATE UNIQUE INDEX IF NOT EXISTS enrolled_agents_device_fingerprint_key
-    ON enrolled_agents (device_fingerprint)
-    WHERE device_fingerprint IS NOT NULL;
-`
+// It ALSO backfills two columns the session-start code (HandleStartSession) has
+// long referenced but no migration ever created — org_id and
+// recording_retention_days — so remote-support session start stops failing with
+// "column does not exist" (SQLSTATE 42703). Pre-existing schema/code drift;
+// fixed here since this migration already touches the table.
+//
+// Additive + idempotent; existing sessions get consent_required=false, so there
+// is NO behavior change for the current (unattended) flow. The DO block keeps
+// `$$` on its own line for the migration runner's splitter.
+var remoteSupportConsentUp = `-- Migration 092: remote-support device consent (+ backfill drifted columns).
+ALTER TABLE remote_support_sessions ADD COLUMN IF NOT EXISTS org_id UUID;
+ALTER TABLE remote_support_sessions ADD COLUMN IF NOT EXISTS recording_retention_days INTEGER;
+ALTER TABLE remote_support_sessions ADD COLUMN IF NOT EXISTS consent_required BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE remote_support_sessions ADD COLUMN IF NOT EXISTS consent_status VARCHAR(16) NOT NULL DEFAULT 'granted';
+ALTER TABLE remote_support_sessions ADD COLUMN IF NOT EXISTS consent_decided_at TIMESTAMPTZ;
+DO
+$$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'remote_support_consent_status_check') THEN
+        ALTER TABLE remote_support_sessions
+            ADD CONSTRAINT remote_support_consent_status_check
+            CHECK (consent_status IN ('pending', 'granted', 'denied'));
+    END IF;
+END
+$$;`
 
-var deviceFingerprintDown = `-- Rollback 092.
-DROP INDEX IF EXISTS enrolled_agents_device_fingerprint_key;
-ALTER TABLE enrolled_agents DROP COLUMN IF EXISTS device_fingerprint;
-`
+var remoteSupportConsentDown = `-- Rollback 091.
+ALTER TABLE remote_support_sessions DROP CONSTRAINT IF EXISTS remote_support_consent_status_check;
+ALTER TABLE remote_support_sessions DROP COLUMN IF EXISTS consent_decided_at;
+ALTER TABLE remote_support_sessions DROP COLUMN IF EXISTS consent_status;
+ALTER TABLE remote_support_sessions DROP COLUMN IF EXISTS consent_required;`

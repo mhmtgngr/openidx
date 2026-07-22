@@ -1,41 +1,36 @@
 package migrations
 
-// Migration v89 — pam_entries.renderer (clientless remote-access renderer).
+// Migration v89 — OAuth per-application user consent records.
 //
-// A PAM entry can be opened by different CLIENTLESS renderers in the browser:
-//   - 'guacamole' (default) — Apache Guacamole renders RDP/SSH/VNC server-side
-//     via guacd (today's behavior; unchanged for every existing entry).
-//   - 'wasm-ssh'  — an in-browser terminal (xterm.js) speaks SSH over a WS->TCP
-//     relay that dials the target over the Ziti overlay. Lightest/fastest.
-//   - 'novnc'     — noVNC over the same WS relay (framebuffer, no guacd).
-//   - 'support'   — a WebRTC remote-support session to an enrolled agent
-//     (screen share / take-over), not a protocol connection.
-//
-// This only records the desired renderer; the launch path dispatches on it. The
-// permission/approval gate (pamEntryAllowed) is unchanged and applies to every
-// renderer. Additive + idempotent; backfills existing rows to 'guacamole' so
-// there is no behavior change.
-//
-// NOTE: the migration runner's statement splitter only recognizes a
-// dollar-quoted block when `$$` begins a line (see migration.go splitSQL), so
-// the DO block below is written with `$$` at the start of its own line. Do not
-// collapse it back onto the `DO` line or the runner will split on the inner `;`.
-var pamEntryRendererUp = `-- Migration 089: pam_entries.renderer (clientless renderer selection).
-ALTER TABLE pam_entries ADD COLUMN IF NOT EXISTS renderer VARCHAR(16) NOT NULL DEFAULT 'guacamole';
-UPDATE pam_entries SET renderer = 'guacamole' WHERE renderer IS NULL OR renderer = '';
-DO
-$$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint WHERE conname = 'pam_entries_renderer_check'
-    ) THEN
-        ALTER TABLE pam_entries
-            ADD CONSTRAINT pam_entries_renderer_check
-            CHECK (renderer IN ('guacamole', 'wasm-ssh', 'novnc', 'support'));
-    END IF;
-END
-$$;`
+// application_sso_settings.require_consent has existed as an admin-configurable
+// flag but was never enforced: the authorization endpoint issued codes without
+// ever showing a consent screen. This adds oauth_user_consents to record a
+// user's grant of a set of scopes to a client, so consent can be enforced at
+// authorization time and remembered across logins (re-prompt only when the
+// requested scopes exceed what was previously granted). Org-scoped under the
+// FORCE-RLS belt (v37 style). Additive/idempotent.
+var oauthUserConsentsUp = `-- Migration 089: OAuth per-application user consent.
+CREATE TABLE IF NOT EXISTS oauth_user_consents (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id      UUID NOT NULL,
+    user_id     UUID NOT NULL,
+    client_id   VARCHAR(255) NOT NULL,
+    scopes      TEXT NOT NULL DEFAULT '',
+    granted_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (org_id, user_id, client_id)
+);
+CREATE INDEX IF NOT EXISTS idx_oauth_user_consents_user ON oauth_user_consents(user_id);
 
-var pamEntryRendererDown = `-- Rollback 089.
-ALTER TABLE pam_entries DROP CONSTRAINT IF EXISTS pam_entries_renderer_check;
-ALTER TABLE pam_entries DROP COLUMN IF EXISTS renderer;`
+DROP POLICY IF EXISTS pol_oauth_user_consents_org_scope ON oauth_user_consents;
+CREATE POLICY pol_oauth_user_consents_org_scope ON oauth_user_consents
+    USING (current_setting('app.bypass_rls', true) = 'on'
+           OR org_id = NULLIF(current_setting('app.org_id', true), '')::uuid)
+    WITH CHECK (current_setting('app.bypass_rls', true) = 'on'
+           OR org_id = NULLIF(current_setting('app.org_id', true), '')::uuid);
+ALTER TABLE oauth_user_consents ENABLE ROW LEVEL SECURITY;
+ALTER TABLE oauth_user_consents FORCE  ROW LEVEL SECURITY;
+GRANT SELECT, INSERT, UPDATE, DELETE ON oauth_user_consents TO openidx_app;`
+
+var oauthUserConsentsDown = `-- Rollback 089.
+DROP TABLE IF EXISTS oauth_user_consents;`

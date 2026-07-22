@@ -4,9 +4,7 @@ package oauth
 import (
 	"compress/flate"
 	"context"
-	"crypto"
 	"crypto/rand"
-	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -318,7 +316,7 @@ func (s *Service) handleIdPSSO(c *gin.Context) {
 	}
 
 	// Decode and parse AuthnRequest
-	authnReq, err := s.decodeAndParseAuthnRequest(samlRequest)
+	authnReq, rawAuthnXML, err := s.decodeAndParseAuthnRequest(samlRequest)
 	if err != nil {
 		s.logger.Error("Failed to decode AuthnRequest", zap.Error(err))
 		s.logAuditEvent(c.Request.Context(), "authentication", "saml_idp", "sso", "failure",
@@ -351,6 +349,26 @@ func (s *Service) handleIdPSSO(c *gin.Context) {
 			"", c.ClientIP(), sp.EntityID, "service_provider", map[string]interface{}{"reason": "sp_disabled", "sp_entity_id": sp.EntityID})
 		c.JSON(http.StatusForbidden, gin.H{"error": "Service provider is disabled"})
 		return
+	}
+
+	// If the AuthnRequest carries an embedded signature, verify it against the
+	// SP's registered certificate and reject on failure. (A signed request whose
+	// signature we cannot validate must never be trusted.)
+	if authnRequestIsSigned(rawAuthnXML) {
+		if sp.Certificate == "" {
+			s.logAuditEvent(c.Request.Context(), "authentication", "saml_idp", "sso", "failure",
+				"", c.ClientIP(), sp.EntityID, "service_provider", map[string]interface{}{"reason": "signed_request_no_sp_cert", "sp_entity_id": sp.EntityID})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Signed request but no SP certificate on file"})
+			return
+		}
+		if verr := verifySAMLSignature(rawAuthnXML, sp.Certificate); verr != nil {
+			s.logger.Warn("AuthnRequest signature verification failed",
+				zap.String("sp_entity_id", sp.EntityID), zap.Error(verr))
+			s.logAuditEvent(c.Request.Context(), "authentication", "saml_idp", "sso", "failure",
+				"", c.ClientIP(), sp.EntityID, "service_provider", map[string]interface{}{"reason": "authn_request_signature_invalid", "sp_entity_id": sp.EntityID})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "AuthnRequest signature verification failed"})
+			return
+		}
 	}
 
 	// Verify ACS URL matches what's registered
@@ -434,37 +452,46 @@ func (s *Service) handleIdPSSO(c *gin.Context) {
 	s.sendSAMLResponseToSP(c, sp.ACSURL, samlResponse, relayState)
 }
 
-// decodeAndParseAuthnRequest decodes and validates a SAML AuthnRequest
-func (s *Service) decodeAndParseAuthnRequest(encodedRequest string) (*AuthnRequest, error) {
+// decodeAndParseAuthnRequest decodes and validates a SAML AuthnRequest. It also
+// returns the raw decoded XML so the caller can verify an embedded signature
+// against the service provider's registered certificate.
+func (s *Service) decodeAndParseAuthnRequest(encodedRequest string) (*AuthnRequest, []byte, error) {
 	// Try deflate + base64
 	decoded, err := inflateAndDecode(encodedRequest)
 	if err != nil {
 		// Fall back to plain base64
 		decoded, err = base64.StdEncoding.DecodeString(encodedRequest)
 		if err != nil {
-			return nil, fmt.Errorf("%w: failed to decode request", ErrInvalidAuthnRequest)
+			return nil, nil, fmt.Errorf("%w: failed to decode request", ErrInvalidAuthnRequest)
 		}
 	}
 
 	var req AuthnRequest
 	if err := xml.Unmarshal(decoded, &req); err != nil {
-		return nil, fmt.Errorf("%w: failed to parse request XML", ErrInvalidAuthnRequest)
+		return nil, nil, fmt.Errorf("%w: failed to parse request XML", ErrInvalidAuthnRequest)
 	}
 
 	// Validate version
 	if req.Version != "2.0" {
-		return nil, fmt.Errorf("%w: unsupported SAML version: %s", ErrInvalidAuthnRequest, req.Version)
+		return nil, nil, fmt.Errorf("%w: unsupported SAML version: %s", ErrInvalidAuthnRequest, req.Version)
 	}
 
 	// Validate required fields
 	if req.ID == "" {
-		return nil, fmt.Errorf("%w: missing ID", ErrInvalidAuthnRequest)
+		return nil, nil, fmt.Errorf("%w: missing ID", ErrInvalidAuthnRequest)
 	}
 	if req.Issuer == "" {
-		return nil, fmt.Errorf("%w: missing Issuer", ErrInvalidAuthnRequest)
+		return nil, nil, fmt.Errorf("%w: missing Issuer", ErrInvalidAuthnRequest)
 	}
 
-	return &req, nil
+	return &req, decoded, nil
+}
+
+// authnRequestIsSigned reports whether the decoded AuthnRequest XML carries an
+// embedded XML-DSig signature element.
+func authnRequestIsSigned(rawXML []byte) bool {
+	return strings.Contains(string(rawXML), "<ds:Signature") ||
+		strings.Contains(string(rawXML), "<Signature")
 }
 
 // authenticateIdPUser checks if the user is authenticated and returns user info
@@ -802,76 +829,14 @@ func (s *Service) sendSAMLResponseToSP(c *gin.Context, acsURL, samlResponse, rel
 	c.String(http.StatusOK, htmlContent)
 }
 
-// signSAMLAssertion signs the SAML assertion with RSA-SHA256
+// signSAMLAssertion signs the <saml:Assertion> within the response using a
+// standards-compliant enveloped XML-DSig signature (exclusive c14n, RSA-SHA256)
+// over a real X.509 certificate. See saml_signing.go for the implementation;
+// assertionID is retained for signature-reference parity but the element's own
+// ID attribute is what goxmldsig references.
 func (s *Service) signSAMLAssertion(xmlData []byte, assertionID string) (string, error) {
-	// Find the Assertion element and extract it for signing
-	xmlStr := string(xmlData)
-
-	// Find assertion start and end
-	assertionStartTag := `<saml:Assertion`
-	assertionEndTag := `</saml:Assertion>`
-	startIdx := strings.Index(xmlStr, assertionStartTag)
-	endIdx := strings.Index(xmlStr, assertionEndTag)
-
-	if startIdx == -1 || endIdx == -1 {
-		return "", fmt.Errorf("could not find assertion element")
-	}
-
-	// Extract the assertion XML (for signing)
-	assertionEndIdx := endIdx + len(assertionEndTag)
-	assertionXML := xmlStr[startIdx:assertionEndIdx]
-
-	// Compute SHA-256 digest of the assertion
-	digest := sha256.Sum256([]byte(assertionXML))
-	digestBase64 := base64.StdEncoding.EncodeToString(digest[:])
-
-	// Sign the digest with RSA-SHA256
-	signature, err := rsa.SignPKCS1v15(rand.Reader, s.privateKey, crypto.SHA256, digest[:])
-	if err != nil {
-		return "", fmt.Errorf("failed to sign assertion: %w", err)
-	}
-	signatureBase64 := base64.StdEncoding.EncodeToString(signature)
-
-	// Build the Signature element
-	sigXML := fmt.Sprintf(`    <ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#">
-      <ds:SignedInfo>
-        <ds:CanonicalizationMethod Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/>
-        <ds:SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"/>
-        <ds:Reference URI="#%s">
-          <ds:Transforms>
-            <ds:Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"/>
-            <ds:Transform Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/>
-          </ds:Transforms>
-          <ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/>
-          <ds:DigestValue>%s</ds:DigestValue>
-        </ds:Reference>
-      </ds:SignedInfo>
-      <ds:SignatureValue>%s</ds:SignatureValue>
-    </ds:Signature>`, assertionID, digestBase64, signatureBase64)
-
-	// Insert the signature after the Issuer element within the Assertion
-	issuerCloseTag := `</saml:Issuer>`
-	issuerIdx := strings.Index(assertionXML, issuerCloseTag)
-	if issuerIdx == -1 {
-		// Fallback: insert after Issuer
-		issuerIdx = strings.Index(assertionXML, `<saml:Issuer>`)
-		if issuerIdx != -1 {
-			issuerIdx = strings.Index(assertionXML[issuerIdx:], `</saml:Issuer>`) + issuerIdx + len(`</saml:Issuer>`)
-		}
-	}
-
-	if issuerIdx != -1 {
-		insertPos := issuerIdx + len(issuerCloseTag)
-		assertionXML = assertionXML[:insertPos] + "\n" + sigXML + assertionXML[insertPos:]
-	} else {
-		// Last resort: prepend signature
-		assertionXML = sigXML + "\n" + assertionXML
-	}
-
-	// Replace the assertion in the original XML
-	signedXML := xmlStr[:startIdx] + assertionXML + xmlStr[assertionEndIdx:]
-
-	return signedXML, nil
+	_ = assertionID
+	return s.signAssertionEnveloped(xmlData)
 }
 
 // generateRandomToken generates a cryptographically random token

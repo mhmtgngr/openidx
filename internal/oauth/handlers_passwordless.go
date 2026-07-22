@@ -418,11 +418,18 @@ func (s *Service) handleOAuthMagicLink(c *gin.Context) {
 		return
 	}
 
-	// CRITICAL: NEVER log magic link tokens in production
-	// Magic link tokens must NEVER be logged in production environments
-	// This check enforces production safety regardless of config flag
+	// Build the one-time verify URL that carries the magic-link token.
+	verifyURL := s.issuer + "/oauth/magic-link-verify?token=" + url.QueryEscape(magicLink.Token) + "&login_session=" + url.QueryEscape(req.LoginSession)
+
+	// Deliver the link by email. Failures are logged but never surfaced to the
+	// caller, so we don't leak whether the account exists.
+	if err := s.identityService.SendMagicLinkEmail(ctx, req.Email, verifyURL); err != nil {
+		s.logger.Error("Failed to send magic link email", zap.Error(err))
+	}
+
+	// CRITICAL: NEVER log magic link tokens in production. Only in an explicitly
+	// enabled development build do we echo the verify URL to the log for testing.
 	if s.config.DebugOTPsEnabled() && s.config.IsDevelopment() && magicLink.Token != "" {
-		verifyURL := s.issuer + "/oauth/magic-link-verify?token=" + url.QueryEscape(magicLink.Token) + "&login_session=" + url.QueryEscape(req.LoginSession)
 		s.logger.Info("DEBUG: Magic link verify URL", zap.String("url", verifyURL))
 	}
 

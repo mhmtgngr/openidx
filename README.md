@@ -20,56 +20,94 @@
 
 ## Overview
 
-OpenIDX is an open-source Zero Trust Access Platform (ZTAP) that unifies API gateway capabilities, AAA controls, identity management, and Zero Trust architecture. Built to compete with commercial solutions like Microsoft Entra ID, Okta, and Duo while offering **70-80% cost savings**.
+OpenIDX is an open-source Zero Trust Access Platform (ZTAP) that unifies four
+capabilities that are usually four separate products — **identity (IAM),
+governance (IGA), privileged access (PAM), and a zero-trust network plane
+(ZTNA)** — in one self-hostable platform over one PostgreSQL database. It is
+built to replace a stack of Microsoft Entra ID, Okta, SailPoint, CyberArk, and
+Zscaler/NetFoundry at a fraction of the cost — a **70–80% saving** against the
+stacked per-user pricing of those tools.
 
-> **Single-tenant by design.** One OpenIDX install is for one
-> organization. The data model is intentionally not tenant-scoped,
-> and queries do not implicitly filter by a `tenant_id`. If you need
-> multi-tenant SaaS isolation, run one OpenIDX install per tenant —
-> see [docs/SECURITY-TENANCY.md](./docs/SECURITY-TENANCY.md) for the
-> trust boundary and the supported deployment topology.
+Because the IdP, the policy engine, the PAM broker, and the OpenZiti network
+overlay share one control plane, a single decision propagates end-to-end: an
+access-review revoke or an admin kill-switch severs the user's tokens, sessions,
+vault checkouts, live privileged sessions, **and** network circuits in seconds —
+not as a multi-connector integration project.
+
+> **Multi-tenant, enforced at the database.** OpenIDX is tenant-scoped: every
+> tenant-owned table carries an `org_id` and is protected by PostgreSQL **FORCE
+> row-level security**, with the tenant stamped onto each pooled connection at
+> checkout (`internal/common/database/rls.go`) and resolved per request from the
+> subdomain, JWT, or `X-Org-ID` header. Access is **fail-closed** — no tenant
+> context yields zero rows — and a merge-blocking CI linter (`tools/orgscope`)
+> fails the build on any tenant-table query missing an `org_id` predicate. See
+> [docs/SECURITY-TENANCY.md](./docs/SECURITY-TENANCY.md) for the trust boundary.
 
 ### Why OpenIDX?
 
-- 🔐 **Zero Trust Native** - Never trust, always verify
-- 💰 **Cost Effective** - Fraction of commercial solution costs
-- 🏛️ **Data Sovereignty** - Your data, your control
-- 🔓 **No Vendor Lock-in** - Open standards, open source
-- 🚀 **Modern Architecture** - Cloud-native, Kubernetes-ready
+- 🧩 **Unified** - IAM + IGA + PAM + ZTNA in one platform, not four SKUs
+- 🔐 **Zero Trust Native** - identity-driven dark services over OpenZiti; never trust, always verify
+- 🏢 **Multi-Tenant** - FORCE row-level security with a CI-enforced tenant boundary
+- 💰 **Cost Effective** - flat infrastructure cost vs per-user/per-identity pricing
+- 🏛️ **Data Sovereignty** - fully self-hostable; your data, your infrastructure, your region
+- 🔓 **No Vendor Lock-in** - open standards, Apache-2.0 core
+- 🚀 **Modern Architecture** - Go services, React console, Kubernetes-ready
 
 ## Features
 
-### Identity Management
-- ✅ Single Sign-On (SSO) with OIDC/SAML/OAuth 2.0
-- ✅ Multi-Factor Authentication (MFA)
-- ✅ Directory Integration (LDAP, Active Directory)
-- ✅ Social Login Providers
-- ✅ Passwordless Authentication (WebAuthn/FIDO2)
+### Identity & Access Management (IAM)
+- ✅ Native OAuth 2.0 / OIDC provider (authorization code + PKCE, refresh rotation, client credentials, token exchange, JWKS with key rotation)
+- ✅ SAML 2.0 Identity Provider (standards-compliant XML-DSig signing, SP metadata, SLO)
+- ✅ Single Sign-On (SSO) with per-application consent
+- ✅ Multi-Factor Authentication — TOTP, WebAuthn/passkeys, push, hardware tokens, email/SMS OTP
+- ✅ Passwordless & magic-link authentication
+- ✅ Adaptive / risk-based authentication with step-up
+- ✅ Directory integration & sync (LDAP, Active Directory, Azure AD)
+- ✅ SCIM 2.0 provisioning (users & groups, filtering, PATCH)
+- ✅ Social / external IdP federation
 
-### Access Control
-- ✅ Role-Based Access Control (RBAC)
-- ✅ Attribute-Based Access Control (ABAC)
-- ✅ Policy-Based Access Control (PBAC)
-- ✅ Just-in-Time (JIT) Access Provisioning
-- ✅ Privileged Access Management (PAM)
+### Identity Governance (IGA)
+- ✅ Access reviews & certification campaigns
+- ✅ Access-request & multi-step approval workflows
+- ✅ Segregation-of-Duties (SoD) — preventive, enforced fail-closed
+- ✅ Just-in-Time (JIT) elevation with automatic expiry
+- ✅ Entitlement catalog, delegations, and lifecycle policies
+- ✅ RBAC, ABAC, and OPA policy-based access control
 
-### API Security
-- ✅ API Gateway with Rate Limiting
-- ✅ Request/Response Transformation
-- ✅ JWT Validation & Token Exchange
-- ✅ mTLS & Certificate Management
+### Privileged Access Management (PAM)
+- ✅ Envelope-encrypted credential vault with KEK rotation
+- ✅ Automated credential rotation (SSH, AWS IAM, GCP SA, Postgres, MySQL, LDAP)
+- ✅ Brokered SSH/RDP/VNC sessions via Guacamole with server-side credential injection
+- ✅ Session recording (encrypted at rest), transcripts, legal holds, retention
+- ✅ Per-user broker identities and RDM-parity connection manager
+- ✅ Privileged sessions over the OpenZiti overlay — targets have no inbound port
+
+### Zero Trust Network (ZTNA over OpenZiti)
+- ✅ Identity-driven "dark" services (no exposed inbound ports)
+- ✅ BrowZer clientless browser access (no agent install)
+- ✅ Desktop (Windows, signed) and mobile / Android endpoint agents with posture checks
+- ✅ Desired-state reconciler syncing OpenIDX policy to the Ziti controller
+- ✅ Cross-pillar kill switch: revoke tokens, sessions, vault checkouts, and network circuits in one action
+
+### API Security & Platform
+- ✅ APISIX API gateway with rate limiting
+- ✅ JWT validation & OAuth 2.0 Token Exchange (RFC 8693)
+- ✅ mTLS & certificate management
+- ✅ Multi-tenancy with FORCE row-level security (CI-enforced)
+- ✅ API keys & service-account authentication
 
 ### Governance & Compliance
-- ✅ Access Reviews & Certifications
-- ✅ Audit Logging & SIEM Integration
-- ✅ Compliance Reports (SOC2, ISO27001, GDPR)
-- ✅ Risk-Based Authentication
+- ✅ Tamper-evident audit log (HMAC hash-chain) with Elasticsearch search
+- ✅ Audit logging & SIEM integration
+- ✅ Compliance reports (SOC 2, ISO 27001, GDPR)
+- ✅ Observability: Prometheus metrics, OpenTelemetry tracing, SLOs
+- ✅ Automated backups with tested restore
 
 ## Quick Start
 
 ### Prerequisites
 - Docker & Docker Compose
-- Go 1.22+
+- Go 1.25+
 - Node.js 20+
 - kubectl (for Kubernetes deployment)
 
@@ -120,33 +158,32 @@ helm install openidx openidx/openidx \
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        Load Balancer                            │
-└─────────────────────────────────────────────────────────────────┘
-                                │
-┌─────────────────────────────────────────────────────────────────┐
 │                     API Gateway (APISIX)                        │
-│              Rate Limiting • Auth • Routing                     │
+│              TLS • Rate Limiting • Routing • Auth               │
 └─────────────────────────────────────────────────────────────────┘
                                 │
-        ┌───────────────────────┼───────────────────────┐
-        │                       │                       │
-┌───────▼───────┐     ┌─────────▼─────────┐    ┌───────▼───────┐
-│   Identity    │     │    Governance     │    │     Admin     │
-│   Service     │     │     Service       │    │   Console     │
-│  (Keycloak)   │     │      (Go)         │    │   (React)     │
-└───────────────┘     └───────────────────┘    └───────────────┘
-        │                       │                       │
-        └───────────────────────┼───────────────────────┘
-                                │
+   ┌───────────┬───────────┬────┴──────┬───────────┬───────────┐
+   │           │           │           │           │           │
+┌──▼───┐  ┌────▼────┐  ┌───▼────┐  ┌───▼───┐  ┌────▼────┐  ┌───▼────┐
+│OAuth/│  │Identity │  │Governance│ │Provis.│  │  Audit  │  │ Access │
+│ OIDC │  │ Service │  │ Service │  │(SCIM) │  │ Service │  │Service │
+│(IdP) │  │ (MFA)   │  │(IGA·PAM)│  │       │  │         │  │(ZTNA)  │
+└──┬───┘  └────┬────┘  └────┬────┘  └───┬───┘  └────┬────┘  └───┬────┘
+   │           │            │           │           │          │
+   └───────────┴────────────┼───────────┴───────────┘          │
+                            │                                   │
+              ┌─────────────▼─────────────┐        ┌────────────▼───────────┐
+              │    Policy Engine (OPA)     │        │   OpenZiti overlay     │
+              │   RBAC • ABAC • fail-closed │        │  controller + router   │
+              └─────────────┬─────────────┘        │  BrowZer · dark services│
+                            │                       └────────────────────────┘
 ┌─────────────────────────────────────────────────────────────────┐
-│                   Policy Engine (OPA)                           │
-│              RBAC • ABAC • Custom Policies                      │
-└─────────────────────────────────────────────────────────────────┘
-                                │
-┌─────────────────────────────────────────────────────────────────┐
-│                      Data Layer                                 │
+│         Data Layer — one store, FORCE row-level security        │
 │         PostgreSQL • Redis • Elasticsearch                      │
 └─────────────────────────────────────────────────────────────────┘
+
+Admin console + end-user portal: React (web/admin-console).
+Native services in Go; no Keycloak — the IdP is OpenIDX's own OAuth/OIDC service.
 ```
 
 ## Project Structure
@@ -178,31 +215,31 @@ openidx/
 - [Zero Trust Network: Easy Ziti Deployment](docs/ZITI_EASY_DEPLOYMENT.md)
 - [Security Best Practices](docs/security.md)
 
-## Roadmap
+## Status & Roadmap
 
-### Phase 1: Foundation (Months 1-3)
-- [x] Core SSO functionality
-- [x] Basic MFA support
-- [x] Admin console MVP
-- [ ] SCIM 2.0 provisioning
+The core platform is built and self-hostable today. Shipped and working:
 
-### Phase 2: Enterprise (Months 4-6)
-- [ ] Advanced MFA (FIDO2, push)
-- [ ] Directory sync
-- [ ] Access reviews
-- [ ] Risk-based authentication
+- [x] OAuth 2.0 / OIDC provider (PKCE, refresh rotation, token exchange, JWKS rotation)
+- [x] SAML 2.0 IdP with standards-compliant XML-DSig signing
+- [x] MFA — TOTP, WebAuthn/passkeys, push, hardware tokens; passwordless & magic-link
+- [x] Adaptive / risk-based authentication with step-up
+- [x] Per-application OAuth consent
+- [x] Directory sync (LDAP / AD / Azure AD) and SCIM 2.0 provisioning
+- [x] Access reviews, certification campaigns, approval workflows, enforced SoD
+- [x] JIT elevation, credential vault with rotation, brokered & recorded PAM sessions
+- [x] OpenZiti ZTNA plane — dark services, BrowZer clientless access, endpoint agents
+- [x] Multi-tenancy (FORCE RLS), tamper-evident audit, backups, observability
 
-### Phase 3: Governance (Months 7-9)
-- [ ] Identity lifecycle management
-- [ ] Automated provisioning
-- [ ] Compliance reporting
-- [ ] SIEM integration
+The forward-looking product strategy, competitive analysis, and prioritized
+gap register live in the docs:
+[`docs/ULTIMATE_PRODUCT_PLAN.md`](docs/ULTIMATE_PRODUCT_PLAN.md),
+[`docs/MARKET_REANALYSIS_AND_GTM_2026-07.md`](docs/MARKET_REANALYSIS_AND_GTM_2026-07.md),
+and [`docs/MARKET_GAP_ANALYSIS_2026.md`](docs/MARKET_GAP_ANALYSIS_2026.md).
 
-### Phase 4: Intelligence (Months 10-12)
-- [ ] AI-driven anomaly detection
-- [ ] Predictive access analytics
-- [ ] Automated policy recommendations
-- [ ] Self-service portal
+Near-term focus areas: outbound SCIM provisioning to SaaS apps, HR-driven
+joiner/mover/leaver, Ziti fabric-event ingestion into the audit pipeline,
+per-org overlay scoping for MSP/multi-tenant deployments, and the agent-identity
+substrate (dynamic client registration, MCP gateway).
 
 ## Contributing
 
@@ -226,9 +263,11 @@ make build
 
 ## License
 
-OpenIDX is licensed under the [Apache 2.0 License](LICENSE) for the core platform.
-
-Enterprise features are available under the [Business Source License](LICENSE-BSL.md).
+OpenIDX is licensed under the [Apache 2.0 License](LICENSE). The entire platform
+in this repository is Apache-2.0 today. A future commercial/open-core boundary
+(for MSP orchestration, compliance packs, and enterprise support) is described in
+the [go-to-market strategy](docs/MARKET_REANALYSIS_AND_GTM_2026-07.md); the
+Apache-2.0 core is committed to staying Apache-2.0.
 
 ## Support
 

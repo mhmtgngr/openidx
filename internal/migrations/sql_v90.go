@@ -1,57 +1,41 @@
 package migrations
 
-// Migration v90 — quick_links (curated support/collaboration launcher).
+// Migration v90 — pam_entries.renderer (clientless remote-access renderer).
 //
-// A quick link is an admin-curated, user-searchable shortcut. Two kinds:
-//   - type='external' — a plain URL (Teams, Zoom, status page, docs, ticketing)
-//     opened in a new tab.
-//   - type='pam'      — references a pam_entries row; opening it launches that
-//     connection CLIENTLESSLY via the entry's renderer (guacamole tab or the
-//     in-browser wasm-ssh terminal). No connection config is duplicated; the
-//     PAM permission/approval gate still applies at launch.
+// A PAM entry can be opened by different CLIENTLESS renderers in the browser:
+//   - 'guacamole' (default) — Apache Guacamole renders RDP/SSH/VNC server-side
+//     via guacd (today's behavior; unchanged for every existing entry).
+//   - 'wasm-ssh'  — an in-browser terminal (xterm.js) speaks SSH over a WS->TCP
+//     relay that dials the target over the Ziti overlay. Lightest/fastest.
+//   - 'novnc'     — noVNC over the same WS relay (framebuffer, no guacd).
+//   - 'support'   — a WebRTC remote-support session to an enrolled agent
+//     (screen share / take-over), not a protocol connection.
 //
-// Role-gated by min_role (hierarchical, matches the nav model). Org-scoped with
-// forced RLS like its peers. Additive + idempotent. The DO block keeps `$$` on
-// its own line so the migration runner's statement splitter (see migration.go
-// splitSQL) does not break on the inner ';'.
-var quickLinksUp = `-- Migration 090: quick_links (support/collaboration launcher).
-CREATE TABLE IF NOT EXISTS quick_links (
-    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    org_id       UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000010'::uuid REFERENCES organizations(id) ON DELETE CASCADE,
-    title        VARCHAR(255) NOT NULL,
-    description  TEXT NOT NULL DEFAULT '',
-    category     VARCHAR(64) NOT NULL DEFAULT 'Other',
-    icon         VARCHAR(64) NOT NULL DEFAULT 'Link2',
-    type         VARCHAR(16) NOT NULL DEFAULT 'external',
-    url          TEXT NOT NULL DEFAULT '',
-    pam_entry_id UUID REFERENCES pam_entries(id) ON DELETE CASCADE,
-    min_role     VARCHAR(32) NOT NULL DEFAULT 'user',
-    sort_order   INTEGER NOT NULL DEFAULT 0,
-    enabled      BOOLEAN NOT NULL DEFAULT true,
-    open_in_new  BOOLEAN NOT NULL DEFAULT true,
-    created_by   UUID,
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-CREATE INDEX IF NOT EXISTS idx_quick_links_org ON quick_links(org_id);
-CREATE INDEX IF NOT EXISTS idx_quick_links_enabled ON quick_links(org_id, enabled);
-ALTER TABLE quick_links ENABLE ROW LEVEL SECURITY;
-ALTER TABLE quick_links FORCE ROW LEVEL SECURITY;
+// This only records the desired renderer; the launch path dispatches on it. The
+// permission/approval gate (pamEntryAllowed) is unchanged and applies to every
+// renderer. Additive + idempotent; backfills existing rows to 'guacamole' so
+// there is no behavior change.
+//
+// NOTE: the migration runner's statement splitter only recognizes a
+// dollar-quoted block when `$$` begins a line (see migration.go splitSQL), so
+// the DO block below is written with `$$` at the start of its own line. Do not
+// collapse it back onto the `DO` line or the runner will split on the inner `;`.
+var pamEntryRendererUp = `-- Migration 090: pam_entries.renderer (clientless renderer selection).
+ALTER TABLE pam_entries ADD COLUMN IF NOT EXISTS renderer VARCHAR(16) NOT NULL DEFAULT 'guacamole';
+UPDATE pam_entries SET renderer = 'guacamole' WHERE renderer IS NULL OR renderer = '';
 DO
 $$
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'quick_links' AND policyname = 'pol_quick_links_org_scope') THEN
-        CREATE POLICY pol_quick_links_org_scope ON quick_links
-            USING ((current_setting('app.bypass_rls', true) = 'on')
-                   OR (org_id = (NULLIF(current_setting('app.org_id', true), ''))::uuid))
-            WITH CHECK ((current_setting('app.bypass_rls', true) = 'on')
-                   OR (org_id = (NULLIF(current_setting('app.org_id', true), ''))::uuid));
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'quick_links_type_check') THEN
-        ALTER TABLE quick_links ADD CONSTRAINT quick_links_type_check CHECK (type IN ('external', 'pam'));
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'pam_entries_renderer_check'
+    ) THEN
+        ALTER TABLE pam_entries
+            ADD CONSTRAINT pam_entries_renderer_check
+            CHECK (renderer IN ('guacamole', 'wasm-ssh', 'novnc', 'support'));
     END IF;
 END
 $$;`
 
-var quickLinksDown = `-- Rollback 090.
-DROP TABLE IF EXISTS quick_links CASCADE;`
+var pamEntryRendererDown = `-- Rollback 089.
+ALTER TABLE pam_entries DROP CONSTRAINT IF EXISTS pam_entries_renderer_check;
+ALTER TABLE pam_entries DROP COLUMN IF EXISTS renderer;`

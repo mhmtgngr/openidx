@@ -370,12 +370,22 @@ type WebAuthnConfig struct {
 
 // PushMFAConfig holds Push MFA configuration
 type PushMFAConfig struct {
-	Enabled          bool   `mapstructure:"enabled"`
-	FCMServerKey     string `mapstructure:"fcm_server_key"`    // Firebase Cloud Messaging server key
+	Enabled bool `mapstructure:"enabled"`
+	// FCMServerKey is the legacy FCM server key. DEPRECATED: Google decommissioned
+	// the legacy HTTP and XMPP APIs in 2024; it is unused. Configure the HTTP v1
+	// credentials below instead.
+	FCMServerKey string `mapstructure:"fcm_server_key"`
+	// FCMCredentialsFile is the path to a Firebase service-account JSON used for
+	// FCM HTTP v1 (OAuth2 bearer token). Required for Android/web push.
+	FCMCredentialsFile string `mapstructure:"fcm_credentials_file"`
+	// FCMProjectID is the Firebase project ID for the v1 endpoint. Defaults to the
+	// project_id found in the credentials file when left empty.
+	FCMProjectID     string `mapstructure:"fcm_project_id"`
 	APNSKeyID        string `mapstructure:"apns_key_id"`       // Apple Push Notification Service key ID
 	APNSTeamID       string `mapstructure:"apns_team_id"`      // Apple team ID
-	APNSKeyPath      string `mapstructure:"apns_key_path"`     // Path to APNS .p8 key file
+	APNSKeyPath      string `mapstructure:"apns_key_path"`     // Path to APNS .p8 key file (token auth)
 	APNSBundleID     string `mapstructure:"apns_bundle_id"`    // APNS bundle identifier (e.g., "com.openidx.app")
+	APNSProduction   bool   `mapstructure:"apns_production"`   // Use the production APNS host (default: sandbox)
 	ChallengeTimeout int    `mapstructure:"challenge_timeout"` // Timeout in seconds (default: 60)
 	AutoApprove      bool   `mapstructure:"auto_approve"`      // Auto-approve for development (NEVER use in production)
 }
@@ -614,6 +624,7 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("push_mfa.enabled", true)
 	v.SetDefault("push_mfa.challenge_timeout", 60)
 	v.SetDefault("push_mfa.auto_approve", false)
+	v.SetDefault("push_mfa.apns_production", false)
 
 	// SMS MFA defaults
 	v.SetDefault("sms.enabled", false)
@@ -781,6 +792,13 @@ func bindEnvVars(v *viper.Viper) {
 		"sms.aws_secret_key":                              "AWS_SECRET_ACCESS_KEY",
 		"sms.webhook_url":                                 "SMS_WEBHOOK_URL",
 		"sms.webhook_api_key":                             "SMS_WEBHOOK_API_KEY",
+		"push_mfa.fcm_credentials_file":                   "PUSH_MFA_FCM_CREDENTIALS_FILE",
+		"push_mfa.fcm_project_id":                         "PUSH_MFA_FCM_PROJECT_ID",
+		"push_mfa.apns_key_id":                            "PUSH_MFA_APNS_KEY_ID",
+		"push_mfa.apns_team_id":                           "PUSH_MFA_APNS_TEAM_ID",
+		"push_mfa.apns_key_path":                          "PUSH_MFA_APNS_KEY_PATH",
+		"push_mfa.apns_bundle_id":                         "PUSH_MFA_APNS_BUNDLE_ID",
+		"push_mfa.apns_production":                        "PUSH_MFA_APNS_PRODUCTION",
 		// Turkish SMS providers
 		"sms.netgsm_usercode":          "NETGSM_USERCODE",
 		"sms.netgsm_password":          "NETGSM_PASSWORD",
