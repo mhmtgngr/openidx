@@ -25,7 +25,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"os"
 	"strconv"
@@ -650,75 +649,16 @@ func (h *RemoteSupportHandler) HandleAdminWS(c *gin.Context) {
 		h.logger.Warn("HandleAdminWS: upgrade failed", zap.Error(err))
 		return
 	}
-	// Consent gate (attended support): if the session requires device consent and
-	// it hasn't been granted yet, do NOT 403 the handshake — that made the browser
-	// WS fail and reconnect in a tight loop, exhausting its retry budget before
-	// the user could click Allow (~5-8s later), so the viewer gave up right when
-	// consent landed. Instead, hold the (already-upgraded) WS open and wait for
-	// consent, then proceed to stream. Fail-closed on denial or timeout.
-	if err := h.waitForConsent(c.Request.Context(), conn, id); err != nil {
-		_ = conn.Close()
-		return
-	}
+	// Consent handling: the DEVICE self-gates — its agent only starts the relay
+	// peer (and thus only streams / applies input) AFTER it sends a consent grant.
+	// So the admin can join the broker immediately and simply receives no frames
+	// until the device consents; the viewer shows "connecting" until then. We do
+	// NOT block here waiting for consent: an earlier version 403'd the handshake
+	// (browser reconnect-stormed and gave up before the user clicked Allow), and a
+	// blocking wait without a reader let APISIX drop the idle socket after a few
+	// seconds. Joining the broker now, with runPeer actively reading, is stable
+	// and starts streaming the instant the device grants.
 	h.runPeer(c.Request.Context(), id, conn, peerAdmin)
-}
-
-// waitForConsent blocks until the session's device consent is granted, returning
-// nil to proceed. Returns an error if consent is not required-but-pending (nil
-// immediately), denied, the session ends, or the wait times out. Keeps the WS
-// alive with periodic pings so proxies don't drop it while the user decides.
-func (h *RemoteSupportHandler) waitForConsent(ctx context.Context, conn *websocket.Conn, sessionID string) error {
-	readStatus := func() (required bool, status string, ok bool) {
-		if h.db == nil || h.db.Pool == nil {
-			return false, "granted", true
-		}
-		var req bool
-		var st string
-		if err := h.db.Pool.QueryRow(ctx,
-			`SELECT consent_required, consent_status, status FROM remote_support_sessions WHERE id=$1`,
-			sessionID).Scan(&req, &st, new(string)); err != nil {
-			return false, "", false
-		}
-		return req, st, true
-	}
-	required, status, ok := readStatus()
-	if !ok {
-		return fmt.Errorf("session gone")
-	}
-	if !required || status == "granted" {
-		return nil // no gate, proceed immediately
-	}
-	if status == "denied" {
-		return fmt.Errorf("consent denied")
-	}
-	// Poll for up to 30s, keeping the WS warm with pings.
-	deadline := time.Now().Add(30 * time.Second)
-	tick := time.NewTicker(500 * time.Millisecond)
-	defer tick.Stop()
-	ping := time.NewTicker(15 * time.Second)
-	defer ping.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ping.C:
-			_ = conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(5*time.Second))
-		case <-tick.C:
-			if time.Now().After(deadline) {
-				return fmt.Errorf("consent timeout")
-			}
-			_, status, ok := readStatus()
-			if !ok {
-				return fmt.Errorf("session gone")
-			}
-			switch status {
-			case "granted":
-				return nil
-			case "denied":
-				return fmt.Errorf("consent denied")
-			}
-		}
-	}
 }
 
 // HandleAgentWS handles the agent (device) side of signaling. The agent
