@@ -5,12 +5,10 @@
 
 ## En son ne yapıyorduk?
 
-**PR #512'yi (remote-support over OpenZiti) main'e merge ediyoruz.**
-Tüm remote-support/relay/Ziti çalışması `feat/rekey-tool` branch'inde (126 commit) ve **canlıda çalışıyor** ama main'de değildi. Bu oturumda:
+**PR #512 (remote-support over OpenZiti) MAIN'E MERGE EDİLDİ** ✅ (`427592d`).
+Tüm remote-support/relay/Ziti çalışması (126 commit, `feat/rekey-tool`) artık main'de ve canlıda çalışıyor. Merge sonrası CI green: Go/Frontend/Docker/Windows/CodeQL/Trivy/Helm/Terraform hepsi success. `feat/rekey-tool` branch silindi.
 
-1. **Conflict'ler çözüldü + merge commit yapıldı** (`4d5ec79`), branch push edildi.
-2. **#512 artık MERGEABLE** — CI çalışıyor (BLOCKED = sadece CI bekliyor).
-3. **CI geçince #512'yi squash-merge et.** (`gh pr merge 512 --repo mhmtgngr/openidx --squash`)
+Merge sırasında düzeltilen CI sorunları (referans): eksik `@xterm/xterm`+`@xterm/addon-fit` dep'i eklendi (tsc TS2307); relay-renderer lint (cw/ch); orgscope false-positive'leri `//orgscope:ignore` ile susturuldu (ziti_identities); `compose_prod_test.go` sabit-pencere kırılganlığı `serviceBlock()` helper'ıyla düzeltildi; 3 dosya gofmt + kullanılmayan `oauth.withDBTimeout` silindi.
 
 ### Merge sırasında çözülen conflict'ler (referans için)
 - `internal/access/ziti.go` → **ours** (feat/rekey-tool; remote-support Ziti + Ziti-fabric içeriyor)
@@ -47,7 +45,7 @@ Analiz §7.2 öncelik sırası (yüksek kaldıraç):
 3. **Token Exchange (RFC 8693) + DCR (RFC 7591)** — agent-identity, 2026 RFP'leri.
 4. **EDR/MDM posture ingestion** (CrowdStrike ZTA/Intune/Jamf).
 
-**Önerilen sonraki adım:** #512 merge olduktan sonra **Outbound SCIM client**'a başla (en yüksek kaldıraç).
+**Önerilen sonraki adım:** #512 merge oldu → **Outbound SCIM client**'a başla (en yüksek kaldıraç).
 
 ## Faydalı komutlar / ortam
 
@@ -62,7 +60,7 @@ Analiz §7.2 öncelik sırası (yüksek kaldıraç):
 - `gh` CLI authed as `mhmtgngr`
 
 ## Açık PR'lar
-- **#512** remote-support over Ziti (MERGEABLE, CI çalışıyor → merge et)
+- ~~#512 remote-support over Ziti~~ **MERGED** (`427592d`)
 - **#514** dep upgrades (React 19 hariç; conflict'li, ayrı iş)
 - #504/#506 React 19 dependabot (test tooling bloke — happy-dom+Radix focus-scope; bekletiliyor)
 - #75, #57 eski/bilgilendirme PR'ları
