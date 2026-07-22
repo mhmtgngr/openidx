@@ -26,7 +26,82 @@
 
 ## 1. Executive summary
 
-<!-- FILLED AFTER MARKET SECTIONS -->
+**How ready is the project?** Materially more ready than eleven days ago.
+The July 10 audit's central risk — the "hollow layer" of advertised-but-broken
+features — is mostly gone: fourteen P0 rows are verified closed in code
+(step-up bypass, MFA-factor bypass, inert API keys, tenant IDOR/enumeration,
+fail-open SoD, non-enforcing certification revokes, unscoped campaigns, SCIM
+filter, key rotation, dead-engine purge), and the platform gained a signed
+Windows client, a mobile app, a kill switch spanning token→session→circuit,
+RDM-parity PAM with overlay-dark targets, and an executed ops-hardening
+sprint (backups+tested restore, observability/SLOs, KEK rotation, single
+edge, merge-blocking RLS linter). Verdict: **MVP-to-early-GA — ready for
+design partners and paid pilots now**; unqualified GA is blocked by six
+Tier-1 landmines (push-MFA delivery on a dead FCM endpoint, unsent
+magic-link email, hand-rolled SAML crypto, missing consent screen, a mock
+session helper in-tree, stub voice MFA) that are days-to-weeks of work, plus
+commercialization scaffolding that is calendar-bound, not code-bound (§2, §7).
+
+**What is the product thesis over Ziti?** Every incumbent is assembling
+"identity to network packet" by M&A ($25B PANW×CyberArk closed Feb 2026;
+Okta×Axiom; Delinea×StrongDM) — OpenIDX already *is* that, in one codebase
+over one Postgres. OpenZiti is the substrate that makes each promise
+physical: deprovision severs circuits in ≤30 s, privileged targets have no
+inbound port, the kill switch reaches the packet. The build order (§3.3):
+first make the network pillar auditable and tenant-clean (fabric-event
+ingestion, per-org overlay scoping, mid-session posture revocation,
+metering), then wire governance to the network (JIT network grants,
+certification-revoke → circuit severance), then modern-PAM on the fabric
+(`openidx connect`, secretless injection), then the agent frontier
+(MCP gateway, SSF/CAEP). The OSS OpenZiti management plane remains an
+unclaimed strategic prize: upstream v2.0 just shipped GA controller HA and
+delegation primitives, the official console is vestigial (37 GitHub stars),
+NetFoundry is quote-only and frames OSS as non-production — and Headscale
+(42k stars) proves open control planes win mindshare (§6.1).
+
+**How does governance affect IAM, Ziti, PAM?** Governance is the decision
+layer; the other three are enforcement planes sharing one database — so a
+decision propagates as writes and ≤30 s reconciles, not connector tickets.
+Approvals/SoD/JIT/certifications already enforce into IAM (grants, session
+kills) and PAM (checkout approval, JIT leases, live-session termination);
+lifecycle and the kill switch already enforce into Ziti at identity level.
+Two wires (JIT network grants, revoke→policy-detach) complete the sentence
+that closes deals: *"a revoke decision deletes the grant, kills the session,
+terminates the privileged connection, and severs the network circuit in
+under 30 seconds — one hash-chained audit trail"* (§4).
+
+**How do we sell it?** Community-led, design-partner-anchored, sovereignty-
+first (§8): fix time-to-first-value, launch loudly (Show HN / r/selfhosted —
+the Infisical/Authentik funnel), and recruit 5–10 design partners where
+regulation forces self-hosting — Türkiye first (BDDK bars SaaS IdPs from
+core banking; yerli malı = 15% public-tender advantage; the real rival is
+free-Keycloak-plus-SI, so sell the *certified, supported, four-pillar
+suite*), then EU NIS2/DORA mid-market (DORA's RTS is effectively a PAM
+mandate; no sovereign vendor offers all four pillars), then MSPs
+(white-label multi-tenant is unserved in OSS ZTNA) and OSS-first
+engineering orgs (Auth0-renewal and Teleport-license refugees). Keep the
+core Apache-2.0 forever; monetize new buyer-tier features only
+(compliance packs, premium connectors, MSP orchestration/metering,
+FIPS/air-gap builds, SLAs) — the 2023–26 license wars prove backlash tracks
+retroactive taking, and compliance-grade builds are the best-documented
+first-dollar trigger (Chainguard: $5M→$40M ARR). Price Enterprise at
+$4–6/user/mo (floor ~$6–8K/yr) against a stacked incumbent bill of
+$33–65/user/mo — the README's "70–80% savings" is now substantiated by
+third-party pricing data. Trust calendar: pentest now, **CRA
+vulnerability-reporting readiness by 2026-09-11** (identity/PAM software is
+CRA "Important Class I" by name), ISO 27001 in Q4, SOC 2 Type II before the
+first US mid-market deal. Honest math: 0.2–1% of self-hosted orgs convert;
+year-two target is 30–60 customers ≈ **$1–2M ARR** — the exact waterline
+where Zitadel, NetBird, and Infisical raised or reached sustainability (§8.8).
+
+**The gaps** (§7): six Tier-1 demo landmines (fix before any external eval);
+eight commercial deal-blockers (pentest/attestation, README contradiction,
+quickstart TTFV, importers, licensing clarity, benchmarks, supply-chain
+signing, i18n); and a Tier-2 capability list topped by outbound SCIM (the
+one workforce-IAM hole Okta will always exploit), HR-driven JML, fabric
+event ingestion, per-org overlay scoping, and the RFC 8693/DCR agent
+substrate. The 12-month calendar in §9 sequences all three streams to a
+Q2 2027 target of 10 customers and $250–500K ARR run-rate.
 
 ---
 
@@ -639,9 +714,12 @@ all are calendar-bound — start them **now, in parallel** with Wave A.
 | **OIDC pairwise subjects; complete SAML SLO; DB-backed feature flags** | Standards-hygiene rows | S each |
 
 **Explicitly deprioritized (do not build now):** ERP-depth SoD, PEDM,
-SWG/CASB/DLP, IoT/OT discovery, global PoPs, VC/eIDAS wallet issuance
-(watch eIDAS timelines; revisit when EUDI acceptance becomes an RFP row in
-target sectors).
+SWG/CASB/DLP, IoT/OT discovery, global PoPs. **Timed watch item:** eIDAS
+2.0 — every member state must offer an EUDI wallet by end-2026 and regulated
+relying parties (banks, telecom, health, energy) must *accept* wallet
+credentials by ~Dec 2027; plan OpenID4VP relying-party (wallet-verification)
+support for H2 2027 so sovereign-segment RFPs can be answered "roadmap,
+dated" — wallet *issuance* stays out of scope.
 
 ### 7.3 Closed since 2026-07-10
 
@@ -653,13 +731,219 @@ it superseded-in-part by this document) so the registers never contradict.
 
 ## 8. Go-to-market: the way to sell
 
-<!-- GTM SECTION — research agent 3 + synthesis -->
+Benchmarked against 15+ commercial-OSS identity/security vendors (July 2026
+research; sources by domain). The honest headline first: **plan revenue
+around dozens of $10–60K contracts, not thousands of subscriptions.**
+Org-level conversion of self-hosted OSS runs **0.2–1%** — Grafana had ~2,000
+paying of ~1M using orgs ("90% of our users will never pay us, and that's by
+design" — CEO Raj Dutt); Elastic ~1%; Confluent built $5B+ on <1% — an order
+of magnitude below cloud-freemium's 9–18%. Growth after the first sale is
+expansion-led (GitLab: 123% net retention). Zitadel had ~150 paying
+customers on $15.5M raised; Infisical reached cash-flow-positive + a $16M
+Series A on the same motion OpenIDX should run. The documented first-dollar
+triggers for self-hosted security products, in order of evidence strength:
+**(1) compliance-grade builds** (Teleport gates FIPS/FedRAMP to Enterprise;
+Ubuntu Pro sells FIPS modules; Chainguard rode compliance artifacts from $5M
+to $40M ARR in two years), **(2) audit/governance gating per the buyer-based
+open-core canon** (IC features free, manager/executive features paid —
+OCV/GitLab doctrine), **(3) managed-hosting ops relief** (Sentry: 70%
+self-serve SaaS; Plausible/PostHog: 100% cloud revenue).
+
+### 8.1 Who buys first (ICP, in order)
+
+| # | Segment | Why they buy | Entry wedge |
+|---|---|---|---|
+| 1 | **Türkiye regulated & public sector** (banks/fintech under BDDK, public institutions) | **BDDK requires banks' primary AND secondary systems located in Türkiye**; multi-tenant public SaaS is effectively excluded for core banking — a cloud IdP cannot be the authoritative identity layer. Same localization pattern in capital markets (SPK), payments (TCMB), telecom (BTK), and public sector (Circular 2019/12: critical data + email in-country). KVKK's 2024 SCC regime (Board-approved clauses, 5-business-day notification) taxes every US-SaaS tenant. **Domestic software gets a mandatory 15% price advantage in public tenders** (yerli malı) | Self-hosted unified IAM+PAM with Turkish support + KVKK/BDDK compliance pack. Local PAM incumbent Kron (300+ customers, FY2024 revenue −29.6% amid subscription transition, ~$10–15M scale) is single-pillar — beatable on breadth. **The real competitor is "free Keycloak + local SI"** (Akbank runs Keycloak; local Keycloak consultancies exist) — so the pitch is *supported, certified, CRA/DORA-mapped four-pillar suite*, never merely "open source" |
+| 2 | **EU sovereignty mid-market (100–2,000 employees)**, DACH/Nordics/Benelux first | NIS2 audits from 2026-06-30 (Art 21(2)(i)/(j): access control + "MFA or continuous authentication"; fines to €10M/2%; personal liability). **DORA's RTS (Reg. 2024/1774, Arts 20–21) is effectively a PAM mandate**: unique identities, least privilege, privileged access on need-to-use basis, strong auth for privileged/remote access, access reviews every 6 months for critical functions. Microsoft's CLOUD-Act Senate testimony; EuroStack (~€300B framing); ICC/Microsoft incident; Danish/Schleswig-Holstein migrations; Gartner: EU sovereign-cloud spend +83% in 2026 | "Sovereign identity fabric": Bare.ID ("100% German supply chain") and Univention/openDesk prove buyers pay for the label — but they are Keycloak wrappers, and Evolveum midPoint is IGA-only; **none offers IAM+IGA+PAM+ZTNA as one suite** |
+| 3 | **MSPs / MSSPs** | 94% of SMBs use an MSP; MSP zero-trust demand +150% since 2021; **no OSS vendor offers a self-hosted white-label multi-tenant ZTNA+IAM control plane** (NetBird is closest, no IGA/PAM; Tailscale has no MSP portal at all) | White-label multi-tenant console (RLS multi-tenancy is already built; per-org overlay = Wave A2) + per-active-user pricing, no minimums — the Duo/NetBird playbook |
+| 4 | **OSS-first engineering orgs** (50–500 eng) | Auth0 3–4× renewal refugees; Teleport CE now restricted to <100 employees/<$10M; HashiCorp-BUSL distrust; VPN CVE fatigue | Keycloak/Auth0 importer + TCO calculator + `openidx connect` (Wave C1) for the Teleport-shaped need |
+
+**Not the ICP (do not chase in year one):** Fortune-500 IGA RFPs (connector
+count knockout), all-in M365 E5/E7 shops (marginal Entra cost ≈ $0), SSE
+buyers wanting inline inspection, and anyone requiring a hosted multi-region
+SaaS with 99.99% SLAs.
+
+### 8.2 The motion: community-led, design-partner-anchored
+
+1. **Fix time-to-first-value, then launch loudly.** The funnel is
+   stars → Discord → production self-hosters → paying accounts. Infisical's
+   open-sourcing + Reddit/Show-HN launch made it GitHub's fastest-growing
+   repo of the day and carried it to 25k+ stars and enterprise logos;
+   Authentik states most paying customers *already ran it* at home or as
+   shadow IT. Prerequisites: the D3 quickstart (15-minute working login +
+   published dark app), honest README (D2), and Tier-1 landmine fixes —
+   *then* Show HN / r/selfhosted / r/opensource.
+2. **Recruit 5–10 design partners** (free Enterprise features + roadmap
+   influence, in exchange for logo/reference/case study): 2–3 Türkiye
+   regulated, 2–3 EU mid-market, 1–2 MSPs, 1–2 OSS-first eng orgs.
+   Sales-assisted POCs convert ~50% (ICONIQ 2026) — every POC gets
+   white-glove help.
+3. **Sell the seams, not the checklist.** The demo script is §6.3's five
+   proof points, ending with the revoke-to-packet moment (§4.4). Against
+   point products, always widen the frame to the stacked bill (§5.3).
+
+### 8.3 Licensing and the open-core boundary
+
+The 2023–2026 record is unambiguous: **backlash tracks *retroactive taking*,
+not closedness.** Ranked by severity: silently removing shipped features
+(MinIO gutting its community console → forks, project written off) > 
+relicensing a hyperscaler-dependency core (HashiCorp→OpenTofu;
+Redis→Valkey, then capitulation back to AGPL) > company-size walls on free
+binaries (Teleport 16's <100-employee/<$10M cap — churn and resentment, but
+no fork because source stayed AGPL-compilable) > permissive→copyleft with
+everything still free (Zitadel, announced early: grumbling, no fork) >
+**a proprietary layer drawn correctly on day one** (Tailscale/Headscale,
+Pomerium Zero, NetBird's AGPL control plane + paid enterprise glue): zero
+backlash, because nothing was ever taken away. Also: Tailscale *reversed*
+its SSO paywall ("security isn't a luxury") — an identity vendor paywalling
+the SSO protocol itself lands on sso.tax and is reputationally untenable,
+because SSO *is* the product. The defensible line (per the sso.tax debate)
+is charging for *governance around* identity, never the protocols.
+
+**The line for OpenIDX:**
+- **Apache-2.0 forever, never retroactively narrowed:** all protocols
+  (OIDC/SAML/SCIM/MFA/passkeys), the IdP, base governance (requests,
+  approvals, SoD, campaigns), PAM core (vault, rotation, brokered sessions,
+  recording), Ziti orchestration + BrowZer, multi-tenancy + RLS, audit
+  hash-chain, agents. This *is* the moat and the funnel.
+- **Commercial (source-available `ee/`, Infisical/Authentik pattern), new
+  features only:** compliance packs (KVKK/BDDK/NIS2/DORA report templates +
+  evidence automation), premium connectors (HR sources, EDR/MDM, ITSM),
+  white-label/MSP orchestration + usage metering/chargeback, advanced
+  retention/legal-hold policies, FIPS/air-gap build channel, and the SLA
+  ladder itself.
+- **Fallback if protection is ever needed:** the Zitadel route (AGPL core,
+  Apache SDKs, announced early) — never BUSL/SSPL.
+- **CRA note:** monetizing makes OpenIDX a CRA "manufacturer" (the light
+  open-source-steward regime won't apply), and identity/PAM software sits in
+  **Annex III Class I "important products"** — see §8.6.
+
+### 8.4 Packaging and pricing
+
+Anchors: Authentik Enterprise $5/user/mo (+$0.02 external, Plus from
+$20K/yr); NetBird $6/$12; Pomerium $7; Tailscale $8/$18; Infisical Pro
+$18/identity; Phase Two Keycloak hosting $149→$2,499/mo; Keycloak
+enterprise-support bundles ~$42K–90K/yr; ceiling: Entra Suite $12/user/mo
+list, stacked incumbents $33–65/user/mo (§5.3).
+
+| Edition | Price | Contains |
+|---|---|---|
+| **Community** | Free, self-hosted | Everything protocol + all four pillars' core (§8.3) |
+| **Enterprise Self-Hosted** | **$4–6 /internal user/mo** (annual; floor ~$6–8K/yr) | `ee/` features, ticket support, security-advisory feed |
+| **Enterprise Plus / Regulated** | **from $25–40K/yr** | SLA ladder (to 24×7), air-gap/FIPS-track builds, sovereign compliance packs, named engineer, escrow |
+| **Managed Dedicated** | Enterprise price + hosting | Single-tenant instance operated in the customer's region/cloud — sovereignty as a service (the "your instance, your soil" offer; *note: the platform is multi-tenant-capable — dedicated is a positioning choice, not an architectural constraint*) |
+| **MSP / White-label** | per-active-user, ~20–30% partner margin, no minimums | Multi-tenant console, white-label branding (shipped), per-tenant metering (Wave A4), NFR licenses, monthly month-end billing (the Duo mechanic) |
+
+**The TCO one-pager:** 500-user company — OpenIDX Enterprise ≈ $15–30K/yr
++ infrastructure vs $200–400K+ stacked list (§5.3). The long-standing
+"70–80% savings" README claim is now *substantiated by third-party pricing
+data* — publish the math.
+
+### 8.5 Channels and procurement mechanics
+
+- **AWS Marketplace private offers** — fees now 3% (<$1M) / 2% / 1.5%, and
+  buyers burn committed cloud spend (EDP/MACC): the cheapest procurement
+  shortcut available to a two-person vendor. List early, even self-hosted
+  (BYOL + paid support listing).
+- **Türkiye:** yerli malı certification (15% tender advantage), 2–3 local
+  SI/MSSP partnerships, KVKK/BDDK compliance-pack co-marketing.
+- **EU:** partner with EU hosting providers (the elest.io/Univention
+  pattern), openDesk-adjacent public-sector channels, NIS2/DORA content.
+- **MSP program:** Registered/Silver/Gold tiers, PSA integrations
+  (ConnectWise/Halo) on the roadmap, portal after Wave A2.
+
+### 8.6 Trust artifacts and the compliance calendar
+
+| When | Artifact | Cost (benchmarked) |
+|---|---|---|
+| Now (after Tier-1 fixes) | **Product pentest** + published summary | $8–15K |
+| Now | SBOM + cosign-signed images + SECURITY-SUPPLY-CHAIN.md (D7) | eng time |
+| **By 2026-09-11** | **CRA vulnerability-reporting readiness** — coordinated disclosure policy, 24-h early warning to ENISA for actively exploited vulns, 72-h notification, 14-day report. *Seven weeks away.* CRA Annex III **Class I item (1) verbatim covers "identity management systems and privileged access management software"**; monetizing (paid support/SLA/hosting) makes OpenIDX a full "manufacturer" — the light open-source-steward regime will not apply. Full CE obligations 2027-12-11; self-assessment allowed only if harmonised standards are applied in full (first CEN/CENELEC deliverables expected Q3 2026 — if they slip, small vendors face notified-body queues). Early CE readiness is a *moat*: from Dec 2027 it penalizes DIY Keycloak assemblies and non-EU-focused rivals | process + docs; ~1 security-eng headcount of process + low-five-figures €/yr from 2027 |
+| Q4 2026 | **ISO 27001** (EMEA buyers weight it over SOC 2) | ~$15–25K all-in |
+| H1 2027 | **SOC 2 Type II** (Type I fast, Type II observation window opened same day) — before the first US mid-market deal | ~$30–50K year one (Vanta/Drata ~$10–25K + auditor $12–45K + pentest) |
+| ongoing | Cyber/E&O insurance | $1.5–5K/yr |
+
+Self-hosting partially relaxes buyer demands (no customer data at the
+vendor; "audit the code" is a real answer) — but SOC 2 covers the
+*build/release pipeline*, which supply-chain-aware buyers now audit anyway.
+
+### 8.7 The first ten customers (concrete sequence)
+
+1–3: Türkiye design partners — one BDDK-regulated bank/fintech (PAM +
+session recording + data-locality lead), one public institution (yerli malı
++ BrowZer clientless for contractors), one industrial (OT vendor-access
+pattern: hop mode + recorded Guacamole).
+4–6: EU mid-market via NIS2/DORA content + Keycloak-migration webinar
+(importer as the hook) — DACH/Nordics.
+7–8: MSP white-label pilots (after Wave A2) — one Turkish MSSP, one EU MSP.
+9–10: OSS-first engineering orgs via the Auth0-refugee/Teleport-restriction
+angle (importer + TCO calculator + `openidx connect` beta).
+
+**Sales assets to build (small, this quarter):** the five-proof-point demo
+script (§6.3), the TCO calculator, four battle cards (§6.2 rows), a
+reference architecture + published benchmark (D6), and a trust page
+(pentest summary, SBOM, CRA posture, compliance-pack list).
+
+### 8.8 Honest revenue math
+
+- **Year 1** (from launch): 5–10 design partners → 3–6 convert to paid →
+  **$50–150K ARR**, plus first MSP pilot revenue.
+- **Year 2:** 30–60 customers × $15–60K ACV → **$1–2M ARR** — precisely the
+  waterline where Zitadel (150 customers), NetBird (Series A), and Infisical
+  (cash-flow-positive) sat. Fundable *or* sustainable; the sovereign-EMEA
+  unified-platform wedge is owned by none of the fifteen comparables.
+- The bus-factor objection (§10) is answered with runbooks, escrow, and the
+  Apache-2.0 core itself — "you can't be locked in" is the closing argument.
 
 ---
 
 ## 9. 12-month commercialization roadmap
 
-<!-- FILLED -->
+Product waves (§3.3) + deal-blockers (§7.1) + GTM (§8) on one calendar:
+
+**Q3 2026 (now → Sep)** — *"Make it evaluable."*
+- Product: Tier-1 landmine fixes (push FCM v1/APNS, magic-link send, SAML
+  `goxmldsig`, consent, delete mock helper, voice-MFA decision); Wave A1
+  (fabric event ingestion) started; SIEM forwarder; Ziti v2.0/Raft upgrade
+  plan (v2 routers need v2 controllers).
+- Commercial: hygiene PR (D2 — README rewrite: *multi-tenant, RLS-enforced*
+  as the headline); quickstart + 10-min video (D3); pentest commissioned
+  (D1); SBOM/cosign (D7); **CRA disclosure process by Sep 11**; licensing +
+  open-core boundary published (D5); TCO calculator + battle cards.
+- Milestone: **Show HN / r/selfhosted launch** once TTFV < 15 min. First 2
+  design partners signed (Türkiye).
+
+**Q4 2026 (Oct → Dec)** — *"Make it governable end-to-end."*
+- Product: Wave A2 (per-org overlay scoping) + A3 (mid-session posture
+  revocation); outbound SCIM client build begins (the Tier-2 #1);
+  Keycloak importer; detective SoD sweep; break-glass + dual-control.
+- Commercial: ISO 27001 program start; design partners 3–6; first `ee/`
+  features (compliance packs, retention/legal-hold policies); AWS
+  Marketplace BYOL listing; Türkiye SI partnership #1.
+- Milestone: **first paid contract** (target: Türkiye regulated).
+
+**Q1 2027 (Jan → Mar)** — *"The differentiator demo."*
+- Product: Wave B1/B2 (JIT network grants; certification-revoke → policy
+  detach → the <30 s revoke-to-packet demo complete); outbound SCIM GA;
+  HR connector #1 (BambooHR); RFC 8693 + DCR (agent substrate); Okta/Auth0
+  importers; Wave A4 metering.
+- Commercial: SOC 2 Type I + Type II window opens; MSP portal beta with 2
+  pilot partners; published benchmarks (D6); i18n first pass (TR + DE).
+- Milestone: **5+ paying customers; MSP program soft launch.**
+
+**Q2 2027 (Apr → Jun)** — *"Own the frontier narrative."*
+- Product: Wave C1 (`openidx connect` native access) beta; EDR/MDM
+  ingestion; SSF/CAEP build (Wave D2) — announce "first OSS SSF/CAEP with
+  native network termination"; MCP gateway spike on `openziti/llm-gateway`.
+- Commercial: MSP program GA; EU partner #2; case studies ×3; SOC 2 Type II
+  report lands (if window opened in Q1).
+- Milestone: **10 customers / $250–500K ARR run-rate; decide raise-vs-bootstrap
+  from a position of proof.**
+
+**KPIs to instrument now:** time-to-first-value (target <15 min); GitHub
+stars + Discord members (funnel proxy); *production deployments* (opt-in
+telemetry ping — the number that predicts revenue); design partners signed;
+POC→paid ≥50%; ARR; mean support first-response time.
 
 ---
 

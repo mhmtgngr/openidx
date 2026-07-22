@@ -26,6 +26,15 @@
 > **Effort key.** S ≈ ≤1 wk · M ≈ 1–3 wk · L ≈ 1–2 mo · XL ≈ quarter+.
 >
 > Last refreshed: 2026-07-10.
+>
+> **⚠️ Partially superseded (2026-07-21).** Fourteen of this register's P0
+> rows are now verified closed in code, and the commercial prioritization has
+> moved on. See
+> [`MARKET_REANALYSIS_AND_GTM_2026-07.md`](./MARKET_REANALYSIS_AND_GTM_2026-07.md)
+> for the re-scored readiness assessment, the verified-closed list, the
+> re-prioritized gap register (deal-blockers vs product gaps), the Ziti-first
+> build order, and the go-to-market plan. This file remains the exhaustive
+> per-pillar backlog reference.
 
 ---
 
