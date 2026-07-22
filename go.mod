@@ -11,7 +11,7 @@ require (
 	github.com/alicebob/miniredis/v2 v2.38.0
 	github.com/aws/aws-sdk-go-v2 v1.42.1
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.27
-	github.com/aws/aws-sdk-go-v2/service/iam v1.55.0
+	github.com/aws/aws-sdk-go-v2/service/iam v1.55.1
 	github.com/aws/aws-sdk-go-v2/service/sts v1.44.0
 	github.com/briandowns/spinner v1.23.2
 	github.com/elastic/go-elasticsearch/v8 v8.19.1
