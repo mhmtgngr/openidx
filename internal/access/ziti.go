@@ -1994,9 +1994,9 @@ func (zm *ZitiManager) GetAuditEvents(ctx context.Context, since *time.Time) ([]
 			Identity:  s.IdentityName,
 			Service:   s.ServiceName,
 			Details: map[string]interface{}{
-				"session_id":  s.ID,
+				"session_id":   s.ID,
 				"session_type": s.Type,
-				"service_id":  s.ServiceID,
+				"service_id":   s.ServiceID,
 			},
 		})
 	}

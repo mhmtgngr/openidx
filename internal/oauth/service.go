@@ -193,11 +193,6 @@ func (s *Service) AuthorizeHandler() *AuthorizeHandler {
 	return s.authorizeHandler
 }
 
-// withDBTimeout returns a context with timeout for database operations
-func (s *Service) withDBTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(ctx, 5*time.Second)
-}
-
 // NewService creates a new OAuth service
 func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *config.Config, logger *zap.Logger, idSvc *identity.Service) (*Service, error) {
 	// Try to load RSA key from database, generate if not found
