@@ -60,6 +60,7 @@ interface StartSessionResponse {
   agent_ws: string
   ice_servers: unknown
   recording_enabled: boolean
+  transport?: 'webrtc' | 'relay'
 }
 
 export function RemoteSupportPage() {
@@ -275,6 +276,7 @@ export function RemoteSupportPage() {
                 admin_user_id: '',
                 status: (resp.status as RemoteSession['status']),
                 mode: (resp.mode === 'view' ? 'view' : 'interactive'),
+                transport: resp.transport === 'relay' ? 'relay' : 'webrtc',
                 ice_servers: resp.ice_servers,
                 recording_enabled: resp.recording_enabled,
                 is_on_legal_hold: false,
