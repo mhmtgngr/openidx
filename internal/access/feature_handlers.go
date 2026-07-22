@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	apperrors "github.com/openidx/openidx/internal/common/errors"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
@@ -36,8 +37,7 @@ func (s *Service) handleGetServiceFeatures(c *gin.Context) {
 
 	status, err := s.featureManager.GetServiceStatus(c.Request.Context(), routeID)
 	if err != nil {
-		s.logger.Error("Failed to get service features", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("Failed to get service features", err), s.logger)
 		return
 	}
 

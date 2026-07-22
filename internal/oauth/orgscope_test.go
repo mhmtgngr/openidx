@@ -18,7 +18,10 @@ import (
 // background session-expiry sweep (session_worker), marked
 // //orgscope:ignore.
 func TestOAuth_requireOrgContext(t *testing.T) {
-	s := &Service{logger: zap.NewNop()}
+	// The client methods now delegate to the OAuthClientStore, which performs the
+	// org-context check. Wire a store (no DB needed to reach the orgctx guard,
+	// which runs before any query).
+	s := &Service{logger: zap.NewNop(), clients: NewPostgresOAuthClientStore(nil)}
 	ctx := context.Background()
 
 	t.Run("GetClient", func(t *testing.T) {

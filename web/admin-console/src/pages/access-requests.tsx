@@ -31,6 +31,18 @@ interface AccessRequest {
   updated_at: string
 }
 
+// Minimal shapes for the resource pickers (role / group / application).
+interface Role {
+  id: string
+  name: string
+}
+// Groups can come back SCIM-shaped (displayName) or flat (name).
+type RawResource = { id?: unknown; name?: unknown; displayName?: unknown }
+interface AppResource {
+  id: string
+  name: string
+}
+
 const statusBadge = (status: string) => {
   const map: Record<string, string> = {
     pending: 'bg-yellow-100 text-yellow-800',
@@ -100,6 +112,50 @@ export function AccessRequestsPage() {
   })
   const vaultSecrets: VaultSecretMeta[] = vaultSecretsData?.secrets || []
 
+  // Resource pickers for the non-vault types. Requesters should choose a real,
+  // existing resource rather than free-typing a name (a typo produces a request
+  // that references nothing and stores a throwaway resource_id). Each list loads
+  // only when its type is selected.
+  const { data: rolesData } = useQuery({
+    queryKey: ['ar-roles'],
+    queryFn: () => api.get<Role[]>('/api/v1/identity/roles'),
+    enabled: newReq.resource_type === 'role',
+  })
+  const { data: groupsData } = useQuery({
+    queryKey: ['ar-groups'],
+    queryFn: () => api.get<RawResource[]>('/api/v1/identity/groups'),
+    enabled: newReq.resource_type === 'group',
+  })
+  const { data: appsData } = useQuery({
+    queryKey: ['ar-apps'],
+    queryFn: () => api.getWithHeaders<AppResource[]>('/api/v1/applications'),
+    enabled: newReq.resource_type === 'application',
+  })
+
+  // Normalize each type's list to { id, name } picker options. Guard against
+  // non-array payloads (some list endpoints wrap in {data:[]} / {items:[]}).
+  const asArray = <T,>(v: unknown): T[] =>
+    Array.isArray(v)
+      ? (v as T[])
+      : Array.isArray((v as { data?: unknown })?.data)
+        ? ((v as { data: T[] }).data)
+        : []
+  const resourceOptions: { id: string; name: string }[] =
+    newReq.resource_type === 'role'
+      ? asArray<Role>(rolesData).map(r => ({ id: r.id, name: r.name }))
+      : newReq.resource_type === 'group'
+        ? asArray<RawResource>(groupsData).map(g => ({
+            id: String(g.id ?? ''),
+            name: String(g.displayName ?? g.name ?? ''),
+          }))
+        : newReq.resource_type === 'application'
+          ? asArray<AppResource>(appsData?.data).map(a => ({ id: a.id, name: a.name }))
+          : []
+  const isPickerType =
+    newReq.resource_type === 'role' ||
+    newReq.resource_type === 'group' ||
+    newReq.resource_type === 'application'
+
   const createMutation = useMutation({
     mutationFn: (data: typeof newReq) => {
       if (data.resource_type === 'vault_credential') {
@@ -113,7 +169,16 @@ export function AccessRequestsPage() {
         }
         return api.post('/api/v1/governance/requests', payload)
       }
-      const payload = { ...data, duration: data.duration === 'permanent' ? '' : data.duration }
+      // role / group / application: send the picked resource_id alongside the
+      // name so the request references a real resource (not a throwaway UUID).
+      const payload = {
+        resource_type: data.resource_type,
+        resource_id: data.secretId || undefined,
+        resource_name: data.resource_name,
+        justification: data.justification,
+        priority: data.priority,
+        duration: data.duration === 'permanent' ? '' : data.duration,
+      }
       return api.post('/api/v1/governance/requests', payload)
     },
     onSuccess: () => {
@@ -413,9 +478,26 @@ export function AccessRequestsPage() {
                     ))}
                   </SelectContent>
                 </Select>
+              ) : isPickerType && resourceOptions.length > 0 ? (
+                <Select value={newReq.secretId} onValueChange={v => {
+                  const res = resourceOptions.find(r => r.id === v)
+                  setNewReq(p => ({ ...p, secretId: v, resource_name: res?.name || '' }))
+                }}>
+                  <SelectTrigger aria-label="Resource Name">
+                    <SelectValue placeholder={`Select a ${newReq.resource_type}`} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {resourceOptions.map(r => (
+                      <SelectItem key={r.id} value={r.id}>{r.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               ) : (
-                <Input placeholder="Enter resource name" value={newReq.resource_name}
-                  onChange={e => setNewReq(p => ({ ...p, resource_name: e.target.value }))} />
+                <Input
+                  placeholder={newReq.resource_type ? 'Enter resource name' : 'Select a resource type first'}
+                  disabled={!newReq.resource_type}
+                  value={newReq.resource_name}
+                  onChange={e => setNewReq(p => ({ ...p, resource_name: e.target.value, secretId: '' }))} />
               )}
             </div>
             <div>

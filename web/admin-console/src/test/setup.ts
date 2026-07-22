@@ -64,7 +64,7 @@ Object.defineProperty(window, 'crypto', {
   },
 })
 
-// Mock hasPointerCapture for Radix UI components in happy-dom
+// Mock hasPointerCapture for Radix UI components (jsdom lacks pointer-capture APIs)
 if (!HTMLElement.prototype.hasPointerCapture) {
   HTMLElement.prototype.hasPointerCapture = vi.fn(() => false)
 }
@@ -75,9 +75,17 @@ if (!HTMLElement.prototype.releasePointerCapture) {
   HTMLElement.prototype.releasePointerCapture = vi.fn()
 }
 
-// Mock getAnimations for happy-dom
+// Mock getAnimations for Radix UI (jsdom lacks the Web Animations API)
 if (!Element.prototype.getAnimations) {
   Element.prototype.getAnimations = vi.fn(() => [])
+}
+
+// Mock scrollIntoView for Radix UI Select. jsdom (unlike happy-dom) does not
+// implement Element.prototype.scrollIntoView, and @radix-ui/react-select calls
+// it when the listbox mounts, which otherwise throws an unhandled rejection
+// ("candidate?.scrollIntoView is not a function") and fails Select-based tests.
+if (!Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = vi.fn()
 }
 
 // Mock pointer events for Radix UI

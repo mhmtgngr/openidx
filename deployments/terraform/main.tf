@@ -123,6 +123,10 @@ module "rds" {
   # dev to save cost. Mirrors the instance_class / NAT-gateway env conditionals.
   multi_az = var.environment == "prod"
 
+  # One read replica in prod for the app's DATABASE_READ_URL (read-mostly,
+  # lag-tolerant queries via PostgresDB.Reader) + a warm standby. None in dev.
+  read_replica_count = var.environment == "prod" ? 1 : 0
+
   vpc_id          = module.vpc.vpc_id
   subnet_ids      = module.vpc.private_subnets
   security_groups = [module.eks.cluster_security_group_id]
@@ -155,6 +159,11 @@ output "cluster_name" {
 output "rds_endpoint" {
   description = "RDS endpoint"
   value       = module.rds.endpoint
+}
+
+output "rds_reader_endpoints" {
+  description = "RDS read-replica endpoints (empty in dev). Build DATABASE_READ_URL from one of these to enable the app read pool."
+  value       = module.rds.reader_endpoints
 }
 
 output "redis_endpoint" {

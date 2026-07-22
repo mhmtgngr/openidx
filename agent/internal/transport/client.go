@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"runtime"
@@ -18,6 +19,10 @@ type EnrollResponse struct {
 	AuthToken string `json:"auth_token"`
 	Status    string `json:"status"`
 	ZitiJWT   string `json:"ziti_jwt,omitempty"`
+	// ZitiService is the Ziti overlay service fronting the base agent API. When
+	// set (alongside ZitiJWT), the agent routes config/report/consent over the
+	// overlay by dialing this service instead of the public HTTPS endpoint.
+	ZitiService string `json:"ziti_service,omitempty"`
 }
 
 // Client is an HTTP client for communicating with the OpenIDX access API.
@@ -47,11 +52,12 @@ func (c *Client) Enroll(token string) (*EnrollResponse, error) {
 
 	hostname, _ := os.Hostname()
 	body, _ := json.Marshal(map[string]string{
-		"token":    token,
-		"hostname": hostname,
-		"os":       runtime.GOOS,
-		"arch":     runtime.GOARCH,
-		"platform": runtime.GOOS + "/" + runtime.GOARCH,
+		"token":              token,
+		"hostname":           hostname,
+		"os":                 runtime.GOOS,
+		"arch":               runtime.GOARCH,
+		"platform":           runtime.GOOS + "/" + runtime.GOARCH,
+		"device_fingerprint": deviceFingerprint(hostname),
 	})
 
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
@@ -132,4 +138,37 @@ func (c *Client) GetConfig() ([]byte, error) {
 	}
 
 	return body, nil
+}
+
+// SendConsent posts the device's remote-support consent decision
+// (POST /api/v1/access/agent/remote-support/sessions/:id/consent). decision is
+// "grant" or "deny". The endpoint authenticates the device via X-Agent-ID +
+// X-Auth-Token (the agent's own auth token), so the admin can never view or
+// control until the device grants.
+func (c *Client) SendConsent(sessionID, decision string) error {
+	url := c.baseURL + "/api/v1/access/agent/remote-support/sessions/" + sessionID + "/consent"
+	body := []byte(`{"decision":"` + decision + `"}`)
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("creating consent request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Agent-ID", c.agentID)
+	req.Header.Set("X-Auth-Token", c.authToken)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("sending consent request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("consent request failed with status %d", resp.StatusCode)
+	}
+	return nil
+}
+
+// DialServiceConn is not supported over the plain HTTPS transport; remote
+// support falls back to a public WebSocket dial when this returns an error.
+func (c *Client) DialServiceConn(serviceName string) (net.Conn, error) {
+	return nil, fmt.Errorf("ziti service dial not supported on HTTPS transport")
 }

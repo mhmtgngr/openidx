@@ -3,6 +3,17 @@
 What a mobile developer needs to take this app from "code-complete in the repo"
 to "installable + fully working (incl. OpenZiti)".
 
+> **Full API + architecture guide:**
+> [`docs/mobile-authenticator-developer-guide.md`](../docs/mobile-authenticator-developer-guide.md)
+> — the authoritative contract for login (OAuth/PKCE), MFA (TOTP + push + passkeys),
+> and app-connection (PAM/Guacamole, BrowZer, native Ziti), with verified request/
+> response examples and `file:line` backend citations. Read that first; this file is
+> the accounts/secrets/build handoff.
+>
+> **Quick start for a new developer:**
+> [`docs/mobile-developer-guide-simple.md`](../docs/mobile-developer-guide-simple.md)
+> — set up in 5 minutes, the endpoints by feature, and sample screen patterns.
+
 ## 1. What this is / current state
 React Native + Expo (SDK 57, TypeScript, expo-router) companion app. **Feature-
 complete against the live backend** and `tsc`-clean:

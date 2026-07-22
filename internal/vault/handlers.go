@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	apperrors "github.com/openidx/openidx/internal/common/errors"
 )
 
 // RegisterRoutes mounts the vault API under an already-admin-guarded group.
@@ -45,7 +46,7 @@ func (s *Service) handleCreate(c *gin.Context) {
 		OwnerID: req.OwnerID, CreatedBy: currentUserID(c),
 	})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("create", err), s.logger)
 		return
 	}
 	c.JSON(http.StatusCreated, meta) // meta carries no value
@@ -54,7 +55,7 @@ func (s *Service) handleCreate(c *gin.Context) {
 func (s *Service) handleList(c *gin.Context) {
 	out, err := s.List(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("list", err), s.logger)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"secrets": out})
@@ -67,7 +68,7 @@ func (s *Service) handleGet(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("get", err), s.logger)
 		return
 	}
 	c.JSON(http.StatusOK, d)
@@ -83,7 +84,7 @@ func (s *Service) handleNewVersion(c *gin.Context) {
 	}
 	v, err := s.NewVersion(c.Request.Context(), c.Param("id"), []byte(req.Value), currentUserID(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("new version", err), s.logger)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"version": v})
@@ -95,7 +96,7 @@ func (s *Service) handleDelete(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("delete", err), s.logger)
 		return
 	}
 	c.Status(http.StatusNoContent)
@@ -119,7 +120,7 @@ func (s *Service) handleReveal(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("reveal", err), s.logger)
 		return
 	}
 	// Returned once. Do not log the body.
@@ -140,7 +141,7 @@ func (s *Service) handleAddGrant(c *gin.Context) {
 	g.GrantedBy = currentUserID(c)
 	id, err := s.AddGrant(c.Request.Context(), g)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("add grant", err), s.logger)
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"id": id})
@@ -153,7 +154,7 @@ func (s *Service) handleListGrants(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("list grants", err), s.logger)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"grants": grants})
@@ -174,7 +175,7 @@ func (s *Service) handleCheckouts(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("checkouts", err), s.logger)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"checkouts": out})

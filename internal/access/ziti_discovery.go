@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	apperrors "github.com/openidx/openidx/internal/common/errors"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
@@ -60,8 +61,7 @@ func (s *Service) handleDiscoverZitiServices(c *gin.Context) {
 
 	result, err := s.discoverZitiServices(c.Request.Context())
 	if err != nil {
-		s.logger.Error("Failed to discover Ziti services", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("Failed to discover Ziti services", err), s.logger)
 		return
 	}
 
@@ -83,8 +83,7 @@ func (s *Service) handleImportZitiService(c *gin.Context) {
 
 	result, err := s.importZitiService(c.Request.Context(), &req)
 	if err != nil {
-		s.logger.Error("Failed to import Ziti service", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("Failed to import Ziti service", err), s.logger)
 		return
 	}
 

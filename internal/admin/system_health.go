@@ -3,6 +3,8 @@ package admin
 import (
 	"context"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -47,20 +49,30 @@ func (s *Service) handleSystemHealth(c *gin.Context) {
 		}
 	}
 
-	// Check inter-service connectivity by querying known service ports
+	// Check inter-service connectivity. Each service's base URL is taken from its
+	// *_SERVICE_URL env (the same vars the gateway uses), falling back to
+	// http://localhost:<port>. Using the service *name* as a hostname (the old
+	// behavior) only resolves under Kubernetes/Docker DNS; on a single-box deploy
+	// the services listen on 127.0.0.1:<port>, so name-based probes always read
+	// "unreachable" and made this page show a false "degraded"/"Unhealthy".
 	services := []struct {
-		name string
-		port string
+		name   string
+		envVar string
+		port   string
 	}{
-		{"identity-service", "8001"},
-		{"governance-service", "8002"},
-		{"provisioning-service", "8003"},
-		{"audit-service", "8004"},
-		{"oauth-service", "8006"},
+		{"identity-service", "IDENTITY_SERVICE_URL", "8001"},
+		{"governance-service", "GOVERNANCE_SERVICE_URL", "8002"},
+		{"provisioning-service", "PROVISIONING_SERVICE_URL", "8003"},
+		{"audit-service", "AUDIT_SERVICE_URL", "8004"},
+		{"oauth-service", "OAUTH_SERVICE_URL", "8006"},
 	}
 
 	for _, svc := range services {
-		svcHealth := s.checkServiceHealth(ctx, svc.name, svc.port)
+		base := os.Getenv(svc.envVar)
+		if base == "" {
+			base = "http://localhost:" + svc.port
+		}
+		svcHealth := s.checkServiceHealth(ctx, svc.name, base)
 		deps = append(deps, svcHealth)
 		if svcHealth.Status == "unhealthy" && overallStatus == "healthy" {
 			overallStatus = "degraded"
@@ -140,11 +152,14 @@ func (s *Service) checkRedis(ctx context.Context) HealthStatus {
 	}
 }
 
-func (s *Service) checkServiceHealth(ctx context.Context, name, port string) HealthStatus {
+func (s *Service) checkServiceHealth(ctx context.Context, name, baseURL string) HealthStatus {
 	start := time.Now()
 
 	client := &http.Client{Timeout: 3 * time.Second}
-	url := "http://" + name + ":" + port + "/health"
+	// Probe liveness: /health/live is always 200 while the process is up. We only
+	// want to know the peer is reachable here — a peer's own dependency being
+	// degraded is reported by that peer, not surfaced as "unhealthy transport".
+	url := strings.TrimRight(baseURL, "/") + "/health/live"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return HealthStatus{

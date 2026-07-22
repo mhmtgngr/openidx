@@ -15,6 +15,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	apperrors "github.com/openidx/openidx/internal/common/errors"
 	"go.uber.org/zap"
 )
 
@@ -588,7 +589,7 @@ func (s *Service) handleGenerateExport(c *gin.Context) {
 
 	export, err := s.GenerateReportExport(c.Request.Context(), orgIDStr, req.ReportType, req.Framework, req.Format, userIDStr)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("generate export", err), s.logger)
 		return
 	}
 
@@ -617,7 +618,7 @@ func (s *Service) handleListExports(c *gin.Context) {
 
 	exports, total, err := s.ListReportExports(c.Request.Context(), orgIDStr, limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("list exports", err), s.logger)
 		return
 	}
 
@@ -653,7 +654,7 @@ func (s *Service) handleListScheduledReports(c *gin.Context) {
 
 	reports, err := s.ListScheduledReports(c.Request.Context(), orgIDStr)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("list scheduled reports", err), s.logger)
 		return
 	}
 
@@ -682,7 +683,7 @@ func (s *Service) handleCreateScheduledReport(c *gin.Context) {
 	report.CreatedBy = userIDStr
 
 	if err := s.CreateScheduledReport(c.Request.Context(), &report); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("create scheduled report", err), s.logger)
 		return
 	}
 
@@ -705,7 +706,7 @@ func (s *Service) handleUpdateScheduledReport(c *gin.Context) {
 	}
 
 	if err := s.UpdateScheduledReport(c.Request.Context(), reportID, req.Name, req.Schedule, req.Format, req.Enabled); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("update scheduled report", err), s.logger)
 		return
 	}
 
@@ -716,7 +717,7 @@ func (s *Service) handleDeleteScheduledReport(c *gin.Context) {
 	reportID := c.Param("id")
 
 	if err := s.DeleteScheduledReport(c.Request.Context(), reportID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("delete scheduled report", err), s.logger)
 		return
 	}
 
@@ -724,7 +725,12 @@ func (s *Service) handleDeleteScheduledReport(c *gin.Context) {
 }
 
 // RegisterReportRoutes registers report-related routes
-func RegisterReportRoutes(router *gin.RouterGroup, svc *Service) {
+func RegisterReportRoutes(router *gin.RouterGroup, svc *Service, extraMiddleware ...gin.HandlerFunc) {
+	// These endpoints generate/download/schedule reports over the audit trail
+	// (sensitive). Apply the JWT auth middleware passed by the caller.
+	for _, mw := range extraMiddleware {
+		router.Use(mw)
+	}
 	router.POST("/reports/generate", svc.handleGenerateExport)
 	router.GET("/reports/exports", svc.handleListExports)
 	router.GET("/reports/exports/:id/download", svc.handleDownloadExport)

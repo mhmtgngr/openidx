@@ -15,6 +15,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/agent/assets"
+	"github.com/openidx/openidx/agent/internal/agent"
 	"github.com/openidx/openidx/agent/internal/authstore"
 	"github.com/openidx/openidx/agent/internal/desktoppam"
 	"github.com/openidx/openidx/agent/internal/ipc"
@@ -28,6 +29,7 @@ type app struct {
 	configDir string
 	serverURL string
 
+	mBanner   *systray.MenuItem
 	mStatus   *systray.MenuItem
 	mSignIn   *systray.MenuItem
 	mSignOut  *systray.MenuItem
@@ -36,7 +38,8 @@ type app struct {
 	mu       sync.Mutex
 	tokens   *sso.Tokens
 	connSlot []*systray.MenuItem
-	slotID   []string // slot index -> entry id
+	slotID   []string     // slot index -> entry id
+	rsAgent  *agent.Agent // remote-support agent running in this user session
 }
 
 // Run starts the tray UI and blocks until the user quits.
@@ -50,6 +53,14 @@ func (a *app) onReady() {
 	systray.SetIcon(assets.OpenIDXICO)
 	systray.SetTitle("OpenIDX")
 	systray.SetTooltip("OpenIDX")
+
+	// Remote-support banner: hidden until a session is live, then shown at the
+	// very top so the user always sees "An OpenIDX admin can see and control
+	// this device."
+	a.mBanner = systray.AddMenuItem("", "")
+	a.mBanner.Disable()
+	a.mBanner.Hide()
+	systray.AddSeparator()
 
 	a.mStatus = systray.AddMenuItem("Not signed in", "")
 	a.mStatus.Disable()
@@ -77,6 +88,43 @@ func (a *app) onReady() {
 
 	go a.loop(mQuit)
 	go a.statusTicker()
+	go a.runRemoteSupportAgent()
+}
+
+// runRemoteSupportAgent runs a lightweight agent loop IN THE USER SESSION whose
+// only job is to service remote-support sessions (screen capture + input),
+// which must happen where there is an interactive desktop. The Windows service
+// (session 0) handles posture/enrollment but has DisableRemoteSupport set, so
+// this is the single place screen-share runs. Posture double-reporting is
+// harmless (idempotent), and this keeps the user from ever having to launch the
+// agent by hand: the tray auto-starts at login and remote support "just works".
+func (a *app) runRemoteSupportAgent() {
+	// Never let a transient failure permanently stop remote-support handling —
+	// that would leave the operator with the "start a new session but it won't
+	// stream until I restart the client" symptom. Recover from panics and
+	// restart the agent loop with a short backoff if Run ever returns.
+	for {
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					a.logger.Error("tray remote-support agent panicked", zap.Any("recover", r))
+				}
+			}()
+			ag, err := agent.NewAgent(a.logger, a.configDir)
+			if err != nil {
+				a.logger.Warn("tray: could not start remote-support agent", zap.Error(err))
+				return
+			}
+			ag.RegisterBuiltinChecks()
+			a.mu.Lock()
+			a.rsAgent = ag
+			a.mu.Unlock()
+			if err := ag.Run(context.Background()); err != nil && err != context.Canceled {
+				a.logger.Warn("tray remote-support agent stopped; will restart", zap.Error(err))
+			}
+		}()
+		time.Sleep(3 * time.Second)
+	}
 }
 
 // updateStatus composes the status line from the sign-in state and the
@@ -100,8 +148,30 @@ func (a *app) updateStatus() {
 		} else {
 			devPart = "device: not enrolled"
 		}
+		a.updateBanner(st.RemoteSupportActive, st.RemoteSupportControlled)
 	}
 	a.mStatus.SetTitle(signPart + " · " + devPart)
+}
+
+// updateBanner raises or clears the remote-support notice at the top of the
+// tray menu and reflects it in the tooltip, so the person at the device always
+// knows when an admin can see/control it.
+func (a *app) updateBanner(active, controlled bool) {
+	if a.mBanner == nil {
+		return
+	}
+	if !active {
+		a.mBanner.Hide()
+		systray.SetTooltip("OpenIDX")
+		return
+	}
+	msg := "🔴 An OpenIDX admin can see this device"
+	if controlled {
+		msg = "🔴 An OpenIDX admin can see and CONTROL this device"
+	}
+	a.mBanner.SetTitle(msg)
+	a.mBanner.Show()
+	systray.SetTooltip(msg)
 }
 
 func (a *app) statusTicker() {

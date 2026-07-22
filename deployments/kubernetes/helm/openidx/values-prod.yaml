@@ -27,6 +27,15 @@ externalSecrets:
     name: "openidx-secret-store"   # <-- your ClusterSecretStore
     kind: ClusterSecretStore
   remoteKeyPrefix: "openidx/prod"
+  # Tier 1.6 read replica. Terraform provisions one RDS read replica in prod
+  # (read_replica_count = 1) and exposes rds_reader_endpoints. To activate the
+  # read pool (read-mostly, lag-tolerant queries offload to the replica; writes
+  # and security-critical reads stay on the primary — proven by `make ha-drill`):
+  #   1. store <remoteKeyPrefix>/database-read-url = the RDS reader endpoint
+  #   2. flip this to true and `helm upgrade`.
+  # Left false so the ExternalSecret does not reference a missing key on a fresh
+  # cutover. Turn on as a follow-on step (see docs/tier3b-cutover-runbook.md §1b).
+  readReplica: false
 
 # ----- Managed datastores: disable the in-cluster subcharts -----
 postgresql:
@@ -55,6 +64,13 @@ config:
 # (DATABASE_SSL_ROOT_CERT via the external secret) for the strongest posture.
 database:
   sslMode: require
+  # Fail a dial fast during an RDS Multi-AZ failover so the pool re-dials the
+  # promoted primary instead of hanging on the dead one and exhausting itself.
+  connectTimeout: "5s"
+  # Cap any single query at 30s. Generous enough for audit/governance reports
+  # while preventing a query on a degraded primary from pinning a connection
+  # indefinitely. Migrations run out-of-band and are unaffected by this chart.
+  statementTimeout: "30s"
 
 # ----- Production hardening -----
 networkPolicy:

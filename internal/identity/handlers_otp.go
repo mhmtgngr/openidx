@@ -5,6 +5,8 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+
+	apperrors "github.com/openidx/openidx/internal/common/errors"
 )
 
 // --- SMS OTP Handlers ---
@@ -173,7 +175,9 @@ func (s *Service) handleEnrollEmailOTP(c *gin.Context) {
 	if email == "" {
 		user, err := s.GetUser(c.Request.Context(), userID)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get user"})
+			// Typed renderer: logs the real cause server-side (was previously
+			// discarded) while returning a safe body. See internal/common/errors.
+			apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to get user", err), s.logger)
 			return
 		}
 		email = GetEmail(*user)
@@ -318,7 +322,7 @@ func (s *Service) handleGetMFAMethods(c *gin.Context) {
 
 	methods, err := s.GetUserMFAMethods(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get MFA methods"})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to get MFA methods", err), s.logger)
 		return
 	}
 

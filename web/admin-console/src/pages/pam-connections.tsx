@@ -24,6 +24,7 @@ import {
   api, PamEntry, PamEntryType, PamFolder, PamEntryInput, PamConnectResult, PamImportResult,
 } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
+import { TerminalSession } from '../components/remote/terminal-session'
 
 // Icon + accent per entry type, so the list reads like RDM's typed tree.
 const typeIcon = (t: string) => {
@@ -75,6 +76,10 @@ export function PamConnectionsPage() {
   const [showImport, setShowImport] = useState(false)
   const [importData, setImportData] = useState('')
   const [importResult, setImportResult] = useState<PamImportResult | null>(null)
+
+  // Clientless in-browser SSH terminal (wasm-ssh renderer). When set, a dialog
+  // hosts the xterm session for this entry instead of opening a guac tab.
+  const [terminalEntry, setTerminalEntry] = useState<PamEntry | null>(null)
 
   const [revealFor, setRevealFor] = useState<PamEntry | null>(null)
   const [revealReason, setRevealReason] = useState('')
@@ -181,6 +186,18 @@ export function PamConnectionsPage() {
     },
   })
 
+  // launch dispatches on the entry's renderer: wasm-ssh opens the in-browser
+  // terminal dialog (no guac tab); everything else uses the existing connect
+  // flow (guacamole tab / website URL). The permission + approval gate is
+  // enforced server-side for both paths.
+  const launch = (entry: PamEntry) => {
+    if (entry.renderer === 'wasm-ssh') {
+      setTerminalEntry(entry)
+      return
+    }
+    connect.mutate(entry.id)
+  }
+
   const del = useMutation({
     mutationFn: (id: string) => api.pam.deleteEntry(id),
     onSuccess: () => {
@@ -251,7 +268,7 @@ export function PamConnectionsPage() {
       port: entry.port, username: entry.username, domain: entry.domain, url: entry.url,
       secret: '', credential_entry_id: entry.credential_entry_id,
       allow_reveal: entry.allow_reveal, require_approval: entry.require_approval,
-      record_session: entry.record_session,
+      record_session: entry.record_session, renderer: entry.renderer,
     })
     setShowEntryDialog(true)
   }
@@ -361,7 +378,7 @@ export function PamConnectionsPage() {
                       </div>
                       <div className="flex items-center gap-1 shrink-0">
                         {launchable && (
-                          <Button size="sm" onClick={() => connect.mutate(entry.id)} disabled={connect.isPending}>
+                          <Button size="sm" onClick={() => launch(entry)} disabled={connect.isPending}>
                             <Play className="h-4 w-4 mr-1" /> Connect
                           </Button>
                         )}
@@ -510,6 +527,15 @@ export function PamConnectionsPage() {
                 Record session
               </label>
             </div>
+            {selectedType?.protocol === 'ssh' && (
+              <label className="flex items-center gap-2 text-sm pt-1">
+                <Checkbox
+                  checked={form.renderer === 'wasm-ssh'}
+                  onCheckedChange={(v) => setForm((f) => ({ ...f, renderer: v ? 'wasm-ssh' : 'guacamole' }))}
+                />
+                Open in browser terminal (clientless SSH, no Guacamole tab)
+              </label>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowEntryDialog(false)}>Cancel</Button>
@@ -646,6 +672,19 @@ export function PamConnectionsPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Clientless in-browser SSH terminal (wasm-ssh renderer). */}
+      <Dialog open={!!terminalEntry} onOpenChange={(o) => { if (!o) setTerminalEntry(null) }}>
+        <DialogContent className="max-w-4xl p-0 overflow-hidden">
+          {terminalEntry && (
+            <TerminalSession
+              entryId={terminalEntry.id}
+              entryName={terminalEntry.name}
+              onClose={() => setTerminalEntry(null)}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

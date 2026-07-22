@@ -7,22 +7,27 @@ import (
 )
 
 // NewTransport creates the appropriate transport based on available identity.
-// If a Ziti identity file is provided and exists on disk, a ZitiClient is
-// returned. Otherwise it falls back to a plain HTTPS Client.
+// When a Ziti identity file exists, it returns a ResilientTransport that prefers
+// the Ziti overlay but automatically falls back to plain HTTPS whenever the
+// overlay is unreachable (no edge routers, controller restart, transient network
+// loss). This keeps the agent connected through control-plane hiccups without
+// crashing or needing a re-enroll, and transparently resumes over Ziti when it
+// recovers. Without a Ziti identity it returns a plain HTTPS client.
 func NewTransport(serverURL, authToken, agentID, zitiIdentityFile, zitiServiceName string, logger *zap.Logger) Transport {
+	https := NewClient(serverURL, authToken, agentID)
 	if zitiIdentityFile != "" {
 		if _, err := os.Stat(zitiIdentityFile); err == nil {
-			client, err := NewZitiClient(zitiIdentityFile, zitiServiceName, serverURL, authToken, agentID)
+			ziti, err := NewZitiClient(zitiIdentityFile, zitiServiceName, serverURL, authToken, agentID)
 			if err != nil {
-				logger.Warn("Failed to create Ziti transport, falling back to HTTPS",
+				logger.Warn("Failed to create Ziti transport, using HTTPS only",
 					zap.Error(err))
-			} else {
-				logger.Info("Using Ziti transport",
-					zap.String("service", zitiServiceName))
-				return client
+				return https
 			}
+			logger.Info("Using resilient transport (Ziti overlay with HTTPS fallback)",
+				zap.String("service", zitiServiceName))
+			return NewResilientTransport(ziti, https, logger)
 		}
 	}
 	logger.Info("Using HTTPS transport", zap.String("server", serverURL))
-	return NewClient(serverURL, authToken, agentID)
+	return https
 }

@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/agent/internal/checks"
 	"github.com/openidx/openidx/agent/internal/plugin"
+	"github.com/openidx/openidx/agent/internal/remotesupport"
 	"github.com/openidx/openidx/agent/internal/transport"
 )
 
@@ -22,6 +24,36 @@ type Agent struct {
 	registry  *checks.Registry
 	engine    *checks.Engine
 	serverCfg *ServerConfig
+
+	// ConsentDecider decides how to answer a consent-required remote-support
+	// session. It returns "grant", "deny", or "" (defer — decide later, e.g.
+	// while a native Allow/Deny dialog is still open). The tray can install a
+	// prompt-backed decider; the default is policy-driven (see
+	// defaultConsentDecider). Called at most once per session id.
+	ConsentDecider func(rs *RemoteSupportBlock) string
+	// handledConsent tracks session ids we have already answered so a repeated
+	// config poll does not re-submit a decision.
+	handledConsent map[string]bool
+	// handledSessions tracks session ids we have already begun streaming so a
+	// repeated config poll does not launch a second peer for the same session.
+	handledSessions map[string]bool
+	// RemoteInputSink, when set, receives inbound pointer/keyboard/control
+	// events for an active remote-support session (a Windows SendInput injector
+	// installs one). Nil = view-only (no input applied).
+	RemoteInputSink remotesupport.InputSink
+	// remoteSupportActive/Controlled expose live session state for the tray
+	// banner ("An OpenIDX admin can see and control this device"). Set while a
+	// session streams; controlled follows the admin's control_state toggle.
+	remoteSupportActive     atomic.Bool
+	remoteSupportControlled atomic.Bool
+
+	// DisableRemoteSupport gates the remote-support screen-share + input path.
+	// The Windows SERVICE runs in session 0, which has no interactive desktop,
+	// so a capture there is black and input goes nowhere. The service sets this
+	// true and the TRAY (running in the user session) runs remote-support
+	// instead. Posture reporting still runs in both; only the screen-share is
+	// gated. Default false = enabled (single-process / foreground `run`).
+	DisableRemoteSupport bool
 }
 
 // NewAgent loads the persisted agent config from configDir, creates a transport
@@ -118,7 +150,67 @@ func (a *Agent) SyncConfig(ctx context.Context) error {
 
 	a.serverCfg = &cfg
 	a.logger.Info("server config synced", zap.Int("checks", len(cfg.Checks)))
+	if !a.DisableRemoteSupport {
+		a.processRemoteSupportConsent(cfg.RemoteSupport)
+	}
 	return nil
+}
+
+// defaultConsentDecider is the fallback policy when no native prompt is wired.
+// A managed, enrolled device auto-grants (the admin already has an authorized
+// session and the device is under management); a real attended prompt can be
+// installed via Agent.ConsentDecider to require an explicit Allow/Deny click.
+func defaultConsentDecider(_ *RemoteSupportBlock) string { return "grant" }
+
+// processRemoteSupportConsent answers a consent-required remote-support session
+// that is still pending. It is a no-op when there is no session, consent is not
+// required, or the decision was already sent. The admin cannot view/control
+// until the device grants (server-enforced in HandleAdminWS), so this is the
+// device's half of the attended-support handshake.
+func (a *Agent) processRemoteSupportConsent(rs *RemoteSupportBlock) {
+	if rs == nil || !rs.ConsentRequired || rs.SessionID == "" {
+		// No consent required (or no session): if a session is present and
+		// already grantable, stream it directly.
+		if rs != nil && rs.SessionID != "" && rs.WSPath != "" &&
+			(!rs.ConsentRequired || rs.ConsentStatus == "granted") {
+			a.runRemoteSupport(rs)
+		}
+		return
+	}
+	if rs.ConsentStatus == "granted" {
+		a.runRemoteSupport(rs) // already granted (e.g. reconnect) — stream
+		return
+	}
+	if rs.ConsentStatus != "pending" {
+		return // denied
+	}
+	if a.handledConsent == nil {
+		a.handledConsent = map[string]bool{}
+	}
+	if a.handledConsent[rs.SessionID] {
+		return
+	}
+	decide := a.ConsentDecider
+	if decide == nil {
+		decide = defaultConsentDecider
+	}
+	decision := decide(rs)
+	if decision != "grant" && decision != "deny" {
+		return // deferred — a native prompt is still open; try again next poll
+	}
+	if err := a.client.SendConsent(rs.SessionID, decision); err != nil {
+		a.logger.Warn("remote-support consent send failed",
+			zap.String("session_id", rs.SessionID), zap.String("decision", decision), zap.Error(err))
+		return
+	}
+	a.handledConsent[rs.SessionID] = true
+	a.logger.Info("remote-support consent sent",
+		zap.String("session_id", rs.SessionID), zap.String("decision", decision))
+	// On grant, begin streaming immediately (don't wait for the next poll).
+	if decision == "grant" {
+		rs.ConsentStatus = "granted"
+		a.runRemoteSupport(rs)
+	}
 }
 
 // reportPayload is the JSON body sent to the report endpoint.

@@ -67,6 +67,61 @@ func (p *PostgresChecker) Check(ctx context.Context) ComponentStatus {
 	}
 }
 
+// ReadReplicaChecker checks the health of the optional read-replica pool. It is
+// NON-critical by design: a replica outage must not fail readiness (traffic
+// transparently falls back to the primary via PostgresDB.Reader()), it only
+// surfaces the degradation so operators can see when read offload is lost.
+type ReadReplicaChecker struct {
+	db *database.PostgresDB
+}
+
+// NewReadReplicaChecker creates a non-critical read-replica checker.
+func NewReadReplicaChecker(db *database.PostgresDB) *ReadReplicaChecker {
+	return &ReadReplicaChecker{db: db}
+}
+
+// Name returns the checker name.
+func (r *ReadReplicaChecker) Name() string { return "database_replica" }
+
+// IsCritical is always false: the replica is an optimization + warm standby.
+func (r *ReadReplicaChecker) IsCritical() bool { return false }
+
+// Check pings the replica. When no replica is configured it reports "up" with a
+// note (nothing to fail on); a ping failure reports "down" but, being
+// non-critical, only degrades overall health rather than failing readiness.
+func (r *ReadReplicaChecker) Check(ctx context.Context) ComponentStatus {
+	if !r.db.HasReadReplica() {
+		return ComponentStatus{
+			Status:    "up",
+			Details:   "no read replica configured (reads served by primary)",
+			CheckedAt: time.Now().UTC().Format(time.RFC3339),
+		}
+	}
+	start := time.Now()
+	err := r.db.PingRead()
+	latency := time.Since(start)
+	if err != nil {
+		return ComponentStatus{
+			Status:    "down",
+			LatencyMS: float64(latency.Milliseconds()),
+			Details:   "replica unreachable; reads fall back to primary: " + err.Error(),
+			CheckedAt: time.Now().UTC().Format(time.RFC3339),
+		}
+	}
+	status := "up"
+	details := ""
+	if latency > 500*time.Millisecond {
+		status = "degraded"
+		details = "high latency"
+	}
+	return ComponentStatus{
+		Status:    status,
+		LatencyMS: float64(latency.Milliseconds()),
+		Details:   details,
+		CheckedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+}
+
 // RedisChecker checks the health of a Redis connection
 type RedisChecker struct {
 	redis    *database.RedisClient

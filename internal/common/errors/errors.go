@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 )
 
 // ErrorCode represents an application error code
@@ -350,14 +351,36 @@ type ErrorResponse struct {
 	Timestamp string                 `json:"timestamp,omitempty"`
 }
 
-// HandleError sends an error response to the client
+// HandleError sends an error response to the client.
+//
+// SECURITY: the client only ever sees the AppError's Code/Message/Details/
+// Metadata — never the wrapped internal Err (which may contain SQL fragments,
+// hostnames, or driver text). Any error that is NOT already an *AppError is
+// coerced to a generic 500 with a safe message, and the real error is preserved
+// on the AppError.Err for server-side logging via HandleErrorWithLogger.
+//
+// Prefer HandleErrorWithLogger on request paths so 5xx internals are logged with
+// request context instead of being silently swallowed.
 func HandleError(c *gin.Context, err error) {
+	handleError(c, err, nil)
+}
+
+// HandleErrorWithLogger is HandleError plus structured server-side logging of the
+// underlying error for 5xx responses. This is the recommended handler-layer
+// renderer: it gives the client a safe, typed body while preserving the real
+// cause (SQL error, timeout, etc.) in the logs for debugging.
+func HandleErrorWithLogger(c *gin.Context, err error, logger *zap.Logger) {
+	handleError(c, err, logger)
+}
+
+func handleError(c *gin.Context, err error, logger *zap.Logger) {
 	var appErr *AppError
 	var ok bool
 
 	// Check if it's an AppError
 	if appErr, ok = err.(*AppError); !ok {
-		// If not, wrap it as an internal error
+		// If not, wrap it as an internal error. The original error is kept on
+		// .Err for logging but never rendered to the client.
 		appErr = Internal("An unexpected error occurred", err)
 	}
 
@@ -365,7 +388,24 @@ func HandleError(c *gin.Context, err error) {
 	requestID, _ := c.Get("request_id")
 	reqIDStr, _ := requestID.(string)
 
-	// Build error response
+	// Log 5xx internals server-side so a coerced/ wrapped error isn't lost.
+	// 4xx are client errors and don't need error-level logs.
+	if logger != nil && appErr.StatusCode >= http.StatusInternalServerError {
+		fields := []zap.Field{
+			zap.String("error_code", string(appErr.Code)),
+			zap.Int("status", appErr.StatusCode),
+			zap.String("path", c.FullPath()),
+		}
+		if reqIDStr != "" {
+			fields = append(fields, zap.String("request_id", reqIDStr))
+		}
+		if appErr.Err != nil {
+			fields = append(fields, zap.Error(appErr.Err))
+		}
+		logger.Error("request failed", fields...)
+	}
+
+	// Build error response (client-safe fields only)
 	response := ErrorResponse{
 		Error:     appErr.Code,
 		Message:   appErr.Message,

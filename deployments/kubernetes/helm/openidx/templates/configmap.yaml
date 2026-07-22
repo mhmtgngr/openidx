@@ -22,3 +22,13 @@ data:
   # PostgreSQL TLS mode. Services with APP_ENV=production refuse to start when
   # this is 'disable' — production must set 'require' or stronger.
   DATABASE_SSL_MODE: {{ .Values.database.sslMode | default "disable" | quote }}
+  {{- if .Values.database.connectTimeout }}
+  # Bound a single dial so a DB failover fails fast and the pool re-dials the
+  # promoted primary instead of hanging (in-code default 5s when unset).
+  DB_CONNECT_TIMEOUT: {{ .Values.database.connectTimeout | quote }}
+  {{- end }}
+  {{- if .Values.database.statementTimeout }}
+  # Server-side per-statement cap so a query stuck on a degraded primary can't
+  # pin a connection indefinitely (in-code default: off when unset).
+  DB_STATEMENT_TIMEOUT: {{ .Values.database.statementTimeout | quote }}
+  {{- end }}

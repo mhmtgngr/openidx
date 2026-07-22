@@ -60,6 +60,30 @@ jobs:
           go-version: '1.25'
           cache-dependency-path: agent/go.sum
 
+      # Native deps for the real screen-share build (VP8 encode via libvpx +
+      # pkg-config + the mingw C toolchain the CGO binding uses). vcpkg is
+      # preinstalled on windows-latest at $VCPKG_INSTALLATION_ROOT. Best-effort:
+      # the build step falls back to a pure-Go exe if any of this is unavailable.
+      - name: Install libvpx + pkg-config (for screen capture)
+        id: nativedeps
+        shell: bash
+        continue-on-error: true
+        run: |
+          set -x
+          # pkg-config + mingw gcc for the vpx cgo binding.
+          choco install -y pkgconfiglite mingw || true
+          # libvpx via the preinstalled vcpkg. Use the MINGW triplet — the Go
+          # build links with mingw gcc, which cannot read vcpkg's default MSVC
+          # (x64-windows) import libs ("file format not recognized"). The mingw
+          # triplet builds gcc-linkable libs + pkgconfig.
+          VCPKG="${VCPKG_INSTALLATION_ROOT:-C:/vcpkg}"
+          "$VCPKG/vcpkg" install libvpx:x64-mingw-dynamic || "$VCPKG/vcpkg" install libvpx:x64-mingw-static
+          TRIPLET_DIR="$VCPKG/installed/x64-mingw-dynamic"
+          [ -d "$TRIPLET_DIR" ] || TRIPLET_DIR="$VCPKG/installed/x64-mingw-static"
+          echo "VCPKG_TRIPLET_DIR=$TRIPLET_DIR" >> "$GITHUB_ENV"
+          ls "$TRIPLET_DIR/lib/pkgconfig" || true
+          ls "$TRIPLET_DIR/lib" || true
+
       - name: Resolve version
         id: ver
         shell: bash
@@ -78,9 +102,59 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          go build -trimpath \
-            -ldflags "-s -w -X main.Version=${{ steps.ver.outputs.version }} -X main.Commit=${{ github.sha }}" \
+          LDFLAGS="-s -w -X main.Version=${{ steps.ver.outputs.version }} -X main.Commit=${{ github.sha }}"
+
+          # Try the real screen-share build first: -tags screenshare needs CGO +
+          # libvpx (installed via vcpkg below). If anything about the native
+          # toolchain fails, fall back to the pure-Go build so the MSI is never
+          # blocked — that build negotiates remote-support sessions and honors
+          # input, it just sends no video frames.
+          set +e
+          echo "Attempting screen-share (VP8 capture) build..."
+          # Static-link the MinGW GCC runtime (libwinpthread / libgcc / libstdc++)
+          # into the exe. The screenshare build uses CGO via MinGW-w64, which by
+          # default DYNAMICALLY links libwinpthread-1.dll — a DLL that only exists
+          # on machines with a MinGW/Git toolchain. On a clean Windows box the exe
+          # then fails to launch with 0xC0000135 (STATUS_DLL_NOT_FOUND), the
+          # service can't start (1920), and the MSI rolls back (1603). Linking the
+          # GCC runtime statically removes that external dependency entirely.
+          CGO_ENABLED=1 \
+          PKG_CONFIG_PATH="$VCPKG_TRIPLET_DIR/lib/pkgconfig" \
+          CGO_CFLAGS="-I$VCPKG_TRIPLET_DIR/include" \
+          CGO_LDFLAGS="-L$VCPKG_TRIPLET_DIR/lib -static-libgcc -static-libstdc++ -Wl,-Bstatic -lwinpthread -Wl,-Bdynamic" \
+            go build -trimpath -tags screenshare -ldflags "$LDFLAGS" \
             -o dist/openidx-agent.exe ./cmd/openidx-agent
+          if [ $? -eq 0 ]; then
+            echo "SCREENSHARE_BUILD=on" >> "$GITHUB_ENV"
+            echo "✓ built WITH real screen capture (VP8)"
+            # Copy the libvpx runtime DLL next to the exe (dynamic triplet).
+            cp "$VCPKG_TRIPLET_DIR/bin/"*vpx*.dll dist/ 2>/dev/null || \
+              cp "$VCPKG_TRIPLET_DIR/lib/"*vpx*.dll dist/ 2>/dev/null || true
+            # Belt-and-suspenders: if libwinpthread somehow remained dynamically
+            # linked (older MinGW), ship the DLL next to the exe so a clean box
+            # still launches. Static linking above normally makes this a no-op.
+            for d in /mingw64/bin /c/ProgramData/chocolatey/lib/mingw/tools/install/mingw64/bin; do
+              [ -f "$d/libwinpthread-1.dll" ] && cp "$d/libwinpthread-1.dll" dist/ 2>/dev/null && break
+            done || true
+          else
+            echo "::warning::screenshare build failed; falling back to pure-Go (no video capture)"
+            CGO_ENABLED=0 go build -trimpath -ldflags "$LDFLAGS" \
+              -o dist/openidx-agent.exe ./cmd/openidx-agent
+            echo "SCREENSHARE_BUILD=off" >> "$GITHUB_ENV"
+          fi
+          set -e
+          ls -la dist/
+
+      - name: Report build variant
+        shell: bash
+        run: |
+          if [ "${SCREENSHARE_BUILD:-off}" = "on" ]; then
+            echo "### ✅ Screen-share build (real VP8 capture)" >> "$GITHUB_STEP_SUMMARY"
+            echo "Remote support streams the device screen." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### ⚠️ Pure-Go build (no video capture)" >> "$GITHUB_STEP_SUMMARY"
+            echo "Remote support negotiates + honors input, but sends no video (libvpx toolchain unavailable this run)." >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       # Authenticode signing (optional): set WINDOWS_CERT_PFX_BASE64 +
       # WINDOWS_CERT_PASSWORD repo secrets to enable. Decode the cert once and
@@ -126,10 +200,28 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
+          # Include the libvpx runtime DLL in the MSI only when the screenshare
+          # build produced one (pass -d VpxDll=<path> so the WiX <?ifdef?> fires).
+          VPX_ARG=""
+          VPX_DLL="$(ls agent/dist/vpx*.dll 2>/dev/null | head -1 || true)"
+          if [ -n "$VPX_DLL" ]; then
+            VPX_ARG="-d VpxDll=$VPX_DLL"
+            echo "Bundling libvpx runtime: $VPX_DLL"
+          fi
+          # Include the MinGW pthread runtime only if the build shipped it as a
+          # fallback (normally it's static-linked, so this is absent).
+          PTHREAD_ARG=""
+          PTHREAD_DLL="$(ls agent/dist/libwinpthread*.dll 2>/dev/null | head -1 || true)"
+          if [ -n "$PTHREAD_DLL" ]; then
+            PTHREAD_ARG="-d PthreadDll=$PTHREAD_DLL"
+            echo "Bundling MinGW pthread runtime: $PTHREAD_DLL"
+          fi
           wix build agent/packaging/wix/OpenIDX.wxs \
             -ext WixToolset.Util.wixext \
             -d Version=${{ steps.ver.outputs.version }} \
             -d ExePath=agent/dist/openidx-agent.exe \
+            $VPX_ARG \
+            $PTHREAD_ARG \
             -arch x64 \
             -o dist/OpenIDX-${{ steps.ver.outputs.version }}.msi
 
@@ -169,6 +261,27 @@ jobs:
           $manifest | ConvertTo-Json | Set-Content -Path dist/latest.json -Encoding utf8
           Get-Content dist/latest.json
 
+      - name: Stamp install script
+        if: steps.ver.outputs.release == 'true'
+        shell: pwsh
+        run: |
+          $ver     = "${{ steps.ver.outputs.version }}"
+          $repo    = "${{ github.repository }}"
+          $tag     = "${{ github.ref_name }}"
+          $msiUrl  = "https://github.com/$repo/releases/download/$tag/OpenIDX-$ver.msi"
+          $manUrl  = "https://github.com/$repo/releases/latest/download/latest.json"
+          # Deployment defaults come from repo variables so the published script
+          # is a true one-liner. Blank values stay as safe placeholders that the
+          # operator overrides with -Server/-Token/-ServerIP.
+          $server  = "${{ vars.AGENT_DEFAULT_SERVER_URL }}"
+          $token   = "${{ vars.AGENT_DEFAULT_ENROLL_TOKEN }}"
+          $serverIp= "${{ vars.AGENT_DEFAULT_SERVER_IP }}"
+          $src = Get-Content agent/scripts/install-openidx-agent.ps1 -Raw
+          $src = $src.Replace('__MSI_URL__', $msiUrl).Replace('__MANIFEST_URL__', $manUrl)
+          $src = $src.Replace('__SERVER_URL__', $server).Replace('__ENROLL_TOKEN__', $token).Replace('__SERVER_IP__', $serverIp)
+          Set-Content -Path dist/install-openidx-agent.ps1 -Value $src -Encoding utf8
+          Write-Host "Stamped install script (server=$server ip=$serverIp)"
+
       - name: Publish release
         if: steps.ver.outputs.release == 'true'
         uses: softprops/action-gh-release@v2
@@ -178,4 +291,5 @@ jobs:
           files: |
             dist/OpenIDX-${{ steps.ver.outputs.version }}.msi
             dist/latest.json
+            dist/install-openidx-agent.ps1
           fail_on_unmatched_files: true

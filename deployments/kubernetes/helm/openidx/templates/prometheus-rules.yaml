@@ -116,4 +116,40 @@ spec:
           annotations:
             summary: "Circuit breaker {{ "{{ $labels.name }}" }} is open"
             description: "Circuit breaker {{ "{{ $labels.name }}" }} has been open for more than 1 minute."
+
+    - name: openidx.jwks_availability
+      rules:
+        # The verify path (validating already-issued JWTs) must survive a
+        # JWKS/database outage by serving the last-good key set (serve-stale).
+        # These alerts distinguish "issuer is down but verify is still up"
+        # (warning, we are riding the cache) from "the stale belt is about to
+        # run out and verify will start failing" (critical).
+        - alert: JWKSRefreshFailing
+          expr: sum(rate(openidx_jwks_refresh_failures_total[5m])) > 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "JWKS refresh is failing"
+            description: "The OAuth JWKS endpoint (and the database behind it) has been unreachable for 10m. Token verification is still up via the cached key set, but new signing keys will not propagate. Investigate the issuer/DB."
+
+        - alert: JWKSServingStale
+          expr: sum(rate(openidx_jwks_serve_stale_total[5m])) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Token verification is riding a stale JWKS cache"
+            description: "Services are validating tokens from a past-TTL JWKS cache because refresh is failing. Availability is preserved, but fix the issuer before the max-stale window (JWKS_MAX_STALE) is exceeded."
+
+        - alert: JWKSStaleNearExpiry
+          # 12h default JWKS_MAX_STALE; warn hard once we cross ~10h of staleness,
+          # after which verification starts failing closed.
+          expr: max(openidx_jwks_stale_seconds) > 36000
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "JWKS cache close to max-stale — verification will start failing"
+            description: "The served JWKS key set is {{ "{{ $value | humanizeDuration }}" }} stale, approaching JWKS_MAX_STALE. Once exceeded, valid tokens will be rejected. Restore the OAuth/JWKS issuer immediately."
 {{- end }}

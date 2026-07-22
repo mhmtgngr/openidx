@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	apperrors "github.com/openidx/openidx/internal/common/errors"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
@@ -116,7 +117,7 @@ func (s *Service) handleIDPDiscovery(c *gin.Context) {
 
 		idp, err := s.getRouteIDP(c.Request.Context(), route)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			apperrors.HandleErrorWithLogger(c, apperrors.Internal("i d p discovery", err), s.logger)
 			return
 		}
 
@@ -145,7 +146,7 @@ func (s *Service) handleIDPDiscovery(c *gin.Context) {
 	// List all enabled IDPs
 	idps, err := s.listEnabledIDPs(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("i d p discovery", err), s.logger)
 		return
 	}
 

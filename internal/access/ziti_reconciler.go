@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -152,6 +153,96 @@ type ZitiReconciler struct {
 	mu       sync.Mutex            // serializes runs
 	statusMu sync.Mutex            // protects status map
 	status   map[string]string     // serviceName -> "synced" | "error: ..."
+
+	// darkServices, when non-empty, models OpenIDX's OWN surfaces as tier'd dark
+	// Ziti services (dark-platform spec). Empty by default → no behavior change;
+	// access-service main populates it only when a DARK_MODE tier is enabled.
+	darkServices []darkService
+}
+
+// darkService is one OpenIDX surface to make overlay-only: a Ziti service named
+// `name`, host.v1-hosted at loopback `upstream` (host:port), dialable only by
+// the tier attribute `tierAttr` ("enrolled-users" = Tier 1, "device-trusted" =
+// Tier 2).
+type darkService struct {
+	name     string
+	upstream string // "127.0.0.1:<port>"
+	tierAttr string // "enrolled-users" | "device-trusted"
+}
+
+// defaultDarkServices is the canonical tier map for OpenIDX's own surfaces:
+// management/data planes are Tier 2 (device-trusted); user self-service and the
+// console shell are Tier 1 (any enrolled user). None of these are Tier-0 (the
+// enroll/oauth/jwks bootstrap surface must never be darked).
+func defaultDarkServices() []darkService {
+	return []darkService{
+		{"openidx-admin-api", "127.0.0.1:8005", "device-trusted"},
+		{"openidx-governance", "127.0.0.1:8002", "device-trusted"},
+		{"openidx-audit", "127.0.0.1:8004", "device-trusted"},
+		{"openidx-provisioning", "127.0.0.1:8003", "device-trusted"},
+		{"openidx-scim", "127.0.0.1:8003", "device-trusted"},
+		{"openidx-access", "127.0.0.1:8007", "device-trusted"},
+		{"openidx-identity-selfservice", "127.0.0.1:8001", "enrolled-users"},
+		{"openidx-console", "127.0.0.1:8443", "enrolled-users"},
+	}
+}
+
+// SetDarkServices installs the dark-service set (called by access-service main
+// only when a DARK_MODE tier is enabled). Nil/empty disables the feature.
+func (rec *ZitiReconciler) SetDarkServices(ds []darkService) { rec.darkServices = ds }
+
+// EnableDefaultDarkServices installs the canonical OpenIDX tier map so the
+// reconcile loop begins modeling OpenIDX's own surfaces as tier'd overlay-only
+// services. Exported entry point for access-service main (darkService is
+// internal). Idempotent; no-op semantics until the loop next ticks.
+func (rec *ZitiReconciler) EnableDefaultDarkServices() {
+	rec.darkServices = defaultDarkServices()
+}
+
+// reconcileDarkServices ensures each configured dark surface has a Ziti service
+// (host.v1 → its loopback upstream) plus a tier dial policy. It is the identity-
+// side + network-side gate that makes an OpenIDX surface overlay-only. Runs only
+// when darkServices is non-empty (inert by default). Failures are logged and do
+// not abort the pass (convergent — retried next tick).
+func (rec *ZitiReconciler) reconcileDarkServices(ctx context.Context, zm *ZitiManager) {
+	for _, d := range rec.darkServices {
+		host, portStr, ok := strings.Cut(d.upstream, ":")
+		if !ok {
+			rec.logger.Warn("dark service has malformed upstream", zap.String("svc", d.name), zap.String("upstream", d.upstream))
+			continue
+		}
+		port, perr := strconv.Atoi(portStr)
+		if perr != nil {
+			rec.logger.Warn("dark service has non-numeric port", zap.String("svc", d.name), zap.String("upstream", d.upstream))
+			continue
+		}
+		// Ensure the service + a fixed host.v1 config pointing at the loopback
+		// upstream (the router hosts it; the dark service has no public route).
+		if existing, _ := zm.GetServiceByName(d.name); existing == nil {
+			cfgID, cerr := zm.CreateHostV1ConfigFixed(ctx, d.name+"-host", host, port)
+			if cerr != nil {
+				rec.logger.Warn("dark service host.v1 create failed", zap.String("svc", d.name), zap.Error(cerr))
+				continue
+			}
+			if _, err := zm.createServiceWithConfigID(ctx, d.name, []string{d.name}, cfgID); err != nil {
+				rec.logger.Warn("dark service create failed", zap.String("svc", d.name), zap.Error(err))
+				continue
+			}
+		}
+		// Bind goes to the routers (host.v1 hosting); Dial to the tier attribute.
+		if err := zm.EnsureRouterRoleAttribute(ctx); err != nil {
+			rec.logger.Warn("dark service: tag routers failed", zap.String("svc", d.name), zap.Error(err))
+		}
+		if _, err := zm.EnsureServicePolicy(ctx, "openidx-bind-"+d.name, "Bind",
+			[]string{"#" + d.name}, []string{"#ziti-routers"}); err != nil {
+			rec.logger.Warn("dark bind policy converge failed", zap.String("svc", d.name), zap.Error(err))
+		}
+		_ = rec.ensureTierDialPolicy(ctx, zm, d.name, d.tierAttr)
+		if err := zm.EnsureServiceEdgeRouterPolicy(ctx, "openidx-serp-"+d.name,
+			[]string{"#" + d.name}, []string{"#all"}); err != nil {
+			rec.logger.Debug("dark serp (may already exist)", zap.String("svc", d.name), zap.Error(err))
+		}
+	}
 }
 
 // NewZitiReconciler creates a ZitiReconciler with a 30-second safety-net
@@ -374,6 +465,24 @@ func (rec *ZitiReconciler) ensurePolicies(ctx context.Context, zm *ZitiManager, 
 	return nil
 }
 
+// ensureTierDialPolicy upserts a Dial policy granting the tier identity role the
+// right to dial #<serviceName>. tierAttr is "enrolled-users" (Tier 1: any
+// enrolled OpenIDX user) or "device-trusted" (Tier 2: trusted device only) — see
+// the dark-platform spec. This is the identity-side gate for making OpenIDX's own
+// surfaces overlay-only; Bind is left to the existing #ziti-routers policy. It
+// uses EnsureServicePolicy (upsert), so it is idempotent/convergent like the
+// #browzer-users dial policy it mirrors.
+func (rec *ZitiReconciler) ensureTierDialPolicy(ctx context.Context, zm *ZitiManager, serviceName, tierAttr string) error {
+	svcRole := "#" + serviceName
+	_, err := zm.EnsureServicePolicy(ctx, serviceName+"-dial-"+tierAttr, "Dial",
+		[]string{svcRole}, []string{"#" + tierAttr})
+	if err != nil {
+		rec.logger.Warn("tier dial policy converge failed",
+			zap.String("svc", serviceName), zap.String("tier", tierAttr), zap.Error(err))
+	}
+	return err
+}
+
 // ensureHosting starts hosting for the route. identity mode uses SDK Listen
 // (HostService, idempotent). direct mode relies on the host.v1 config created
 // in ensureService and the router Bind created in ensurePolicies, so there is
@@ -455,5 +564,76 @@ func (rec *ZitiReconciler) reconcileOnce(ctx context.Context) {
 	for _, d := range desired {
 		rec.reconcileRoute(ctx, zm, d)
 	}
+	// Dark-platform: converge OpenIDX's own surfaces as tier'd overlay-only
+	// services. No-op unless a DARK_MODE tier populated darkServices.
+	if len(rec.darkServices) > 0 {
+		rec.reconcileDarkServices(ctx, zm)
+	}
+	// Remote-support signaling over Ziti: ensure the access-service (broker) is
+	// reachable by enrolled agent identities over the overlay, independent of
+	// dark mode. Gated by REMOTE_SUPPORT_OVER_ZITI so it's inert unless opted in.
+	if remoteSupportOverZitiEnabled() {
+		rec.reconcileRemoteSupportZiti(ctx, zm)
+	}
 	rec.logger.Info("reconcile pass complete", zap.Int("routes", len(desired)))
+}
+
+// remoteSupportZitiService is the Ziti service name agents dial to reach the
+// access-service signaling broker over the overlay.
+const remoteSupportZitiService = "openidx-access"
+
+// remoteSupportOverZitiEnabled reports whether remote-support signaling should
+// be reachable over the Ziti overlay (device leg). Opt-in so deployments that
+// don't want it keep the plain-WSS behavior.
+func remoteSupportOverZitiEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("REMOTE_SUPPORT_OVER_ZITI"))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+// reconcileRemoteSupportZiti ensures the access-service signaling broker is an
+// overlay service (host.v1 → its loopback 127.0.0.1:8007) that enrolled agent
+// identities (role "openidx-agent") may Dial. This lets the device dial the
+// remote-support signaling WebSocket over Ziti with no public port. Admin-side
+// signaling still terminates at the edge (Option B); only the device leg is
+// zero-trust here. Idempotent; failures are logged and retried next pass.
+func (rec *ZitiReconciler) reconcileRemoteSupportZiti(ctx context.Context, zm *ZitiManager) {
+	const svc = remoteSupportZitiService
+	if existing, _ := zm.GetServiceByName(svc); existing == nil {
+		cfgID, cerr := zm.CreateHostV1ConfigFixed(ctx, svc+"-host", "127.0.0.1", 8007)
+		if cerr != nil {
+			rec.logger.Warn("remote-support ziti: host.v1 create failed", zap.Error(cerr))
+			return
+		}
+		if _, err := zm.createServiceWithConfigID(ctx, svc, []string{svc}, cfgID); err != nil {
+			rec.logger.Warn("remote-support ziti: service create failed", zap.Error(err))
+			return
+		}
+	}
+	// Routers host the service (Bind); agent identities may Dial it.
+	if err := zm.EnsureRouterRoleAttribute(ctx); err != nil {
+		rec.logger.Warn("remote-support ziti: tag routers failed", zap.Error(err))
+	}
+	if _, err := zm.EnsureServicePolicy(ctx, "openidx-bind-"+svc, "Bind",
+		[]string{"#" + svc}, []string{"#ziti-routers"}); err != nil {
+		rec.logger.Warn("remote-support ziti: bind policy failed", zap.Error(err))
+	}
+	if _, err := zm.EnsureServicePolicy(ctx, svc+"-dial-openidx-agent", "Dial",
+		[]string{"#" + svc}, []string{"#openidx-agent"}); err != nil {
+		rec.logger.Warn("remote-support ziti: agent dial policy failed", zap.Error(err))
+	}
+	// Agent identities need an edge-router-policy or they get zero routers and
+	// every dial fails with NO_EDGE_ROUTERS_AVAILABLE. Grant #openidx-agent all
+	// routers (the service-edge-router-policy below already scopes the service).
+	if err := zm.EnsureEdgeRouterPolicy(ctx, "openidx-agent-all-routers",
+		[]string{"#all"}, []string{"#openidx-agent"}); err != nil {
+		rec.logger.Warn("remote-support ziti: agent edge-router policy failed", zap.Error(err))
+	}
+	if err := zm.EnsureServiceEdgeRouterPolicy(ctx, "openidx-serp-"+svc,
+		[]string{"#" + svc}, []string{"#all"}); err != nil {
+		rec.logger.Debug("remote-support ziti: serp (may exist)", zap.Error(err))
+	}
 }

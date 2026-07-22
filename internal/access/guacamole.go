@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	apperrors "github.com/openidx/openidx/internal/common/errors"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/config"
@@ -557,8 +558,7 @@ func (s *Service) handleListGuacamoleConnections(c *gin.Context) {
 
 	conns, err := s.guacamoleClient.ListGuacConnections(c.Request.Context())
 	if err != nil {
-		s.logger.Error("Failed to list guacamole connections", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("Failed to list guacamole connections", err), s.logger)
 		return
 	}
 

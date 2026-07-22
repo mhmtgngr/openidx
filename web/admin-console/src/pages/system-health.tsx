@@ -22,7 +22,7 @@ import {
   CardTitle,
 } from '../components/ui/card'
 import { useToast } from '../hooks/use-toast'
-import { api, baseURL } from '../lib/api'
+import { api } from '../lib/api'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -41,6 +41,62 @@ interface HealthResponse {
   uptime_seconds: number
   version?: string
   dependencies: DependencyHealth[]
+}
+
+// Raw shape returned by GET /api/v1/system/health (admin-api). Dependency status
+// is healthy/degraded/unhealthy there; the UI vocabulary is up/degraded/down.
+interface RawDependency {
+  name: string
+  status: string
+  latency_ms?: number
+  details?: string
+}
+interface RawSystemHealth {
+  status?: string
+  uptime?: string
+  timestamp?: string
+  version?: string
+  dependencies?: RawDependency[]
+}
+
+// Map a backend dependency status to the UI's up/degraded/down vocabulary.
+function depStatus(s: string): 'up' | 'degraded' | 'down' {
+  switch (s) {
+    case 'healthy':
+    case 'up':
+      return 'up'
+    case 'degraded':
+      return 'degraded'
+    default:
+      return 'down' // unhealthy, unknown, empty
+  }
+}
+
+// Coerce the aggregated backend payload into the shape this page renders. This
+// keeps the component's markup stable regardless of the backend's exact status
+// vocabulary.
+function normalizeHealth(raw: RawSystemHealth): HealthResponse {
+  const deps = raw.dependencies || []
+  const overall: 'healthy' | 'degraded' | 'unhealthy' =
+    raw.status === 'healthy' || raw.status === 'up'
+      ? 'healthy'
+      : raw.status === 'degraded'
+        ? 'degraded'
+        : raw.status === 'unhealthy' || raw.status === 'down'
+          ? 'unhealthy'
+          : 'unhealthy'
+  return {
+    status: overall,
+    uptime_seconds: 0,
+    version: raw.version,
+    dependencies: deps.map(d => ({
+      name: d.name,
+      status: depStatus(d.status),
+      latency_ms: d.latency_ms ?? 0,
+      last_checked: raw.timestamp || '',
+      details: d.details,
+    })),
+  }
 }
 
 // Relations & Integrity Doctor types — mirrors the backend Finding/Report
@@ -287,16 +343,14 @@ export function SystemHealthPage() {
     refetchInterval: 30_000,
   })
 
-  // We use the api helper but the health endpoint might be at a different path
+  // We use the api helper (auth + baseURL handled centrally) and hit the
+  // aggregated system-health endpoint served by admin-api and routed at the edge
+  // under /api/*. (The previous `${baseURL}/health` had no backend route at the
+  // edge — it hit the SPA fallback and returned index.html, so the JSON parse
+  // failed and the page always rendered "Unhealthy".)
   async function api_get_health(): Promise<HealthResponse> {
-    const token = localStorage.getItem('token')
-    const response = await fetch(`${baseURL}/health`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    })
-    if (!response.ok) {
-      throw new Error(`Health check failed: ${response.status}`)
-    }
-    return response.json()
+    const raw = await api.get<RawSystemHealth>('/api/v1/system/health')
+    return normalizeHealth(raw)
   }
 
   const handleRefresh = () => {

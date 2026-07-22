@@ -178,6 +178,21 @@ type Service struct {
 	// idpCipher encrypts identity_providers.client_secret at rest. Best-effort:
 	// a passthrough (noop) when no usable ENCRYPTION_KEY is configured.
 	idpCipher *secretcrypt.Cipher
+
+	// users is the user data-access port (Repository pattern — see
+	// user_repository.go). New/refactored user reads route through this so SQL
+	// lives in one place and read-mostly queries use the read replica. The
+	// legacy inline db.Pool user queries are being migrated here incrementally.
+	users UserRepository
+
+	// groups is the group data-access port (see group_repository.go), the second
+	// aggregate migrated to the Repository pattern.
+	groups GroupRepository
+
+	// sessions is the session data-access port (see session_repository.go), the
+	// third aggregate. Reads that tolerate lag use the replica; IsValid reads the
+	// primary (security-critical read-after-write).
+	sessions SessionRepository
 }
 
 // NewService creates a new identity service
@@ -198,6 +213,9 @@ func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *confi
 		cfg:       cfg,
 		logger:    log,
 		idpCipher: idpCipher,
+		users:     NewPostgresUserRepository(db),
+		groups:    NewPostgresGroupRepository(db),
+		sessions:  NewPostgresSessionRepository(db),
 	}
 }
 
@@ -545,36 +563,13 @@ func parseRSAPublicKey(nStr, eStr string) (*rsa.PublicKey, error) {
 func (s *Service) GetUser(ctx context.Context, userID string) (*User, error) {
 	s.logger.Debug("Getting user", zap.String("user_id", userID))
 
-	org, err := orgctx.From(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	// Query from database - use UserDB for scanning. A user in another
-	// org reads as not-found (pgx.ErrNoRows) rather than 403, so the
-	// existence of other tenants' users can't be probed. first_name/last_name
-	// are nullable in the schema (SCIM users may have no name), so COALESCE to
-	// '' — UserDB scans them into plain strings and a raw NULL errors the scan.
-	var dbUser UserDB
-	err = s.db.Pool.QueryRow(ctx, `
-		SELECT id, username, email, COALESCE(first_name, '') AS first_name,
-		       COALESCE(last_name, '') AS last_name, enabled, email_verified,
-		       created_at, updated_at, last_login_at, password_changed_at,
-		       password_must_change, failed_login_count, last_failed_login_at, locked_until
-		FROM users WHERE id = $1 AND org_id = $2
-	`, userID, org.ID).Scan(
-		&dbUser.ID, &dbUser.Username, &dbUser.Email, &dbUser.FirstName, &dbUser.LastName,
-		&dbUser.Enabled, &dbUser.EmailVerified, &dbUser.CreatedAt, &dbUser.UpdatedAt, &dbUser.LastLoginAt,
-		&dbUser.PasswordChangedAt, &dbUser.PasswordMustChange, &dbUser.FailedLoginCount,
-		&dbUser.LastFailedLoginAt, &dbUser.LockedUntil,
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	// Convert to SCIM User model
-	user := dbUser.ToUser()
-	return &user, nil
+	// Delegates to the user repository (Repository pattern — see
+	// user_repository.go). The repo owns the SQL, scopes to the caller's tenant
+	// (a cross-tenant id reads as not-found, not 403), and serves the read from
+	// the replica pool when one is configured. The repo returns the sentinel
+	// ErrUserNotFound on a miss; existing callers already treat any error here as
+	// "user not found", so the contract is preserved.
+	return s.users.GetByID(ctx, userID)
 }
 
 // ListUsers retrieves users with pagination
@@ -665,85 +660,48 @@ func (s *Service) ListUsers(ctx context.Context, offset, limit int, search ...st
 
 // CreateUser creates a new user
 func (s *Service) CreateUser(ctx context.Context, user *User) error {
-	org, err := orgctx.From(ctx)
-	if err != nil {
+	s.logger.Info("Creating user", zap.String("username", user.UserName))
+
+	// Persistence lives in the repository (primary pool). The service keeps the
+	// domain side effects: audit logging on success. Repo writes the generated
+	// id + timestamps back onto `user`.
+	if err := s.users.Create(ctx, user); err != nil {
 		return err
 	}
 
-	// Convert SCIM User to UserDB for database operations
-	dbUser := FromUser(*user)
-
-	s.logger.Info("Creating user", zap.String("username", dbUser.Username))
-
-	// Generate UUID if not provided
-	if dbUser.ID == "" {
-		dbUser.ID = uuid.New().String()
-	}
-
-	now := time.Now()
-	dbUser.CreatedAt = now
-	dbUser.UpdatedAt = now
-
-	_, err = s.db.Pool.Exec(ctx, `
-		INSERT INTO users (id, username, email, first_name, last_name, enabled,
-		                   email_verified, created_at, updated_at, org_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-	`, dbUser.ID, dbUser.Username, dbUser.Email, dbUser.FirstName, dbUser.LastName,
-		dbUser.Enabled, dbUser.EmailVerified, dbUser.CreatedAt, dbUser.UpdatedAt, org.ID)
-
-	if err == nil {
-		// Mirror the generated ID and timestamps back to the caller so the
-		// HTTP handler's `c.JSON(201, user)` returns a usable id, and so
-		// downstream best-effort hooks (email verification, webhooks) see
-		// the real user_id instead of "".
-		user.ID = dbUser.ID
-		user.CreatedAt = dbUser.CreatedAt
-		user.UpdatedAt = dbUser.UpdatedAt
-
-		actorID := actorIDFromContext(ctx)
-		s.logAuditEvent(ctx, "identity", "user_management", "user.created", "success",
-			actorID, dbUser.ID, "user", map[string]interface{}{
-				"username": dbUser.Username,
-				"email":    dbUser.Email,
-			})
-	}
-
-	return err
+	actorID := actorIDFromContext(ctx)
+	s.logAuditEvent(ctx, "identity", "user_management", "user.created", "success",
+		actorID, user.ID, "user", map[string]interface{}{
+			"username": user.UserName,
+			"email":    GetEmail(*user),
+		})
+	return nil
 }
 
 // UpdateUser updates an existing user
 func (s *Service) UpdateUser(ctx context.Context, user *User) error {
 	s.logger.Info("Updating user", zap.String("user_id", user.ID))
 
-	// Convert SCIM User to UserDB for database operations
 	org, err := orgctx.From(ctx)
 	if err != nil {
 		return err
 	}
 
-	dbUser := FromUser(*user)
-
-	dbUser.UpdatedAt = time.Now()
-
-	result, err := s.db.Pool.Exec(ctx, `
-		UPDATE users
-		SET username = $2, email = $3, first_name = $4, last_name = $5,
-		    enabled = $6, email_verified = $7, updated_at = $8
-		WHERE id = $1 AND org_id = $9
-	`, dbUser.ID, dbUser.Username, dbUser.Email, dbUser.FirstName, dbUser.LastName,
-		dbUser.Enabled, dbUser.EmailVerified, dbUser.UpdatedAt, org.ID)
-	if err != nil {
+	// Persistence in the repository (primary pool); domain side effects stay
+	// here. A missing row returns ErrUserNotFound (repo), which we translate to
+	// the legacy "user not found" contract existing callers expect.
+	if err := s.users.Update(ctx, user); err != nil {
+		if errors.Is(err, ErrUserNotFound) {
+			return fmt.Errorf("user not found")
+		}
 		return err
-	}
-	if result.RowsAffected() == 0 {
-		return fmt.Errorf("user not found")
 	}
 
 	// A user set to disabled must lose live access, not just be blocked from new
 	// password logins. deprovisionUser is idempotent, so running it whenever the
 	// resulting state is disabled (without needing the prior value) is safe.
-	if !dbUser.Enabled {
-		s.deprovisionUser(ctx, dbUser.ID, org.ID, false)
+	if !user.Enabled {
+		s.deprovisionUser(ctx, user.ID, org.ID, false)
 	}
 	return nil
 }
@@ -777,6 +735,13 @@ func (s *Service) deprovisionUser(ctx context.Context, userID, orgID string, har
 	// One scoped logger with the (scrubbed) user id, so the per-step warnings
 	// below never re-embed caller-supplied input directly.
 	log := s.logger.With(zap.String("user_id", scrubLogValue(userID)))
+
+	// No database configured (unit tests, or a service without a pool): there is
+	// nothing to revoke. deprovision is best-effort, so skip rather than
+	// nil-panic. Redis-side revocation below is likewise guarded.
+	if s.db == nil || s.db.Pool == nil {
+		return
+	}
 
 	// Collect the user's live session IDs so we can publish revocation markers
 	// that the oauth-service checks (it has its own Redis view; the marker is
@@ -877,12 +842,14 @@ func (s *Service) DeleteUser(ctx context.Context, userID string) error {
 	// against a still-present user.
 	s.deprovisionUser(ctx, userID, org.ID, true)
 
-	result, err := s.db.Pool.Exec(ctx, "DELETE FROM users WHERE id = $1 AND org_id = $2", userID, org.ID)
-	if err != nil {
+	// Row removal lives in the repository (primary pool). Ordering + side
+	// effects (audit above, deprovision above) stay here. Missing row maps to
+	// the legacy "user not found" contract.
+	if err := s.users.Delete(ctx, userID); err != nil {
+		if errors.Is(err, ErrUserNotFound) {
+			return fmt.Errorf("user not found")
+		}
 		return err
-	}
-	if result.RowsAffected() == 0 {
-		return fmt.Errorf("user not found")
 	}
 	return nil
 }
@@ -1025,50 +992,14 @@ func (s *Service) DeleteIdentityProvider(ctx context.Context, idpID string) erro
 // GetUserSessions retrieves active sessions for a user
 func (s *Service) GetUserSessions(ctx context.Context, userID string) ([]Session, error) {
 	s.logger.Debug("Getting sessions for user", zap.String("user_id", userID))
-
-	org, err := orgctx.From(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	rows, err := s.db.Pool.Query(ctx, `
-		SELECT id, user_id, client_id, ip_address, user_agent,
-		       started_at, last_seen_at, expires_at
-		FROM sessions
-		WHERE user_id = $1 AND org_id = $2 AND expires_at > NOW()
-		ORDER BY last_seen_at DESC
-	`, userID, org.ID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var sessions []Session
-	for rows.Next() {
-		var s Session
-		if err := rows.Scan(
-			&s.ID, &s.UserID, &s.ClientID, &s.IPAddress, &s.UserAgent,
-			&s.StartedAt, &s.LastSeenAt, &s.ExpiresAt,
-		); err != nil {
-			return nil, err
-		}
-		sessions = append(sessions, s)
-	}
-
-	return sessions, nil
+	// Delegates to the session repository (replica read, lag-tolerant).
+	return s.sessions.ListByUser(ctx, userID)
 }
 
 // TerminateSession terminates a specific session
 func (s *Service) TerminateSession(ctx context.Context, sessionID string) error {
 	s.logger.Info("Terminating session", zap.String("session_id", sessionID))
-
-	org, err := orgctx.From(ctx)
-	if err != nil {
-		return err
-	}
-
-	_, err = s.db.Pool.Exec(ctx, "DELETE FROM sessions WHERE id = $1 AND org_id = $2", sessionID, org.ID)
-	return err
+	return s.sessions.Terminate(ctx, sessionID)
 }
 
 // ListGroups retrieves groups with pagination
@@ -1146,25 +1077,9 @@ func (s *Service) ListGroups(ctx context.Context, offset, limit int, search ...s
 // GetGroup retrieves a group by ID
 func (s *Service) GetGroup(ctx context.Context, groupID string) (*Group, error) {
 	s.logger.Debug("Getting group", zap.String("group_id", groupID))
-
-	org, err := orgctx.From(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	var dbGroup GroupDB
-	err = s.db.Pool.QueryRow(ctx, `
-		SELECT g.id, g.name, g.description, g.parent_id, g.allow_self_join, g.require_approval, g.max_members, g.created_at, g.updated_at,
-		       COALESCE((SELECT COUNT(*) FROM group_memberships gm WHERE gm.group_id = g.id AND gm.org_id = $2), 0) as member_count
-		FROM groups g WHERE g.id = $1 AND g.org_id = $2
-	`, groupID, org.ID).Scan(
-		&dbGroup.ID, &dbGroup.DisplayName, &dbGroup.Description, &dbGroup.ParentID, &dbGroup.AllowSelfJoin, &dbGroup.RequireApproval, &dbGroup.MaxMembers, &dbGroup.CreatedAt, &dbGroup.UpdatedAt, &dbGroup.MemberCount,
-	)
-	if err != nil {
-		return nil, err
-	}
-	group := dbGroup.ToGroup()
-	return &group, nil
+	// Delegates to the group repository (see group_repository.go): tenant-scoped
+	// read on the replica, returns ErrGroupNotFound on a miss.
+	return s.groups.GetByID(ctx, groupID)
 }
 
 // GetGroupMembers retrieves members of a group
@@ -1203,73 +1118,22 @@ func (s *Service) GetGroupMembers(ctx context.Context, groupID string) ([]GroupM
 // CreateGroup creates a new group
 func (s *Service) CreateGroup(ctx context.Context, group *Group) error {
 	s.logger.Info("Creating group", zap.String("name", group.GetName()))
-
-	org, err := orgctx.From(ctx)
-	if err != nil {
-		return err
-	}
-
-	// Generate UUID if not provided
-	if group.ID == "" {
-		group.ID = uuid.New().String()
-	}
-
-	now := time.Now()
-	group.CreatedAt = now
-	group.UpdatedAt = now
-
-	// Convert SCIM Group to GroupDB for database insert
-	dbGroup := FromGroup(*group)
-
-	_, err = s.db.Pool.Exec(ctx, `
-		INSERT INTO groups (id, name, description, parent_id, created_at, updated_at, org_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-	`, dbGroup.ID, dbGroup.DisplayName, dbGroup.Description, dbGroup.ParentID, dbGroup.CreatedAt, dbGroup.UpdatedAt, org.ID)
-
-	return err
+	// Persistence in the repository (primary pool); it writes the generated id +
+	// timestamps back onto `group`.
+	return s.groups.Create(ctx, group)
 }
 
 // UpdateGroup updates an existing group
 func (s *Service) UpdateGroup(ctx context.Context, group *Group) error {
 	s.logger.Info("Updating group", zap.String("group_id", group.ID))
-
-	org, err := orgctx.From(ctx)
-	if err != nil {
-		return err
-	}
-
-	group.UpdatedAt = time.Now()
-
-	// Convert SCIM Group to GroupDB for database update
-	dbGroup := FromGroup(*group)
-
-	_, err = s.db.Pool.Exec(ctx, `
-		UPDATE groups
-		SET name = $2, description = $3, parent_id = $4, allow_self_join = $5, require_approval = $6, max_members = $7, updated_at = $8
-		WHERE id = $1 AND org_id = $9
-	`, dbGroup.ID, dbGroup.DisplayName, dbGroup.Description, dbGroup.ParentID, dbGroup.AllowSelfJoin, dbGroup.RequireApproval, dbGroup.MaxMembers, dbGroup.UpdatedAt, org.ID)
-
-	return err
+	return s.groups.Update(ctx, group)
 }
 
 // DeleteGroup deletes a group
 func (s *Service) DeleteGroup(ctx context.Context, groupID string) error {
 	s.logger.Info("Deleting group", zap.String("group_id", groupID))
-
-	org, err := orgctx.From(ctx)
-	if err != nil {
-		return err
-	}
-
-	// First remove all group memberships
-	_, err = s.db.Pool.Exec(ctx, "DELETE FROM group_memberships WHERE group_id = $1 AND org_id = $2", groupID, org.ID)
-	if err != nil {
-		return fmt.Errorf("failed to remove group memberships: %w", err)
-	}
-
-	// Then delete the group
-	_, err = s.db.Pool.Exec(ctx, "DELETE FROM groups WHERE id = $1 AND org_id = $2", groupID, org.ID)
-	return err
+	// Repo removes memberships then the group row (primary pool).
+	return s.groups.Delete(ctx, groupID)
 }
 
 // AddGroupMember adds a user to a group
@@ -1502,94 +1366,53 @@ func (s *Service) GetSubgroups(ctx context.Context, parentID string) ([]Group, e
 func (s *Service) CreateSession(ctx context.Context, userID, clientID, ipAddress, userAgent string, sessionDuration time.Duration) (*Session, error) {
 	s.logger.Info("Creating session", zap.String("user_id", userID), zap.String("client_id", clientID))
 
-	org, err := orgctx.From(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	sessionID := uuid.New().String()
 	now := time.Now()
-	expiresAt := now.Add(sessionDuration)
-
 	session := &Session{
-		ID:         sessionID,
 		UserID:     userID,
 		ClientID:   clientID,
 		IPAddress:  ipAddress,
 		UserAgent:  userAgent,
 		StartedAt:  now,
 		LastSeenAt: now,
-		ExpiresAt:  expiresAt,
+		ExpiresAt:  now.Add(sessionDuration),
 	}
-
-	_, err = s.db.Pool.Exec(ctx, `
-		INSERT INTO sessions (id, user_id, client_id, ip_address, user_agent, started_at, last_seen_at, expires_at, org_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-	`, session.ID, session.UserID, session.ClientID, session.IPAddress, session.UserAgent,
-		session.StartedAt, session.LastSeenAt, session.ExpiresAt, org.ID)
-
-	if err != nil {
+	// Persistence in the repository (primary); it fills in the generated id.
+	if err := s.sessions.Create(ctx, session); err != nil {
 		return nil, err
 	}
-
 	return session, nil
 }
 
 // UpdateSessionActivity updates the last seen time for a session
 func (s *Service) UpdateSessionActivity(ctx context.Context, sessionID string) error {
 	s.logger.Debug("Updating session activity", zap.String("session_id", sessionID))
-
-	org, err := orgctx.From(ctx)
-	if err != nil {
+	// Repo write (primary). Legacy contract: missing/revoked/expired -> error.
+	if err := s.sessions.UpdateActivity(ctx, sessionID); err != nil {
+		if errors.Is(err, ErrSessionNotFound) {
+			return fmt.Errorf("session not found or is revoked/expired")
+		}
 		return err
 	}
-
-	now := time.Now()
-	result, err := s.db.Pool.Exec(ctx, `
-		UPDATE sessions SET last_seen_at = $2
-		WHERE id = $1 AND org_id = $3 AND (revoked IS NULL OR revoked = false) AND expires_at > NOW()
-	`, sessionID, now, org.ID)
-	if err != nil {
-		return err
-	}
-
-	if result.RowsAffected() == 0 {
-		return fmt.Errorf("session not found or is revoked/expired")
-	}
-
 	return nil
 }
 
 // IsSessionValid checks if a session is not revoked and not expired
 func (s *Service) IsSessionValid(ctx context.Context, sessionID string) (bool, error) {
-	org, err := orgctx.From(ctx)
-	if err != nil {
+	// Repo reads the PRIMARY here (security-critical read-after-write): a
+	// just-revoked session must not read as valid off a lagging replica.
+	valid, err := s.sessions.IsValid(ctx, sessionID)
+	if errors.Is(err, ErrSessionNotFound) {
+		// Preserve the legacy contract: a missing session returned the raw
+		// pgx.ErrNoRows-derived error to the caller. Surface a non-nil error so
+		// callers still treat it as "not valid".
 		return false, err
 	}
-
-	var revoked bool
-	var expiresAt time.Time
-	err = s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(revoked, false), expires_at FROM sessions WHERE id = $1 AND org_id = $2
-	`, sessionID, org.ID).Scan(&revoked, &expiresAt)
-	if err != nil {
-		return false, err
-	}
-	return !revoked && time.Now().Before(expiresAt), nil
+	return valid, err
 }
 
 // CountActiveSessions returns the number of active (non-revoked, non-expired) sessions for a user
 func (s *Service) CountActiveSessions(ctx context.Context, userID string) (int, error) {
-	org, err := orgctx.From(ctx)
-	if err != nil {
-		return 0, err
-	}
-
-	var count int
-	err = s.db.Pool.QueryRow(ctx, `
-		SELECT COUNT(*) FROM sessions WHERE user_id = $1 AND org_id = $2 AND (revoked IS NULL OR revoked = false) AND expires_at > NOW()
-	`, userID, org.ID).Scan(&count)
-	return count, err
+	return s.sessions.CountActive(ctx, userID)
 }
 
 // RevokeUserSessionsOnPasswordChange revokes all sessions and refresh tokens for a user on password change
@@ -4878,7 +4701,7 @@ func (s *Service) handleAdminResetPassword(c *gin.Context) {
 				zap.String("target_user_id", userID),
 				zap.String("source", *source),
 				zap.Error(err))
-			c.JSON(500, gin.H{"error": "Failed to reset directory password: " + err.Error()})
+			c.JSON(500, gin.H{"error": "Failed to reset directory password"})
 			return
 		}
 
@@ -6278,6 +6101,11 @@ func (s *Service) logAuditEvent(ctx context.Context, eventType, category, action
 	orgID := "00000000-0000-0000-0000-000000000010"
 	if org, err := orgctx.From(ctx); err == nil && org.ID != "" {
 		orgID = org.ID
+	}
+	// No database configured (unit tests, or a service constructed without a
+	// pool): audit is best-effort, so skip rather than nil-panic in a goroutine.
+	if s.db == nil || s.db.Pool == nil {
+		return
 	}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

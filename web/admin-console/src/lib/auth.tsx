@@ -53,26 +53,34 @@ function generateCodeVerifier(): string {
     .replace(/=+$/, '')
 }
 
-async function generateCodeChallenge(verifier: string): Promise<string> {
-  // Check if crypto.subtle is available (requires secure context: HTTPS or localhost)
+async function generateCodeChallenge(verifier: string): Promise<{ challenge: string; method: 'S256' | 'plain' }> {
+  // PKCE S256 requires crypto.subtle, which is ONLY available in a secure
+  // context (HTTPS, or http://localhost). In an insecure context it is
+  // undefined. Previously we fell back to the plain verifier as the challenge
+  // but still told the server method=S256 — the server then computed
+  // SHA256(verifier) and compared it to the plain verifier, which never matches,
+  // so the token exchange failed and LOGIN WAS IMPOSSIBLE on any non-HTTPS /
+  // non-localhost deployment. Return the method we actually used so the caller
+  // sends a consistent code_challenge_method.
   if (!crypto.subtle) {
-    console.warn('[Auth] crypto.subtle not available - using plain code verifier (dev mode)')
-    // In development without secure context, use verifier as challenge (not secure but works for dev)
-    return verifier
+    console.warn('[Auth] crypto.subtle unavailable (insecure context) — using PKCE method=plain. Serve the console over HTTPS to use S256.')
+    return { challenge: verifier, method: 'plain' }
   }
 
   try {
     const encoder = new TextEncoder()
     const data = encoder.encode(verifier)
     const digest = await crypto.subtle.digest('SHA-256', data)
-    return btoa(String.fromCharCode.apply(null, Array.from(new Uint8Array(digest))))
+    const challenge = btoa(String.fromCharCode.apply(null, Array.from(new Uint8Array(digest))))
       .replace(/\+/g, '-')
       .replace(/\//g, '_')
       .replace(/=+$/, '')
+    return { challenge, method: 'S256' }
   } catch (error) {
-    console.error('[Auth] Failed to generate code challenge:', error)
-    // Fallback to plain verifier
-    return verifier
+    // A SubtleCrypto failure is rare, but if it happens fall back to plain and
+    // report method=plain so the challenge and method stay consistent.
+    console.error('[Auth] Failed to generate S256 challenge, falling back to plain:', error)
+    return { challenge: verifier, method: 'plain' }
   }
 }
 
@@ -288,7 +296,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = async () => {
     // OpenIDX OAuth login with PKCE
     const codeVerifier = generateCodeVerifier()
-    const codeChallenge = await generateCodeChallenge(codeVerifier)
+    const { challenge: codeChallenge, method: codeChallengeMethod } = await generateCodeChallenge(codeVerifier)
     sessionStorage.setItem('pkce_code_verifier', codeVerifier)
 
     const authUrl = new URL(`${OAUTH_URL}/oauth/authorize`)
@@ -297,7 +305,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     authUrl.searchParams.set('redirect_uri', window.location.origin + '/login')
     authUrl.searchParams.set('scope', 'openid profile email')
     authUrl.searchParams.set('code_challenge', codeChallenge)
-    authUrl.searchParams.set('code_challenge_method', 'S256')
+    // Send the method that MATCHES the challenge we generated (S256 in a secure
+    // context, plain otherwise) so backend PKCE verification succeeds.
+    authUrl.searchParams.set('code_challenge_method', codeChallengeMethod)
 
     window.location.href = authUrl.toString()
   }

@@ -199,6 +199,7 @@ type PamEntry struct {
 	RequireApproval     bool                   `json:"require_approval"`
 	RecordSession       bool                   `json:"record_session"`
 	ReachMode           string                 `json:"reach_mode"`
+	Renderer            string                 `json:"renderer"`
 	ZitiEnabled         bool                   `json:"ziti_enabled"`
 	Favorite            bool                   `json:"favorite"`
 	LastConnectedAt     *time.Time             `json:"last_connected_at,omitempty"`
@@ -226,6 +227,26 @@ type pamEntryUpsertReq struct {
 	AllowReveal       bool                   `json:"allow_reveal"`
 	RequireApproval   bool                   `json:"require_approval"`
 	RecordSession     bool                   `json:"record_session"`
+	Renderer          string                 `json:"renderer"`
+}
+
+// pamNormalizeRenderer clamps a requested renderer to a safe, valid value.
+// Defaults to 'guacamole'. 'wasm-ssh' is only allowed for ssh-protocol entries
+// (the in-browser terminal); 'novnc'/'support' pass through for future use.
+// Anything unrecognized falls back to 'guacamole' so a bad client value can
+// never brick a launch.
+func pamNormalizeRenderer(renderer, entryType string) string {
+	switch renderer {
+	case "wasm-ssh":
+		if pamEntryTypeByName[entryType].Protocol == "ssh" {
+			return "wasm-ssh"
+		}
+		return "guacamole"
+	case "novnc", "support":
+		return renderer
+	default:
+		return "guacamole"
+	}
 }
 
 // validatePamEntry checks the type against the catalog and the per-kind
@@ -420,6 +441,7 @@ const pamEntrySelectColumns = `
 	COALESCE(e.domain,''), COALESCE(e.url,''), e.settings,
 	(e.vault_secret_id IS NOT NULL), COALESCE(e.credential_entry_id::text,''), COALESCE(ce.name,''),
 	e.allow_reveal, e.require_approval, e.record_session, e.reach_mode,
+	COALESCE(e.renderer,'guacamole'),
 	e.last_connected_at, e.connect_count, e.created_at, e.updated_at`
 
 type pamEntryScanner interface {
@@ -435,6 +457,7 @@ func scanPamEntry(row pamEntryScanner) (*PamEntry, error) {
 		&e.Domain, &e.URL, &settingsJSON,
 		&e.HasSecret, &e.CredentialEntryID, &e.CredentialEntryName,
 		&e.AllowReveal, &e.RequireApproval, &e.RecordSession, &e.ReachMode,
+		&e.Renderer,
 		&e.LastConnectedAt, &e.ConnectCount, &e.CreatedAt, &e.UpdatedAt,
 	); err != nil {
 		return nil, err
@@ -532,6 +555,7 @@ func (s *Service) handlePamListEntries(c *gin.Context) {
 			&e.Domain, &e.URL, &settingsJSON,
 			&e.HasSecret, &e.CredentialEntryID, &e.CredentialEntryName,
 			&e.AllowReveal, &e.RequireApproval, &e.RecordSession, &e.ReachMode,
+			&e.Renderer,
 			&e.LastConnectedAt, &e.ConnectCount, &e.CreatedAt, &e.UpdatedAt,
 			&e.Favorite,
 		); err != nil {
@@ -694,15 +718,15 @@ func (s *Service) handlePamCreateEntry(c *gin.Context) {
 		INSERT INTO pam_entries (id, org_id, folder_id, name, entry_type, description, tags,
 		                         hostname, port, username, domain, url, settings,
 		                         vault_secret_id, credential_entry_id,
-		                         allow_reveal, require_approval, record_session, created_by)
+		                         allow_reveal, require_approval, record_session, renderer, created_by)
 		VALUES ($1, $2, NULLIF($3,'')::uuid, $4, $5, NULLIF($6,''), $7,
 		        NULLIF($8,''), NULLIF($9,0), NULLIF($10,''), NULLIF($11,''), NULLIF($12,''), $13,
 		        NULLIF($14,'')::uuid, NULLIF($15,'')::uuid,
-		        $16, $17, $18, NULLIF($19,'')::uuid)`,
+		        $16, $17, $18, $19, NULLIF($20,'')::uuid)`,
 		entryID, org.ID, req.FolderID, req.Name, req.EntryType, req.Description, req.Tags,
 		req.Hostname, pamDefaultPort(req.EntryType, req.Port), req.Username, req.Domain, req.URL, settingsJSON,
 		vaultSecretID, req.CredentialEntryID,
-		req.AllowReveal, req.RequireApproval, req.RecordSession, userID)
+		req.AllowReveal, req.RequireApproval, req.RecordSession, pamNormalizeRenderer(req.Renderer, req.EntryType), userID)
 	if err != nil {
 		if vaultSecretID != "" && s.vaultSvc != nil {
 			if delErr := s.vaultSvc.Delete(ctx, vaultSecretID); delErr != nil {
@@ -815,14 +839,15 @@ func (s *Service) handlePamUpdateEntry(c *gin.Context) {
 		       hostname = NULLIF($5,''), port = NULLIF($6,0), username = NULLIF($7,''),
 		       domain = NULLIF($8,''), url = NULLIF($9,''), settings = $10,
 		       vault_secret_id = NULLIF($11,'')::uuid, credential_entry_id = NULLIF($12,'')::uuid,
-		       allow_reveal = $13, require_approval = $14, record_session = $15, updated_at = NOW()
+		       allow_reveal = $13, require_approval = $14, record_session = $15,
+		       renderer = $18, updated_at = NOW()
 		 WHERE id = $16 AND org_id = $17`,
 		req.FolderID, req.Name, req.Description, req.Tags,
 		req.Hostname, pamDefaultPort(req.EntryType, req.Port), req.Username,
 		req.Domain, req.URL, settingsJSON,
 		vaultSecretID, req.CredentialEntryID,
 		req.AllowReveal, req.RequireApproval, req.RecordSession,
-		entryID, org.ID)
+		entryID, org.ID, pamNormalizeRenderer(req.Renderer, req.EntryType))
 	if err != nil {
 		s.logger.Error("handlePamUpdateEntry: update failed", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update entry"})

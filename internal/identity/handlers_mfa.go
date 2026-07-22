@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-webauthn/webauthn/protocol"
+	apperrors "github.com/openidx/openidx/internal/common/errors"
 )
 
 // WebAuthn Handlers
@@ -21,7 +22,7 @@ func (s *Service) handleBeginWebAuthnRegistration(c *gin.Context) {
 
 	options, err := s.BeginWebAuthnRegistration(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("begin web authn registration", err), s.logger)
 		return
 	}
 
@@ -52,7 +53,7 @@ func (s *Service) handleFinishWebAuthnRegistration(c *gin.Context) {
 
 	credential, err := s.FinishWebAuthnRegistration(c.Request.Context(), userID, credentialName, parsedResponse)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("finish web authn registration", err), s.logger)
 		return
 	}
 
@@ -76,7 +77,7 @@ func (s *Service) handleBeginWebAuthnAuthentication(c *gin.Context) {
 
 	options, err := s.BeginWebAuthnAuthentication(c.Request.Context(), req.Username)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("begin web authn authentication", err), s.logger)
 		return
 	}
 
@@ -133,7 +134,7 @@ func (s *Service) handleGetWebAuthnCredentials(c *gin.Context) {
 
 	credentials, err := s.GetWebAuthnCredentials(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("get web authn credentials", err), s.logger)
 		return
 	}
 
@@ -157,7 +158,7 @@ func (s *Service) handleDeleteWebAuthnCredential(c *gin.Context) {
 	}
 
 	if err := s.DeleteWebAuthnCredential(c.Request.Context(), userID, credentialID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("delete web authn credential", err), s.logger)
 		return
 	}
 
@@ -186,7 +187,7 @@ func (s *Service) handleRegisterPushDevice(c *gin.Context) {
 
 	device, err := s.RegisterPushMFADevice(c.Request.Context(), userID, &enrollment, ipAddress)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("register push device", err), s.logger)
 		return
 	}
 
@@ -204,7 +205,7 @@ func (s *Service) handleGetPushDevices(c *gin.Context) {
 
 	devices, err := s.GetPushMFADevices(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("get push devices", err), s.logger)
 		return
 	}
 
@@ -228,7 +229,7 @@ func (s *Service) handleDeletePushDevice(c *gin.Context) {
 	}
 
 	if err := s.DeletePushMFADevice(c.Request.Context(), userID, deviceID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("delete push device", err), s.logger)
 		return
 	}
 
@@ -257,7 +258,7 @@ func (s *Service) handleCreatePushChallenge(c *gin.Context) {
 
 	challenge, err := s.CreatePushMFAChallenge(c.Request.Context(), &request)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("create push challenge", err), s.logger)
 		return
 	}
 

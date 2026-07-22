@@ -635,5 +635,40 @@ func allMigrations() []*Migration {
 			UpSQL:       oauthUserConsentsUp,
 			DownSQL:     oauthUserConsentsDown,
 		},
+		{
+			Version:     90,
+			Name:        "pam_entries_renderer",
+			Description: "Add pam_entries.renderer (guacamole|wasm-ssh|novnc|support) so a PAM entry can declare which clientless in-browser renderer opens it; backfill existing rows to 'guacamole' (no behavior change). The permission/approval gate is unchanged and applies to every renderer. Additive/idempotent.",
+			UpSQL:       pamEntryRendererUp,
+			DownSQL:     pamEntryRendererDown,
+		},
+		{
+			Version:     91,
+			Name:        "quick_links",
+			Description: "Add quick_links: an admin-curated, user-searchable launcher for support/collaboration systems. type='external' opens a URL; type='pam' references a pam_entries row and launches it clientlessly via the entry's renderer (guacamole/wasm-ssh) under the existing PAM permission gate. Org-scoped + forced RLS; role-gated by min_role. Additive/idempotent.",
+			UpSQL:       quickLinksUp,
+			DownSQL:     quickLinksDown,
+		},
+		{
+			Version:     92,
+			Name:        "remote_support_consent",
+			Description: "Add remote_support_sessions.consent_required/consent_status/consent_decided_at so an attended support session can require the person at the device to click Allow before the admin can view/control. Existing sessions default consent_required=false (no behavior change for unattended/server support). Additive/idempotent.",
+			UpSQL:       remoteSupportConsentUp,
+			DownSQL:     remoteSupportConsentDown,
+		},
+		{
+			Version:     93,
+			Name:        "device_fingerprint",
+			Description: "Add enrolled_agents.device_fingerprint + a partial unique index so re-enrollment of the same physical device reuses one agent_id/auth_token instead of minting a new row every install. Existing rows keep fingerprint NULL and are unaffected. Additive/idempotent.",
+			UpSQL:       deviceFingerprintUp,
+			DownSQL:     deviceFingerprintDown,
+		},
+		{
+			Version:     94,
+			Name:        "remote_support_transport",
+			Description: "Add remote_support_sessions.transport (webrtc|relay) so a session can use a fully server-relayed VP8-over-WebSocket media path instead of peer-to-peer WebRTC. Defaults to 'webrtc' (no behavior change). Enables full-Ziti, no-STUN remote support.",
+			UpSQL:       remoteSupportTransportUp,
+			DownSQL:     remoteSupportTransportDown,
+		},
 	}
 }

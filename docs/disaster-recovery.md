@@ -90,6 +90,72 @@ dropdb openidx_temp
 
 ---
 
+### 1D. Failover Game-Day (RDS Multi-AZ / Patroni)
+
+Multi-AZ RDS provides *automatic* failover to a synchronous standby, but failover
+is only trustworthy if it is **rehearsed**. Run this in staging quarterly and
+after any DB/driver upgrade.
+
+**What "good" looks like:**
+- The verify path (validating already-issued JWTs) is **unaffected** — it does not
+  touch Postgres (in-memory JWKS + serve-stale, see the always-available-auth plan).
+- The issue path (login/refresh) returns clean, retryable errors for a few
+  seconds, then recovers **without any service restart** as pgxpool re-dials the
+  promoted primary.
+
+**Drill (runnable):** `scripts/dr-game-day.sh` drives this end-to-end — a
+synthetic auth canary that probes `/health/live` (verify path, must stay 200)
+and `/health/ready` (issue path, may 503 briefly then must self-recover), then
+prints a pass/fail verdict against the two "good" criteria above.
+
+```bash
+# Self-test (no infra): stands up a local mock that simulates a failover window
+# and runs the whole canary/verdict logic against it, so the drill itself is
+# verified and can't silently rot. This is what `make dr-game-day` runs.
+make dr-game-day
+#   or: scripts/dr-game-day.sh --self-test
+
+# Live staging — observe only (you trigger failover in another terminal):
+scripts/dr-game-day.sh --base-url https://staging.openidx.example
+
+# Live staging — the script triggers failover for you and grades the result:
+scripts/dr-game-day.sh --base-url https://staging.openidx.example \
+    --trigger --provider rds --rds-instance openidx-staging
+# Patroni:
+scripts/dr-game-day.sh --base-url https://staging.openidx.example \
+    --trigger --provider patroni --patroni-cluster openidx --patroni-standby pg-1
+```
+
+The script asserts, and exits non-zero on violation:
+- `/health/live` stayed **200 for the entire window** (verify path is DB-free —
+  a single non-200 is a broken always-available guarantee).
+- If `/health/ready` dropped, it **recovered on its own within budget** (pgxpool
+  re-dialed the promoted primary) — no `kubectl rollout`, no pod restarts.
+
+Under the hood it triggers the same failover the manual runbook did:
+```bash
+#   RDS:      aws rds reboot-db-instance --db-instance-identifier openidx-prod --force-failover
+#   Patroni:  patronictl switchover openidx --candidate <standby> --force
+```
+Expectations while it runs:
+- connect attempts fail FAST (~5s `DB_CONNECT_TIMEOUT`), not hang for minutes
+- `/health/ready` flips to 503 on affected replicas → LB drains new logins
+- `/health/live` stays 200 → pods are NOT killed/restarted
+- within ~1 pool `HealthCheckPeriod` (60s) new acquires reach the new primary
+- the canary's login success rate recovers on its own (no `kubectl rollout`)
+
+After the drill, confirm no restarts and steady state:
+```bash
+kubectl get pods -l app.kubernetes.io/name=openidx   # RESTARTS column unchanged
+```
+
+**If the pool does NOT recover without a restart**, that is a regression — check
+that `DB_CONNECT_TIMEOUT` is set (a hung dial with no timeout is the classic
+cause) and that `HealthCheckPeriod` is evicting dead conns. See
+`internal/common/database/database.go` and `docs/architecture/db-pooling.md`.
+
+---
+
 ## Procedure 2: Elasticsearch Recovery
 
 ```bash

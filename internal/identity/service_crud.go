@@ -6,8 +6,6 @@ import (
 	"fmt"
 
 	"go.uber.org/zap"
-
-	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // ============================================================
@@ -17,61 +15,18 @@ import (
 // GetUserByUsername retrieves a user by username
 func (s *Service) GetUserByUsername(ctx context.Context, username string) (*User, error) {
 	s.logger.Debug("Getting user by username", zap.String("username", username))
-
-	org, err := orgctx.From(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	// Fall back to direct database query
-	var dbUser UserDB
-	err = s.db.Pool.QueryRow(ctx, `
-		SELECT id, username, email, first_name, last_name, enabled, email_verified,
-		       created_at, updated_at, last_login_at, password_changed_at,
-		       password_must_change, failed_login_count, last_failed_login_at, locked_until
-		FROM users WHERE username = $1 AND org_id = $2
-	`, username, org.ID).Scan(
-		&dbUser.ID, &dbUser.Username, &dbUser.Email, &dbUser.FirstName, &dbUser.LastName,
-		&dbUser.Enabled, &dbUser.EmailVerified, &dbUser.CreatedAt, &dbUser.UpdatedAt, &dbUser.LastLoginAt,
-		&dbUser.PasswordChangedAt, &dbUser.PasswordMustChange, &dbUser.FailedLoginCount,
-		&dbUser.LastFailedLoginAt, &dbUser.LockedUntil,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("user not found")
-	}
-
-	user := dbUser.ToUser()
-	return &user, nil
+	// Delegates to the user repository (see user_repository.go). The repo owns
+	// the SQL, scopes to the caller's tenant, reads from the replica, and returns
+	// ErrUserNotFound on a miss. Note: the repo's shared column list COALESCEs
+	// first_name/last_name, fixing a latent scan error this method had for users
+	// with a NULL name.
+	return s.users.GetByUsername(ctx, username)
 }
 
 // GetUserByEmail retrieves a user by email address
 func (s *Service) GetUserByEmail(ctx context.Context, email string) (*User, error) {
 	s.logger.Debug("Getting user by email", zap.String("email", email))
-
-	org, err := orgctx.From(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	// Fall back to direct database query
-	var dbUser UserDB
-	err = s.db.Pool.QueryRow(ctx, `
-		SELECT id, username, email, first_name, last_name, enabled, email_verified,
-		       created_at, updated_at, last_login_at, password_changed_at,
-		       password_must_change, failed_login_count, last_failed_login_at, locked_until
-		FROM users WHERE email = $1 AND org_id = $2
-	`, email, org.ID).Scan(
-		&dbUser.ID, &dbUser.Username, &dbUser.Email, &dbUser.FirstName, &dbUser.LastName,
-		&dbUser.Enabled, &dbUser.EmailVerified, &dbUser.CreatedAt, &dbUser.UpdatedAt, &dbUser.LastLoginAt,
-		&dbUser.PasswordChangedAt, &dbUser.PasswordMustChange, &dbUser.FailedLoginCount,
-		&dbUser.LastFailedLoginAt, &dbUser.LockedUntil,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("user not found")
-	}
-
-	user := dbUser.ToUser()
-	return &user, nil
+	return s.users.GetByEmail(ctx, email)
 }
 
 // ListUsersWithFilter lists users with advanced filtering and pagination
@@ -115,27 +70,8 @@ func (s *Service) ListUsersWithFilter(ctx context.Context, filter UserFilter) (*
 // GetGroupByDisplayName retrieves a group by display name
 func (s *Service) GetGroupByDisplayName(ctx context.Context, displayName string) (*Group, error) {
 	s.logger.Debug("Getting group by display name", zap.String("display_name", displayName))
-
-	org, err := orgctx.From(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	// Fall back to direct database query
-	var dbGroup GroupDB
-	err = s.db.Pool.QueryRow(ctx, `
-		SELECT g.id, g.name, g.description, g.parent_id, g.allow_self_join, g.require_approval, g.max_members, g.created_at, g.updated_at,
-		       COALESCE((SELECT COUNT(*) FROM group_memberships gm WHERE gm.group_id = g.id AND gm.org_id = $2), 0) as member_count
-		FROM groups g WHERE g.name = $1 AND g.org_id = $2
-	`, displayName, org.ID).Scan(
-		&dbGroup.ID, &dbGroup.DisplayName, &dbGroup.Description, &dbGroup.ParentID, &dbGroup.AllowSelfJoin, &dbGroup.RequireApproval, &dbGroup.MaxMembers, &dbGroup.CreatedAt, &dbGroup.UpdatedAt, &dbGroup.MemberCount,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("group not found")
-	}
-
-	group := dbGroup.ToGroup()
-	return &group, nil
+	// Delegates to the group repository (see group_repository.go).
+	return s.groups.GetByName(ctx, displayName)
 }
 
 // ListGroupsWithFilter lists groups with advanced filtering and pagination

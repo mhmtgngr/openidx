@@ -53,6 +53,7 @@ interface ZitiIdentity {
   id: string
   ziti_id: string
   name: string
+  display_name?: string
   identity_type: string
   user_id?: string
   enrolled: boolean
@@ -1168,7 +1169,7 @@ function IdentitiesTab() {
     try {
       const data = await api.get<{ enrollment_jwt: string }>(`/api/v1/access/ziti/identities/${identity.id}/enrollment-jwt`)
       if (data.enrollment_jwt) {
-        setJwtModal({ jwt: data.enrollment_jwt, name: identity.name })
+        setJwtModal({ jwt: data.enrollment_jwt, name: identity.display_name || identity.name })
       } else {
         toast({ title: 'No JWT', description: 'Enrollment JWT is not available.', variant: 'destructive' })
       }
@@ -1178,7 +1179,9 @@ function IdentitiesTab() {
   }
 
   const identities = (data?.identities || []).filter((ident) =>
-    !search || ident.name.toLowerCase().includes(search.toLowerCase()) ||
+    !search ||
+    (ident.display_name || '').toLowerCase().includes(search.toLowerCase()) ||
+    ident.name.toLowerCase().includes(search.toLowerCase()) ||
     ident.identity_type.toLowerCase().includes(search.toLowerCase())
   )
 
@@ -1290,7 +1293,7 @@ function IdentitiesTab() {
                         <Shield className={`h-4 w-4 ${ident.enrolled ? 'text-green-700' : 'text-yellow-700'}`} />
                       </div>
                       <div>
-                        <p className="font-medium">{ident.name}</p>
+                        <p className="font-medium">{ident.display_name || ident.name}</p>
                         {ident.user_id && <p className="text-xs text-muted-foreground">User: {ident.user_id.slice(0, 8)}...</p>}
                       </div>
                     </div>

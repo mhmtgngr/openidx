@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	apperrors "github.com/openidx/openidx/internal/common/errors"
 
 	"github.com/openidx/openidx/internal/common/health"
 	"github.com/openidx/openidx/internal/common/orgctx"
@@ -641,7 +642,7 @@ func (s *Service) handleHealthFix(c *gin.Context) {
 		return
 	}
 	if err := s.healthEngine.FixOne(orgctx.WithBypassRLS(c.Request.Context()), c.Param("checkId"), req.Subject); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("health fix", err), s.logger)
 		return
 	}
 	s.logAuditEvent(c, "health_fix_applied", c.Param("checkId"), "system_health", map[string]interface{}{"subject": req.Subject})

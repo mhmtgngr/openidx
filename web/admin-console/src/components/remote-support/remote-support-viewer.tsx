@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Button } from '../ui/button'
 import { Badge } from '../ui/badge'
-import { Circle, Square, WifiOff } from 'lucide-react'
+import { Circle, Maximize, Square, WifiOff } from 'lucide-react'
 import { api } from '../../lib/api'
 
 /**
@@ -49,16 +49,29 @@ export function RemoteSupportViewer({
   onEnd,
 }: Props) {
   const videoRef = useRef<HTMLVideoElement | null>(null)
+  const liveStreamRef = useRef<MediaStream | null>(null)
   const overlayRef = useRef<HTMLDivElement | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
   const pcRef = useRef<RTCPeerConnection | null>(null)
   const inputChannelRef = useRef<RTCDataChannel | null>(null)
+  const controlActiveRef = useRef<boolean>(mode === 'interactive')
   const recorderRef = useRef<MediaRecorder | null>(null)
   const chunkIndexRef = useRef<number>(0)
   const recordedStreamRef = useRef<MediaStream | null>(null)
   const [state, setState] = useState<ConnState>('connecting')
   const [errorMessage, setErrorMessage] = useState<string>('')
   const [recState, setRecState] = useState<RecState>('off')
+  // Live control toggle: in an interactive session the admin can hand control
+  // back and forth without restarting. When false, input is not forwarded and
+  // the device is told to drop its "being controlled" indicator. Starts true
+  // for interactive sessions (matches today's behavior), always false in view.
+  const [controlActive, setControlActive] = useState<boolean>(mode === 'interactive')
+  // reconnectNonce forces the connect effect to tear down and re-run. A
+  // watchdog bumps it when the viewer connects but no video arrives (the device
+  // peer wasn't ready yet, so our offer was missed) — automating the manual
+  // "close and reopen the viewer" the operator had to do.
+  const [reconnectNonce, setReconnectNonce] = useState(0)
+  const gotVideoRef = useRef(false)
 
   useEffect(() => {
     const ws = openSignalingSocket(wsUrl)
@@ -69,10 +82,10 @@ export function RemoteSupportViewer({
 
     pc.ontrack = (e) => {
       const stream = e.streams[0] ?? new MediaStream([e.track])
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream
-        setState('streaming')
-      }
+      gotVideoRef.current = true
+      liveStreamRef.current = stream
+      attachStream(stream)
+      setState('streaming')
       recordedStreamRef.current = stream
       if (recordingEnabled && !recorderRef.current) {
         try { startMediaRecorder(stream) }
@@ -100,30 +113,52 @@ export function RemoteSupportViewer({
         setErrorMessage(`peer connection ${pc.connectionState}`)
       }
     }
-    if (mode === 'interactive') {
-      // The agent side creates the channel and we receive it via ondatachannel;
-      // we also create our own as a fallback so input flows regardless of
-      // which side wins the implicit race.
-      const ch = pc.createDataChannel('openidx-input', { ordered: true })
-      inputChannelRef.current = ch
-      ch.onopen = () => { /* ready to send */ }
-    }
+    // NOTE: we deliberately do NOT createDataChannel here. The browser is the
+    // ANSWERER (the device sends the offer), and an SDP answer cannot introduce
+    // a data-channel m-line the offer omitted — a channel created on this side
+    // would never be negotiated, so input silently failed. The device now
+    // creates the "openidx-input" channel before its offer; we receive it via
+    // ondatachannel below and send input + control_state on it.
     pc.ondatachannel = (e) => {
       if (e.channel.label === 'openidx-input') {
         inputChannelRef.current = e.channel
+        const dc = e.channel
+        // The device gates ALL input on control_state and starts OFF, so we
+        // announce our (default-on for interactive) control state the moment
+        // the channel opens; otherwise the device drops every tap/key.
+        const announce = () => {
+          if (controlActiveRef.current) {
+            try { dc.send(JSON.stringify({ event: 'control_state', active: true })) } catch { /* not open */ }
+          }
+        }
+        if (dc.readyState === 'open') announce()
+        else dc.onopen = announce
       }
     }
 
     ws.onopen = () => setState('awaiting-offer')
     ws.onclose = () => {
-      if (state !== 'closed') {
-        setState('error')
-        setErrorMessage('signaling channel closed')
+      // Signaling is only needed to negotiate + trickle ICE. Once the peer
+      // connection is established, video + input flow directly peer-to-peer
+      // over WebRTC, so a signaling WS close (e.g. proxy idle timeout) must NOT
+      // tear down a live session. pcRef is always current (unlike the captured
+      // `state`), so gate the error on whether we reached a usable peer.
+      const pcState = pcRef.current?.connectionState
+      const live = pcState === 'connected' || pcState === 'connecting'
+      if (!live) {
+        setState((prev) => (prev === 'closed' || prev === 'streaming' ? prev : 'error'))
+        setErrorMessage((prev) => (prev ? prev : 'signaling channel closed'))
       }
     }
     ws.onerror = () => {
-      setState('error')
-      setErrorMessage('signaling error')
+      // Same rationale as onclose: a signaling-transport error must not tear
+      // down a session whose media path is already (or nearly) up.
+      const pcState = pcRef.current?.connectionState
+      const live = pcState === 'connected' || pcState === 'connecting'
+      if (!live) {
+        setState((prev) => (prev === 'closed' || prev === 'streaming' ? prev : 'error'))
+        setErrorMessage((prev) => (prev ? prev : 'signaling error'))
+      }
     }
     ws.onmessage = async (ev) => {
       const envelope = parseEnvelope(ev.data)
@@ -156,20 +191,95 @@ export function RemoteSupportViewer({
       }
     }
 
+    // Watchdog: if we don't receive a video track within a few seconds, the
+    // device peer probably wasn't connected when we sent our answer (so our
+    // signaling was missed). Rather than sit on a black screen until the
+    // operator manually closes + reopens, bump reconnectNonce to tear this
+    // connection down and try again. Retries a handful of times, then gives up.
+    gotVideoRef.current = false
+    const watchdog = setTimeout(() => {
+      if (!gotVideoRef.current && reconnectNonce < 6) {
+        setReconnectNonce((n) => n + 1)
+      }
+    }, 4000)
+
     return () => {
       // Best-effort teardown — each may already be closed; ignore throws.
+      clearTimeout(watchdog)
       try { stopRecording() } catch { /* already stopped */ }
       try { ws.close() } catch { /* already closed */ }
       try { pc.close() } catch { /* already closed */ }
       setState('closed')
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wsUrl])
+  }, [wsUrl, reconnectNonce])
+
+  // attachStream binds a MediaStream to the <video> and forces playback. The
+  // ontrack event can fire before the browser has a keyframe to paint, or while
+  // the element is still behind the "connecting" overlay, leaving a black frame
+  // until the viewer is reopened. Re-attaching + play() (and retrying a few
+  // times) makes the first frame render as soon as it arrives, without needing
+  // a manual close/reopen.
+  function attachStream(stream: MediaStream) {
+    const v = videoRef.current
+    if (!v) return
+    if (v.srcObject !== stream) v.srcObject = stream
+    const tryPlay = (n: number) => {
+      v.play?.().catch(() => {
+        if (n > 0) setTimeout(() => tryPlay(n - 1), 200)
+      })
+    }
+    tryPlay(5)
+  }
+
+  // enterFullscreen makes the video overlay fill the screen — the most reliable
+  // way to control at 1:1 pixel accuracy (the letterbox math is exact and the
+  // pointer has the whole display to aim in). Esc exits (browser default). We
+  // focus the overlay so keyboard input keeps flowing in fullscreen.
+  function enterFullscreen() {
+    const el = overlayRef.current
+    if (!el) return
+    const req = el.requestFullscreen?.bind(el)
+    if (req) {
+      req().then(() => el.focus()).catch(() => { /* user gesture / policy */ })
+    }
+  }
+
+  // Whenever we enter the streaming state (or the element remounts), make sure
+  // the live stream is actually attached and playing. This catches the race
+  // where ontrack fired before the <video> ref existed or before the overlay
+  // revealed it.
+  useEffect(() => {
+    if (state === 'streaming' && liveStreamRef.current) {
+      attachStream(liveStreamRef.current)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state])
 
   function sendInput(event: Record<string, unknown>) {
+    if (!controlActiveRef.current) return
     const ch = inputChannelRef.current
     if (!ch || ch.readyState !== 'open') return
     ch.send(JSON.stringify(event))
+  }
+
+  // sendControlState notifies the device whether the admin currently holds
+  // control, so it can show/hide its "being controlled" banner. Sent over the
+  // same input channel as a distinct event the agent recognizes.
+  function sendControlState(active: boolean) {
+    const ch = inputChannelRef.current
+    if (ch && ch.readyState === 'open') {
+      ch.send(JSON.stringify({ event: 'control_state', active }))
+    }
+  }
+
+  function toggleControl() {
+    setControlActive((prev) => {
+      const next = !prev
+      controlActiveRef.current = next
+      sendControlState(next)
+      return next
+    })
   }
 
   /**
@@ -254,18 +364,49 @@ export function RemoteSupportViewer({
 
   /**
    * Translate a pointer event on the overlay to normalized device-screen
-   * coordinates. The Android side scales these to the actual screen size,
-   * so we pass through fractional x/y in the 0..1 range plus the absolute
-   * dimensions of the overlay so the device can interpret pixel offsets if
-   * it prefers.
+   * coordinates in the 0..1000 range the device expects.
+   *
+   * The <video> is rendered with object-contain, so the actual picture is
+   * letterboxed inside the overlay: it fills one axis and leaves black bars on
+   * the other. Mapping the click against the raw overlay rect therefore lands
+   * in the wrong spot (offset by the bar size and scaled wrong). We reconstruct
+   * the real content rectangle from the video's intrinsic aspect ratio and map
+   * the pointer relative to THAT, clamping to the picture so clicks on the bars
+   * don't send out-of-range coordinates.
    */
   function pointerCoords(e: React.PointerEvent<HTMLDivElement>) {
     const rect = overlayRef.current?.getBoundingClientRect()
     if (!rect) return { x: 0, y: 0 }
-    return {
-      x: ((e.clientX - rect.left) / rect.width) * 1000,
-      y: ((e.clientY - rect.top) / rect.height) * 1000,
+    const vid = videoRef.current
+    const vw = vid?.videoWidth || 0
+    const vh = vid?.videoHeight || 0
+
+    // Content rect defaults to the full overlay (before metadata / for square).
+    let cx = rect.left
+    let cy = rect.top
+    let cw = rect.width
+    let ch = rect.height
+    if (vw > 0 && vh > 0 && rect.width > 0 && rect.height > 0) {
+      const videoAR = vw / vh
+      const boxAR = rect.width / rect.height
+      if (videoAR > boxAR) {
+        // Video is wider than the box: full width, letterbox top/bottom.
+        cw = rect.width
+        ch = rect.width / videoAR
+        cx = rect.left
+        cy = rect.top + (rect.height - ch) / 2
+      } else {
+        // Video is taller: full height, pillarbox left/right.
+        ch = rect.height
+        cw = rect.height * videoAR
+        cy = rect.top
+        cx = rect.left + (rect.width - cw) / 2
+      }
     }
+    const fx = (e.clientX - cx) / cw
+    const fy = (e.clientY - cy) / ch
+    const clamp = (v: number) => Math.max(0, Math.min(1, v))
+    return { x: clamp(fx) * 1000, y: clamp(fy) * 1000 }
   }
 
   const pointerDownAt = useRef<{ x: number; y: number; t: number } | null>(null)
@@ -288,7 +429,7 @@ export function RemoteSupportViewer({
     } else {
       sendInput({
         event: 'swipe',
-        x: start.x, y: start.y, x_end: x, y_end: y,
+        x: start.x, y: start.y, x2: x, y2: y,
         duration_ms: Math.max(100, duration),
       })
     }
@@ -354,17 +495,33 @@ export function RemoteSupportViewer({
         <div className="flex items-center gap-2">
           {mode === 'interactive' && (
             <>
-              <Button variant="outline" size="sm" onClick={() => sendInput({ event: 'global_action', action: 'back' })}>
+              <Button
+                variant={controlActive ? 'default' : 'outline'}
+                size="sm"
+                onClick={toggleControl}
+                title={controlActive ? 'You are controlling the device — click to release' : 'View-only — click to take control'}
+              >
+                {controlActive ? 'Release control' : 'Take control'}
+              </Button>
+              <Button variant="outline" size="sm" disabled={!controlActive} onClick={() => sendInput({ event: 'global_action', action: 'back' })}>
                 Back
               </Button>
-              <Button variant="outline" size="sm" onClick={() => sendInput({ event: 'global_action', action: 'home' })}>
+              <Button variant="outline" size="sm" disabled={!controlActive} onClick={() => sendInput({ event: 'global_action', action: 'home' })}>
                 Home
               </Button>
-              <Button variant="outline" size="sm" onClick={() => sendInput({ event: 'global_action', action: 'recents' })}>
+              <Button variant="outline" size="sm" disabled={!controlActive} onClick={() => sendInput({ event: 'global_action', action: 'recents' })}>
                 Recents
               </Button>
             </>
           )}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={enterFullscreen}
+            title="Fullscreen (Esc to exit) — best for pixel-accurate control"
+          >
+            <Maximize className="mr-1 h-3 w-3" /> Fullscreen
+          </Button>
           <Button variant="destructive" size="sm" onClick={onEnd}>
             <Square className="mr-1 h-3 w-3" /> End session
           </Button>
@@ -374,17 +531,26 @@ export function RemoteSupportViewer({
       <div
         ref={overlayRef}
         tabIndex={0}
-        onPointerDown={onPointerDown}
+        onPointerDown={(e) => { e.currentTarget.focus(); onPointerDown(e) }}
         onPointerUp={onPointerUp}
         onKeyDown={onKeyDown}
-        className="relative bg-black rounded-md aspect-video overflow-hidden focus:outline-none focus:ring-2 focus:ring-primary"
+        // The video is the interactive control surface. Stop pointer events from
+        // bubbling to the surrounding Radix Dialog (which otherwise treats a
+        // click as an outside-interaction / focus change and blurs or dismisses
+        // the surface). style touch-none prevents the browser from hijacking
+        // drags as scroll/gestures.
+        onClick={(e) => e.stopPropagation()}
+        style={{ touchAction: 'none' }}
+        className="relative bg-black rounded-md aspect-video overflow-hidden focus:outline-none focus:ring-2 focus:ring-primary cursor-crosshair fullscreen:aspect-auto fullscreen:h-screen fullscreen:w-screen fullscreen:rounded-none"
       >
         <video
           ref={videoRef}
           autoPlay
           playsInline
           muted
-          className="absolute inset-0 h-full w-full object-contain"
+          // pointer-events-none so clicks land on the capturing overlay div, not
+          // the <video> element (which would swallow them).
+          className="absolute inset-0 h-full w-full object-contain pointer-events-none"
         />
         {state !== 'streaming' && (
           <div className="absolute inset-0 flex items-center justify-center text-white/80 text-sm">

@@ -362,6 +362,12 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 
 	// Admin API for route management (requires auth)
 	api := router.Group("/api/v1/access")
+	// WebSocket auth promotion MUST run before the bearer auth middleware:
+	// browsers cannot set an Authorization header on a WebSocket, so the token
+	// rides as a `bearer.<jwt>` subprotocol. This copies it into the header so the
+	// standard auth middleware validates it exactly like any other request (and
+	// makes WS auth independent of edge/APISIX behavior).
+	api.Use(promoteWebSocketBearer)
 	if len(authMiddleware) > 0 {
 		api.Use(authMiddleware...)
 	}
@@ -589,8 +595,16 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.POST("/pam/entries/:id/favorite", svc.handlePamFavoriteEntry)
 		api.DELETE("/pam/entries/:id/favorite", svc.handlePamUnfavoriteEntry)
 		api.POST("/pam/entries/:id/connect", svc.handlePamConnect)
+		api.GET("/pam/entries/:id/ws", svc.handlePamWSConnect)
 		api.POST("/pam/entries/:id/reveal", svc.handlePamRevealEntry)
 		api.POST("/pam/entries/:id/request", svc.handlePamRequestAccess)
+
+		// Quick Links — admin-curated, user-searchable support/collaboration launcher.
+		api.GET("/quick-links/my", svc.handleMyQuickLinks)
+		api.GET("/quick-links", svc.requireAdminRole(), svc.handleListQuickLinks)
+		api.POST("/quick-links", svc.requireAdminRole(), svc.handleCreateQuickLink)
+		api.PUT("/quick-links/:id", svc.requireAdminRole(), svc.handleUpdateQuickLink)
+		api.DELETE("/quick-links/:id", svc.requireAdminRole(), svc.handleDeleteQuickLink)
 		api.GET("/pam/entries/:id/grants", svc.requireAdminRole(), svc.handlePamListEntryGrants)
 		api.POST("/pam/entries/:id/grants", svc.requireAdminRole(), svc.handlePamAddEntryGrant)
 		api.DELETE("/pam/entries/:id/grants/:grantId", svc.requireAdminRole(), svc.handlePamRemoveEntryGrant)
@@ -831,6 +845,17 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 			svc.remoteSupportHandler.RegisterRemoteSupportPublicRoutes(publicAgent)
 		}
 	}
+
+	// Tier-0 "dark platform" enroll door: the ONLY access-service route that
+	// stays public when the platform goes dark. Trades an entitlement (session
+	// bearer / enrollment token) for a one-time Ziti enrollment JWT so a native
+	// client can join the overlay. It authenticates the request itself (verifies
+	// the bearer against JWKS, or validates the enrollment token), so it sits
+	// OUTSIDE the JWT middleware like the agent routes. Rate-limited + audited.
+	// See docs/superpowers/specs/2026-07-17-dark-platform-ziti-first-design.md §4.
+	router.POST("/api/v1/access/enroll",
+		middleware.RateLimit(20, time.Minute), // tight per-IP budget for the public gate
+		svc.handleEnroll)
 
 	// Public APK download for Android Enterprise provisioning. The device
 	// fetches this during factory-reset setup, before any auth context exists.

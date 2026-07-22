@@ -205,12 +205,38 @@ export const setAuthInitializing = (_value: boolean) => {
 // Response interceptor for error handling
 axiosInstance.interceptors.response.use(
   (response) => response,
-  (error: AxiosError) => {
+  async (error: AxiosError) => {
     if (error.response?.status === 401) {
       // Log 401 errors but don't auto-redirect - let the auth context handle session state
       // This prevents redirect loops when the backend rejects tokens during auth flow
       console.warn('[API] 401 Unauthorized:', error.config?.url)
     }
+
+    // 503 temporarily_unavailable: the backend returns this (with a Retry-After
+    // header) during a transient dependency brownout — e.g. a database failover
+    // (see internal/oauth/unavailable.go). It is meant to be RETRIED, not shown
+    // to the user as a hard failure. Retry idempotent requests a bounded number
+    // of times, honoring Retry-After, so a brief DB blip stays invisible.
+    const config = error.config as (AxiosRequestConfig & { _ha503Retries?: number }) | undefined
+    const method = (config?.method || 'get').toLowerCase()
+    const isIdempotent = method === 'get' || method === 'head' || method === 'options'
+    if (error.response?.status === 503 && config && isIdempotent) {
+      const attempts = config._ha503Retries ?? 0
+      const MAX_503_RETRIES = 3
+      if (attempts < MAX_503_RETRIES) {
+        config._ha503Retries = attempts + 1
+        // Honor Retry-After (seconds); default to a short capped backoff.
+        const retryAfterHeader = error.response.headers?.['retry-after']
+        const retryAfterSec = retryAfterHeader ? parseInt(String(retryAfterHeader), 10) : NaN
+        const delayMs = Number.isFinite(retryAfterSec)
+          ? Math.min(retryAfterSec * 1000, 10000)
+          : Math.min(500 * 2 ** attempts, 4000)
+        console.warn(`[API] 503 temporarily_unavailable on ${config.url} — retry ${config._ha503Retries}/${MAX_503_RETRIES} in ${delayMs}ms`)
+        await new Promise((resolve) => setTimeout(resolve, delayMs))
+        return axiosInstance(config)
+      }
+    }
+
     return Promise.reject(error)
   }
 )
@@ -477,6 +503,43 @@ export const api = {
     disableZiti: (id: string) =>
       api.post<{ reach_mode: string }>(`/api/v1/access/pam/entries/${id}/ziti/disable`),
   },
+  quickLinks: {
+    listMine: () => api.get<{ quick_links: QuickLink[] }>('/api/v1/access/quick-links/my'),
+    list: () => api.get<{ quick_links: QuickLink[] }>('/api/v1/access/quick-links'),
+    create: (body: QuickLinkInput) => api.post<{ id: string }>('/api/v1/access/quick-links', body),
+    update: (id: string, body: QuickLinkInput) => api.put<{ status: string }>(`/api/v1/access/quick-links/${id}`, body),
+    remove: (id: string) => api.delete<void>(`/api/v1/access/quick-links/${id}`),
+  },
+}
+
+export interface QuickLink {
+  id: string
+  title: string
+  description: string
+  category: string
+  icon: string
+  type: 'external' | 'pam'
+  url?: string
+  pam_entry_id?: string
+  pam_renderer?: string
+  min_role: string
+  sort_order: number
+  enabled: boolean
+  open_in_new: boolean
+}
+
+export interface QuickLinkInput {
+  title: string
+  description?: string
+  category?: string
+  icon?: string
+  type: 'external' | 'pam'
+  url?: string
+  pam_entry_id?: string
+  min_role?: string
+  sort_order?: number
+  enabled?: boolean
+  open_in_new?: boolean
 }
 
 export interface PamBrokerStatus {
@@ -527,6 +590,7 @@ export interface PamEntry {
   require_approval: boolean
   record_session: boolean
   reach_mode: string
+  renderer?: string
   ziti_enabled: boolean
   favorite: boolean
   last_connected_at?: string
@@ -552,6 +616,7 @@ export interface PamEntryInput {
   allow_reveal?: boolean
   require_approval?: boolean
   record_session?: boolean
+  renderer?: string
 }
 
 export interface PamConnectResult {

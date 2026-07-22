@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	apperrors "github.com/openidx/openidx/internal/common/errors"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/database"
@@ -183,7 +184,7 @@ func (h *KioskAPIHandler) HandleGetPolicy(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "policy not found"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("get policy", err), h.logger)
 		return
 	}
 	c.JSON(http.StatusOK, rec)

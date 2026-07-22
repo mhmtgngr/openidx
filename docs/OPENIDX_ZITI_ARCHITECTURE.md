@@ -464,3 +464,141 @@ and reloaded within ~5 s.)
 
 *Generated from the live deployment and source on 2026-06-23. Identity files,
 ports, and hostnames are specific to this box (`192.168.31.76`).*
+
+---
+
+# Dark platform cutover (staged, verify-before-cutover)
+
+> Spec: `docs/superpowers/specs/2026-07-17-dark-platform-ziti-first-design.md`.
+> Plan: `docs/superpowers/plans/2026-07-17-dark-platform-ziti-first.md`.
+>
+> **Everything below is opt-in.** With all flags at their defaults the platform
+> behaves exactly as it does today (full public route set, all-interfaces bind).
+> Going dark is an explicit, staged **operator** action, gated at every step by
+> `make dark-drill` and `scripts/dark-mode.sh --verify`. Never drop a public
+> route until `--verify` proves the overlay path works.
+
+## Tier model
+
+| Tier | Surfaces | Ziti dial attribute | Public in `DARK_MODE=off` | Public after cutover |
+|---|---|---|---|---|
+| **0 (bootstrap)** | `enroll`, `oauth`, `.well-known`/jwks | (public, never darked) | yes | **yes (always)** |
+| **1 (self-service + shell)** | identity self-service API, console SPA | `#enrolled-users` | yes | dark in `tier1` |
+| **2 (management + data)** | admin-api, governance, audit, provisioning, scim, access | `#device-trusted` | yes | dark in `tier2` and `tier1` |
+
+Tier 0 is **always** seeded. Darking it bricks enrollment and login and makes
+the platform unrecoverable without break-glass. The invariant test
+`TestNoTier0SurfaceIsDarked` and the seeder both enforce this.
+
+## The two enforcement planes
+
+Going dark requires **both** planes to move together, or you get a false-secure
+state (edge route dropped but backend still bound to a routable interface, or
+vice versa):
+
+1. **Edge (what the internet can reach):** `DARK_MODE={off|tier2|tier1}` selects
+   which APISIX routes get seeded — `deployments/apisix-edge/seed-edge-routes.sh`.
+2. **Backend bind (what a routable interface can reach):**
+   `SERVICE_BIND_ADDR=127.0.0.1` on each darked service makes it loopback-only,
+   so the edge router (and only it) can host it onto the overlay. Combined with
+   `DARK_MODE_TIER1`/`DARK_MODE_TIER2=true` on the access-service, the reconciler
+   models each surface as a tier'd dark Ziti service (`defaultDarkServices()`).
+
+## Runbook — do these IN ORDER. Do not skip a verify.
+
+### 1. Enroll the admin fleet FIRST
+
+Before darking anything, every operator who needs the management plane must be
+enrolled and (for Tier 2) device-trusted, or you will lock yourself out.
+
+- Enroll each admin via native tunneler or BrowZer. The public enroll door is
+  `POST /api/v1/access/enroll` (Tier 0, rate-limited, audited) — it exchanges a
+  valid session/token for a Ziti enrollment JWT.
+- Confirm device-trust: `GET /api/v1/access/my-devices` must show the device as
+  trusted (this is what grants `#device-trusted` → Tier-2 dial).
+- Register the console dark app: `bash scripts/register-console-dark-app.sh`
+  (idempotent; the reconciler converges `openidx-console` + its BrowZer route).
+
+### 2. Deploy Phases 1-5 with all flags OFF
+
+Ship the code. `DARK_MODE=off`, no `SERVICE_BIND_ADDR` override, no
+`DARK_MODE_TIER*`. **No behavior change** — this is a safe, reversible deploy.
+Confirm the fleet is enrolled and healthy on the still-public platform.
+
+### 3. Drill in staging (offline + live)
+
+```bash
+make dark-drill                 # offline: route-set + tier invariants + self-test
+```
+Then a **live staging drill**, Tier 2 first:
+```bash
+# On admin/governance/audit/provisioning/scim/access services:
+export SERVICE_BIND_ADDR=127.0.0.1
+export DARK_MODE_TIER2=true            # access-service: model surfaces as dark
+# Re-seed the edge to drop the Tier-2 routes:
+DARK_MODE=tier2 bash deployments/apisix-edge/seed-edge-routes.sh
+# Prove the invariant against the LIVE staging deployment:
+scripts/dark-mode.sh --verify \
+  --public-url  https://<staging-host>/api/v1/admin/health \
+  --overlay-url https://<overlay-path-to-admin>/health
+```
+`--verify` must prove all three: **public refused** + **overlay reachable** +
+**tier gate holds** (a Tier-1-only identity is refused the Tier-2 surface). If
+any check fails, STOP — do not proceed to prod.
+
+### 4. Cut over prod, Tier 2 then Tier 1
+
+Only after staging `--verify` is green: repeat step 3 against prod for `tier2`.
+Once Tier 2 is stable and verified, repeat for `tier1` (adds self-service + SPA
+to the dark set; only the Tier-0 bootstrap stays public).
+
+### 5. Break-glass (rehearse this in staging as part of the drill)
+
+If a cutover locks out operators or the overlay is impaired:
+
+```bash
+scripts/dark-mode.sh --undark          # re-seeds DARK_MODE=off (public routes back)
+```
+`--undark` restores the full public edge route set and prints the
+`SERVICE_BIND_ADDR` revert (unset it and restart the affected services to
+re-bind all interfaces). Keep a **sealed, out-of-band enroll token** so a fresh
+admin device can enroll even if the console is unreachable. The undark path is
+part of `make dark-drill` — rehearse it so the muscle memory exists before you
+need it at 3am.
+
+## Invariants (enforced in CI via `make dark-drill`)
+
+- Tier-2 surfaces carry `#device-trusted`, never merely `#enrolled-users`
+  (`TestTier2ServicesRequireDeviceTrust`).
+- No Tier-0 surface is ever a dark service (`TestNoTier0SurfaceIsDarked`).
+- Every dark upstream is loopback (`TestDarkServiceUpstreamsAreLoopback`).
+- `scripts/dark-mode.sh --self-test` proves public-refused + overlay-200 +
+  tier-gate on every run, so a cutover can't be green-lit on a false positive.
+
+## Live cutover result (this deployment, Tier 1+2 dark)
+
+Verified on this box: 5 services loopback-bound (dark on the external host IP,
+still served via the local edge + overlay):
+
+| Service | Port | External host-IP | Via edge |
+|---|---|---|---|
+| identity | 8001 | refused (dark) | reachable |
+| governance | 8002 | refused (dark) | reachable |
+| provisioning | 8003 | refused (dark) | reachable |
+| audit | 8004 | refused (dark) | reachable |
+| admin-api | 8005 | refused (dark) | reachable |
+| oauth | 8006 | public (Tier 0) | reachable |
+| access | 8007 | public (Tier 0) | reachable |
+
+**Key finding — darking `identity` does NOT break login.** The oauth service
+holds `identityService *identity.Service` as an **in-process embedded library**
+(`internal/oauth/service.go`), and `handleLogin` calls
+`s.identityService.AuthenticateUser(...)` directly against the DB — not over
+HTTP to `:8001`. So loopback-binding identity's network port has zero effect on
+credential verification. Proven live with identity dark: full auth-code+PKCE
+login issued a real `access_token` (873 chars) + `id_token`.
+
+Cutover tooling: `scripts/service-dark-bind.sh` (per-service loopback bind via a
+systemd drop-in; drill by default, `KEEP=1` persists) and
+`scripts/service-undark.sh` (break-glass revert). Requires binaries that honor
+`SERVICE_BIND_ADDR` (Phase 1); the pre-Phase-1 binaries silently ignored it.

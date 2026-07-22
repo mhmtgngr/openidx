@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	apperrors "github.com/openidx/openidx/internal/common/errors"
 )
 
 // handleTrustBrowser creates a trusted browser entry
@@ -114,7 +115,7 @@ func (s *Service) handleRevokeAllTrustedBrowsers(c *gin.Context) {
 	}
 
 	if err := s.RevokeAllTrustedBrowsers(c.Request.Context(), userID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("revoke all trusted browsers", err), s.logger)
 		return
 	}
 

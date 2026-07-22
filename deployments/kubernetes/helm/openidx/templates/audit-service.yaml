@@ -77,7 +77,7 @@ spec:
                 name: {{ include "openidx.fullname" . }}-config
           livenessProbe:
             httpGet:
-              path: /health
+              path: /health/live
               port: http
               {{- if .Values.serviceTLS.enabled }}
               scheme: HTTPS
@@ -86,7 +86,7 @@ spec:
             periodSeconds: 20
           readinessProbe:
             httpGet:
-              path: /health
+              path: /health/ready
               port: http
               {{- if .Values.serviceTLS.enabled }}
               scheme: HTTPS

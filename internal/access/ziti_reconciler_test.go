@@ -1,6 +1,7 @@
 package access
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -500,5 +501,112 @@ func TestDeleteEdgeEntityByNameNoMatch(t *testing.T) {
 		cfg: &config.Config{ZitiCtrlURL: srv.URL}, initialized: true}
 	if err := zm.deleteEdgeEntityByName(context.Background(), "service-edge-router-policies", "openidx-serp-openidx-Missing"); err != nil {
 		t.Fatalf("expected nil error on no match, got %v", err)
+	}
+}
+
+func TestEnsureTierDialPolicyBindsAttribute(t *testing.T) {
+	// ensureTierDialPolicy must upsert a Dial policy granting #<tierAttr> the
+	// right to dial #<serviceName>. Assert the POST/PUT carries both the service
+	// role and the tier identity role.
+	var body []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/edge/management/v1/service-policies":
+			// none exist yet → force a create POST
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case r.Method == "POST" && r.URL.Path == "/edge/management/v1/service-policies":
+			body, _ = io.ReadAll(r.Body)
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"data":{"id":"pol-tier"}}`))
+		default:
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"data":{}}`))
+		}
+	}))
+	defer srv.Close()
+	zm := &ZitiManager{logger: zap.NewNop(), mgmtToken: "fake", mgmtClient: srv.Client(),
+		cfg: &config.Config{ZitiCtrlURL: srv.URL}, initialized: true}
+	rec := &ZitiReconciler{logger: zap.NewNop(), status: map[string]string{}}
+
+	if err := rec.ensureTierDialPolicy(context.Background(), zm, "openidx-admin-api", "device-trusted"); err != nil {
+		t.Fatalf("ensureTierDialPolicy: %v", err)
+	}
+	if !bytesContains(body, "device-trusted") {
+		t.Errorf("POST body missing #device-trusted identity role: %s", body)
+	}
+	if !bytesContains(body, "openidx-admin-api") {
+		t.Errorf("POST body missing #openidx-admin-api service role: %s", body)
+	}
+	if !bytesContains(body, "Dial") {
+		t.Errorf("POST body must be a Dial policy: %s", body)
+	}
+}
+
+func TestDefaultDarkServicesTiers(t *testing.T) {
+	svcs := defaultDarkServices()
+	byName := map[string]darkService{}
+	for _, d := range svcs {
+		byName[d.name] = d
+	}
+	// admin-api MUST be Tier 2 (device-trusted) and point at loopback :8005.
+	admin, ok := byName["openidx-admin-api"]
+	if !ok {
+		t.Fatal("openidx-admin-api not in defaultDarkServices()")
+	}
+	if admin.tierAttr != "device-trusted" {
+		t.Errorf("admin-api tier = %q, want device-trusted", admin.tierAttr)
+	}
+	if admin.upstream != "127.0.0.1:8005" {
+		t.Errorf("admin-api upstream = %q, want 127.0.0.1:8005", admin.upstream)
+	}
+	// console MUST be Tier 1 (enrolled-users).
+	console, ok := byName["openidx-console"]
+	if !ok {
+		t.Fatal("openidx-console not in defaultDarkServices()")
+	}
+	if console.tierAttr != "enrolled-users" {
+		t.Errorf("console tier = %q, want enrolled-users", console.tierAttr)
+	}
+}
+
+func TestReconcileDarkServicesCreatesServiceAndTierPolicy(t *testing.T) {
+	var createdSvc, createdPolicy bool
+	var policyBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/edge/management/v1/services":
+			json.NewEncoder(w).Encode(map[string]interface{}{"data": []interface{}{}}) // none yet
+		case r.Method == "POST" && r.URL.Path == "/edge/management/v1/services":
+			createdSvc = true
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(map[string]interface{}{"data": map[string]string{"id": "svc-dark"}})
+		case r.Method == "GET" && r.URL.Path == "/edge/management/v1/service-policies":
+			json.NewEncoder(w).Encode(map[string]interface{}{"data": []interface{}{}})
+		case r.Method == "POST" && r.URL.Path == "/edge/management/v1/service-policies":
+			createdPolicy = true
+			policyBody, _ = io.ReadAll(r.Body)
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(map[string]interface{}{"data": map[string]string{"id": "pol-dark"}})
+		default:
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(map[string]interface{}{"data": map[string]interface{}{}})
+		}
+	}))
+	defer srv.Close()
+	zm := &ZitiManager{logger: zap.NewNop(), mgmtToken: "fake", mgmtClient: srv.Client(),
+		cfg: &config.Config{ZitiCtrlURL: srv.URL}, initialized: true}
+	rec := &ZitiReconciler{logger: zap.NewNop(), status: map[string]string{},
+		darkServices: []darkService{{name: "openidx-admin-api", upstream: "127.0.0.1:8005", tierAttr: "device-trusted"}}}
+
+	rec.reconcileDarkServices(context.Background(), zm)
+
+	if !createdSvc {
+		t.Error("expected the dark service to be created")
+	}
+	if !createdPolicy {
+		t.Error("expected a tier dial policy to be created")
+	}
+	if !bytes.Contains(policyBody, []byte("device-trusted")) {
+		t.Errorf("dial policy must grant #device-trusted, got %s", policyBody)
 	}
 }

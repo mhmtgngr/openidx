@@ -20,6 +20,30 @@ dotnet tool install --global wix
 wix build agent/packaging/wix/OpenIDX.wxs -d Version=1.0.0 -d ExePath=agent/dist/openidx-agent.exe -arch x64 -o dist/OpenIDX.msi
 ```
 
+### Screen-share (remote support video) build variant
+
+Remote-support **video** needs the `screenshare` build (real screen capture +
+VP8 encode). It requires CGO + libvpx, so it is not the default cross-compile.
+The CI `build-msi` job builds it automatically (installs libvpx via vcpkg,
+bundles `vpx.dll` into the MSI) and falls back to the pure-Go exe if the native
+toolchain is unavailable. To build it locally on Windows:
+
+```powershell
+# libvpx via vcpkg (once)
+vcpkg install libvpx:x64-windows
+cd agent
+$env:CGO_ENABLED=1
+$env:PKG_CONFIG_PATH="$env:VCPKG_ROOT/installed/x64-windows/lib/pkgconfig"
+go build -tags screenshare -o dist/openidx-agent.exe ./cmd/openidx-agent
+# copy the runtime DLL next to the exe, then pass it to WiX:
+copy "$env:VCPKG_ROOT/installed/x64-windows/bin/vpx*.dll" dist/
+wix build packaging/wix/OpenIDX.wxs -d Version=1.0.0 -d ExePath=dist/openidx-agent.exe -d VpxDll=dist/vpx1.dll -arch x64 -o ../dist/OpenIDX.msi
+```
+
+The **pure-Go** exe (default) still runs remote support — it negotiates the
+session and honors keyboard/mouse control — it just sends no video frames. The
+`screenshare` exe adds the live screen stream.
+
 ## Deploy (silent / GPO / Intune)
 Zero-touch fleet enroll with a **reusable** bootstrap token (one token for all
 devices — mint via `POST /api/v1/access/agent/tokens {"reusable":true}`):

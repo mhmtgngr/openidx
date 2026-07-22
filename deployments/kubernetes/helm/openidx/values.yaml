@@ -28,6 +28,10 @@ externalSecrets:
     name: ""
     kind: ClusterSecretStore
   remoteKeyPrefix: "openidx"
+  # When true, also pull <remoteKeyPrefix>/database-read-url into DATABASE_READ_URL
+  # so services open a read-replica pool (PostgresDB.Reader()). Off by default;
+  # a replica outage transparently falls back to the primary.
+  readReplica: false
 
 global:
   # Image namespace. Matches the GHCR pipeline in .github/workflows/docker.yml
@@ -415,6 +419,18 @@ database:
   # Defaults to 'disable' for in-cluster dev. Production MUST set 'require' or stronger —
   # services started with APP_ENV=production refuse to boot when this is 'disable'.
   sslMode: disable
+  # Availability tuning (Tier 1). Left empty to use the in-code defaults; set to
+  # override fleet-wide. Both are Go durations (e.g. "5s", "30s").
+  #   connectTimeout   bounds a single dial so an RDS/Patroni failover fails fast
+  #                    and the pool re-dials the promoted primary (code default 5s).
+  #   statementTimeout server-side per-query cap so a query stuck on a degraded
+  #                    primary can't hold a connection open forever (code default
+  #                    off). WARNING: applies to ALL services sharing this config —
+  #                    keep generous enough for audit/governance reports, and do
+  #                    NOT set it so low that legitimate bulk work is aborted.
+  #                    Run migrations out-of-band (they are not part of this chart).
+  connectTimeout: ""
+  statementTimeout: ""
 
 # PostgreSQL
 postgresql:

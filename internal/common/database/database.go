@@ -21,9 +21,35 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// PostgresDB wraps the pgx connection pool
+// PostgresDB wraps the pgx connection pool.
+//
+// Pool is the primary (read-write) pool and MUST be used for all writes and for
+// any read that must observe its own prior write (read-after-write). readPool,
+// when non-nil, is an OPTIONAL pool pointed at a read replica / reader endpoint;
+// callers opt into it via Reader() for read-mostly, lag-tolerant queries (e.g.
+// signing-key/discovery reads, dashboards, audit/governance reports). When no
+// replica is configured, Reader() returns the primary pool, so call sites are
+// always correct by construction and simply lose the offload benefit.
 type PostgresDB struct {
-	Pool *pgxpool.Pool
+	Pool     *pgxpool.Pool
+	readPool *pgxpool.Pool
+}
+
+// Reader returns the pool to use for read-mostly, replication-lag-tolerant
+// queries. It returns the read-replica pool when one is configured
+// (DATABASE_READ_URL), otherwise the primary pool. NEVER use Reader() for writes
+// or for a read that must see a just-committed write from the same request — use
+// Pool for those.
+func (db *PostgresDB) Reader() *pgxpool.Pool {
+	if db.readPool != nil {
+		return db.readPool
+	}
+	return db.Pool
+}
+
+// HasReadReplica reports whether a distinct read-replica pool is configured.
+func (db *PostgresDB) HasReadReplica() bool {
+	return db.readPool != nil
 }
 
 // PostgresTLSConfig holds TLS configuration for PostgreSQL connections
@@ -50,14 +76,100 @@ func envInt32(name string, def, min int32) int32 {
 	return int32(n)
 }
 
+// envDuration reads a Go duration (e.g. "5s", "30s") from env var name, falling
+// back to def on empty/unparseable input. Negative durations fall back to def;
+// an explicit "0" is honored (used to disable statement_timeout).
+func envDuration(name string, def time.Duration) time.Duration {
+	s := os.Getenv(name)
+	if s == "" {
+		return def
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil || d < 0 {
+		return def
+	}
+	return d
+}
+
 // NewPostgres creates a new PostgreSQL connection pool.
 // An optional PostgresTLSConfig can be provided to configure SSL parameters.
+//
+// If DATABASE_READ_URL is set, a second (read-only) pool is opened against it and
+// exposed via (*PostgresDB).Reader() for read-mostly, replication-lag-tolerant
+// queries. The same TLS config and pool settings are applied. If the replica
+// can't be reached at startup, NewPostgres logs nothing here (no logger) but
+// returns an error only for the PRIMARY — a bad replica must not take the service
+// down, so a replica ping failure degrades to "no replica" (Reader() falls back
+// to the primary) rather than failing startup.
 func NewPostgres(connString string, tlsCfg ...PostgresTLSConfig) (*PostgresDB, error) {
 	// Apply TLS config to connection string if provided
 	if len(tlsCfg) > 0 {
 		connString = applyPostgresTLS(connString, tlsCfg[0])
 	}
 
+	config, err := buildPoolConfig(connString)
+	if err != nil {
+		return nil, err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	pool, err := pgxpool.NewWithConfig(ctx, config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create connection pool: %w", err)
+	}
+
+	// Test the connection
+	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("failed to ping database: %w", err)
+	}
+
+	db := &PostgresDB{Pool: pool}
+
+	// Optional read-replica pool. A replica is a pure optimization + warm standby;
+	// its unavailability must never fail service startup, so we degrade to
+	// primary-only (Reader() falls back to Pool) if it can't be opened/pinged.
+	if readURL := os.Getenv("DATABASE_READ_URL"); readURL != "" {
+		if len(tlsCfg) > 0 {
+			readURL = applyPostgresTLS(readURL, tlsCfg[0])
+		}
+		if rp, rerr := openReadPool(readURL); rerr == nil {
+			db.readPool = rp
+		}
+		// On error: leave db.readPool nil. The audit checker (registered
+		// separately) surfaces replica health; startup continues on the primary.
+	}
+
+	return db, nil
+}
+
+// openReadPool builds and pings a read-only pool for the reader endpoint. It uses
+// the same buildPoolConfig (pool sizing, timeouts, RLS checkout — set_config is
+// read-only-safe on a hot standby) as the primary.
+func openReadPool(readURL string) (*pgxpool.Pool, error) {
+	cfg, err := buildPoolConfig(readURL)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	rp, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	if err := rp.Ping(ctx); err != nil {
+		rp.Close()
+		return nil, err
+	}
+	return rp, nil
+}
+
+// buildPoolConfig parses connString and applies OpenIDX's pool sizing, timeout,
+// and RLS settings. Split out from NewPostgres so the (DB-free) configuration
+// can be unit-tested without a live Postgres.
+func buildPoolConfig(connString string) (*pgxpool.Config, error) {
 	config, err := pgxpool.ParseConfig(connString)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse connection string: %w", err)
@@ -80,25 +192,36 @@ func NewPostgres(connString string, tlsCfg ...PostgresTLSConfig) (*PostgresDB, e
 	config.MaxConnIdleTime = 30 * time.Minute
 	config.HealthCheckPeriod = time.Minute
 
+	// Availability belt (Tier 1 — issue path): bound how long a single dial may
+	// take. pgx's default ConnectTimeout is 0 (no timeout), so a runtime
+	// reconnect to a *dead* primary during an RDS/Patroni failover can hang for
+	// the OS TCP timeout (often minutes), pinning the acquiring request and
+	// eventually exhausting the pool — a database failover cascading into a
+	// service-wide outage. A short connect timeout makes failover fail fast and
+	// lets the pool re-dial the promoted primary. Tunable via DB_CONNECT_TIMEOUT
+	// (Go duration, e.g. "5s"); default 5s. HealthCheckPeriod above then evicts
+	// dead conns within a minute so new acquires reconnect.
+	config.ConnConfig.ConnectTimeout = envDuration("DB_CONNECT_TIMEOUT", 5*time.Second)
+
+	// Optional per-statement timeout, applied as a server-side runtime parameter
+	// on every pooled connection. Disabled by default (0) to avoid surprising
+	// long-running work (migrations, bulk audit/governance reports); set
+	// DB_STATEMENT_TIMEOUT (e.g. "30s") on request-serving services so a query
+	// stuck on a degraded primary can't hold a connection open indefinitely.
+	// NOTE: keep this UNSET on the migrate entrypoint (large index builds).
+	if stmtTimeout := envDuration("DB_STATEMENT_TIMEOUT", 0); stmtTimeout > 0 {
+		if config.ConnConfig.RuntimeParams == nil {
+			config.ConnConfig.RuntimeParams = map[string]string{}
+		}
+		// Postgres statement_timeout is in milliseconds.
+		config.ConnConfig.RuntimeParams["statement_timeout"] = strconv.FormatInt(stmtTimeout.Milliseconds(), 10)
+	}
+
 	// v1.8.0 RLS belt: stamp each connection with the request's tenant scope
 	// (app.org_id / app.bypass_rls) at checkout from orgctx on the acquire ctx.
 	configureRLS(config)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	pool, err := pgxpool.NewWithConfig(ctx, config)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create connection pool: %w", err)
-	}
-
-	// Test the connection
-	if err := pool.Ping(ctx); err != nil {
-		pool.Close()
-		return nil, fmt.Errorf("failed to ping database: %w", err)
-	}
-
-	return &PostgresDB{Pool: pool}, nil
+	return config, nil
 }
 
 // applyPostgresTLS modifies the connection string to include SSL parameters
@@ -130,8 +253,22 @@ func applyPostgresTLS(connString string, cfg PostgresTLSConfig) string {
 
 // Close closes the connection pool
 func (db *PostgresDB) Close() error {
+	if db.readPool != nil {
+		db.readPool.Close()
+	}
 	db.Pool.Close()
 	return nil
+}
+
+// PingRead verifies the read-replica connection is alive. Returns nil when no
+// replica is configured (nothing to check).
+func (db *PostgresDB) PingRead() error {
+	if db.readPool == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return db.readPool.Ping(ctx)
 }
 
 // Ping verifies the database connection is alive

@@ -8,6 +8,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 vi.mock('../lib/api', () => ({
   api: {
     get: vi.fn(),
+    getWithHeaders: vi.fn(() => Promise.resolve({ data: [], headers: {} })),
     post: vi.fn((url: string) =>
       url.includes('/credential') ? Promise.resolve({ value: 's3cr3t-p4ss' })
       : url.includes('/return') ? Promise.resolve({ status: 'returned' })
@@ -100,6 +101,18 @@ function createWrapper() {
 // payload to all three.
 function routeGet(url: string) {
 
+  if (url.includes('/identity/roles')) {
+    return Promise.resolve([
+      { id: 'role-1', name: 'admin', description: '', is_composite: false, created_at: '' },
+      { id: 'role-2', name: 'auditor', description: '', is_composite: false, created_at: '' },
+    ])
+  }
+  if (url.includes('/identity/groups')) {
+    return Promise.resolve([
+      { id: 'grp-1', name: 'Administrators' },
+      { id: 'grp-2', displayName: 'Developers' },
+    ])
+  }
   if (url.includes('requester_id=me')) {
     return Promise.resolve({ requests: [myRequest] })
   }
@@ -315,7 +328,7 @@ describe('AccessRequestsPage', () => {
     expect(screen.getByRole('option', { name: /4 hours/i })).toBeInTheDocument()
   })
 
-  it('non-vault flow still uses free-text name and allows Permanent duration', async () => {
+  it('Role type shows a resource picker (not free text) and submits the picked resource_id', async () => {
     const user = userEvent.setup()
     render(<AccessRequestsPage />, { wrapper: createWrapper() })
     await screen.findByText('Access Requests')
@@ -328,16 +341,33 @@ describe('AccessRequestsPage', () => {
     await user.click(resourceTypeSelect)
     await user.click(await screen.findByRole('option', { name: /^role$/i }))
 
-    // Free-text Resource Name should be present
-    expect(screen.getByPlaceholderText(/enter resource name/i)).toBeInTheDocument()
+    // Resource Name should now be a picker populated from /identity/roles,
+    // NOT a free-text box.
+    expect(screen.queryByPlaceholderText(/enter resource name/i)).not.toBeInTheDocument()
+    const resourceSelect = await screen.findByRole('combobox', { name: /resource name/i })
+    await user.click(resourceSelect)
+    await user.click(await screen.findByRole('option', { name: /^auditor$/i }))
 
-    // Fill resource name
-    fireEvent.change(screen.getByPlaceholderText(/enter resource name/i), { target: { value: 'admin-role' } })
-
-    // Open duration — Permanent should be available
+    // Permanent duration remains available for non-vault types; selecting it
+    // also closes the dropdown so it doesn't overlay the Submit button.
     const durationSelect = screen.getByRole('combobox', { name: /access duration/i })
     await user.click(durationSelect)
-    expect(screen.getByRole('option', { name: /^permanent$/i })).toBeInTheDocument()
+    await user.click(await screen.findByRole('option', { name: /^permanent$/i }))
+
+    fireEvent.change(screen.getByPlaceholderText(/explain why you need access/i), { target: { value: 'Need auditor role' } })
+    await user.click(screen.getByRole('button', { name: /submit request/i }))
+
+    await waitFor(() => {
+      expect(vi.mocked(api.post)).toHaveBeenCalledWith(
+        '/api/v1/governance/requests',
+        expect.objectContaining({
+          resource_type: 'role',
+          resource_id: 'role-2',
+          resource_name: 'auditor',
+          duration: '',
+        }),
+      )
+    })
   })
 
   // --- fulfilled vault_credential row actions ---

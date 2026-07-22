@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/openziti/sdk-golang/ziti"
@@ -42,13 +43,28 @@ func NewZitiClient(identityFile, serviceName, baseURL, authToken, agentID string
 	}
 
 	return &ZitiClient{
-		baseURL:     baseURL,
+		baseURL:     zitiBaseURL(baseURL),
 		authToken:   authToken,
 		agentID:     agentID,
 		httpClient:  &http.Client{Transport: transport, Timeout: 30 * time.Second},
 		zitiCtx:     zitiCtx,
 		serviceName: serviceName,
 	}, nil
+}
+
+// zitiBaseURL forces the http scheme for calls tunneled over the Ziti overlay.
+// The overlay service (openidx-access) fronts the access API on plain-HTTP
+// 127.0.0.1:8007; the Ziti mTLS tunnel already provides transport security, so
+// an https scheme would trigger a TLS handshake the loopback listener won't
+// answer. Host/path are preserved (host is only cosmetic once we dial by
+// service). Falls back to the original URL if it can't be parsed.
+func zitiBaseURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return raw
+	}
+	u.Scheme = "http"
+	return u.String()
 }
 
 // Close cleans up the Ziti context.
@@ -74,4 +90,19 @@ func (c *ZitiClient) ReportResults(data []byte) error {
 func (c *ZitiClient) GetConfig() ([]byte, error) {
 	inner := &Client{baseURL: c.baseURL, authToken: c.authToken, agentID: c.agentID, httpClient: c.httpClient}
 	return inner.GetConfig()
+}
+
+// SendConsent delegates to the inner HTTP client over the Ziti-backed transport.
+func (c *ZitiClient) SendConsent(sessionID, decision string) error {
+	inner := &Client{baseURL: c.baseURL, authToken: c.authToken, agentID: c.agentID, httpClient: c.httpClient}
+	return inner.SendConsent(sessionID, decision)
+}
+
+// DialServiceConn opens a raw overlay connection to the named Ziti service.
+// Used to carry the remote-support signaling WebSocket over the overlay.
+func (c *ZitiClient) DialServiceConn(serviceName string) (net.Conn, error) {
+	if c.zitiCtx == nil {
+		return nil, fmt.Errorf("ziti context not initialised")
+	}
+	return c.zitiCtx.Dial(serviceName)
 }

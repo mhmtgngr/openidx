@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,8 +15,23 @@ import (
 	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/common/middleware"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
+
+// extractSubprotocolToken pulls the JWT out of a Sec-WebSocket-Protocol header
+// value that carries it as "access_token_<jwt>" (the browser can't set an
+// Authorization header on a WebSocket). The header may list multiple
+// comma-separated protocols; we take the first access_token_ one.
+func extractSubprotocolToken(header string) string {
+	for _, p := range strings.Split(header, ",") {
+		p = strings.TrimSpace(p)
+		if strings.HasPrefix(p, "access_token_") {
+			return strings.TrimPrefix(p, "access_token_")
+		}
+	}
+	return ""
+}
 
 // EventStreamer manages real-time streaming of audit events
 type EventStreamer struct {
@@ -27,6 +43,16 @@ type EventStreamer struct {
 	service         *Service
 	originValidator *OriginValidator
 	upgrader        *websocket.Upgrader
+	// jwksURL, when set, enables JWT authentication of stream connections. The
+	// audit event stream is sensitive security data and must not be readable
+	// unauthenticated. Set via SetJWKSURL from the service entrypoint.
+	jwksURL string
+}
+
+// SetJWKSURL enables JWT auth on the audit stream (REST routes via middleware,
+// WebSocket via the access_token_<jwt> subprotocol validated at upgrade).
+func (es *EventStreamer) SetJWKSURL(url string) {
+	es.jwksURL = url
 }
 
 // StreamClient represents a connected WebSocket client
@@ -144,11 +170,23 @@ func NewEventStreamerWithConfig(logger *zap.Logger, service *Service, streamConf
 func (es *EventStreamer) RegisterRoutes(r *gin.RouterGroup) {
 	stream := r.Group("/stream")
 	{
+		// GET "" is the WebSocket upgrade: browsers can't set an Authorization
+		// header on a WebSocket, so the token arrives as the access_token_<jwt>
+		// subprotocol and is validated inside handleWebSocketStream.
 		stream.GET("", es.handleWebSocketStream)
-		stream.POST("/subscribe", es.handleSubscribe)
+		// /subscribe and the webhook management routes are normal HTTP and take
+		// the JWT auth middleware directly.
+		if es.jwksURL != "" {
+			stream.POST("/subscribe", middleware.Auth(es.jwksURL), es.handleSubscribe)
+		} else {
+			stream.POST("/subscribe", es.handleSubscribe)
+		}
 	}
 
 	webhooks := r.Group("/webhooks")
+	if es.jwksURL != "" {
+		webhooks.Use(middleware.Auth(es.jwksURL))
+	}
 	{
 		webhooks.POST("", es.handleRegisterWebhook)
 		webhooks.GET("", es.handleListWebhooks)
@@ -162,6 +200,24 @@ func (es *EventStreamer) RegisterRoutes(r *gin.RouterGroup) {
 
 // handleWebSocketStream upgrades HTTP to WebSocket and streams events
 func (es *EventStreamer) handleWebSocketStream(c *gin.Context) {
+	// Authenticate BEFORE upgrading. The browser can't set an Authorization
+	// header on a WebSocket, so the frontend passes the token as the
+	// "access_token_<jwt>" subprotocol (see web/admin-console lib/api.ts). Reject
+	// unauthenticated connections — the audit stream is sensitive security data.
+	if es.jwksURL != "" {
+		tokenStr := extractSubprotocolToken(c.Request.Header.Get("Sec-WebSocket-Protocol"))
+		if tokenStr == "" {
+			c.JSON(401, gin.H{"error": "missing access token (pass as access_token_<jwt> subprotocol)"})
+			return
+		}
+		if _, err := middleware.VerifyBearerToken(es.jwksURL, tokenStr); err != nil {
+			es.logger.Warn("audit stream: rejected unauthenticated/invalid WebSocket token",
+				zap.String("remote_addr", c.Request.RemoteAddr), zap.Error(err))
+			c.JSON(401, gin.H{"error": "invalid access token"})
+			return
+		}
+	}
+
 	conn, err := es.upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		es.logger.Error("Failed to upgrade to WebSocket",

@@ -7,6 +7,346 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Clientless remote access + Quick Links launcher + attended-support consent.**
+  A user can now reach support/collaboration systems and remote connections with
+  no installed client, and admins manage it centrally. (1) **In-browser SSH**
+  ("wasm-ssh" renderer): a PAM SSH entry opens an xterm.js terminal in the
+  browser over a WebSocket->TCP relay (`GET /api/v1/access/pam/entries/:id/ws`)
+  that dials the target over the Ziti overlay — no PuTTY/guacd, the browser tab
+  is the SSH client. Reuses the existing PAM permission/approval gate (enforced
+  before the socket upgrade) and credential vault; the token rides as a
+  `bearer.<jwt>` WS subprotocol. `pam_entries.renderer` (migration v89) selects
+  guacamole (default, unchanged) vs wasm-ssh. (2) **Quick Links** (migration
+  v90): an admin-curated, user-searchable launcher. `type=external` opens a safe
+  URL (Teams/Zoom/status/ticketing); `type=pam` references a connection and
+  launches it clientlessly via its renderer. Org-scoped + forced RLS, role-gated
+  by `min_role`, unsafe URLs rejected. New user page (`/quick-links`) + admin
+  CRUD (`/quick-links-admin`). (3) **Attended-support consent** (migration v91):
+  a remote-support session can require the person at the device to Allow it
+  before the admin can view/control — the admin WebSocket is refused (403
+  "awaiting device consent") until the device grants via
+  `POST /agent/remote-support/sessions/:id/consent`; a denial ends the session.
+  Plus a **live view<->control toggle** in the support viewer (hand control back
+  and forth without restarting). Verified live end-to-end (real SSH handshake;
+  quick-links create/list/reject; consent 403->101). Also fixed a pre-existing
+  bug where `remote_support_sessions` lacked `org_id`/`recording_retention_days`
+  (referenced by session-start but never migrated), and a migration-runner
+  dollar-quote splitter bug that broke fresh `migrate` on v89.
+
+- **Dark platform (Ziti-first / overlay-only posture) — Phases 1-6, fully opt-in.**
+  A staged path to make OpenIDX's own surfaces reachable only over the OpenZiti
+  overlay, defaults preserving today's public behavior at every step. (1)
+  `SERVICE_BIND_ADDR` + `DARK_MODE_TIER1/2` config and `cfg.ListenAddr()` so every
+  service can bind loopback-only (verified live). (2) `#enrolled-users` on every
+  identity + gated `#device-trusted`, and a reconciler `ensureTierDialPolicy`.
+  (3) A single hardened public enroll door `POST /api/v1/access/enroll`
+  (session/token → Ziti enrollment JWT, rate-limited + audited; verified live,
+  fail-closed on every bad path). (4) `DARK_MODE={off|tier2|tier1}` edge route
+  set + `scripts/dark-mode.sh` (`--verify`/`--undark`/`--self-test`) + `make
+  dark-drill`. (5) The reconciler now models OpenIDX's own surfaces as tier'd
+  dark Ziti services via `defaultDarkServices()` (admin-api/governance/audit/
+  provisioning/scim/access → Tier 2 `#device-trusted`; identity self-service +
+  console → Tier 1 `#enrolled-users`; enroll/oauth/jwks never darked), plus
+  `scripts/register-console-dark-app.sh` registering the admin console as a
+  BrowZer dark app (Tier-1 shell, same-origin `/api/*` tunnels to the Tier-2
+  backends). (6) Staged **cutover runbook + break-glass** in
+  `OPENIDX_ZITI_ARCHITECTURE.md` (enroll fleet → drill → cut Tier 2 then Tier 1
+  → `--undark`), linked from `DEPLOYMENT.md`, and **mutation-tested tier
+  invariants** wired into `make dark-drill` (Tier-2 surfaces must be
+  `#device-trusted`; no Tier-0 surface is ever darked; dark upstreams are
+  loopback). Spec/plan under `docs/superpowers/`.
+
+- **Scoped the Tier 3b cutover: `docs/tier3b-cutover-runbook.md`.** The
+  availability plan recommended moving prod off the single VM onto the
+  already-written EKS/managed path but left the *cutover* itself unsequenced. New
+  runbook lays out the end-to-end move: preconditions (a passing `make ha-drill`
+  and a live DR game-day PASS), closing the two open infra gaps (add an OpenSearch
+  Terraform module; activate the RDS read replica via `externalSecrets.readReplica`
+  — everything else is wired), standing up the EKS stack in parallel on a shadow
+  DNS name, the data cutover (logical replication preferred, dump/restore
+  fallback), a DNS traffic cutover that deliberately flips the **DB-independent
+  verify surfaces first** so token validation never stops, post-cutover
+  activation/verification, and rollback at each stage. It leans on the
+  always-available invariant (verification does not depend on which stack/DB is
+  live) that `make dr-game-day` checks at every gate. Also surfaced and wired the
+  concrete config gap it identified: `values-prod.yaml` now carries a documented
+  `externalSecrets.readReplica` flag (left `false` so a fresh cutover's
+  ExternalSecret doesn't reference a missing key; flip on as a follow-on step).
+  Verified `helm template` renders clean with the flag both off (no
+  `DATABASE_READ_URL`) and on (rendered). Linked from the availability plan and
+  `DEPLOYMENT.md`.
+
+- **Repository pattern reaches the admin god-object (`SettingsRepository`).**
+  Began strangling `internal/admin/service.go` (3,439 lines — the largest
+  god-object in the design-patterns review) by extracting all `system_settings`
+  access into `internal/admin/settings_repository.go`. That table is a key/value
+  JSON store (`system`, `sms_config`, `mfa_methods`, ...) whose identical
+  `SELECT value FROM system_settings WHERE key = $1` + `INSERT ... ON CONFLICT
+  (key) DO UPDATE` UPSERT was copy-pasted inline across ~6 handlers, each free to
+  pick its own pool. It's now one `GetRaw`/`PutRaw` port with a typed
+  `ErrSettingNotFound` and nil-db guards; `admin.Service`'s `GetSettings`/
+  `UpdateSettings` + the SMS/MFA-methods handlers delegate to it. **Pool
+  judgment:** reads use the **primary**, not the replica — `system_settings`
+  carries password policy, `RequireMFA`, lockout, and session limits, so a
+  just-tightened policy must take effect immediately (read-after-write); a lagging
+  replica could briefly enforce a weaker policy. Locked by a mutation-tested
+  invariant guard (`TestSettingsRepositoryGetUsesPrimary`/`WritesUsePrimary`,
+  wired into `make ha-drill`; verified it fails when a write is moved to
+  `.Reader()`) and unit-tested with a fake repo and no database (defaulting,
+  corrupt-row fallback, write-error propagation, nil-db guards).
+
+- **`make dr-game-day` — the data-tier failover game-day is now runnable, not a
+  copy-paste runbook.** `docs/disaster-recovery.md` §1D previously described the
+  RDS Multi-AZ / Patroni failover drill as manual shell steps in a comment block.
+  New `scripts/dr-game-day.sh` executes it end-to-end: a synthetic auth canary
+  probes `/health/live` (verify path — must stay 200 the entire window, since
+  verify is DB-free/serve-stale) and `/health/ready` (issue path — may 503 while
+  the LB drains new logins, then must self-recover as pgxpool re-dials the
+  promoted primary), then prints a pass/fail verdict and exits non-zero on any
+  contract violation. It can trigger failover itself (`--trigger --provider
+  rds|patroni`) or just observe. Crucially it ships a **`--self-test` mode** that
+  stands up a local stdlib mock simulating a failover window and runs the whole
+  canary/verdict logic against it — so the drill is verified with no
+  infrastructure and can't silently rot into a false-green (a false-green DR
+  drill is worse than none). `make dr-game-day` runs that self-test; verified it
+  passes on a clean window and fails correctly on both a verify-path drop and a
+  non-recovering issue path.
+
+- **`make ha-drill` — one command to verify the always-available-auth
+  guarantees.** Runs the focused Go tests that encode each availability tier
+  (serve-stale JWKS + Auth-survives-issuer-outage; bounded DB timeouts +
+  read-replica seam; dependency-outage classification + 503 brownout + Redis
+  revocation breaker) plus the mutation-tested read/write pool-safety guards. The
+  wrapper (`scripts/ha-drill.sh`) fails loudly if a guarantee test is renamed or
+  removed (no silent "[no tests to run]" false-green), so the drill stays
+  trustworthy. Runs in ~15s with no infrastructure; complements the DR failover
+  game-day. See `docs/architecture/always-available-auth-plan.md` §5.
+
+- **Repository pattern reference implementation (identity/User).** Introduced
+  `internal/identity/user_repository.go`: a `UserRepository` interface +
+  `PostgresUserRepository` pgx implementation
+  (`GetByID`/`GetByUsername`/`GetByEmail`/`Exists` reads via `db.Reader()`, plus
+  `Create`/`Update`/`Delete` writes on the primary pool) that isolates user SQL
+  into one type, scopes every query to the caller's tenant, and makes the
+  primary-vs-replica choice explicit (reads offload to the Tier 1.6 replica;
+  writes never do). `identity.Service.GetUser`/`GetUserByUsername`/
+  `GetUserByEmail`/`CreateUser`/`UpdateUser`/`DeleteUser` now delegate to it
+  (behavior-preserving; domain side effects like audit logging, deprovisioning,
+  and delete ordering stay in the service). Along the way this fixed a latent
+  NULL-name scan error in the username/email lookups, guarded two nil-DB
+  panics (`logAuditEvent`, `deprovisionUser`), and surfaces duplicate
+  username/email as a typed `ErrUserAlreadyExists` (409). This is the template
+  for splitting the god-object services (see
+  `docs/architecture/design-patterns-review.md`). Business logic (full CRUD) is
+  now unit-testable with a fake repo and no database (`user_repository_test.go`).
+
+- **Repository pattern — second aggregate (identity/Group).** `Group` is now
+  behind `GroupRepository` (`internal/identity/group_repository.go`) following the
+  same template: `GetByID`/`GetByName` reads on the replica, `Create`/`Update`/
+  `Delete` writes on the primary (Delete removes memberships then the group row),
+  typed `ErrGroupNotFound`/`ErrGroupAlreadyExists`. `identity.Service`'s
+  `GetGroup`/`GetGroupByDisplayName`/`CreateGroup`/`UpdateGroup`/`DeleteGroup`
+  delegate to it. Unit-tested with a fake repo and no database
+  (`group_repository_test.go`).
+
+- **Repository pattern — third aggregate (identity/Session).**
+  `SessionRepository` (`internal/identity/session_repository.go`) demonstrates
+  per-query pool judgment: lag-tolerant reads (`ListByUser`/`CountActive`) use the
+  replica, while `IsValid` deliberately reads the **primary** because session
+  validity is a read-after-write security check (a just-revoked session must not
+  read as valid off a lagging replica). Writes (`Create`/`UpdateActivity`/
+  `Terminate`) use the primary. `identity.Service`'s `GetUserSessions`/
+  `CreateSession`/`UpdateSessionActivity`/`IsSessionValid`/`CountActiveSessions`/
+  `TerminateSession` delegate to it. The security-critical primary read is locked
+  by a mutation-tested guard (`TestSecurityCriticalReadUsesPrimary`), and the
+  writes-never-replica guard now covers all three repositories. Unit-tested with a
+  fake repo and no database (`session_repository_test.go`).
+
+- **Repository pattern generalizes to the oauth service (OAuth clients).** OAuth
+  client CRUD is now behind `OAuthClientStore`
+  (`internal/oauth/oauth_client_store.go`): `GetByClientID` reads the primary
+  (client validation gates every token grant and checks the secret), `List` reads
+  the replica, and `Create`/`Update`/`Delete` write the primary.
+  `oauth.Service`'s `GetClient`/`ListClients`/`CreateClient`/`UpdateClient`/
+  `DeleteClient` delegate to it; guarded by a mutation-tested invariant test and
+  unit-tested with a fake store and no database. Also documented a pre-existing
+  smell surfaced by this work: the oauth package has a *separate* `ClientRepository`
+  (`client.go`, used by `token_flow.go`) that models the same `oauth_clients` table
+  differently — a worthwhile unification follow-up (see
+  `docs/architecture/design-patterns-review.md`). **(Resolved below in
+  Removed — that duplicate turned out to be unwired, security-divergent dead code
+  and was deleted.)**
+
+### Fixed
+
+- **Admin-console unit tests can run again (frontend test env repaired).**
+  `vitest.config.ts` requested `environment: 'happy-dom'`, but `happy-dom` was
+  never in `package.json` (only `jsdom` is a pinned devDependency), so `npm test`
+  / CI's `npm test -- --run` died immediately with `ERR_MODULE_NOT_FOUND` and
+  ran **zero** tests. Switched the config to the installed `jsdom` environment
+  and added the one jsdom shim happy-dom provided that Radix UI needs:
+  `Element.prototype.scrollIntoView` (a no-op mock in `src/test/setup.ts`),
+  which `@radix-ui/react-select` calls on mount and which otherwise threw
+  `candidate?.scrollIntoView is not a function` and failed every Select-based
+  test. Result: the full suite now runs green — **761 tests across 122 files
+  pass** (previously: could not start). This also unblocks the `ci-web`
+  pipeline. No new dependency added.
+
+### Security
+
+- **Closed ~170 server-error information-disclosure sites: 5xx responses no
+  longer leak `err.Error()` to clients.** Handlers across 30+ files (access/Ziti,
+  identity MFA/risk, vault, credentials, audit, organization, portal, oauth
+  client-management) were returning the raw wrapped error
+  (`c.JSON(500, gin.H{"error": err.Error()})`) — which can expose SQL fragments,
+  hostnames, driver text, and internal paths. Every 5xx `err.Error()` leak was
+  migrated to the typed renderer `apperrors.HandleErrorWithLogger(c,
+  apperrors.Internal("<action>", err), logger)`, which returns a safe, typed body
+  (`{"error":"INTERNAL_ERROR","message":"<action>"}`) to the client while logging
+  the real cause server-side with request-id/path context. Where a handler
+  already logged the error immediately before leaking it, that now-redundant log
+  line was removed to avoid double-logging (the renderer logs). Protocol
+  endpoints kept their RFC 6749 shape (e.g. the OAuth authorize/consent path
+  still returns `{"error":"server_error"}`, now with a static
+  `error_description` instead of the raw error). A count check enforces zero
+  remaining 5xx `err.Error()` leaks. **Surfaced and fixed a latent bug in the
+  process:** `portal.ReviewGroupRequest` returned its "invalid decision"
+  *validation* error as a 500 leak; it now returns a typed `ErrInvalidDecision`
+  sentinel that the handler maps to a proper 400. `go build ./...`,
+  `go vet ./...`, and the touched-package tests all pass.
+
+### Removed
+
+- **Collapsed the admin-console's two parallel API clients — deleted the entire
+  dead `src/lib/api/` directory (client + domain wrappers + barrel; ~800 lines).**
+  The console had two API layers: the live `src/lib/api.ts` (the `api` object,
+  imported by ~199 modules) and a second, separate `src/lib/api/` package
+  (`client.ts` axios instance + `admin`/`audit`/`governance`/`identity` wrappers +
+  `types.ts` + an `index.ts` barrel re-exporting `apiClient as api`). Because a
+  file (`api.ts`) wins module resolution over a same-named directory
+  (`api/index.ts`), **every `@/lib/api` import hit `api.ts` and the whole
+  directory had zero live importers** — a classic duplicate-that-can-drift trap
+  (the two clients had already diverged on token-storage keys and the
+  refresh-token endpoint, both fixed earlier). Verified exhaustively that nothing
+  outside the directory imported any of its modules, then removed it. The one
+  place that referenced it — `dashboard.test.tsx` — was `vi.mock()`-ing the dead
+  `./lib/api/client` while the component under test actually imports `{ api }`
+  from `../lib/api`, so the mock was inert; retargeted it to mock the real
+  `../lib/api`, which also makes the test's stubbing actually take effect.
+  `tsc --noEmit`, the full vitest suite (746 tests / 121 files pass; the −15 vs
+  before are exactly the deleted `audit.test.ts` that only tested the dead
+  `auditApi`), and `vite build` all pass.
+
+- **Deleted a dead, security-divergent duplicate OAuth/OIDC pipeline
+  (`client.go`, `authorize_flow.go`, `token_flow.go`; ~3,100 lines incl. tests).**
+  The oauth package carried a second, fully parallel implementation
+  (`Client` / `ClientRepository` / `AuthorizeFlow` / `TokenFlow`) operating on the
+  same `oauth_clients` table as the live `OAuthClient` / `OAuthClientStore`, but it
+  was **never wired to a live route** — only reachable from tests. It had also
+  already diverged from the live path on a security check: the dead
+  `ClientRepository.ValidateRedirectURI` permitted wildcard-subdomain redirect
+  URIs (`https://*.example.com`, an open-redirect risk), while the live authorize
+  handler requires exact byte-equality. Two representations of one table that can
+  disagree — and insecure dead code invites someone to wire it — so the cluster
+  was removed. The authoritative representation is `OAuthClient` (+
+  `OAuthClientStore`); live token/authorize/userinfo flows remain in
+  `service.go` / `authorize.go`. The three genuinely-live symbols the cluster
+  exported (`TokenFlowResponse`, `generateUUID`, and the RFC 6749 error-code
+  constants used by the 503 brownout path) were preserved in a small new
+  `internal/oauth/oauth_types.go`. Redundant validation tests were dropped only
+  after confirming equivalent live coverage
+  (`TestAuthorizeHandler_ValidateRedirectURI`, `TestValidatePKCE`,
+  `TestSecurityFeatures`); `TestOAuthConstants` was retargeted onto the preserved
+  constants. `go build ./...`, `go vet ./...`, and `go test ./internal/oauth/`
+  all pass. See `docs/architecture/design-patterns-review.md` §1.
+
+### Changed
+
+- **Hardened the shared error renderer (`internal/common/errors`).** `HandleError`
+  now guarantees the client only sees safe, typed fields (never the wrapped
+  internal error), and a new `HandleErrorWithLogger(c, err, logger)` logs the real
+  cause server-side for 5xx (with request id + path) instead of silently dropping
+  it. Closes an information-disclosure vector and an observability gap. Tests in
+  `render_test.go` verify a DB error containing a password/hostname is logged but
+  not leaked to the response body. First adopters migrated in
+  `internal/identity/handlers_otp.go` (internal-error sites that previously
+  discarded the underlying error now log it via `HandleErrorWithLogger`).
+
+- **Always-available authentication — Tier 0 (verify-path survives a DB outage).**
+  Token *verification* (validating an already-issued JWT) is now hardened to keep
+  working through an outage of the OAuth/JWKS endpoint and the shared database:
+  - **Serve-stale JWKS.** The shared verify path
+    (`internal/common/middleware`, used by all services) and the gateway JWT
+    middleware now keep serving the last successfully fetched signing keys when a
+    JWKS refresh fails, bounded by `JWKS_MAX_STALE` (default 12h) past the
+    `JWKS_TTL` freshness window (default 1h). Previously a failed refresh after
+    cache expiry rejected otherwise-valid tokens, turning a database blip into an
+    auth outage.
+  - **Metrics + alerts.** New `openidx_jwks_refresh_failures_total`,
+    `openidx_jwks_serve_stale_total`, and `openidx_jwks_stale_seconds`, with a
+    `openidx.jwks_availability` PrometheusRule group (issuer-down, serving-stale,
+    and near-max-stale alerts).
+  - **Liveness/readiness probe split.** Every Helm service pointed both probes at
+    `/health` (which 503s when the shared DB is down), so a DB blip would restart
+    every pod at once and wipe warm JWKS caches. Liveness now uses `/health/live`
+    (process-only), readiness uses `/health/ready` (drains from the LB on a
+    critical dependency outage), for graceful degradation instead of a crash-loop.
+  - Docs: `docs/architecture/always-available-auth-plan.md`.
+
+- **Always-available authentication — Tier 1 (issue path survives DB failover).**
+  - **Bounded DB connect timeout.** pgxpool's default `ConnectTimeout` was 0
+    (unbounded), so a runtime reconnect to a dead primary during an RDS/Patroni
+    failover could hang for minutes, pin the request, and exhaust the pool — a DB
+    failover cascading into a service-wide outage. `internal/common/database` now
+    sets a 5s connect timeout (`DB_CONNECT_TIMEOUT`) so failover fails fast and the
+    pool re-dials the promoted primary.
+  - **Optional per-statement timeout** (`DB_STATEMENT_TIMEOUT`, 30s in prod
+    values) so a query on a degraded primary can't hold a connection open forever.
+    Off by default; migrations run out-of-band and are unaffected.
+  - Wired through the Helm configmap (`database.connectTimeout` /
+    `database.statementTimeout`), set in `values-prod.yaml`. Tests:
+    `internal/common/database/pool_config_test.go`. Added a Postgres failover
+    game-day to the DR runbook.
+  - **Optional read-replica pool.** `DATABASE_READ_URL` opens a second read-only
+    pool exposed via `(*PostgresDB).Reader()`, which falls back to the primary
+    when no replica is configured (correct-by-construction call sites). A replica
+    outage never fails startup (degrades to primary-only) and is surfaced by a
+    new non-critical `database_replica` health check. Delivered via the external
+    secret store (`externalSecrets.readReplica`). Query call sites are not
+    auto-routed — adoption is per-query where read-after-write is not required.
+    Tests: `read_replica_test.go`, `read_replica_checker_test.go`.
+
+- **Always-available authentication — Tier 2 (graceful brownout on the issue path).**
+  Added `internal/oauth/unavailable.go`: a classifier that distinguishes a
+  transient dependency outage (Postgres/Redis unreachable, pool exhausted, dial
+  timeout, `57P0x`/`08xxx`/`53300`/`25006` SQLSTATEs, network errors) from a
+  genuine application error, and returns RFC 6749 `503 temporarily_unavailable`
+  with a `Retry-After` header for the former (clients back off and retry) while
+  keeping `500 server_error` for the latter. Applied to the DB-backed OAuth
+  issue-path sites (authorization-code creation, refresh-grant user-status
+  check), so a database failover degrades login to a brief, retryable brownout
+  instead of a hammered 500. Tests: `internal/oauth/unavailable_test.go`.
+  - **Redis revocation-check circuit breaker.** `IsAccessTokenRevoked` (the
+    hot-path revocation read used by token introspection/verification) now runs
+    its Redis reads through a circuit breaker (`oauth-redis-revocation`,
+    threshold 5, 5s reset). During a Redis brownout the breaker opens and the
+    check fails fast instead of every request paying the 3s Redis read timeout.
+    Callers already fail closed on error, so opening the breaker changes cost, not
+    security. Observable via `openidx_circuit_breaker_state{name=
+    "oauth-redis-revocation"}` (existing `CircuitBreakerOpen` alert). Test:
+    `internal/oauth/revocation_breaker_test.go`.
+
+- **Always-available authentication — Tier 3 (infra for HA prod).** The Terraform
+  RDS module now provisions optional read replica(s) (`read_replica_count`,
+  defaulted to 1 in prod / 0 in dev) and exposes `rds_reader_endpoints` /
+  `rds_reader_addresses`. This is the managed reader endpoint the Tier 1.6
+  `DATABASE_READ_URL` app seam points at — previously the app supported a read
+  pool that prod had no way to create. Wire the output into the external secret
+  `.../database-read-url` and set `externalSecrets.readReplica=true` to activate
+  it. (`deployments/terraform/modules/rds`, `deployments/terraform/main.tf`.)
+
 ## [1.27.0] - 2026-07-13
 
 ### Added

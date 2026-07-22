@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/gin-gonic/gin"
+	apperrors "github.com/openidx/openidx/internal/common/errors"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
@@ -108,7 +109,7 @@ func (s *Service) handlePutZitiSettings(c *gin.Context) {
 	uid, _ := userID.(string)
 	ctx := orgctx.WithBypassRLS(c.Request.Context())
 	if err := saveZitiConnSettings(ctx, s.db, s.config.EncryptionKey, in, uid); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("put ziti settings", err), s.logger)
 		return
 	}
 	if st, _, err := loadZitiConnSettings(ctx, s.db); err == nil {
@@ -140,7 +141,7 @@ func (s *Service) handleTestZitiSettings(c *gin.Context) {
 	}
 	tmpDir, err := os.MkdirTemp("", "ziti-test-*")
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("test ziti settings", err), s.logger)
 		return
 	}
 	defer os.RemoveAll(tmpDir)
@@ -191,7 +192,8 @@ func (s *Service) handleZitiConnect(c *gin.Context) {
 
 	zm, err := NewZitiManagerWithConn(s.config, ctrlURL, user, pwd, dir, insecure, s.db, s.logger)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "connect failed: " + err.Error()})
+		s.logger.Error("Ziti controller connection test failed", zap.Error(err))
+		c.JSON(http.StatusBadGateway, gin.H{"error": "connect failed: could not reach the Ziti controller (see server logs for details)"})
 		return
 	}
 

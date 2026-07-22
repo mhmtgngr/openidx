@@ -59,6 +59,31 @@ export function getZitiJwt(): Promise<string | null> {
   return SecureStore.getItemAsync(ZITI_JWT);
 }
 
+/**
+ * Dark-platform enroll door (Tier-0): POST /api/v1/access/enroll.
+ *
+ * The ONLY access-service route that stays public when the platform goes dark.
+ * It trades the signed-in session (Authorization: Bearer, injected by the api
+ * client) for a one-time OpenZiti enrollment JWT, which the native Ziti module
+ * uses to join the overlay and reach every (now-dark) service.
+ *
+ * Prefer this over the JWT embedded in enrollDevice()'s response when the
+ * platform is dark, or to (re-)enroll the overlay identity without re-creating
+ * the agent. An admin/MDM enrollment token may be passed instead of a session.
+ */
+export async function requestZitiEnrollmentJwt(
+  enrollmentToken?: string,
+): Promise<string> {
+  const res = await api.post<{ ziti_enrollment_jwt: string; identity_name: string }>(
+    `${BASE}/enroll`,
+    enrollmentToken ? { enrollment_token: enrollmentToken } : {},
+  );
+  if (res.ziti_enrollment_jwt) {
+    await SecureStore.setItemAsync(ZITI_JWT, res.ziti_enrollment_jwt);
+  }
+  return res.ziti_enrollment_jwt;
+}
+
 /** Report a device-posture snapshot. No-op (returns false) if not enrolled. */
 export async function reportPosture(results: PostureResult[]): Promise<boolean> {
   const id = await getAgentIdentity();

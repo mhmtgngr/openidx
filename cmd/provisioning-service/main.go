@@ -4,7 +4,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"time"
 
@@ -166,6 +165,7 @@ func main() {
 	healthService := newhealth.NewHealthService(log)
 	healthService.SetVersion(Version)
 	healthService.RegisterCheck(newhealth.NewPostgresChecker(db))
+	healthService.RegisterCheck(newhealth.NewReadReplicaChecker(db))
 	healthService.RegisterCheck(newhealth.NewRedisChecker(redis))
 
 	// Register standard health check endpoints
@@ -175,7 +175,7 @@ func main() {
 	router.GET("/ready", healthService.ReadyHandler())
 
 	httpServer := &http.Server{
-		Addr:         fmt.Sprintf(":%d", cfg.Port),
+		Addr:         cfg.ListenAddr(),
 		Handler:      router,
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 15 * time.Second,

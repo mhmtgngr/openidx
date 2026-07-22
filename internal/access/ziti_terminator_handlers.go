@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	apperrors "github.com/openidx/openidx/internal/common/errors"
 )
 
 // ---------------------------------------------------------------------------
@@ -18,7 +19,7 @@ func (s *Service) handleListTerminators(c *gin.Context) {
 	}
 	respData, statusCode, err := s.ziti().MgmtRequest("GET", "/edge/management/v1/terminators?limit=500", nil)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("list terminators", err), s.logger)
 		return
 	}
 	if statusCode != http.StatusOK {
@@ -69,7 +70,7 @@ func (s *Service) handleGetTerminator(c *gin.Context) {
 	id := c.Param("id")
 	respData, statusCode, err := s.ziti().MgmtRequest("GET", "/edge/management/v1/terminators/"+id, nil)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("get terminator", err), s.logger)
 		return
 	}
 	if statusCode != http.StatusOK {
@@ -93,7 +94,7 @@ func (s *Service) handleDeleteTerminator(c *gin.Context) {
 	id := c.Param("id")
 	_, statusCode, err := s.ziti().MgmtRequest("DELETE", "/edge/management/v1/terminators/"+id, nil)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("delete terminator", err), s.logger)
 		return
 	}
 	if statusCode != http.StatusOK && statusCode != http.StatusNoContent {

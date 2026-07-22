@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	apperrors "github.com/openidx/openidx/internal/common/errors"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/config"
@@ -421,8 +422,7 @@ func (s *Service) handleListOrganizations(c *gin.Context) {
 		}
 		orgs, err := s.GetUserOrganizations(c.Request.Context(), uid)
 		if err != nil {
-			s.logger.Error("failed to get user organizations", zap.Error(err))
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to get user organizations", err), s.logger)
 			return
 		}
 		c.Header("X-Total-Count", strconv.Itoa(len(orgs)))
@@ -446,7 +446,7 @@ func (s *Service) handleListOrganizations(c *gin.Context) {
 
 	orgs, total, err := s.ListOrganizations(c.Request.Context(), limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("list organizations", err), s.logger)
 		return
 	}
 
@@ -488,8 +488,7 @@ func (s *Service) handleCreateOrganization(c *gin.Context) {
 	}
 
 	if err := s.CreateOrganization(c.Request.Context(), org, creatorUserID); err != nil {
-		s.logger.Error("failed to create organization", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to create organization", err), s.logger)
 		return
 	}
 
@@ -527,8 +526,7 @@ func (s *Service) handleUpdateOrganization(c *gin.Context) {
 	}
 
 	if err := s.UpdateOrganization(c.Request.Context(), orgID, req.Name, req.Plan, req.Status); err != nil {
-		s.logger.Error("failed to update organization", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to update organization", err), s.logger)
 		return
 	}
 
@@ -554,7 +552,7 @@ func (s *Service) handleListMembers(c *gin.Context) {
 
 	members, total, err := s.ListMembers(c.Request.Context(), orgID, limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("list members", err), s.logger)
 		return
 	}
 
@@ -584,8 +582,7 @@ func (s *Service) handleAddMember(c *gin.Context) {
 	invitedBy, _ := inviterID.(string)
 
 	if err := s.AddMember(c.Request.Context(), orgID, req.UserID, req.Role, invitedBy); err != nil {
-		s.logger.Error("failed to add member", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to add member", err), s.logger)
 		return
 	}
 
@@ -600,8 +597,7 @@ func (s *Service) handleRemoveMember(c *gin.Context) {
 	}
 
 	if err := s.RemoveMember(c.Request.Context(), orgID, userID); err != nil {
-		s.logger.Error("failed to remove member", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to remove member", err), s.logger)
 		return
 	}
 
@@ -617,8 +613,7 @@ func (s *Service) handleGetMyOrganizations(c *gin.Context) {
 
 	orgs, err := s.GetUserOrganizations(c.Request.Context(), uid)
 	if err != nil {
-		s.logger.Error("failed to get user organizations", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to get user organizations", err), s.logger)
 		return
 	}
 

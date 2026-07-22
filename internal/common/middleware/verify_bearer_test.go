@@ -44,6 +44,7 @@ func resetJWKSCache() {
 	globalJWKSCache.mu.Lock()
 	globalJWKSCache.keys = make(map[string]*rsa.PublicKey)
 	globalJWKSCache.expiresAt = time.Time{}
+	globalJWKSCache.lastRefreshOK = time.Time{}
 	globalJWKSCache.mu.Unlock()
 }
 

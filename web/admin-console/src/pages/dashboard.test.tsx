@@ -23,29 +23,29 @@ vi.mock('recharts', () => ({
   ResponsiveContainer: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }))
 
-// Mock the api module
-vi.mock('../lib/api/client', () => {
+// Mock the api module. DashboardPage imports { api } from '../lib/api' and calls
+// api.get(...), so we mock that exact surface. (Previously this mocked the
+// unused '../lib/api/client' module, so the mock was inert and the real api was
+// never stubbed; that duplicate client has since been deleted.)
+vi.mock('../lib/api', () => {
   const mockGet = vi.fn(() => Promise.resolve(null))
   return {
-    apiClient: {
+    api: {
       get: mockGet,
+      getWithHeaders: vi.fn(() => Promise.resolve({ data: null, headers: {} })),
       post: vi.fn(() => Promise.resolve(null)),
       put: vi.fn(() => Promise.resolve(null)),
       patch: vi.fn(() => Promise.resolve(null)),
       delete: vi.fn(() => Promise.resolve(null)),
     },
-    getToken: vi.fn(() => null),
-    setToken: vi.fn(),
-    removeToken: vi.fn(),
-    default: {
-      get: mockGet,
-    },
+    baseURL: '',
+    getOAuthURL: () => '',
   }
 })
 
 // Get reference to the mocked function
-const { apiClient } = await vi.importMock('../lib/api/client') as any
-const mockApiGet = apiClient.get
+const { api } = await vi.importMock('../lib/api') as any
+const mockApiGet = api.get
 
 const mockDashboardStats = {
   total_users: 150,

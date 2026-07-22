@@ -26,6 +26,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	apperrors "github.com/openidx/openidx/internal/common/errors"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 	"golang.org/x/oauth2"
@@ -34,6 +35,7 @@ import (
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/middleware"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/common/resilience"
 	"github.com/openidx/openidx/internal/common/secretcrypt"
 	"github.com/openidx/openidx/internal/identity"
 	"github.com/openidx/openidx/internal/risk"
@@ -159,6 +161,16 @@ type Service struct {
 	riskService      *risk.Service
 	webhookService   WebhookPublisher
 	authorizeHandler *AuthorizeHandler
+	// redisBreaker fast-fails Redis-backed revocation checks when Redis is
+	// unhealthy, so a Redis brownout doesn't make every token op pay the full
+	// 3s read timeout (a latency cliff on the verify/introspect hot path). It is
+	// shared per-service and distributed via Redis state when available.
+	redisBreaker *resilience.CircuitBreaker
+
+	// clients is the OAuth client data-access port (Repository pattern — see
+	// client_repository.go). GetByClientID reads the primary (security), List the
+	// replica; writes the primary.
+	clients OAuthClientStore
 }
 
 // WebhookPublisher defines the interface for publishing webhook events
@@ -179,11 +191,6 @@ func (s *Service) SetWebhookService(ws WebhookPublisher) {
 // AuthorizeHandler returns the authorization handler
 func (s *Service) AuthorizeHandler() *AuthorizeHandler {
 	return s.authorizeHandler
-}
-
-// withDBTimeout returns a context with timeout for database operations
-func (s *Service) withDBTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(ctx, 5*time.Second)
 }
 
 // NewService creates a new OAuth service
@@ -280,6 +287,25 @@ func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *confi
 
 	// Initialize authorize handler
 	svc.authorizeHandler = NewAuthorizeHandler(svc, svc.logger)
+
+	// OAuth client data-access repository (Repository pattern — see
+	// client_repository.go).
+	svc.clients = NewPostgresOAuthClientStore(db)
+
+	// Circuit breaker for Redis-backed revocation checks: after 5 consecutive
+	// failures, fast-fail for 5s instead of paying the Redis read timeout on
+	// every request during a Redis brownout. State is shared across replicas via
+	// Redis when a client is available.
+	breakerCfg := resilience.CircuitBreakerConfig{
+		Name:         "oauth-redis-revocation",
+		Threshold:    5,
+		ResetTimeout: 5 * time.Second,
+		Logger:       svc.logger,
+	}
+	if redis != nil {
+		breakerCfg.RedisClient = redis.Client
+	}
+	svc.redisBreaker = resilience.NewCircuitBreaker(breakerCfg)
 
 	// Build the signing snapshot (active key + verification set + JWKS) and
 	// keep it fresh so rotations by the admin service take effect without a
@@ -388,198 +414,33 @@ func (s *Service) checkCountryBlock(ctx context.Context, clientIP, userID, usern
 // CreateClient creates a new OAuth client
 func (s *Service) CreateClient(ctx context.Context, client *OAuthClient) error {
 	s.logger.Info("Creating OAuth client", zap.String("name", client.Name))
-
-	org, err := orgctx.From(ctx)
-	if err != nil {
-		return err
-	}
-
-	now := time.Now()
-	client.CreatedAt = now
-	client.UpdatedAt = now
-
-	// Set defaults
-	if client.AccessTokenLifetime == 0 {
-		client.AccessTokenLifetime = 3600 // 1 hour
-	}
-	if client.RefreshTokenLifetime == 0 {
-		client.RefreshTokenLifetime = 86400 // 24 hours
-	}
-
-	redirectURIsJSON, _ := json.Marshal(client.RedirectURIs)
-	grantTypesJSON, _ := json.Marshal(client.GrantTypes)
-	responseTypesJSON, _ := json.Marshal(client.ResponseTypes)
-	scopesJSON, _ := json.Marshal(client.Scopes)
-
-	// Use timeout context for database operation
-	dbCtx, cancel := s.withDBTimeout(ctx)
-	defer cancel()
-
-	_, err = s.db.Pool.Exec(dbCtx, `
-		INSERT INTO oauth_clients (
-			id, client_id, client_secret, name, description, type,
-			redirect_uris, grant_types, response_types, scopes,
-			logo_uri, policy_uri, tos_uri, pkce_required,
-			allow_refresh_token, access_token_lifetime, refresh_token_lifetime,
-			created_at, updated_at, org_id
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
-	`, client.ID, client.ClientID, client.ClientSecret, client.Name, client.Description,
-		client.Type, redirectURIsJSON, grantTypesJSON, responseTypesJSON, scopesJSON,
-		client.LogoURI, client.PolicyURI, client.TOSUri, client.PKCERequired,
-		client.AllowRefreshToken, client.AccessTokenLifetime, client.RefreshTokenLifetime,
-		client.CreatedAt, client.UpdatedAt, org.ID)
-
-	return err
+	// Persistence in the repository (primary pool) — see client_repository.go.
+	return s.clients.Create(ctx, client)
 }
 
 // GetClient retrieves an OAuth client by client ID
 func (s *Service) GetClient(ctx context.Context, clientID string) (*OAuthClient, error) {
-	var client OAuthClient
-	// Use pointers to handle NULL values
-	var clientSecret, description, logoURI, policyURI, tosURI *string
-	var redirectURIsJSON, grantTypesJSON, responseTypesJSON, scopesJSON []byte
-
-	org, err := orgctx.From(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	// Use timeout context for database operation
-	dbCtx, cancel := s.withDBTimeout(ctx)
-	defer cancel()
-
-	err = s.db.Pool.QueryRow(dbCtx, `
-		SELECT id, client_id, client_secret, name, description, type,
-		       redirect_uris, grant_types, response_types, scopes,
-		       logo_uri, policy_uri, tos_uri, pkce_required,
-		       allow_refresh_token, access_token_lifetime, refresh_token_lifetime,
-		       created_at, updated_at
-		FROM oauth_clients WHERE client_id = $1 AND org_id = $2
-	`, clientID, org.ID).Scan(
-		&client.ID, &client.ClientID, &clientSecret, &client.Name, &description,
-		&client.Type, &redirectURIsJSON, &grantTypesJSON, &responseTypesJSON, &scopesJSON,
-		&logoURI, &policyURI, &tosURI, &client.PKCERequired,
-		&client.AllowRefreshToken, &client.AccessTokenLifetime, &client.RefreshTokenLifetime,
-		&client.CreatedAt, &client.UpdatedAt,
-	)
-
-	if err != nil {
-		return nil, err
-	}
-
-	// Handle NULL values
-	if clientSecret != nil {
-		client.ClientSecret = *clientSecret
-	}
-	if description != nil {
-		client.Description = *description
-	}
-	if logoURI != nil {
-		client.LogoURI = *logoURI
-	}
-	if policyURI != nil {
-		client.PolicyURI = *policyURI
-	}
-	if tosURI != nil {
-		client.TOSUri = *tosURI
-	}
-
-	json.Unmarshal(redirectURIsJSON, &client.RedirectURIs)
-	json.Unmarshal(grantTypesJSON, &client.GrantTypes)
-	json.Unmarshal(responseTypesJSON, &client.ResponseTypes)
-	json.Unmarshal(scopesJSON, &client.Scopes)
-
-	return &client, nil
+	// Repo reads the PRIMARY here: client validation gates every token grant and
+	// checks the secret, so a just-rotated/disabled client must be seen at once.
+	return s.clients.GetByClientID(ctx, clientID)
 }
 
 // ListClients retrieves all OAuth clients
 func (s *Service) ListClients(ctx context.Context, offset, limit int) ([]OAuthClient, int, error) {
-	var total int
-
-	// Use timeout context for database operations
-	dbCtx, cancel := s.withDBTimeout(ctx)
-	defer cancel()
-
-	org, err := orgctx.From(ctx)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	err = s.db.Pool.QueryRow(dbCtx, "SELECT COUNT(*) FROM oauth_clients WHERE org_id = $1", org.ID).Scan(&total)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	rows, err := s.db.Pool.Query(dbCtx, `
-		SELECT id, client_id, name, description, type, created_at, updated_at
-		FROM oauth_clients
-		WHERE org_id = $3
-		ORDER BY created_at DESC
-		OFFSET $1 LIMIT $2
-	`, offset, limit, org.ID)
-	if err != nil {
-		return nil, 0, err
-	}
-	defer rows.Close()
-
-	var clients []OAuthClient
-	for rows.Next() {
-		var c OAuthClient
-		var desc *string
-		if err := rows.Scan(&c.ID, &c.ClientID, &c.Name, &desc, &c.Type, &c.CreatedAt, &c.UpdatedAt); err != nil {
-			return nil, 0, err
-		}
-		if desc != nil {
-			c.Description = *desc
-		}
-		clients = append(clients, c)
-	}
-
-	return clients, total, nil
+	// Repo reads the replica (admin/dashboard, lag-tolerant).
+	return s.clients.List(ctx, offset, limit)
 }
 
 // UpdateClient updates an OAuth client
 func (s *Service) UpdateClient(ctx context.Context, clientID string, client *OAuthClient) error {
 	s.logger.Info("Updating OAuth client", zap.String("client_id", clientID))
-
-	org, err := orgctx.From(ctx)
-	if err != nil {
-		return err
-	}
-
-	now := time.Now()
-	client.UpdatedAt = now
-
-	redirectURIsJSON, _ := json.Marshal(client.RedirectURIs)
-	grantTypesJSON, _ := json.Marshal(client.GrantTypes)
-	responseTypesJSON, _ := json.Marshal(client.ResponseTypes)
-	scopesJSON, _ := json.Marshal(client.Scopes)
-
-	_, err = s.db.Pool.Exec(ctx, `
-		UPDATE oauth_clients
-		SET name = $2, description = $3, redirect_uris = $4, grant_types = $5,
-		    response_types = $6, scopes = $7, pkce_required = $8,
-		    allow_refresh_token = $9, access_token_lifetime = $10,
-		    refresh_token_lifetime = $11, updated_at = $12
-		WHERE client_id = $1 AND org_id = $13
-	`, clientID, client.Name, client.Description, redirectURIsJSON, grantTypesJSON,
-		responseTypesJSON, scopesJSON, client.PKCERequired, client.AllowRefreshToken,
-		client.AccessTokenLifetime, client.RefreshTokenLifetime, now, org.ID)
-
-	return err
+	return s.clients.Update(ctx, clientID, client)
 }
 
 // DeleteClient deletes an OAuth client
 func (s *Service) DeleteClient(ctx context.Context, clientID string) error {
 	s.logger.Info("Deleting OAuth client", zap.String("client_id", clientID))
-
-	org, err := orgctx.From(ctx)
-	if err != nil {
-		return err
-	}
-
-	_, err = s.db.Pool.Exec(ctx, "DELETE FROM oauth_clients WHERE client_id = $1 AND org_id = $2", clientID, org.ID)
-	return err
+	return s.clients.Delete(ctx, clientID)
 }
 
 // Authorization Flow
@@ -811,43 +672,65 @@ func (s *Service) MarkUserTokensRevoked(ctx context.Context, userID string) erro
 // blacklist entry exists, or (b) the user's "revoke everything before
 // timestamp T" marker is newer than the token's `iat`. When Redis is
 // unavailable it returns the error so the caller can fail closed.
+//
+// The Redis reads run through a circuit breaker: after repeated Redis failures
+// the breaker opens and this returns fast (an error) instead of every request
+// paying the Redis read timeout during a brownout. Callers already fail closed
+// on error, so opening the breaker is safe — it just makes the failure cheap.
 func (s *Service) IsAccessTokenRevoked(ctx context.Context, token string, userID string, issuedAt int64) (bool, error) {
 	if s.redis == nil || s.redis.Client == nil {
 		return false, fmt.Errorf("redis not configured for token revocation")
 	}
 
-	// Per-token blacklist (set by /oauth/revoke and /oauth/logout).
-	if n, err := s.redis.Client.Exists(ctx, accessTokenBlacklistKey(token)).Result(); err != nil {
-		return false, err
-	} else if n > 0 {
-		return true, nil
-	}
-
-	// Per-user "revoke everything before now" marker (set by /oauth/logout-all).
-	if userID != "" && issuedAt > 0 {
-		v, err := s.redis.Client.Get(ctx, userTokensRevokedAtKey(userID)).Result()
-		if err != nil && !errors.Is(err, redis.Nil) {
-			return false, err
+	var revoked bool
+	err := s.revocationBreakerExec(func() error {
+		// Per-token blacklist (set by /oauth/revoke and /oauth/logout).
+		if n, err := s.redis.Client.Exists(ctx, accessTokenBlacklistKey(token)).Result(); err != nil {
+			return err
+		} else if n > 0 {
+			revoked = true
+			return nil
 		}
-		if v != "" {
-			cutoff, perr := strconv.ParseInt(v, 10, 64)
-			// `<=` means "tokens issued in the same wall-clock second as
-			// (or before) the logout-all call are revoked." This is the
-			// right semantic for /oauth/logout-all: every outstanding
-			// access token that existed at the moment the user said
-			// "kill everything" should stop working — including ones
-			// issued in the very same second. The previous
-			// inter-subtest-pollution worry about `handleLogout` bumping
-			// the cutoff went away when handleLogout switched to a
-			// per-token blacklist for single-session logout (only
-			// logout-all bumps the cutoff now).
-			if perr == nil && issuedAt <= cutoff {
-				return true, nil
+
+		// Per-user "revoke everything before now" marker (set by /oauth/logout-all).
+		if userID != "" && issuedAt > 0 {
+			v, err := s.redis.Client.Get(ctx, userTokensRevokedAtKey(userID)).Result()
+			if err != nil && !errors.Is(err, redis.Nil) {
+				return err
+			}
+			if v != "" {
+				cutoff, perr := strconv.ParseInt(v, 10, 64)
+				// `<=` means "tokens issued in the same wall-clock second as
+				// (or before) the logout-all call are revoked." This is the
+				// right semantic for /oauth/logout-all: every outstanding
+				// access token that existed at the moment the user said
+				// "kill everything" should stop working — including ones
+				// issued in the very same second. The previous
+				// inter-subtest-pollution worry about `handleLogout` bumping
+				// the cutoff went away when handleLogout switched to a
+				// per-token blacklist for single-session logout (only
+				// logout-all bumps the cutoff now).
+				if perr == nil && issuedAt <= cutoff {
+					revoked = true
+				}
 			}
 		}
+		return nil
+	})
+	if err != nil {
+		return false, err
 	}
+	return revoked, nil
+}
 
-	return false, nil
+// revocationBreakerExec runs a Redis revocation read through the circuit
+// breaker when one is configured, otherwise runs it directly. Redis.Nil
+// (key-miss) is handled inside fn and never surfaces as a breaker failure.
+func (s *Service) revocationBreakerExec(fn func() error) error {
+	if s.redisBreaker == nil {
+		return fn()
+	}
+	return s.redisBreaker.ExecuteError(fn)
 }
 
 // JWT Token Generation
@@ -1720,7 +1603,9 @@ func (s *Service) handleAuthorizeCallback(c *gin.Context) {
 	}
 
 	if err := s.CreateAuthorizationCode(c.Request.Context(), authCode); err != nil {
-		c.JSON(500, gin.H{"error": "server_error"})
+		// DB write failure: a transient outage becomes a retryable 503, a real
+		// error stays a 500 (see unavailable.go).
+		writeServerOrUnavailable(c, err)
 		return
 	}
 
@@ -2155,7 +2040,9 @@ func (s *Service) issueAuthorizationCode(c *gin.Context, oauthParams map[string]
 	}
 
 	if err := s.CreateAuthorizationCode(c.Request.Context(), authCode); err != nil {
-		c.JSON(500, gin.H{"error": "server_error"})
+		// DB write failure: a transient outage becomes a retryable 503, a real
+		// error stays a 500 (see unavailable.go).
+		writeServerOrUnavailable(c, err)
 		return
 	}
 
@@ -2846,7 +2733,9 @@ func (s *Service) handleAuthorizeConsent(c *gin.Context) {
 	}
 
 	if err := s.CreateAuthorizationCode(c.Request.Context(), authCode); err != nil {
-		c.JSON(500, gin.H{"error": "server_error"})
+		// DB write failure: a transient outage becomes a retryable 503, a real
+		// error stays a 500 (see unavailable.go).
+		writeServerOrUnavailable(c, err)
 		return
 	}
 
@@ -2893,7 +2782,7 @@ func (s *Service) handleAuthorizeConsentV2(c *gin.Context) {
 	code, err := s.authorizeHandler.IssueAuthorizationCode(c.Request.Context(), req.AuthSession, userID, req.SessionID)
 	if err != nil {
 		s.logger.Error("Failed to issue authorization code", zap.Error(err))
-		c.JSON(500, gin.H{"error": "server_error", "error_description": err.Error()})
+		c.JSON(500, gin.H{"error": "server_error", "error_description": "failed to issue authorization code"})
 		return
 	}
 
@@ -2993,6 +2882,14 @@ func (s *Service) handleAuthorizationCodeGrant(c *gin.Context) {
 
 	// Verify PKCE - required for public clients, optional for confidential
 	if authCode.CodeChallenge != "" {
+		// Reject "plain" PKCE in production: it's a bare string compare with no
+		// protection against code interception, and only exists for insecure-
+		// context dev clients (crypto.subtle unavailable). A prod console is on
+		// HTTPS and always uses S256, so plain here would only help an attacker.
+		if authCode.CodeChallengeMethod == "plain" && s.config != nil && s.config.IsProduction() {
+			c.JSON(400, gin.H{"error": "invalid_grant", "error_description": "PKCE method 'plain' is not allowed in production; use S256"})
+			return
+		}
 		if !VerifyPKCE(codeVerifier, authCode.CodeChallenge, authCode.CodeChallengeMethod) {
 			c.JSON(400, gin.H{"error": "invalid_grant", "error_description": "PKCE verification failed"})
 			return
@@ -3134,7 +3031,10 @@ func (s *Service) handleRefreshTokenGrant(c *gin.Context) {
 	if active, err := s.userIsActive(c.Request.Context(), token.UserID); err != nil {
 		s.logger.Error("refresh grant: failed to check user status",
 			zap.String("user_id", token.UserID), zap.Error(err))
-		c.JSON(500, gin.H{"error": "server_error"})
+		// A DB outage here is a transient brownout, not a client error: tell the
+		// client to retry shortly (503 temporarily_unavailable + Retry-After)
+		// instead of a hard 500 it would hammer. See unavailable.go.
+		writeServerOrUnavailable(c, err)
 		return
 	} else if !active {
 		s.logger.Info("refresh grant denied: user disabled or deleted",
@@ -3446,7 +3346,7 @@ func (s *Service) handleListClients(c *gin.Context) {
 
 	clients, total, err := s.ListClients(c.Request.Context(), offset, limit)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("list clients", err), s.logger)
 		return
 	}
 
@@ -3469,7 +3369,7 @@ func (s *Service) handleCreateClient(c *gin.Context) {
 	client.ClientSecret = GenerateRandomToken(32)
 
 	if err := s.CreateClient(c.Request.Context(), &client); err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("create client", err), s.logger)
 		return
 	}
 
@@ -3517,7 +3417,7 @@ func (s *Service) handleUpdateClient(c *gin.Context) {
 	}
 
 	if err := s.UpdateClient(c.Request.Context(), c.Param("id"), &client); err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("update client", err), s.logger)
 		return
 	}
 
@@ -3526,7 +3426,7 @@ func (s *Service) handleUpdateClient(c *gin.Context) {
 
 func (s *Service) handleDeleteClient(c *gin.Context) {
 	if err := s.DeleteClient(c.Request.Context(), c.Param("id")); err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("delete client", err), s.logger)
 		return
 	}
 
@@ -3549,7 +3449,7 @@ func (s *Service) RegenerateClientSecret(ctx context.Context, clientID string) (
 func (s *Service) handleRegenerateClientSecret(c *gin.Context) {
 	secret, err := s.RegenerateClientSecret(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("regenerate client secret", err), s.logger)
 		return
 	}
 	c.JSON(200, gin.H{"client_secret": secret})

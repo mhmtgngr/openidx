@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
+	apperrors "github.com/openidx/openidx/internal/common/errors"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
@@ -22,7 +23,7 @@ func (s *Service) handleGetSyncStatus(c *gin.Context) {
 
 	status, err := s.ziti().GetSyncStatus(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("get sync status", err), s.logger)
 		return
 	}
 
@@ -39,7 +40,7 @@ func (s *Service) handleSyncAllUsers(c *gin.Context) {
 
 	result, err := s.ziti().SyncAllUsersToZiti(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("sync all users", err), s.logger)
 		return
 	}
 
@@ -57,7 +58,7 @@ func (s *Service) handleSyncSingleUser(c *gin.Context) {
 	userID := c.Param("userId")
 	result, err := s.ziti().SyncUserToZiti(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("sync single user", err), s.logger)
 		return
 	}
 
@@ -87,7 +88,7 @@ func (s *Service) handleGetUnsyncedUsers(c *gin.Context) {
 		LIMIT 50
 	`, org.ID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("get unsynced users", err), s.logger)
 		return
 	}
 	defer rows.Close()
@@ -196,7 +197,7 @@ func (s *Service) handleGetUserZitiMap(c *gin.Context) {
 		WHERE zi.user_id IS NOT NULL AND zi.org_id = $1
 	`, org.ID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("get user ziti map", err), s.logger)
 		return
 	}
 	defer rows.Close()
@@ -234,7 +235,7 @@ func (s *Service) handleSyncDeviceTrust(c *gin.Context) {
 
 	userID := c.Param("userId")
 	if err := s.ziti().SyncDeviceTrustForUser(c.Request.Context(), userID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("sync device trust", err), s.logger)
 		return
 	}
 
@@ -284,7 +285,7 @@ func (s *Service) handleGetEnrichedDevices(c *gin.Context) {
 		ORDER BY d.last_seen_at DESC
 		LIMIT $1 OFFSET $2`, limit, offset, org.ID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("get enriched devices", err), s.logger)
 		return
 	}
 	defer rows.Close()
@@ -353,7 +354,7 @@ func (s *Service) handleSyncAllGroups(c *gin.Context) {
 
 	result, err := s.ziti().SyncAllGroupAttributes(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("sync all groups", err), s.logger)
 		return
 	}
 

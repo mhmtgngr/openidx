@@ -26,7 +26,9 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -34,6 +36,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/jackc/pgx/v5"
+	apperrors "github.com/openidx/openidx/internal/common/errors"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/database"
@@ -120,8 +123,124 @@ type signalingSession struct {
 	sessionID string
 
 	mu        sync.Mutex
-	adminConn *websocket.Conn
-	agentConn *websocket.Conn
+	adminConn *brokerConn
+	agentConn *brokerConn
+
+	// agentReplay buffers the agent's SDP offer + ICE candidates so an admin
+	// viewer that connects a moment after the device can still receive the
+	// offer and negotiate. Only the agent side is buffered (see recordReplay):
+	// the admin's answer is bound to a specific offer's ICE ufrag and must never
+	// be replayed to a reconnected device. Reset on every fresh agent bind.
+	agentReplay [][]byte
+}
+
+// brokerConn wraps a websocket.Conn with a single writer goroutine fed by a
+// bounded channel. This decouples the two peers' read loops: a slow reader (e.g.
+// the admin browser under load) no longer blocks the sender's read loop via a
+// shared mutex during WriteMessage. Under backpressure, VP8 video frames (binary)
+// are DROPPED rather than blocking — the renderer just requests a keyframe and
+// catches up — while text (signaling/control) is always delivered. This is what
+// killed relay stability: holding sess.mu across a blocking WriteMessage coupled
+// both legs, so any write stall cascaded into a device-side abnormal close (1006).
+type brokerConn struct {
+	ws     *websocket.Conn
+	send   chan wsMessage
+	closed chan struct{}
+	once   sync.Once
+}
+
+type wsMessage struct {
+	mt   int
+	data []byte
+}
+
+// brokerSendQueue is the per-connection outbound buffer. Sized to absorb a short
+// stall without unbounded memory; overflow drops the oldest video frame.
+const brokerSendQueue = 64
+
+func newBrokerConn(ws *websocket.Conn) *brokerConn {
+	c := &brokerConn{
+		ws:     ws,
+		send:   make(chan wsMessage, brokerSendQueue),
+		closed: make(chan struct{}),
+	}
+	go c.writeLoop()
+	return c
+}
+
+func (c *brokerConn) writeLoop() {
+	for {
+		select {
+		case <-c.closed:
+			return
+		case msg := <-c.send:
+			// A generous per-write deadline: a write that can't complete in this
+			// window means the peer is genuinely gone, not merely slow.
+			_ = c.ws.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			if err := c.ws.WriteMessage(msg.mt, msg.data); err != nil {
+				c.Close()
+				return
+			}
+		}
+	}
+}
+
+// enqueue queues a message for delivery. Text messages block briefly (signaling
+// must not be lost); binary video frames are dropped if the queue is full so a
+// slow admin never stalls the device's read loop. Returns false if the conn is
+// closed.
+func (c *brokerConn) enqueue(mt int, data []byte) bool {
+	// Copy: the caller's buffer (gorilla read buffer) is reused on the next read.
+	buf := make([]byte, len(data))
+	copy(buf, data)
+	if mt == websocket.BinaryMessage {
+		select {
+		case c.send <- wsMessage{mt, buf}:
+			return true
+		case <-c.closed:
+			return false
+		default:
+			// Queue full: drop this video frame. The decoder recovers on the next
+			// keyframe (viewer requests one on decode error).
+			return true
+		}
+	}
+	// Text / control: deliver reliably, but bound the wait so a dead peer can't
+	// wedge the sender forever.
+	select {
+	case c.send <- wsMessage{mt, buf}:
+		return true
+	case <-c.closed:
+		return false
+	case <-time.After(5 * time.Second):
+		c.Close()
+		return false
+	}
+}
+
+func (c *brokerConn) writeControl(messageType int, deadline time.Time) error {
+	return c.ws.WriteControl(messageType, nil, deadline)
+}
+
+func (c *brokerConn) Close() {
+	c.once.Do(func() {
+		close(c.closed)
+		_ = c.ws.Close()
+	})
+}
+
+// maxReplayMessages caps the per-peer signaling replay buffer. SDP + a modest
+// number of ICE candidates fit comfortably; the cap prevents unbounded growth
+// on a chatty or stuck peer.
+const maxReplayMessages = 64
+
+// defaultSTUNServers returns the ICE server list handed to both peers when no
+// admin override or minted TURN credential is present. Public STUN lets each
+// peer discover its server-reflexive (public) address so WebRTC can establish
+// a direct path across typical NAT. Overridable per-session via the start
+// request's ice_servers, or globally by wiring a TURN minter.
+func defaultSTUNServers() json.RawMessage {
+	return json.RawMessage(`[{"urls":["stun:stun.l.google.com:19302","stun:stun1.l.google.com:19302"]}]`)
 }
 
 // RegisterRemoteSupportAdminRoutes mounts the admin (and admin-WS) surface.
@@ -148,6 +267,9 @@ func (h *RemoteSupportHandler) RegisterRemoteSupportAdminRoutes(r *gin.RouterGro
 // /agent/report) since agents don't have a tenant JWT.
 func (h *RemoteSupportHandler) RegisterRemoteSupportPublicRoutes(r *gin.RouterGroup) {
 	r.GET("/agent/remote-support/sessions/:id/ws", h.HandleAgentWS)
+	// Device consent (attended support): the agent Allows/Denies before the
+	// admin can view/control. Agent-authenticated (X-Agent-ID + X-Auth-Token).
+	r.POST("/agent/remote-support/sessions/:id/consent", h.HandleAgentConsent)
 }
 
 // startSessionRequest is the body accepted by HandleStartSession.
@@ -157,6 +279,14 @@ type startSessionRequest struct {
 	ICEServers json.RawMessage `json:"ice_servers"` // optional override
 	Notes      string          `json:"notes"`
 	Record     bool            `json:"record"` // opt-in MediaRecorder capture
+	// Transport selects the media path: "webrtc" (default, P2P) or "relay"
+	// (VP8 frames streamed through the broker — full-Ziti, no STUN). Empty uses
+	// the server default (REMOTE_SUPPORT_TRANSPORT).
+	Transport string `json:"transport"`
+	// ConsentRequired: when true, the person at the device must Allow the
+	// session (attended support) before the admin can view/control. Servers /
+	// unattended targets leave this false (today's behavior).
+	ConsentRequired bool `json:"consent_required"`
 	// RecordingRetentionDays: per-session retention override. nil means
 	// "use the per-org policy or default". 0 means "infinite". Positive
 	// values cap the recording lifetime to that many days.
@@ -170,6 +300,7 @@ type remoteSessionRow struct {
 	AdminUserID          string          `json:"admin_user_id,omitempty"`
 	Status               string          `json:"status"`
 	Mode                 string          `json:"mode"`
+	Transport            string          `json:"transport"`
 	ICEServers           json.RawMessage `json:"ice_servers"`
 	EndReason            string          `json:"end_reason,omitempty"`
 	RecordingURL         string          `json:"recording_url,omitempty"`
@@ -209,6 +340,17 @@ func (h *RemoteSupportHandler) HandleStartSession(c *gin.Context) {
 		return
 	}
 
+	// Resolve the media transport: explicit request wins, else the server
+	// default (REMOTE_SUPPORT_TRANSPORT), else 'webrtc'.
+	transport := strings.ToLower(strings.TrimSpace(req.Transport))
+	if transport == "" {
+		transport = defaultRemoteSupportTransport()
+	}
+	if transport != "webrtc" && transport != "relay" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "transport must be 'webrtc' or 'relay'"})
+		return
+	}
+
 	// Reject if the agent has another active session already (broker would
 	// happily run two, but the UX of two admins sharing a screen is bad).
 	var blockingID string
@@ -231,7 +373,12 @@ func (h *RemoteSupportHandler) HandleStartSession(c *gin.Context) {
 	// Resolve ice_servers in priority order:
 	//   1. Admin-supplied (verbatim, back-compat).
 	//   2. Minted per-session TURN credentials when the minter is wired.
-	//   3. Empty array — LAN / Ziti-overlay-only mode.
+	//   3. Default public STUN servers so peers can gather server-reflexive
+	//      candidates and connect across NAT. (Host candidates alone only work
+	//      when both peers share a subnet with no NAT/firewall in between; STUN
+	//      is cheap and makes the common case — LAN + remote — just work. A
+	//      TURN relay, wired via SetTurnMinter, is still needed for symmetric
+	//      NAT, but STUN covers the vast majority.)
 	ice := req.ICEServers
 	mintedTurn := false
 	if len(ice) == 0 {
@@ -246,7 +393,7 @@ func (h *RemoteSupportHandler) HandleStartSession(c *gin.Context) {
 			}
 		}
 		if len(ice) == 0 {
-			ice = json.RawMessage(`[]`)
+			ice = defaultSTUNServers()
 		}
 	}
 
@@ -260,14 +407,43 @@ func (h *RemoteSupportHandler) HandleStartSession(c *gin.Context) {
 	if orgID != "" {
 		orgArg = orgID
 	}
-	_, err := h.db.Pool.Exec(c.Request.Context(), `
+	// Supersede any prior in-flight session for this agent. Starting a new session
+	// while an old one is still pending/active left two live sessions: the config
+	// picks the newest, but the device's peer for the OLD one lingered in the
+	// broker, delaying the switch and making the new session appear "stuck". Mark
+	// older ones ended so there is exactly one live session per agent, and evict
+	// their broker peers so the device cleanly re-binds to the new session.
+	rows, err := h.db.Pool.Query(c.Request.Context(), `
+        UPDATE remote_support_sessions
+           SET status = 'ended', ended_at = NOW(), end_reason = 'superseded'
+         WHERE agent_id = $1 AND status IN ('pending','active')
+        RETURNING id
+    `, req.AgentID)
+	if err != nil {
+		h.logger.Warn("HandleStartSession: supersede prior sessions failed", zap.Error(err))
+	} else {
+		var oldIDs []string
+		for rows.Next() {
+			var oldID string
+			if rows.Scan(&oldID) == nil {
+				oldIDs = append(oldIDs, oldID)
+			}
+		}
+		rows.Close()
+		for _, oldID := range oldIDs {
+			h.evictSession(oldID)
+		}
+	}
+	_, err = h.db.Pool.Exec(c.Request.Context(), `
         INSERT INTO remote_support_sessions
             (id, agent_id, admin_user_id, status, mode, ice_servers, notes,
-             recording_enabled, org_id, recording_retention_days)
+             recording_enabled, org_id, recording_retention_days,
+             consent_required, consent_status, transport)
         VALUES ($1, $2, NULLIF($3,'')::uuid, 'pending', $4, $5::jsonb, $6,
-                $7, $8::uuid, $9)
+                $7, $8::uuid, $9, $10, $11, $12)
     `, id, req.AgentID, adminID, mode, string(ice), req.Notes,
-		recordingEnabled, orgArg, retentionArg)
+		recordingEnabled, orgArg, retentionArg,
+		req.ConsentRequired, consentStatusFor(req.ConsentRequired), transport)
 	if err != nil {
 		h.logger.Error("HandleStartSession: insert failed", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to start session"})
@@ -292,7 +468,89 @@ func (h *RemoteSupportHandler) HandleStartSession(c *gin.Context) {
 		"agent_ws":          "/api/v1/access/agent/remote-support/sessions/" + id + "/ws",
 		"ice_servers":       ice,
 		"recording_enabled": recordingEnabled,
+		"transport":         transport,
+		"consent_required":  req.ConsentRequired,
+		"consent_status":    consentStatusFor(req.ConsentRequired),
 	})
+}
+
+// defaultRemoteSupportTransport returns the media transport used when a
+// start-session request doesn't specify one: "relay" when
+// REMOTE_SUPPORT_TRANSPORT=relay, else "webrtc".
+func defaultRemoteSupportTransport() string {
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("REMOTE_SUPPORT_TRANSPORT")), "relay") {
+		return "relay"
+	}
+	return "webrtc"
+}
+
+// consentStatusFor returns the initial consent_status for a session: 'pending'
+// when the device must Allow first, otherwise 'granted' (unattended/server —
+// no behavior change).
+func consentStatusFor(required bool) string {
+	if required {
+		return "pending"
+	}
+	return "granted"
+}
+
+// consentDecisionRequest is the body of the agent accept/decline call.
+type consentDecisionRequest struct {
+	Decision string `json:"decision"` // "grant" | "deny"
+}
+
+// HandleAgentConsent is the DEVICE side of attended-support consent:
+// POST /api/v1/access/agent/remote-support/sessions/:id/consent {decision}.
+// The agent proves ownership with X-Agent-ID + X-Auth-Token (same as the agent
+// WS). It flips consent_status to granted/denied; a denial also ends the
+// session so the admin can never view/control without an explicit Allow.
+func (h *RemoteSupportHandler) HandleAgentConsent(c *gin.Context) {
+	id := c.Param("id")
+	row, err := h.fetchSession(c.Request.Context(), id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "session not found"})
+		return
+	}
+	agentID := c.GetHeader("X-Agent-ID")
+	authToken := c.GetHeader("X-Auth-Token")
+	if agentID != row.AgentID || authToken == "" || !h.verifyAgentAuth(c.Request.Context(), agentID, authToken) {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "agent credentials invalid"})
+		return
+	}
+	var req consentDecisionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		return
+	}
+	var newStatus string
+	switch req.Decision {
+	case "grant":
+		newStatus = "granted"
+	case "deny":
+		newStatus = "denied"
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "decision must be 'grant' or 'deny'"})
+		return
+	}
+
+	if newStatus == "denied" {
+		// A denial ends the session immediately (fail-closed).
+		_, _ = h.db.Pool.Exec(c.Request.Context(), `
+            UPDATE remote_support_sessions
+               SET consent_status='denied', consent_decided_at=NOW(),
+                   status='ended', ended_at=NOW(), end_reason='consent denied by device'
+             WHERE id=$1`, id)
+		h.audit(c.Request.Context(), "remote_support.consent_denied", id, "success", "agent="+agentID)
+		c.JSON(http.StatusOK, gin.H{"consent_status": "denied", "status": "ended"})
+		return
+	}
+
+	_, _ = h.db.Pool.Exec(c.Request.Context(), `
+        UPDATE remote_support_sessions
+           SET consent_status='granted', consent_decided_at=NOW()
+         WHERE id=$1`, id)
+	h.audit(c.Request.Context(), "remote_support.consent_granted", id, "success", "agent="+agentID)
+	c.JSON(http.StatusOK, gin.H{"consent_status": "granted"})
 }
 
 // HandleListSessions returns recent sessions, newest first.
@@ -303,6 +561,7 @@ func (h *RemoteSupportHandler) HandleListSessions(c *gin.Context) {
 	}
 	rows, err := h.db.Pool.Query(c.Request.Context(), `
         SELECT s.id, s.agent_id, COALESCE(s.admin_user_id::text,''), s.status, s.mode,
+               COALESCE(s.transport,'webrtc'),
                s.ice_servers, COALESCE(s.end_reason,''), COALESCE(s.recording_url,''),
                s.recording_enabled, s.recording_size_bytes, s.recording_chunk_count,
                s.recording_finalized_at,
@@ -340,7 +599,7 @@ func (h *RemoteSupportHandler) HandleGetSession(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("get session", err), h.logger)
 		return
 	}
 	c.JSON(http.StatusOK, row)
@@ -357,7 +616,7 @@ func (h *RemoteSupportHandler) HandleEndSession(c *gin.Context) {
 		body.Reason = "admin_ended"
 	}
 	if err := h.endSession(c.Request.Context(), id, body.Reason); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("end session", err), h.logger)
 		return
 	}
 	h.audit(c.Request.Context(), "remote_support.session_ended", id, "success", body.Reason)
@@ -371,11 +630,34 @@ func (h *RemoteSupportHandler) HandleAdminWS(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "session not found"})
 		return
 	}
-	conn, err := h.upgrader.Upgrade(c.Writer, c.Request, nil)
+	// Echo the token subprotocol the browser offered. A browser WebSocket that
+	// opens with a subprotocol (we send `bearer.<jwt>` because browsers can't
+	// set an Authorization header on WS) REQUIRES the server to select one of
+	// the offered subprotocols in the handshake response; otherwise the browser
+	// rejects the upgrade and closes the socket immediately (observed as a
+	// ~30ms admin WS that dropped before it could answer the device's offer).
+	var respHeader http.Header
+	if proto := c.GetHeader("Sec-WebSocket-Protocol"); proto != "" {
+		// The client may offer a comma-separated list; select the first token.
+		sub := strings.TrimSpace(strings.Split(proto, ",")[0])
+		if sub != "" {
+			respHeader = http.Header{"Sec-WebSocket-Protocol": []string{sub}}
+		}
+	}
+	conn, err := h.upgrader.Upgrade(c.Writer, c.Request, respHeader)
 	if err != nil {
 		h.logger.Warn("HandleAdminWS: upgrade failed", zap.Error(err))
 		return
 	}
+	// Consent handling: the DEVICE self-gates — its agent only starts the relay
+	// peer (and thus only streams / applies input) AFTER it sends a consent grant.
+	// So the admin can join the broker immediately and simply receives no frames
+	// until the device consents; the viewer shows "connecting" until then. We do
+	// NOT block here waiting for consent: an earlier version 403'd the handshake
+	// (browser reconnect-stormed and gave up before the user clicked Allow), and a
+	// blocking wait without a reader let APISIX drop the idle socket after a few
+	// seconds. Joining the broker now, with runPeer actively reading, is stable
+	// and starts streaming the instant the device grants.
 	h.runPeer(c.Request.Context(), id, conn, peerAdmin)
 }
 
@@ -419,19 +701,59 @@ const (
 // the socket closes. Every received message is relayed verbatim to the
 // other peer (if connected) and updates last_activity_at so the janitor
 // can age out orphan sessions.
-func (h *RemoteSupportHandler) runPeer(ctx context.Context, sessionID string, conn *websocket.Conn, role peerRole) {
+func (h *RemoteSupportHandler) runPeer(ctx context.Context, sessionID string, rawConn *websocket.Conn, role peerRole) {
+	// Wrap the raw socket in a brokerConn: a dedicated writer goroutine + bounded
+	// queue so this peer's WRITES never block the OTHER peer's read loop. Reads
+	// still happen on the raw socket below.
+	conn := newBrokerConn(rawConn)
 	defer conn.Close()
 
 	sess := h.bindPeer(sessionID, conn, role)
 	defer h.unbindPeer(sess, role)
+
+	// Read deadline + pong handler: the keepalive pings below must be answered
+	// within the window or the peer is considered dead. This gives deterministic
+	// dead-connection detection instead of relying on TCP timeouts.
+	_ = rawConn.SetReadDeadline(time.Now().Add(70 * time.Second))
+	rawConn.SetPongHandler(func(string) error {
+		return rawConn.SetReadDeadline(time.Now().Add(70 * time.Second))
+	})
+
+	// Replay the other peer's buffered signaling to this (possibly late-joining)
+	// connection so a viewer that connects after the device already sent its
+	// OFFER + ICE still gets them and can negotiate. Best-effort via the queue.
+	for _, msg := range sess.replayFor(role) {
+		if !conn.enqueue(websocket.TextMessage, msg) {
+			return
+		}
+	}
 
 	// If both peers are now connected, flip status → active.
 	if sess.hasBothPeers() {
 		h.markActive(ctx, sessionID)
 	}
 
+	// Keepalive: proxies (APISIX) drop idle WebSockets after ~60s. Ping every 25s
+	// via the writer goroutine's control path. Stops when the read loop returns.
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		t := time.NewTicker(25 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-t.C:
+				if err := conn.writeControl(websocket.PingMessage, time.Now().Add(5*time.Second)); err != nil {
+					return
+				}
+			}
+		}
+	}()
+
 	for {
-		mt, data, err := conn.ReadMessage()
+		mt, data, err := rawConn.ReadMessage()
 		if err != nil {
 			return
 		}
@@ -439,18 +761,26 @@ func (h *RemoteSupportHandler) runPeer(ctx context.Context, sessionID string, co
 			continue
 		}
 		h.touchSession(ctx, sessionID)
+		// Buffer for replay to a peer that joins later, then relay to the peer
+		// that's already connected (if any). Only TEXT signaling is buffered:
+		// binary frames are relay-transport VP8 video, which must never be
+		// replayed (a late viewer waits for a fresh keyframe) and would otherwise
+		// balloon the replay buffer with stale frames at video frame rates.
+		if mt == websocket.TextMessage {
+			sess.recordReplay(role, data)
+		}
 		if target := sess.otherPeer(role); target != nil {
-			if writeErr := target.WriteMessage(mt, data); writeErr != nil {
-				h.logger.Warn("relay write failed", zap.String("session", sessionID), zap.Error(writeErr))
-				return
-			}
+			// enqueue is non-blocking for video (drops under backpressure) so a
+			// slow peer never stalls this read loop — the fix for the 1006 close
+			// cascade that made relay unstable.
+			target.enqueue(mt, data)
 		}
 	}
 }
 
 // bindPeer attaches conn to the session broker entry, creating it on first
 // peer.
-func (h *RemoteSupportHandler) bindPeer(sessionID string, conn *websocket.Conn, role peerRole) *signalingSession {
+func (h *RemoteSupportHandler) bindPeer(sessionID string, conn *brokerConn, role peerRole) *signalingSession {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	sess, ok := h.sessions[sessionID]
@@ -464,14 +794,20 @@ func (h *RemoteSupportHandler) bindPeer(sessionID string, conn *websocket.Conn, 
 	case peerAdmin:
 		// If a previous admin connection lingers, drop it.
 		if sess.adminConn != nil {
-			_ = sess.adminConn.Close()
+			sess.adminConn.Close()
 		}
 		sess.adminConn = conn
 	case peerAgent:
 		if sess.agentConn != nil {
-			_ = sess.agentConn.Close()
+			sess.agentConn.Close()
 		}
 		sess.agentConn = conn
+		// A fresh agent connection begins a NEW negotiation with a new ICE
+		// ufrag. Drop the previous offer/ICE buffer so a late-joining admin is
+		// never handed a stale offer from a prior agent incarnation (which would
+		// carry an old ufrag and make ICE fail). The buffer refills from this
+		// connection's fresh offer via recordReplay.
+		sess.agentReplay = nil
 	}
 	return sess
 }
@@ -503,13 +839,49 @@ func (s *signalingSession) hasBothPeers() bool {
 	return s.adminConn != nil && s.agentConn != nil
 }
 
-func (s *signalingSession) otherPeer(role peerRole) *websocket.Conn {
+func (s *signalingSession) otherPeer(role peerRole) *brokerConn {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if role == peerAdmin {
 		return s.agentConn
 	}
 	return s.adminConn
+}
+
+// recordReplay buffers the AGENT's signaling (its SDP offer + ICE candidates)
+// so an admin viewer that connects slightly later still receives the offer and
+// can negotiate. Only the agent side is buffered: the admin's answer/ICE are
+// tied to a specific offer's ICE ufrag and must never be replayed to a
+// reconnected agent (doing so causes stable->SetRemote(answer)->stable and
+// dropped candidates). The agent buffer is reset on every fresh agent bind.
+func (s *signalingSession) recordReplay(role peerRole, data []byte) {
+	if role != peerAgent {
+		return
+	}
+	buf := make([]byte, len(data))
+	copy(buf, data)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.agentReplay = append(s.agentReplay, buf)
+	if len(s.agentReplay) > maxReplayMessages {
+		s.agentReplay = s.agentReplay[len(s.agentReplay)-maxReplayMessages:]
+	}
+}
+
+// replayFor returns a copy of the buffered agent offer/ICE for a joining admin
+// so it can catch up on signaling the agent sent before the admin connected.
+// Only the admin receives a replay; the agent never does (nothing is buffered
+// for it), which keeps every agent (re)connection a clean, fresh negotiation.
+func (s *signalingSession) replayFor(role peerRole) [][]byte {
+	if role != peerAdmin {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	src := s.agentReplay
+	out := make([][]byte, len(src))
+	copy(out, src)
+	return out
 }
 
 // markActive flips a pending session to active when both peers connect.
@@ -551,6 +923,15 @@ func (h *RemoteSupportHandler) endSession(ctx context.Context, sessionID, reason
 		}
 	}
 	// Drop any live broker entry so both peers receive a clean close.
+	h.evictSession(sessionID)
+	return nil
+}
+
+// evictSession drops a session's live broker entry (if any), closing both peer
+// connections so they receive a clean close. Safe to call for a session with no
+// live broker entry. Used both on explicit end and when a new session supersedes
+// an older in-flight one for the same agent.
+func (h *RemoteSupportHandler) evictSession(sessionID string) {
 	h.mu.Lock()
 	sess, ok := h.sessions[sessionID]
 	if ok {
@@ -560,16 +941,15 @@ func (h *RemoteSupportHandler) endSession(ctx context.Context, sessionID, reason
 	if sess != nil {
 		sess.mu.Lock()
 		if sess.adminConn != nil {
-			_ = sess.adminConn.Close()
+			sess.adminConn.Close()
 			sess.adminConn = nil
 		}
 		if sess.agentConn != nil {
-			_ = sess.agentConn.Close()
+			sess.agentConn.Close()
 			sess.agentConn = nil
 		}
 		sess.mu.Unlock()
 	}
-	return nil
 }
 
 // verifyAgentAuth checks the supplied auth token against the
@@ -593,10 +973,13 @@ func (h *RemoteSupportHandler) verifyAgentAuth(ctx context.Context, agentID, tok
 // recording flag is a fifth datum and the positional-return signature
 // was already noisy.
 type activeSessionInfo struct {
-	SessionID  string
-	Mode       string
-	ICEServers json.RawMessage
-	Recording  bool
+	SessionID       string
+	Mode            string
+	ICEServers      json.RawMessage
+	Recording       bool
+	ConsentRequired bool
+	ConsentStatus   string
+	Transport       string
 }
 
 // findActiveSessionForAgent — called from HandleConfig to embed an in-flight
@@ -609,12 +992,13 @@ func findActiveSessionForAgent(ctx context.Context, db *database.PostgresDB, age
 	}
 	var iceBytes []byte
 	err := db.Pool.QueryRow(ctx, `
-        SELECT id, mode, ice_servers, recording_enabled
+        SELECT id, mode, ice_servers, recording_enabled, consent_required, consent_status,
+               COALESCE(transport,'webrtc')
           FROM remote_support_sessions
          WHERE agent_id = $1 AND status IN ('pending','active')
          ORDER BY started_at DESC
          LIMIT 1
-    `, agentID).Scan(&info.SessionID, &info.Mode, &iceBytes, &info.Recording)
+    `, agentID).Scan(&info.SessionID, &info.Mode, &iceBytes, &info.Recording, &info.ConsentRequired, &info.ConsentStatus, &info.Transport)
 	if err != nil {
 		return activeSessionInfo{}, false
 	}
@@ -629,6 +1013,7 @@ func (h *RemoteSupportHandler) fetchSession(ctx context.Context, id string) (rem
 	}
 	row := h.db.Pool.QueryRow(ctx, `
         SELECT s.id, s.agent_id, COALESCE(s.admin_user_id::text,''), s.status, s.mode,
+               COALESCE(s.transport,'webrtc'),
                s.ice_servers, COALESCE(s.end_reason,''), COALESCE(s.recording_url,''),
                s.recording_enabled, s.recording_size_bytes, s.recording_chunk_count,
                s.recording_finalized_at,
@@ -647,6 +1032,7 @@ func scanRemoteSessionRow(r rowScanner) (remoteSessionRow, error) {
 	var iceBytes []byte
 	err := r.Scan(
 		&rec.ID, &rec.AgentID, &rec.AdminUserID, &rec.Status, &rec.Mode,
+		&rec.Transport,
 		&iceBytes, &rec.EndReason, &rec.RecordingURL,
 		&rec.RecordingEnabled, &rec.RecordingSizeBytes, &rec.RecordingChunkCount,
 		&rec.RecordingFinalizedAt,

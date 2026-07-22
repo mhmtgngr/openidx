@@ -20,6 +20,8 @@ export const IdentityProviders = lazy(() => import('./identity-providers').then(
 // Applications
 export const Applications = lazy(() => import('./applications').then((m) => ({ default: m.ApplicationsPage })))
 export const AppLauncher = lazy(() => import('./app-launcher').then((m) => ({ default: m.AppLauncherPage })))
+export const QuickLinks = lazy(() => import('./quick-links').then((m) => ({ default: m.QuickLinksPage })))
+export const QuickLinksAdmin = lazy(() => import('./quick-links-admin').then((m) => ({ default: m.QuickLinksAdminPage })))
 export const AppPublish = lazy(() => import('./app-publish').then((m) => ({ default: m.AppPublishPage })))
 export const ZeroTrust = lazy(() => import('./zero-trust').then((m) => ({ default: m.ZeroTrustPage })))
 export const ProvisioningRules = lazy(() => import('./provisioning-rules').then((m) => ({ default: m.ProvisioningRulesPage })))
@@ -38,6 +40,7 @@ export const Devices = lazy(() => import('./devices').then((m) => ({ default: m.
 export const AgentFleet = lazy(() => import('./agent-fleet').then((m) => ({ default: m.AgentFleetPage })))
 export const KioskPolicies = lazy(() => import('./kiosk-policies').then((m) => ({ default: m.KioskPoliciesPage })))
 export const RemoteSupport = lazy(() => import('./remote-support').then((m) => ({ default: m.RemoteSupportPage })))
+export const RemoteSupportPopout = lazy(() => import('./remote-support-popout').then((m) => ({ default: m.RemoteSupportPopout })))
 
 // Governance
 export const ApprovalPolicies = lazy(() => import('./approval-policies').then((m) => ({ default: m.ApprovalPoliciesPage })))

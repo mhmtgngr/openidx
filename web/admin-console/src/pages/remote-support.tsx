@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Video, Play, Square, MonitorPlay, Eye, MousePointer2, Clock,
   CheckCircle2, XCircle, AlertCircle, Download, Trash2, Infinity as InfinityIcon,
-  Lock, Unlock,
+  Lock, Unlock, Shield, Globe,
 } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -20,6 +20,7 @@ import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { api, baseURL } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 import { RemoteSupportViewer } from '../components/remote-support/remote-support-viewer'
+import { RelayRenderer } from '../components/remote-support/relay-renderer'
 
 /**
  * Remote support admin page (Phase 4). Lists sessions, lets an admin start
@@ -34,6 +35,7 @@ interface RemoteSession {
   admin_user_id: string
   status: 'pending' | 'active' | 'ended' | 'expired' | 'declined'
   mode: 'interactive' | 'view'
+  transport?: 'webrtc' | 'relay'
   ice_servers: unknown
   end_reason?: string
   recording_url?: string
@@ -58,6 +60,7 @@ interface StartSessionResponse {
   agent_ws: string
   ice_servers: unknown
   recording_enabled: boolean
+  transport?: 'webrtc' | 'relay'
 }
 
 export function RemoteSupportPage() {
@@ -68,6 +71,7 @@ export function RemoteSupportPage() {
     id: string
     agentId: string
     mode: 'interactive' | 'view'
+    transport: 'webrtc' | 'relay'
     wsPath: string
     iceServers: unknown
     recordingEnabled: boolean
@@ -122,6 +126,7 @@ export function RemoteSupportPage() {
       id: session.id,
       agentId: session.agent_id,
       mode: session.mode,
+      transport: session.transport === 'relay' ? 'relay' : 'webrtc',
       wsPath,
       iceServers: session.ice_servers,
       recordingEnabled: session.recording_enabled,
@@ -158,6 +163,7 @@ export function RemoteSupportPage() {
                   <TableHead>Session</TableHead>
                   <TableHead>Agent</TableHead>
                   <TableHead>Mode</TableHead>
+                  <TableHead>Connection</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Started</TableHead>
                   <TableHead className="w-48" />
@@ -169,6 +175,7 @@ export function RemoteSupportPage() {
                     <TableCell className="font-mono text-xs">{s.id.slice(0, 8)}…</TableCell>
                     <TableCell className="font-mono">{s.agent_id}</TableCell>
                     <TableCell><ModeBadge mode={s.mode} /></TableCell>
+                    <TableCell><TransportBadge transport={s.transport} /></TableCell>
                     <TableCell><StatusBadge status={s.status} reason={s.end_reason} /></TableCell>
                     <TableCell className="text-muted-foreground text-sm">
                       {new Date(s.started_at).toLocaleString()}
@@ -269,6 +276,7 @@ export function RemoteSupportPage() {
                 admin_user_id: '',
                 status: (resp.status as RemoteSession['status']),
                 mode: (resp.mode === 'view' ? 'view' : 'interactive'),
+                transport: resp.transport === 'relay' ? 'relay' : 'webrtc',
                 ice_servers: resp.ice_servers,
                 recording_enabled: resp.recording_enabled,
                 is_on_legal_hold: false,
@@ -283,7 +291,17 @@ export function RemoteSupportPage() {
 
       {viewerSession && (
         <Dialog open onOpenChange={(o) => !o && setViewerSession(null)}>
-          <DialogContent className="max-w-5xl">
+          <DialogContent
+            className="max-w-5xl"
+            // The viewer is an interactive control surface: clicking / dragging
+            // on the remote screen and typing must go to the video overlay, not
+            // dismiss the dialog or get swallowed by Radix's focus trap. Disable
+            // outside-interaction auto-close and focus-steal so pointer + key
+            // events reach the RemoteSupportViewer.
+            onPointerDownOutside={(e) => e.preventDefault()}
+            onInteractOutside={(e) => e.preventDefault()}
+            onOpenAutoFocus={(e) => e.preventDefault()}
+          >
             <DialogHeader>
               <DialogTitle>
                 Live session — {viewerSession.agentId}
@@ -295,18 +313,46 @@ export function RemoteSupportPage() {
                 The user sees a non-suppressible banner on the device while you are connected.
               </DialogDescription>
             </DialogHeader>
-            <RemoteSupportViewer
-              wsUrl={(baseURL.replace(/^http/, 'ws') + viewerSession.wsPath)}
-              mode={viewerSession.mode}
-              iceServers={normalizeIce(viewerSession.iceServers)}
-              sessionId={viewerSession.id}
-              recordingEnabled={viewerSession.recordingEnabled}
-              onClose={() => setViewerSession(null)}
-              onEnd={() => {
-                endMutation.mutate(viewerSession.id)
-                setViewerSession(null)
-              }}
-            />
+            {viewerSession.transport === 'relay' ? (
+              <RelayRenderer
+                wsUrl={(baseURL.replace(/^http/, 'ws') + viewerSession.wsPath)}
+                mode={viewerSession.mode}
+                onPopOut={() => {
+                  // Open the session in a dedicated window (second-monitor
+                  // friendly). The dialog stays open so the End button and
+                  // session state remain here; closing the popout just stops
+                  // viewing. Relay-only (reconstructable from a URL).
+                  const q = new URLSearchParams({
+                    session: viewerSession.id,
+                    ws: viewerSession.wsPath,
+                    mode: viewerSession.mode,
+                  })
+                  window.open(
+                    `${window.location.origin}/remote-support/live?${q.toString()}`,
+                    `oidx-rs-${viewerSession.id}`,
+                    'noopener,width=1280,height=800',
+                  )
+                  setViewerSession(null)
+                }}
+                onEnd={() => {
+                  endMutation.mutate(viewerSession.id)
+                  setViewerSession(null)
+                }}
+              />
+            ) : (
+              <RemoteSupportViewer
+                wsUrl={(baseURL.replace(/^http/, 'ws') + viewerSession.wsPath)}
+                mode={viewerSession.mode}
+                iceServers={normalizeIce(viewerSession.iceServers)}
+                sessionId={viewerSession.id}
+                recordingEnabled={viewerSession.recordingEnabled}
+                onClose={() => setViewerSession(null)}
+                onEnd={() => {
+                  endMutation.mutate(viewerSession.id)
+                  setViewerSession(null)
+                }}
+              />
+            )}
           </DialogContent>
         </Dialog>
       )}
@@ -458,6 +504,25 @@ function ModeBadge({ mode }: { mode: 'interactive' | 'view' }) {
   return <Badge variant="secondary"><Eye className="mr-1 h-3 w-3" /> view</Badge>
 }
 
+// TransportBadge shows how the session's media travels. Relay is the zero-trust
+// path (media + control over the Ziti overlay through the broker); WebRTC is
+// direct P2P. Makes "did it go over Ziti?" answerable at a glance.
+function TransportBadge({ transport }: { transport?: 'webrtc' | 'relay' }) {
+  if (transport === 'relay')
+    return (
+      <Badge className="bg-emerald-600 hover:bg-emerald-600" title="Media + control over the Ziti overlay (no P2P/STUN)">
+        <Shield className="mr-1 h-3 w-3" /> Zero-trust relay
+      </Badge>
+    )
+  if (transport === 'webrtc')
+    return (
+      <Badge variant="secondary" title="Direct peer-to-peer (WebRTC/STUN)">
+        <Globe className="mr-1 h-3 w-3" /> Direct P2P
+      </Badge>
+    )
+  return <span className="text-muted-foreground text-xs">—</span>
+}
+
 function StatusBadge({ status, reason }: { status: RemoteSession['status']; reason?: string }) {
   switch (status) {
     case 'active':
@@ -475,9 +540,46 @@ function StatusBadge({ status, reason }: { status: RemoteSession['status']; reas
   }
 }
 
+// supportsRelay reports whether this browser can decode the relay transport's
+// VP8 stream (WebCodecs). Chromium-based browsers can; Firefox/Safari currently
+// cannot, so we transparently prefer WebRTC there.
+function supportsRelay(): boolean {
+  return typeof window !== 'undefined' && 'VideoDecoder' in window
+}
+
 interface StartSessionDialogProps {
   onClose: () => void
   onStarted: (resp: StartSessionResponse) => void
+}
+
+// AgentSummary is the subset of the /agents list the picker needs.
+interface AgentSummary {
+  agent_id: string
+  hostname?: string
+  platform?: string
+  status?: string
+  last_seen_at?: string | null
+}
+
+// isOnline treats a device as online if it reported within the last ~2 minutes
+// (the agent baseline poll is 30s, so this tolerates a couple of missed beats).
+function isOnline(a: AgentSummary): boolean {
+  if (!a.last_seen_at) return false
+  return Date.now() - new Date(a.last_seen_at).getTime() < 120_000
+}
+
+// isRecent keeps a device in the default picker if it has been seen in the last
+// 24h — recent enough to be a real, reachable target rather than a stale
+// duplicate from a long-ago install.
+function isRecent(a: AgentSummary): boolean {
+  if (!a.last_seen_at) return false
+  return Date.now() - new Date(a.last_seen_at).getTime() < 24 * 60 * 60 * 1000
+}
+
+// onlineRank sorts online devices first, then by most-recently-seen.
+function onlineRank(a: AgentSummary): number {
+  const seen = a.last_seen_at ? new Date(a.last_seen_at).getTime() : 0
+  return (isOnline(a) ? 0 : 1e15) - seen
 }
 
 function StartSessionDialog({ onClose, onStarted }: StartSessionDialogProps) {
@@ -486,6 +588,29 @@ function StartSessionDialog({ onClose, onStarted }: StartSessionDialogProps) {
   const [mode, setMode] = useState<'interactive' | 'view'>('interactive')
   const [notes, setNotes] = useState('')
   const [record, setRecord] = useState(false)
+  const [consentRequired, setConsentRequired] = useState(false)
+  // Default to the zero-trust relay transport on browsers that can decode it
+  // (Chromium). It carries media over the Ziti overlay too and enables pop-out.
+  // Falls back to WebRTC automatically on browsers without WebCodecs.
+  const [transport, setTransport] = useState<'' | 'webrtc' | 'relay'>(
+    supportsRelay() ? 'relay' : 'webrtc',
+  )
+
+  // Load enrolled agents so the admin can pick a device by hostname instead of
+  // pasting an opaque agent id. Online devices (seen recently) float to the top.
+  const { data: agents = [] } = useQuery<AgentSummary[]>({
+    queryKey: ['agents-for-support'],
+    queryFn: () => api.get<AgentSummary[]>('/api/v1/access/agents'),
+    refetchInterval: 10000,
+  })
+  const [showAll, setShowAll] = useState(false)
+  // By default show only usable targets: active devices that have reported
+  // recently. Revoked/stale duplicate registrations are hidden (a "show all"
+  // toggle reveals everything). Online devices sort first.
+  const visibleAgents = agents.filter(
+    (a) => showAll || (a.status !== 'revoked' && isRecent(a)),
+  )
+  const sortedAgents = [...visibleAgents].sort((a, b) => onlineRank(a) - onlineRank(b))
 
   const startMutation = useMutation({
     mutationFn: () =>
@@ -494,6 +619,8 @@ function StartSessionDialog({ onClose, onStarted }: StartSessionDialogProps) {
         mode,
         notes,
         record,
+        consent_required: consentRequired,
+        ...(transport ? { transport } : {}),
       }),
     onSuccess: (data) => {
       toast({ title: 'Session created' })
@@ -516,12 +643,41 @@ function StartSessionDialog({ onClose, onStarted }: StartSessionDialogProps) {
         </DialogHeader>
         <div className="space-y-4">
           <div>
-            <label className="text-sm font-medium">Target agent ID</label>
-            <Input
+            <label className="text-sm font-medium">Target device</label>
+            <select
               value={agentId}
               onChange={(e) => setAgentId(e.target.value)}
-              placeholder="agent-xxxxxxxx"
-            />
+              className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+            >
+              <option value="">Select a device…</option>
+              {sortedAgents.map((a) => {
+                const online = isOnline(a)
+                const label = a.hostname
+                  ? `${online ? '🟢' : '⚪'} ${a.hostname}${a.platform ? ` (${a.platform})` : ''} — ${a.agent_id}`
+                  : `${online ? '🟢' : '⚪'} ${a.agent_id}`
+                return (
+                  <option key={a.agent_id} value={a.agent_id}>
+                    {label}
+                  </option>
+                )
+              })}
+            </select>
+            <div className="mt-1 flex items-center justify-between gap-2">
+              <Input
+                value={agentId}
+                onChange={(e) => setAgentId(e.target.value)}
+                placeholder="or type an agent id: agent-xxxxxxxx"
+                className="text-xs"
+              />
+              <label className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+                <input
+                  type="checkbox"
+                  checked={showAll}
+                  onChange={(e) => setShowAll(e.target.checked)}
+                />
+                show all
+              </label>
+            </div>
           </div>
           <div>
             <label className="text-sm font-medium">Mode</label>
@@ -535,6 +691,27 @@ function StartSessionDialog({ onClose, onStarted }: StartSessionDialogProps) {
             </select>
           </div>
           <div>
+            <label className="text-sm font-medium">Connection</label>
+            <select
+              value={transport}
+              onChange={(e) => setTransport(e.target.value as '' | 'webrtc' | 'relay')}
+              className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+            >
+              <option value="relay" disabled={!supportsRelay()}>
+                Zero-trust relay{supportsRelay() ? ' (recommended)' : ' — needs Chrome/Edge'}
+              </option>
+              <option value="webrtc">Direct P2P (WebRTC) — works in any browser</option>
+              <option value="">Server default</option>
+            </select>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {transport === 'relay'
+                ? 'Video and control travel over the Ziti overlay through the broker — no direct connection or STUN. Best for locked-down networks.'
+                : transport === 'webrtc'
+                  ? 'Peer-to-peer media (uses STUN). Works everywhere, but needs a direct network path.'
+                  : 'Let the server pick the configured default transport.'}
+            </p>
+          </div>
+          <div>
             <label className="text-sm font-medium">Notes</label>
             <Input
               value={notes}
@@ -542,6 +719,15 @@ function StartSessionDialog({ onClose, onStarted }: StartSessionDialogProps) {
               placeholder="case ID, user-reported issue, etc."
             />
           </div>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={consentRequired}
+              onChange={(e) => setConsentRequired(e.target.checked)}
+            />
+            Require device consent (attended) — the user must click Allow before
+            you can view/control. Recommended for a person's own machine.
+          </label>
           <label className="flex items-center gap-2 text-sm">
             <input
               type="checkbox"
@@ -606,9 +792,22 @@ function normalizeIce(raw: unknown): RTCIceServer[] {
   for (const entry of raw) {
     if (typeof entry === 'string') {
       out.push({ urls: entry })
-    } else if (entry && typeof entry === 'object' && 'url' in entry) {
-      const e = entry as { url: string; username?: string; credential?: string }
-      out.push({ urls: e.url, username: e.username, credential: e.credential })
+    } else if (entry && typeof entry === 'object') {
+      // Accept both the WebRTC-native shape ({ urls: string | string[] }) and
+      // the legacy singular ({ url: string }) form. The server emits `urls`
+      // (plural, per the RTCIceServer spec) for STUN/TURN, so handling only
+      // `url` here silently dropped every ICE server and left the browser with
+      // no candidates to negotiate — the media path never came up.
+      const e = entry as {
+        urls?: string | string[]
+        url?: string
+        username?: string
+        credential?: string
+      }
+      const urls = e.urls ?? e.url
+      if (urls) {
+        out.push({ urls, username: e.username, credential: e.credential })
+      }
     }
   }
   return out

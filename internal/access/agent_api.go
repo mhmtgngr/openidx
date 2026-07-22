@@ -74,10 +74,14 @@ func (h *AgentAPIHandler) logAuditEventToDB(ctx context.Context, action, agentID
 		"detail":   detail,
 	}
 	detailsJSON, _ := json.Marshal(details)
+	// user_id must be NULL for agent-lifecycle events: an agent_id is not a
+	// users.id, and unified_audit_events.user_id has an FK to users, so passing
+	// the agent_id here fails the constraint (the event was silently dropped).
+	// The agent_id is preserved in details.agent_id above.
 	_, err := h.db.Pool.Exec(ctx, `
 		INSERT INTO unified_audit_events (id, source, event_type, user_id, details, created_at)
-		VALUES ($1, 'access-service', $2, $3, $4, NOW())
-	`, uuid.New().String(), action, agentID, detailsJSON)
+		VALUES ($1, 'access-service', $2, NULL, $3, NOW())
+	`, uuid.New().String(), action, detailsJSON)
 	if err != nil {
 		h.logger.Warn("logAuditEventToDB: failed to persist audit event",
 			zap.String("action", action),
@@ -132,6 +136,11 @@ type enrollRequest struct {
 	Platform       string `json:"platform"`
 	FormFactor     string `json:"form_factor"`
 	ManagementMode string `json:"management_mode"` // device_owner | profile_owner | unmanaged
+	// DeviceFingerprint is a stable per-machine identifier (e.g. Windows
+	// MachineGuid, else a hostname-derived fallback). When present, enrollment
+	// reuses the existing agent_id/auth_token for that device instead of minting
+	// a new row on every install — so one physical machine maps to one agent.
+	DeviceFingerprint string `json:"device_fingerprint"`
 }
 
 // enrollResponse is returned by HandleEnroll on success.
@@ -190,11 +199,12 @@ func normalizeManagementMode(m string) string {
 // HandleEnrollOAuth) needs to assemble a response after the agent record is
 // persisted.
 type issuedAgentCredentials struct {
-	AgentID   string
-	DeviceID  string
-	AuthToken string
-	Status    string
-	ZitiJWT   string
+	AgentID     string
+	DeviceID    string
+	AuthToken   string
+	Status      string
+	ZitiJWT     string
+	ZitiService string
 }
 
 // issueAgentCredentials performs the credential-minting half of enrollment
@@ -236,25 +246,75 @@ func (h *AgentAPIHandler) issueAgentCredentials(
 	})
 
 	if h.db != nil && h.db.Pool != nil {
+		// Stable-identity path: if this device has enrolled before (same
+		// device_fingerprint), reuse its agent_id/device_id and just rotate the
+		// auth token + refresh metadata, instead of creating a duplicate row.
+		// This makes re-installs / upgrades idempotent — one physical machine
+		// stays one agent. Falls through to a fresh INSERT when the device is
+		// new or sends no fingerprint (legacy clients).
+		if fp := strings.TrimSpace(req.DeviceFingerprint); fp != "" {
+			var existingAgentID, existingDeviceID string
+			err := h.db.Pool.QueryRow(ctx, `
+                SELECT agent_id, device_id FROM enrolled_agents
+                WHERE device_fingerprint = $1
+            `, fp).Scan(&existingAgentID, &existingDeviceID)
+			if err == nil && existingAgentID != "" {
+				_, upErr := h.db.Pool.Exec(ctx, `
+                    UPDATE enrolled_agents
+                       SET auth_token_hash = $2, status = 'active', metadata = $3,
+                           platform = COALESCE(NULLIF($4,''), platform),
+                           form_factor = COALESCE(NULLIF($5,''), form_factor),
+                           enrollment_method = COALESCE(NULLIF($6,''), enrollment_method),
+                           management_mode = COALESCE(NULLIF($7,''), management_mode),
+                           is_device_owner = $8, last_seen_at = NOW()
+                     WHERE agent_id = $1
+                `, existingAgentID, authTokenHash, metadata,
+					platform, formFactor, method, managementMode, isDeviceOwner)
+				if upErr != nil {
+					h.logger.Error("Failed to refresh existing agent enrollment", zap.Error(upErr))
+				} else {
+					h.logger.Info("Re-enrolled existing device (stable identity)",
+						zap.String("agent_id", existingAgentID), zap.String("fingerprint", fp))
+					reused := issuedAgentCredentials{
+						AgentID:   existingAgentID,
+						DeviceID:  existingDeviceID,
+						AuthToken: authToken,
+						Status:    "active",
+					}
+					// Provision a Ziti identity on re-enroll too, if the device
+					// doesn't have one yet (e.g. it first enrolled before overlay
+					// was enabled). Without this, a returning device would never
+					// get an overlay identity and remote-support-over-Ziti would
+					// stay off for it.
+					h.ensureAgentZitiIdentity(ctx, existingAgentID, &reused)
+					return reused
+				}
+			}
+		}
+
 		// Use NULLIF so empty string columns don't leak past the platform check;
 		// platform stays NULL for legacy callers that omit it.
 		var userIDArg interface{}
 		if enrolledByUserID != "" {
 			userIDArg = enrolledByUserID
 		}
+		var fpArg interface{}
+		if fp := strings.TrimSpace(req.DeviceFingerprint); fp != "" {
+			fpArg = fp
+		}
 		_, err := h.db.Pool.Exec(ctx, `
             INSERT INTO enrolled_agents (
                 agent_id, device_id, status, auth_token_hash,
                 enrolled_at, compliance_status, metadata,
                 platform, form_factor, enrollment_method, enrolled_by_user_id,
-                management_mode, is_device_owner
+                management_mode, is_device_owner, device_fingerprint
             )
             VALUES ($1,$2,$3,$4, NOW(), 'unknown', $5,
                     NULLIF($6,''), NULLIF($7,''), NULLIF($8,''), $9,
-                    NULLIF($10,''), $11)
+                    NULLIF($10,''), $11, $12)
         `, agentID, deviceID, status, authTokenHash, metadata,
 			platform, formFactor, method, userIDArg,
-			managementMode, isDeviceOwner)
+			managementMode, isDeviceOwner, fpArg)
 		if err != nil {
 			h.logger.Error("Failed to persist agent enrollment", zap.Error(err))
 		}
@@ -267,29 +327,89 @@ func (h *AgentAPIHandler) issueAgentCredentials(
 		Status:    status,
 	}
 
-	if status == "active" && h.zm != nil && agentZitiOverlayEnabled() {
-		zitiID, zitiJWT, err := h.zm.CreateIdentity(ctx, agentID, "Device", []string{"openidx-agent"})
-		if err != nil {
-			h.logger.Warn("Failed to create Ziti identity for agent",
-				zap.String("agent_id", agentID), zap.Error(err))
-		} else {
-			if h.db != nil && h.db.Pool != nil {
-				h.db.Pool.Exec(ctx,
-					"UPDATE enrolled_agents SET ziti_identity_id = $1 WHERE agent_id = $2",
-					zitiID, agentID)
-			}
-			result.ZitiJWT = zitiJWT
-			h.logger.Info("Ziti identity created for agent",
-				zap.String("agent_id", agentID),
-				zap.String("ziti_id", zitiID))
-		}
-	} else if status == "active" && h.zm != nil {
+	h.ensureAgentZitiIdentity(ctx, agentID, &result)
+	return result
+}
+
+// ensureAgentZitiIdentity provisions a Ziti (OpenZiti) identity for the agent
+// tagged "openidx-agent" and stamps it on the enrolled_agents row, returning the
+// enrollment JWT on the result. No-op when overlay is disabled, the Ziti manager
+// is absent, the credential isn't active, or the agent already has an identity.
+// Called on both fresh enroll and fingerprint re-enroll so a returning device
+// (that first enrolled before overlay was on) still gets an identity.
+func (h *AgentAPIHandler) ensureAgentZitiIdentity(ctx context.Context, agentID string, result *issuedAgentCredentials) {
+	if result.Status != "active" || h.zm == nil {
+		return
+	}
+	if !agentZitiOverlayEnabled() {
 		h.logger.Debug("Ziti overlay for agents disabled; enrolling over HTTPS only "+
 			"(set ZITI_AGENT_OVERLAY_ENABLED=true when the controller is reachable from agents)",
 			zap.String("agent_id", agentID))
+		return
 	}
+	// If the agent already has a Ziti identity, decide based on whether it has
+	// actually completed enrollment. A common case: the identity was created on a
+	// prior enroll but the device never consumed the one-time-token (e.g. it
+	// couldn't reach the controller), so the OTT is still pending. In that case we
+	// must re-hand the device the pending JWT, otherwise it can never enroll. If
+	// the identity is already enrolled (no pending OTT), leave it alone.
+	if h.db != nil && h.db.Pool != nil {
+		var existing string
+		if err := h.db.Pool.QueryRow(ctx,
+			`SELECT COALESCE(ziti_identity_id,'') FROM enrolled_agents WHERE agent_id = $1`,
+			agentID).Scan(&existing); err == nil && existing != "" {
+			// The agent has an identity, so it can route the base API over the
+			// overlay: always advertise the service, even when already enrolled.
+			result.ZitiService = remoteSupportZitiService
+			if jwt, jerr := h.zm.GetIdentityEnrollmentJWT(ctx, existing); jerr == nil && jwt != "" {
+				result.ZitiJWT = jwt
+				h.logger.Info("Re-issued pending Ziti enrollment JWT for agent",
+					zap.String("agent_id", agentID), zap.String("ziti_id", existing))
+			}
+			return
+		}
+	}
+	zitiID, zitiJWT, err := h.zm.CreateIdentity(ctx, agentID, "Device", []string{"openidx-agent"})
+	if err != nil {
+		// The DB row lost its ziti_identity_id but an identity with this name
+		// still exists in the controller (orphan). Delete it and recreate so the
+		// device gets a fresh, un-enrolled JWT it can enroll with.
+		if strings.Contains(err.Error(), "duplicate value") {
+			if orphanID := h.findZitiIdentityByName(ctx, agentID); orphanID != "" {
+				if delErr := h.zm.DeleteIdentity(ctx, orphanID); delErr == nil {
+					zitiID, zitiJWT, err = h.zm.CreateIdentity(ctx, agentID, "Device", []string{"openidx-agent"})
+				} else {
+					h.logger.Warn("Failed to delete orphan Ziti identity",
+						zap.String("agent_id", agentID), zap.Error(delErr))
+				}
+			}
+		}
+		if err != nil {
+			h.logger.Warn("Failed to create Ziti identity for agent",
+				zap.String("agent_id", agentID), zap.Error(err))
+			return
+		}
+	}
+	if h.db != nil && h.db.Pool != nil {
+		h.db.Pool.Exec(ctx,
+			"UPDATE enrolled_agents SET ziti_identity_id = $1 WHERE agent_id = $2",
+			zitiID, agentID)
+	}
+	result.ZitiJWT = zitiJWT
+	result.ZitiService = remoteSupportZitiService
+	h.logger.Info("Ziti identity created for agent",
+		zap.String("agent_id", agentID), zap.String("ziti_id", zitiID))
+}
 
-	return result
+// findZitiIdentityByName returns the controller-side identity ID whose name
+// matches agentID, or "" if none. Used to reclaim an orphaned identity when the
+// DB lost the mapping but the controller still holds it. Queries the controller
+// with a name filter so it doesn't depend on identity-list paging.
+func (h *AgentAPIHandler) findZitiIdentityByName(ctx context.Context, agentID string) string {
+	if h.zm == nil {
+		return ""
+	}
+	return h.zm.FindIdentityIDByName(ctx, agentID)
 }
 
 // agentZitiOverlayEnabled reports whether newly-enrolled agents should be issued
@@ -412,6 +532,13 @@ func writeEnrollResponse(c *gin.Context, creds issuedAgentCredentials, method st
 	}
 	if creds.ZitiJWT != "" {
 		response["ziti_jwt"] = creds.ZitiJWT
+	}
+	// Tell the agent which Ziti service fronts the base agent API so it can route
+	// config/report/consent over the overlay. Advertised whenever the agent has a
+	// Ziti identity (even when re-enrolling without a fresh JWT), so a device that
+	// enrolled its identity earlier still learns the service to dial.
+	if creds.ZitiService != "" {
+		response["ziti_service"] = creds.ZitiService
 	}
 	c.JSON(http.StatusOK, response)
 }
@@ -896,7 +1023,54 @@ type agentRemoteSupportInfo struct {
 	WSPath     string          `json:"ws_path"`
 	ICEServers json.RawMessage `json:"ice_servers,omitempty"`
 	Recording  bool            `json:"recording"`
+	// ConsentRequired tells the device it must Allow the session before the
+	// admin can view/control; ConsentStatus is the current decision
+	// ('pending'|'granted'|'denied'). ConsentPath is where the device POSTs its
+	// grant/deny decision.
+	ConsentRequired bool   `json:"consent_required"`
+	ConsentStatus   string `json:"consent_status,omitempty"`
+	ConsentPath     string `json:"consent_path,omitempty"`
+	// ZitiService, when non-empty, is the Ziti overlay service the device should
+	// dial to reach the signaling broker (zero-trust, no public port). The
+	// device opens the same WSPath over that overlay connection. Empty = dial
+	// the public WSS via ServerURL (same-LAN / edge fallback).
+	ZitiService string `json:"ziti_service,omitempty"`
+	// Transport selects the media path: "webrtc" (P2P, default) or "relay"
+	// (VP8 frames streamed through the broker over this WS — full-Ziti, no STUN).
+	Transport string `json:"transport,omitempty"`
 }
+
+// zitiServiceForAgent returns the Ziti overlay service the device should dial
+// for remote-support signaling, or "" to use the public WSS. Non-empty only
+// when REMOTE_SUPPORT_OVER_ZITI is enabled AND this agent has a provisioned Ziti
+// identity (so it can actually dial the overlay).
+func (h *AgentAPIHandler) zitiServiceForAgent(ctx context.Context, agentID string) string {
+	if !remoteSupportOverZitiEnabled() || h.db == nil || h.db.Pool == nil {
+		return ""
+	}
+	var zitiID string
+	err := h.db.Pool.QueryRow(ctx,
+		`SELECT COALESCE(ziti_identity_id,'') FROM enrolled_agents WHERE agent_id = $1`,
+		agentID).Scan(&zitiID)
+	if err != nil || zitiID == "" {
+		return ""
+	}
+	return remoteSupportZitiService
+}
+
+// remoteSupportPollInterval is the shortened /agent/config poll cadence used
+// while a remote-support session is in flight, so the device notices consent
+// prompts and (dis)connect transitions within seconds instead of waiting out
+// the normal posture reporting interval.
+const remoteSupportPollInterval = "5s"
+
+// baselinePollInterval is the /agent/config cadence used when NO remote-support
+// session is active. It must stay short enough that a device notices a NEWLY
+// created support session on its own — otherwise, after one session ends the
+// interval would revert to a long posture cadence and the operator would have
+// to restart the agent before a second session could ever connect. 30s trades
+// a little extra config traffic for "just works" reconnects.
+const baselinePollInterval = "30s"
 
 // defaultAgentConfig returns the built-in fallback configuration used when no
 // agent ID is provided or the database is unavailable.
@@ -907,7 +1081,7 @@ func defaultAgentConfig() agentConfigResponse {
 			{Name: "disk_encryption", Enabled: true},
 			{Name: "process_running", Enabled: true},
 		},
-		ReportInterval:    "1h",
+		ReportInterval:    baselinePollInterval,
 		EnforcementPolicy: "monitor",
 	}
 }
@@ -968,8 +1142,7 @@ func (h *AgentAPIHandler) enforceExpiredGracePeriods(ctx context.Context) {
 	}
 }
 
-// HandleConfig returns the agent configuration, taking into account the agent's
-// enrollment status when an X-Agent-ID header (or query parameter) is supplied.
+// HandleConfig returns the agent configuration, taking into account the agent's enrollment status when an X-Agent-ID header (or query parameter) is supplied.
 //
 // Status-based behaviour:
 //   - revoked  → 403 Forbidden
@@ -977,6 +1150,32 @@ func (h *AgentAPIHandler) enforceExpiredGracePeriods(ctx context.Context) {
 //   - pending  → minimal config (os_version only, 1 h interval)
 //   - active   → full config built from enabled posture_checks rows
 //
+// defaultConfigWithSupport returns the default agent config but ALSO embeds an
+// in-flight remote-support session pointer (with consent fields) if one is
+// active for the agent. Used by the config early-return paths (posture-check
+// query error, or no enabled checks) so a device without posture checks can
+// still learn about a support session and grant/deny attended-support consent.
+func (h *AgentAPIHandler) defaultConfigWithSupport(ctx context.Context, agentID string) agentConfigResponse {
+	cfg := defaultAgentConfig()
+	if info, ok := findActiveSessionForAgent(ctx, h.db, agentID); ok {
+		cfg.RemoteSupport = &agentRemoteSupportInfo{
+			SessionID:       info.SessionID,
+			Mode:            info.Mode,
+			WSPath:          "/api/v1/access/agent/remote-support/sessions/" + info.SessionID + "/ws",
+			ICEServers:      info.ICEServers,
+			Recording:       info.Recording,
+			ConsentRequired: info.ConsentRequired,
+			ConsentStatus:   info.ConsentStatus,
+			ConsentPath:     "/api/v1/access/agent/remote-support/sessions/" + info.SessionID + "/consent",
+			ZitiService:     h.zitiServiceForAgent(ctx, agentID),
+			Transport:       info.Transport,
+		}
+		// Fast-poll while a support session is in flight (see HandleConfig).
+		cfg.ReportInterval = remoteSupportPollInterval
+	}
+	return cfg
+}
+
 // Falls back to defaultAgentConfig when no agent ID is given or the DB is nil.
 func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 	// 1. Resolve agent ID from header or query param.
@@ -1064,7 +1263,7 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 		if queryErr != nil {
 			h.logger.Warn("HandleConfig: could not query posture_checks",
 				zap.String("agent_id", agentID), zap.Error(queryErr))
-			c.JSON(http.StatusOK, defaultAgentConfig())
+			c.JSON(http.StatusOK, h.defaultConfigWithSupport(ctx, agentID))
 			return
 		}
 		defer rows.Close()
@@ -1088,15 +1287,19 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 			h.logger.Warn("HandleConfig: rows iteration error", zap.Error(rows.Err()))
 		}
 
-		// Fall back to defaults when no enabled checks exist.
+		// Fall back to a defaults-shaped config when no enabled checks exist —
+		// but STILL embed an in-flight remote-support session pointer if one is
+		// active, otherwise a device with no posture checks could never learn it
+		// has a support session (and, for attended support, could never grant
+		// consent). checks stays empty; the rest of the config is the default.
 		if len(checks) == 0 {
-			c.JSON(http.StatusOK, defaultAgentConfig())
+			c.JSON(http.StatusOK, h.defaultConfigWithSupport(ctx, agentID))
 			return
 		}
 
 		cfg := agentConfigResponse{
 			Checks:            checks,
-			ReportInterval:    "15m",
+			ReportInterval:    baselinePollInterval,
 			EnforcementPolicy: "enforce",
 		}
 
@@ -1114,12 +1317,21 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 		// exists for this agent so the device knows where to dial signaling.
 		if info, ok := findActiveSessionForAgent(ctx, h.db, agentID); ok {
 			cfg.RemoteSupport = &agentRemoteSupportInfo{
-				SessionID:  info.SessionID,
-				Mode:       info.Mode,
-				WSPath:     "/api/v1/access/agent/remote-support/sessions/" + info.SessionID + "/ws",
-				ICEServers: info.ICEServers,
-				Recording:  info.Recording,
+				SessionID:       info.SessionID,
+				Mode:            info.Mode,
+				WSPath:          "/api/v1/access/agent/remote-support/sessions/" + info.SessionID + "/ws",
+				ICEServers:      info.ICEServers,
+				Recording:       info.Recording,
+				ConsentRequired: info.ConsentRequired,
+				ConsentStatus:   info.ConsentStatus,
+				ConsentPath:     "/api/v1/access/agent/remote-support/sessions/" + info.SessionID + "/consent",
+				ZitiService:     h.zitiServiceForAgent(ctx, agentID),
+				Transport:       info.Transport,
 			}
+			// Fast-poll while a support session is in flight so the device
+			// picks up the (dis)connect + consent transitions in seconds
+			// instead of waiting out the normal posture interval.
+			cfg.ReportInterval = remoteSupportPollInterval
 		}
 
 		c.JSON(http.StatusOK, cfg)
@@ -1135,6 +1347,8 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 type agentRecord struct {
 	AgentID          string     `json:"agent_id"`
 	DeviceID         string     `json:"device_id"`
+	Hostname         string     `json:"hostname"`
+	Platform         string     `json:"platform"`
 	Status           string     `json:"status"`
 	ComplianceStatus string     `json:"compliance_status"`
 	ComplianceScore  float64    `json:"compliance_score"`
@@ -1152,9 +1366,11 @@ func (h *AgentAPIHandler) HandleListAgents(c *gin.Context) {
 
 	ctx := c.Request.Context()
 	rows, err := h.db.Pool.Query(ctx, `
-		SELECT agent_id, device_id, status, compliance_status, compliance_score, last_seen_at, enrolled_at
+		SELECT agent_id, device_id,
+		       COALESCE(metadata->>'hostname',''), COALESCE(platform, metadata->>'platform',''),
+		       status, compliance_status, compliance_score, last_seen_at, enrolled_at
 		FROM enrolled_agents
-		ORDER BY enrolled_at DESC
+		ORDER BY last_seen_at DESC NULLS LAST, enrolled_at DESC
 	`)
 	if err != nil {
 		h.logger.Error("HandleListAgents: failed to query enrolled_agents", zap.Error(err))
@@ -1169,6 +1385,8 @@ func (h *AgentAPIHandler) HandleListAgents(c *gin.Context) {
 		if scanErr := rows.Scan(
 			&rec.AgentID,
 			&rec.DeviceID,
+			&rec.Hostname,
+			&rec.Platform,
 			&rec.Status,
 			&rec.ComplianceStatus,
 			&rec.ComplianceScore,

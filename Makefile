@@ -1,7 +1,7 @@
 # OpenIDX Makefile
 # Build, test, and deploy automation
 
-.PHONY: all build test lint clean dev dev-infra docker helm docs smoke-test build-agent build-agent-all test-agent docker-build-agent ziti-quickstart ziti-down
+.PHONY: all build test lint clean dev dev-infra docker helm docs smoke-test ha-drill dr-game-day dark-drill dark-drill-live build-agent build-agent-all test-agent docker-build-agent ziti-quickstart ziti-down
 
 # Variables
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -117,6 +117,73 @@ test-e2e:
 smoke-test:
 	@echo "Running smoke tests..."
 	@./scripts/smoke-test.sh
+
+#---------------------------------------------------------------------------
+# Availability drill — verify the "always-available auth" guarantees
+#---------------------------------------------------------------------------
+# Runs the focused Go tests that encode each availability tier (see
+# docs/architecture/always-available-auth-plan.md). This is the single command
+# to prove the guarantees hold; each maps to a tier and fails loudly if a change
+# regresses it. Data-tier failover itself is exercised by the DR game-day
+# (docs/disaster-recovery.md §1D) against a live DB, not here.
+ha-drill:
+	@echo "🛡️  OpenIDX availability drill — verifying always-available-auth guarantees"
+	@echo ""
+	@bash scripts/ha-drill.sh "Tier 0: verify path survives a JWKS/DB outage (serve-stale)" \
+		./internal/common/middleware/ \
+		'ServeStaleJWKSOnRefreshFailure|StaleJWKSExpiresAfterMaxStale|NoStaleServeWithoutSuccessfulFetch|AuthMiddlewareSurvivesIssuerOutage'
+	@bash scripts/ha-drill.sh "Tier 1: bounded DB timeouts" \
+		./internal/common/database/ \
+		'BuildPoolConfigConnectTimeoutDefault|BuildPoolConfigStatementTimeout|ReaderFallsBackToPrimary|PingReadNoReplicaIsNil'
+	@bash scripts/ha-drill.sh "Tier 1: read-replica health checker (non-critical)" \
+		./internal/health/ 'ReadReplicaCheckerNonCritical'
+	@bash scripts/ha-drill.sh "Tier 2: issue-path brownout + Redis breaker" \
+		./internal/oauth/ \
+		'IsDependencyUnavailable|WriteServerOrUnavailable|RevocationBreakerFastFailsOnRedisOutage'
+	@bash scripts/ha-drill.sh "Guards: identity read/write pool safety (mutation-tested)" \
+		./internal/identity/ \
+		'WritesNeverUseReplica|ReadsUseReplica|SecurityCriticalReadUsesPrimary'
+	@bash scripts/ha-drill.sh "Guards: oauth client store pool safety (mutation-tested)" \
+		./internal/oauth/ \
+		'OAuthClientStoreWritesUsePrimary|OAuthClientGetUsesPrimary'
+	@bash scripts/ha-drill.sh "Guards: admin settings store pool safety (mutation-tested)" \
+		./internal/admin/ \
+		'SettingsRepositoryWritesUsePrimary|SettingsRepositoryGetUsesPrimary'
+	@echo "✅ Availability drill passed — all always-available-auth guarantees hold."
+
+#---------------------------------------------------------------------------
+# DR game-day — rehearse data-tier failover (docs/disaster-recovery.md §1D).
+# `dr-game-day` runs the self-test: it stands up a local mock that simulates a
+# failover window and drives the whole canary/verdict logic against it, so the
+# drill itself is verified (a false-green DR drill is worse than none) with NO
+# infrastructure. To run against real staging, call the script directly:
+#   scripts/dr-game-day.sh --base-url https://staging.openidx.example --trigger \
+#       --provider rds --rds-instance openidx-staging
+dr-game-day:
+	@bash scripts/dr-game-day.sh --self-test
+
+#---------------------------------------------------------------------------
+# Dark-mode drill — verify the "dark platform" posture (docs/superpowers/specs/
+# 2026-07-17-dark-platform-ziti-first-design.md). Runs the dark-mode.sh self-test
+# (mock public + overlay, no infra) proving the two-sided invariant logic —
+# public refused / overlay reachable / tier gate holds — so a cutover can't be
+# green-lit on a false positive. Also runs the edge route-set assertions.
+# For a live check: scripts/dark-mode.sh --verify --public-url ... --overlay-url ...
+dark-drill:
+	@bash deployments/apisix-edge/seed-edge-routes.test.sh
+	@bash scripts/register-console-dark-app.test.sh
+	@go test ./internal/access/ -run 'TestTier2ServicesRequireDeviceTrust|TestNoTier0SurfaceIsDarked|TestDarkServiceUpstreamsAreLoopback|TestDarkServiceNamesAreUnique|TestDefaultDarkServicesTiers|TestReconcileDarkServicesCreatesServiceAndTierPolicy' -count=1
+	@bash scripts/dark-mode.sh --self-test
+
+# Opt-in LIVE drill against the running edge (needs APISIX_ADMIN_KEY + a live
+# oidx-apisix). Self-restoring: darks the tier, measures per-service effect, then
+# reverts to the exact prior route set. DARK_TIER=tier1 to also dark self-service
+# + SPA (only the Tier-0 bootstrap stays public). NOT part of `dark-drill` — it
+# touches the live edge, so run it deliberately:
+#   APISIX_ADMIN_KEY=... make dark-drill-live            # tier2
+#   APISIX_ADMIN_KEY=... DARK_TIER=tier1 make dark-drill-live
+dark-drill-live:
+	@bash scripts/dark-drill-live.sh $(or $(DARK_TIER),tier2)
 
 #---------------------------------------------------------------------------
 # Linting

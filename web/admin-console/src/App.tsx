@@ -33,6 +33,8 @@ import {
   Settings,
   Applications,
   AppLauncher,
+  QuickLinks,
+  QuickLinksAdmin,
   AppPublish,
   ZeroTrust,
   IdentityProviders,
@@ -50,6 +52,7 @@ import {
   AgentFleet,
   KioskPolicies,
   RemoteSupport,
+  RemoteSupportPopout,
   MFAManagement,
   RiskPolicies,
   LoginAnomalies,
@@ -189,6 +192,17 @@ function App() {
       <Route path="/reset-password" element={<ResetPassword />} />
       <Route path="/magic-link-verify" element={<MagicLinkVerify />} />
 
+      {/* Standalone pop-out viewer: protected but chrome-less (no sidebar), so
+          a relay session can live in its own window / second monitor. */}
+      <Route
+        path="/remote-support/live"
+        element={
+          <ProtectedRoute>
+            <RemoteSupportPopout />
+          </ProtectedRoute>
+        }
+      />
+
       {/* Protected routes with auth guard */}
       <Route
         path="/"
@@ -204,6 +218,8 @@ function App() {
         {/* My Pages (user-facing) */}
         <Route path="profile" element={<UserProfile />} />
         <Route path="app-launcher" element={<AppLauncher />} />
+        <Route path="quick-links" element={<QuickLinks />} />
+        <Route path="quick-links-admin" element={<AdminRoute><QuickLinksAdmin /></AdminRoute>} />
         <Route path="my-access" element={<MyAccess />} />
         <Route path="my-privileged-access" element={<MyPrivilegedAccess />} />
         <Route path="my-devices" element={<MyDevices />} />

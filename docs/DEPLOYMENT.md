@@ -19,6 +19,18 @@ in this repo:
 > [production config checklist](#production-config-checklist) lists exactly
 > what must be set.
 
+> **Migrating an existing single-VM prod onto this EKS path?** Follow the
+> sequenced, low-downtime cutover in
+> [`tier3b-cutover-runbook.md`](./tier3b-cutover-runbook.md). This guide covers a
+> greenfield install; the cutover runbook covers moving live traffic and data.
+
+> **Going dark (Ziti-first / overlay-only posture)?** The staged, verify-before-
+> cutover procedure — enroll the fleet, drill, cut Tier 2 then Tier 1, and the
+> break-glass undark path — is in
+> [`OPENIDX_ZITI_ARCHITECTURE.md` → Dark platform cutover](./OPENIDX_ZITI_ARCHITECTURE.md#dark-platform-cutover-staged-verify-before-cutover).
+> It is fully opt-in: defaults preserve today's public behavior, and every step
+> is gated by `make dark-drill` and `scripts/dark-mode.sh --verify`.
+
 ---
 
 ## Prerequisites
@@ -312,6 +324,43 @@ backends:
 
 Traces are emitted when `TRACING_ENABLED=true` (services export OTLP to
 `jaeger:4317`).
+
+---
+
+## Troubleshooting: "organization empty" / empty lists on a fresh install
+
+If a freshly built stack (Docker or self-hosted) logs in but shows **empty
+lists** — 0 users/groups/apps, or an "organization" / "organization context
+required" error — the request is resolving **no tenant**, so under the RLS belt
+every org-scoped read comes back empty.
+
+Run the read-only doctor to pinpoint it:
+
+```bash
+# against a compose Postgres container:
+PG_CONTAINER=openidx-postgres scripts/org-doctor.sh
+# or with a direct URL:
+DATABASE_URL='postgres://openidx:PASS@localhost:5432/openidx?sslmode=disable' scripts/org-doctor.sh
+```
+
+Two causes, in order of likelihood:
+
+1. **`DEFAULT_ORG_FALLBACK` is not set** (it defaults to **`false`**). For a
+   single-tenant install every service must run with `DEFAULT_ORG_FALLBACK=true`
+   (optionally `DEFAULT_ORG_ID=00000000-0000-0000-0000-000000000010`); otherwise
+   a request that carries no tenant subdomain/JWT resolves no org and the API
+   returns empty/blocked results. The bundled
+   `deployments/docker/docker-compose*.yml` now set this to `true` by default —
+   pull the updated file, or add the two env vars to each service and restart.
+   Verify a running container: `docker exec openidx-identity-service printenv
+   DEFAULT_ORG_FALLBACK`.
+2. **The seeded default org is missing or users have `org_id = NULL`** — migration
+   025 (multitenancy) creates the org and backfills `org_id`; if it didn't run,
+   re-run the `migrate` (and `seed`) steps **as the DB owner** (not the
+   `openidx_app` role, which is `NOBYPASSRLS`). The doctor prints the exact fix.
+
+A true multi-tenant (subdomain-per-org) deploy intentionally leaves
+`DEFAULT_ORG_FALLBACK=false` and resolves the tenant from the host/JWT instead.
 
 ---
 

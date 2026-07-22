@@ -23,6 +23,13 @@ type EnrollResult struct {
 
 // Enroll performs the full enrollment flow: HTTP enrollment + optional Ziti enrollment.
 func Enroll(logger *zap.Logger, serverURL, token, configDir string) (*EnrollResult, error) {
+	return EnrollWithManifest(logger, serverURL, token, configDir, "")
+}
+
+// EnrollWithManifest is Enroll plus an optional update_manifest_url persisted to
+// config so the service's self-updater is wired at enroll time (e.g. the MSI's
+// UPDATE_MANIFEST_URL property). Empty manifestURL keeps auto-update disabled.
+func EnrollWithManifest(logger *zap.Logger, serverURL, token, configDir, manifestURL string) (*EnrollResult, error) {
 	// Step 1: HTTP enrollment with server
 	client := transport.NewClient(serverURL, "", "")
 	resp, err := client.Enroll(token)
@@ -36,11 +43,24 @@ func Enroll(logger *zap.Logger, serverURL, token, configDir string) (*EnrollResu
 
 	// Step 2: Save agent config
 	cfg := &agent.AgentConfig{
-		ServerURL:  serverURL,
-		AgentID:    resp.AgentID,
-		DeviceID:   resp.DeviceID,
-		AuthToken:  resp.AuthToken,
-		EnrolledAt: time.Now().UTC().Format(time.RFC3339),
+		ServerURL:         serverURL,
+		AgentID:           resp.AgentID,
+		DeviceID:          resp.DeviceID,
+		AuthToken:         resp.AuthToken,
+		EnrolledAt:        time.Now().UTC().Format(time.RFC3339),
+		UpdateManifestURL: manifestURL,
+	}
+
+	// If the server advertises a Ziti overlay service and an identity file is
+	// already present on disk (the device enrolled its identity on a prior run),
+	// wire the Ziti transport now — even without a fresh JWT. Otherwise a device
+	// that already enrolled its identity would keep dialing an empty service.
+	identityPath := filepath.Join(configDir, "ziti-identity.json")
+	if resp.ZitiService != "" {
+		if _, statErr := os.Stat(identityPath); statErr == nil {
+			cfg.ZitiIdentityFile = identityPath
+			cfg.ZitiServiceName = resp.ZitiService
+		}
 	}
 
 	if err := cfg.Save(configDir); err != nil {
@@ -60,8 +80,14 @@ func Enroll(logger *zap.Logger, serverURL, token, configDir string) (*EnrollResu
 			logger.Warn("Failed to save Ziti JWT", zap.Error(err))
 		} else {
 			logger.Info("Ziti enrollment JWT saved", zap.String("path", jwtPath))
-			identityPath := filepath.Join(configDir, "ziti-identity.json")
 			cfg.ZitiIdentityFile = identityPath
+			// Persist the base-API service so the Ziti transport dials the right
+			// service (defaults to openidx-access when the server didn't say).
+			if resp.ZitiService != "" {
+				cfg.ZitiServiceName = resp.ZitiService
+			} else {
+				cfg.ZitiServiceName = "openidx-access"
+			}
 			if err := cfg.Save(configDir); err != nil {
 				logger.Warn("Failed to update config with Ziti identity path", zap.Error(err))
 			}
