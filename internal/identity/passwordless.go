@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
@@ -138,6 +139,26 @@ func (s *Service) CreateMagicLink(ctx context.Context, email, purpose, redirectU
 		CreatedAt:   createdAt,
 		ExpiresAt:   expiresAt,
 	}, nil
+}
+
+// SendMagicLinkEmail delivers a magic-link email to the given address. The full
+// verify URL (including the one-time token) is built by the caller and passed in,
+// so the token is never persisted in or logged by this method.
+//
+// Delivery is best-effort: when no email service is configured it logs a warning
+// and returns nil, so callers can keep returning a generic response without
+// leaking whether an account exists.
+func (s *Service) SendMagicLinkEmail(ctx context.Context, to, magicLinkURL string) error {
+	if s.emailService == nil {
+		s.logger.Warn("Email service not configured, magic link not delivered",
+			zap.String("email", maskEmail(to)))
+		return nil
+	}
+
+	return s.emailService.SendAsync(ctx, to, "Your OpenIDX sign-in link", "magic-link", map[string]interface{}{
+		"MagicLinkURL": magicLinkURL,
+		"ExpiresIn":    "15 minutes",
+	})
 }
 
 // VerifyMagicLink validates a magic link token and returns the user

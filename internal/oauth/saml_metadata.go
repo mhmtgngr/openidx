@@ -3,12 +3,9 @@ package oauth
 
 import (
 	"context"
-	"crypto/x509"
-	"encoding/pem"
 	"encoding/xml"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -312,33 +309,12 @@ func (s *Service) handleIdPMetadata(c *gin.Context) {
 	c.String(http.StatusOK, xml.Header+string(output))
 }
 
-// getSigningCertificate returns the X.509 certificate data for the signing key
+// getSigningCertificate returns the base64 DER of the IdP's real self-signed
+// X.509 signing certificate for publication in SAML metadata. (The previous
+// implementation published a bare PKIX public key wrapped in a CERTIFICATE PEM
+// header, which is not a valid X.509 certificate and breaks SP onboarding.)
 func (s *Service) getSigningCertificate() (string, error) {
-	// Marshal the public key to X.509 PKIX format
-	pubKeyBytes, err := x509.MarshalPKIXPublicKey(s.publicKey)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal public key: %w", err)
-	}
-
-	// Encode as PEM
-	certBlock := &pem.Block{
-		Type:  "CERTIFICATE",
-		Bytes: pubKeyBytes,
-	}
-	certPEM := pem.EncodeToMemory(certBlock)
-
-	// Remove PEM headers to get raw base64 for SAML metadata
-	certStr := string(certPEM)
-	certStr = strings.TrimSpace(certStr)
-	certStr = strings.TrimPrefix(certStr, "-----BEGIN CERTIFICATE-----")
-	certStr = strings.TrimSuffix(certStr, "-----END CERTIFICATE-----")
-	certStr = strings.TrimSpace(certStr)
-
-	// Remove any line breaks
-	certStr = strings.ReplaceAll(certStr, "\n", "")
-	certStr = strings.ReplaceAll(certStr, "\r", "")
-
-	return certStr, nil
+	return s.samlSigningCertBase64()
 }
 
 // HandleIdPMetadataRequest is an alias for handleIdPMetadata for compatibility

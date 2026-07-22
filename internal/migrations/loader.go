@@ -628,5 +628,12 @@ func allMigrations() []*Migration {
 			UpSQL:       auditIndexedAtUp,
 			DownSQL:     auditIndexedAtDown,
 		},
+		{
+			Version:     89,
+			Name:        "oauth_user_consents",
+			Description: "Add oauth_user_consents so application_sso_settings.require_consent is enforceable: the authorize flow records a user's scope grant per client and re-prompts only when requested scopes exceed the stored grant. Org-scoped under FORCE RLS. Additive/idempotent.",
+			UpSQL:       oauthUserConsentsUp,
+			DownSQL:     oauthUserConsentsDown,
+		},
 	}
 }
