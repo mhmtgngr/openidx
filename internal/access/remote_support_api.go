@@ -407,7 +407,34 @@ func (h *RemoteSupportHandler) HandleStartSession(c *gin.Context) {
 	if orgID != "" {
 		orgArg = orgID
 	}
-	_, err := h.db.Pool.Exec(c.Request.Context(), `
+	// Supersede any prior in-flight session for this agent. Starting a new session
+	// while an old one is still pending/active left two live sessions: the config
+	// picks the newest, but the device's peer for the OLD one lingered in the
+	// broker, delaying the switch and making the new session appear "stuck". Mark
+	// older ones ended so there is exactly one live session per agent, and evict
+	// their broker peers so the device cleanly re-binds to the new session.
+	rows, err := h.db.Pool.Query(c.Request.Context(), `
+        UPDATE remote_support_sessions
+           SET status = 'ended', ended_at = NOW(), end_reason = 'superseded'
+         WHERE agent_id = $1 AND status IN ('pending','active')
+        RETURNING id
+    `, req.AgentID)
+	if err != nil {
+		h.logger.Warn("HandleStartSession: supersede prior sessions failed", zap.Error(err))
+	} else {
+		var oldIDs []string
+		for rows.Next() {
+			var oldID string
+			if rows.Scan(&oldID) == nil {
+				oldIDs = append(oldIDs, oldID)
+			}
+		}
+		rows.Close()
+		for _, oldID := range oldIDs {
+			h.evictSession(oldID)
+		}
+	}
+	_, err = h.db.Pool.Exec(c.Request.Context(), `
         INSERT INTO remote_support_sessions
             (id, agent_id, admin_user_id, status, mode, ice_servers, notes,
              recording_enabled, org_id, recording_retention_days,
@@ -904,6 +931,15 @@ func (h *RemoteSupportHandler) endSession(ctx context.Context, sessionID, reason
 		}
 	}
 	// Drop any live broker entry so both peers receive a clean close.
+	h.evictSession(sessionID)
+	return nil
+}
+
+// evictSession drops a session's live broker entry (if any), closing both peer
+// connections so they receive a clean close. Safe to call for a session with no
+// live broker entry. Used both on explicit end and when a new session supersedes
+// an older in-flight one for the same agent.
+func (h *RemoteSupportHandler) evictSession(sessionID string) {
 	h.mu.Lock()
 	sess, ok := h.sessions[sessionID]
 	if ok {
@@ -922,7 +958,6 @@ func (h *RemoteSupportHandler) endSession(ctx context.Context, sessionID, reason
 		}
 		sess.mu.Unlock()
 	}
-	return nil
 }
 
 // verifyAgentAuth checks the supplied auth token against the
