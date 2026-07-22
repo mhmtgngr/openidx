@@ -172,9 +172,21 @@ export function RelayRenderer({ wsUrl, mode, onEnd, onPopOut, autoFullscreen }: 
     if (!rect || !c || c.width === 0 || c.height === 0) return { x: 0, y: 0 }
     const videoAR = c.width / c.height
     const boxAR = rect.width / rect.height
-    let cw = rect.width, ch = rect.height, cx = rect.left, cy = rect.top
-    if (videoAR > boxAR) { cw = rect.width; ch = rect.width / videoAR; cy = rect.top + (rect.height - ch) / 2 }
-    else { ch = rect.height; cw = rect.height * videoAR; cx = rect.left + (rect.width - cw) / 2 }
+    // Letterbox the video inside the overlay (object-contain): compute the
+    // content rect (cw/ch) and its offset (cx/cy) so pointer coords map to the
+    // visible frame, not the black bars.
+    let cw: number, ch: number, cx: number, cy: number
+    if (videoAR > boxAR) {
+      cw = rect.width
+      ch = rect.width / videoAR
+      cx = rect.left
+      cy = rect.top + (rect.height - ch) / 2
+    } else {
+      ch = rect.height
+      cw = rect.height * videoAR
+      cy = rect.top
+      cx = rect.left + (rect.width - cw) / 2
+    }
     const clamp = (v: number) => Math.max(0, Math.min(1, v))
     return { x: clamp((e.clientX - cx) / cw) * 1000, y: clamp((e.clientY - cy) / ch) * 1000 }
   }
