@@ -1,146 +1,131 @@
-# OpenIDX is Single-Tenant by Design
+# OpenIDX Multi-Tenancy & the Tenant Trust Boundary
 
-This document explains a deliberate scope choice in OpenIDX that is
-not a bug, and which the v1.0 plan made explicit: **one OpenIDX
-install is for one organization**. The identity service, the OAuth
-service, and every data table they touch live under a single
-trust boundary — the operator who runs the install.
+OpenIDX is **multi-tenant, enforced at the database**. Every tenant-owned
+table carries an `org_id` and is protected by PostgreSQL **FORCE row-level
+security (RLS)**. The tenant is resolved per request, stamped onto the pooled
+database connection at checkout, and enforced by the database itself — not by
+hoping every query remembers to filter. Access is **fail-closed**: a request
+with no resolved tenant sees zero rows.
 
-If you are building a multi-tenant SaaS on top of OpenIDX, you are
-either running one OpenIDX install per tenant (supported), or
-building tenant isolation in a layer above us (your engineering
-choice). OpenIDX itself does not enforce per-tenant data isolation
-at the database row level.
+> **History.** OpenIDX was originally single-tenant by design, and earlier
+> revisions of this document said so. That is no longer true: row-level
+> multi-tenancy shipped (migration v37 established the FORCE-RLS belt; later
+> migrations extended it to governance campaigns, ABAC, risk, and PAM tables).
+> This document is the current, code-accurate trust-boundary statement.
 
-## What this means in practice
+## How tenant isolation is enforced
 
-### Data layer
+### 1. Every tenant table has `org_id` + a FORCE-RLS policy
 
-`internal/identity/service.go` and every other service module take a
-`*pgxpool.Pool` and run queries with no implicit tenant scoping. There
-is no `tenant_id` column on `users`, `roles`, `sessions`,
-`oauth_clients`, `audit_events`, or any of the other core tables. Every
-admin can read every row. Every authenticated user with the right role
-can act on every other user in the install.
+Tenant-owned tables carry a non-null `org_id` and an RLS policy of the shape:
 
-This is intentional. Retrofitting row-level multi-tenancy onto the
-data model is a large epic with significant performance and migration
-cost, and the OSS / per-customer install model does not require it.
+```sql
+CREATE POLICY pol_<table>_org_scope ON <table>
+    USING (current_setting('app.bypass_rls', true) = 'on'
+           OR org_id = NULLIF(current_setting('app.org_id', true), '')::uuid)
+    WITH CHECK (current_setting('app.bypass_rls', true) = 'on'
+           OR org_id = NULLIF(current_setting('app.org_id', true), '')::uuid);
+ALTER TABLE <table> ENABLE ROW LEVEL SECURITY;
+ALTER TABLE <table> FORCE  ROW LEVEL SECURITY;
+GRANT SELECT, INSERT, UPDATE, DELETE ON <table> TO openidx_app;
+```
 
-### Identity layer
+`FORCE ROW LEVEL SECURITY` means the policy applies **even to the table owner**,
+so there is no privileged code path that silently bypasses it.
 
-Roles and permissions in OpenIDX are global to the install. There is
-no concept of "tenant administrator" vs "global administrator" — an
-admin role grants the same access in every code path. Federation
-identities (SAML, OIDC) all land in the same `users` table; the only
-distinction between, say, two SAML IdPs is the row's `provider`
-column, not a tenant boundary.
+### 2. The runtime role is a non-owner
 
-### Access control layer
+Services connect as `openidx_app`, which does **not** own the tables and cannot
+disable RLS. A foothold that reaches the connection still cannot read across
+tenants without the `app.org_id` GUC being set to that tenant.
 
-OPA policies and access reviews are also global. An access review
-named "Q1 2026 user-access" reviews every user in the install. There
-is no per-organization scoping on review campaigns, certifications,
-SoD policies, or risk-based MFA policies.
+### 3. The tenant is stamped on every connection at checkout
 
-### Audit layer
+`internal/common/database/rls.go` sets the `app.org_id` (and, for the rare
+cross-org maintenance path, `app.bypass_rls`) session GUC when a connection is
+checked out of the pool, from the tenant resolved for the current request. No
+service module has to remember to add a `WHERE org_id = …` clause — the database
+enforces it. (Queries still carry an explicit `org_id` predicate as defense in
+depth; see the CI gate below.)
 
-`audit_events` records actions across the entire install. There is
-no per-tenant audit channel. A compliance officer with read access to
-the audit table can see every action by every user.
+### 4. The tenant is resolved per request
 
-## What the project *does* support
+`internal/common/middleware/tenant_resolver.go` derives the tenant from, in
+order, the request subdomain, the authenticated JWT, or the `X-Org-ID` header,
+and places it in the request's org context (`orgctx`). If none resolves, the
+request has no tenant and RLS yields zero rows — **fail-closed**.
 
-### Federation across multiple identity sources
+### 5. A CI linter makes it un-bypassable by construction
 
-Many organizations want OpenIDX to be the single sign-on point in
-front of multiple identity providers (one corporate AD, several SAML
-IdPs for acquired entities, a couple of social providers for
-contractors). This works: each IdP is registered separately in
-`identity_providers`, users from each are stored in the same `users`
-table with `provider` distinguishing them, and the OAuth service
-mints the same shape of access token regardless of upstream IdP.
+`tools/orgscope` is a static analyzer wired as a **merge-blocking required CI
+check**. It fails the build on any query against a tenant table that lacks an
+`org_id` predicate, unless the call site is explicitly annotated
+`//orgscope:ignore <reason>`. Every service ships an `orgscope_test.go`, and a
+dedicated cross-org integration test (`test/integration/cross_org_test.go`)
+asserts that one tenant cannot read another's data.
 
-That is **federation**, not multi-tenancy. Every federated user
-shares the audit log and the role catalog.
+## Cross-tenant (install-wide) operations
 
-### Application catalog with per-app authorization
+Some background work is legitimately install-wide — directory-sync pollers, the
+session-expiry sweeper, the Ziti reconciler, certification schedulers. These run
+under an explicit, audited bypass:
 
-`internal/access` and `internal/governance` let an admin publish
-multiple downstream applications, each with its own access policy
-(who can reach it, which device-trust posture is required, etc).
-That gives the install many tenants of *applications*, not of
-*organizations*.
+- They set `app.bypass_rls = on` via the documented `WithBypassRLS` helper, or
+  iterate tenants explicitly and set `app.org_id` per tenant.
+- Each such site is annotated `//orgscope:ignore <reason>` so the bypass is
+  visible in code review and to the CI linter.
 
-### Per-customer deployments
+The bypass is deliberate and narrow; the default for all request-path code is
+tenant-scoped and fail-closed.
 
-If your operating model is "one organization per OpenIDX install,"
-everything works as advertised. This is the supported topology —
-SOC2 boundary lines align with the install, JWT signing keys are
-unique per install, the database belongs to the customer, etc.
+## What multi-tenancy covers
 
-## What the project does *not* support — and why
-
-We do not currently support:
-
-- **Per-tenant data isolation at the row level.** Adding a
-  `tenant_id` column to every table, propagating it through every
-  query, and enforcing it via Postgres RLS is a sizable epic. Until
-  it lands, do not run two unrelated organizations against the same
-  install and assume they cannot see each other's data.
-
-- **Per-tenant signing keys.** JWT and ID-token signing uses one key
-  per install. Rotating the key affects every tenant simultaneously.
-
-- **Per-tenant rate limits.** The brute-force / IP-rate-limit
-  middleware operates against the install as a whole; a noisy tenant
-  can consume the shared budget.
-
-- **Per-tenant audit isolation.** The audit table is shared. There is
-  no built-in way to give one tenant's compliance officer audit-read
-  access without exposing every tenant's events.
-
-These items are all on a list called "multi-tenant SaaS isolation" in
-the v1.0 plan. They are **explicitly out of scope** for v1.x — the
-release-engineering work has been about making the single-tenant
-posture credible and well-instrumented. The multi-tenant story is a
-v2 epic, not a follow-on patch.
-
-## If you really need multi-tenancy
-
-The supported pattern is **one OpenIDX install per tenant**. Helm
-chart + Terraform module (under `deployments/`) make this
-straightforward: spin up a fresh database, a fresh Redis namespace, a
-fresh OpenIDX deployment, point your gateway at it. Each install gets
-its own JWT signing key, its own audit log, its own admin set, and
-its own SOC2 boundary line — which is the original ask in most
-"I need multi-tenancy" conversations.
-
-If your model genuinely requires shared infrastructure (one DB, one
-Redis, one OpenIDX, many tenants), please open an issue describing
-the constraint that makes per-tenant installs unworkable. Multi-
-tenant SaaS isolation will land as its own major-version effort when
-the demand for it is concrete.
-
-## Where this assumption is enforced (or not)
-
-| Layer | Single-tenant assumption is… |
+| Layer | Tenant isolation |
 |---|---|
-| Database schema | Not enforced — no `tenant_id` columns. |
-| Application services | Assumed — no scoping in queries. |
-| Authorization | Assumed — roles are global. |
-| Audit | Assumed — shared table. |
-| Documentation | Stated here and in [SECURITY-HARDENING.md](./SECURITY-HARDENING.md). |
-| CI / tests | Not checked — the integration suite runs against a single install. |
+| Database schema | Enforced — `org_id` + FORCE RLS on tenant tables |
+| Application services | Enforced — `app.org_id` stamped per connection; queries carry `org_id` |
+| Authorization / governance | Scoped — campaigns, certifications, ABAC, SoD, and risk policies carry `org_id` |
+| Audit | Scoped — `audit_events` is org-scoped, including Elasticsearch search |
+| CI / tests | Enforced — `orgscope` merge gate + cross-org integration test |
 
-The project deliberately does not add half-measures (e.g., a
-`tenant_id` column that some queries use and others ignore) because a
-silent inconsistency is worse than an explicit single-tenant scope.
+## Federation vs. multi-tenancy
+
+Multi-tenancy (per-`org_id` isolation) is distinct from **federation** (one
+tenant trusting several upstream identity providers). Both are supported and
+composable: within a single tenant, multiple IdPs can be registered in
+`identity_providers`, and their users land in the same tenant-scoped `users`
+table distinguished by `provider`. Federation happens inside a tenant boundary;
+it does not cross one.
+
+## Known follow-ups
+
+Tenant data isolation is enforced as described above. Some cross-cutting
+concerns are still being tightened tenant-by-tenant and are tracked in the gap
+register ([`docs/MARKET_GAP_ANALYSIS_2026.md`](./MARKET_GAP_ANALYSIS_2026.md)):
+
+- **Per-org signing keys.** OAuth/OIDC token signing currently uses one key set
+  per install; per-tenant signing keys are a future enhancement.
+- **Per-org rate-limit budgets.** The auth-surface rate limiter is being moved
+  toward per-tenant budgets so a noisy tenant cannot consume a shared allowance.
+- **Per-org Ziti overlay scoping.** The ZTNA plane is being namespaced per tenant
+  (the "OSS OpenZiti multi-tenant console" work) for delegated-admin / MSP
+  deployments.
+
+## Deployment topologies
+
+Both models are supported:
+
+- **Shared install, many tenants (multi-tenant SaaS / MSP).** One database, one
+  Redis, one OpenIDX deployment, tenants isolated by `org_id` + FORCE RLS. This
+  is the model this document describes.
+- **One install per tenant (dedicated / sovereign).** For customers who require
+  physical isolation (a dedicated database, region, or SOC 2 boundary per
+  tenant), the Helm chart and Terraform module under `deployments/` make
+  per-tenant installs straightforward. This is a positioning choice, not an
+  architectural limit.
 
 ## When this document is wrong
 
-If a future PR adds genuine multi-tenancy — for instance, row-level
-security on `users` with a `tenant_id` column propagated through
-every query and verified by tests — this document is the place to
-say so. Until then, please treat the contents above as the project's
-official trust-boundary statement.
+If a future PR changes the tenant boundary — for example, adding per-tenant
+signing keys or per-tenant Ziti scoping — update this document to match. It is
+the project's official trust-boundary statement; keep it code-accurate.
