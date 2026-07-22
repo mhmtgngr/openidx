@@ -261,14 +261,17 @@ func (uas *UnifiedAuditService) syncZitiAuditEvents(ctx context.Context) error {
 		`SELECT last_sync_at, last_event_id FROM external_audit_sync_state WHERE source = 'ziti'`).
 		Scan(&lastSyncAt, &lastEventID)
 
-	// Fetch events from Ziti (this would call the Ziti management API for audit logs)
-	// Note: This is a placeholder - actual Ziti audit API integration would go here
+	// Fetch events from Ziti (api-session logins + service dials from the
+	// controller's management API — see ZitiManager.GetAuditEvents).
 	events, err := uas.ziti().GetAuditEvents(ctx, lastSyncAt)
 	if err != nil {
 		return err
 	}
 
-	// Insert events
+	// Insert events, deduping by the Ziti event id (stored in details) so a
+	// re-poll never creates duplicate rows — the unified_audit_events PK is a
+	// random UUID, so ON CONFLICT alone can't dedup controller events.
+	var newestTS time.Time
 	var newLastEventID string
 	for _, event := range events {
 		// Map Ziti event to unified format
@@ -299,22 +302,34 @@ func (uas *UnifiedAuditService) syncZitiAuditEvents(ctx context.Context) error {
 		}
 
 		detailsJSON, _ := json.Marshal(details)
+		// Insert only if no row with this ziti_event_id already exists.
 		uas.db.Pool.Exec(ctx, `
 			INSERT INTO unified_audit_events (id, source, event_type, route_id, actor_ip, details, created_at)
-			VALUES ($1, 'ziti', $2, $3, $4, $5, $6)
-			ON CONFLICT DO NOTHING
-		`, uuid.New().String(), event.Type, routeID, event.SourceIP, detailsJSON, event.Timestamp)
+			SELECT $1, 'ziti', $2, $3, $4, $5, $6
+			 WHERE NOT EXISTS (
+			     SELECT 1 FROM unified_audit_events
+			      WHERE source = 'ziti' AND details->>'ziti_event_id' = $7
+			 )
+		`, uuid.New().String(), event.Type, routeID, event.SourceIP, detailsJSON, event.Timestamp, event.ID)
 
+		if event.Timestamp.After(newestTS) {
+			newestTS = event.Timestamp
+		}
 		newLastEventID = event.ID
 	}
 
-	// Update sync state
+	// Upsert the cursor so `since` advances (the row may not exist yet on first
+	// sync). Advance last_sync_at to the newest event timestamp, not NOW(), so
+	// the timestamp cursor passed to GetAuditEvents is exact.
 	if newLastEventID != "" {
 		uas.db.Pool.Exec(ctx, `
-			UPDATE external_audit_sync_state
-			SET last_sync_at = NOW(), last_event_id = $1, updated_at = NOW()
-			WHERE source = 'ziti'
-		`, newLastEventID)
+			INSERT INTO external_audit_sync_state (source, last_sync_at, last_event_id, updated_at)
+			VALUES ('ziti', $1, $2, NOW())
+			ON CONFLICT (source) DO UPDATE
+			   SET last_sync_at = EXCLUDED.last_sync_at,
+			       last_event_id = EXCLUDED.last_event_id,
+			       updated_at = NOW()
+		`, newestTS, newLastEventID)
 	}
 
 	return nil

@@ -1940,14 +1940,157 @@ type ZitiAuditEvent struct {
 	Details   map[string]interface{} `json:"details,omitempty"`
 }
 
-// GetAuditEvents retrieves audit events from Ziti controller
+// GetAuditEvents retrieves fabric/edge events from the Ziti controller as audit
+// events: identity API-session logins (who authenticated to the overlay, when,
+// from where) and service dials/circuits (who reached which service). OpenZiti
+// does not expose a single audit feed, so we derive these from the management
+// API's api-sessions and sessions collections. The `since` filter bounds results
+// to events newer than the caller's cursor. Returns newest-first order per the
+// controller default; callers sort/cursor by Timestamp.
 func (zm *ZitiManager) GetAuditEvents(ctx context.Context, since *time.Time) ([]ZitiAuditEvent, error) {
-	// Note: The Ziti controller may not have a built-in audit API
-	// This is a placeholder for integration with Ziti's metrics/events
-	// In production, you might use Ziti's event streaming or metrics endpoints
+	// No management client (not connected / not configured): nothing to fetch.
+	if zm == nil || zm.mgmtClient == nil {
+		return []ZitiAuditEvent{}, nil
+	}
+	var out []ZitiAuditEvent
 
-	// For now, return an empty slice
-	return []ZitiAuditEvent{}, nil
+	// API sessions = overlay authentications. Each is "identity X logged into the
+	// overlay at T from IP".
+	apiSessions, err := zm.listFabricAPISessions(ctx)
+	if err != nil {
+		zm.logger.Debug("ziti audit: list api-sessions failed", zap.Error(err))
+	}
+	for _, s := range apiSessions {
+		if since != nil && !s.CreatedAt.After(*since) {
+			continue
+		}
+		out = append(out, ZitiAuditEvent{
+			ID:        "apisession:" + s.ID,
+			Type:      "ziti.api_session.created",
+			Timestamp: s.CreatedAt,
+			Identity:  s.IdentityName,
+			SourceIP:  s.IPAddress,
+			Details: map[string]interface{}{
+				"identity_id":    s.IdentityID,
+				"api_session_id": s.ID,
+			},
+		})
+	}
+
+	// Sessions = service dials (a circuit toward a service). Each is "identity X
+	// dialed service Y".
+	sessions, err := zm.listFabricSessions(ctx)
+	if err != nil {
+		zm.logger.Debug("ziti audit: list sessions failed", zap.Error(err))
+	}
+	for _, s := range sessions {
+		if since != nil && !s.CreatedAt.After(*since) {
+			continue
+		}
+		out = append(out, ZitiAuditEvent{
+			ID:        "session:" + s.ID,
+			Type:      "ziti.service.dialed",
+			Timestamp: s.CreatedAt,
+			Identity:  s.IdentityName,
+			Service:   s.ServiceName,
+			Details: map[string]interface{}{
+				"session_id":  s.ID,
+				"session_type": s.Type,
+				"service_id":  s.ServiceID,
+			},
+		})
+	}
+	return out, nil
+}
+
+// fabricAPISession is the subset of an /edge/management/v1/api-sessions row used
+// to derive an overlay-login audit event.
+type fabricAPISession struct {
+	ID           string
+	IdentityID   string
+	IdentityName string
+	IPAddress    string
+	CreatedAt    time.Time
+}
+
+func (zm *ZitiManager) listFabricAPISessions(ctx context.Context) ([]fabricAPISession, error) {
+	data, status, err := zm.mgmtRequest("GET", "/edge/management/v1/api-sessions?limit=500&sort=createdAt%20desc", nil)
+	if err != nil {
+		return nil, err
+	}
+	if status != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status %d listing api-sessions", status)
+	}
+	var resp struct {
+		Data []struct {
+			ID         string    `json:"id"`
+			IdentityID string    `json:"identityId"`
+			IPAddress  string    `json:"ipAddress"`
+			CreatedAt  time.Time `json:"createdAt"`
+			Identity   struct {
+				Name string `json:"name"`
+			} `json:"identity"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, err
+	}
+	out := make([]fabricAPISession, 0, len(resp.Data))
+	for _, d := range resp.Data {
+		out = append(out, fabricAPISession{
+			ID: d.ID, IdentityID: d.IdentityID, IdentityName: d.Identity.Name,
+			IPAddress: d.IPAddress, CreatedAt: d.CreatedAt,
+		})
+	}
+	return out, nil
+}
+
+// fabricSession is the subset of an /edge/management/v1/sessions row used to
+// derive a service-dial audit event.
+type fabricSession struct {
+	ID           string
+	Type         string
+	ServiceID    string
+	ServiceName  string
+	IdentityName string
+	CreatedAt    time.Time
+}
+
+func (zm *ZitiManager) listFabricSessions(ctx context.Context) ([]fabricSession, error) {
+	data, status, err := zm.mgmtRequest("GET", "/edge/management/v1/sessions?limit=500&sort=createdAt%20desc", nil)
+	if err != nil {
+		return nil, err
+	}
+	if status != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status %d listing sessions", status)
+	}
+	var resp struct {
+		Data []struct {
+			ID        string    `json:"id"`
+			Type      string    `json:"type"`
+			CreatedAt time.Time `json:"createdAt"`
+			Service   struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			} `json:"service"`
+			APISession struct {
+				Identity struct {
+					Name string `json:"name"`
+				} `json:"identity"`
+			} `json:"apiSession"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, err
+	}
+	out := make([]fabricSession, 0, len(resp.Data))
+	for _, d := range resp.Data {
+		out = append(out, fabricSession{
+			ID: d.ID, Type: d.Type, ServiceID: d.Service.ID, ServiceName: d.Service.Name,
+			IdentityName: d.APISession.Identity.Name, CreatedAt: d.CreatedAt,
+		})
+	}
+	return out, nil
 }
 
 // CreateService (overloaded) creates a Ziti service with host/port config
