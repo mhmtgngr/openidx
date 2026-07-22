@@ -38,7 +38,7 @@ type app struct {
 	mu       sync.Mutex
 	tokens   *sso.Tokens
 	connSlot []*systray.MenuItem
-	slotID   []string // slot index -> entry id
+	slotID   []string     // slot index -> entry id
 	rsAgent  *agent.Agent // remote-support agent running in this user session
 }
 

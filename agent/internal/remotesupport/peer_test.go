@@ -13,9 +13,9 @@ import (
 // pipeConn is an in-memory SignalConn pair for tests: whatever one side writes,
 // the other side reads. Emulates the broker relay between device and admin.
 type pipeConn struct {
-	in  chan []byte
-	out chan []byte
-	mu  sync.Mutex
+	in     chan []byte
+	out    chan []byte
+	mu     sync.Mutex
 	closed bool
 }
 
