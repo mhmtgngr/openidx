@@ -167,6 +167,10 @@ func main() {
 		auditService.StartESReconciler(context.Background())
 	}
 
+	// SIEM forwarder: stream the unified audit trail to an external SIEM
+	// (syslog/CEF/Splunk HEC). No-op unless AUDIT_SIEM_ENABLED=true.
+	auditService.StartSIEMForwarder(context.Background())
+
 	// Initialize EventStreamer with WebSocket origin validation
 	streamConfig := audit.StreamConfigFromAppConfig(cfg)
 	eventStreamer := audit.NewEventStreamerWithConfig(log, auditService, streamConfig)
