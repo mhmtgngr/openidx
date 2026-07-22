@@ -159,6 +159,12 @@ func (a *Agent) streamRemoteSupport(ctx context.Context, rs *RemoteSupportBlock)
 	if err != nil {
 		return err
 	}
+	// The screen source owns a libvpx (CGO) encoder + capture buffers. It MUST be
+	// closed when the stream ends, or every session reconnect leaks a full encoder
+	// — observed as the agent's RSS climbing to hundreds of MB over a flapping
+	// relay session. relay.Close()/peer.Close() do NOT close the source (it's
+	// injected), so close it here.
+	defer src.Close()
 
 	// Banner state for the tray: active for the session's lifetime.
 	a.remoteSupportActive.Store(true)
