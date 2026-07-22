@@ -123,8 +123,8 @@ type signalingSession struct {
 	sessionID string
 
 	mu        sync.Mutex
-	adminConn *websocket.Conn
-	agentConn *websocket.Conn
+	adminConn *brokerConn
+	agentConn *brokerConn
 
 	// agentReplay buffers the agent's SDP offer + ICE candidates so an admin
 	// viewer that connects a moment after the device can still receive the
@@ -132,6 +132,101 @@ type signalingSession struct {
 	// the admin's answer is bound to a specific offer's ICE ufrag and must never
 	// be replayed to a reconnected device. Reset on every fresh agent bind.
 	agentReplay [][]byte
+}
+
+// brokerConn wraps a websocket.Conn with a single writer goroutine fed by a
+// bounded channel. This decouples the two peers' read loops: a slow reader (e.g.
+// the admin browser under load) no longer blocks the sender's read loop via a
+// shared mutex during WriteMessage. Under backpressure, VP8 video frames (binary)
+// are DROPPED rather than blocking — the renderer just requests a keyframe and
+// catches up — while text (signaling/control) is always delivered. This is what
+// killed relay stability: holding sess.mu across a blocking WriteMessage coupled
+// both legs, so any write stall cascaded into a device-side abnormal close (1006).
+type brokerConn struct {
+	ws     *websocket.Conn
+	send   chan wsMessage
+	closed chan struct{}
+	once   sync.Once
+}
+
+type wsMessage struct {
+	mt   int
+	data []byte
+}
+
+// brokerSendQueue is the per-connection outbound buffer. Sized to absorb a short
+// stall without unbounded memory; overflow drops the oldest video frame.
+const brokerSendQueue = 64
+
+func newBrokerConn(ws *websocket.Conn) *brokerConn {
+	c := &brokerConn{
+		ws:     ws,
+		send:   make(chan wsMessage, brokerSendQueue),
+		closed: make(chan struct{}),
+	}
+	go c.writeLoop()
+	return c
+}
+
+func (c *brokerConn) writeLoop() {
+	for {
+		select {
+		case <-c.closed:
+			return
+		case msg := <-c.send:
+			// A generous per-write deadline: a write that can't complete in this
+			// window means the peer is genuinely gone, not merely slow.
+			_ = c.ws.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			if err := c.ws.WriteMessage(msg.mt, msg.data); err != nil {
+				c.Close()
+				return
+			}
+		}
+	}
+}
+
+// enqueue queues a message for delivery. Text messages block briefly (signaling
+// must not be lost); binary video frames are dropped if the queue is full so a
+// slow admin never stalls the device's read loop. Returns false if the conn is
+// closed.
+func (c *brokerConn) enqueue(mt int, data []byte) bool {
+	// Copy: the caller's buffer (gorilla read buffer) is reused on the next read.
+	buf := make([]byte, len(data))
+	copy(buf, data)
+	if mt == websocket.BinaryMessage {
+		select {
+		case c.send <- wsMessage{mt, buf}:
+			return true
+		case <-c.closed:
+			return false
+		default:
+			// Queue full: drop this video frame. The decoder recovers on the next
+			// keyframe (viewer requests one on decode error).
+			return true
+		}
+	}
+	// Text / control: deliver reliably, but bound the wait so a dead peer can't
+	// wedge the sender forever.
+	select {
+	case c.send <- wsMessage{mt, buf}:
+		return true
+	case <-c.closed:
+		return false
+	case <-time.After(5 * time.Second):
+		c.Close()
+		return false
+	}
+}
+
+func (c *brokerConn) writeControl(messageType int, deadline time.Time) error {
+	return c.ws.WriteControl(messageType, nil, deadline)
+}
+
+func (c *brokerConn) Close() {
+	c.once.Do(func() {
+		close(c.closed)
+		_ = c.ws.Close()
+	})
 }
 
 // maxReplayMessages caps the per-peer signaling replay buffer. SDP + a modest
@@ -587,21 +682,29 @@ const (
 // the socket closes. Every received message is relayed verbatim to the
 // other peer (if connected) and updates last_activity_at so the janitor
 // can age out orphan sessions.
-func (h *RemoteSupportHandler) runPeer(ctx context.Context, sessionID string, conn *websocket.Conn, role peerRole) {
+func (h *RemoteSupportHandler) runPeer(ctx context.Context, sessionID string, rawConn *websocket.Conn, role peerRole) {
+	// Wrap the raw socket in a brokerConn: a dedicated writer goroutine + bounded
+	// queue so this peer's WRITES never block the OTHER peer's read loop. Reads
+	// still happen on the raw socket below.
+	conn := newBrokerConn(rawConn)
 	defer conn.Close()
 
 	sess := h.bindPeer(sessionID, conn, role)
 	defer h.unbindPeer(sess, role)
 
+	// Read deadline + pong handler: the keepalive pings below must be answered
+	// within the window or the peer is considered dead. This gives deterministic
+	// dead-connection detection instead of relying on TCP timeouts.
+	_ = rawConn.SetReadDeadline(time.Now().Add(70 * time.Second))
+	rawConn.SetPongHandler(func(string) error {
+		return rawConn.SetReadDeadline(time.Now().Add(70 * time.Second))
+	})
+
 	// Replay the other peer's buffered signaling to this (possibly late-joining)
 	// connection so a viewer that connects after the device already sent its
-	// OFFER + ICE still gets them and can negotiate. Best-effort: a write error
-	// here is handled by the read loop below.
+	// OFFER + ICE still gets them and can negotiate. Best-effort via the queue.
 	for _, msg := range sess.replayFor(role) {
-		sess.mu.Lock()
-		err := conn.WriteMessage(websocket.TextMessage, msg)
-		sess.mu.Unlock()
-		if err != nil {
+		if !conn.enqueue(websocket.TextMessage, msg) {
 			return
 		}
 	}
@@ -611,9 +714,8 @@ func (h *RemoteSupportHandler) runPeer(ctx context.Context, sessionID string, co
 		h.markActive(ctx, sessionID)
 	}
 
-	// Keepalive: proxies (APISIX) drop idle WebSockets after ~60s. While a peer
-	// waits for the other side to join it sends no application traffic, so ping
-	// periodically to keep the tunnel open. Stops when the read loop returns.
+	// Keepalive: proxies (APISIX) drop idle WebSockets after ~60s. Ping every 25s
+	// via the writer goroutine's control path. Stops when the read loop returns.
 	done := make(chan struct{})
 	defer close(done)
 	go func() {
@@ -624,10 +726,7 @@ func (h *RemoteSupportHandler) runPeer(ctx context.Context, sessionID string, co
 			case <-done:
 				return
 			case <-t.C:
-				sess.mu.Lock()
-				err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(5*time.Second))
-				sess.mu.Unlock()
-				if err != nil {
+				if err := conn.writeControl(websocket.PingMessage, time.Now().Add(5*time.Second)); err != nil {
 					return
 				}
 			}
@@ -635,7 +734,7 @@ func (h *RemoteSupportHandler) runPeer(ctx context.Context, sessionID string, co
 	}()
 
 	for {
-		mt, data, err := conn.ReadMessage()
+		mt, data, err := rawConn.ReadMessage()
 		if err != nil {
 			return
 		}
@@ -652,20 +751,17 @@ func (h *RemoteSupportHandler) runPeer(ctx context.Context, sessionID string, co
 			sess.recordReplay(role, data)
 		}
 		if target := sess.otherPeer(role); target != nil {
-			sess.mu.Lock()
-			writeErr := target.WriteMessage(mt, data)
-			sess.mu.Unlock()
-			if writeErr != nil {
-				h.logger.Warn("relay write failed", zap.String("session", sessionID), zap.Error(writeErr))
-				return
-			}
+			// enqueue is non-blocking for video (drops under backpressure) so a
+			// slow peer never stalls this read loop — the fix for the 1006 close
+			// cascade that made relay unstable.
+			target.enqueue(mt, data)
 		}
 	}
 }
 
 // bindPeer attaches conn to the session broker entry, creating it on first
 // peer.
-func (h *RemoteSupportHandler) bindPeer(sessionID string, conn *websocket.Conn, role peerRole) *signalingSession {
+func (h *RemoteSupportHandler) bindPeer(sessionID string, conn *brokerConn, role peerRole) *signalingSession {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	sess, ok := h.sessions[sessionID]
@@ -679,12 +775,12 @@ func (h *RemoteSupportHandler) bindPeer(sessionID string, conn *websocket.Conn, 
 	case peerAdmin:
 		// If a previous admin connection lingers, drop it.
 		if sess.adminConn != nil {
-			_ = sess.adminConn.Close()
+			sess.adminConn.Close()
 		}
 		sess.adminConn = conn
 	case peerAgent:
 		if sess.agentConn != nil {
-			_ = sess.agentConn.Close()
+			sess.agentConn.Close()
 		}
 		sess.agentConn = conn
 		// A fresh agent connection begins a NEW negotiation with a new ICE
@@ -724,7 +820,7 @@ func (s *signalingSession) hasBothPeers() bool {
 	return s.adminConn != nil && s.agentConn != nil
 }
 
-func (s *signalingSession) otherPeer(role peerRole) *websocket.Conn {
+func (s *signalingSession) otherPeer(role peerRole) *brokerConn {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if role == peerAdmin {
@@ -817,11 +913,11 @@ func (h *RemoteSupportHandler) endSession(ctx context.Context, sessionID, reason
 	if sess != nil {
 		sess.mu.Lock()
 		if sess.adminConn != nil {
-			_ = sess.adminConn.Close()
+			sess.adminConn.Close()
 			sess.adminConn = nil
 		}
 		if sess.agentConn != nil {
-			_ = sess.agentConn.Close()
+			sess.agentConn.Close()
 			sess.agentConn = nil
 		}
 		sess.mu.Unlock()

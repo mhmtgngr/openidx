@@ -254,6 +254,57 @@ func readN(t *testing.T, c *websocket.Conn, n int) []string {
 	return out
 }
 
+// TestBrokerSlowReaderDoesNotStallSender is the regression test for the relay
+// instability: a slow/stalled admin reader must NOT block the device's read loop
+// via the broker, and must NOT abnormally close the device connection. The
+// device streams a burst of video frames faster than the admin drains them; the
+// device leg must stay open and keep sending (excess video frames are dropped by
+// the broker's bounded per-connection queue, not backpressured onto the device).
+func TestBrokerSlowReaderDoesNotStallSender(t *testing.T) {
+	_, srv := newBrokerTestServer(t)
+	sid := "sess-slow-reader"
+
+	dev := dialWS(t, srv, "/agent/"+sid)
+	adm := dialWS(t, srv, "/admin/"+sid)
+	time.Sleep(50 * time.Millisecond)
+
+	// Admin never reads. Device blasts more frames than the broker queue holds.
+	frame := append([]byte{0x00}, make([]byte, 4096)...) // ~4KB video frame
+	deadline := time.Now().Add(3 * time.Second)
+	sent := 0
+	for i := 0; i < 500; i++ {
+		_ = dev.SetWriteDeadline(deadline)
+		if err := dev.WriteMessage(websocket.BinaryMessage, frame); err != nil {
+			t.Fatalf("device write %d stalled/failed (backpressure bug): %v", i, err)
+		}
+		sent++
+	}
+	if sent != 500 {
+		t.Fatalf("expected all 500 device frames to send without stalling, sent %d", sent)
+	}
+
+	// The device leg must still be alive: a round-trip control message succeeds.
+	if err := dev.WriteMessage(websocket.TextMessage, []byte(`{"type":"ping","payload":"ALIVE"}`)); err != nil {
+		t.Fatalf("device leg died under slow-reader backpressure: %v", err)
+	}
+	// And the admin, once it finally reads, still gets text signaling (not stuck).
+	_ = adm.SetReadDeadline(time.Now().Add(3 * time.Second))
+	sawAlive := false
+	for {
+		mt, data, err := adm.ReadMessage()
+		if err != nil {
+			break
+		}
+		if mt == websocket.TextMessage && strings.Contains(string(data), "ALIVE") {
+			sawAlive = true
+			break
+		}
+	}
+	if !sawAlive {
+		t.Error("admin never received the text control after the video burst (queue starved text)")
+	}
+}
+
 func containsMsg(msgs []string, needle string) bool {
 	for _, m := range msgs {
 		if strings.Contains(m, needle) {

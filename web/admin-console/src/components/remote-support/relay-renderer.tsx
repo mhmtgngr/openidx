@@ -37,6 +37,17 @@ export function RelayRenderer({ wsUrl, mode, onEnd, onPopOut, autoFullscreen }: 
   const [state, setState] = useState<RelayState>('connecting')
   const [errorMessage, setErrorMessage] = useState('')
   const [controlActive, setControlActive] = useState(mode === 'interactive')
+  // reconnectNonce forces the connect effect to tear down and re-run. The relay
+  // start-of-session has an inherent race: the admin WS may open before the
+  // device has (a) granted consent [broker returns 403] or (b) connected its own
+  // leg over the Ziti overlay [no frames yet]. Rather than dying on the first
+  // close, auto-reconnect a bounded number of times with backoff so the viewer
+  // reliably latches on once the device side is ready.
+  const [reconnectNonce, setReconnectNonce] = useState(0)
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Nonce at which we last had a healthy stream; the retry budget is measured
+  // relative to it, so a drop after a good stream gets a fresh set of retries.
+  const lastGoodNonceRef = useRef(0)
 
   useEffect(() => {
     if (typeof VideoDecoder === 'undefined') {
@@ -61,6 +72,9 @@ export function RelayRenderer({ wsUrl, mode, onEnd, onPopOut, autoFullscreen }: 
           const ctx = c.getContext('2d')
           if (ctx) ctx.drawImage(frame, 0, 0)
           setState('streaming')
+          // Healthy frame: rebase the retry budget to now so a later genuine
+          // drop still gets a full set of reconnect attempts.
+          lastGoodNonceRef.current = reconnectNonce
         }
         frame.close()
       },
@@ -78,8 +92,25 @@ export function RelayRenderer({ wsUrl, mode, onEnd, onPopOut, autoFullscreen }: 
       if (controlActiveRef.current) sendJSON({ event: 'control_state', active: true })
       requestKeyframe()
     }
-    ws.onclose = () => setState((p) => (p === 'closed' ? p : 'error'))
-    ws.onerror = () => setState((p) => (p === 'closed' ? p : 'error'))
+    // On an unexpected close/error, auto-reconnect with backoff until the device
+    // side is ready. This absorbs the start-of-session race (403 while consent is
+    // pending, or no frames yet while the device's overlay leg connects) so the
+    // viewer latches on reliably instead of dying on the first close.
+    const scheduleReconnect = () => {
+      if (reconnectNonce - lastGoodNonceRef.current >= 8) {
+        setState((p) => (p === 'closed' ? p : 'error'))
+        return
+      }
+      setState((p) => (p === 'closed' ? p : 'connecting'))
+      // Reset keyframe gating so a fresh connection waits for a new keyframe.
+      gotKeyRef.current = false
+      const attempts = reconnectNonce - lastGoodNonceRef.current
+      const delay = Math.min(500 + attempts * 500, 3000)
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current)
+      reconnectTimerRef.current = setTimeout(() => setReconnectNonce((n) => n + 1), delay)
+    }
+    ws.onclose = () => scheduleReconnect()
+    ws.onerror = () => scheduleReconnect()
     ws.onmessage = (ev) => {
       if (typeof ev.data === 'string') return // control text (unused inbound)
       const buf = new Uint8Array(ev.data as ArrayBuffer)
@@ -105,12 +136,16 @@ export function RelayRenderer({ wsUrl, mode, onEnd, onPopOut, autoFullscreen }: 
     }
 
     return () => {
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current)
+      // Detach handlers before closing so a normal unmount/reconnect teardown
+      // doesn't re-trigger scheduleReconnect via onclose.
+      ws.onclose = null
+      ws.onerror = null
       try { ws.close() } catch { /* already closed */ }
       try { decoder.close() } catch { /* already closed */ }
-      setState('closed')
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wsUrl])
+  }, [wsUrl, reconnectNonce])
 
   function sendJSON(obj: Record<string, unknown>) {
     const ws = wsRef.current
