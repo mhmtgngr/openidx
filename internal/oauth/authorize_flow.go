@@ -280,21 +280,25 @@ func (f *AuthorizeFlow) validatePKCE(client *Client, req *FlowAuthorizeRequest) 
 	return nil
 }
 
-// getUserSession retrieves the authenticated user session
+// getUserSession retrieves the authenticated user session for the experimental
+// AuthorizeFlow handler.
+//
+// SECURITY: this must never fabricate an identity. The production authorization
+// endpoint is Service.HandleAuthorizeRequest (see service.go), which resolves the
+// subject from a validated flow-auth session. AuthorizeFlow does not carry a
+// session store, so it cannot authenticate anyone and always fails closed here —
+// callers treat the error as "unauthenticated" and redirect to login. If this
+// flow is ever promoted to production, wire a real session validator (Redis /
+// database) before relying on it.
 func (f *AuthorizeFlow) getUserSession(c *gin.Context) (*UserSession, error) {
-	// Check session cookie
 	sessionCookie, err := c.Cookie("session")
 	if err != nil || sessionCookie == "" {
 		return nil, errors.New("no session cookie")
 	}
 
-	// In a real implementation, this would validate the session from Redis/database
-	// For now, return a mock session
-	return &UserSession{
-		UserID:    "user-123",
-		Email:     "user@example.com",
-		ExpiresAt: time.Now().Add(time.Hour),
-	}, nil
+	// No session store is available to this flow: fail closed rather than trust
+	// the cookie's mere presence. Never return a synthesized session.
+	return nil, errors.New("session validation not available in AuthorizeFlow; use the production authorize endpoint")
 }
 
 // generateAuthorizationCode creates and stores an authorization code

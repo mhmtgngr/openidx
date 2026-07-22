@@ -834,39 +834,65 @@ func (m *MockSAMLService) testBuildUserAttributes(user *SAMLUser, sp *SAMLServic
 	return attrs
 }
 
-// Test signature verification
+// Test signature verification — a real sign/verify round-trip through goxmldsig.
 
-func TestSAMLSignatureStructure(t *testing.T) {
-	// This tests the structure of our signature XML
-	sigXML := `    <ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#">
-      <ds:SignedInfo>
-        <ds:CanonicalizationMethod Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/>
-        <ds:SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"/>
-        <ds:Reference URI="#_assertion123">
-          <ds:Transforms>
-            <ds:Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"/>
-            <ds:Transform Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/>
-          </ds:Transforms>
-          <ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/>
-          <ds:DigestValue>abcdef1234567890</ds:DigestValue>
-        </ds:Reference>
-      </ds:SignedInfo>
-      <ds:SignatureValue>signature123</ds:SignatureValue>
-    </ds:Signature>`
+func TestSAMLAssertionSignRoundTrip(t *testing.T) {
+	key, err := rsa.GenerateKey(crand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("failed to generate test key: %v", err)
+	}
+	svc := &Service{
+		privateKey: key,
+		publicKey:  &key.PublicKey,
+		issuer:     "https://idp.example.com",
+	}
 
-	// Check that the signature XML contains expected elements
-	if !strings.Contains(sigXML, `<ds:SignedInfo>`) {
-		t.Error("missing SignedInfo element")
+	// The Assertion declares its own xmlns:saml so it is independently
+	// canonicalizable, exactly as the production IdPAssertion struct emits it.
+	responseXML := `<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="_resp1" Version="2.0">` +
+		`<saml:Issuer>https://idp.example.com</saml:Issuer>` +
+		`<saml:Assertion xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="_assertion123" Version="2.0" IssueInstant="2026-01-01T00:00:00Z">` +
+		`<saml:Issuer>https://idp.example.com</saml:Issuer>` +
+		`<saml:Subject><saml:NameID>alice-user</saml:NameID></saml:Subject>` +
+		`</saml:Assertion></samlp:Response>`
+
+	signed, err := svc.signAssertionEnveloped([]byte(responseXML))
+	if err != nil {
+		t.Fatalf("signAssertionEnveloped failed: %v", err)
 	}
-	if !strings.Contains(sigXML, `Algorithm="http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"`) {
-		t.Error("missing signature method")
+
+	// The signature must be a real enveloped XML-DSig, not hand-rolled markup.
+	for _, want := range []string{"Signature", "SignedInfo", "SignatureValue", "DigestValue", "enveloped-signature"} {
+		if !strings.Contains(signed, want) {
+			t.Errorf("signed assertion missing %q", want)
+		}
 	}
-	if !strings.Contains(sigXML, `URI="#_assertion123"`) {
-		t.Error("missing reference URI")
+
+	// The published cert must be a parseable X.509 certificate (not a bare key).
+	certB64, err := svc.samlSigningCertBase64()
+	if err != nil {
+		t.Fatalf("samlSigningCertBase64 failed: %v", err)
 	}
-	transformCount := strings.Count(sigXML, `<ds:Transform Algorithm="`)
-	if transformCount != 2 {
-		t.Errorf("expected 2 transforms, got %d", transformCount)
+	certDER, err := base64.StdEncoding.DecodeString(certB64)
+	if err != nil {
+		t.Fatalf("cert is not valid base64: %v", err)
+	}
+	if _, err := x509.ParseCertificate(certDER); err != nil {
+		t.Fatalf("published cert is not a valid X.509 certificate: %v", err)
+	}
+
+	// The signature must validate against that cert.
+	if err := verifySAMLSignature([]byte(signed), certB64); err != nil {
+		t.Fatalf("verifySAMLSignature rejected a valid signature: %v", err)
+	}
+
+	// Tampering with the signed content must break verification.
+	tampered := strings.Replace(signed, "alice-user", "evil-user", 1)
+	if tampered == signed {
+		t.Fatal("failed to tamper with signed XML for negative test")
+	}
+	if err := verifySAMLSignature([]byte(tampered), certB64); err == nil {
+		t.Error("verifySAMLSignature accepted a tampered assertion")
 	}
 }
 

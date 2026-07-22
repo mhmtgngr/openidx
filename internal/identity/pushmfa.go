@@ -520,36 +520,45 @@ func (s *Service) sendPushNotification(ctx context.Context, device *PushMFADevic
 	}
 }
 
+// Process-wide caches for the push provider credentials/tokens. Config is fixed
+// per process, so a single cached token source (FCM) and provider token (APNS)
+// serve every challenge.
+var (
+	defaultFCMProvider  = &fcmProvider{}
+	defaultAPNSProvider = &apnsProvider{}
+)
+
 func (s *Service) sendFCMNotification(ctx context.Context, token string, payload map[string]interface{}) error {
-	fcmKey := s.cfg.PushMFA.FCMServerKey
-	if fcmKey == "" {
-		s.logger.Warn("FCM server key not configured, skipping push notification")
-		return fmt.Errorf("FCM server key not configured")
+	accessToken, projectID, err := defaultFCMProvider.getToken(ctx, s.cfg.PushMFA.FCMCredentialsFile, s.cfg.PushMFA.FCMProjectID)
+	if err != nil {
+		s.logger.Warn("FCM HTTP v1 not configured, skipping push notification", zap.Error(err))
+		return fmt.Errorf("FCM not configured: %w", err)
 	}
 
 	s.logger.Info("Sending FCM notification",
 		zap.String("token_prefix", token[:min(10, len(token))]))
 
-	body := map[string]interface{}{
-		"to": token,
-		"notification": map[string]string{
-			"title": "Authentication Request",
-			"body":  "Approve or deny the login request",
-		},
-		"data": payload,
+	// FCM HTTP v1 requires all data values to be strings.
+	var msg fcmMessage
+	msg.Message.Token = token
+	msg.Message.Notification = map[string]string{
+		"title": "Authentication Request",
+		"body":  "Approve or deny the login request",
 	}
+	msg.Message.Data = stringifyPayload(payload)
 
-	jsonBody, err := json.Marshal(body)
+	jsonBody, err := json.Marshal(&msg)
 	if err != nil {
 		return fmt.Errorf("failed to marshal FCM payload: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://fcm.googleapis.com/fcm/send", bytes.NewReader(jsonBody))
+	endpoint := fmt.Sprintf("https://fcm.googleapis.com/v1/projects/%s/messages:send", projectID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(jsonBody))
 	if err != nil {
 		return fmt.Errorf("failed to create FCM request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "key="+fcmKey)
+	req.Header.Set("Authorization", "Bearer "+accessToken)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -579,6 +588,12 @@ func (s *Service) sendAPNSNotification(ctx context.Context, token string, payloa
 		return fmt.Errorf("APNS bundle ID not configured")
 	}
 
+	providerToken, err := defaultAPNSProvider.getToken(s.cfg.PushMFA.APNSKeyPath, s.cfg.PushMFA.APNSKeyID, s.cfg.PushMFA.APNSTeamID)
+	if err != nil {
+		s.logger.Warn("APNS token auth not configured, skipping push notification", zap.Error(err))
+		return fmt.Errorf("APNS not configured: %w", err)
+	}
+
 	s.logger.Info("Sending APNS notification",
 		zap.String("token_prefix", token[:min(10, len(token))]))
 
@@ -600,12 +615,18 @@ func (s *Service) sendAPNSNotification(ctx context.Context, token string, payloa
 		return fmt.Errorf("failed to marshal APNS payload: %w", err)
 	}
 
-	url := fmt.Sprintf("https://api.push.apple.com/3/device/%s", token)
+	// Sandbox by default; production host only when explicitly enabled.
+	host := "https://api.sandbox.push.apple.com"
+	if s.cfg.PushMFA.APNSProduction {
+		host = "https://api.push.apple.com"
+	}
+	url := fmt.Sprintf("%s/3/device/%s", host, token)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(jsonBody))
 	if err != nil {
 		return fmt.Errorf("failed to create APNS request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "bearer "+providerToken)
 	req.Header.Set("apns-topic", bundleID)
 	req.Header.Set("apns-push-type", "alert")
 	req.Header.Set("apns-priority", "10")

@@ -23,6 +23,7 @@ import (
 	"github.com/openidx/openidx/internal/common/secretcrypt"
 	"github.com/openidx/openidx/internal/common/tlsutil"
 	"github.com/openidx/openidx/internal/common/tracing"
+	"github.com/openidx/openidx/internal/email"
 	newhealth "github.com/openidx/openidx/internal/health"
 	"github.com/openidx/openidx/internal/identity"
 	"github.com/openidx/openidx/internal/metrics"
@@ -164,6 +165,14 @@ func main() {
 	// Initialize Identity service
 	identityService := identity.NewService(db, redis, cfg, log)
 
+	// Wire the email service so the OAuth flows that depend on it work:
+	// magic-link login delivery and email OTP challenges both call through the
+	// identity service. Emails are enqueued to a shared Redis queue; this
+	// service also drains it so it can deliver its own mail without depending
+	// on another service being up.
+	emailService := email.NewService(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUsername, cfg.SMTPPassword, cfg.SMTPFrom, redis, log)
+	identityService.SetEmailService(emailService)
+
 	// Initialize risk service (conditional access)
 	riskService := risk.NewService(db, redis, log)
 
@@ -177,6 +186,7 @@ func main() {
 	ctx, cancelWorkers := context.WithCancel(context.Background())
 	go webhookService.ProcessDeliveries(ctx)
 	go webhookService.ProcessRetries(ctx)
+	go emailService.ProcessQueue(ctx)
 	defer cancelWorkers()
 
 	// Initialize OAuth service

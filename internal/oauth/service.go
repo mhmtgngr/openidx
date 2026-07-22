@@ -1266,6 +1266,11 @@ func RegisterRoutes(router *gin.Engine, svc *Service, clientMgmtAuth gin.Handler
 		oauth.POST("/passkey-begin", svc.handlePasskeyBegin)
 		oauth.POST("/passkey-finish", svc.handlePasskeyFinish)
 
+		// Consent decision — records or rejects a user's approval of a client and
+		// its scopes, then issues the code on approval. The subject comes from the
+		// server-side consent stash, so this endpoint is safe unauthenticated.
+		oauth.POST("/consent", svc.handleConsentDecision)
+
 		// Magic link login (public, no auth required)
 		oauth.POST("/magic-link", svc.handleOAuthMagicLink)
 		oauth.GET("/magic-link-verify", svc.handleMagicLinkVerify)
@@ -2122,6 +2127,20 @@ func (s *Service) handleLogin(c *gin.Context) {
 
 // issueAuthorizationCode generates an auth code and returns the redirect URL
 func (s *Service) issueAuthorizationCode(c *gin.Context, oauthParams map[string]string, userID string) {
+	// Enforce per-application consent unless it was just granted in this flow.
+	if oauthParams["consent_granted"] != "true" {
+		required, cerr := s.consentRequired(c.Request.Context(), oauthParams["client_id"], userID, oauthParams["scope"])
+		if cerr != nil {
+			s.logger.Error("consent check failed", zap.Error(cerr))
+			c.JSON(500, gin.H{"error": "server_error"})
+			return
+		}
+		if required {
+			s.beginConsent(c, oauthParams, userID)
+			return
+		}
+	}
+
 	code := GenerateRandomToken(32)
 	authCode := &AuthorizationCode{
 		Code:                code,
@@ -2786,6 +2805,28 @@ func (s *Service) handleAuthorizeConsent(c *gin.Context) {
 	}
 	if !validRedirect {
 		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "redirect_uri not registered for client"})
+		return
+	}
+
+	// Enforce per-application consent before issuing a code. If required and not
+	// yet granted, return a consent challenge for the browser to render.
+	required, cerr := s.consentRequired(c.Request.Context(), req.ClientID, userID, req.Scope)
+	if cerr != nil {
+		s.logger.Error("consent check failed", zap.Error(cerr))
+		c.JSON(500, gin.H{"error": "server_error"})
+		return
+	}
+	if required {
+		s.beginConsent(c, map[string]string{
+			"client_id":             req.ClientID,
+			"redirect_uri":          req.RedirectURI,
+			"response_type":         req.ResponseType,
+			"scope":                 req.Scope,
+			"state":                 req.State,
+			"nonce":                 req.Nonce,
+			"code_challenge":        req.CodeChallenge,
+			"code_challenge_method": req.CodeChallengeMethod,
+		}, userID)
 		return
 	}
 
