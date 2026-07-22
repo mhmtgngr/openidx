@@ -25,6 +25,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"strconv"
@@ -630,23 +631,6 @@ func (h *RemoteSupportHandler) HandleAdminWS(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "session not found"})
 		return
 	}
-	// Consent gate (attended support): if the session requires device consent
-	// and the device has not yet granted it, the admin must NOT be able to
-	// view/control. Refuse the WS until consent is 'granted' (fail-closed). A
-	// 'denied' session has already been ended by HandleAgentConsent.
-	var consentRequired bool
-	var consentStatus string
-	if err := h.db.Pool.QueryRow(c.Request.Context(),
-		`SELECT consent_required, consent_status FROM remote_support_sessions WHERE id=$1`, id).
-		Scan(&consentRequired, &consentStatus); err == nil {
-		if consentRequired && consentStatus != "granted" {
-			c.JSON(http.StatusForbidden, gin.H{
-				"error":          "awaiting device consent",
-				"consent_status": consentStatus,
-			})
-			return
-		}
-	}
 	// Echo the token subprotocol the browser offered. A browser WebSocket that
 	// opens with a subprotocol (we send `bearer.<jwt>` because browsers can't
 	// set an Authorization header on WS) REQUIRES the server to select one of
@@ -666,7 +650,75 @@ func (h *RemoteSupportHandler) HandleAdminWS(c *gin.Context) {
 		h.logger.Warn("HandleAdminWS: upgrade failed", zap.Error(err))
 		return
 	}
+	// Consent gate (attended support): if the session requires device consent and
+	// it hasn't been granted yet, do NOT 403 the handshake — that made the browser
+	// WS fail and reconnect in a tight loop, exhausting its retry budget before
+	// the user could click Allow (~5-8s later), so the viewer gave up right when
+	// consent landed. Instead, hold the (already-upgraded) WS open and wait for
+	// consent, then proceed to stream. Fail-closed on denial or timeout.
+	if err := h.waitForConsent(c.Request.Context(), conn, id); err != nil {
+		_ = conn.Close()
+		return
+	}
 	h.runPeer(c.Request.Context(), id, conn, peerAdmin)
+}
+
+// waitForConsent blocks until the session's device consent is granted, returning
+// nil to proceed. Returns an error if consent is not required-but-pending (nil
+// immediately), denied, the session ends, or the wait times out. Keeps the WS
+// alive with periodic pings so proxies don't drop it while the user decides.
+func (h *RemoteSupportHandler) waitForConsent(ctx context.Context, conn *websocket.Conn, sessionID string) error {
+	readStatus := func() (required bool, status string, ok bool) {
+		if h.db == nil || h.db.Pool == nil {
+			return false, "granted", true
+		}
+		var req bool
+		var st string
+		if err := h.db.Pool.QueryRow(ctx,
+			`SELECT consent_required, consent_status, status FROM remote_support_sessions WHERE id=$1`,
+			sessionID).Scan(&req, &st, new(string)); err != nil {
+			return false, "", false
+		}
+		return req, st, true
+	}
+	required, status, ok := readStatus()
+	if !ok {
+		return fmt.Errorf("session gone")
+	}
+	if !required || status == "granted" {
+		return nil // no gate, proceed immediately
+	}
+	if status == "denied" {
+		return fmt.Errorf("consent denied")
+	}
+	// Poll for up to 30s, keeping the WS warm with pings.
+	deadline := time.Now().Add(30 * time.Second)
+	tick := time.NewTicker(500 * time.Millisecond)
+	defer tick.Stop()
+	ping := time.NewTicker(15 * time.Second)
+	defer ping.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ping.C:
+			_ = conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(5*time.Second))
+		case <-tick.C:
+			if time.Now().After(deadline) {
+				return fmt.Errorf("consent timeout")
+			}
+			_, status, ok := readStatus()
+			if !ok {
+				return fmt.Errorf("session gone")
+			}
+			switch status {
+			case "granted":
+				return nil
+			case "denied":
+				return fmt.Errorf("consent denied")
+			}
+		}
+	}
 }
 
 // HandleAgentWS handles the agent (device) side of signaling. The agent
