@@ -1,6 +1,8 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'tailwindcss';
+
+/* Tailwind v4 is CSS-first, but we keep the existing JS theme (design tokens,
+   container, keyframes) via @config rather than porting it all to @theme. */
+@config '../tailwind.config.js';
 
 @layer base {
   :root {
