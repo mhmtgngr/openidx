@@ -171,6 +171,10 @@ func main() {
 	// (syslog/CEF/Splunk HEC). No-op unless AUDIT_SIEM_ENABLED=true.
 	auditService.StartSIEMForwarder(context.Background())
 
+	// Start the usage metering aggregator: rolls up Ziti fabric events into daily
+	// per-org/service/identity counters (Wave A4, the MSP billing substrate).
+	auditService.StartUsageMetering(context.Background())
+
 	// Initialize EventStreamer with WebSocket origin validation
 	streamConfig := audit.StreamConfigFromAppConfig(cfg)
 	eventStreamer := audit.NewEventStreamerWithConfig(log, auditService, streamConfig)

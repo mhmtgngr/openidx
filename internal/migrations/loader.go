@@ -719,5 +719,12 @@ func allMigrations() []*Migration {
 			UpSQL:       networkGrantQueueUp,
 			DownSQL:     networkGrantQueueDown,
 		},
+		{
+			Version:     102,
+			Name:        "usage_metering",
+			Description: "Add usage_metering_daily + usage_metering_cursor (Wave A4): a daily rollup of Ziti fabric usage (overlay logins, service dials) from unified_audit_events, per org/service/identity. The MSP billing substrate. Additive/idempotent.",
+			UpSQL:       usageMeteringUp,
+			DownSQL:     usageMeteringDown,
+		},
 	}
 }

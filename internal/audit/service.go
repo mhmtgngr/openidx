@@ -1130,6 +1130,9 @@ func RegisterRoutes(router *gin.Engine, svc *Service, extraMiddleware ...gin.Han
 		// Statistics
 		audit.GET("/statistics", svc.handleGetStatistics)
 
+		// Usage metering (Wave A4): Ziti fabric usage rollup for billing/reporting.
+		audit.GET("/usage", svc.handleGetUsage)
+
 		// Reports
 		audit.GET("/reports", svc.handleListReports)
 		audit.POST("/reports", svc.handleGenerateReport)
