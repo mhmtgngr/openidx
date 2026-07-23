@@ -96,6 +96,10 @@ func (s *Service) revokeExpiredJITAccess(ctx context.Context) {
 			continue
 		}
 
+		// Sever the user's live overlay circuits too (Wave B2): a JIT grant that
+		// expired shouldn't leave an open circuit until the app closes it.
+		s.enqueueNetworkRevocation(ctx, requesterID, orgID, "jit_expiry")
+
 		// Mark the access request as expired
 		_, err := s.db.Pool.Exec(ctx,
 			`UPDATE access_requests SET status = 'expired', updated_at = NOW() WHERE id = $1 AND org_id = $2`, id, orgID)
