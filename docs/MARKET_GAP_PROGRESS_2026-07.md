@@ -14,8 +14,9 @@ Status snapshot after the 2026-07-23 push. This tracks the §7.2 roadmap from
 | SSF/CAEP transmitter + receiver | #547 | First OSS SSF/CAEP with native network termination (receiver actuator severs the overlay) |
 | Mid-session + governance-revoke network termination (A3 + B2) | #549 | Posture/risk degrade AND access-review/cert/JIT revoke sever live Ziti circuits |
 | JIT network grants (B1) | #551 | Approve a network_service request → time-bound `jit-<id>` Ziti attribute opens the dial → expiry removes it + severs the circuit |
+| Usage metering (A4) | #553 | Daily rollup of Ziti fabric usage (overlay logins, service dials) per org/service/identity from unified_audit_events; GET /api/v1/audit/usage |
 
-Migrations v95–v101 applied live. Every feature has DB-backed tests + a live
+Migrations v95–v102 applied live. Every feature has DB-backed tests + a live
 end-to-end proof against `openidx.tdv.org`.
 
 ## Remaining §7.2 waves (follow-up PRs)
@@ -30,10 +31,6 @@ the MSP channel + any multi-tenant SaaS offer.
   (attribute namespacing), the reconciler, and every place a default org is
   assumed on the overlay path. Large; do behind a feature flag.
 
-### A4 — Usage metering per org/service/identity
-Consume the Ziti fabric event stream (already ingested into `unified_audit_events`
-by #516) into per-org/service/identity usage counters + a consumption dashboard.
-The MSP billing substrate.
 
 ### D1 — MCP / AI-agent gateway
 Each agent a Ziti identity (DCR from #545 already lets an agent self-register);
