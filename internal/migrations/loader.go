@@ -712,5 +712,12 @@ func allMigrations() []*Migration {
 			UpSQL:       networkRevocationQueueUp,
 			DownSQL:     networkRevocationQueueDown,
 		},
+		{
+			Version:     101,
+			Name:        "network_grant_queue",
+			Description: "Add network_grant_queue (+ network_revocation_queue.attribute) for JIT network grants (Wave B1): fulfilling a network_service access request adds a time-bound Ziti role attribute (jit-<request-id>) that opens the dial; expiry removes it and severs the circuit. Governance->access handoff. Additive/idempotent.",
+			UpSQL:       networkGrantQueueUp,
+			DownSQL:     networkGrantQueueDown,
+		},
 	}
 }

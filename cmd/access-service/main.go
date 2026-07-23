@@ -329,6 +329,10 @@ func main() {
 	// the governance service revoked (access-review/certification/JIT expiry).
 	accessService.StartNetworkRevocationWorker(context.Background())
 
+	// Start the JIT network grant worker: adds time-bound Ziti attributes when a
+	// network_service access request is fulfilled (Wave B1).
+	accessService.StartNetworkGrantWorker(context.Background())
+
 	// Start continuous session verification if enabled
 	if cfg.ContinuousVerifyEnabled {
 		log.Info("Starting continuous session verifier", zap.Int("interval_seconds", cfg.ContinuousVerifyInterval))
