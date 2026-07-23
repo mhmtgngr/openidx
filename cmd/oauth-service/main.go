@@ -200,6 +200,10 @@ func main() {
 	// Start background session expiry worker
 	oauthService.StartSessionWorker(ctx)
 
+	// SSF/CAEP transmitter: drain the SET outbox and push signed security event
+	// tokens to subscribed receivers. Idle until a stream is configured.
+	oauthService.StartSSFPushWorker(ctx)
+
 	// The client-management API (/api/v1/oauth/clients) is ALWAYS authenticated
 	// — it creates/modifies OAuth clients, so it must never be reachable
 	// unauthenticated, including in development. The interactive OIDC flow
