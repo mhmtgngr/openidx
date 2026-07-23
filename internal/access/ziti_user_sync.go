@@ -46,7 +46,7 @@ type SyncStatus struct {
 func (zm *ZitiManager) getUserGroupNames(ctx context.Context, userID string) ([]string, error) {
 	rows, err := zm.db.Pool.Query(ctx,
 		//orgscope:ignore Ziti user-sync engine; keyed by globally-unique user_id (a user belongs to exactly one org), so the membership set is org-bounded
-		`SELECT g.name FROM groups g
+		`SELECT g.name, g.org_id FROM groups g
 		 JOIN group_memberships gm ON gm.group_id = g.id
 		 WHERE gm.user_id = $1
 		 ORDER BY g.name`, userID)
@@ -55,15 +55,50 @@ func (zm *ZitiManager) getUserGroupNames(ctx context.Context, userID string) ([]
 	}
 	defer rows.Close()
 
+	perOrg := zm.cfg != nil && zm.cfg.ZitiPerOrgAttributes
 	var names []string
 	for rows.Next() {
 		var name string
-		if err := rows.Scan(&name); err != nil {
+		var orgID *string
+		if err := rows.Scan(&name, &orgID); err != nil {
 			continue
+		}
+		if perOrg {
+			name = orgScopedAttr(orgID, name)
 		}
 		names = append(names, name)
 	}
 	return names, nil
+}
+
+// orgScopedAttr namespaces a Ziti role attribute by its owning org so that two
+// tenants' identically named groups (e.g. "engineers") map to distinct overlay
+// attributes and cannot dial each other's services. The result is sanitized to
+// the Ziti-legal attribute charset (alphanumerics, '-', '.', '_'). A nil/empty
+// org falls back to the bare name so global groups keep their existing policies.
+func orgScopedAttr(orgID *string, name string) string {
+	if orgID == nil || *orgID == "" {
+		return sanitizeAttr(name)
+	}
+	return "org-" + sanitizeAttr(*orgID) + "-" + sanitizeAttr(name)
+}
+
+// sanitizeAttr coerces an arbitrary string into the Ziti role-attribute charset.
+// Any character outside [A-Za-z0-9._-] becomes '-'; runs are not collapsed so the
+// mapping is deterministic and reversible enough for auditing.
+func sanitizeAttr(s string) string {
+	b := make([]byte, 0, len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9',
+			c == '.', c == '_', c == '-':
+			b = append(b, c)
+		default:
+			b = append(b, '-')
+		}
+	}
+	return string(b)
 }
 
 // SyncUserToZiti creates a Ziti identity for a user if one doesn't exist,
