@@ -195,6 +195,14 @@ func (cv *ContinuousVerifier) verifyActiveSessions(ctx context.Context) {
 				cv.svc.redis.Client.Del(ctx, "proxy_session:"+tokenHash)
 			}
 
+			// Mid-session network termination (Wave A3): revoking the proxy
+			// session stops NEW dials, but an already-open Ziti circuit would
+			// survive until the app closes it. When the overlay is active, sever
+			// the user's live controller sessions too so a posture/risk degrade
+			// kills the circuit in-flight (posture becomes a guarantee, not a
+			// gate). Best-effort; never blocks the revoke.
+			cv.svc.severUserZitiCircuits(ctx, sess.UserID, decision.Reason)
+
 			cv.logger.Warn("Session revoked by continuous verification",
 				zap.String("session_id", sess.SessionID),
 				zap.String("user_id", sess.UserID),
@@ -240,4 +248,51 @@ func (s *Service) StartContinuousVerification(ctx context.Context, intervalSecon
 	}
 	cv := NewContinuousVerifier(s, time.Duration(intervalSeconds)*time.Second, s.logger)
 	cv.Start(ctx)
+}
+
+// severUserZitiCircuits terminates the user's (and their enrolled devices')
+// live Ziti controller sessions so a mid-session posture/risk degrade kills any
+// already-open overlay circuit, not just future dials (Wave A3). No-op when the
+// overlay is not active. Best-effort: failures are logged, never propagated.
+func (s *Service) severUserZitiCircuits(ctx context.Context, userID, reason string) {
+	zm := s.ziti()
+	if zm == nil || userID == "" {
+		return
+	}
+	// Collect the user's own identity + any enrolled-device identities.
+	var zitiIDs []string
+	var userZitiID string
+	if err := s.db.Pool.QueryRow(ctx,
+		//orgscope:ignore mid-session network termination; resolves the session user's own Ziti identity by user_id on the continuous-verify sweep
+		`SELECT ziti_id FROM ziti_identities WHERE user_id = $1 LIMIT 1`, userID).Scan(&userZitiID); err == nil && userZitiID != "" {
+		zitiIDs = append(zitiIDs, userZitiID)
+	}
+	rows, err := s.db.Pool.Query(ctx,
+		//orgscope:ignore enrolled_agents scoped through the org-verified enrolled_by_user_id key (data plane)
+		`SELECT ziti_identity_id FROM enrolled_agents
+		  WHERE enrolled_by_user_id = $1 AND ziti_identity_id IS NOT NULL AND ziti_identity_id <> ''`, userID)
+	if err == nil {
+		for rows.Next() {
+			var zid string
+			if err := rows.Scan(&zid); err == nil && zid != "" {
+				zitiIDs = append(zitiIDs, zid)
+			}
+		}
+		rows.Close()
+	}
+
+	total := 0
+	for _, zid := range zitiIDs {
+		edge, api, terr := zm.TerminateIdentitySessions(ctx, zid)
+		if terr != nil {
+			s.logger.Warn("continuous-verify: Ziti session termination failed",
+				zap.String("ziti_id", zid), zap.Error(terr))
+			continue
+		}
+		total += edge + api
+	}
+	if total > 0 {
+		s.logger.Warn("continuous-verify: severed live Ziti circuits",
+			zap.String("user_id", userID), zap.String("reason", reason), zap.Int("sessions", total))
+	}
 }
