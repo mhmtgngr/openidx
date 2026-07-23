@@ -135,6 +135,12 @@ func (e *SyncEngine) doSync(ctx context.Context, directoryID, orgID, dirType str
 			return fmt.Errorf("invalid Azure AD config: %w", err)
 		}
 		return e.doSyncAzureAD(ctx, directoryID, orgID, cfg, fullSync, result)
+	case "hris", "bamboohr":
+		var cfg HRISConfig
+		if err := json.Unmarshal(configBytes, &cfg); err != nil {
+			return fmt.Errorf("invalid HRIS config: %w", err)
+		}
+		return e.doSyncHRIS(ctx, directoryID, orgID, cfg, fullSync, result)
 	default:
 		return fmt.Errorf("unsupported directory type: %s", dirType)
 	}
