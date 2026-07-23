@@ -23,6 +23,7 @@ import (
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/common/secretcrypt"
 )
 
 // ctxKey is an unexported type for context keys in this package.
@@ -222,16 +223,51 @@ type Service struct {
 	jwksCacheMu     sync.RWMutex
 	jwksCachedKey   *rsa.PublicKey
 	jwksCacheExpiry time.Time
+
+	// cipher encrypts/decrypts outbound-SCIM target secrets at rest.
+	cipher *secretcrypt.Cipher
 }
 
 // NewService creates a new provisioning service
 func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *config.Config, logger *zap.Logger) *Service {
+	log := logger.With(zap.String("service", "provisioning"))
+	// Build the secret cipher for outbound-SCIM target credentials. Fall back to
+	// a no-op cipher (plaintext passthrough) when no key is configured, matching
+	// the rest of the tree's rollout behavior.
+	cipher, err := secretcrypt.New(cfg.EncryptionKey)
+	if err != nil {
+		log.Warn("provisioning: encryption key unusable; outbound-SCIM secrets will not be encrypted at rest", zap.Error(err))
+		cipher = secretcrypt.NewNoop()
+	}
 	return &Service{
 		db:     db,
 		redis:  redis,
 		config: cfg,
-		logger: logger.With(zap.String("service", "provisioning")),
+		logger: log,
+		cipher: cipher,
 	}
+}
+
+// encryptSecret seals a plaintext secret for storage. Empty input returns "".
+func (s *Service) encryptSecret(plaintext string) (string, error) {
+	if plaintext == "" {
+		return "", nil
+	}
+	if s.cipher == nil {
+		return plaintext, nil
+	}
+	return s.cipher.Encrypt(plaintext)
+}
+
+// decryptSecret opens a stored secret. Empty input returns "".
+func (s *Service) decryptSecret(stored string) (string, error) {
+	if stored == "" {
+		return "", nil
+	}
+	if s.cipher == nil {
+		return stored, nil
+	}
+	return s.cipher.Decrypt(stored)
 }
 
 // openIDXAuthMiddleware validates OpenIDX OAuth JWT tokens for provisioning service
