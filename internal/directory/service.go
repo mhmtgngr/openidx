@@ -84,6 +84,16 @@ func (s *Service) TestConnection(ctx context.Context, dirType string, configByte
 		}
 		connector := NewAzureADConnector(cfg, s.logger)
 		return connector.TestConnection(ctx)
+	case "hris", "bamboohr":
+		var cfg HRISConfig
+		if err := json.Unmarshal(configBytes, &cfg); err != nil {
+			return fmt.Errorf("invalid HRIS config: %w", err)
+		}
+		connector, err := newHRISConnector(cfg, s.logger)
+		if err != nil {
+			return err
+		}
+		return connector.TestConnection(ctx)
 	default:
 		return fmt.Errorf("unsupported directory type: %s", dirType)
 	}
