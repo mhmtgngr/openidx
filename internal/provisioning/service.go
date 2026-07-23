@@ -562,6 +562,10 @@ func (s *Service) CreateSCIMUser(ctx context.Context, user *SCIMUser) (*SCIMUser
 	// rule evaluation never fails the SCIM create).
 	s.applyProvisioningRules(ctx, TriggerUserCreated, user)
 
+	// Fan out to downstream SCIM targets: an upstream create provisions the
+	// user into every enabled SaaS target.
+	s.fanOutUserChange(ctx, org.ID, userID, OpCreate, user)
+
 	return user, nil
 }
 
@@ -663,6 +667,16 @@ func (s *Service) UpdateSCIMUser(ctx context.Context, userID string, user *SCIMU
 	// supported actions are additive and idempotent).
 	s.applyProvisioningRules(ctx, TriggerUserUpdated, user)
 
+	// Fan out to downstream SCIM targets. An `active:false` update is the
+	// standard IdP deprovision signal, so route it as a deactivate op (the
+	// worker PATCHes active=false or DELETEs per the target's policy); anything
+	// else is a normal update.
+	op := OpUpdate
+	if !user.Active {
+		op = OpDeactivate
+	}
+	s.fanOutUserChange(ctx, org.ID, userID, op, user)
+
 	return user, nil
 }
 
@@ -754,6 +768,12 @@ func (s *Service) DeleteSCIMUser(ctx context.Context, userID string) error {
 
 	// Revoke sessions + API keys before removing the user row.
 	s.deprovisionUser(ctx, userID, org.ID, true)
+
+	// Fan out a delete to downstream SCIM targets BEFORE removing the local row,
+	// so the outbox snapshot still identifies the user. The worker deactivates
+	// or deletes the remote resource per each target's policy. Enqueued with a
+	// minimal snapshot (identity is all the worker needs to find the mapping).
+	s.fanOutUserChange(ctx, org.ID, userID, OpDelete, &SCIMUser{ID: userID})
 
 	// Delete from users table (CASCADE will delete from scim_users)
 	_, err = s.db.Pool.Exec(ctx, "DELETE FROM users WHERE id = $1 AND org_id = $2", userID, org.ID)

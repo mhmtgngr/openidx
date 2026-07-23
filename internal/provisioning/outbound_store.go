@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 )
 
 // This file implements the persistence layer for OUTBOUND SCIM provisioning:
@@ -331,6 +332,49 @@ func payloadHash(v interface{}) string {
 	b, _ := json.Marshal(v)
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
+}
+
+// fanOutUserChange enqueues an outbound provisioning op for a SCIM user across
+// all enabled targets. It is the single hook the inbound-SCIM write paths call
+// so an upstream IdP/HR create/update/deprovision propagates to downstream SaaS.
+// Best-effort: a fan-out failure is logged, never fatal to the inbound write
+// (the outbox is the source of truth once written, and a missed enqueue is
+// recovered by a full sync). orgID is the resolved org; localID is users.id.
+func (s *Service) fanOutUserChange(ctx context.Context, orgID, localID, operation string, user *SCIMUser) {
+	snap := scimUserToSnapshot(localID, user)
+	n, err := s.EnqueueUserOp(ctx, orgID, localID, operation, snap)
+	if err != nil {
+		s.logger.Warn("outbound SCIM fan-out failed (will be recovered by full sync)",
+			zap.String("op", operation), zap.String("user_id", scrubLogValue(localID)), zap.Error(err))
+		return
+	}
+	if n > 0 {
+		s.logger.Info("outbound SCIM fan-out enqueued",
+			zap.String("op", operation), zap.String("user_id", scrubLogValue(localID)), zap.Int("targets", n))
+	}
+}
+
+// scimUserToSnapshot converts an inbound SCIM user into the outbox snapshot the
+// worker maps to a downstream SCIM resource.
+func scimUserToSnapshot(localID string, user *SCIMUser) userSnapshot {
+	snap := userSnapshot{
+		ID:          localID,
+		UserName:    user.UserName,
+		DisplayName: user.DisplayName,
+		Active:      user.Active,
+	}
+	if user.Name.GivenName != "" || user.Name.FamilyName != "" {
+		snap.FirstName = user.Name.GivenName
+		snap.LastName = user.Name.FamilyName
+	}
+	if len(user.Emails) > 0 {
+		snap.Email = user.Emails[0].Value
+	}
+	if user.Enterprise != nil {
+		snap.Department = user.Enterprise.Department
+		snap.EmployeeNumber = user.Enterprise.EmployeeNumber
+	}
+	return snap
 }
 
 func nullIfEmpty(s string) interface{} {
