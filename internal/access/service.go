@@ -485,6 +485,16 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.POST("/ziti/posture/edr/:id/test", adminOnly, svc.handleTestEDRSource)
 		api.POST("/ziti/posture/edr/:id/sync", adminOnly, svc.handleSyncEDRSource)
 
+		// MCP / AI-agent gateway (Wave D1). Admin manages servers + per-tool
+		// allowlists; the invoke endpoint authenticates the AGENT's own token
+		// (not the admin session), so it lives outside adminOnly.
+		api.GET("/mcp/servers", adminOnly, svc.handleListMCPServers)
+		api.POST("/mcp/servers", adminOnly, svc.handleCreateMCPServer)
+		api.DELETE("/mcp/servers/:id", adminOnly, svc.handleDeleteMCPServer)
+		api.POST("/mcp/servers/:id/policies", adminOnly, svc.handleAddMCPToolPolicy)
+		// Agent-facing gateway: POST /api/v1/access/mcp/:server/tools/:tool.
+		api.POST("/mcp/:server/tools/:tool", svc.handleMCPInvoke)
+
 		// Phase 3: Policy sync
 		api.GET("/ziti/policy-sync", svc.handleListPolicySyncStates)
 		api.POST("/ziti/policy-sync", adminOnly, svc.handleSyncGovernancePolicy)
