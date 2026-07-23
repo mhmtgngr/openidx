@@ -49,6 +49,30 @@ type DirectoryConnector interface {
 	SearchGroups(ctx context.Context) ([]GroupRecord, error)
 }
 
+// HRISConfig holds the connection + sync configuration for an HR source of
+// truth (BambooHR today; the same shape covers Workday/SuccessFactors REST
+// APIs). An HRIS is modeled as a directory-connector type: it lands users into
+// the same users table and drives joiner/mover/leaver.
+type HRISConfig struct {
+	// Provider selects the HRIS dialect. Currently "bamboohr".
+	Provider string `json:"provider"`
+	// BaseURL overrides the provider's default API root (for Workday tenants or
+	// testing). For BambooHR the default is https://api.bamboohr.com/api/gateway.php/<subdomain>.
+	BaseURL string `json:"base_url"`
+	// Subdomain is the BambooHR company subdomain (the <subdomain> above).
+	Subdomain string `json:"subdomain"`
+	// APIKey authenticates to the HRIS (BambooHR: sent as HTTP Basic username).
+	APIKey string `json:"api_key"`
+	// SyncInterval in minutes (0 = manual only); SyncEnabled gates the scheduler.
+	SyncInterval int  `json:"sync_interval"`
+	SyncEnabled  bool `json:"sync_enabled"`
+	// DeprovisionAction on a leaver: "disable" (default) or "delete".
+	DeprovisionAction string `json:"deprovision_action"`
+	// UsernameField chooses which HR field becomes the OpenIDX username:
+	// "email" (default) or "employee_number".
+	UsernameField string `json:"username_field"`
+}
+
 // AttributeMapping maps LDAP attributes to OpenIDX user fields
 type AttributeMapping struct {
 	Username    string `json:"username"`
@@ -68,6 +92,17 @@ type UserRecord struct {
 	FirstName   string
 	LastName    string
 	DisplayName string
+
+	// HR/JML attributes. Populated by an HRIS connector (BambooHR/Workday/...);
+	// left zero by LDAP/Azure connectors. These drive joiner/mover/leaver and
+	// feed the outbound-SCIM enterprise extension + org chart.
+	EmployeeNumber   string
+	JobTitle         string
+	Department       string
+	ManagerExternal  string // manager's external HR id (resolved to manager_id at sync)
+	HireDate         string // ISO-8601 (YYYY-MM-DD) or ""
+	TerminationDate  string // ISO-8601 or ""
+	EmploymentStatus string // active | terminated | on_leave | pending
 }
 
 // GroupRecord represents a group extracted from LDAP
