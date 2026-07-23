@@ -677,5 +677,12 @@ func allMigrations() []*Migration {
 			UpSQL:       outboundScimUp,
 			DownSQL:     outboundScimDown,
 		},
+		{
+			Version:     96,
+			Name:        "hr_jml",
+			Description: "Add HR/JML user attributes (employee_number, job_title, department, hire_date, termination_date, employment_status, external_hr_id) + supporting indexes so an HRIS source (BambooHR/Workday/SuccessFactors, modeled as a directory-connector type) can drive joiner/mover/leaver. Additive/idempotent; NULL for existing users.",
+			UpSQL:       hrJmlUp,
+			DownSQL:     hrJmlDown,
+		},
 	}
 }
