@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
@@ -221,6 +222,7 @@ func (s *Service) buildClientFromMetadata(md *clientMetadata) (*OAuthClient, err
 	scopes := splitScope(md.Scope)
 
 	client := &OAuthClient{
+		ID:                   uuid.NewString(),
 		ClientID:             "oidc_" + randToken(16),
 		Name:                 firstNonEmptyStr(md.ClientName, "Dynamically Registered Client"),
 		Description:          "Registered via RFC 7591 Dynamic Client Registration",
