@@ -670,5 +670,12 @@ func allMigrations() []*Migration {
 			UpSQL:       remoteSupportTransportUp,
 			DownSQL:     remoteSupportTransportDown,
 		},
+		{
+			Version:     95,
+			Name:        "outbound_scim",
+			Description: "Add scim_target_apps + scim_provisioning_records + scim_provisioning_queue so OpenIDX can act as a SCIM 2.0 client and provision users/groups OUT to downstream SaaS (Okta/Entra/Slack/...). Outbox-based at-least-once delivery with retry/backoff. Org-scoped for RLS. Additive/idempotent; no behavior change until a target app is configured.",
+			UpSQL:       outboundScimUp,
+			DownSQL:     outboundScimDown,
+		},
 	}
 }
