@@ -83,6 +83,12 @@ func (s *Service) revokeExpiredJITAccess(ctx context.Context) {
 				s.logger.Warn("Failed to write jit_credential.checkout_expired audit event",
 					zap.String("request_id", sanitizeForLog(id)), zap.Error(err))
 			}
+		} else if resourceType == "network_service" {
+			// JIT network grant expiry (Wave B1): remove the time-bound Ziti
+			// attribute and sever any circuits it opened. There is no DB
+			// assignment row for network_service (the attribute lives on the Ziti
+			// identity), so hand off the removal to the access-service worker.
+			s.enqueueNetworkAttributeRemoval(ctx, requesterID, orgID, jitNetworkAttribute(id), "jit_expiry")
 		} else if err := revokeResourceAssignment(ctx, s.db.Pool, resourceType, requesterID, resourceID, orgID); err != nil {
 			// Includes unknown resource types (revokeResourceAssignment fails
 			// loud on those). Skip marking the request expired so we never write

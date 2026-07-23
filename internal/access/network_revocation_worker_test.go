@@ -16,7 +16,7 @@ func TestDrainNetworkRevocations(t *testing.T) {
 	ctx := context.Background()
 	db.Pool.Exec(ctx, `CREATE EXTENSION IF NOT EXISTS pgcrypto`)
 	db.Pool.Exec(ctx, `
-        CREATE TABLE network_revocation_queue (id BIGSERIAL PRIMARY KEY, org_id UUID, user_id UUID NOT NULL, reason VARCHAR(64) NOT NULL, state VARCHAR(16) NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+        CREATE TABLE network_revocation_queue (id BIGSERIAL PRIMARY KEY, org_id UUID, user_id UUID NOT NULL, reason VARCHAR(64) NOT NULL, attribute VARCHAR(128), state VARCHAR(16) NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
         CREATE TABLE ziti_identities (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID, ziti_id VARCHAR(255), org_id UUID);
         CREATE TABLE enrolled_agents (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), enrolled_by_user_id UUID, ziti_identity_id VARCHAR(255));`)
 

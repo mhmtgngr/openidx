@@ -1157,6 +1157,25 @@ func (s *Service) fulfillRequest(ctx context.Context, request *AccessRequest) er
 			s.logger.Warn("Failed to write jit_credential.checkout_granted audit event",
 				zap.String("request_id", request.ID), zap.Error(err))
 		}
+	case "network_service":
+		// JIT network grant (Wave B1): fulfilling a network_service request adds
+		// a time-bound Ziti role attribute (jit-<request-id>) to the requester's
+		// identity, which a service policy binds to open the dial. Governance has
+		// no Ziti access, so hand off to the access-service worker. The grant
+		// itself is the fulfillment; the attribute apply is async + best-effort.
+		attr := jitNetworkAttribute(request.ID)
+		s.enqueueNetworkGrant(ctx, request.RequesterID, org.ID, request.ID, attr, request.ExpiresAt)
+		grantDetails, _ := json.Marshal(map[string]any{
+			"request_id": request.ID, "resource_id": request.ResourceID,
+			"attribute": attr, "expires_at": request.ExpiresAt,
+		})
+		if _, err := s.db.Pool.Exec(ctx,
+			`INSERT INTO audit_events (id, event_type, category, action, outcome, actor_id, actor_ip, target_id, target_type, details, created_at, org_id)
+			 VALUES (gen_random_uuid(), 'access', 'provisioning', 'jit_network.grant_issued', 'success', $1, '0.0.0.0', $2, 'network_service', $3, NOW(), $4)`,
+			request.RequesterID, request.ResourceID, string(grantDetails), org.ID); err != nil {
+			s.logger.Warn("Failed to write jit_network.grant_issued audit event",
+				zap.String("request_id", request.ID), zap.Error(err))
+		}
 	default:
 		// Fail loudly. Marking a request "fulfilled" without granting
 		// anything is exactly the bug the P1.1 audit found — an approved

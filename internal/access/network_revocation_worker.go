@@ -42,26 +42,33 @@ func (s *Service) drainNetworkRevocations(ctx context.Context) {
              SELECT id FROM network_revocation_queue
               WHERE state='pending'
               ORDER BY id ASC LIMIT 50 FOR UPDATE SKIP LOCKED)
-        RETURNING q.id, q.user_id::text, q.reason`)
+        RETURNING q.id, q.user_id::text, q.reason, COALESCE(q.attribute,'')`)
 	if err != nil {
 		s.logger.Warn("network revocation: claim failed", zap.Error(err))
 		return
 	}
 	type item struct {
-		id     int64
-		userID string
-		reason string
+		id        int64
+		userID    string
+		reason    string
+		attribute string
 	}
 	var items []item
 	for rows.Next() {
 		var it item
-		if err := rows.Scan(&it.id, &it.userID, &it.reason); err == nil {
+		if err := rows.Scan(&it.id, &it.userID, &it.reason, &it.attribute); err == nil {
 			items = append(items, it)
 		}
 	}
 	rows.Close()
 
 	for _, it := range items {
+		// If this intent names a JIT attribute (Wave B1 expiry), remove it from
+		// the user's Ziti identity first so the dial closes, then sever any
+		// circuits it opened.
+		if it.attribute != "" {
+			s.removeUserZitiAttribute(ctx, it.userID, it.attribute)
+		}
 		// severUserZitiCircuits is a best-effort no-op when the overlay is off.
 		s.severUserZitiCircuits(ctx, it.userID, "governance:"+it.reason)
 		_, _ = s.db.Pool.Exec(ctx,
