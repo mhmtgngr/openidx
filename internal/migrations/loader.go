@@ -698,5 +698,12 @@ func allMigrations() []*Migration {
 			UpSQL:       edrPostureUp,
 			DownSQL:     edrPostureDown,
 		},
+		{
+			Version:     99,
+			Name:        "ssf_caep",
+			Description: "Add ssf_streams + ssf_stream_delivery (outbox) + ssf_received_events so OpenIDX is both an SSF/CAEP transmitter (push signed SETs on session-revoked etc.) and receiver (apply inbound SETs, with Ziti session termination as the actuator). Org-scoped, encrypted delivery auth. Additive/idempotent.",
+			UpSQL:       ssfCaepUp,
+			DownSQL:     ssfCaepDown,
+		},
 	}
 }

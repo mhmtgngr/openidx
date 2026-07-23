@@ -160,10 +160,13 @@ type Service struct {
 	// dcrInitialAccessToken gates POST /oauth/register (RFC 7591). Empty = open
 	// registration (dev/first-run); set to require a bearer initial access token.
 	dcrInitialAccessToken string
-	identityService       *identity.Service
-	riskService           *risk.Service
-	webhookService        WebhookPublisher
-	authorizeHandler      *AuthorizeHandler
+	// ssfReceiverConfig trusts an upstream SSF transmitter's issuer + JWKS for
+	// inbound SET validation. Empty = only OpenIDX-issued SETs are accepted.
+	ssfReceiverConfig SSFReceiverConfig
+	identityService   *identity.Service
+	riskService       *risk.Service
+	webhookService    WebhookPublisher
+	authorizeHandler  *AuthorizeHandler
 	// redisBreaker fast-fails Redis-backed revocation checks when Redis is
 	// unhealthy, so a Redis brownout doesn't make every token op pay the full
 	// 3s read timeout (a latency cliff on the verify/introspect hot path). It is
@@ -286,6 +289,7 @@ func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *confi
 		issuer:                issuer,
 		tenantBaseDomain:      cfg.TenantBaseDomain,
 		dcrInitialAccessToken: cfg.DCRInitialAccessToken,
+		ssfReceiverConfig:     SSFReceiverConfig{Issuer: cfg.SSFReceiverIssuer, JWKSURL: cfg.SSFReceiverJWKSURL},
 		identityService:       idSvc,
 	}
 
@@ -1066,6 +1070,21 @@ func RegisterRoutes(router *gin.Engine, svc *Service, clientMgmtAuth gin.Handler
 	router.OPTIONS("/.well-known/openid-configuration", svc.handleDiscovery)
 	router.GET("/.well-known/jwks.json", svc.handleJWKS)
 	router.OPTIONS("/.well-known/jwks.json", svc.handleJWKS)
+
+	// SSF/CAEP (Shared Signals): transmitter metadata + stream management +
+	// receiver push endpoint.
+	router.GET("/.well-known/ssf-configuration", svc.handleSSFConfiguration)
+	ssf := router.Group("/ssf")
+	{
+		ssf.GET("/streams", svc.handleListSSFStreams)
+		ssf.POST("/streams", svc.handleCreateSSFStream)
+		ssf.GET("/streams/:id", svc.handleGetSSFStream)
+		ssf.DELETE("/streams/:id", svc.handleDeleteSSFStream)
+		ssf.POST("/streams/:id/verify", svc.handleSSFVerify)
+		// Receiver push delivery (RFC 8935). Public: SETs are authenticated by
+		// signature, not a session.
+		ssf.POST("/events", svc.handleSSFReceive)
+	}
 
 	oauth := router.Group("/oauth")
 	{
@@ -3609,6 +3628,14 @@ func (s *Service) revokeAllUserSessions(ctx context.Context, userID string) erro
 		}
 		s.revokeSessionWithRedis(ctx, sessionID)
 	}
+
+	// Emit a CAEP session-revoked SET to subscribed SSF receivers so downstream
+	// apps drop the user immediately (best-effort; never fails the revocation).
+	var email string
+	_ = s.db.Pool.QueryRow(ctx, `SELECT COALESCE(email,'') FROM users WHERE id=$1 AND org_id=$2`, userID, org.ID).Scan(&email)
+	s.EmitCAEPEvent(ctx, org.ID, EventSessionRevoked, email, userID,
+		map[string]interface{}{"reason": "session_revoked"})
+
 	return nil
 }
 
