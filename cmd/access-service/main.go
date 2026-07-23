@@ -320,6 +320,11 @@ func main() {
 		log.Info("Per-user Guacamole identities enabled; grant sweeper started")
 	}
 
+	// Start the EDR/MDM posture ingestion worker: polls configured EDR/MDM
+	// sources (CrowdStrike/Intune/Jamf) and feeds device compliance into the
+	// Ziti-bound posture pipeline. Idle until a source is configured.
+	accessService.StartEDRIngestionWorker(context.Background())
+
 	// Start continuous session verification if enabled
 	if cfg.ContinuousVerifyEnabled {
 		log.Info("Starting continuous session verifier", zap.Int("interval_seconds", cfg.ContinuousVerifyInterval))

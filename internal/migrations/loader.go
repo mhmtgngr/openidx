@@ -691,5 +691,12 @@ func allMigrations() []*Migration {
 			UpSQL:       dcrTokenExchangeUp,
 			DownSQL:     dcrTokenExchangeDown,
 		},
+		{
+			Version:     98,
+			Name:        "edr_posture_ingestion",
+			Description: "Add edr_posture_sources + edr_device_mappings so an external EDR/MDM (CrowdStrike/Intune/Jamf) can feed the existing Ziti-bound posture pipeline: a non-compliant device signal writes a failing device_posture_results row, so the proxy/continuous-verify enforcement revokes the session and severs the overlay circuit automatically. Org-scoped, encrypted creds. Additive/idempotent.",
+			UpSQL:       edrPostureUp,
+			DownSQL:     edrPostureDown,
+		},
 	}
 }

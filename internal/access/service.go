@@ -476,6 +476,15 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.GET("/ziti/posture/summary", svc.handleGetPostureSummary)
 		api.POST("/ziti/posture/device", svc.handleSubmitDevicePosture)
 
+		// EDR/MDM posture sources (CrowdStrike/Intune/Jamf) — ingest external
+		// device compliance into the Ziti-bound posture pipeline.
+		api.GET("/ziti/posture/edr", adminOnly, svc.handleListEDRSources)
+		api.POST("/ziti/posture/edr", adminOnly, svc.handleCreateEDRSource)
+		api.GET("/ziti/posture/edr/:id", adminOnly, svc.handleGetEDRSource)
+		api.DELETE("/ziti/posture/edr/:id", adminOnly, svc.handleDeleteEDRSource)
+		api.POST("/ziti/posture/edr/:id/test", adminOnly, svc.handleTestEDRSource)
+		api.POST("/ziti/posture/edr/:id/sync", adminOnly, svc.handleSyncEDRSource)
+
 		// Phase 3: Policy sync
 		api.GET("/ziti/policy-sync", svc.handleListPolicySyncStates)
 		api.POST("/ziti/policy-sync", adminOnly, svc.handleSyncGovernancePolicy)
