@@ -101,6 +101,11 @@ type Config struct {
 	// Empty (the default) disables subdomain tenant resolution.
 	TenantBaseDomain string `mapstructure:"tenant_base_domain"`
 
+	// DCRInitialAccessToken gates RFC 7591 dynamic client registration. Empty
+	// (default) leaves registration open; set it to require a bearer initial
+	// access token on POST /oauth/register.
+	DCRInitialAccessToken string `mapstructure:"dcr_initial_access_token"`
+
 	// DefaultOrgFallback, when true, makes the TenantResolver attach the
 	// install's default org to any request that resolves no tenant signal
 	// (single-tenant compatibility). v1.7.0 ships with this OFF: a request
@@ -552,6 +557,7 @@ func setDefaults(v *viper.Viper, serviceName string) {
 
 	// Multi-tenancy: empty disables subdomain-based tenant resolution.
 	v.SetDefault("tenant_base_domain", "")
+	v.SetDefault("dcr_initial_access_token", "")
 	// v1.7.0: tenant isolation is enforced by default — no silent default-org
 	// fallback. Single-tenant installs opt back in with DEFAULT_ORG_FALLBACK=true.
 	v.SetDefault("default_org_fallback", false)
@@ -714,6 +720,7 @@ func bindEnvVars(v *viper.Viper) {
 		"shutdown_timeout_seconds":            "SHUTDOWN_TIMEOUT_SECONDS",
 		"oauth_issuer":                        "OAUTH_ISSUER",
 		"tenant_base_domain":                  "TENANT_BASE_DOMAIN",
+		"dcr_initial_access_token":            "DCR_INITIAL_ACCESS_TOKEN",
 		"default_org_fallback":                "DEFAULT_ORG_FALLBACK",
 		"default_org_id":                      "DEFAULT_ORG_ID",
 		"oauth_jwks_url":                      "OAUTH_JWKS_URL",

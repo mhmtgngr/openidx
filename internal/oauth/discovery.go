@@ -112,6 +112,7 @@ func buildDiscoveryDocument(issuer string) *DiscoveryDocument {
 		AuthorizationEndpoint: issuer + "/oauth/authorize",
 		TokenEndpoint:         issuer + "/oauth/token",
 		JWKSURI:               issuer + "/.well-known/jwks.json",
+		RegistrationEndpoint:  issuer + "/oauth/register",
 		ResponseTypesSupported: []string{
 			"code",                // Authorization Code Flow
 			"id_token",            // Implicit Flow (deprecated but supported)
@@ -192,6 +193,7 @@ func buildDiscoveryDocument(issuer string) *DiscoveryDocument {
 			"refresh_token",      // Refresh token
 			"client_credentials", // Client credentials
 			"password",           // Resource owner password credentials (not recommended)
+			"urn:ietf:params:oauth:grant-type:token-exchange", // RFC 8693 token exchange
 		},
 		CodeChallengeMethodsSupported: []string{
 			"S256",  // SHA-256 (recommended)
