@@ -153,6 +153,11 @@ func main() {
 
 	provisioningService := provisioning.NewService(db, redis, cfg, log)
 
+	// Start the outbound-SCIM provisioning worker: it drains the outbox and
+	// pushes user/group changes to configured downstream SaaS targets. Idle
+	// (no-op) until an operator configures a target app.
+	provisioningService.StartOutboundWorker(context.Background())
+
 	// Register routes (with optional OPA authorization)
 	var opaMiddleware []gin.HandlerFunc
 	if cfg.EnableOPAAuthz {

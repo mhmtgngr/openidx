@@ -897,6 +897,9 @@ func RegisterRoutes(router *gin.Engine, svc *Service, extraMiddleware ...gin.Han
 		prov.GET("/rules/:id", svc.handleGetRule)
 		prov.PUT("/rules/:id", svc.handleUpdateRule)
 		prov.DELETE("/rules/:id", svc.handleDeleteRule)
+
+		// Outbound SCIM: downstream target apps (provision OUT to SaaS).
+		svc.registerOutboundRoutes(prov)
 	}
 }
 

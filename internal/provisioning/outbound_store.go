@@ -340,6 +340,101 @@ func nullIfEmpty(s string) interface{} {
 	return s
 }
 
+// EnqueueFullSync enqueues a create/update op for every local user (and, when
+// the target provisions groups, every group) so a target is reconciled to the
+// current directory. Returns the number of ops enqueued. Uses INSERT..SELECT so
+// the whole reconcile is a couple of statements regardless of directory size.
+func (s *Service) EnqueueFullSync(ctx context.Context, orgID string, target *TargetApp) (int, error) {
+	total := 0
+	if target.ProvisionUsers {
+		ct, err := s.db.Pool.Exec(ctx, `
+            INSERT INTO scim_provisioning_queue
+                (org_id, target_id, resource_type, local_id, operation, payload)
+            SELECT $1, $2, 'user', u.id, 'update',
+                   jsonb_build_object(
+                       'id', u.id::text,
+                       'user_name', u.username,
+                       'email', u.email,
+                       'first_name', COALESCE(u.first_name,''),
+                       'last_name', COALESCE(u.last_name,''),
+                       'active', COALESCE(u.enabled, true)
+                   )
+              FROM users u
+             WHERE (u.org_id::text = $3 OR $3 = '')`,
+			nullIfEmpty(orgID), target.ID, orgID)
+		if err != nil {
+			return total, fmt.Errorf("enqueue user full sync: %w", err)
+		}
+		total += int(ct.RowsAffected())
+	}
+	if target.ProvisionGroups {
+		ct, err := s.db.Pool.Exec(ctx, `
+            INSERT INTO scim_provisioning_queue
+                (org_id, target_id, resource_type, local_id, operation, payload)
+            SELECT $1, $2, 'group', g.id, 'update',
+                   jsonb_build_object('id', g.id::text, 'display_name', g.name)
+              FROM groups g
+             WHERE (g.org_id::text = $3 OR $3 = '')`,
+			nullIfEmpty(orgID), target.ID, orgID)
+		if err != nil {
+			return total, fmt.Errorf("enqueue group full sync: %w", err)
+		}
+		total += int(ct.RowsAffected())
+	}
+	// Record the reconcile trigger for the admin UI.
+	_, _ = s.db.Pool.Exec(ctx,
+		`UPDATE scim_target_apps SET last_sync_at=NOW(), last_sync_status='enqueued', last_sync_error=NULL WHERE id=$1`,
+		target.ID)
+	return total, nil
+}
+
+// TargetStatusReport summarizes a target's provisioning state.
+type TargetStatusReport struct {
+	TargetID        string         `json:"target_id"`
+	RecordsByStatus map[string]int `json:"records_by_status"`
+	QueueByState    map[string]int `json:"queue_by_state"`
+}
+
+// TargetStatus returns per-target record/queue counts for the admin UI.
+func (s *Service) TargetStatus(ctx context.Context, targetID string) (*TargetStatusReport, error) {
+	rep := &TargetStatusReport{
+		TargetID:        targetID,
+		RecordsByStatus: map[string]int{},
+		QueueByState:    map[string]int{},
+	}
+	recRows, err := s.db.Pool.Query(ctx,
+		`SELECT status, COUNT(*) FROM scim_provisioning_records WHERE target_id=$1 GROUP BY status`, targetID)
+	if err != nil {
+		return nil, err
+	}
+	for recRows.Next() {
+		var st string
+		var n int
+		if err := recRows.Scan(&st, &n); err != nil {
+			recRows.Close()
+			return nil, err
+		}
+		rep.RecordsByStatus[st] = n
+	}
+	recRows.Close()
+
+	qRows, err := s.db.Pool.Query(ctx,
+		`SELECT state, COUNT(*) FROM scim_provisioning_queue WHERE target_id=$1 GROUP BY state`, targetID)
+	if err != nil {
+		return nil, err
+	}
+	defer qRows.Close()
+	for qRows.Next() {
+		var st string
+		var n int
+		if err := qRows.Scan(&st, &n); err != nil {
+			return nil, err
+		}
+		rep.QueueByState[st] = n
+	}
+	return rep, qRows.Err()
+}
+
 type rowScanner interface {
 	Scan(dest ...interface{}) error
 }
