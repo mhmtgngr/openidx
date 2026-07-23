@@ -13,26 +13,16 @@ Status snapshot after the 2026-07-23 push. This tracks the §7.2 roadmap from
 | EDR/MDM posture ingestion | #546 | CrowdStrike/Intune/Jamf device compliance → the Ziti-bound posture pipeline (non-compliant device → circuit cut) |
 | SSF/CAEP transmitter + receiver | #547 | First OSS SSF/CAEP with native network termination (receiver actuator severs the overlay) |
 | Mid-session + governance-revoke network termination (A3 + B2) | #549 | Posture/risk degrade AND access-review/cert/JIT revoke sever live Ziti circuits |
+| JIT network grants (B1) | #551 | Approve a network_service request → time-bound `jit-<id>` Ziti attribute opens the dial → expiry removes it + severs the circuit |
 
-Migrations v95–v100 applied live. Every feature has DB-backed tests + a live
+Migrations v95–v101 applied live. Every feature has DB-backed tests + a live
 end-to-end proof against `openidx.tdv.org`.
 
 ## Remaining §7.2 waves (follow-up PRs)
 
 Each is a large, multi-file, often cross-service build. Recommended order:
 
-### B1 — JIT network *grants* (the differentiator demo)
-Approval of an access request adds a **time-bound role attribute** to the target
-Ziti service policy; the expiry sweeper removes it and kills sessions. "Approve
-→ network exists for 8 h → vanishes."
-- Build on: `internal/governance/jit.go`, `jit_expiry.go` (grant/expiry lifecycle
-  already exists), `ZitiManager.PatchIdentityRoleAttributes` (attribute plumbing),
-  and the new `network_revocation_queue` (for the kill-on-expiry leg — already
-  wired for JIT expiry in B2).
-- New: on JIT *grant*, enqueue an "add attribute" intent the access-service
-  applies; scope the attribute name by grant id so expiry removes exactly it.
-
-### A3 companion / A2 — Per-org overlay scoping (MSP unlock)
+### A2 — Per-org overlay scoping (MSP unlock)
 Remove the hardcoded fallback org from the Ziti path; namespace Ziti
 attributes/service names per org; org-RBAC on Ziti passthrough. Prerequisite for
 the MSP channel + any multi-tenant SaaS offer.
