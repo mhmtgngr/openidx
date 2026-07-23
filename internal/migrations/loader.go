@@ -705,5 +705,12 @@ func allMigrations() []*Migration {
 			UpSQL:       ssfCaepUp,
 			DownSQL:     ssfCaepDown,
 		},
+		{
+			Version:     100,
+			Name:        "network_revocation_queue",
+			Description: "Add network_revocation_queue so the governance service can hand a circuit-severance intent to the access-service (which owns the ZitiManager) on an access-review/certification revoke or JIT expiry. A worker terminates the subject's live overlay circuits, completing decision-to-packet. Additive/idempotent.",
+			UpSQL:       networkRevocationQueueUp,
+			DownSQL:     networkRevocationQueueDown,
+		},
 	}
 }

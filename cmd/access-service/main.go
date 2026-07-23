@@ -325,6 +325,10 @@ func main() {
 	// Ziti-bound posture pipeline. Idle until a source is configured.
 	accessService.StartEDRIngestionWorker(context.Background())
 
+	// Start the network revocation worker: severs live Ziti circuits for users
+	// the governance service revoked (access-review/certification/JIT expiry).
+	accessService.StartNetworkRevocationWorker(context.Background())
+
 	// Start continuous session verification if enabled
 	if cfg.ContinuousVerifyEnabled {
 		log.Info("Starting continuous session verifier", zap.Int("interval_seconds", cfg.ContinuousVerifyInterval))

@@ -614,6 +614,11 @@ func (s *Service) revokeReviewItemAccess(ctx context.Context, tx pgx.Tx, itemID,
 		return "", fmt.Errorf("revoke access for review item %s: %w", itemID, err)
 	}
 
+	// Hand a circuit-severance intent to the access-service so this revoke also
+	// severs the user's live overlay circuits (Wave B2). Best-effort; the DB
+	// removal above + attribute reconcile already deny new dials.
+	s.enqueueNetworkRevocation(ctx, *userID, orgID, "access_review")
+
 	// Audit the revocation in the same transaction: if the revoke rolls back, so
 	// does its audit row. actor = the reviewer, target = the affected user.
 	details, _ := json.Marshal(map[string]any{
