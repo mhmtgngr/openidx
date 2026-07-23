@@ -23,6 +23,7 @@ import (
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/common/secretcrypt"
 )
 
 // ctxKey is an unexported type for context keys in this package.
@@ -222,16 +223,51 @@ type Service struct {
 	jwksCacheMu     sync.RWMutex
 	jwksCachedKey   *rsa.PublicKey
 	jwksCacheExpiry time.Time
+
+	// cipher encrypts/decrypts outbound-SCIM target secrets at rest.
+	cipher *secretcrypt.Cipher
 }
 
 // NewService creates a new provisioning service
 func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *config.Config, logger *zap.Logger) *Service {
+	log := logger.With(zap.String("service", "provisioning"))
+	// Build the secret cipher for outbound-SCIM target credentials. Fall back to
+	// a no-op cipher (plaintext passthrough) when no key is configured, matching
+	// the rest of the tree's rollout behavior.
+	cipher, err := secretcrypt.New(cfg.EncryptionKey)
+	if err != nil {
+		log.Warn("provisioning: encryption key unusable; outbound-SCIM secrets will not be encrypted at rest", zap.Error(err))
+		cipher = secretcrypt.NewNoop()
+	}
 	return &Service{
 		db:     db,
 		redis:  redis,
 		config: cfg,
-		logger: logger.With(zap.String("service", "provisioning")),
+		logger: log,
+		cipher: cipher,
 	}
+}
+
+// encryptSecret seals a plaintext secret for storage. Empty input returns "".
+func (s *Service) encryptSecret(plaintext string) (string, error) {
+	if plaintext == "" {
+		return "", nil
+	}
+	if s.cipher == nil {
+		return plaintext, nil
+	}
+	return s.cipher.Encrypt(plaintext)
+}
+
+// decryptSecret opens a stored secret. Empty input returns "".
+func (s *Service) decryptSecret(stored string) (string, error) {
+	if stored == "" {
+		return "", nil
+	}
+	if s.cipher == nil {
+		return stored, nil
+	}
+	return s.cipher.Decrypt(stored)
 }
 
 // openIDXAuthMiddleware validates OpenIDX OAuth JWT tokens for provisioning service
@@ -526,6 +562,10 @@ func (s *Service) CreateSCIMUser(ctx context.Context, user *SCIMUser) (*SCIMUser
 	// rule evaluation never fails the SCIM create).
 	s.applyProvisioningRules(ctx, TriggerUserCreated, user)
 
+	// Fan out to downstream SCIM targets: an upstream create provisions the
+	// user into every enabled SaaS target.
+	s.fanOutUserChange(ctx, org.ID, userID, OpCreate, user)
+
 	return user, nil
 }
 
@@ -627,6 +667,16 @@ func (s *Service) UpdateSCIMUser(ctx context.Context, userID string, user *SCIMU
 	// supported actions are additive and idempotent).
 	s.applyProvisioningRules(ctx, TriggerUserUpdated, user)
 
+	// Fan out to downstream SCIM targets. An `active:false` update is the
+	// standard IdP deprovision signal, so route it as a deactivate op (the
+	// worker PATCHes active=false or DELETEs per the target's policy); anything
+	// else is a normal update.
+	op := OpUpdate
+	if !user.Active {
+		op = OpDeactivate
+	}
+	s.fanOutUserChange(ctx, org.ID, userID, op, user)
+
 	return user, nil
 }
 
@@ -718,6 +768,12 @@ func (s *Service) DeleteSCIMUser(ctx context.Context, userID string) error {
 
 	// Revoke sessions + API keys before removing the user row.
 	s.deprovisionUser(ctx, userID, org.ID, true)
+
+	// Fan out a delete to downstream SCIM targets BEFORE removing the local row,
+	// so the outbox snapshot still identifies the user. The worker deactivates
+	// or deletes the remote resource per each target's policy. Enqueued with a
+	// minimal snapshot (identity is all the worker needs to find the mapping).
+	s.fanOutUserChange(ctx, org.ID, userID, OpDelete, &SCIMUser{ID: userID})
 
 	// Delete from users table (CASCADE will delete from scim_users)
 	_, err = s.db.Pool.Exec(ctx, "DELETE FROM users WHERE id = $1 AND org_id = $2", userID, org.ID)
@@ -861,6 +917,9 @@ func RegisterRoutes(router *gin.Engine, svc *Service, extraMiddleware ...gin.Han
 		prov.GET("/rules/:id", svc.handleGetRule)
 		prov.PUT("/rules/:id", svc.handleUpdateRule)
 		prov.DELETE("/rules/:id", svc.handleDeleteRule)
+
+		// Outbound SCIM: downstream target apps (provision OUT to SaaS).
+		svc.registerOutboundRoutes(prov)
 	}
 }
 
