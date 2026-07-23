@@ -157,10 +157,13 @@ type Service struct {
 	signer           atomic.Pointer[signerSnapshot]
 	issuer           string
 	tenantBaseDomain string // when set, JWT iss is derived per-tenant (https://<slug>.<base>)
-	identityService  *identity.Service
-	riskService      *risk.Service
-	webhookService   WebhookPublisher
-	authorizeHandler *AuthorizeHandler
+	// dcrInitialAccessToken gates POST /oauth/register (RFC 7591). Empty = open
+	// registration (dev/first-run); set to require a bearer initial access token.
+	dcrInitialAccessToken string
+	identityService       *identity.Service
+	riskService           *risk.Service
+	webhookService        WebhookPublisher
+	authorizeHandler      *AuthorizeHandler
 	// redisBreaker fast-fails Redis-backed revocation checks when Redis is
 	// unhealthy, so a Redis brownout doesn't make every token op pay the full
 	// 3s read timeout (a latency cliff on the verify/introspect hot path). It is
@@ -272,17 +275,18 @@ func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *confi
 	}
 
 	svc := &Service{
-		db:               db,
-		redis:            redis,
-		config:           cfg,
-		logger:           logger.With(zap.String("service", "oauth")),
-		idpCipher:        idpCipher,
-		privateKey:       privateKey,
-		publicKey:        &privateKey.PublicKey,
-		keyStore:         keyStore,
-		issuer:           issuer,
-		tenantBaseDomain: cfg.TenantBaseDomain,
-		identityService:  idSvc,
+		db:                    db,
+		redis:                 redis,
+		config:                cfg,
+		logger:                logger.With(zap.String("service", "oauth")),
+		idpCipher:             idpCipher,
+		privateKey:            privateKey,
+		publicKey:             &privateKey.PublicKey,
+		keyStore:              keyStore,
+		issuer:                issuer,
+		tenantBaseDomain:      cfg.TenantBaseDomain,
+		dcrInitialAccessToken: cfg.DCRInitialAccessToken,
+		identityService:       idSvc,
 	}
 
 	// Initialize authorize handler
@@ -1135,6 +1139,13 @@ func RegisterRoutes(router *gin.Engine, svc *Service, clientMgmtAuth gin.Handler
 		oauth.POST("/introspect", svc.handleIntrospect)
 		oauth.POST("/revoke", svc.handleRevoke)
 
+		// Dynamic Client Registration (RFC 7591) + management (RFC 7592).
+		oauth.POST("/register", svc.handleRegisterClient)
+		oauth.OPTIONS("/register", func(c *gin.Context) { c.AbortWithStatus(204) })
+		oauth.GET("/register/:client_id", svc.handleGetRegisteredClient)
+		oauth.PUT("/register/:client_id", svc.handleUpdateRegisteredClient)
+		oauth.DELETE("/register/:client_id", svc.handleDeleteRegisteredClient)
+
 		// UserInfo endpoint (with OPTIONS for CORS preflight)
 		oauth.GET("/userinfo", svc.handleUserInfo)
 		oauth.POST("/userinfo", svc.handleUserInfo)
@@ -1215,9 +1226,10 @@ func (s *Service) handleDiscovery(c *gin.Context) {
 		TokenEndpoint:                     base + "/oauth/token",
 		UserInfoEndpoint:                  base + "/oauth/userinfo",
 		JwksURI:                           base + "/.well-known/jwks.json",
+		RegistrationEndpoint:              base + "/oauth/register",
 		ScopesSupported:                   []string{"openid", "profile", "email", "offline_access"},
 		ResponseTypesSupported:            []string{"code", "id_token", "token id_token", "code id_token"},
-		GrantTypesSupported:               []string{"authorization_code", "refresh_token", "client_credentials"},
+		GrantTypesSupported:               []string{"authorization_code", "refresh_token", "client_credentials", grantTypeTokenExchange},
 		SubjectTypesSupported:             []string{"public"},
 		IDTokenSigningAlgValuesSupported:  []string{"RS256"},
 		TokenEndpointAuthMethodsSupported: []string{"client_secret_post", "client_secret_basic"},
@@ -2824,6 +2836,8 @@ func (s *Service) handleToken(c *gin.Context) {
 		s.handleRefreshTokenGrant(c)
 	case "client_credentials":
 		s.handleClientCredentialsGrant(c)
+	case grantTypeTokenExchange:
+		s.handleTokenExchangeGrant(c)
 	default:
 		c.JSON(400, gin.H{"error": "unsupported_grant_type"})
 	}

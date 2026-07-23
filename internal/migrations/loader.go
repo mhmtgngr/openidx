@@ -684,5 +684,12 @@ func allMigrations() []*Migration {
 			UpSQL:       hrJmlUp,
 			DownSQL:     hrJmlDown,
 		},
+		{
+			Version:     97,
+			Name:        "dcr_registration_tokens",
+			Description: "Add oauth_registration_tokens (hashed RFC 7592 registration access token per dynamically-registered client) so an RFC 7591-registered client can manage its own credential lifecycle. Token Exchange (RFC 8693) needs no schema. Additive/idempotent.",
+			UpSQL:       dcrTokenExchangeUp,
+			DownSQL:     dcrTokenExchangeDown,
+		},
 	}
 }
