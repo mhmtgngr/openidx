@@ -726,5 +726,12 @@ func allMigrations() []*Migration {
 			UpSQL:       usageMeteringUp,
 			DownSQL:     usageMeteringDown,
 		},
+		{
+			Version:     103,
+			Name:        "mcp_gateway",
+			Description: "Add mcp_servers + mcp_tool_policies (Wave D1): the MCP/AI-agent gateway. An agent authenticates with an OpenIDX token, a per-tool allowlist gates the call, and the request forwards to the MCP server (published as a dark Ziti service). Network-enforced agent containment. Org-scoped. Additive/idempotent.",
+			UpSQL:       mcpGatewayUp,
+			DownSQL:     mcpGatewayDown,
+		},
 	}
 }
