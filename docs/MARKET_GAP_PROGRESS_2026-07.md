@@ -15,8 +15,9 @@ Status snapshot after the 2026-07-23 push. This tracks the §7.2 roadmap from
 | Mid-session + governance-revoke network termination (A3 + B2) | #549 | Posture/risk degrade AND access-review/cert/JIT revoke sever live Ziti circuits |
 | JIT network grants (B1) | #551 | Approve a network_service request → time-bound `jit-<id>` Ziti attribute opens the dial → expiry removes it + severs the circuit |
 | Usage metering (A4) | #553 | Daily rollup of Ziti fabric usage (overlay logins, service dials) per org/service/identity from unified_audit_events; GET /api/v1/audit/usage |
+| MCP / AI-agent gateway (D1) | #555 | Agent token → per-tool allowlist → forward to MCP server over dark Ziti service → audited. Network-enforced agent containment. |
 
-Migrations v95–v102 applied live. Every feature has DB-backed tests + a live
+Migrations v95–v103 applied live. Every feature has DB-backed tests + a live
 end-to-end proof against `openidx.tdv.org`.
 
 ## Remaining §7.2 waves (follow-up PRs)
@@ -32,12 +33,6 @@ the MSP channel + any multi-tenant SaaS offer.
   assumed on the overlay path. Large; do behind a feature flag.
 
 
-### D1 — MCP / AI-agent gateway
-Each agent a Ziti identity (DCR from #545 already lets an agent self-register);
-MCP servers published as dark Ziti services; per-tool OPA allowlists; every call
-audited. Network-enforced agent containment — the pure-IdP rivals can't do it.
-- Build on: DCR (#545), token exchange (#545), OPA middleware, dark-service
-  hosting (`ZitiManager.HostService`).
 
 ### D3 — K8s fabric subchart + HA controller (Raft) + Terraform provider
 Production posture for platform buyers. Infra/packaging work.
