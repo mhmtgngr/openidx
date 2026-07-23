@@ -486,13 +486,18 @@ func main() {
 	}()
 	log.Info("Background audit sync scheduled (every 5 minutes)")
 
-	// Register routes (admin API is protected in non-dev environments)
+	// Register routes with an auth middleware ALWAYS attached — never with a
+	// bare (unauthenticated) group. Production hard-blocks and accepts both OAuth
+	// JWTs and minted API keys / service-account PATs; development uses SoftAuth,
+	// which still verifies and attaches a bearer identity (so user_id flows to the
+	// handlers) but does not hard-block unauthenticated local calls. Registering
+	// the group with no middleware in dev previously left the entire
+	// /api/v1/access surface unauthenticated (see the PAM endpoint-control fix).
 	if cfg.Environment != "development" {
-		// Accept both OAuth JWTs and minted API keys / service-account PATs.
 		apiKeyService := apikeys.NewService(db, redis, log)
 		access.RegisterRoutes(router, accessService, middleware.AuthWithAPIKey(cfg.OAuthJWKSURL, apiKeyService.MiddlewareValidator()))
 	} else {
-		access.RegisterRoutes(router, accessService)
+		access.RegisterRoutes(router, accessService, middleware.SoftAuth(cfg.OAuthJWKSURL))
 	}
 
 	// Create HTTP server

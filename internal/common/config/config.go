@@ -132,6 +132,16 @@ type Config struct {
 	DarkModeTier1 bool `mapstructure:"dark_mode_tier1"`
 	DarkModeTier2 bool `mapstructure:"dark_mode_tier2"`
 
+	// DevAdminBypass, when true, treats every caller as admin across the
+	// access-service admin surface (the inline PAM admin check and the
+	// requireAdminRole gate) — a local-development convenience so a single
+	// unauthenticated dev caller isn't 403'd / hidden from all entries. It is
+	// an EXPLICIT opt-in (env DEV_ADMIN_BYPASS, default false) and is
+	// deliberately NOT implied by APP_ENV=development: a box left in dev mode
+	// must still keep the admin surface behind identity rather than exposing it
+	// (read inventory AND mutations) to anonymous callers.
+	DevAdminBypass bool `mapstructure:"dev_admin_bypass"`
+
 	// OpenZiti configuration
 	ZitiEnabled            bool   `mapstructure:"ziti_enabled"`
 	ZitiReconcilerEnabled  bool   `mapstructure:"ziti_reconciler"`
@@ -529,6 +539,7 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("bind_addr", "")
 	v.SetDefault("dark_mode_tier1", false)
 	v.SetDefault("dark_mode_tier2", false)
+	v.SetDefault("dev_admin_bypass", false)
 
 	// Database defaults
 	v.SetDefault("database_url", "postgres://openidx:openidx_secret@localhost:5432/openidx?sslmode=disable")
@@ -725,6 +736,7 @@ func bindEnvVars(v *viper.Viper) {
 		"bind_addr":                                       "SERVICE_BIND_ADDR",
 		"dark_mode_tier1":                                 "DARK_MODE_TIER1",
 		"dark_mode_tier2":                                 "DARK_MODE_TIER2",
+		"dev_admin_bypass":                                "DEV_ADMIN_BYPASS",
 		"shutdown_timeout_seconds":                        "SHUTDOWN_TIMEOUT_SECONDS",
 		"oauth_issuer":                                    "OAUTH_ISSUER",
 		"tenant_base_domain":                              "TENANT_BASE_DOMAIN",

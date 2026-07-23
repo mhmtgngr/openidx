@@ -70,9 +70,12 @@ func quickLinkRank(role string) int {
 	return 0
 }
 
-// callerMaxRank returns the caller's highest role rank (dev mode = super_admin).
+// callerMaxRank returns the caller's highest role rank. The DevAdminBypass
+// opt-in elevates any caller to super_admin for local convenience; plain
+// APP_ENV=development no longer does (it would expose super_admin-only quick
+// links to every caller on a box left in dev mode).
 func (s *Service) callerMaxRank(c *gin.Context) int {
-	if s.config != nil && s.config.IsDevelopment() {
+	if s.config != nil && s.config.DevAdminBypass {
 		return quickLinkRank("super_admin")
 	}
 	max := 0

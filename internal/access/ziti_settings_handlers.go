@@ -34,14 +34,17 @@ func validateZitiConnSettings(in ZitiConnSettingsView) string {
 	return ""
 }
 
-// requireAdminRole guards the Ziti connection-management endpoints. In
-// production the router wraps these in middleware.Auth (which sets "roles" from
-// the JWT) and we enforce an admin role. In development the access-service
-// registers all routes without auth (everything is open), so this no-ops to
-// match that posture rather than 403ing the only guarded endpoints.
+// requireAdminRole guards the access-service admin surface (Ziti connection
+// management, PAM entry/folder/grant CRUD, guacamole credentials, temp-access,
+// …). The router always attaches an auth middleware that sets "roles" from a
+// verified JWT (AuthWithAPIKey in prod, SoftAuth in dev), so this enforces an
+// admin role by default in EVERY environment. The all-callers-are-admin dev
+// convenience is now an explicit opt-in (DevAdminBypass) — it is NOT implied by
+// APP_ENV=development, so a box left in dev mode does not silently expose these
+// mutations to anonymous callers.
 func (s *Service) requireAdminRole() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if s.config != nil && s.config.IsDevelopment() {
+		if s.config != nil && s.config.DevAdminBypass {
 			c.Next()
 			return
 		}
