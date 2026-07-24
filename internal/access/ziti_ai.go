@@ -801,8 +801,9 @@ func (zm *ZitiManager) ComputeZitiIdentityRisks(ctx context.Context) ([]ZitiIden
 	// Posture results key on the OpenIDX-side identity UUID; synced Ziti
 	// identities are named with that UUID, so match by identity name.
 	postureFailures := make(map[string]int)
-	rows, err = zm.db.Pool.Query(ctx, `
-		SELECT identity_id::text, COUNT(*) FROM device_posture_results
+	rows, err = zm.db.Pool.Query(ctx,
+		//orgscope:ignore controller-wide risk rollup over the Ziti fabric (identities span orgs, like the other ziti_* reads); aggregates failure counts keyed by identity, exposed only via admin-gated fabric endpoints
+		`SELECT identity_id::text, COUNT(*) FROM device_posture_results
 		 WHERE passed = false AND (expires_at IS NULL OR expires_at > NOW())
 		 GROUP BY identity_id`)
 	if err == nil {
