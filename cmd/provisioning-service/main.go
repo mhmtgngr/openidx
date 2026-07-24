@@ -56,6 +56,12 @@ func main() {
 		log.Fatal("Production security validation failed", zap.Error(err))
 	}
 
+	// Dark-platform: refuse to start on a public bind when a DARK_MODE tier is on
+	// (a "dark" service must be reachable only over the OpenZiti overlay).
+	if err := cfg.ValidateDarkModeBind(); err != nil {
+		log.Fatal("Dark-mode bind validation failed", zap.Error(err))
+	}
+
 	cfg.LogSecurityWarnings(log)
 
 	// Initialize tracing

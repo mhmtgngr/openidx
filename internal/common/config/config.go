@@ -933,6 +933,41 @@ func (c *Config) ListenAddr() string {
 	return fmt.Sprintf("%s:%d", c.BindAddr, c.Port)
 }
 
+// DarkModeEnabled reports whether any dark-platform tier is active. When true the
+// service is meant to be reachable ONLY over the OpenZiti overlay, so it must
+// bind loopback rather than a public interface.
+func (c *Config) DarkModeEnabled() bool {
+	return c.DarkModeTier1 || c.DarkModeTier2
+}
+
+// isLoopbackBindAddr reports whether a BindAddr keeps the listener on the local
+// host only. Empty ("all interfaces") and 0.0.0.0/:: are explicitly NOT loopback.
+func isLoopbackBindAddr(addr string) bool {
+	switch strings.TrimSpace(addr) {
+	case "127.0.0.1", "::1", "localhost":
+		return true
+	default:
+		return false
+	}
+}
+
+// ValidateDarkModeBind fails closed when a dark tier is enabled but the service
+// would still bind a public interface. A dark service that is actually reachable
+// from the internet is a silent security hole (the whole point is overlay-only
+// reach), so we refuse to start rather than advertise a false posture. Returns
+// nil when no dark tier is set (today's default) or when BindAddr is loopback.
+func (c *Config) ValidateDarkModeBind() error {
+	if !c.DarkModeEnabled() {
+		return nil
+	}
+	if !isLoopbackBindAddr(c.BindAddr) {
+		return fmt.Errorf("dark mode enabled (tier1=%v tier2=%v) but SERVICE_BIND_ADDR=%q is not loopback; "+
+			"set SERVICE_BIND_ADDR=127.0.0.1 so the service is reachable only over the OpenZiti overlay",
+			c.DarkModeTier1, c.DarkModeTier2, c.BindAddr)
+	}
+	return nil
+}
+
 // GetRedisSentinelAddresses returns the sentinel addresses as a slice
 func (c *Config) GetRedisSentinelAddresses() []string {
 	if c.RedisSentinelAddresses == "" {
