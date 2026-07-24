@@ -113,6 +113,23 @@ func TestLoad(t *testing.T) {
 		assert.Contains(t, cfg.DatabaseURL, "localhost")
 	})
 
+	t.Run("AccessAPIRequireAuth defaults false and parses from env", func(t *testing.T) {
+		os.Setenv("DATABASE_URL", "postgres://localhost/test")
+		os.Unsetenv("ACCESS_API_REQUIRE_AUTH")
+
+		cfg, err := Load("test-service")
+		require.NoError(t, err)
+		assert.False(t, cfg.AccessAPIRequireAuth, "must default off so local dev is unchanged")
+
+		os.Setenv("ACCESS_API_REQUIRE_AUTH", "true")
+		cfg, err = Load("test-service")
+		require.NoError(t, err)
+		assert.True(t, cfg.AccessAPIRequireAuth, "ACCESS_API_REQUIRE_AUTH=true must force hard auth on the data API")
+
+		os.Unsetenv("ACCESS_API_REQUIRE_AUTH")
+		os.Unsetenv("DATABASE_URL")
+	})
+
 	t.Run("Load fails with invalid port", func(t *testing.T) {
 		os.Setenv("DATABASE_URL", "postgres://localhost/test")
 		os.Unsetenv("OPENIDX_PORT")

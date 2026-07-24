@@ -2,10 +2,14 @@ package access
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 	"go.uber.org/zap"
 
 	apperrors "github.com/openidx/openidx/internal/common/errors"
@@ -176,12 +180,80 @@ func (s *Service) mintZitiEnrollmentJWT(ctx context.Context, subject string) (jw
 	}
 
 	name = subject
-	if stored != nil && *stored != "" {
+	// A stored JWT is only good while its embedded expiry is still in the future.
+	// The controller mints one-time enrollment tokens (OTT) with a short life; a
+	// device that enrolls weeks later must NOT be handed the long-expired copy we
+	// cached at identity-creation time. If the stored token is missing or expired,
+	// re-issue a fresh OTT and persist it. (This is the mobile "JWT expired 31 days
+	// ago" bug: the backend kept returning the same stale JWT every call.)
+	if stored != nil && *stored != "" && !enrollmentJWTExpired(*stored) {
 		return *stored, name, nil
 	}
+
+	// Try the controller's current OTT first; if none is pending (already consumed
+	// or lapsed) re-enroll to mint a fresh one.
 	jwt, err = zm.GetIdentityEnrollmentJWT(ctx, zitiID)
-	if err != nil {
-		return "", "", err
+	if err != nil || jwt == "" || enrollmentJWTExpired(jwt) {
+		fresh, rerr := zm.ReEnrollIdentity(ctx, zitiID)
+		if rerr != nil {
+			if err == nil {
+				err = rerr
+			}
+			if jwt == "" {
+				return "", "", fmt.Errorf("mint fresh ziti enrollment jwt: %w", rerr)
+			}
+			// fall through with whatever non-empty (but possibly stale) jwt we had
+		} else {
+			jwt = fresh
+			err = nil
+		}
 	}
+	if jwt == "" {
+		return "", "", enrollError{"no enrollment JWT could be minted for identity"}
+	}
+
+	// Persist the fresh JWT so subsequent reads are consistent (best-effort).
+	_, _ = s.db.Pool.Exec(ctx,
+		//orgscope:ignore ziti_identities.ziti_id is a globally-unique controller identity id, not org-scoped
+		"UPDATE ziti_identities SET enrollment_jwt = $1 WHERE ziti_id = $2", jwt, zitiID)
+
 	return jwt, name, nil
+}
+
+// enrollmentJWTExpired reports whether an OTT enrollment JWT is expired (or so
+// malformed we can't trust it). It parses WITHOUT verifying the signature — the
+// token is issued by our own controller and we only need its `exp` to decide
+// whether to reissue; a parse failure is treated as expired so we re-mint rather
+// than hand out a broken token. A token expiring within a small skew is also
+// treated as expired so a device isn't handed one about to lapse mid-enrollment.
+func enrollmentJWTExpired(token string) bool {
+	parsed, _, err := jwt.NewParser().ParseUnverified(token, jwt.MapClaims{})
+	if err != nil || parsed == nil {
+		return true
+	}
+	claims, ok := parsed.Claims.(jwt.MapClaims)
+	if !ok {
+		return true
+	}
+	expRaw, ok := claims["exp"]
+	if !ok {
+		return true
+	}
+	var exp int64
+	switch v := expRaw.(type) {
+	case float64:
+		exp = int64(v)
+	case int64:
+		exp = v
+	case json.Number:
+		n, err := v.Int64()
+		if err != nil {
+			return true
+		}
+		exp = n
+	default:
+		return true
+	}
+	// 60s skew: don't hand out a token that lapses during enrollment.
+	return time.Now().Add(60 * time.Second).After(time.Unix(exp, 0))
 }

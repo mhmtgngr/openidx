@@ -496,6 +496,15 @@ func main() {
 	if cfg.Environment != "development" {
 		apiKeyService := apikeys.NewService(db, redis, log)
 		access.RegisterRoutes(router, accessService, middleware.AuthWithAPIKey(cfg.OAuthJWKSURL, apiKeyService.MiddlewareValidator()))
+	} else if cfg.AccessAPIRequireAuth {
+		// Dev mode but the box is reachable off-localhost: force the same
+		// hard-blocking auth as production so the data API refuses anonymous
+		// callers, while keeping the rest of dev-mode ergonomics. The Tier-0
+		// enroll door / agent / APK / temp-access routes sit outside this group
+		// and stay public.
+		apiKeyService := apikeys.NewService(db, redis, log)
+		log.Warn("ACCESS_API_REQUIRE_AUTH=true: forcing hard auth on /api/v1/access data API despite APP_ENV=development")
+		access.RegisterRoutes(router, accessService, middleware.AuthWithAPIKey(cfg.OAuthJWKSURL, apiKeyService.MiddlewareValidator()))
 	} else {
 		access.RegisterRoutes(router, accessService, middleware.SoftAuth(cfg.OAuthJWKSURL))
 	}

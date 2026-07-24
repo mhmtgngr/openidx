@@ -142,6 +142,19 @@ type Config struct {
 	// (read inventory AND mutations) to anonymous callers.
 	DevAdminBypass bool `mapstructure:"dev_admin_bypass"`
 
+	// AccessAPIRequireAuth forces the access-service data API (/api/v1/access/*)
+	// onto the hard-blocking auth middleware even when APP_ENV=development. In dev
+	// the group otherwise uses SoftAuth, which verifies a bearer when present but
+	// does NOT reject anonymous callers — leaving the whole data surface (PAM
+	// inventory, sessions, etc.) readable without a token. Set this (env
+	// ACCESS_API_REQUIRE_AUTH=true) on any box reachable off-localhost so a
+	// dev-mode install still refuses unauthenticated data reads. The Tier-0 public
+	// door (POST /api/v1/access/enroll), agent enroll/report, APK download and
+	// temp-access links are registered outside this group and stay reachable.
+	// Default false preserves today's local-dev ergonomics. Production
+	// (APP_ENV!=development) always hard-blocks regardless of this flag.
+	AccessAPIRequireAuth bool `mapstructure:"access_api_require_auth"`
+
 	// OpenZiti configuration
 	ZitiEnabled            bool   `mapstructure:"ziti_enabled"`
 	ZitiReconcilerEnabled  bool   `mapstructure:"ziti_reconciler"`
@@ -540,6 +553,7 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("dark_mode_tier1", false)
 	v.SetDefault("dark_mode_tier2", false)
 	v.SetDefault("dev_admin_bypass", false)
+	v.SetDefault("access_api_require_auth", false)
 
 	// Database defaults
 	v.SetDefault("database_url", "postgres://openidx:openidx_secret@localhost:5432/openidx?sslmode=disable")
@@ -737,6 +751,7 @@ func bindEnvVars(v *viper.Viper) {
 		"dark_mode_tier1":                                 "DARK_MODE_TIER1",
 		"dark_mode_tier2":                                 "DARK_MODE_TIER2",
 		"dev_admin_bypass":                                "DEV_ADMIN_BYPASS",
+		"access_api_require_auth":                         "ACCESS_API_REQUIRE_AUTH",
 		"shutdown_timeout_seconds":                        "SHUTDOWN_TIMEOUT_SECONDS",
 		"oauth_issuer":                                    "OAUTH_ISSUER",
 		"tenant_base_domain":                              "TENANT_BASE_DOMAIN",
