@@ -5,8 +5,10 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 	"go.uber.org/zap"
 )
 
@@ -67,5 +69,36 @@ func TestEnrollForgedBearerFailsClosed(t *testing.T) {
 
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("forged bearer → %d, want 401 (must not be trusted)", w.Code)
+	}
+}
+
+// enrollmentJWTExpired is the guard that fixes the mobile "JWT expired 31 days
+// ago" bug: the mint path must treat a stale/absent/garbage OTT as expired so it
+// re-issues a fresh one instead of handing back the cached copy forever.
+func TestEnrollmentJWTExpired(t *testing.T) {
+	sign := func(claims jwt.MapClaims) string {
+		tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+		s, _ := tok.SignedString([]byte("test-key-unimportant-parseunverified"))
+		return s
+	}
+
+	cases := []struct {
+		name  string
+		token string
+		want  bool
+	}{
+		{"future exp is fresh", sign(jwt.MapClaims{"exp": time.Now().Add(time.Hour).Unix()}), false},
+		{"past exp is expired", sign(jwt.MapClaims{"exp": time.Now().Add(-time.Hour).Unix()}), true},
+		{"about-to-lapse within skew is expired", sign(jwt.MapClaims{"exp": time.Now().Add(30 * time.Second).Unix()}), true},
+		{"missing exp is expired", sign(jwt.MapClaims{"sub": "x"}), true},
+		{"garbage is expired", "not-a-jwt", true},
+		{"empty is expired", "", true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := enrollmentJWTExpired(c.token); got != c.want {
+				t.Errorf("enrollmentJWTExpired(%s) = %v, want %v", c.name, got, c.want)
+			}
+		})
 	}
 }

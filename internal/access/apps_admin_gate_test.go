@@ -21,7 +21,7 @@ import (
 // fail closed with 403. The development bypass is exercised separately.
 func TestAppsRoutes_requireAdminRole(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	// Non-development config so the gate actually enforces (dev mode bypasses).
+	// Gate enforces by default in any env; DevAdminBypass is the only bypass.
 	s := &Service{config: &config.Config{Environment: "production"}}
 
 	router := func(inject gin.HandlerFunc) *gin.Engine {
@@ -55,15 +55,29 @@ func TestAppsRoutes_requireAdminRole(t *testing.T) {
 		})
 	}
 
-	// Development mode bypasses the gate entirely (local convenience).
-	t.Run("dev mode bypass", func(t *testing.T) {
+	// APP_ENV=development ALONE must NOT bypass the gate — a box left in dev
+	// mode must still keep admin mutations behind identity. The bypass is now an
+	// explicit opt-in (DevAdminBypass).
+	t.Run("dev env alone does not bypass", func(t *testing.T) {
 		dev := &Service{config: &config.Config{Environment: "development"}}
 		r := gin.New()
 		r.GET("/apps", dev.requireAdminRole(), func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, httptest.NewRequest("GET", "/apps", nil))
+		if w.Code != http.StatusForbidden {
+			t.Errorf("dev env alone should NOT bypass gate, got %d (body=%s)", w.Code, w.Body.String())
+		}
+	})
+
+	// DevAdminBypass=true is the explicit local-convenience opt-in.
+	t.Run("DevAdminBypass opt-in bypasses", func(t *testing.T) {
+		dev := &Service{config: &config.Config{Environment: "development", DevAdminBypass: true}}
+		r := gin.New()
+		r.GET("/apps", dev.requireAdminRole(), func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest("GET", "/apps", nil))
 		if w.Code != http.StatusOK {
-			t.Errorf("dev mode should bypass gate, got %d (body=%s)", w.Code, w.Body.String())
+			t.Errorf("DevAdminBypass should bypass gate, got %d (body=%s)", w.Code, w.Body.String())
 		}
 	})
 }

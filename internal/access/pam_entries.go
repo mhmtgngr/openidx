@@ -106,12 +106,17 @@ var pamGrantActions = map[string]bool{"view": true, "connect": true, "edit": tru
 
 // ---- Auth helpers ----
 
-// pamCallerIsAdmin mirrors requireAdminRole's posture for inline checks: the
-// dev profile registers routes without auth (no roles on the context), so it
-// is treated as admin to match that open posture rather than hiding every
-// entry from the only caller.
+// pamCallerIsAdmin mirrors requireAdminRole's posture for inline checks: a
+// caller is admin when the request carries an admin / super_admin role.
+//
+// The local-development convenience bypass (treat every caller as admin so a
+// single unauthenticated dev caller isn't hidden from all entries) is now an
+// EXPLICIT opt-in via DevAdminBypass — it is NOT implied by APP_ENV=development.
+// Piggybacking the bypass on IsDevelopment() meant a box left in dev mode
+// exposed the whole PAM inventory to anonymous callers; gating it behind a
+// dedicated flag keeps the endpoint controlled by default even in dev.
 func (s *Service) pamCallerIsAdmin(c *gin.Context) bool {
-	if s.config != nil && s.config.IsDevelopment() {
+	if s.config != nil && s.config.DevAdminBypass {
 		return true
 	}
 	if rolesRaw, ok := c.Get("roles"); ok {

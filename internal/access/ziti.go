@@ -1114,6 +1114,74 @@ func (zm *ZitiManager) GetIdentityEnrollmentJWT(ctx context.Context, zitiID stri
 	return "", fmt.Errorf("no enrollment JWT available for identity %s", zitiID)
 }
 
+// ReEnrollIdentity refreshes an identity's one-time enrollment token (OTT) so a
+// device is handed a NON-expired enrollment JWT, then returns that fresh JWT.
+// This is the fix for the stale-JWT bug: the controller keeps a pending OTT with
+// a short `expiresAt`; once it lapses, naively reading the stored copy returns a
+// long-expired token forever. There are two cases:
+//
+//   - Unenrolled identity with a pending OTT (the common case here): call
+//     POST /enrollments/{id}/refresh with a future expiry, which regenerates the
+//     token + JWT. This is what actually mints a usable JWT for a device that
+//     never completed enrollment.
+//   - Already-enrolled identity (no pending OTT): fall back to
+//     POST /identities/{id}/re-enroll to reissue an OTT.
+//
+// Callers should persist the returned JWT.
+func (zm *ZitiManager) ReEnrollIdentity(ctx context.Context, zitiID string) (string, error) {
+	// Prefer refreshing a pending OTT enrollment when one exists.
+	if enrID := zm.pendingOTTEnrollmentID(ctx, zitiID); enrID != "" {
+		expiry := time.Now().Add(7 * 24 * time.Hour).UTC().Format("2006-01-02T15:04:05.000Z")
+		body, _ := json.Marshal(map[string]interface{}{"expiresAt": expiry})
+		_, statusCode, err := zm.mgmtRequest("POST",
+			fmt.Sprintf("/edge/management/v1/enrollments/%s/refresh", enrID), body)
+		if err != nil {
+			return "", fmt.Errorf("ziti enrollment refresh call failed: %w", err)
+		}
+		if statusCode != http.StatusOK && statusCode != http.StatusAccepted {
+			return "", fmt.Errorf("ziti enrollment refresh returned status %d", statusCode)
+		}
+		return zm.GetIdentityEnrollmentJWT(ctx, zitiID)
+	}
+
+	// No pending OTT — the identity is already enrolled; reissue one.
+	_, statusCode, err := zm.mgmtRequest("POST",
+		fmt.Sprintf("/edge/management/v1/identities/%s/re-enroll", zitiID), nil)
+	if err != nil {
+		return "", fmt.Errorf("ziti re-enroll call failed: %w", err)
+	}
+	if statusCode != http.StatusOK && statusCode != http.StatusCreated && statusCode != http.StatusNoContent {
+		return "", fmt.Errorf("ziti re-enroll returned status %d", statusCode)
+	}
+	return zm.GetIdentityEnrollmentJWT(ctx, zitiID)
+}
+
+// pendingOTTEnrollmentID returns the id of an identity's pending OTT enrollment,
+// or "" if the identity has none (e.g. already enrolled). Best-effort: any error
+// yields "" so the caller falls back to the re-enroll path.
+func (zm *ZitiManager) pendingOTTEnrollmentID(ctx context.Context, zitiID string) string {
+	respData, statusCode, err := zm.mgmtRequest("GET",
+		fmt.Sprintf("/edge/management/v1/identities/%s/enrollments", zitiID), nil)
+	if err != nil || statusCode != http.StatusOK {
+		return ""
+	}
+	var resp struct {
+		Data []struct {
+			ID     string `json:"id"`
+			Method string `json:"method"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(respData, &resp); err != nil {
+		return ""
+	}
+	for _, e := range resp.Data {
+		if e.Method == "ott" && e.ID != "" {
+			return e.ID
+		}
+	}
+	return ""
+}
+
 // CreateServicePolicy creates a Bind or Dial service policy
 func (zm *ZitiManager) CreateServicePolicy(ctx context.Context, name, policyType string, serviceRoles, identityRoles []string) (string, error) {
 	body, _ := json.Marshal(map[string]interface{}{

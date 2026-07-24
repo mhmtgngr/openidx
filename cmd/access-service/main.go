@@ -486,13 +486,27 @@ func main() {
 	}()
 	log.Info("Background audit sync scheduled (every 5 minutes)")
 
-	// Register routes (admin API is protected in non-dev environments)
+	// Register routes with an auth middleware ALWAYS attached — never with a
+	// bare (unauthenticated) group. Production hard-blocks and accepts both OAuth
+	// JWTs and minted API keys / service-account PATs; development uses SoftAuth,
+	// which still verifies and attaches a bearer identity (so user_id flows to the
+	// handlers) but does not hard-block unauthenticated local calls. Registering
+	// the group with no middleware in dev previously left the entire
+	// /api/v1/access surface unauthenticated (see the PAM endpoint-control fix).
 	if cfg.Environment != "development" {
-		// Accept both OAuth JWTs and minted API keys / service-account PATs.
 		apiKeyService := apikeys.NewService(db, redis, log)
 		access.RegisterRoutes(router, accessService, middleware.AuthWithAPIKey(cfg.OAuthJWKSURL, apiKeyService.MiddlewareValidator()))
+	} else if cfg.AccessAPIRequireAuth {
+		// Dev mode but the box is reachable off-localhost: force the same
+		// hard-blocking auth as production so the data API refuses anonymous
+		// callers, while keeping the rest of dev-mode ergonomics. The Tier-0
+		// enroll door / agent / APK / temp-access routes sit outside this group
+		// and stay public.
+		apiKeyService := apikeys.NewService(db, redis, log)
+		log.Warn("ACCESS_API_REQUIRE_AUTH=true: forcing hard auth on /api/v1/access data API despite APP_ENV=development")
+		access.RegisterRoutes(router, accessService, middleware.AuthWithAPIKey(cfg.OAuthJWKSURL, apiKeyService.MiddlewareValidator()))
 	} else {
-		access.RegisterRoutes(router, accessService)
+		access.RegisterRoutes(router, accessService, middleware.SoftAuth(cfg.OAuthJWKSURL))
 	}
 
 	// Create HTTP server
