@@ -127,3 +127,71 @@ func TestGetUserGroupNamesPerOrg(t *testing.T) {
 		t.Fatal("per-org attributes must isolate identically named cross-tenant groups")
 	}
 }
+
+// TestOrgMarkerAttr proves the bare org marker used by per-org Dial policies is
+// stable, sanitized, and distinct per org — so a tenant's identities match only
+// their own org's openidx-orgdial-* policy.
+func TestOrgMarkerAttr(t *testing.T) {
+	orgA := "aaaaaaaa-0000-0000-0000-000000000000"
+	orgB := "bbbbbbbb-0000-0000-0000-000000000000"
+
+	if got := orgMarkerAttr(orgA); got != "org-"+orgA {
+		t.Errorf("orgMarkerAttr(%q) = %q", orgA, got)
+	}
+	if orgMarkerAttr(orgA) == orgMarkerAttr(orgB) {
+		t.Error("distinct orgs must yield distinct markers")
+	}
+	// Charset coercion (Ziti-legal attribute).
+	if got := orgMarkerAttr("weird/org id"); got != "org-weird-org-id" {
+		t.Errorf("marker not sanitized: %q", got)
+	}
+	// The marker prefix matches the group-attribute prefix, so a per-org Dial
+	// policy on #org-<id> and a group attr org-<id>-<group> share the tenant scope.
+	group := orgScopedAttr(&orgA, "engineers")
+	marker := orgMarkerAttr(orgA)
+	if len(group) < len(marker) || group[:len(marker)] != marker {
+		t.Errorf("group attr %q should start with marker %q", group, marker)
+	}
+}
+
+// TestUserOrgID proves the per-org marker source: buildUserAttributes stamps the
+// identity with the user's own org (org-<id>) when the flag is on, so the
+// reconciler's per-org Dial policy grants only that tenant's services.
+func TestUserOrgID(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	if _, err := db.Pool.Exec(ctx, `
+		CREATE TABLE users (
+			id UUID PRIMARY KEY,
+			org_id UUID,
+			username TEXT,
+			enabled BOOLEAN DEFAULT true
+		);`); err != nil {
+		t.Fatalf("schema: %v", err)
+	}
+	orgA := "aaaaaaaa-0000-0000-0000-000000000000"
+	userA := "11111111-0000-0000-0000-000000000000"
+	userNoOrg := "22222222-0000-0000-0000-000000000000"
+	if _, err := db.Pool.Exec(ctx,
+		`INSERT INTO users (id, org_id, username) VALUES ($1,$2,'a'),($3,NULL,'b')`,
+		userA, orgA, userNoOrg); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	zm := &ZitiManager{db: db, logger: zap.NewNop(), cfg: &config.Config{ZitiPerOrgAttributes: true}}
+	if got := zm.userOrgID(ctx, userA); got != orgA {
+		t.Errorf("userOrgID(userA) = %q, want %q", got, orgA)
+	}
+	if got := zm.userOrgID(ctx, userNoOrg); got != "" {
+		t.Errorf("userOrgID(null-org) = %q, want empty", got)
+	}
+	if got := zm.userOrgID(ctx, "99999999-0000-0000-0000-000000000000"); got != "" {
+		t.Errorf("userOrgID(missing) = %q, want empty", got)
+	}
+	// The marker built from that org matches what a per-org Dial policy grants.
+	if orgMarkerAttr(zm.userOrgID(ctx, userA)) != "org-"+orgA {
+		t.Error("marker from userOrgID must equal org-<id>")
+	}
+}

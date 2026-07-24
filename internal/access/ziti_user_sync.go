@@ -278,7 +278,32 @@ func (zm *ZitiManager) buildUserAttributes(ctx context.Context, userID string) (
 	// #browzer-users when BrowZer is enabled.
 	_, browzer := zm.browzerAuthPolicy(ctx)
 
-	return assembleAttributes(groups, hasTrusted, browzer), nil
+	attrs := assembleAttributes(groups, hasTrusted, browzer)
+
+	// Per-org overlay scoping (Wave A2): when the flag is on, tag the identity
+	// with a bare org marker (org-<id>) so the reconciler's per-org Dial policy
+	// (openidx-orgdial-*) grants this identity only its OWN org's services. Off
+	// by default → no extra attribute, install-wide behavior unchanged.
+	if zm.cfg != nil && zm.cfg.ZitiPerOrgAttributes {
+		if orgID := zm.userOrgID(ctx, userID); orgID != "" {
+			attrs = append(attrs, orgMarkerAttr(orgID))
+		}
+	}
+	return attrs, nil
+}
+
+// userOrgID returns the user's org_id (or "" on miss). Small helper so
+// buildUserAttributes can stamp the per-org marker without widening
+// getUserGroupNames' contract.
+func (zm *ZitiManager) userOrgID(ctx context.Context, userID string) string {
+	var orgID *string
+	err := zm.db.Pool.QueryRow(ctx,
+		//orgscope:ignore Ziti user-sync engine; keyed by globally-unique user_id, selects that user's own org_id
+		`SELECT org_id FROM users WHERE id = $1`, userID).Scan(&orgID)
+	if err != nil || orgID == nil {
+		return ""
+	}
+	return *orgID
 }
 
 // assembleAttributes is the pure attribute-assembly for a synced Ziti identity,
