@@ -24,18 +24,33 @@ end-to-end proof against `openidx.tdv.org`.
 
 Each is a large, multi-file, often cross-service build. Recommended order:
 
-### A2 — Per-org overlay scoping (MSP unlock)
+### A2 — Per-org overlay scoping (MSP unlock) — attribute isolation SHIPPED (#557, v104)
 Remove the hardcoded fallback org from the Ziti path; namespace Ziti
 attributes/service names per org; org-RBAC on Ziti passthrough. Prerequisite for
 the MSP channel + any multi-tenant SaaS offer.
-- Touch: `internal/access/ziti*.go` (service/identity naming), `ziti_user_sync.go`
-  (attribute namespacing), the reconciler, and every place a default org is
-  assumed on the overlay path. Large; do behind a feature flag.
+
+**Shipped (#557, migration v104, flag `ZITI_PER_ORG_ATTRIBUTES` default off):**
+- v104 replaces the GLOBAL `groups_name_key UNIQUE(name)` with composite
+  `UNIQUE(org_id, name)` — two tenants can finally own identically named groups
+  (`Engineering`/`Admins`). Applied live (v103→104).
+- `getUserGroupNames` namespaces attributes as `org-<org_id>-<group>` (sanitized
+  to the Ziti charset) when the flag is on; bare names (unchanged single-tenant
+  behavior) when off. `orgScopedAttr`/`sanitizeAttr` + DB-backed tests.
+- Live-proven: a user across two orgs' groups maps to
+  `org-<A>-DevOps` / `org-<A>-Developers` / `org-<B>-Engineering`, no collision.
+
+**Still open for full A2:** per-org **service/identity NAMING** on the hosted-service
+path, org-RBAC on the Ziti passthrough, and removing the DEFAULT-org fallback from
+the overlay reconciler. Those touch `ziti.go` (HostService naming), the reconciler,
+and identity naming; larger and best done as a follow-up behind the same flag.
 
 
 
 ### D3 — K8s fabric subchart + HA controller (Raft) + Terraform provider
 Production posture for platform buyers. Infra/packaging work.
+Partial base already exists: `deployments/terraform/` (modules: rds, elasticache,
+audit-service, ...) and `deployments/kubernetes/`. Remaining: Ziti-controller HA
+(Raft) subchart + a first-class Terraform provider/module for the overlay.
 
 ## Notes for the next session
 
