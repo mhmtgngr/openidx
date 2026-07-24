@@ -59,6 +59,14 @@ func main() {
 		log.Fatal("Production security validation failed", zap.Error(err))
 	}
 
+	// Dark-platform: if a DARK_MODE tier is enabled, refuse to start unless the
+	// service binds loopback-only. A "dark" service that is actually reachable on
+	// a public interface is a false posture, so fail closed rather than advertise
+	// overlay-only reach we aren't enforcing.
+	if err := cfg.ValidateDarkModeBind(); err != nil {
+		log.Fatal("Dark-mode bind validation failed", zap.Error(err))
+	}
+
 	cfg.LogSecurityWarnings(log)
 
 	// Initialize tracing

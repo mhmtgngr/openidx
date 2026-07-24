@@ -1161,3 +1161,30 @@ func TestListenAddrHonorsBindAddr(t *testing.T) {
 		t.Errorf("ListenAddr() = %q, want \"127.0.0.1:8001\"", got)
 	}
 }
+
+// ValidateDarkModeBind must fail closed: a dark tier with a public bind is a
+// false "overlay-only" posture, so startup must refuse it; loopback (and the
+// no-dark default) must pass.
+func TestValidateDarkModeBind(t *testing.T) {
+	cases := []struct {
+		name    string
+		cfg     Config
+		wantErr bool
+	}{
+		{"no dark tier, empty bind (default) is fine", Config{}, false},
+		{"no dark tier, public bind is fine", Config{BindAddr: "0.0.0.0"}, false},
+		{"dark tier1 + loopback is fine", Config{DarkModeTier1: true, BindAddr: "127.0.0.1"}, false},
+		{"dark tier2 + ::1 is fine", Config{DarkModeTier2: true, BindAddr: "::1"}, false},
+		{"dark tier1 + empty bind (all ifaces) fails", Config{DarkModeTier1: true}, true},
+		{"dark tier1 + 0.0.0.0 fails", Config{DarkModeTier1: true, BindAddr: "0.0.0.0"}, true},
+		{"dark tier2 + public ip fails", Config{DarkModeTier2: true, BindAddr: "192.168.1.5"}, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := c.cfg.ValidateDarkModeBind()
+			if (err != nil) != c.wantErr {
+				t.Errorf("ValidateDarkModeBind() err=%v, wantErr=%v", err, c.wantErr)
+			}
+		})
+	}
+}
