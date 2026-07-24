@@ -196,16 +196,14 @@ func (s *Service) mintZitiEnrollmentJWT(ctx context.Context, subject string) (jw
 	if err != nil || jwt == "" || enrollmentJWTExpired(jwt) {
 		fresh, rerr := zm.ReEnrollIdentity(ctx, zitiID)
 		if rerr != nil {
-			if err == nil {
-				err = rerr
-			}
+			// If we have no usable token at all, surface the refresh error;
+			// otherwise fall through with whatever non-empty (but possibly
+			// stale) jwt we managed to read.
 			if jwt == "" {
 				return "", "", fmt.Errorf("mint fresh ziti enrollment jwt: %w", rerr)
 			}
-			// fall through with whatever non-empty (but possibly stale) jwt we had
 		} else {
 			jwt = fresh
-			err = nil
 		}
 	}
 	if jwt == "" {
