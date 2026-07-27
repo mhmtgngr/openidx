@@ -189,6 +189,16 @@ type Config struct {
 	// access-service does (e.g. compose port mappings).
 	ZitiConsoleURL string `mapstructure:"ziti_console_url"`
 
+	// Local AI provider (optional). Points at an OpenAI-compatible chat
+	// completions endpoint running ON-PREMISES (Ollama `http://host:11434/v1`,
+	// LM Studio, vLLM, llama.cpp server). Used strictly as an enrichment layer
+	// — narratives, briefings, copilot answers — over deterministic scoring;
+	// everything degrades to template output when disabled. No cloud calls.
+	AIEnabled            bool   `mapstructure:"ai_enabled"`
+	AIBaseURL            string `mapstructure:"ai_base_url"`
+	AIModel              string `mapstructure:"ai_model"`
+	AIHTTPTimeoutSeconds int    `mapstructure:"ai_http_timeout_seconds"`
+
 	// Continuous verification
 	ContinuousVerifyEnabled  bool `mapstructure:"continuous_verify_enabled"`
 	ContinuousVerifyInterval int  `mapstructure:"continuous_verify_interval"`
@@ -645,6 +655,12 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("guacamole_http_timeout_seconds", 8)
 	v.SetDefault("ziti_http_timeout_seconds", 8)
 
+	// Local AI provider defaults (disabled; Ollama's OpenAI-compatible endpoint)
+	v.SetDefault("ai_enabled", false)
+	v.SetDefault("ai_base_url", "http://localhost:11434/v1")
+	v.SetDefault("ai_model", "llama3.2")
+	v.SetDefault("ai_http_timeout_seconds", 60)
+
 	// BrowZer defaults
 	v.SetDefault("browzer_enabled", false)
 	v.SetDefault("browzer_client_id", "browzer-client")
@@ -809,6 +825,10 @@ func bindEnvVars(v *viper.Viper) {
 		"guacamole_per_user_identities":                   "GUACAMOLE_PER_USER_IDENTITIES",
 		"guacamole_http_timeout_seconds":                  "GUACAMOLE_HTTP_TIMEOUT_SECONDS",
 		"ziti_http_timeout_seconds":                       "ZITI_HTTP_TIMEOUT_SECONDS",
+		"ai_enabled":                                      "AI_ENABLED",
+		"ai_base_url":                                     "AI_BASE_URL",
+		"ai_model":                                        "AI_MODEL",
+		"ai_http_timeout_seconds":                         "AI_HTTP_TIMEOUT_SECONDS",
 		"browzer_enabled":                                 "BROWZER_ENABLED",
 		"browzer_client_id":                               "BROWZER_CLIENT_ID",
 		"browzer_targets_path":                            "BROWZER_TARGETS_PATH",
