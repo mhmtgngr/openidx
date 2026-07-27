@@ -188,3 +188,24 @@ If a dial returns permission-denied, the identity is not Tier 2 yet — re-check
    "complete device checks to unlock" state otherwise.
 4. Test the `dial()` path against a `reach_mode:ziti` PAM entry (backend will
    provide one).
+
+## 8. Admin action to finish enabling remote access over Ziti
+
+One live admin step remains (requires an admin session, so it is done by an
+OpenIDX admin, not baked into code):
+
+- In the console: **Access → PAM entries → (pick an SSH/RDP entry) → Enable Ziti
+  reach**, or call:
+  ```
+  POST /api/v1/access/pam/entries/<id>/ziti/enable
+  Authorization: Bearer <admin token>
+  ```
+  This provisions the overlay service (`ziti_service_name`) + a loopback
+  intercept port; the reconciler then publishes it and the PAM broker's
+  ziti-tunnel binds it. After that, a Tier-2 phone can `zitiDial()` the service.
+
+- To turn on the posture→tier gate, set on the access-service:
+  `POSTURE_DEVICE_TRUST_GATE=observe` (watch first) then `=enforce`.
+
+Until an entry is `reach_mode:ziti`, PAM sessions stay `direct` and the mobile
+`dial()` path has nothing to target.
