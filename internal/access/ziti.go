@@ -1085,6 +1085,36 @@ func (zm *ZitiManager) FindIdentityIDByName(ctx context.Context, name string) st
 	return ""
 }
 
+// IsIdentityEnrolled reports whether the controller considers the identity
+// fully enrolled. An identity is enrolled iff it has NO pending enrollment
+// (the `enrollment` object is empty). This is the live source of truth that the
+// DB `ziti_identities.enrolled` flag drifts from: the flag is written false at
+// identity creation and nothing flips it true when a device completes
+// enrollment out-of-band (native SDK / tunneler). Callers can use this to
+// self-heal the stored flag. Returns (false, err) on any controller error so
+// callers keep the stored value rather than falsely claiming enrollment.
+func (zm *ZitiManager) IsIdentityEnrolled(ctx context.Context, zitiID string) (bool, error) {
+	respData, statusCode, err := zm.mgmtRequest("GET",
+		fmt.Sprintf("/edge/management/v1/identities/%s", zitiID), nil)
+	if err != nil {
+		return false, err
+	}
+	if statusCode != http.StatusOK {
+		return false, fmt.Errorf("unexpected status %d getting identity", statusCode)
+	}
+	var resp struct {
+		Data struct {
+			Enrollment map[string]interface{} `json:"enrollment"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(respData, &resp); err != nil {
+		return false, err
+	}
+	// A pending OTT/CA/updb enrollment means the device has NOT completed
+	// enrollment yet. An empty enrollment map means it has.
+	return len(resp.Data.Enrollment) == 0, nil
+}
+
 // GetIdentityEnrollmentJWT retrieves the enrollment JWT for an identity
 func (zm *ZitiManager) GetIdentityEnrollmentJWT(ctx context.Context, zitiID string) (string, error) {
 	respData, statusCode, err := zm.mgmtRequest("GET",
