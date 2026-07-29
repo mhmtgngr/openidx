@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OpenIDX — Corporate Brochure</title>
+<style>
+  :root{
+    --ink:#0b1220; --ink2:#334155; --muted:#64748b; --line:#e2e8f0;
+    --brand:#1e3a8a; --brand2:#2563eb; --accent:#0891b2; --gold:#b45309;
+    --bg:#ffffff; --panel:#f8fafc; --ok:#047857;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{background:#e9edf3;color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;line-height:1.5}
+  .page{width:210mm;min-height:297mm;margin:14px auto;background:var(--bg);
+    padding:18mm 16mm;position:relative;box-shadow:0 6px 28px rgba(15,23,42,.14)}
+  @media print{
+    body{background:#fff}
+    .page{margin:0;box-shadow:none;page-break-after:always;width:auto;min-height:auto}
+    @page{size:A4;margin:12mm}
+  }
+  h1{font-size:30px;letter-spacing:-.5px;color:var(--brand);line-height:1.1}
+  h2{font-size:17px;color:var(--brand);margin:20px 0 8px;padding-bottom:5px;
+    border-bottom:2px solid var(--line);letter-spacing:-.2px}
+  h3{font-size:13px;color:var(--ink);margin:12px 0 4px;text-transform:uppercase;letter-spacing:.4px}
+  p{color:var(--ink2);font-size:12.2px;margin:6px 0}
+  .lead{font-size:13.5px;color:var(--ink2)}
+  .muted{color:var(--muted);font-size:11px}
+  .brandbar{height:6px;background:linear-gradient(90deg,var(--brand),var(--brand2),var(--accent));border-radius:6px;margin-bottom:16px}
+  .logo{display:flex;align-items:center;gap:12px}
+  .logo .mark{width:44px;height:44px;border-radius:11px;flex:0 0 auto;
+    background:linear-gradient(135deg,var(--brand),var(--accent));
+    display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:20px}
+  .logo .name{font-size:22px;font-weight:800;letter-spacing:-.5px;color:var(--ink)}
+  .logo .name span{color:var(--brand2)}
+  .tag{font-size:11px;color:var(--muted);margin-top:2px}
+  .hero{margin:18px 0 6px}
+  .pillars{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:16px 0}
+  .pill{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px}
+  .pill .k{font-size:11px;font-weight:700;color:var(--brand2);text-transform:uppercase;letter-spacing:.4px}
+  .pill .t{font-size:13px;font-weight:700;margin:3px 0}
+  .pill .d{font-size:10.6px;color:var(--muted);line-height:1.35}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
+  ul{list-style:none;margin:6px 0}
+  ul li{font-size:11.6px;color:var(--ink2);padding:3px 0 3px 18px;position:relative}
+  ul li::before{content:"";position:absolute;left:2px;top:8px;width:7px;height:7px;border-radius:2px;background:var(--brand2)}
+  ul.ok li::before{background:var(--ok)}
+  .kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:14px 0}
+  .kpi{text-align:center;background:linear-gradient(180deg,#fff,#f1f5f9);border:1px solid var(--line);border-radius:12px;padding:14px 8px}
+  .kpi .n{font-size:26px;font-weight:800;color:var(--brand);line-height:1}
+  .kpi .l{font-size:10.5px;color:var(--muted);margin-top:5px}
+  table{width:100%;border-collapse:collapse;margin:8px 0;font-size:11px}
+  th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{background:var(--brand);color:#fff;font-size:10.5px;text-transform:uppercase;letter-spacing:.3px;font-weight:700}
+  tr:nth-child(even) td{background:#fbfcfe}
+  .tagpill{display:inline-block;font-size:9.5px;font-weight:700;padding:2px 8px;border-radius:999px}
+  .t-oss{background:#dcfce7;color:#166534}
+  .t-ent{background:#dbeafe;color:#1e40af}
+  .t-add{background:#fef3c7;color:#92400e}
+  .t-msp{background:#f3e8ff;color:#6b21a8}
+  .callout{background:linear-gradient(135deg,#0b1220,#1e3a8a);color:#fff;border-radius:14px;padding:16px 18px;margin:16px 0}
+  .callout .q{font-size:14px;font-weight:600;line-height:1.45}
+  .callout .s{font-size:10.5px;color:#c7d2fe;margin-top:6px}
+  .foot{position:absolute;bottom:12mm;left:16mm;right:16mm;display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--line);padding-top:8px}
+  .foot .c{font-size:10px;color:var(--muted)}
+  .step{display:flex;gap:10px;margin:7px 0}
+  .step .n{flex:0 0 auto;width:22px;height:22px;border-radius:50%;background:var(--brand2);color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center}
+  .step .b{font-size:11.4px}
+  .step .b b{color:var(--ink)}
+  .price{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:10px 0}
+  .tier{border:1px solid var(--line);border-radius:12px;padding:12px;background:#fff}
+  .tier.hl{border:2px solid var(--brand2);background:linear-gradient(180deg,#eff6ff,#fff)}
+  .tier .h{font-size:12px;font-weight:800;color:var(--brand)}
+  .tier .p{font-size:16px;font-weight:800;color:var(--ink);margin:3px 0}
+  .tier .p small{font-size:10px;color:var(--muted);font-weight:600}
+  .tier .x{font-size:10px;color:var(--muted);line-height:1.35}
+  .badge{display:inline-block;background:#ecfdf5;color:var(--ok);border:1px solid #a7f3d0;font-size:10px;font-weight:700;padding:3px 10px;border-radius:999px}
+  .disc{font-size:9.5px;color:var(--muted);font-style:italic;margin-top:6px}
+</style>
+</head>
+<body>
+
+<!-- PAGE 1 -->
+<section class="page">
+  <div class="brandbar"></div>
+  <div class="logo">
+    <div class="mark">◇</div>
+    <div>
+      <div class="name">Open<span>IDX</span></div>
+      <div class="tag">Zero Trust Access Platform · Self-Hosted · Open Source</div>
+    </div>
+  </div>
+
+  <div class="hero">
+    <h1>Four identity products.<br>One platform. One database.</h1>
+    <p class="lead">OpenIDX unifies <b>identity management (IAM)</b>,
+    <b>governance (IGA)</b>, <b>privileged access (PAM)</b>, and a
+    <b>zero-trust network plane (ZTNA)</b> — work you normally buy as four
+    separate products — into a single self-hostable platform over one
+    PostgreSQL database. It is built to replace a stack of Microsoft Entra ID +
+    Okta + SailPoint + CyberArk + Zscaler at <b>70–80% below</b> their stacked
+    per-user pricing.</p>
+  </div>
+
+  <div class="kpis">
+    <div class="kpi"><div class="n">70–80%</div><div class="l">savings vs. the stacked incumbent bill</div></div>
+    <div class="kpi"><div class="n">4→1</div><div class="l">one platform instead of four SKUs</div></div>
+    <div class="kpi"><div class="n">≤30 s</div><div class="l">end-to-end access revocation (kill switch)</div></div>
+  </div>
+
+  <div class="pillars">
+    <div class="pill"><div class="k">IAM</div><div class="t">Identity</div>
+      <div class="d">OIDC/SAML SSO, MFA (passkey/TOTP/push), LDAP/AD/Azure AD sync, SCIM 2.0, adaptive risk.</div></div>
+    <div class="pill"><div class="k">IGA</div><div class="t">Governance</div>
+      <div class="d">Access reviews, SoD (fail-closed), JIT elevation, approval workflows, HR-driven JML.</div></div>
+    <div class="pill"><div class="k">PAM</div><div class="t">Privileged Access</div>
+      <div class="d">Encrypted vault + rotation, SSH/RDP/VNC brokering, session recording, credential injection.</div></div>
+    <div class="pill"><div class="k">ZTNA</div><div class="t">Zero Trust Network</div>
+      <div class="d">OpenZiti "dark" services (no open ports), clientless BrowZer, posture-checked agents.</div></div>
+  </div>
+
+  <div class="callout">
+    <div class="q">"One revoke decision deletes the grant, kills the session,
+    terminates the privileged connection, and severs the network circuit in
+    under 30 seconds — in a single hash-chained audit trail."</div>
+    <div class="s">This is OpenIDX's real moat: because all four pillars share one control plane, a decision is a single database write — not a multi-connector integration project.</div>
+  </div>
+
+  <h2>Why now? — The market is consolidating</h2>
+  <div class="grid2">
+    <div class="card">
+      <h3>Incumbents are assembling this by M&A</h3>
+      <ul>
+        <li><b>$25 billion</b> Palo Alto × CyberArk (Feb 2026)</li>
+        <li>Okta × Axiom · Delinea × StrongDM · SailPoint IPO</li>
+        <li>Everyone is buying "identity-to-network-packet" together.</li>
+        <li><b>OpenIDX already is that, in one codebase.</b></li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>The pricing revolt is real</h3>
+      <ul>
+        <li>Okta: ~$204/user/yr (Essentials); governance is a separate SKU</li>
+        <li>Auth0: <b>15× bill growth</b> on 1.67× user growth (documented)</li>
+        <li>CyberArk: $1.8K–12K/user/yr, quote-only</li>
+        <li>PAM broadly: $9–400/user/yr, multi-year commit</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="foot">
+    <div class="c">OpenIDX · Corporate Brochure · 2026</div>
+    <div class="c">Apache-2.0 core · openidx.tdv.org</div>
+  </div>
+</section>
+
+<!-- PAGE 2 -->
+<section class="page">
+  <div class="brandbar"></div>
+  <h2 style="margin-top:0">What's marketable — the packaging map</h2>
+  <p>Not one giant SKU; packageable modules by buyer tier. The core stays open
+  source (Apache-2.0) forever; the monetized layers are new-buyer features.</p>
+  <table>
+    <thead><tr><th style="width:26%">Module</th><th style="width:24%">Sold to</th><th>Value proposition</th><th style="width:16%">Tier</th></tr></thead>
+    <tbody>
+      <tr><td><b>IAM / SSO core</b></td><td>Every organization</td><td>Fixed cost + self-host vs. Okta/Auth0</td><td><span class="tagpill t-oss">Open source</span></td></tr>
+      <tr><td><b>PAM Suite</b></td><td>Regulated sectors, IT ops</td><td>CyberArk/Delinea alternative, 90%+ cheaper</td><td><span class="tagpill t-ent">Enterprise</span></td></tr>
+      <tr><td><b>ZTNA / OpenZiti plane</b></td><td>Distributed workforce, OT/IoT, MSP</td><td>"Dark" services, no VPN, clientless</td><td><span class="tagpill t-ent">Enterprise</span></td></tr>
+      <tr><td><b>IGA / Governance</b></td><td>Compliance & audit</td><td>SailPoint alternative, audit evidence</td><td><span class="tagpill t-ent">Enterprise</span></td></tr>
+      <tr><td><b>Kill-Switch & Access 360</b></td><td>CISO / SOC</td><td>End-to-end revocation in one action ≤30 s</td><td><span class="tagpill t-ent">Enterprise</span></td></tr>
+      <tr><td><b>Compliance Packs</b></td><td>Regulated sectors</td><td>SOC2/ISO/GDPR/DORA audit-ready output</td><td><span class="tagpill t-add">Add-on</span></td></tr>
+      <tr><td><b>Premium connectors</b></td><td>Enterprise integration</td><td>Workday, ServiceNow, extra rotation</td><td><span class="tagpill t-add">Add-on</span></td></tr>
+      <tr><td><b>MSP orchestration + metering</b></td><td>Service providers</td><td>White-label multi-tenant, chargeback</td><td><span class="tagpill t-msp">MSP</span></td></tr>
+      <tr><td><b>FIPS / air-gap build</b></td><td>Defense, government</td><td>Certified, air-gapped deployment</td><td><span class="tagpill t-add">Add-on</span></td></tr>
+    </tbody>
+  </table>
+
+  <h2>Pricing</h2>
+  <div class="price">
+    <div class="tier"><div class="h">Community</div><div class="p">Free</div>
+      <div class="x">Full core: IAM+IGA+PAM+ZTNA. Self-host. Community support. Apache-2.0.</div></div>
+    <div class="tier hl"><div class="h">Enterprise</div><div class="p">$4–6<small>/user/mo</small></div>
+      <div class="x">Floor ~$6–8K/yr. SLA, compliance packs, premium connectors, priority support.</div></div>
+    <div class="tier"><div class="h">MSP</div><div class="p">Tenant + metered</div>
+      <div class="x">White-label, multi-tenant orchestration, usage metering & chargeback.</div></div>
+    <div class="tier"><div class="h">Gov / Defense</div><div class="p">Project-based</div>
+      <div class="x">FIPS/air-gap build, on-prem install, data-sovereignty positioning.</div></div>
+  </div>
+  <p class="muted">Comparison: the stacked incumbent bill is <b>$33–65/user/mo</b>.
+  OpenIDX Enterprise ~$4–6 → the "70–80% savings" is substantiated by third-party pricing data.</p>
+
+  <h2>Target segments</h2>
+  <div class="grid2">
+    <div class="card">
+      <h3>1 · Sovereignty-mandated public sector <span class="badge">Priority</span></h3>
+      <ul>
+        <li>Regulations that bar foreign SaaS IdPs for identity/critical data (e.g. Türkiye Presidential Circular 2019/12, sector data-localization)</li>
+        <li>Identity/SSO/PAM is the most sensitive data class → self-host is the only compliant path</li>
+        <li>Ministries, municipalities, universities, hospitals, defense</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>2 · EU NIS2 / DORA mid-market</h3>
+      <ul>
+        <li>DORA's RTS is effectively a PAM mandate; NIS2 wants identity + privileged access + audit</li>
+        <li>No sovereign, self-hosted, four-pillar vendor exists → gap</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>3 · MSPs (Managed Service Providers)</h3>
+      <ul>
+        <li>White-label multi-tenant ZTNA is unserved in OSS</li>
+        <li>FORCE-RLS multitenancy + metering fits exactly</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>4 · OSS-first engineering orgs</h3>
+      <ul>
+        <li>Auth0-renewal and Teleport-license "refugees"</li>
+        <li>Show HN / r/selfhosted funnel (the Infisical/Authentik model)</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="foot">
+    <div class="c">OpenIDX · Corporate Brochure · 2026</div>
+    <div class="c">Apache-2.0 core · openidx.tdv.org</div>
+  </div>
+</section>
+
+<!-- PAGE 3 -->
+<section class="page">
+  <div class="brandbar"></div>
+  <h2 style="margin-top:0">Deployment roadmap</h2>
+  <p>Phases run independently so value arrives early. A typical pilot is 30–45 days.</p>
+
+  <div class="grid2">
+    <div class="card">
+      <div class="step"><div class="n">0</div><div class="b"><b>Discovery & scope</b> (1–2 wks) — map the existing stack, choose the first value point (SSO+MFA or PAM access), define success criteria.</div></div>
+      <div class="step"><div class="n">1</div><div class="b"><b>Foundation</b> (2–4 wks) — self-host (Docker/K8s), directory sync (LDAP/AD/Azure AD), first 2–3 apps on SSO + MFA, audit/SIEM/backup.</div></div>
+      <div class="step"><div class="n">2</div><div class="b"><b>Privileged access</b> (2–4 wks) — critical servers into the vault, SSH/RDP/VNC brokering + recording, rotation, JIT + approvals.</div></div>
+    </div>
+    <div class="card">
+      <div class="step"><div class="n">3</div><div class="b"><b>Zero-trust network</b> (3–6 wks) — OpenZiti overlay, critical services go "dark" (ports close), clientless/agent + posture, PAM targets moved onto the overlay.</div></div>
+      <div class="step"><div class="n">4</div><div class="b"><b>Governance & compliance</b> (parallel) — access reviews, SoD, HR-driven JML, kill switch + Access 360, compliance reports, pentest.</div></div>
+      <div class="step"><div class="n">5</div><div class="b"><b>Go-live & scale</b> — pilot → production, staged rollout, support/SLA, paid add-ons.</div></div>
+    </div>
+  </div>
+
+  <h2>Proven capabilities (code-verified)</h2>
+  <div class="grid2">
+    <div class="card">
+      <h3>Identity & Access</h3>
+      <ul class="ok">
+        <li>OAuth 2.0/OIDC (PKCE, refresh rotation, token exchange, JWKS rotation)</li>
+        <li>SAML 2.0 IdP (XML-DSig, SP metadata, SLO)</li>
+        <li>MFA: TOTP, WebAuthn/passkey, push, OTP + adaptive risk/step-up</li>
+        <li>LDAP/AD/Azure AD sync, SCIM 2.0 (filter, PATCH)</li>
+      </ul>
+      <h3>Privileged Access</h3>
+      <ul class="ok">
+        <li>Envelope-encrypted vault + KEK rotation</li>
+        <li>Rotation: SSH, AWS IAM, GCP SA, Postgres, MySQL, LDAP</li>
+        <li>Guacamole SSH/RDP/VNC + credential injection, recording, legal hold</li>
+        <li>Privileged sessions over OpenZiti — no inbound port on the target</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>Governance</h3>
+      <ul class="ok">
+        <li>Access reviews + certification (revocation enforced)</li>
+        <li>SoD preventive, fail-closed; JIT + automatic expiry</li>
+        <li>RBAC/ABAC/OPA; HR-driven Joiner/Mover/Leaver</li>
+      </ul>
+      <h3>Zero-Trust Network & Platform</h3>
+      <ul class="ok">
+        <li>Identity-driven "dark" services, clientless BrowZer</li>
+        <li>Desktop (signed Windows) + Android agent, posture</li>
+        <li>Multi-tenant FORCE row-level security (CI-enforced)</li>
+        <li>HMAC hash-chained audit + Elasticsearch, SIEM, Prometheus/OTel</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="callout">
+    <div class="q">Why OpenIDX?</div>
+    <div class="s">① Four products, one platform, one DB — no integration debt · ② 70–80% cheaper, fixed cost · ③ Fully self-hosted, data sovereignty · ④ Regulations mandate self-host (2019/12, BDDK, DORA, NIS2) · ⑤ Kill switch: token→session→vault→network ≤30 s · ⑥ Apache-2.0, no lock-in</div>
+  </div>
+
+  <p class="disc">Maturity note: OpenIDX is at "MVP–early GA" — ready for design
+  partners and paid pilots. Unqualified GA is pending a pentest and the
+  CRA/ISO/SOC 2 compliance calendar. Pricing and savings figures are based on
+  July 2026 third-party market data.</p>
+
+  <div class="foot">
+    <div class="c">OpenIDX · Corporate Brochure · 2026</div>
+    <div class="c">Contact / demo: openidx.tdv.org</div>
+  </div>
+</section>
+
+</body>
+</html>

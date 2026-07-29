@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OpenIDX — Bankacılık & Finans (BDDK) Uyum Broşürü</title>
+<style>
+  :root{
+    --ink:#0b1220; --ink2:#334155; --muted:#64748b; --line:#e2e8f0;
+    --brand:#134e4a; --brand2:#0f766e; --accent:#0891b2; --gold:#b45309;
+    --bg:#ffffff; --panel:#f5faf9; --ok:#047857; --navy:#1e293b; --warn:#b45309;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{background:#e9edf3;color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;line-height:1.48}
+  .page{width:210mm;min-height:297mm;margin:14px auto;background:var(--bg);
+    padding:15mm 15mm;position:relative;box-shadow:0 6px 28px rgba(15,23,42,.14)}
+  @media print{
+    body{background:#fff}
+    .page{margin:0;box-shadow:none;page-break-after:always;width:auto;min-height:auto}
+    @page{size:A4;margin:11mm}
+  }
+  h1{font-size:25px;letter-spacing:-.4px;color:var(--brand);line-height:1.12}
+  h2{font-size:15px;color:var(--brand);margin:15px 0 7px;padding-bottom:4px;border-bottom:2px solid var(--line);letter-spacing:-.2px}
+  h3{font-size:12px;color:var(--ink);margin:9px 0 3px;text-transform:uppercase;letter-spacing:.4px}
+  p{color:var(--ink2);font-size:11.6px;margin:5px 0}
+  .lead{font-size:12.6px;color:var(--ink2)}
+  .muted{color:var(--muted);font-size:10.3px}
+  .brandbar{height:6px;background:linear-gradient(90deg,var(--brand),var(--brand2),var(--accent));border-radius:6px;margin-bottom:14px}
+  .logo{display:flex;align-items:center;gap:12px;justify-content:space-between}
+  .logo .left{display:flex;align-items:center;gap:11px}
+  .logo .mark{width:40px;height:40px;border-radius:10px;flex:0 0 auto;
+    background:linear-gradient(135deg,var(--brand),var(--accent));
+    display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:18px}
+  .logo .name{font-size:20px;font-weight:800;letter-spacing:-.5px;color:var(--ink)}
+  .logo .name span{color:var(--brand2)}
+  .tag{font-size:10.5px;color:var(--muted);margin-top:1px}
+  .ribbon{background:var(--brand);color:#fff;font-size:11px;font-weight:700;padding:5px 12px;border-radius:8px;letter-spacing:.3px;white-space:nowrap}
+  .hero{margin:14px 0 4px}
+  .banner{background:linear-gradient(135deg,#134e4a,#0f766e);color:#fff;border-radius:12px;padding:13px 16px;margin:12px 0}
+  .banner .q{font-size:13px;font-weight:600;line-height:1.4}
+  .banner .s{font-size:10.3px;color:#a7f3d0;margin-top:5px}
+  table{width:100%;border-collapse:collapse;margin:7px 0;font-size:10.6px}
+  th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{background:var(--navy);color:#fff;font-size:10px;text-transform:uppercase;letter-spacing:.3px;font-weight:700}
+  tr:nth-child(even) td{background:#fbfcfe}
+  td b{color:var(--ink)}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:12px}
+  ul{list-style:none;margin:5px 0}
+  ul li{font-size:11px;color:var(--ink2);padding:2.5px 0 2.5px 16px;position:relative}
+  ul li::before{content:"";position:absolute;left:2px;top:8px;width:6px;height:6px;border-radius:2px;background:var(--brand2)}
+  ul.ok li::before{background:var(--ok)}
+  ul.x li::before{background:#dc2626;border-radius:50%}
+  .cmp{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:8px 0}
+  .box{border-radius:11px;padding:12px}
+  .box.bad{background:#fef2f2;border:1px solid #fecaca}
+  .box.good{background:#ecfdf5;border:1px solid #a7f3d0}
+  .box .bh{font-size:12px;font-weight:800;margin-bottom:4px}
+  .box.bad .bh{color:#b91c1c}
+  .box.good .bh{color:#047857}
+  .badge{display:inline-block;background:#ecfdf5;color:var(--ok);border:1px solid #a7f3d0;font-size:9.5px;font-weight:700;padding:2px 9px;border-radius:999px}
+  .chk{display:grid;grid-template-columns:1fr 1fr;gap:5px 16px;margin:6px 0}
+  .chk div{font-size:10.6px;color:var(--ink2);padding-left:18px;position:relative}
+  .chk div::before{content:"✓";position:absolute;left:2px;top:0;color:var(--ok);font-weight:800;font-size:11px}
+  .foot{position:absolute;bottom:11mm;left:15mm;right:15mm;display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--line);padding-top:7px}
+  .foot .c{font-size:9.5px;color:var(--muted)}
+  .disc{font-size:9px;color:var(--muted);font-style:italic;margin-top:5px;line-height:1.4}
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:9px;margin:11px 0}
+  .kpi{text-align:center;background:linear-gradient(180deg,#fff,#f1f5f9);border:1px solid var(--line);border-radius:10px;padding:11px 6px}
+  .kpi .n{font-size:20px;font-weight:800;color:var(--brand);line-height:1}
+  .kpi .l{font-size:9.3px;color:var(--muted);margin-top:4px}
+</style>
+</head>
+<body>
+
+<section class="page">
+  <div class="brandbar"></div>
+  <div class="logo">
+    <div class="left">
+      <div class="mark">◇</div>
+      <div>
+        <div class="name">Open<span>IDX</span></div>
+        <div class="tag">Sıfır Güven Erişim Platformu · Self-Host · Yerli</div>
+      </div>
+    </div>
+    <div class="ribbon">BANKACILIK & FİNANS · BDDK</div>
+  </div>
+
+  <div class="hero">
+    <h1>BDDK'ya uyumlu, yerli, self-host<br>kimlik ve ayrıcalıklı erişim platformu.</h1>
+    <p class="lead">OpenIDX; bankaların, sigorta ve aracı kurumların
+    <b>kimlik doğrulama (SSO/MFA)</b>, <b>ayrıcalıklı erişim yönetimi (PAM)</b>,
+    <b>yetkilendirme yönetişimi (IGA)</b> ve <b>sıfır-güven ağ (ZTNA)</b>
+    ihtiyacını — <b>Bankaların Bilgi Sistemleri ve Elektronik Bankacılık
+    Hizmetleri Hakkında Yönetmelik</b> (RG 31069, 15 Mart 2020) ile tam uyumlu
+    şekilde — kurumun kendi altyapısında, tek platformda karşılar.</p>
+  </div>
+
+  <div class="banner">
+    <div class="q">Yönetmelik; erişim kontrolü, <b>yetkili (privileged) erişim yönetimi</b>,
+    kapsamlı log kaydı, düzenli sızma testi ve birincil sistemlerin yurt içinde
+    bulundurulmasını zorunlu kılar.</div>
+    <div class="s">— BDDK Bankaların Bilgi Sistemleri ve Elektronik Bankacılık Hizmetleri Hakkında Yönetmelik. Kimlik doğrulama ve ayrıcalıklı erişim, bu yükümlülüklerin merkezindedir; yurt dışı SaaS IdP bu çerçevede kullanılamaz.</div>
+  </div>
+
+  <h2>Yurt dışı SaaS kimlik sağlayıcısı bankacılıkta neden kullanılamaz?</h2>
+  <div class="cmp">
+    <div class="box bad">
+      <div class="bh">✕ Okta · Microsoft Entra · Auth0 (yurt dışı SaaS)</div>
+      <ul class="x">
+        <li>Müşteri + personel kimlik verisi yurt dışı veri merkezinde işlenir</li>
+        <li>Birincil sistem / veri yerelleştirme kuralına aykırı</li>
+        <li>Dış hizmet alımı yükümlülükleri (BDDK dış-kaynak) karşılanamaz</li>
+        <li>Ayrıcalıklı oturum kaydı ve denetim izi sağlayıcı kontrolünde</li>
+        <li>Kesinti/erişim yabancı sağlayıcıya bağımlı, kur riskli lisans</li>
+      </ul>
+    </div>
+    <div class="box good">
+      <div class="bh">✓ OpenIDX (yerli, self-host)</div>
+      <ul class="ok">
+        <li>Tüm kimlik/oturum verisi bankanın kendi veri merkezinde</li>
+        <li>Birincil sistem yurt içinde, veri lokalizasyonu sağlanır</li>
+        <li>Dış-kaynak yerine kurum-içi kontrol; kaynak kod denetlenebilir</li>
+        <li>Ayrıcalıklı oturum kaydı, HMAC hash-zincirli değişmez denetim izi</li>
+        <li>Sabit altyapı maliyeti; kullanıcı-başı ceza yok, kilitlenme yok</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2>BDDK uyum haritası — madde madde karşılık</h2>
+  <table>
+    <thead><tr><th style="width:32%">Yönetmelik gerekliliği</th><th>OpenIDX ile karşılık</th></tr></thead>
+    <tbody>
+      <tr><td><b>Erişim kontrolü & kimlik doğrulama</b></td><td>Merkezi SSO (OIDC/SAML), çok-faktörlü doğrulama (passkey/TOTP/push), en-az-yetki, dizin (AD/LDAP) entegrasyonu.</td></tr>
+      <tr><td><b>Yetkili (privileged) erişim yönetimi</b></td><td>PAM: şifreli kasa, otomatik parola rotasyonu, SSH/RDP/VNC brokerı, sunucu-tarafı kimlik enjeksiyonu (yönetici parolayı görmez).</td></tr>
+      <tr><td><b>Kapsamlı log / izlenebilirlik</b></td><td>HMAC hash-zincirli, kurcalama-belirtir denetim günlüğü; ayrıcalıklı oturum kaydı + transkript; SIEM'e akış.</td></tr>
+      <tr><td><b>Görevler ayrılığı & yetki gözden geçirme</b></td><td>SoD (önleyici, fail-closed), periyodik erişim sertifikasyon kampanyaları, geçici yetki (JIT) + otomatik iptal.</td></tr>
+      <tr><td><b>Veri yerelleştirme / birincil sistem</b></td><td>Tamamen self-host; tek PostgreSQL, banka altyapısında. Veri yurt dışına çıkmaz.</td></tr>
+      <tr><td><b>Sızma testi & süreklilik</b></td><td>Pentest destekli sertifikasyon; otomatik yedekleme + test edilmiş geri yükleme; HA/DR.</td></tr>
+      <tr><td><b>Olay bildirimi & izleme</b></td><td>Adaptif risk motoru, anomali tespiti, kill-switch (token→oturum→ağ ≤30 sn).</td></tr>
+    </tbody>
+  </table>
+
+  <div class="kpis">
+    <div class="kpi"><div class="n">%100</div><div class="l">veri yurt içinde</div></div>
+    <div class="kpi"><div class="n">4→1</div><div class="l">dört ürün tek platform</div></div>
+    <div class="kpi"><div class="n">%90+</div><div class="l">CyberArk'a göre PAM tasarrufu</div></div>
+    <div class="kpi"><div class="n">≤30 sn</div><div class="l">uçtan uca erişim iptali</div></div>
+  </div>
+
+  <div class="foot">
+    <div class="c">OpenIDX · Bankacılık & Finans (BDDK) Uyum Broşürü · 2026</div>
+    <div class="c">openidx.tdv.org</div>
+  </div>
+</section>
+
+<section class="page">
+  <div class="brandbar"></div>
+  <h2 style="margin-top:0">Bankaya ne sağlar? — dört sütun tek platform</h2>
+  <div class="grid2">
+    <div class="card">
+      <h3>Kimlik & SSO (IAM)</h3>
+      <ul class="ok">
+        <li>Personel + şube + genel müdürlük tek oturum açma (OIDC/SAML)</li>
+        <li>Güçlü MFA: passkey, mobil push, TOTP, OTP; adaptif risk</li>
+        <li>Mevcut AD/LDAP dizini ile senkron; harici IdP federasyonu</li>
+        <li>İşe alım/ayrılma (JML) → otomatik hesap açma/kapama</li>
+      </ul>
+      <h3>Yönetişim (IGA)</h3>
+      <ul class="ok">
+        <li>Periyodik yetki gözden geçirme (BDDK denetim kanıtı)</li>
+        <li>Görevler ayrılığı — çakışan yetkiyi önler (front/back office)</li>
+        <li>Geçici yetki (JIT) — proje/denetim için süreli erişim</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>Ayrıcalıklı Erişim (PAM) <span class="badge">BDDK kritik</span></h3>
+      <ul class="ok">
+        <li>Sunucu / veritabanı / ağ cihazı parolaları şifreli kasada</li>
+        <li>Otomatik rotasyon: SSH, AWS, GCP, Postgres, MySQL, LDAP</li>
+        <li>SSH/RDP/VNC oturumları tarayıcıdan, tam kayıt altında</li>
+        <li>Yönetici parolayı hiç görmez; yasal saklama + süreli imha</li>
+      </ul>
+      <h3>Sıfır Güven Ağ (ZTNA)</h3>
+      <ul class="ok">
+        <li>Çekirdek bankacılık servisleri "karanlık" — açık port yok</li>
+        <li>Uzaktan/tedarikçi erişimi VPN'siz, cihaz-sağlık kontrollü</li>
+        <li>Ayrıcalıklı hedefler overlay üzerinde — saldırı yüzeyi minimal</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2>Neden dört ayrı ürün yerine OpenIDX?</h2>
+  <table>
+    <thead><tr><th style="width:34%">Klasik yığın (dört satıcı)</th><th>OpenIDX (tek platform)</th></tr></thead>
+    <tbody>
+      <tr><td>Entra/Okta (IAM) + SailPoint (IGA) + CyberArk (PAM) + Zscaler (ZTNA) ayrı lisans, ayrı konnektör</td><td>IAM+IGA+PAM+ZTNA tek kod tabanı, tek PostgreSQL</td></tr>
+      <tr><td>Bir iptal kararı dört sistemde ayrı ayrı, konnektör gecikmeli</td><td>Tek kill-switch: token+oturum+kasa+ağ devresi ≤30 sn</td></tr>
+      <tr><td>Yığılmış kullanıcı-başı fatura $33–65/kullanıcı/ay</td><td>Sabit altyapı; Enterprise ~$4–6/kullanıcı/ay (%70–80 tasarruf)</td></tr>
+      <tr><td>Yabancı SaaS bağımlılığı, veri yurt dışında</td><td>Tam self-host, veri yurt içinde, açık kaynak (kilitlenme yok)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Kurulum & devreye alma</h2>
+  <div class="chk">
+    <div>Bankanın kendi veri merkezine kurulum (Docker/Kubernetes, HA/DR)</div>
+    <div>Mevcut AD/LDAP + çekirdek sistem entegrasyonu</div>
+    <div>İlk uygulamalar 2–4 haftada SSO + MFA'ya bağlanır</div>
+    <div>Kritik sunucular PAM'e alınır, ayrıcalıklı oturum kaydı başlar</div>
+    <div>Denetim günlüğü + kurum SIEM'ine akış (BDDK log)</div>
+    <div>Otomatik yedekleme + test edilmiş geri yükleme</div>
+    <div>Pentest → ISO 27001 hedefi + BDDK denetim hazırlığı</div>
+    <div>Yerinde eğitim + Türkçe destek + SLA</div>
+  </div>
+
+  <div class="banner" style="background:linear-gradient(135deg,#1e3a8a,#2563eb)">
+    <div class="q">Uyum + egemenlik + maliyet — üçü birden.</div>
+    <div class="s">BDDK Yönetmeliği'nin erişim/PAM/log/lokalizasyon yükümlülükleri tek platformda; müşteri ve personel verisi yurt içinde; ve dört yabancı lisans yerine sabit maliyetli yerli çözüm. Açık kaynak çekirdek bağımsız denetime açıktır.</div>
+  </div>
+
+  <p class="disc">Uyum notu: Bu broşür OpenIDX'in yeteneklerini ve ilgili BDDK
+  yükümlülüklerinin gerekçesini özetler; nihai uyum değerlendirmesi bankanın
+  bilgi sistemleri/iç denetim/hukuk birimleri tarafından yapılmalıdır. OpenIDX
+  olgunluk seviyesi pilot/tasarım-ortağı için uygundur; üretim sertifikasyonu
+  (ISO 27001 / SOC 2 / bağımsız pentest) devam eden bir süreçtir. Fiyat/tasarruf
+  rakamları Temmuz 2026 üçüncü-taraf pazar verisine dayanır.</p>
+
+  <div class="foot">
+    <div class="c">OpenIDX · Bankacılık & Finans (BDDK) Uyum Broşürü · 2026</div>
+    <div class="c">Demo & pilot talebi: openidx.tdv.org</div>
+  </div>
+</section>
+
+</body>
+</html>
