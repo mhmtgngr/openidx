@@ -136,24 +136,24 @@
     <div class="s">Bu, OpenIDX'in asıl farkı: dört sütun tek kontrol düzlemini paylaştığı için karar entegrasyon değil, tek yazma işlemidir.</div>
   </div>
 
-  <h2>Neden şimdi? — Pazar konsolide oluyor</h2>
+  <h2>Neden şimdi? — Pazar konsolide oluyor & egemenlik zorunlu</h2>
   <div class="grid2">
     <div class="card">
-      <h3>Rakipler M&A ile kuruyor</h3>
+      <h3>Türkiye: yurt dışı SaaS IdP yasak</h3>
       <ul>
-        <li><b>$25 milyar</b> Palo Alto × CyberArk (Şub 2026)</li>
-        <li>Okta × Axiom · Delinea × StrongDM · SailPoint IPO</li>
-        <li>Herkes "kimlikten ağ paketine" sözünü satın alarak birleştiriyor.</li>
-        <li><b>OpenIDX bunu zaten tek kod tabanında yapıyor.</b></li>
+        <li><b>Kamu (2019/12 Genelge):</b> kritik + kimlik verisi yurt dışına çıkamaz, SaaS'ta işlenemez → Okta/Entra/Auth0 kamuda <b>kullanılamaz</b></li>
+        <li><b>Bankacılık (BDDK):</b> çekirdek sistemde SaaS IdP ağır kısıtlı</li>
+        <li>Tek uyumlu yol: <b>self-host</b> — OpenIDX'in doğduğu yer</li>
+        <li>Yerli malı → kamu ihalesinde %15 avantaj</li>
       </ul>
     </div>
     <div class="card">
-      <h3>Fiyat isyanı gerçek</h3>
+      <h3>Küresel: fiyat isyanı + M&A</h3>
       <ul>
-        <li>Okta: ~$204/kullanıcı/yıl (Essentials); governance ayrı SKU</li>
-        <li>Auth0: 1.67× kullanıcıda <b>15× fatura</b> (belgelenmiş)</li>
-        <li>CyberArk: $1.8K–12K/kullanıcı/yıl, teklif-bazlı</li>
-        <li>PAM geneli: $9–400/kullanıcı/yıl, çok-yıl taahhüt</li>
+        <li><b>$25 milyar</b> Palo Alto × CyberArk (Şub 2026); Okta×Axiom, Delinea×StrongDM</li>
+        <li>Okta ~$204/kullanıcı/yıl; Auth0 1.67× kullanıcıda <b>15× fatura</b></li>
+        <li>CyberArk $1.8K–12K/kullanıcı/yıl, teklif-bazlı</li>
+        <li>Rakipler M&A ile birleştiriyor; <b>OpenIDX zaten tek kod tabanında</b></li>
       </ul>
     </div>
   </div>
@@ -194,7 +194,7 @@
     <div class="tier"><div class="h">MSP</div><div class="p">Kiracı + ölçüm</div>
       <div class="x">White-label, çok-kiracı orkestrasyon, kullanım ölçümü ve geri-faturalama.</div></div>
     <div class="tier"><div class="h">Kamu / Savunma</div><div class="p">Proje-bazlı</div>
-      <div class="x">FIPS/air-gap build, yerinde kurulum, yerli malı konumlanma.</div></div>
+      <div class="x">2019/12 Genelge uyumlu self-host, yerli malı, FIPS/air-gap build, yerinde kurulum.</div></div>
   </div>
   <p class="muted">Karşılaştırma: yığılmış rakip faturası <b>$33–65/kullanıcı/ay</b>.
   OpenIDX Enterprise ~$4–6 → "%70–80 tasarruf" üçüncü-taraf fiyat verisiyle doğrulanmıştır.</p>
@@ -202,25 +202,28 @@
   <h2>Hedef segmentler</h2>
   <div class="grid2">
     <div class="card">
-      <h3>1 · Türkiye regüle sektör <span class="badge">Öncelik</span></h3>
+      <h3>1 · Türkiye kamu kurumları <span class="badge">En büyük pazar</span></h3>
       <ul>
-        <li>BDDK Bilgi Sistemleri + Bulut Tebliği → çekirdek bankacılıkta SaaS IdP ağır kısıtlı, self-host zorunlu</li>
-        <li>KVKK md. 9 veri lokalizasyonu</li>
+        <li><b>2019/12 Cumhurbaşkanlığı Bilgi ve İletişim Güvenliği Genelgesi:</b> kritik + kimlik verisi yurt dışına çıkamaz, yurt dışı SaaS/bulutta işlenemez</li>
+        <li>Kimlik/SSO/PAM en hassas veri sınıfı → yurt dışı SaaS IdP (Okta/Entra/Auth0) <b>kamuda kullanılamaz</b>, tek yol self-host</li>
+        <li>Türksat Gölbaşı Veri Merkezi + e-Devlet yerli yazılım hedefi (2025) aynı yönde</li>
+        <li>Bakanlık, belediye, üniversite, KİT, hastane, savunma → on binlerce kurum</li>
         <li>Yerli malı → kamu ihalesinde %15 fiyat avantajı</li>
       </ul>
     </div>
     <div class="card">
-      <h3>2 · AB NIS2 / DORA orta ölçek</h3>
+      <h3>2 · Türkiye regüle özel sektör</h3>
       <ul>
-        <li>DORA RTS pratikte PAM zorunluluğu</li>
-        <li>Egemen, self-host, dört-sütunlu tek satıcı yok → boşluk</li>
+        <li>BDDK Bilgi Sistemleri + Bulut Tebliği → çekirdek bankacılıkta SaaS IdP ağır kısıtlı</li>
+        <li>KVKK md. 9 veri lokalizasyonu → self-host zorunlu</li>
+        <li>Banka, sigorta, aracı kurum, varlık yönetimi</li>
       </ul>
     </div>
     <div class="card">
-      <h3>3 · MSP'ler</h3>
+      <h3>3 · AB NIS2 / DORA · MSP'ler</h3>
       <ul>
-        <li>White-label çok-kiracılı ZTNA OSS'te servis edilmiyor</li>
-        <li>FORCE-RLS çok-kiracılılık + ölçüm tam oturur</li>
+        <li>DORA RTS pratikte PAM zorunluluğu; egemen dört-sütunlu satıcı yok</li>
+        <li>MSP: white-label çok-kiracılı ZTNA OSS'te servis edilmiyor → FORCE-RLS + ölçüm tam oturur</li>
       </ul>
     </div>
     <div class="card">
@@ -294,7 +297,7 @@
 
   <div class="callout">
     <div class="q">Neden OpenIDX?</div>
-    <div class="s">① Dört ürün, tek platform, tek DB — entegrasyon borcu yok · ② %70–80 daha ucuz, sabit maliyet · ③ Tam self-host, veri egemenliği · ④ BDDK/KVKK/DORA/NIS2 self-host'u zorluyor · ⑤ Kill-switch token→oturum→vault→ağ ≤30 sn · ⑥ Apache-2.0, kilitlenme yok</div>
+    <div class="s">① Dört ürün, tek platform, tek DB — entegrasyon borcu yok · ② %70–80 daha ucuz, sabit maliyet · ③ Tam self-host, veri egemenliği · ④ Kamu 2019/12 + BDDK/KVKK/DORA/NIS2 self-host'u zorluyor · ⑤ Kill-switch token→oturum→vault→ağ ≤30 sn · ⑥ Apache-2.0, kilitlenme yok</div>
   </div>
 
   <p class="disc">Olgunluk notu: OpenIDX "MVP–erken GA" seviyesindedir; tasarım

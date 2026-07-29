@@ -191,25 +191,48 @@ katmanlar yeni-alıcı özellikleridir.
 Sıra, "regülasyonun self-host'u zorunlu kıldığı" yerlerden başlar (en kolay
 kazanım), sonra maliyet-hassas OSS-öncelikli kurumlara genişler.
 
-### Segment 1 — Türkiye regüle sektör (ÖNCELİK)
+### Segment 1 — Türkiye kamu kurumları (EN BÜYÜK & ÖNCELİKLİ)
+- **2019/12 Cumhurbaşkanlığı Bilgi ve İletişim Güvenliği Genelgesi**
+  (6 Temmuz 2019, RG 30823): kritik türdeki veriler ve kişisel/kimlik
+  verilerinin **yurt içinde tutulması, yurt dışına aktarılmaması** ve yurt dışı
+  bulut/SaaS hizmetlerinde işlenmemesi zorunlu. Uygulama detayları **Bilgi ve
+  İletişim Güvenliği Rehberi (BİG Rehberi, DDO)** ile bağlayıcı.
+- **Somut sonuç:** Kimlik doğrulama, SSO ve ayrıcalıklı erişim gibi **kritik
+  güvenlik altyapısı** yurt dışı SaaS IdP (Okta, Microsoft Entra, Auth0) ile
+  kamuda **kullanılamaz** — kimlik verisi ve oturum sırları en hassas veri
+  sınıfıdır. Tek uyumlu yol **self-host**tur.
+- **Devlet yönü aynı istikamette:** Türksat **Gölbaşı Veri Merkezi** ile
+  e-Devlet dahil kamu bulut ihtiyacını **yerli yazılım** ile karşılama hedefi
+  (Aralık 2025). Kamu bulutu yerlileşiyor; üzerinde çalışacak IAM/PAM/ZTNA
+  katmanı da yerli ve self-host olmalı.
+- **Kapsam büyüklüğü:** Bakanlıklar, belediyeler, üniversiteler, KİT'ler,
+  hastaneler (Sağlık Bakanlığı e-Nabız/HBYS), savunma sanayii, e-Devlet
+  entegre kurumlar — on binlerce kurum, yüz binlerce iç kullanıcı ve sunucu.
+- **Rakip:** yurt dışı SaaS zaten eleniyor; gerçek rakip "ücretsiz Keycloak +
+  sistem entegratörü". Bu yüzden **sertifikalı, destekli, dört-sütunlu, yerli
+  malı** paket olarak satılır.
+- **Ticari avantaj:** Yerli malı belgesi → **kamu ihalelerinde %15 fiyat
+  avantajı** (Kamu İhale Kanunu). KDV/kurumlar vergisi yazılım teşvikleri.
+
+### Segment 2 — Türkiye regüle özel sektör (bankacılık/finans)
 - **BDDK** Bilgi Sistemleri Yönetmeliği + Bulut Tebliği: bankalar, sigorta,
   aracı kurumlar veri yerelleştirme ve dış-hizmet kurallarına tabi; çekirdek
   bankacılık için SaaS IdP kullanımı ağır kısıtlı → **self-host zorunlu**.
-- **KVKK md. 9** veri lokalizasyonu.
-- **Yerli malı belgesi → kamu ihalelerinde %15 fiyat avantajı.**
+- **KVKK md. 9** veri lokalizasyonu (2024 değişikliğine rağmen sektörel
+  mevzuat yurt-içi barındırmayı zorluyor).
 - Gerçek rakip "ücretsiz Keycloak + sistem entegratörü" — bu yüzden
   **sertifikalı, destekli, dört-sütunlu paket** olarak satılır.
 
-### Segment 2 — AB NIS2 / DORA orta ölçek
+### Segment 3 — AB NIS2 / DORA orta ölçek
 - DORA'nın RTS'i pratikte bir PAM zorunluluğu; NIS2 kimlik + ayrıcalıklı
   erişim + denetim ister.
 - Egemen (sovereign), self-host, dört-sütunlu tek satıcı yok → boşluk.
 
-### Segment 3 — MSP'ler (Yönetilen Hizmet Sağlayıcılar)
+### Segment 4 — MSP'ler (Yönetilen Hizmet Sağlayıcılar)
 - White-label çok-kiracılı ZTNA OSS'te hiç servis edilmiyor.
 - OpenIDX'in FORCE-RLS çok-kiracılılığı + ölçüm/geri-faturalama tam oturur.
 
-### Segment 4 — OSS-öncelikli mühendislik kurumları
+### Segment 5 — OSS-öncelikli mühendislik kurumları
 - Auth0-yenileme ve Teleport-lisans "mültecileri".
 - Show HN / r/selfhosted funnel'ı (Infisical/Authentik modeli).
 
@@ -222,7 +245,7 @@ kazanım), sonra maliyet-hassas OSS-öncelikli kurumlara genişler.
 | **Community** | Ücretsiz (Apache-2.0) | Tüm çekirdek: IAM+IGA+PAM+ZTNA, self-host, topluluk desteği |
 | **Enterprise** | **$4–6/kullanıcı/ay** (taban ~$6–8K/yıl) | SLA, uyum paketleri, premium konnektör, öncelikli destek |
 | **MSP** | Kiracı + ölçüm bazlı | White-label, çok-kiracı orkestrasyon, geri-faturalama |
-| **Kamu/Savunma** | Proje-bazlı | FIPS/air-gap build, yerinde kurulum, yerli malı |
+| **Kamu / Savunma** | Proje-bazlı | 2019/12 Genelge uyumlu self-host, yerli malı, FIPS/air-gap build, yerinde kurulum |
 
 **Karşılaştırma:** Yığılmış rakip faturası **$33–65/kullanıcı/ay**. OpenIDX
 Enterprise ~$4–6 → README'nin **"%70–80 tasarruf"** iddiası üçüncü-taraf
@@ -259,6 +282,6 @@ uyuşmazlıkları, güvenlik başlıkları, açık DCR) zaten düzeltildi.
 1. **Dört ürün, tek platform, tek veritabanı** — entegrasyon borcu yok.
 2. **%70–80 daha ucuz** — sabit maliyet, kullanıcı-başı fiyat cezası yok.
 3. **Veri egemenliği** — tamamen self-host, verin senin altyapında.
-4. **Regülasyona hazır konumlanma** — BDDK/KVKK/DORA/NIS2 self-host'u zorluyor.
+4. **Regülasyona hazır konumlanma** — Kamu 2019/12 Genelgesi + BDDK/KVKK/DORA/NIS2 self-host'u zorluyor.
 5. **Benzersiz moat** — kill-switch token→oturum→vault→ağ devresini ≤30 sn'de keser.
 6. **Açık kaynak, kilitlenme yok** — Apache-2.0 çekirdek, açık standartlar.
