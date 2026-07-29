@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OpenIDX — Kurumsal Broşür</title>
+<style>
+  :root{
+    --ink:#0b1220; --ink2:#334155; --muted:#64748b; --line:#e2e8f0;
+    --brand:#1e3a8a; --brand2:#2563eb; --accent:#0891b2; --gold:#b45309;
+    --bg:#ffffff; --panel:#f8fafc; --ok:#047857;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{background:#e9edf3;color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;line-height:1.5}
+  .page{width:210mm;min-height:297mm;margin:14px auto;background:var(--bg);
+    padding:18mm 16mm;position:relative;box-shadow:0 6px 28px rgba(15,23,42,.14)}
+  @media print{
+    body{background:#fff}
+    .page{margin:0;box-shadow:none;page-break-after:always;width:auto;min-height:auto}
+    @page{size:A4;margin:12mm}
+  }
+  h1{font-size:30px;letter-spacing:-.5px;color:var(--brand);line-height:1.1}
+  h2{font-size:17px;color:var(--brand);margin:20px 0 8px;padding-bottom:5px;
+    border-bottom:2px solid var(--line);letter-spacing:-.2px}
+  h3{font-size:13px;color:var(--ink);margin:12px 0 4px;text-transform:uppercase;
+    letter-spacing:.4px}
+  p{color:var(--ink2);font-size:12.2px;margin:6px 0}
+  .lead{font-size:13.5px;color:var(--ink2)}
+  .muted{color:var(--muted);font-size:11px}
+  .brandbar{height:6px;background:linear-gradient(90deg,var(--brand),var(--brand2),var(--accent));
+    border-radius:6px;margin-bottom:16px}
+  .logo{display:flex;align-items:center;gap:12px}
+  .logo .mark{width:44px;height:44px;border-radius:11px;flex:0 0 auto;
+    background:linear-gradient(135deg,var(--brand),var(--accent));
+    display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:20px}
+  .logo .name{font-size:22px;font-weight:800;letter-spacing:-.5px;color:var(--ink)}
+  .logo .name span{color:var(--brand2)}
+  .tag{font-size:11px;color:var(--muted);margin-top:2px}
+  .hero{margin:18px 0 6px}
+  .pillars{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:16px 0}
+  .pill{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px}
+  .pill .k{font-size:11px;font-weight:700;color:var(--brand2);text-transform:uppercase;letter-spacing:.4px}
+  .pill .t{font-size:13px;font-weight:700;margin:3px 0}
+  .pill .d{font-size:10.6px;color:var(--muted);line-height:1.35}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
+  ul{list-style:none;margin:6px 0}
+  ul li{font-size:11.6px;color:var(--ink2);padding:3px 0 3px 18px;position:relative}
+  ul li::before{content:"";position:absolute;left:2px;top:8px;width:7px;height:7px;
+    border-radius:2px;background:var(--brand2)}
+  ul.ok li::before{background:var(--ok)}
+  .kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:14px 0}
+  .kpi{text-align:center;background:linear-gradient(180deg,#fff,#f1f5f9);
+    border:1px solid var(--line);border-radius:12px;padding:14px 8px}
+  .kpi .n{font-size:26px;font-weight:800;color:var(--brand);line-height:1}
+  .kpi .l{font-size:10.5px;color:var(--muted);margin-top:5px}
+  table{width:100%;border-collapse:collapse;margin:8px 0;font-size:11px}
+  th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{background:var(--brand);color:#fff;font-size:10.5px;text-transform:uppercase;letter-spacing:.3px;font-weight:700}
+  tr:nth-child(even) td{background:#fbfcfe}
+  .tagpill{display:inline-block;font-size:9.5px;font-weight:700;padding:2px 8px;border-radius:999px}
+  .t-oss{background:#dcfce7;color:#166534}
+  .t-ent{background:#dbeafe;color:#1e40af}
+  .t-add{background:#fef3c7;color:#92400e}
+  .t-msp{background:#f3e8ff;color:#6b21a8}
+  .callout{background:linear-gradient(135deg,#0b1220,#1e3a8a);color:#fff;border-radius:14px;
+    padding:16px 18px;margin:16px 0}
+  .callout .q{font-size:14px;font-weight:600;line-height:1.45}
+  .callout .s{font-size:10.5px;color:#c7d2fe;margin-top:6px}
+  .foot{position:absolute;bottom:12mm;left:16mm;right:16mm;display:flex;justify-content:space-between;
+    align-items:center;border-top:1px solid var(--line);padding-top:8px}
+  .foot .c{font-size:10px;color:var(--muted)}
+  .step{display:flex;gap:10px;margin:7px 0}
+  .step .n{flex:0 0 auto;width:22px;height:22px;border-radius:50%;background:var(--brand2);color:#fff;
+    font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center}
+  .step .b{font-size:11.4px}
+  .step .b b{color:var(--ink)}
+  .price{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:10px 0}
+  .tier{border:1px solid var(--line);border-radius:12px;padding:12px;background:#fff}
+  .tier.hl{border:2px solid var(--brand2);background:linear-gradient(180deg,#eff6ff,#fff)}
+  .tier .h{font-size:12px;font-weight:800;color:var(--brand)}
+  .tier .p{font-size:16px;font-weight:800;color:var(--ink);margin:3px 0}
+  .tier .p small{font-size:10px;color:var(--muted);font-weight:600}
+  .tier .x{font-size:10px;color:var(--muted);line-height:1.35}
+  .badge{display:inline-block;background:#ecfdf5;color:var(--ok);border:1px solid #a7f3d0;
+    font-size:10px;font-weight:700;padding:3px 10px;border-radius:999px}
+  .disc{font-size:9.5px;color:var(--muted);font-style:italic;margin-top:6px}
+</style>
+</head>
+<body>
+
+<!-- ============ SAYFA 1 ============ -->
+<section class="page">
+  <div class="brandbar"></div>
+  <div class="logo">
+    <div class="mark">◇</div>
+    <div>
+      <div class="name">Open<span>IDX</span></div>
+      <div class="tag">Sıfır Güven Erişim Platformu · Self-Host · Açık Kaynak</div>
+    </div>
+  </div>
+
+  <div class="hero">
+    <h1>Dört kimlik ürünü.<br>Tek platform. Tek veritabanı.</h1>
+    <p class="lead">OpenIDX; <b>kimlik yönetimi (IAM)</b>, <b>yönetişim (IGA)</b>,
+    <b>ayrıcalıklı erişim (PAM)</b> ve <b>sıfır-güven ağ (ZTNA)</b> yeteneğini —
+    normalde dört ayrı üründen alınan işi — tek self-host edilebilir platformda,
+    tek PostgreSQL üzerinde birleştirir. Microsoft Entra ID + Okta + SailPoint +
+    CyberArk + Zscaler yığınının yerini, <b>kullanıcı-başı yığılmış fiyatların
+    %70–80 altında</b> almak için tasarlanmıştır.</p>
+  </div>
+
+  <div class="kpis">
+    <div class="kpi"><div class="n">%70–80</div><div class="l">yığılmış rakip faturasına göre tasarruf</div></div>
+    <div class="kpi"><div class="n">4→1</div><div class="l">dört SKU yerine tek platform</div></div>
+    <div class="kpi"><div class="n">≤30 sn</div><div class="l">uçtan uca erişim iptali (kill-switch)</div></div>
+  </div>
+
+  <div class="pillars">
+    <div class="pill"><div class="k">IAM</div><div class="t">Kimlik</div>
+      <div class="d">OIDC/SAML SSO, MFA (passkey/TOTP/push), LDAP/AD/Azure AD senkron, SCIM 2.0, adaptif risk.</div></div>
+    <div class="pill"><div class="k">IGA</div><div class="t">Yönetişim</div>
+      <div class="d">Erişim gözden geçirme, SoD (fail-closed), JIT yükseltme, onay akışları, HR-tetikli JML.</div></div>
+    <div class="pill"><div class="k">PAM</div><div class="t">Ayrıcalıklı Erişim</div>
+      <div class="d">Şifreli kasa + rotasyon, SSH/RDP/VNC broker, oturum kaydı, kimlik enjeksiyonu.</div></div>
+    <div class="pill"><div class="k">ZTNA</div><div class="t">Sıfır Güven Ağ</div>
+      <div class="d">OpenZiti "karanlık" servisler (açık port yok), clientless BrowZer, posture'lı ajanlar.</div></div>
+  </div>
+
+  <div class="callout">
+    <div class="q">"Bir iptal kararı; token'ı siler, oturumu öldürür, ayrıcalıklı
+    bağlantıyı sonlandırır ve ağ devresini 30 saniyenin altında keser — tek,
+    hash-zincirli denetim izinde."</div>
+    <div class="s">Bu, OpenIDX'in asıl farkı: dört sütun tek kontrol düzlemini paylaştığı için karar entegrasyon değil, tek yazma işlemidir.</div>
+  </div>
+
+  <h2>Neden şimdi? — Pazar konsolide oluyor</h2>
+  <div class="grid2">
+    <div class="card">
+      <h3>Rakipler M&A ile kuruyor</h3>
+      <ul>
+        <li><b>$25 milyar</b> Palo Alto × CyberArk (Şub 2026)</li>
+        <li>Okta × Axiom · Delinea × StrongDM · SailPoint IPO</li>
+        <li>Herkes "kimlikten ağ paketine" sözünü satın alarak birleştiriyor.</li>
+        <li><b>OpenIDX bunu zaten tek kod tabanında yapıyor.</b></li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>Fiyat isyanı gerçek</h3>
+      <ul>
+        <li>Okta: ~$204/kullanıcı/yıl (Essentials); governance ayrı SKU</li>
+        <li>Auth0: 1.67× kullanıcıda <b>15× fatura</b> (belgelenmiş)</li>
+        <li>CyberArk: $1.8K–12K/kullanıcı/yıl, teklif-bazlı</li>
+        <li>PAM geneli: $9–400/kullanıcı/yıl, çok-yıl taahhüt</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="foot">
+    <div class="c">OpenIDX · Kurumsal Broşür · 2026</div>
+    <div class="c">Apache-2.0 çekirdek · openidx.tdv.org</div>
+  </div>
+</section>
+
+<!-- ============ SAYFA 2 ============ -->
+<section class="page">
+  <div class="brandbar"></div>
+  <h2 style="margin-top:0">Pazarlanabilir kısımlar — paketleme haritası</h2>
+  <p>Tek dev SKU değil; alıcı katmanına göre paketlenebilir modüller. Çekirdek
+  sonsuza dek açık kaynak (Apache-2.0); para kazandıran katmanlar yeni-alıcı özellikleridir.</p>
+  <table>
+    <thead><tr><th style="width:26%">Modül</th><th style="width:24%">Kime</th><th>Değer önermesi</th><th style="width:16%">Katman</th></tr></thead>
+    <tbody>
+      <tr><td><b>IAM / SSO çekirdeği</b></td><td>Her kurum</td><td>Okta/Auth0 yerine sabit maliyet, self-host</td><td><span class="tagpill t-oss">Açık kaynak</span></td></tr>
+      <tr><td><b>PAM Suite</b></td><td>Regüle sektör, IT ops</td><td>CyberArk/Delinea alternatifi, %90+ ucuz</td><td><span class="tagpill t-ent">Enterprise</span></td></tr>
+      <tr><td><b>ZTNA / OpenZiti düzlemi</b></td><td>Dağıtık işgücü, OT/IoT, MSP</td><td>"Karanlık" servisler, VPN yok, clientless</td><td><span class="tagpill t-ent">Enterprise</span></td></tr>
+      <tr><td><b>IGA / Yönetişim</b></td><td>Uyum & denetim</td><td>SailPoint alternatifi, denetim kanıtı</td><td><span class="tagpill t-ent">Enterprise</span></td></tr>
+      <tr><td><b>Kill-Switch & Access 360</b></td><td>CISO / SOC</td><td>Tek işlemle uçtan-uca iptal ≤30 sn</td><td><span class="tagpill t-ent">Enterprise</span></td></tr>
+      <tr><td><b>Uyum Paketleri</b></td><td>Regüle sektör</td><td>SOC2/ISO/KVKK/DORA denetime-hazır çıktı</td><td><span class="tagpill t-add">Eklenti</span></td></tr>
+      <tr><td><b>Premium konnektörler</b></td><td>Kurumsal entegrasyon</td><td>Workday, ServiceNow, ek rotasyon</td><td><span class="tagpill t-add">Eklenti</span></td></tr>
+      <tr><td><b>MSP orkestrasyon + ölçüm</b></td><td>Servis sağlayıcılar</td><td>White-label çok-kiracı, geri-faturalama</td><td><span class="tagpill t-msp">MSP</span></td></tr>
+      <tr><td><b>FIPS / air-gap build</b></td><td>Savunma, kamu</td><td>Sertifikalı, hava-boşluklu dağıtım</td><td><span class="tagpill t-add">Eklenti</span></td></tr>
+    </tbody>
+  </table>
+
+  <h2>Fiyatlandırma</h2>
+  <div class="price">
+    <div class="tier"><div class="h">Community</div><div class="p">Ücretsiz</div>
+      <div class="x">Tüm çekirdek: IAM+IGA+PAM+ZTNA. Self-host. Topluluk desteği. Apache-2.0.</div></div>
+    <div class="tier hl"><div class="h">Enterprise</div><div class="p">$4–6<small>/kullanıcı/ay</small></div>
+      <div class="x">Taban ~$6–8K/yıl. SLA, uyum paketleri, premium konnektör, öncelikli destek.</div></div>
+    <div class="tier"><div class="h">MSP</div><div class="p">Kiracı + ölçüm</div>
+      <div class="x">White-label, çok-kiracı orkestrasyon, kullanım ölçümü ve geri-faturalama.</div></div>
+    <div class="tier"><div class="h">Kamu / Savunma</div><div class="p">Proje-bazlı</div>
+      <div class="x">FIPS/air-gap build, yerinde kurulum, yerli malı konumlanma.</div></div>
+  </div>
+  <p class="muted">Karşılaştırma: yığılmış rakip faturası <b>$33–65/kullanıcı/ay</b>.
+  OpenIDX Enterprise ~$4–6 → "%70–80 tasarruf" üçüncü-taraf fiyat verisiyle doğrulanmıştır.</p>
+
+  <h2>Hedef segmentler</h2>
+  <div class="grid2">
+    <div class="card">
+      <h3>1 · Türkiye regüle sektör <span class="badge">Öncelik</span></h3>
+      <ul>
+        <li>BDDK Bilgi Sistemleri + Bulut Tebliği → çekirdek bankacılıkta SaaS IdP ağır kısıtlı, self-host zorunlu</li>
+        <li>KVKK md. 9 veri lokalizasyonu</li>
+        <li>Yerli malı → kamu ihalesinde %15 fiyat avantajı</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>2 · AB NIS2 / DORA orta ölçek</h3>
+      <ul>
+        <li>DORA RTS pratikte PAM zorunluluğu</li>
+        <li>Egemen, self-host, dört-sütunlu tek satıcı yok → boşluk</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>3 · MSP'ler</h3>
+      <ul>
+        <li>White-label çok-kiracılı ZTNA OSS'te servis edilmiyor</li>
+        <li>FORCE-RLS çok-kiracılılık + ölçüm tam oturur</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>4 · OSS-öncelikli mühendislik</h3>
+      <ul>
+        <li>Auth0-yenileme, Teleport-lisans "mültecileri"</li>
+        <li>Show HN / r/selfhosted funnel (Infisical/Authentik modeli)</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="foot">
+    <div class="c">OpenIDX · Kurumsal Broşür · 2026</div>
+    <div class="c">Apache-2.0 çekirdek · openidx.tdv.org</div>
+  </div>
+</section>
+
+<!-- ============ SAYFA 3 ============ -->
+<section class="page">
+  <div class="brandbar"></div>
+  <h2 style="margin-top:0">Kuruma kullandırma yol haritası</h2>
+  <p>Değer erken gelsin diye fazlar bağımsız çalıştırılabilir. Tipik pilot 30–45 gün.</p>
+
+  <div class="grid2">
+    <div class="card">
+      <div class="step"><div class="n">0</div><div class="b"><b>Keşif & kapsam</b> (1–2 hafta) — mevcut yığın çıkarılır, ilk değer noktası (SSO+MFA veya PAM erişim) ve başarı kriteri belirlenir.</div></div>
+      <div class="step"><div class="n">1</div><div class="b"><b>Temel kurulum</b> (2–4 hafta) — self-host (Docker/K8s), dizin senkronu (LDAP/AD/Azure AD), ilk 2–3 uygulama SSO + MFA, denetim/SIEM/yedekleme.</div></div>
+      <div class="step"><div class="n">2</div><div class="b"><b>Ayrıcalıklı erişim</b> (2–4 hafta) — kritik sunucular kasaya, SSH/RDP/VNC broker + oturum kaydı, rotasyon, JIT + onay.</div></div>
+    </div>
+    <div class="card">
+      <div class="step"><div class="n">3</div><div class="b"><b>Sıfır güven ağ</b> (3–6 hafta) — OpenZiti overlay, kritik servisler "karanlık" (port kapanır), clientless/ajan + posture, PAM hedefleri overlay'e taşınır.</div></div>
+      <div class="step"><div class="n">4</div><div class="b"><b>Yönetişim & uyum</b> (paralel) — erişim gözden geçirme, SoD, HR-tetikli JML, kill-switch + Access 360, uyum raporları, pentest.</div></div>
+      <div class="step"><div class="n">5</div><div class="b"><b>Devreye alma & büyütme</b> — pilot → üretim, kademeli genişletme, destek/SLA, ücretli eklentiler.</div></div>
+    </div>
+  </div>
+
+  <h2>Kanıtlanmış yetenekler (kod-doğrulanmış)</h2>
+  <div class="grid2">
+    <div class="card">
+      <h3>Kimlik & Erişim</h3>
+      <ul class="ok">
+        <li>OAuth 2.0/OIDC (PKCE, refresh rotation, token exchange, JWKS rotasyon)</li>
+        <li>SAML 2.0 IdP (XML-DSig, SP metadata, SLO)</li>
+        <li>MFA: TOTP, WebAuthn/passkey, push, OTP + adaptif risk/step-up</li>
+        <li>LDAP/AD/Azure AD senkron, SCIM 2.0 (filtre, PATCH)</li>
+      </ul>
+      <h3>Ayrıcalıklı Erişim</h3>
+      <ul class="ok">
+        <li>Zarf-şifreli kasa + KEK rotasyon</li>
+        <li>Rotasyon: SSH, AWS IAM, GCP SA, Postgres, MySQL, LDAP</li>
+        <li>Guacamole SSH/RDP/VNC + kimlik enjeksiyonu, oturum kaydı, legal hold</li>
+        <li>Ayrıcalıklı oturum OpenZiti üzerinden — hedefte açık port yok</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>Yönetişim</h3>
+      <ul class="ok">
+        <li>Erişim gözden geçirme + sertifikasyon (iptal enforce)</li>
+        <li>SoD önleyici, fail-closed; JIT + otomatik süre dolumu</li>
+        <li>RBAC/ABAC/OPA; HR-tetikli Joiner/Mover/Leaver</li>
+      </ul>
+      <h3>Sıfır Güven Ağ & Platform</h3>
+      <ul class="ok">
+        <li>Kimlik-tetikli "karanlık" servisler, clientless BrowZer</li>
+        <li>Masaüstü (imzalı Windows) + Android ajan, posture</li>
+        <li>Çok-kiracı FORCE row-level security (CI-enforced)</li>
+        <li>HMAC hash-zincirli denetim + Elasticsearch, SIEM, Prometheus/OTel</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="callout">
+    <div class="q">Neden OpenIDX?</div>
+    <div class="s">① Dört ürün, tek platform, tek DB — entegrasyon borcu yok · ② %70–80 daha ucuz, sabit maliyet · ③ Tam self-host, veri egemenliği · ④ BDDK/KVKK/DORA/NIS2 self-host'u zorluyor · ⑤ Kill-switch token→oturum→vault→ağ ≤30 sn · ⑥ Apache-2.0, kilitlenme yok</div>
+  </div>
+
+  <p class="disc">Olgunluk notu: OpenIDX "MVP–erken GA" seviyesindedir; tasarım
+  ortağı ve ücretli pilotlar için hazırdır. Kayıtsız şartsız GA için pentest,
+  CRA/ISO/SOC 2 uyum takvimi devam etmektedir. Fiyat ve tasarruf rakamları
+  Temmuz 2026 üçüncü-taraf pazar verisine dayanır.</p>
+
+  <div class="foot">
+    <div class="c">OpenIDX · Kurumsal Broşür · 2026</div>
+    <div class="c">İletişim / demo talebi: openidx.tdv.org</div>
+  </div>
+</section>
+
+</body>
+</html>
