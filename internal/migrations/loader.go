@@ -810,5 +810,12 @@ func allMigrations() []*Migration {
 			UpSQL:       auditWebhookSubscriptionsUp,
 			DownSQL:     auditWebhookSubscriptionsDown,
 		},
+		{
+			Version:     115,
+			Name:        "vault_require_step_up",
+			Description: "Add vault_secrets.require_step_up so PAM can enforce step-up MFA at credential reveal for high-value secrets. The step-up challenge/verify flow already records completed challenges, but nothing on the reveal path required one; a valid grant alone revealed the secret. internal/vault Reveal now refuses (403, X-Step-Up-Required) unless the caller completed a step-up within the recent window. Additive, defaults false.",
+			UpSQL:       vaultRequireStepUpUp,
+			DownSQL:     vaultRequireStepUpDown,
+		},
 	}
 }
