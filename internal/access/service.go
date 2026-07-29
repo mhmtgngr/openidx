@@ -644,6 +644,12 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.POST("/pam/checkout-authorizations/:id/:decision", svc.requireAdminRole(), svc.handlePamDecideCheckoutAuthorization)
 		api.GET("/pam/checkouts/active", svc.requireAdminRole(), svc.handlePamListActiveCheckouts)
 
+		// Privilege graph (C1) — the unified-architecture moat. Admin-only: it
+		// exposes effective-access blast radius across IAM+IGA+PAM.
+		api.GET("/pam/privilege-graph/secret/:id", svc.requireAdminRole(), svc.handleSecretPrivilegeGraph)
+		api.GET("/pam/privilege-graph/entry/:id", svc.requireAdminRole(), svc.handleEntryPrivilegeGraph)
+		api.GET("/pam/privilege-graph/user/:id", svc.requireAdminRole(), svc.handleUserPrivilegeGraph)
+
 		// v109 SSH certificate authority + session brokering (`openidx connect`).
 		// CA init/rotate is admin-only; anyone authenticated may request a
 		// short-lived cert (host-side AuthorizedPrincipals still gates the
