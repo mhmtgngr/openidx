@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OpenIDX — Kamu Kurumları Regülasyon Uyum Broşürü</title>
+<style>
+  :root{
+    --ink:#0b1220; --ink2:#334155; --muted:#64748b; --line:#e2e8f0;
+    --brand:#7a1420; --brand2:#b91c1c; --accent:#0f766e; --gold:#b45309;
+    --bg:#ffffff; --panel:#fbf7f7; --ok:#047857; --navy:#1e293b;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{background:#e9edf3;color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;line-height:1.48}
+  .page{width:210mm;min-height:297mm;margin:14px auto;background:var(--bg);
+    padding:15mm 15mm;position:relative;box-shadow:0 6px 28px rgba(15,23,42,.14)}
+  @media print{
+    body{background:#fff}
+    .page{margin:0;box-shadow:none;page-break-after:always;width:auto;min-height:auto}
+    @page{size:A4;margin:11mm}
+  }
+  h1{font-size:25px;letter-spacing:-.4px;color:var(--brand);line-height:1.12}
+  h2{font-size:15px;color:var(--brand);margin:15px 0 7px;padding-bottom:4px;
+    border-bottom:2px solid var(--line);letter-spacing:-.2px}
+  h3{font-size:12px;color:var(--ink);margin:9px 0 3px;text-transform:uppercase;letter-spacing:.4px}
+  p{color:var(--ink2);font-size:11.6px;margin:5px 0}
+  .lead{font-size:12.6px;color:var(--ink2)}
+  .muted{color:var(--muted);font-size:10.3px}
+  .brandbar{height:6px;background:linear-gradient(90deg,var(--brand),var(--brand2),var(--gold));
+    border-radius:6px;margin-bottom:14px}
+  .flag{display:inline-block;width:16px;height:11px;background:var(--brand2);border-radius:2px;position:relative;vertical-align:middle;margin-right:2px}
+  .flag::after{content:"☾★";position:absolute;left:2px;top:-2px;color:#fff;font-size:8px;letter-spacing:-2px}
+  .logo{display:flex;align-items:center;gap:12px;justify-content:space-between}
+  .logo .left{display:flex;align-items:center;gap:11px}
+  .logo .mark{width:40px;height:40px;border-radius:10px;flex:0 0 auto;
+    background:linear-gradient(135deg,var(--brand),var(--gold));
+    display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:18px}
+  .logo .name{font-size:20px;font-weight:800;letter-spacing:-.5px;color:var(--ink)}
+  .logo .name span{color:var(--brand2)}
+  .tag{font-size:10.5px;color:var(--muted);margin-top:1px}
+  .ribbon{background:var(--brand);color:#fff;font-size:11px;font-weight:700;
+    padding:5px 12px;border-radius:8px;letter-spacing:.3px;white-space:nowrap}
+  .hero{margin:14px 0 4px}
+  .banner{background:linear-gradient(135deg,#7a1420,#b91c1c);color:#fff;border-radius:12px;
+    padding:13px 16px;margin:12px 0}
+  .banner .q{font-size:13px;font-weight:600;line-height:1.4}
+  .banner .s{font-size:10.3px;color:#fecaca;margin-top:5px}
+  table{width:100%;border-collapse:collapse;margin:7px 0;font-size:10.6px}
+  th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{background:var(--navy);color:#fff;font-size:10px;text-transform:uppercase;letter-spacing:.3px;font-weight:700}
+  tr:nth-child(even) td{background:#fbfcfe}
+  td b{color:var(--ink)}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:12px}
+  ul{list-style:none;margin:5px 0}
+  ul li{font-size:11px;color:var(--ink2);padding:2.5px 0 2.5px 16px;position:relative}
+  ul li::before{content:"";position:absolute;left:2px;top:8px;width:6px;height:6px;border-radius:2px;background:var(--brand2)}
+  ul.ok li::before{background:var(--ok)}
+  ul.x li::before{background:#dc2626;border-radius:50%}
+  .cmp{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:8px 0}
+  .box{border-radius:11px;padding:12px}
+  .box.bad{background:#fef2f2;border:1px solid #fecaca}
+  .box.good{background:#ecfdf5;border:1px solid #a7f3d0}
+  .box .bh{font-size:12px;font-weight:800;margin-bottom:4px}
+  .box.bad .bh{color:#b91c1c}
+  .box.good .bh{color:#047857}
+  .badge{display:inline-block;background:#fef3c7;color:#92400e;border:1px solid #fde68a;
+    font-size:9.5px;font-weight:700;padding:2px 9px;border-radius:999px}
+  .chk{display:grid;grid-template-columns:1fr 1fr;gap:5px 16px;margin:6px 0}
+  .chk div{font-size:10.6px;color:var(--ink2);padding-left:18px;position:relative}
+  .chk div::before{content:"✓";position:absolute;left:2px;top:0;color:var(--ok);font-weight:800;font-size:11px}
+  .foot{position:absolute;bottom:11mm;left:15mm;right:15mm;display:flex;justify-content:space-between;
+    align-items:center;border-top:1px solid var(--line);padding-top:7px}
+  .foot .c{font-size:9.5px;color:var(--muted)}
+  .disc{font-size:9px;color:var(--muted);font-style:italic;margin-top:5px;line-height:1.4}
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:9px;margin:11px 0}
+  .kpi{text-align:center;background:linear-gradient(180deg,#fff,#f1f5f9);
+    border:1px solid var(--line);border-radius:10px;padding:11px 6px}
+  .kpi .n{font-size:20px;font-weight:800;color:var(--brand);line-height:1}
+  .kpi .l{font-size:9.3px;color:var(--muted);margin-top:4px}
+</style>
+</head>
+<body>
+
+<section class="page">
+  <div class="brandbar"></div>
+  <div class="logo">
+    <div class="left">
+      <div class="mark">◇</div>
+      <div>
+        <div class="name">Open<span>IDX</span></div>
+        <div class="tag">Sıfır Güven Erişim Platformu · Self-Host · Yerli</div>
+      </div>
+    </div>
+    <div class="ribbon">KAMU KURUMLARI İÇİN</div>
+  </div>
+
+  <div class="hero">
+    <h1>Yurt dışı kimlik bulutuna veda.<br>Kamuya uygun, yerli, self-host kimlik altyapısı.</h1>
+    <p class="lead">OpenIDX; kamu kurumlarının <b>kimlik doğrulama (SSO/MFA)</b>,
+    <b>ayrıcalıklı erişim (PAM)</b>, <b>kimlik yönetişimi (IGA)</b> ve
+    <b>sıfır-güven ağ (ZTNA)</b> ihtiyacını — <b>2019/12 Cumhurbaşkanlığı
+    Genelgesi</b> ve KVKK ile tam uyumlu şekilde — kurumun kendi altyapısında,
+    tek platformda karşılar. Veri yurt dışına çıkmaz; kimlik ve oturum sırları
+    kurumun sınırları içinde kalır.</p>
+  </div>
+
+  <div class="banner">
+    <div class="q">"Milli güvenliği tehdit edebilecek veya kamu düzeninin bozulmasına
+    yol açabilecek kritik türdeki veriler yurt içinde, kurum kontrolünde tutulur."</div>
+    <div class="s">— 2019/12 Sayılı Cumhurbaşkanlığı Bilgi ve İletişim Güvenliği Tedbirleri Genelgesi (RG 30823, 6 Temmuz 2019). Kimlik verisi ve oturum sırları bu kritik veri sınıfının en hassas parçasıdır.</div>
+  </div>
+
+  <h2>Neden yurt dışı SaaS kimlik sağlayıcısı kamuda kullanılamaz?</h2>
+  <div class="cmp">
+    <div class="box bad">
+      <div class="bh">✕ Okta · Microsoft Entra · Auth0 (yurt dışı SaaS)</div>
+      <ul class="x">
+        <li>Kimlik, parola özeti, oturum ve MFA verisi yurt dışı veri merkezinde işlenir</li>
+        <li>2019/12 Genelge + KVKK md. 9 veri lokalizasyonuna aykırı</li>
+        <li>Kurum verisi üçüncü ülke yargı yetkisine tabi</li>
+        <li>Kesinti / erişim yabancı sağlayıcıya bağımlı — egemenlik yok</li>
+        <li>Kullanıcı-başı, artan, döviz kurlu fatura</li>
+      </ul>
+    </div>
+    <div class="box good">
+      <div class="bh">✓ OpenIDX (yerli, self-host)</div>
+      <ul class="ok">
+        <li>Tüm veri kurumun kendi sunucusunda / yerli veri merkezinde (Türksat vb.)</li>
+        <li>2019/12 Genelge + KVKK uyumlu; veri yurt dışına çıkmaz</li>
+        <li>Kaynak kod açık (Apache-2.0) — denetlenebilir, kilitlenme yok</li>
+        <li>Tam kurum kontrolü; internet kesilse bile çalışır (going-dark)</li>
+        <li>Sabit altyapı maliyeti — kullanıcı-başı ceza yok</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2>Uyum haritası — hangi mevzuat, nasıl karşılanır</h2>
+  <table>
+    <thead><tr><th style="width:30%">Mevzuat / Düzenleme</th><th style="width:34%">Gereklilik</th><th>OpenIDX ile karşılık</th></tr></thead>
+    <tbody>
+      <tr><td><b>2019/12 CB Genelgesi</b> + BİG Rehberi (DDO)</td><td>Kritik/kimlik verisi yurt içinde, kurum kontrolünde; SaaS'ta işlenmez</td><td>Tamamen self-host; veri kurum DB'sinde. Denetim izi HMAC hash-zinciri.</td></tr>
+      <tr><td><b>KVKK md. 9</b></td><td>Kişisel verinin yurt içinde barındırılması / sınır-ötesi kısıt</td><td>Veri hiç yurt dışına çıkmaz; tek PostgreSQL, kurum altyapısında.</td></tr>
+      <tr><td><b>Kamu İhale Kanunu</b></td><td>Yerli malı teklifine %15 fiyat avantajı</td><td>Yerli geliştirme + yerli malı belgesi konumlanması.</td></tr>
+      <tr><td><b>ISO 27001 / SOC 2</b> (hedef)</td><td>Bilgi güvenliği yönetim sistemi kanıtı</td><td>Denetim günlüğü, erişim gözden geçirme, SoD, uyum raporları.</td></tr>
+      <tr><td><b>Ayrıcalıklı erişim denetimi</b></td><td>Yönetici erişimi kaydı, en-az-yetki, oturum izleme</td><td>PAM: kasa + rotasyon, SSH/RDP/VNC oturum kaydı, JIT, kill-switch.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="kpis">
+    <div class="kpi"><div class="n">%100</div><div class="l">veri yurt içinde</div></div>
+    <div class="kpi"><div class="n">4→1</div><div class="l">dört ürün tek platform</div></div>
+    <div class="kpi"><div class="n">%15</div><div class="l">yerli malı ihale avantajı</div></div>
+    <div class="kpi"><div class="n">≤30 sn</div><div class="l">uçtan uca erişim iptali</div></div>
+  </div>
+
+  <div class="foot">
+    <div class="c">OpenIDX · Kamu Kurumları Regülasyon Uyum Broşürü · 2026</div>
+    <div class="c">openidx.tdv.org</div>
+  </div>
+</section>
+
+<section class="page">
+  <div class="brandbar"></div>
+  <h2 style="margin-top:0">Kamu kurumu için ne sağlar? — dört sütun tek platform</h2>
+  <div class="grid2">
+    <div class="card">
+      <h3>Kimlik & SSO (IAM)</h3>
+      <ul class="ok">
+        <li>Tek oturum açma (OIDC/SAML) tüm kurum uygulamalarına</li>
+        <li>Çok faktörlü doğrulama: passkey, TOTP, mobil push, OTP</li>
+        <li>e-Devlet / mevcut dizin (AD/LDAP) entegrasyonu</li>
+        <li>Personel giriş-çıkışına göre otomatik hesap açma/kapama (JML)</li>
+      </ul>
+      <h3>Yönetişim (IGA)</h3>
+      <ul class="ok">
+        <li>Periyodik erişim gözden geçirme kampanyaları (denetim kanıtı)</li>
+        <li>Görevler ayrılığı (SoD) — kural ihlalini önler</li>
+        <li>Geçici yetki (JIT) — süre dolunca otomatik iptal</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>Ayrıcalıklı Erişim (PAM)</h3>
+      <ul class="ok">
+        <li>Sunucu/veritabanı parolaları şifreli kasada, otomatik rotasyon</li>
+        <li>SSH/RDP/VNC oturumları tarayıcıdan, kayıt altında (denetim)</li>
+        <li>Yönetici parolayı hiç görmez — sunucu-tarafı enjeksiyon</li>
+        <li>Yasal saklama (legal hold), transkript, süreli imha</li>
+      </ul>
+      <h3>Sıfır Güven Ağ (ZTNA)</h3>
+      <ul class="ok">
+        <li>Kritik iç servisler "karanlık" — dışarıya açık port yok</li>
+        <li>Uzaktan erişim VPN'siz, kimlik + cihaz sağlık (posture) kontrollü</li>
+        <li>Tek "acil durdur" ile kullanıcının tüm erişimi anında kesilir</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2>Örnek kurumlar ve senaryolar</h2>
+  <table>
+    <thead><tr><th style="width:26%">Kurum tipi</th><th>Öncelikli ihtiyaç → OpenIDX karşılığı</th></tr></thead>
+    <tbody>
+      <tr><td><b>Bakanlık / merkezi kurum</b></td><td>Binlerce personele tek SSO + MFA; e-Devlet entegrasyonu; ayrıcalıklı sunucu erişiminin kayıt altına alınması.</td></tr>
+      <tr><td><b>Belediye</b></td><td>Vatandaş-veri sistemlerine erişimde en-az-yetki + denetim; müteahhit/dış personele süreli (JIT) erişim.</td></tr>
+      <tr><td><b>Üniversite</b></td><td>Öğrenci/akademisyen kimlik federasyonu, laboratuvar/sunucu PAM erişimi, araştırma verisi egemenliği.</td></tr>
+      <tr><td><b>Hastane / sağlık</b></td><td>HBYS/e-Nabız erişiminde kimlik doğrulama + denetim; hassas sağlık verisi yurt içinde.</td></tr>
+      <tr><td><b>KİT / kritik altyapı</b></td><td>OT/SCADA ağına sıfır-güven erişim ("karanlık" servisler), ayrıcalıklı oturum kaydı.</td></tr>
+      <tr><td><b>Savunma sanayii</b></td><td>Hava-boşluklu (air-gap) kurulum, FIPS-uyumlu build, tam yerli tedarik zinciri.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Kurulum & devreye alma</h2>
+  <div class="chk">
+    <div>Kurumun kendi sunucusuna / yerli buluta kurulum (Docker/Kubernetes)</div>
+    <div>Mevcut AD/LDAP dizini ile senkron — kullanıcılar hazır akar</div>
+    <div>İlk uygulamalar 2–4 haftada SSO'ya bağlanır</div>
+    <div>Kritik sunucular PAM'e alınır, oturum kaydı başlar</div>
+    <div>Denetim günlüğü + kurum SIEM'ine akış</div>
+    <div>Otomatik yedekleme + test edilmiş geri yükleme</div>
+    <div>Yerinde eğitim + Türkçe destek + SLA</div>
+    <div>Pentest → sertifikasyon (ISO 27001 hedefi) desteği</div>
+  </div>
+
+  <div class="banner" style="background:linear-gradient(135deg,#0f766e,#047857)">
+    <div class="q">Egemenlik + uyum + maliyet — üçü birden.</div>
+    <div class="s">Veri yurt içinde kalır (2019/12 + KVKK uyumu), dört ayrı ürün yerine tek yerli platform, ve kullanıcı-başı yığılmış lisans yerine sabit altyapı maliyeti. Açık kaynak çekirdek denetlenebilir; kurum hiçbir yabancı sağlayıcıya kilitlenmez.</div>
+  </div>
+
+  <p class="disc">Uyum notu: Bu broşür OpenIDX'in yeteneklerini ve ilgili
+  düzenlemelerin gerekçesini özetler; kurumun kendi uyum/hukuk birimi nihai
+  değerlendirmeyi yapmalıdır. OpenIDX olgunluk seviyesi pilot/tasarım-ortağı
+  için uygundur; kayıtsız şartsız üretim sertifikasyonu (ISO 27001 / SOC 2 /
+  pentest) devam eden bir süreçtir. Fiyat/tasarruf rakamları Temmuz 2026
+  üçüncü-taraf pazar verisine dayanır.</p>
+
+  <div class="foot">
+    <div class="c">OpenIDX · Kamu Kurumları Regülasyon Uyum Broşürü · 2026</div>
+    <div class="c">Demo & pilot talebi: openidx.tdv.org</div>
+  </div>
+</section>
+
+</body>
+</html>
