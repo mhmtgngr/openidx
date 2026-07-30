@@ -56,6 +56,12 @@ type ZitiManager struct {
 	// Config type name → ID cache (e.g. "host.v1" → "NH5p4FpGR")
 	configTypeCacheMu sync.RWMutex
 	configTypeCache   map[string]string
+
+	// pool holds the controller management endpoints (primary + optional HA
+	// cluster members from ZitiCtrlURLs) with cooldown-based failover. Nil in
+	// tests that construct the struct directly; all callers fall back to
+	// cfg.ZitiCtrlURL when unset.
+	pool *controllerEndpointPool
 }
 
 // hostedService tracks a Ziti service listener that forwards to an upstream target
@@ -107,6 +113,9 @@ func NewZitiManagerWithConn(base *config.Config, ctrlURL, adminUser, adminPwd, i
 	c := *base // shallow copy; we only override the Ziti connection fields
 	c.ZitiEnabled = true
 	c.ZitiCtrlURL = ctrlURL
+	// An explicit runtime connection targets exactly one controller — drop any
+	// env-provided HA extras so failover can't wander back to old endpoints.
+	c.ZitiCtrlURLs = ""
 	c.ZitiAdminUser = adminUser
 	c.ZitiAdminPassword = adminPwd
 	c.ZitiIdentityDir = identityDir
@@ -122,6 +131,22 @@ func NewZitiManager(cfg *config.Config, db *database.PostgresDB, logger *zap.Log
 		db:              db,
 		hostedServices:  make(map[string]*hostedService),
 		configTypeCache: make(map[string]string),
+	}
+
+	// Controller endpoint pool: primary URL plus optional HA cluster members
+	// (ZITI_CTRL_URLS). With one endpoint this degenerates to today's
+	// single-controller behavior; with more, management calls fail over.
+	pool, err := newControllerEndpointPool(cfg.ZitiCtrlURL, cfg.ZitiCtrlURLs)
+	if err != nil {
+		return nil, err
+	}
+	zm.pool = pool
+	if pool.Size() > 1 {
+		urls := make([]string, 0, pool.Size())
+		for _, ep := range pool.Snapshot() {
+			urls = append(urls, ep.URL)
+		}
+		zm.logger.Info("Ziti controller HA endpoint pool configured", zap.Strings("endpoints", urls))
 	}
 
 	// Build TLS config for Ziti controller management API communication.
@@ -207,6 +232,15 @@ func NewZitiManager(cfg *config.Config, db *database.PostgresDB, logger *zap.Log
 	}
 
 	return zm, nil
+}
+
+// ControllerEndpoints reports the management endpoint pool for status
+// surfaces. Single-endpoint (or test) managers report their one URL.
+func (zm *ZitiManager) ControllerEndpoints() []ZitiEndpointStatus {
+	if zm.pool != nil {
+		return zm.pool.Snapshot()
+	}
+	return []ZitiEndpointStatus{{URL: zm.cfg.ZitiCtrlURL, Active: true, Healthy: true}}
 }
 
 // IsInitialized returns whether the Ziti SDK context is ready for dialing
@@ -550,11 +584,25 @@ func (l *singleConnListener) Addr() net.Addr {
 // calls elsewhere (mitigates go/request-forgery). Callers MUST url.PathEscape any dynamic
 // path segment they interpolate into pathAndQuery.
 func (zm *ZitiManager) mgmtURL(pathAndQuery string) (string, error) {
+	base, err := zm.mgmtBase()
+	if err != nil {
+		return "", err
+	}
+	return base + pathAndQuery, nil
+}
+
+// mgmtBase resolves the controller base URL for the next management call: the
+// endpoint pool's current member when the pool is set (HA), otherwise the
+// single configured URL validated exactly as before.
+func (zm *ZitiManager) mgmtBase() (string, error) {
+	if zm.pool != nil {
+		return zm.pool.Current(), nil
+	}
 	base, err := url.Parse(zm.cfg.ZitiCtrlURL)
 	if err != nil || (base.Scheme != "https" && base.Scheme != "http") || base.Host == "" {
 		return "", fmt.Errorf("ziti: invalid controller URL")
 	}
-	return base.Scheme + "://" + base.Host + pathAndQuery, nil
+	return base.Scheme + "://" + base.Host, nil
 }
 
 // that created the most recent Dial session for the given service. This is used as
@@ -682,17 +730,50 @@ func parseHostPort(rawURL string) (string, int) {
 // ---- Management API Authentication ----
 
 func (zm *ZitiManager) authenticate() error {
+	base, err := zm.mgmtBase()
+	if err != nil {
+		return fmt.Errorf("management API auth: %w", err)
+	}
+	err = zm.authenticateAt(base)
+	if err == nil {
+		if zm.pool != nil {
+			zm.pool.MarkUp(base)
+		}
+		return nil
+	}
+	// HA failover: mark the failed member down and try the remaining healthy
+	// endpoints once each. zt-session tokens are per controller, so a
+	// successful auth against a new member fully re-establishes the session.
+	if zm.pool != nil && zm.pool.Size() > 1 {
+		tried := map[string]bool{base: true}
+		for range zm.pool.Snapshot() {
+			next, changed := zm.pool.MarkDown(base)
+			if !changed || tried[next] {
+				break
+			}
+			tried[next] = true
+			zm.logger.Warn("Ziti controller auth failed; failing over",
+				zap.String("from", base), zap.String("to", next), zap.Error(err))
+			base = next
+			if err = zm.authenticateAt(base); err == nil {
+				zm.pool.MarkUp(base)
+				return nil
+			}
+		}
+	}
+	return err
+}
+
+// authenticateAt performs a password authentication against one specific
+// controller endpoint and stores the resulting zt-session token.
+func (zm *ZitiManager) authenticateAt(base string) error {
 	body, _ := json.Marshal(map[string]string{
 		"username": zm.cfg.ZitiAdminUser,
 		"password": zm.cfg.ZitiAdminPassword,
 	})
 
-	authURL, err := zm.mgmtURL("/edge/management/v1/authenticate?method=password")
-	if err != nil {
-		return fmt.Errorf("management API auth: %w", err)
-	}
 	resp, err := zm.mgmtClient.Post(
-		authURL,
+		base+"/edge/management/v1/authenticate?method=password",
 		"application/json",
 		bytes.NewReader(body))
 	if err != nil {
@@ -1837,6 +1918,42 @@ func (zm *ZitiManager) MgmtRequest(method, path string, body []byte) ([]byte, in
 // ---- Internal helpers ----
 
 func (zm *ZitiManager) mgmtRequest(method, path string, body []byte) ([]byte, int, error) {
+	// Build against the validated controller base (scheme/host checked) so a malformed or
+	// hostile ZitiCtrlURL can't redirect management calls elsewhere (go/request-forgery).
+	base, err := zm.mgmtBase()
+	if err != nil {
+		return nil, 0, err
+	}
+
+	respBody, status, err := zm.mgmtRequestAt(base, method, path, body)
+
+	// HA failover: a transport error or gateway-class 5xx means this cluster
+	// member is unusable — put it in cooldown and retry once against the next
+	// healthy member (with a fresh auth, since zt-session tokens are minted
+	// per controller).
+	if zm.pool != nil && (err != nil || status == http.StatusBadGateway ||
+		status == http.StatusServiceUnavailable || status == http.StatusGatewayTimeout) {
+		next, changed := zm.pool.MarkDown(base)
+		if changed {
+			zm.logger.Warn("Ziti controller unreachable; failing over",
+				zap.String("from", base), zap.String("to", next),
+				zap.Int("status", status), zap.Error(err))
+			if authErr := zm.authenticateAt(next); authErr == nil {
+				respBody, status, err = zm.mgmtRequestAt(next, method, path, body)
+				base = next
+			}
+		}
+	}
+
+	if zm.pool != nil && err == nil && status < http.StatusInternalServerError {
+		zm.pool.MarkUp(base)
+	}
+	return respBody, status, err
+}
+
+// mgmtRequestAt performs one management API request against a specific
+// controller base URL, with the existing 401 → re-auth → single retry.
+func (zm *ZitiManager) mgmtRequestAt(base, method, path string, body []byte) ([]byte, int, error) {
 	zm.mu.RLock()
 	token := zm.mgmtToken
 	zm.mu.RUnlock()
@@ -1846,12 +1963,7 @@ func (zm *ZitiManager) mgmtRequest(method, path string, body []byte) ([]byte, in
 		reqBody = bytes.NewReader(body)
 	}
 
-	// Build against the validated controller base (scheme/host checked) so a malformed or
-	// hostile ZitiCtrlURL can't redirect management calls elsewhere (go/request-forgery).
-	fullURL, err := zm.mgmtURL(path)
-	if err != nil {
-		return nil, 0, err
-	}
+	fullURL := base + path
 
 	req, err := http.NewRequest(method, fullURL, reqBody)
 	if err != nil {
@@ -1876,7 +1988,7 @@ func (zm *ZitiManager) mgmtRequest(method, path string, body []byte) ([]byte, in
 
 	// Re-authenticate on 401 and retry once
 	if resp.StatusCode == http.StatusUnauthorized {
-		if err := zm.authenticate(); err != nil {
+		if err := zm.authenticateAt(base); err != nil {
 			return respBody, resp.StatusCode, fmt.Errorf("re-authentication failed: %w", err)
 		}
 
