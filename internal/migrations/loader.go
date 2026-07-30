@@ -817,5 +817,12 @@ func allMigrations() []*Migration {
 			UpSQL:       vaultRequireStepUpUp,
 			DownSQL:     vaultRequireStepUpDown,
 		},
+		{
+			Version:     116,
+			Name:        "guac_recording_seal",
+			Description: "Add guacamole_sessions recording-seal metadata (recording_sealed_at, recording_sha256, recording_key_id) plus a partial index. guacd writes RDP/SSH recordings to disk as plaintext (openidx never sees those bytes inline, unlike the already-encrypted WebRTC remote-support path), so a filesystem compromise leaks a replayable recording. PAM A1 adds a leader-gated sealer that encrypts each finished recording through the existing AES-256-GCM keyring and stores an integrity hash. Additive/nullable — NULL sealed_at means still plaintext (sealer off or not yet run).",
+			UpSQL:       guacRecordingSealUp,
+			DownSQL:     guacRecordingSealDown,
+		},
 	}
 }
