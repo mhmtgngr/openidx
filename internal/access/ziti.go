@@ -593,12 +593,15 @@ func (zm *ZitiManager) mgmtURL(pathAndQuery string) (string, error) {
 
 // mgmtBase resolves the controller base URL for the next management call: the
 // endpoint pool's current member when the pool is set (HA), otherwise the
-// single configured URL validated exactly as before.
+// single configured URL. Either way the value is parsed and rebuilt from
+// scheme+host right here, at the site that feeds requests, so a malformed or
+// hostile controller URL can't redirect management calls (go/request-forgery).
 func (zm *ZitiManager) mgmtBase() (string, error) {
+	raw := zm.cfg.ZitiCtrlURL
 	if zm.pool != nil {
-		return zm.pool.Current(), nil
+		raw = zm.pool.Current()
 	}
-	base, err := url.Parse(zm.cfg.ZitiCtrlURL)
+	base, err := url.Parse(raw)
 	if err != nil || (base.Scheme != "https" && base.Scheme != "http") || base.Host == "" {
 		return "", fmt.Errorf("ziti: invalid controller URL")
 	}
@@ -767,13 +770,14 @@ func (zm *ZitiManager) authenticate() error {
 // authenticateAt performs a password authentication against one specific
 // controller endpoint and stores the resulting zt-session token.
 func (zm *ZitiManager) authenticateAt(base string) error {
-	// Re-validate at the request site: rebuild the base from scheme+host only
-	// so a malformed or hostile controller URL can't redirect the call
-	// (go/request-forgery — same guard the pre-pool mgmtURL applied per call).
-	safeBase, err := normalizeControllerURL(base)
-	if err != nil {
-		return fmt.Errorf("management API auth: %w", err)
+	// Re-validate at the request site: parse and rebuild the base from
+	// scheme+host only so a malformed or hostile controller URL can't redirect
+	// the call (go/request-forgery — same guard the pre-pool mgmtURL applied).
+	u, err := url.Parse(base)
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+		return fmt.Errorf("management API auth: ziti: invalid controller URL")
 	}
+	authURL := u.Scheme + "://" + u.Host + "/edge/management/v1/authenticate?method=password"
 
 	body, _ := json.Marshal(map[string]string{
 		"username": zm.cfg.ZitiAdminUser,
@@ -781,7 +785,7 @@ func (zm *ZitiManager) authenticateAt(base string) error {
 	})
 
 	resp, err := zm.mgmtClient.Post(
-		safeBase+"/edge/management/v1/authenticate?method=password",
+		authURL,
 		"application/json",
 		bytes.NewReader(body))
 	if err != nil {
@@ -1962,14 +1966,16 @@ func (zm *ZitiManager) mgmtRequest(method, path string, body []byte) ([]byte, in
 // mgmtRequestAt performs one management API request against a specific
 // controller base URL, with the existing 401 → re-auth → single retry.
 func (zm *ZitiManager) mgmtRequestAt(base, method, path string, body []byte) ([]byte, int, error) {
-	// Re-validate at the request site: rebuild the base from scheme+host only
-	// so a malformed or hostile controller URL can't redirect management calls
-	// elsewhere (go/request-forgery — same guard the pre-pool mgmtURL applied
-	// per call). Callers MUST url.PathEscape any dynamic path segment.
-	safeBase, err := normalizeControllerURL(base)
-	if err != nil {
-		return nil, 0, err
+	// Re-validate at the request site: parse and rebuild the base from
+	// scheme+host only so a malformed or hostile controller URL can't redirect
+	// management calls elsewhere (go/request-forgery — same guard the pre-pool
+	// mgmtURL applied per call). Callers MUST url.PathEscape any dynamic path
+	// segment they interpolate into path.
+	u, err := url.Parse(base)
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+		return nil, 0, fmt.Errorf("ziti: invalid controller URL")
 	}
+	fullURL := u.Scheme + "://" + u.Host + path
 
 	zm.mu.RLock()
 	token := zm.mgmtToken
@@ -1979,8 +1985,6 @@ func (zm *ZitiManager) mgmtRequestAt(base, method, path string, body []byte) ([]
 	if body != nil {
 		reqBody = bytes.NewReader(body)
 	}
-
-	fullURL := safeBase + path
 
 	req, err := http.NewRequest(method, fullURL, reqBody)
 	if err != nil {
