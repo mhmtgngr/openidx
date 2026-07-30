@@ -331,7 +331,7 @@ func (s *Service) handleRevokeUserDevice(c *gin.Context) {
 	if zm := s.ziti(); zm != nil {
 		if err := zm.SyncDeviceTrustForUser(ctx, userID); err != nil {
 			s.logger.Warn("device revoke: device-trust attribute resync failed",
-				zap.String("user_id", userID), zap.Error(err))
+				zap.String("user_id", scrubLogValue(userID)), zap.Error(err))
 		}
 	}
 
