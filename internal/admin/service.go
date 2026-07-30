@@ -198,6 +198,9 @@ type DirectorySyncer interface {
 	TriggerSync(ctx context.Context, directoryID string, fullSync bool) error
 	GetSyncLogs(ctx context.Context, directoryID string, limit int) (interface{}, error)
 	GetSyncState(ctx context.Context, directoryID string) (interface{}, error)
+	// Diagnose runs live LDAP/AD probes and returns findings + suggested config
+	// fixes (nil dirType/config errors are surfaced in the result, not returned).
+	Diagnose(ctx context.Context, dirType string, configBytes []byte) (interface{}, error)
 }
 
 // Service provides admin operations
@@ -974,6 +977,11 @@ func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 	admin.DELETE("/directories/:id", svc.handleDeleteDirectory)
 	admin.POST("/directories/:id/sync", svc.handleSyncDirectory)
 	admin.POST("/directories/:id/test", svc.handleTestConnection)
+	// Live LDAP/AD diagnostics with suggested fixes. The :id form diagnoses a
+	// saved integration; the wizard (pre-save) form posts {type, config} to
+	// /directory-diagnose so it does not collide with the :id wildcard.
+	admin.POST("/directories/:id/diagnose", svc.handleDiagnoseDirectory)
+	admin.POST("/directory-diagnose", svc.handleDiagnoseDirectory)
 	admin.GET("/directories/:id/sync-logs", svc.handleGetSyncLogs)
 	admin.GET("/directories/:id/sync-state", svc.handleGetSyncState)
 
@@ -1701,6 +1709,58 @@ func (s *Service) handleTestConnection(c *gin.Context) {
 	}
 
 	c.JSON(200, gin.H{"success": true, "message": "Connection test successful"})
+}
+
+// handleDiagnoseDirectory runs live LDAP/AD diagnostics and returns findings +
+// suggested config fixes. It diagnoses either a saved integration (:id) or, when
+// a JSON body {type, config} is supplied, an inline config — so the setup wizard
+// can diagnose BEFORE the integration is saved.
+func (s *Service) handleDiagnoseDirectory(c *gin.Context) {
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+	if s.directoryService == nil {
+		c.JSON(503, gin.H{"error": "directory service unavailable"})
+		return
+	}
+
+	// Inline config from the body takes precedence (wizard, pre-save).
+	var body struct {
+		Type   string          `json:"type"`
+		Config json.RawMessage `json:"config"`
+	}
+	_ = c.ShouldBindJSON(&body)
+
+	var dirType string
+	var configBytes []byte
+	if len(body.Config) > 0 {
+		dirType = body.Type
+		if dirType == "" {
+			dirType = "ldap"
+		}
+		configBytes = body.Config
+	} else {
+		id := c.Param("id")
+		if id == "" {
+			c.JSON(400, gin.H{"error": "provide a saved directory id or a {type, config} body"})
+			return
+		}
+		if err := s.db.Pool.QueryRow(c.Request.Context(),
+			`SELECT type, config FROM directory_integrations WHERE id = $1 AND org_id = $2`,
+			id, org.ID).Scan(&dirType, &configBytes); err != nil {
+			c.JSON(404, gin.H{"error": "Directory not found"})
+			return
+		}
+	}
+
+	result, err := s.directoryService.Diagnose(c.Request.Context(), dirType, configBytes)
+	if err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, result)
 }
 
 func (s *Service) handleGetSyncLogs(c *gin.Context) {

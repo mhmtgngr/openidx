@@ -180,6 +180,22 @@ interface DirectoryFormData {
   enabled: boolean
 }
 
+interface DiagnoseFinding {
+  stage: string
+  severity: 'error' | 'warning' | 'info' | 'ok'
+  title: string
+  detail?: string
+  suggested?: Record<string, unknown>
+  evidence?: Record<string, unknown>
+}
+
+interface DiagnoseResult {
+  ok: boolean
+  summary: string
+  findings: DiagnoseFinding[]
+  suggested_config?: Record<string, unknown>
+}
+
 const emptyForm: DirectoryFormData = {
   name: '',
   type: 'ldap',
@@ -258,6 +274,43 @@ export function DirectoriesPage() {
     },
     onError: () => toast({ title: 'Connection test failed', variant: 'destructive' }),
   })
+
+  // --- Live diagnostics (auto-detect + suggest fixes) ---
+  const [diagResult, setDiagResult] = useState<DiagnoseResult | null>(null)
+  const diagnoseMutation = useMutation({
+    mutationFn: () =>
+      api.post<DiagnoseResult>('/api/v1/directory-diagnose', {
+        type: formData.type,
+        config: formData.config,
+      }),
+    onSuccess: (data) => {
+      setDiagResult(data as DiagnoseResult)
+    },
+    onError: () =>
+      toast({ title: 'Diagnostics failed to run', variant: 'destructive' }),
+  })
+
+  // Apply the merged suggested_config patch to the form. Suggestion keys use the
+  // stored config JSON keys; attribute_mapping.* keys patch the nested mapping.
+  const applySuggestions = (patch: Record<string, unknown>) => {
+    setFormData((prev) => {
+      const next = { ...prev, config: { ...prev.config, attribute_mapping: { ...prev.config.attribute_mapping } } }
+      for (const [k, v] of Object.entries(patch)) {
+        if (k.startsWith('attribute_mapping.')) {
+          const attr = k.slice('attribute_mapping.'.length)
+          ;(next.config.attribute_mapping as Record<string, unknown>)[attr] = v
+        } else if (k === 'directory_type') {
+          next.type = v === 'active_directory' ? 'active_directory' : prev.type
+          ;(next.config as Record<string, unknown>)[k] = v
+        } else {
+          ;(next.config as Record<string, unknown>)[k] = v
+        }
+      }
+      return next
+    })
+    toast({ title: 'Suggestions applied', description: 'Review the fields, then Test or Save.' })
+    setDiagResult(null)
+  }
 
   const filtered = directories.filter(
     (d) => d.name.toLowerCase().includes(search.toLowerCase())
@@ -886,9 +939,78 @@ export function DirectoriesPage() {
             </div>
           )}
 
+          {/* Live diagnostics results */}
+          {diagResult && (
+            <div className="mt-4 rounded-lg border p-3 space-y-2 bg-muted/30">
+              <div className="flex items-center justify-between">
+                <div className="text-sm font-semibold">
+                  {diagResult.ok ? '✅ ' : '⚠️ '}
+                  {diagResult.summary}
+                </div>
+                <Button variant="ghost" size="sm" onClick={() => setDiagResult(null)}>
+                  Dismiss
+                </Button>
+              </div>
+              <div className="space-y-1.5 max-h-64 overflow-y-auto">
+                {diagResult.findings.map((f, i) => (
+                  <div key={i} className="text-xs flex gap-2 items-start">
+                    <span
+                      className={
+                        f.severity === 'error'
+                          ? 'text-red-500'
+                          : f.severity === 'warning'
+                          ? 'text-amber-500'
+                          : f.severity === 'ok'
+                          ? 'text-emerald-500'
+                          : 'text-blue-400'
+                      }
+                    >
+                      {f.severity === 'error'
+                        ? '✕'
+                        : f.severity === 'warning'
+                        ? '!'
+                        : f.severity === 'ok'
+                        ? '✓'
+                        : 'ℹ'}
+                    </span>
+                    <div>
+                      <div className="font-medium">{f.title}</div>
+                      {f.detail && <div className="text-muted-foreground">{f.detail}</div>}
+                      {f.suggested && (
+                        <div className="text-muted-foreground mt-0.5">
+                          Suggested:{' '}
+                          {Object.entries(f.suggested)
+                            .map(([k, v]) => `${k} = ${String(v)}`)
+                            .join(', ')}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {diagResult.suggested_config && Object.keys(diagResult.suggested_config).length > 0 && (
+                <Button
+                  size="sm"
+                  className="w-full"
+                  onClick={() => applySuggestions(diagResult.suggested_config!)}
+                >
+                  Apply all suggested fixes ({Object.keys(diagResult.suggested_config).length})
+                </Button>
+              )}
+            </div>
+          )}
+
           <div className="flex justify-end space-x-2 pt-4">
             <Button variant="outline" onClick={() => setDialogOpen(false)}>
               Cancel
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => diagnoseMutation.mutate()}
+              disabled={diagnoseMutation.isPending || (formData.type !== 'ldap' && formData.type !== 'active_directory')}
+            >
+              {diagnoseMutation.isPending && <LoadingSpinner size="sm" className="mr-2" />}
+              Diagnose &amp; Auto-Fix
             </Button>
             <Button onClick={handleSubmit} disabled={createMutation.isPending || updateMutation.isPending}>
               {(createMutation.isPending || updateMutation.isPending) && (
