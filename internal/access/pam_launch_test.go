@@ -104,11 +104,11 @@ func TestValidateRemoteAppArgs(t *testing.T) {
 	ok := []string{
 		"",
 		"   ",
-		"-E",                        // SSMS integrated auth — the correct pattern
-		"-S sql01.corp.local -E",    // host + integrated auth
-		"--nowelcome",               // ordinary flags
-		"/log C:\\logs\\app.log",    // a path arg
-		"-server tcp:db01,1433 -E",  // no secret
+		"-E",                       // SSMS integrated auth — the correct pattern
+		"-S sql01.corp.local -E",   // host + integrated auth
+		"--nowelcome",              // ordinary flags
+		"/log C:\\logs\\app.log",   // a path arg
+		"-server tcp:db01,1433 -E", // no secret
 	}
 	for _, a := range ok {
 		if err := validateRemoteAppArgs(a); err != nil {
