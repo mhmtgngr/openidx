@@ -727,8 +727,14 @@ const revokedSessionTTL = 30 * 24 * time.Hour
 // scrubLogValue strips CR/LF from a value before it is placed in a log field,
 // so a caller-supplied identifier can't forge extra log lines (defense in depth
 // on top of the JSON encoder, and it clears CodeQL's log-injection sink).
+//
+// Uses chained strings.ReplaceAll rather than strings.NewReplacer deliberately:
+// ReplaceAll on "\n"/"\r" is the sanitizer shape CodeQL's go/log-injection
+// query recognizes, so flows through this helper are provably cut. Behavior is
+// identical; only the shape matters. Mirrors the helper of the same name in
+// internal/access and internal/provisioning.
 func scrubLogValue(s string) string {
-	return strings.NewReplacer("\n", "", "\r", "").Replace(s)
+	return strings.ReplaceAll(strings.ReplaceAll(s, "\n", ""), "\r", "")
 }
 
 // deprovisionUser revokes everything that keeps a user's access alive after
@@ -4616,7 +4622,7 @@ func (s *Service) handleForgotPassword(c *gin.Context) {
 	// it to the application log hands anyone with log access (or anything that
 	// ships logs onward) the ability to take over the account. Log only that a
 	// reset was requested, for rate-limit/abuse investigation.
-	s.logger.Info("Password reset token created", zap.String("email", req.Email))
+	s.logger.Info("Password reset token created", zap.String("email", scrubLogValue(req.Email)))
 
 	// Send password reset email
 	if s.emailService != nil {

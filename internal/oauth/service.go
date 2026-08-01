@@ -3883,7 +3883,7 @@ func (s *Service) handleLogout(c *gin.Context) {
 			return
 		}
 		s.logger.Warn("refusing unregistered post_logout_redirect_uri",
-			zap.String("client_id", hintClientID))
+			zap.String("client_id", sanitizeForLog(hintClientID)))
 		c.JSON(400, gin.H{
 			"error":             "invalid_request",
 			"error_description": "post_logout_redirect_uri is not registered for the client identified by id_token_hint",
