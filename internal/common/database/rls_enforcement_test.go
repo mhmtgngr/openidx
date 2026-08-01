@@ -20,7 +20,7 @@ import (
 func startPostgresOrSkip(t *testing.T, ctx context.Context) testcontainers.Container {
 	t.Helper()
 
-	return testsupport.StartContainerOrSkip(t, ctx, testcontainers.ContainerRequest{
+	req := testcontainers.ContainerRequest{
 		Image:        "postgres:16-alpine",
 		ExposedPorts: []string{"5432/tcp"},
 		Env: map[string]string{
@@ -31,6 +31,12 @@ func startPostgresOrSkip(t *testing.T, ctx context.Context) testcontainers.Conta
 		WaitingFor: wait.ForLog("database system is ready to accept connections").
 			WithOccurrence(2).
 			WithStartupTimeout(60 * time.Second),
+	}
+	return testsupport.RunOrSkip(t, req.Image, func() (testcontainers.Container, error) {
+		return testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+			ContainerRequest: req,
+			Started:          true,
+		})
 	})
 }
 

@@ -35,7 +35,12 @@ func setupTestDB(t *testing.T) (*database.PostgresDB, func()) {
 			WithOccurrence(2).
 			WithStartupTimeout(30 * time.Second),
 	}
-	container := testsupport.StartContainerOrSkip(t, ctx, req)
+	container := testsupport.RunOrSkip(t, req.Image, func() (testcontainers.Container, error) {
+		return testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+			ContainerRequest: req,
+			Started:          true,
+		})
+	})
 	host, err := container.Host(ctx)
 	if err != nil {
 		container.Terminate(ctx)

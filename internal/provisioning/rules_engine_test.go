@@ -73,7 +73,12 @@ func setupRulesEngineTestDB(t *testing.T) (*database.PostgresDB, func()) {
 			WithStartupTimeout(30 * time.Second),
 	}
 
-	container := testsupport.StartContainerOrSkip(t, ctx, req)
+	container := testsupport.RunOrSkip(t, req.Image, func() (testcontainers.Container, error) {
+		return testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+			ContainerRequest: req,
+			Started:          true,
+		})
+	})
 
 	host, err := container.Host(ctx)
 	if err != nil {

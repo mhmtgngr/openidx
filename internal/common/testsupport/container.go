@@ -2,18 +2,19 @@
 //
 // It is a normal (non-_test) package so that suites in a dozen different
 // packages can import it instead of each keeping its own copy of the same
-// container bootstrap.
+// bootstrap. That has one consequence worth stating: anything imported here
+// lands in the module's production import graph. testcontainers-go pulls in the
+// Docker client, which carries its own advisories, so importing it here would
+// make govulncheck report the whole Docker surface as reachable from shipped
+// code. Hence the callback below — the caller names the container type and does
+// the starting, and testcontainers stays confined to _test.go files where it
+// belongs.
 package testsupport
 
-import (
-	"context"
-	"testing"
+import "testing"
 
-	"github.com/testcontainers/testcontainers-go"
-)
-
-// StartContainerOrSkip starts req and skips the test when no container runtime
-// is reachable.
+// RunOrSkip invokes start and skips the test when no container runtime is
+// reachable.
 //
 // The recover() is load-bearing rather than defensive padding. testcontainers-go
 // resolves the Docker host through MustExtractDockerHost, which PANICS when
@@ -33,21 +34,6 @@ import (
 // packages that have nothing to do with containers, and the gate would teach
 // people to ignore it. Skipping keeps the signal honest: a red package means a
 // real regression.
-func StartContainerOrSkip(t *testing.T, ctx context.Context, req testcontainers.ContainerRequest) testcontainers.Container {
-	t.Helper()
-
-	return RunOrSkip(t, req.Image, func() (testcontainers.Container, error) {
-		return testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
-			ContainerRequest: req,
-			Started:          true,
-		})
-	})
-}
-
-// RunOrSkip is StartContainerOrSkip for the typed module APIs
-// (testcontainers-go/modules/redis and friends), which have their own Run
-// signatures and so cannot go through a ContainerRequest. Same contract: a
-// missing runtime skips the test instead of panicking the binary.
 func RunOrSkip[T any](t *testing.T, what string, start func() (T, error)) T {
 	t.Helper()
 

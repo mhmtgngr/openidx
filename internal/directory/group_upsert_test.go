@@ -37,7 +37,12 @@ func setupGroupsDB(t *testing.T) (*database.PostgresDB, func()) {
 		Env:          map[string]string{"POSTGRES_USER": "test", "POSTGRES_PASSWORD": "test", "POSTGRES_DB": "testdb"},
 		WaitingFor:   wait.ForListeningPort("5432/tcp"),
 	}
-	container := testsupport.StartContainerOrSkip(t, ctx, req)
+	container := testsupport.RunOrSkip(t, req.Image, func() (testcontainers.Container, error) {
+		return testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+			ContainerRequest: req,
+			Started:          true,
+		})
+	})
 	host, _ := container.Host(ctx)
 	port, _ := container.MappedPort(ctx, "5432")
 	conn := "postgres://test:test@" + host + ":" + port.Port() + "/testdb?sslmode=disable"

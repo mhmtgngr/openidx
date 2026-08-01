@@ -27,7 +27,12 @@ func hrisSetupTestDB(t *testing.T) (*database.PostgresDB, func()) {
 		WaitingFor: wait.ForLog("database system is ready to accept connections").
 			WithOccurrence(2).WithStartupTimeout(30 * time.Second),
 	}
-	container := testsupport.StartContainerOrSkip(t, ctx, req)
+	container := testsupport.RunOrSkip(t, req.Image, func() (testcontainers.Container, error) {
+		return testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+			ContainerRequest: req,
+			Started:          true,
+		})
+	})
 	host, _ := container.Host(ctx)
 	port, _ := container.MappedPort(ctx, "5432")
 	conn := "postgres://test:test@" + host + ":" + port.Port() + "/testdb?sslmode=disable"
