@@ -12,9 +12,9 @@ import (
 // everything (audit-only, today's behavior).
 //
 // Classification is deliberately lexical, not a SQL parse: the scanner
-// understands PostgreSQL quoting ('', "", $tag$..$tag$), line and nested
-// block comments, and statement boundaries well enough to find the top-level
-// statement class. Anything it cannot positively classify as read-only is
+// understands PostgreSQL quoting (single-quote doubling, double-quoted
+// identifiers, $tag$ dollar quoting), line and nested block comments, and
+// statement boundaries well enough to find the top-level statement class. Anything it cannot positively classify as read-only is
 // treated as a write — the policy FAILS CLOSED, so a scanner limitation can
 // over-block but never under-block.
 type StatementPolicy struct {
