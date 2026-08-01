@@ -226,9 +226,22 @@ jobs:
           DATABASE_URL: postgres://openidx:test_secret@localhost:5432/openidx_test?sslmode=disable
           REDIS_URL: redis://localhost:6379
         run: |
-          go test -v -race -coverprofile=coverage_${{ matrix.package }}.out -covermode=atomic ./${{ matrix.package }}/... || true
+          # A failing test MUST fail this job. This step carried `|| true` for a
+          # long time, which meant test-unit reported success no matter what —
+          # and since test-unit is one of the Required Checks (see the gate job
+          # at the bottom of this file), the whole per-package matrix was a
+          # green light that could never turn red. Only test-race, which runs
+          # the whole repo without these service containers, was a real gate.
+          #
+          # Keep this a hard failure: it is the fast, per-package signal, and
+          # it is the only job that runs with the Postgres/Redis services
+          # attached, so it covers tests test-race cannot.
+          go test -v -race -coverprofile=coverage_${{ matrix.package }}.out -covermode=atomic ./${{ matrix.package }}/...
 
+      # Upload whatever coverage was produced even when the tests failed, so a
+      # red run still yields a coverage artifact to inspect.
       - name: Upload coverage
+        if: always()
         uses: actions/upload-artifact@v6
         with:
           name: coverage-${{ matrix.package }}
