@@ -193,6 +193,7 @@ func (s *Service) pushSSFItem(ctx context.Context, it ssfDeliveryItem) {
 func (s *Service) ssfDeliveryTarget(ctx context.Context, streamID string) (endpoint, auth string, err error) {
 	var authEnc *string
 	if err = s.db.Pool.QueryRow(ctx,
+		//orgscope:ignore background push worker (runs under bypass_rls) resolving the delivery target of an outbox row it already claimed; addressed by stream primary key, no request/tenant context
 		`SELECT delivery_endpoint, delivery_auth_enc FROM ssf_streams WHERE id=$1`, streamID).
 		Scan(&endpoint, &authEnc); err != nil {
 		return "", "", err
