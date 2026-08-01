@@ -11,48 +11,27 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/common/testsupport"
 )
 
-// startPostgresOrSkip boots a throwaway Postgres and skips the test when no
-// container runtime is available.
-//
-// The recover() is load-bearing, not defensive padding: testcontainers-go
-// resolves the Docker host through MustExtractDockerHost, which PANICS when
-// there is no runtime rather than returning an error. A plain `if err != nil {
-// t.Skip() }` never runs, and the panic takes down the whole test binary — so
-// one missing runtime would fail every test in the package. That matters now
-// that the unit-test CI job is a real gate and no longer swallows failures.
+// startPostgresOrSkip boots a throwaway Postgres for this test, skipping when
+// no container runtime is available (see testsupport.StartContainerOrSkip for
+// why that path needs a recover rather than an error check).
 func startPostgresOrSkip(t *testing.T, ctx context.Context) testcontainers.Container {
 	t.Helper()
 
-	var container testcontainers.Container
-	func() {
-		defer func() {
-			if r := recover(); r != nil {
-				t.Skipf("no container runtime available: %v", r)
-			}
-		}()
-		var err error
-		container, err = testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
-			ContainerRequest: testcontainers.ContainerRequest{
-				Image:        "postgres:16-alpine",
-				ExposedPorts: []string{"5432/tcp"},
-				Env: map[string]string{
-					"POSTGRES_USER":     "test",
-					"POSTGRES_PASSWORD": "test",
-					"POSTGRES_DB":       "testdb",
-				},
-				WaitingFor: wait.ForLog("database system is ready to accept connections").
-					WithOccurrence(2).
-					WithStartupTimeout(60 * time.Second),
-			},
-			Started: true,
-		})
-		if err != nil {
-			t.Skipf("could not start postgres container: %v", err)
-		}
-	}()
-	return container
+	return testsupport.StartContainerOrSkip(t, ctx, testcontainers.ContainerRequest{
+		Image:        "postgres:16-alpine",
+		ExposedPorts: []string{"5432/tcp"},
+		Env: map[string]string{
+			"POSTGRES_USER":     "test",
+			"POSTGRES_PASSWORD": "test",
+			"POSTGRES_DB":       "testdb",
+		},
+		WaitingFor: wait.ForLog("database system is ready to accept connections").
+			WithOccurrence(2).
+			WithStartupTimeout(60 * time.Second),
+	})
 }
 
 // TestRLSEnforcedEndToEnd is the backstop the tenant-isolation design was

@@ -13,6 +13,7 @@ import (
 
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/secretcrypt"
+	"github.com/openidx/openidx/internal/common/testsupport"
 	"github.com/openidx/openidx/internal/migrations"
 )
 
@@ -34,14 +35,7 @@ func setupTestDB(t *testing.T) (*database.PostgresDB, func()) {
 			WithOccurrence(2).
 			WithStartupTimeout(30 * time.Second),
 	}
-	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
-		ContainerRequest: req,
-		Started:          true,
-	})
-	if err != nil {
-		t.Skipf("Failed to start test container: %v", err)
-		return nil, func() {}
-	}
+	container := testsupport.StartContainerOrSkip(t, ctx, req)
 	host, err := container.Host(ctx)
 	if err != nil {
 		container.Terminate(ctx)

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/testsupport"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 	"go.uber.org/zap"
@@ -26,11 +27,7 @@ func hrisSetupTestDB(t *testing.T) (*database.PostgresDB, func()) {
 		WaitingFor: wait.ForLog("database system is ready to accept connections").
 			WithOccurrence(2).WithStartupTimeout(30 * time.Second),
 	}
-	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{ContainerRequest: req, Started: true})
-	if err != nil {
-		t.Skipf("start container: %v", err)
-		return nil, func() {}
-	}
+	container := testsupport.StartContainerOrSkip(t, ctx, req)
 	host, _ := container.Host(ctx)
 	port, _ := container.MappedPort(ctx, "5432")
 	conn := "postgres://test:test@" + host + ":" + port.Port() + "/testdb?sslmode=disable"
