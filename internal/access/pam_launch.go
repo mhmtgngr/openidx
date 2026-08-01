@@ -475,22 +475,6 @@ func decodePamSettings(raw []byte) map[string]interface{} {
 	return settings
 }
 
-// ensurePamGuacConnection creates or refreshes the per-entry Guacamole
-// connection with the (credential-bearing) params. The connection is stable
-// per entry (mirrors the M3 per-route model); a vanished connection — e.g.
-// deleted inside Guacamole — is transparently recreated.
-func (s *Service) ensurePamGuacConnection(ctx context.Context, orgID string, entry *pamLaunchEntry, protocol string, params map[string]string, broker *GuacamoleClient) (string, error) {
-	dialHost, dialPort := entry.dialTarget()
-	return s.ensureGuacConnection(ctx, "pam-"+entry.ID, entry.GuacConnectionID, protocol, dialHost, dialPort, params, broker,
-		func(ctx context.Context, connID string) {
-			if _, err := s.db.Pool.Exec(ctx,
-				`UPDATE pam_entries SET guacamole_connection_id = $1, updated_at = NOW() WHERE id = $2 AND org_id = $3`,
-				connID, entry.ID, orgID); err != nil {
-				s.logger.Warn("ensurePamGuacConnection: persist connection id failed", zap.Error(err))
-			}
-		})
-}
-
 // ensureGuacConnection creates or refreshes a Guacamole connection by
 // deterministic name with the given (credential-bearing) params, decoupled
 // from any particular catalog table. The name is stable per logical target
