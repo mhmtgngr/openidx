@@ -154,6 +154,9 @@ func (s *Service) syncGroupMembers(ctx context.Context, groupID string, before, 
 	added, removed := diffMembers(before, after)
 
 	for _, userID := range removed {
+		// The id is echoed into error text that is both logged and returned, so
+		// it is scrubbed here rather than at each sink (CodeQL go/log-injection).
+		safeID := scrubLogValue(userID)
 		err := s.RemoveGroupMember(ctx, groupID, userID)
 		switch {
 		case err == nil:
@@ -161,22 +164,23 @@ func (s *Service) syncGroupMembers(ctx context.Context, groupID string, before, 
 			// Already absent is the desired end state, not a failure: SCIM
 			// clients retry, and a retry must not turn into an error.
 		default:
-			return fmt.Errorf("remove member %s: %w", userID, err)
+			return fmt.Errorf("remove member %s: %w", safeID, err)
 		}
 	}
 
 	for _, userID := range added {
+		safeID := scrubLogValue(userID)
 		err := s.AddGroupMember(ctx, groupID, userID)
 		switch {
 		case err == nil:
 		case errors.Is(err, ErrAlreadyGroupMember):
 			// Idempotent, as above.
 		case errors.Is(err, ErrUserNotFound):
-			return fmt.Errorf("member %s is not a user in this organization: %w", userID, errSCIMInvalidValue)
+			return fmt.Errorf("member %s is not a user in this organization: %w", safeID, errSCIMInvalidValue)
 		case errors.Is(err, ErrGroupMemberLimit):
-			return fmt.Errorf("group %s is at its member limit: %w", groupID, errSCIMInvalidValue)
+			return fmt.Errorf("group %s is at its member limit: %w", scrubLogValue(groupID), errSCIMInvalidValue)
 		default:
-			return fmt.Errorf("add member %s: %w", userID, err)
+			return fmt.Errorf("add member %s: %w", safeID, err)
 		}
 	}
 
