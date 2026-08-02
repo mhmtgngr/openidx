@@ -3313,8 +3313,11 @@ func (s *Service) handleRefreshTokenGrant(c *gin.Context) {
 		// attempt rather than both being handed fresh chains.
 		claimed, err := s.markRefreshTokenRotated(c.Request.Context(), refreshToken)
 		if err != nil {
+			// clientID is attacker-controlled (form field or Basic header), so
+			// it is scrubbed of CR/LF before logging — otherwise it can forge
+			// or split log lines (CWE-117).
 			s.logger.Error("failed to mark refresh token rotated",
-				zap.String("client_id", clientID), zap.Error(err))
+				zap.String("client_id", sanitizeForLog(clientID)), zap.Error(err))
 			writeServerOrUnavailable(c, err)
 			return
 		}
@@ -3342,8 +3345,8 @@ func (s *Service) handleRefreshTokenGrant(c *gin.Context) {
 			FamilyID: token.FamilyID,
 		}); err != nil {
 			s.logger.Error("failed to persist rotated refresh token",
-				zap.String("client_id", clientID),
-				zap.String("user_id", token.UserID),
+				zap.String("client_id", sanitizeForLog(clientID)),
+				zap.String("user_id", sanitizeForLog(token.UserID)),
 				zap.Error(err))
 		} else {
 			response.RefreshToken = newRefresh
