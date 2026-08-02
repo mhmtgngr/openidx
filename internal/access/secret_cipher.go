@@ -109,13 +109,11 @@ func (c *secretCipher) gcm() (cipher.AEAD, error) {
 // Writes always go through secretcrypt, so a saved password is tagged (encv1,
 // or encv2 under the active KEK when ENCRYPTION_KEYS is configured).
 //
-// One limit worth stating plainly: rotation reaches this value on write only.
-// cmd/rekey re-seals by scanning text/varchar columns, and this password lives
-// inside system_settings.value (JSONB), so the sweep does not see it — an
-// existing value is re-sealed under a new KEK when an admin next saves the
-// connection, not by running rekey. That gap predates v124 (the value was both
-// untagged and in JSONB before), and closing it means teaching rekey about
-// JSON-embedded secrets.
+// The tag is also what makes this value reachable by rotation: cmd/rekey walks
+// json/jsonb columns and re-seals any string carrying the prefix, so a password
+// living inside system_settings.value is swept by a key retirement like any
+// other secret column. An untagged write would silently drop back out of that
+// sweep, which is the second reason writes never bypass secretcrypt.
 type zitiSecretCipher struct {
 	sc     *secretcrypt.Cipher
 	legacy *secretCipher
