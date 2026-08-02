@@ -873,5 +873,12 @@ func allMigrations() []*Migration {
 			UpSQL:       totpThrottleUp,
 			DownSQL:     totpThrottleDown,
 		},
+		{
+			Version:     124,
+			Name:        "ziti_admin_password_secretcrypt_tag",
+			Description: "Tag the stored Ziti controller admin password as secretcrypt \"encv1:\" so it moves onto the shared secret facility instead of the private AES-256-GCM helper in internal/access. The two formats are byte-identical apart from the tag — base64(nonce||ciphertext), AES-256-GCM, no AAD, same ENCRYPTION_KEY — so this is a keyless re-tag, not a re-encryption. The tag is what makes the move safe: secretcrypt passes an untagged value through Decrypt unchanged so plaintext survives a rollout, so an untagged Ziti ciphertext would otherwise have come back as the base64 blob itself and been sent to a controller login as the password, with no error anywhere. Idempotent; rows already tagged are skipped. Reads accept both shapes, so this converges the data rather than gating correctness. Note the password gains keyring participation only on write (the next save seals encv2 under the active KEK): cmd/rekey scans text/varchar columns and this value lives inside system_settings.value, which is JSONB, so the rekey sweep does not reach it — a pre-existing limit of that tool, not a regression from this migration.",
+			UpSQL:       zitiAdminPwTagUp,
+			DownSQL:     zitiAdminPwTagDown,
+		},
 	}
 }
