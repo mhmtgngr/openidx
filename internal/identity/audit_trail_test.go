@@ -244,25 +244,45 @@ func TestAuthenticateUserCountsEveryConcurrentFailure(t *testing.T) {
 	// The regression guard for the disconnected fix.
 	//
 	// AuthenticateUser used to SELECT failed_login_count, hand it to a private
-	// recorder, and have that recorder write count+1 back. Twelve parallel
-	// guesses all read the same value and all wrote the same value, so they
-	// counted as far fewer than twelve and the account stayed open well past
-	// its threshold — under exactly the parallel traffic an attacker generates.
+	// recorder, and have that recorder write count+1 back. Parallel guesses all
+	// read the same value and all wrote the same value, so they counted as far
+	// fewer than they were and the account stayed open well past its threshold —
+	// under exactly the parallel traffic an attacker generates.
 	//
 	// This asserts against AuthenticateUser, not against RecordFailedLogin. The
-	// previous test only covered the latter, which is why it stayed green while
+	// existing test only covered the latter, which is why it stayed green while
 	// the login path used the racy copy.
+	//
+	// The invariant is "no increment is lost", which is NOT "every call
+	// increments". Once the threshold is crossed the account locks, and later
+	// arrivals are refused at the lockout gate before the password is examined —
+	// by design, they must not count. So the assertion is against the number of
+	// attempts that actually got past that gate, which is whatever the scheduler
+	// happened to allow. Asserting a flat 12 would be asserting that the lockout
+	// does nothing.
 	s, db, ctx := newAuditService(t)
 
 	const attempts = 12
+	var (
+		mu        sync.Mutex
+		evaluated int
+	)
 	var wg sync.WaitGroup
 	wg.Add(attempts)
 	for i := 0; i < attempts; i++ {
 		go func() {
 			defer wg.Done()
-			if _, err := s.AuthenticateUser(ctx, "alice", "wrong-password"); err == nil {
+			_, err := s.AuthenticateUser(ctx, "alice", "wrong-password")
+			if err == nil {
 				t.Error("a wrong password authenticated")
+				return
 			}
+			if errors.Is(err, ErrAccountLocked) {
+				return // refused before evaluation; must not be counted
+			}
+			mu.Lock()
+			evaluated++
+			mu.Unlock()
 		}()
 	}
 	wg.Wait()
@@ -275,9 +295,18 @@ func TestAuthenticateUserCountsEveryConcurrentFailure(t *testing.T) {
 		t.Fatalf("read: %v", err)
 	}
 
-	if count != attempts {
-		t.Errorf("failed_login_count = %d after %d concurrent failures, want %d — %d increments were lost",
-			count, attempts, attempts, attempts-count)
+	// Every guess that was actually evaluated must be recorded. A
+	// read-modify-write counter collapses simultaneous ones and lands short —
+	// and, because it also never reaches the threshold, it leaves every attempt
+	// evaluated, so the gap it opens here is large and obvious.
+	if count != evaluated {
+		t.Errorf("failed_login_count = %d but %d guesses were evaluated; %d increments were lost",
+			count, evaluated, evaluated-count)
+	}
+	// And enough must have been evaluated to exercise the threshold, or this
+	// test would pass against an implementation that never locks at all.
+	if count < 5 {
+		t.Errorf("only %d of %d guesses were evaluated, too few to reach the lockout threshold", count, attempts)
 	}
 	if lockedUntil == nil {
 		t.Error("account not locked after exceeding the failure threshold")
@@ -606,7 +635,10 @@ func TestFailedOperationsDoNotEmitSuccessEvents(t *testing.T) {
 		t.Fatal("removing a role the user does not hold succeeded")
 	}
 
-	time.Sleep(250 * time.Millisecond) // let any stray goroutine land
+	// Give a stray emission time to land. Waiting longer can only make this
+	// stricter — if nothing was emitted, no amount of waiting invents a row —
+	// so it is sized for a loaded CI runner rather than for a local one.
+	time.Sleep(time.Second)
 	if after := countAuditEvents(t, db, ctx, "role.assigned"); after != before {
 		t.Errorf("role.assigned events = %d after a rejected assignment, want %d", after, before)
 	}
