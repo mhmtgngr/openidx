@@ -5215,7 +5215,7 @@ func (s *Service) handleResetPassword(c *gin.Context) {
 
 	if _, err = tx.Exec(ctx,
 		"UPDATE users SET password_hash = $1, password_changed_at = NOW(), updated_at = NOW() WHERE id = $2 AND org_id = $3",
-		string(hashedPassword), userID, org.ID); err != nil {
+		hashedPassword, userID, org.ID); err != nil {
 		c.JSON(500, gin.H{"error": "Failed to update password"})
 		return
 	}
