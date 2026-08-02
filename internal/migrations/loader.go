@@ -880,5 +880,12 @@ func allMigrations() []*Migration {
 			UpSQL:       zitiAdminPwTagUp,
 			DownSQL:     zitiAdminPwTagDown,
 		},
+		{
+			Version:     125,
+			Name:        "oauth_device_codes",
+			Description: "Add oauth_device_codes for the RFC 8628 device authorization grant, so input-constrained clients (TV apps, headless CLIs, kiosks) can authorize against a second device instead of being pushed onto a password grant or a copy-pasted token. Stores the device_code only as a SHA-256 hash — it is a bearer credential the client polls with, and a database disclosure should not hand the reader a set of redeemable grants — while user_code is normalized plaintext because the verification page has to look it up from what a human typed; its defence is entropy plus a short lifetime plus throttling, not storage. The unique index on (org_id, user_code) is what makes that lookup unambiguous and deliberately covers expired rows, so a code is never reissued while its previous owner may still be reading it off a screen.",
+			UpSQL:       deviceCodesUp,
+			DownSQL:     deviceCodesDown,
+		},
 	}
 }
