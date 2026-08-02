@@ -1920,7 +1920,7 @@ func (s *Service) AuthenticateUser(ctx context.Context, username, password strin
 		}
 		if !ok {
 			s.onFailedLogin(ctx, userID, username, "bad_password")
-			s.logger.Debug("Invalid password", zap.String("username", username))
+			s.logger.Debug("Invalid password", zap.String("username", scrubLogValue(username)))
 			return nil, ErrInvalidCredentials
 		}
 		if needsRehash {
