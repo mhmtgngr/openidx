@@ -1964,19 +1964,22 @@ func (s *Service) EnrollTOTP(ctx context.Context, userID, secret, verificationCo
 
 // VerifyTOTP verifies a TOTP code for a user
 func (s *Service) VerifyTOTP(ctx context.Context, userID, code string) (bool, error) {
-	s.logger.Debug("Verifying TOTP code", zap.String("user_id", userID))
+	s.logger.Debug("Verifying TOTP code", zap.String("user_id", scrubLogValue(userID)))
 
 	org, err := orgctx.From(ctx)
 	if err != nil {
 		return false, err
 	}
 
-	// Get user's TOTP secret
+	// Get the user's TOTP secret along with its throttling state.
 	var secret string
 	var enabled bool
+	var failedAttempts int
+	var lockedUntil *time.Time
 	err = s.db.Pool.QueryRow(ctx, `
-		SELECT secret, enabled FROM mfa_totp WHERE user_id = $1 AND org_id = $2
-	`, userID, org.ID).Scan(&secret, &enabled)
+		SELECT secret, enabled, failed_attempts, locked_until
+		FROM mfa_totp WHERE user_id = $1 AND org_id = $2
+	`, userID, org.ID).Scan(&secret, &enabled, &failedAttempts, &lockedUntil)
 
 	if err != nil {
 		return false, fmt.Errorf("failed to get TOTP settings: %w", err)
@@ -1986,20 +1989,94 @@ func (s *Service) VerifyTOTP(ctx context.Context, userID, code string) (bool, er
 		return false, fmt.Errorf("TOTP not enabled for user")
 	}
 
-	// Verify the code
-	valid := validateTOTPWithSkew(code, secret)
-	if valid {
-		// Update last used timestamp
-		now := time.Now()
-		_, err = s.db.Pool.Exec(ctx, `
-			UPDATE mfa_totp SET last_used_at = $2, updated_at = $2 WHERE user_id = $1 AND org_id = $3
-		`, userID, now, org.ID)
-		if err != nil {
-			s.logger.Warn("Failed to update TOTP last used timestamp", zap.Error(err))
-		}
+	// Refuse while locked out, before the code is examined at all. Returning
+	// early here is what makes the lockout worth anything: a verifier that
+	// checks the code first and only then notices the lock still leaks whether
+	// the guess was right.
+	if lockedUntil != nil && time.Now().Before(*lockedUntil) {
+		s.logger.Warn("TOTP verification refused: locked out",
+			zap.String("user_id", scrubLogValue(userID)),
+			zap.Time("locked_until", *lockedUntil))
+		return false, ErrTOTPLockedOut
 	}
 
-	return valid, nil
+	if validateTOTPWithSkew(code, secret) {
+		// Success clears the counter and the lock in one statement.
+		if _, err := s.db.Pool.Exec(ctx, `
+			UPDATE mfa_totp
+			SET last_used_at = NOW(), updated_at = NOW(),
+			    failed_attempts = 0, last_failed_at = NULL, locked_until = NULL
+			WHERE user_id = $1 AND org_id = $2
+		`, userID, org.ID); err != nil {
+			s.logger.Warn("Failed to update TOTP state after success", zap.Error(err))
+		}
+		return true, nil
+	}
+
+	s.recordFailedTOTP(ctx, userID, org.ID)
+	return false, nil
+}
+
+// TOTP verification throttling.
+//
+// A TOTP code is six digits and validateTOTPWithSkew accepts a ±1 step window,
+// so roughly 3 of 10^6 values are valid at any instant. Unthrottled, an
+// attacker expects a hit in the low hundreds of thousands of requests — minutes
+// of sustained traffic against an endpoint that otherwise looks healthy. The
+// second factor is only a factor if guessing it is expensive.
+const (
+	// totpMaxAttempts is the number of consecutive failures tolerated before
+	// the factor locks. internal/mfa used 3; 5 matches the account-lockout
+	// threshold on users, and one number for "how many tries do I get" is
+	// easier to reason about (and to tune) than two.
+	totpMaxAttempts = 5
+	// totpLockoutDuration bounds a wrong-but-honest user's pain while making
+	// sustained guessing pointless: at 5 tries per 15 minutes, exhausting a
+	// million-value keyspace takes centuries.
+	totpLockoutDuration = 15 * time.Minute
+)
+
+// ErrTOTPLockedOut is returned when the factor is locked after repeated
+// failures. It is distinguishable from a wrong code so callers can tell the
+// user to wait rather than to try again, but it deliberately carries no
+// information about the submitted code.
+var ErrTOTPLockedOut = errors.New("too many failed TOTP attempts; try again later")
+
+// recordFailedTOTP counts a failed verification and locks the factor at the
+// threshold.
+//
+// The increment happens in the database, for the same reason the failed-login
+// counter does: reading the count into Go, adding one and writing it back loses
+// increments under exactly the concurrency an attacker generates, so the cap
+// binds later than it claims — or never. Errors here are logged and swallowed
+// because the caller has already decided the code was wrong; failing the
+// request instead would tell the attacker their guess was interesting.
+func (s *Service) recordFailedTOTP(ctx context.Context, userID, orgID string) {
+	var attempts int
+	var lockedUntil *time.Time
+	err := s.db.Pool.QueryRow(ctx, `
+		UPDATE mfa_totp
+		SET failed_attempts = failed_attempts + 1,
+		    last_failed_at  = NOW(),
+		    updated_at      = NOW(),
+		    locked_until = CASE
+		        WHEN failed_attempts + 1 >= $3 THEN NOW() + $4::interval
+		        ELSE locked_until
+		    END
+		WHERE user_id = $1 AND org_id = $2
+		RETURNING failed_attempts, locked_until
+	`, userID, orgID, totpMaxAttempts, totpLockoutDuration.String()).Scan(&attempts, &lockedUntil)
+	if err != nil {
+		s.logger.Error("Failed to record TOTP failure; throttling may not be enforced",
+			zap.String("user_id", scrubLogValue(userID)), zap.Error(err))
+		return
+	}
+
+	if lockedUntil != nil && attempts >= totpMaxAttempts {
+		s.logger.Warn("TOTP locked after repeated failures",
+			zap.String("user_id", scrubLogValue(userID)),
+			zap.Int("attempts", attempts))
+	}
 }
 
 // DisableTOTP disables TOTP for a user
