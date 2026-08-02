@@ -180,25 +180,52 @@ func TestVerifyTOTPCounterDoesNotLoseConcurrentFailures(t *testing.T) {
 	// guesses arrive in parallel, so a counter that reads-modifies-writes in Go
 	// undercounts exactly when it matters. Counting in SQL is what makes the
 	// cap bind.
+	//
+	// The invariant is "no increment is lost", which is NOT the same as "every
+	// call increments". Once the threshold is crossed the factor locks, and
+	// later arrivals are refused before the code is examined — by design, they
+	// must not count. So the assertion is against the number of calls that
+	// actually got past the lockout check, which is whatever the scheduler
+	// happened to allow. Asserting a fixed 12 here would be asserting that the
+	// lockout does nothing.
 	s, db, ctx, _ := newTOTPService(t)
 
 	const attempts = 12
+	var (
+		mu        sync.Mutex
+		notLocked int
+	)
 	var wg sync.WaitGroup
 	wg.Add(attempts)
 	for i := 0; i < attempts; i++ {
 		go func() {
 			defer wg.Done()
-			_, _ = s.VerifyTOTP(ctx, totpUser, "000000")
+			_, err := s.VerifyTOTP(ctx, totpUser, "000000")
+			if errors.Is(err, ErrTOTPLockedOut) {
+				return // refused before evaluation; must not be counted
+			}
+			mu.Lock()
+			notLocked++
+			mu.Unlock()
 		}()
 	}
 	wg.Wait()
 
 	counted, locked := totpState(t, db, ctx)
-	if counted != attempts {
-		t.Errorf("failed_attempts = %d after %d concurrent guesses, want %d", counted, attempts, attempts)
+
+	// Every guess that was actually evaluated must be recorded. A
+	// read-modify-write counter collapses simultaneous ones and lands short.
+	if counted != notLocked {
+		t.Errorf("failed_attempts = %d but %d guesses were evaluated; %d increments were lost",
+			counted, notLocked, notLocked-counted)
+	}
+	// And the guesses have to have been enough to trip the lock, otherwise this
+	// test would pass on an implementation that never locks at all.
+	if counted < totpMaxAttempts {
+		t.Errorf("only %d of %d guesses were evaluated, too few to exercise the threshold", counted, attempts)
 	}
 	if locked == nil {
-		t.Error("factor not locked after concurrent guesses well past the threshold")
+		t.Error("factor not locked after concurrent guesses past the threshold")
 	}
 }
 
