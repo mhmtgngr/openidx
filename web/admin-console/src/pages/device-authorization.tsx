@@ -55,6 +55,22 @@ function describeScopes(scope: string): string[] {
   return scope.split(' ').map((s) => s.trim()).filter(Boolean)
 }
 
+/**
+ * Message for a 429 from either verification endpoint (RFC 8628 §5.2 rate
+ * limiting). The server sends Retry-After; turning it into a wait the user can
+ * act on is the difference between a dead end and an instruction.
+ */
+function tooManyAttemptsMessage(res: Response): string {
+  const seconds = Number(res.headers.get('Retry-After'))
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return 'Too many attempts. Wait a few minutes before trying another code.'
+  }
+  const minutes = Math.ceil(seconds / 60)
+  return minutes <= 1
+    ? 'Too many attempts. Wait about a minute before trying another code.'
+    : `Too many attempts. Wait about ${minutes} minutes before trying another code.`
+}
+
 export function DeviceAuthorizationPage() {
   const [searchParams] = useSearchParams()
   // verification_uri_complete puts the code in the query string so a device
@@ -85,6 +101,13 @@ export function DeviceAuthorizationPage() {
         // this page cannot be used to probe which codes exist; the message says
         // the same thing rather than inventing a distinction the API refuses to
         // make.
+        if (res.status === 429) {
+          // "Please try again" is the one thing that will not work here, and
+          // repeating it is what pushes a user into hammering the endpoint the
+          // limit exists to protect.
+          setLookupError(tooManyAttemptsMessage(res))
+          return
+        }
         setLookupError(
           res.status === 404
             ? 'That code is not valid or has expired. Check the code on your device, or start again there.'
@@ -121,6 +144,10 @@ export function DeviceAuthorizationPage() {
         body: JSON.stringify({ user_code: info.user_code, approve }),
       })
       if (!res.ok) {
+        if (res.status === 429) {
+          setDecideError(tooManyAttemptsMessage(res))
+          return
+        }
         setDecideError(
           res.status === 404
             ? 'That code expired or was already used while you were deciding. Start again on your device.'

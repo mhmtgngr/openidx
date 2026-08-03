@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"math/big"
+	"strconv"
 	"strings"
 	"time"
 
@@ -52,6 +53,23 @@ const (
 	// 5/S, 2/Z, 8/B. A user_code that cannot be transcribed reliably fails the
 	// flow just as surely as one that is rejected.
 	deviceUserCodeAlphabet = "ACDEFGHJKMNPQRTUVWXY"
+
+	// deviceVerifyWindow is how far back failed verification attempts count.
+	// It matches deviceCodeLifetime on purpose: within the life of any one
+	// code, a caller gets a fixed number of guesses at it.
+	deviceVerifyWindow = deviceCodeLifetime
+
+	// deviceVerifyMaxPerSubject caps failed guesses by one signed-in user, and
+	// deviceVerifyMaxPerIP caps them per source address so an attacker holding
+	// several accounts is still bounded. The IP limit is the looser of the two
+	// because a NAT puts a whole office behind one address.
+	//
+	// RFC 8628 §5.2 requires rate limiting here alongside user_code entropy.
+	// Ten guesses per ten minutes against a ~34.6-bit space is not a meaningful
+	// dent in it, and no honest user reaches ten failures: they are typing a
+	// code off a screen in front of them.
+	deviceVerifyMaxPerSubject = 10
+	deviceVerifyMaxPerIP      = 50
 )
 
 // errDeviceCodeNotFound distinguishes "no such device code" from a query error,
@@ -441,6 +459,7 @@ func (s *Service) handleDeviceCodeGrant(c *gin.Context) {
 // Go would be the same read-then-write race that makes a "used" flag useless.
 func (s *Service) claimApprovedDeviceCode(ctx context.Context, id string) (string, error) {
 	var userID string
+	//orgscope:ignore addresses one row by primary key; id comes from loadDeviceCodeByHash, which resolved it under org_id
 	err := s.db.Pool.QueryRow(ctx, `
 		UPDATE oauth_device_codes
 		   SET consumed_at = NOW()
@@ -484,10 +503,15 @@ func (s *Service) decideDeviceCode(ctx context.Context, normalizedUserCode, orgI
 // The increase is the point: a client that ignores the interval is told a larger
 // one each time, so a misbehaving device backs off instead of hammering the
 // token endpoint for the full lifetime of the code.
+//
+// Every statement here addresses rec.ID, a primary key belonging to a row the
+// caller already resolved under an org predicate (loadDeviceCodeByHash), hence
+// the ignore directives — re-filtering on org_id would narrow nothing.
 func (s *Service) throttleDevicePoll(ctx context.Context, rec *deviceCodeRecord) (bool, int) {
 	now := time.Now()
 	if rec.LastPolledAt == nil {
 		if _, err := s.db.Pool.Exec(ctx,
+			//orgscope:ignore addresses one row by primary key, already resolved under org_id by loadDeviceCodeByHash
 			`UPDATE oauth_device_codes SET last_polled_at = $2 WHERE id = $1`, rec.ID, now); err != nil {
 			s.logger.Warn("failed to record device poll", zap.Error(err))
 		}
@@ -496,6 +520,7 @@ func (s *Service) throttleDevicePoll(ctx context.Context, rec *deviceCodeRecord)
 
 	if now.Sub(*rec.LastPolledAt) >= time.Duration(rec.Interval)*time.Second {
 		if _, err := s.db.Pool.Exec(ctx,
+			//orgscope:ignore addresses one row by primary key, already resolved under org_id by loadDeviceCodeByHash
 			`UPDATE oauth_device_codes SET last_polled_at = $2 WHERE id = $1`, rec.ID, now); err != nil {
 			s.logger.Warn("failed to record device poll", zap.Error(err))
 		}
@@ -504,6 +529,7 @@ func (s *Service) throttleDevicePoll(ctx context.Context, rec *deviceCodeRecord)
 
 	next := rec.Interval + devicePollInterval
 	if _, err := s.db.Pool.Exec(ctx,
+		//orgscope:ignore addresses one row by primary key, already resolved under org_id by loadDeviceCodeByHash
 		`UPDATE oauth_device_codes SET interval_secs = $2, last_polled_at = $3 WHERE id = $1`,
 		rec.ID, next, now); err != nil {
 		s.logger.Warn("failed to raise device poll interval", zap.Error(err))
@@ -541,6 +567,112 @@ func (s *Service) resolveUserCode(ctx context.Context, userCode, orgID string) (
 	return &r, nil
 }
 
+// deviceVerificationThrottled reports whether this caller has spent its budget
+// of failed guesses at the user_code space, and how many seconds until the
+// oldest counted failure falls out of the window.
+//
+// RFC 8628 §5.2 requires rate limiting here: user_code entropy alone makes any
+// single guess unlikely and does nothing about a caller guessing in a loop for
+// the ten minutes a code stays live.
+//
+// A successful lookup deliberately does NOT reset the counter. Any caller can
+// mint a device code of their own and look it up, so reset-on-success — the
+// usual failed-login pattern — would hand a guesser an unlimited budget for the
+// price of one extra request.
+func (s *Service) deviceVerificationThrottled(ctx context.Context, orgID, subject, ip string) (bool, int, error) {
+	var subjectHits, ipHits int
+	var subjectOldest, ipOldest *time.Time
+
+	// One round trip for both dimensions. The FILTERs mean a caller with no
+	// determinable address is simply not counted on the IP axis rather than
+	// sharing one bucket with every other such caller.
+	err := s.db.Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FILTER (WHERE subject = $2),
+		       COUNT(*) FILTER (WHERE client_ip = $3 AND $3 <> ''),
+		       MIN(attempted_at) FILTER (WHERE subject = $2),
+		       MIN(attempted_at) FILTER (WHERE client_ip = $3 AND $3 <> '')
+		  FROM oauth_device_verification_attempts
+		 WHERE org_id = $1
+		   AND attempted_at > NOW() - $4::interval
+		   AND (subject = $2 OR (client_ip = $3 AND $3 <> ''))`,
+		orgID, subject, ip, deviceVerifyWindow.String()).
+		Scan(&subjectHits, &ipHits, &subjectOldest, &ipOldest)
+	if err != nil {
+		return false, 0, err
+	}
+
+	retryAfter := func(oldest *time.Time) int {
+		if oldest == nil {
+			return int(deviceVerifyWindow.Seconds())
+		}
+		wait := int(time.Until(oldest.Add(deviceVerifyWindow)).Seconds())
+		if wait < 1 {
+			return 1
+		}
+		return wait
+	}
+
+	if subjectHits >= deviceVerifyMaxPerSubject {
+		return true, retryAfter(subjectOldest), nil
+	}
+	if ipHits >= deviceVerifyMaxPerIP {
+		return true, retryAfter(ipOldest), nil
+	}
+	return false, 0, nil
+}
+
+// recordDeviceVerificationFailure counts one failed guess against this caller.
+//
+// Called for every outcome that tells the caller "that code is not usable",
+// whether the code never existed or has expired — the endpoint refuses to
+// distinguish those, and a limit that only counted one of them would let a
+// sweep run for free against the other.
+func (s *Service) recordDeviceVerificationFailure(ctx context.Context, orgID, subject, ip string) {
+	if _, err := s.db.Pool.Exec(ctx, `
+		INSERT INTO oauth_device_verification_attempts (org_id, subject, client_ip)
+		VALUES ($1, $2, $3)`, orgID, subject, ip); err != nil {
+		// Log rather than fail the request: the caller is already being told
+		// no. A dropped count weakens the limit, so it must be visible.
+		s.logger.Warn("failed to record device verification attempt", zap.Error(err))
+	}
+	// Rows outside the window can never be counted again. Sweeping here keeps
+	// the table proportional to recent failures instead of to all of history,
+	// and only runs on the rare path.
+	if _, err := s.db.Pool.Exec(ctx, `
+		DELETE FROM oauth_device_verification_attempts
+		 WHERE org_id = $1 AND attempted_at < NOW() - $2::interval`,
+		orgID, (2 * deviceVerifyWindow).String()); err != nil {
+		s.logger.Warn("device verification attempt sweep failed", zap.Error(err))
+	}
+}
+
+// guardDeviceVerification applies the throttle. It reports whether the request
+// has already been answered, in which case the caller must stop.
+//
+// Fails closed: if the counter cannot be read, the request is refused rather
+// than allowed through uncounted. That costs nothing real — the lookup it
+// guards needs the same database — and it keeps the control from quietly
+// switching itself off exactly when something is wrong.
+func (s *Service) guardDeviceVerification(c *gin.Context, orgID, subject, ip string) bool {
+	throttled, retryAfter, err := s.deviceVerificationThrottled(c.Request.Context(), orgID, subject, ip)
+	if err != nil {
+		s.logger.Error("device verification throttle check failed", zap.Error(err))
+		c.JSON(500, gin.H{"error": "server_error"})
+		return true
+	}
+	if throttled {
+		s.logger.Warn("device verification throttled",
+			zap.String("subject", scrubLogValue(subject)), zap.String("org_id", orgID))
+		c.Header("Retry-After", strconv.Itoa(retryAfter))
+		c.JSON(429, gin.H{
+			"error":             "slow_down",
+			"error_description": "too many verification attempts; wait before trying another code",
+		})
+		return true
+	}
+	return false
+}
+
 // handleDeviceVerificationLookup backs the verification page: the user types the
 // code they were shown and is told what they are about to authorize.
 func (s *Service) handleDeviceVerificationLookup(c *gin.Context) {
@@ -548,6 +680,12 @@ func (s *Service) handleDeviceVerificationLookup(c *gin.Context) {
 	org, err := orgctx.From(ctx)
 	if err != nil {
 		c.JSON(400, gin.H{"error": "invalid_request"})
+		return
+	}
+
+	subject := currentUserID(c)
+	ip := c.ClientIP()
+	if s.guardDeviceVerification(c, org.ID, subject, ip) {
 		return
 	}
 
@@ -560,6 +698,7 @@ func (s *Service) handleDeviceVerificationLookup(c *gin.Context) {
 	if errors.Is(err, errDeviceCodeNotFound) {
 		// One message for "no such code" and for "expired": distinguishing them
 		// turns this endpoint into an oracle for probing which codes exist.
+		s.recordDeviceVerificationFailure(ctx, org.ID, subject, ip)
 		c.JSON(404, gin.H{"error": "invalid_user_code", "error_description": "that code is not valid or has expired"})
 		return
 	}
@@ -569,6 +708,7 @@ func (s *Service) handleDeviceVerificationLookup(c *gin.Context) {
 		return
 	}
 	if time.Now().After(rec.ExpiresAt) || rec.ConsumedAt != nil {
+		s.recordDeviceVerificationFailure(ctx, org.ID, subject, ip)
 		c.JSON(404, gin.H{"error": "invalid_user_code", "error_description": "that code is not valid or has expired"})
 		return
 	}
@@ -607,6 +747,16 @@ func (s *Service) handleDeviceVerificationDecision(c *gin.Context) {
 		return
 	}
 
+	// Throttled on the same budget as the lookup. This endpoint answers "is
+	// this a live code?" just as clearly — a guessed code returns 404 and a
+	// real one returns 200 — so leaving it open would make the lookup's limit
+	// decorative. It is also the more damaging half: a hit here does not merely
+	// reveal a pending grant, it decides it.
+	ip := c.ClientIP()
+	if s.guardDeviceVerification(c, org.ID, userID, ip) {
+		return
+	}
+
 	var body struct {
 		UserCode string `json:"user_code" form:"user_code"`
 		Approve  bool   `json:"approve" form:"approve"`
@@ -632,6 +782,7 @@ func (s *Service) handleDeviceVerificationDecision(c *gin.Context) {
 	// first — including flipping an approval the device has already redeemed.
 	id, decidedClient, err := s.decideDeviceCode(ctx, normalized, org.ID, next, userID)
 	if errors.Is(err, errDeviceCodeNotFound) {
+		s.recordDeviceVerificationFailure(ctx, org.ID, userID, ip)
 		c.JSON(404, gin.H{"error": "invalid_user_code", "error_description": "that code is not valid or has expired"})
 		return
 	}

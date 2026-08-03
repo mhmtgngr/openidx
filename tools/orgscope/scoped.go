@@ -107,6 +107,13 @@ var scopedTables = map[string]bool{
 	"ziti_service_policies":      true,
 	"ziti_services":              true,
 
+	// v125/v126 — RFC 8628 device grant. Neither table carries the FORCE-RLS
+	// belt yet (the device tests drive the pool with no app.org_id GUC, so a
+	// policy would make them read empty rather than fail), which makes this
+	// lint the only thing standing behind their org predicates.
+	"oauth_device_codes":                 true,
+	"oauth_device_verification_attempts": true,
+
 	// v81 — PAM connection manager (RDM parity)
 	"pam_folders":               true,
 	"pam_entries":               true,

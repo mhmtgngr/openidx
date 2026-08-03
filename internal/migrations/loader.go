@@ -887,5 +887,12 @@ func allMigrations() []*Migration {
 			UpSQL:       deviceCodesUp,
 			DownSQL:     deviceCodesDown,
 		},
+		{
+			Version:     126,
+			Name:        "oauth_device_verification_throttle",
+			Description: "Add oauth_device_verification_attempts so the device-code verification endpoint can be rate limited. RFC 8628 §5.2 requires both entropy and rate limiting on this endpoint; v125 shipped only the entropy and its own comment names throttling as the other half. Entropy alone makes a single guess unlikely and does nothing to stop a caller guessing in a loop for the ten minutes a code stays live. A hit is not a disclosure — both verification routes are behind end-user auth, so a guesser approving a stranger's pending code binds their own subject to that device, and the device silently signs in as the attacker; sweeping and denying is the cheaper attack and takes the grant down for the whole tenant. Only failed attempts are recorded, so the limit is invisible to a user who types the code they were shown, and successes deliberately do not reset the counter — a caller can always issue a code of their own, so reset-on-success would hand back an unlimited budget. State is stored here rather than in Redis because Redis is optional in this deployment and a brute-force counter that stops counting during an outage is not a control.",
+			UpSQL:       deviceVerifyThrottleUp,
+			DownSQL:     deviceVerifyThrottleDown,
+		},
 	}
 }

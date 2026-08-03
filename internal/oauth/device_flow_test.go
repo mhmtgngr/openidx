@@ -107,8 +107,8 @@ func TestDeviceCodeIsStoredHashed(t *testing.T) {
 }
 
 // deviceTestService builds a service over a throwaway Postgres carrying the
-// v125 schema, pulled from the migration registry rather than restated so an
-// edit to the migration is what these tests run against.
+// device-grant schema, pulled from the migration registry rather than restated
+// so an edit to a migration is what these tests run against.
 func deviceTestService(t *testing.T) (*Service, context.Context) {
 	t.Helper()
 	db, cleanup := ssfSetupTestDB(t)
@@ -123,19 +123,25 @@ func deviceTestService(t *testing.T) (*Service, context.Context) {
 	if err != nil {
 		t.Fatalf("LoadMigrations: %v", err)
 	}
-	var up string
-	for _, mig := range list {
-		if mig.Version == 125 {
-			up = mig.UpSQL
+	// v125 is the device codes themselves; v126 is the verification throttle.
+	for _, want := range []int{125, 126} {
+		var up string
+		for _, mig := range list {
+			if mig.Version == want {
+				up = mig.UpSQL
+			}
+		}
+		if up == "" {
+			t.Fatalf("migration v%d not found in the registry", want)
+		}
+		if _, err := db.Pool.Exec(ctx, up); err != nil {
+			t.Fatalf("apply v%d: %v", want, err)
 		}
 	}
-	if up == "" {
-		t.Fatalf("migration v125 not found in the registry")
-	}
-	if _, err := db.Pool.Exec(ctx, up); err != nil {
-		t.Fatalf("apply v125: %v", err)
-	}
-	return &Service{db: db, logger: zap.NewNop()}, ctx
+	// The lookup handler names the client on its success path, which goes
+	// through this port; a bare Service leaves it nil and panics there rather
+	// than returning the fallback name.
+	return &Service{db: db, logger: zap.NewNop(), clients: NewPostgresOAuthClientStore(db)}, ctx
 }
 
 const (

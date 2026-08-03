@@ -14,8 +14,13 @@ function mockFetch(handler: (url: string, init?: RequestInit) => Response | Prom
   return spy
 }
 
-function jsonResponse(body: unknown, status = 200): Response {
-  return { ok: status >= 200 && status < 300, status, json: async () => body } as Response
+function jsonResponse(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    headers: { get: (k: string) => headers[k] ?? null },
+    json: async () => body,
+  } as unknown as Response
 }
 
 const codeInfo = {
@@ -152,6 +157,50 @@ describe('DeviceAuthorizationPage', () => {
     await user.click(screen.getByRole('button', { name: /allow/i }))
 
     expect(await screen.findByText(/expired or was already used/i)).toBeInTheDocument()
+    expect(screen.queryByText(/device connected/i)).not.toBeInTheDocument()
+  })
+
+  it('tells a throttled user to wait instead of to try again', async () => {
+    mockFetch(() => jsonResponse({ error: 'slow_down' }, 429, { 'Retry-After': '240' }))
+    const user = userEvent.setup()
+    renderAt('/device')
+
+    await user.type(screen.getByLabelText(/device code/i), 'ACDEFGHJ')
+    await user.click(screen.getByRole('button', { name: /continue/i }))
+
+    // "Please try again" is the one instruction that cannot work against a
+    // rate limit, and following it is what hammers the endpoint.
+    expect(await screen.findByText(/too many attempts/i)).toBeInTheDocument()
+    expect(screen.getByText(/4 minutes/i)).toBeInTheDocument()
+    expect(screen.queryByText(/please try again/i)).not.toBeInTheDocument()
+  })
+
+  it('still says something useful when Retry-After is missing', async () => {
+    mockFetch(() => jsonResponse({ error: 'slow_down' }, 429))
+    const user = userEvent.setup()
+    renderAt('/device')
+
+    await user.type(screen.getByLabelText(/device code/i), 'ACDEFGHJ')
+    await user.click(screen.getByRole('button', { name: /continue/i }))
+
+    expect(await screen.findByText(/too many attempts/i)).toBeInTheDocument()
+    expect(screen.getByText(/few minutes/i)).toBeInTheDocument()
+  })
+
+  it('reports a throttled decision rather than claiming success', async () => {
+    let call = 0
+    mockFetch(() =>
+      call++ === 0
+        ? jsonResponse(codeInfo)
+        : jsonResponse({ error: 'slow_down' }, 429, { 'Retry-After': '60' }),
+    )
+    const user = userEvent.setup()
+    renderAt('/device?user_code=ACDE-FGHJ')
+
+    await waitFor(() => screen.getByText('Living Room TV'))
+    await user.click(screen.getByRole('button', { name: /allow/i }))
+
+    expect(await screen.findByText(/too many attempts/i)).toBeInTheDocument()
     expect(screen.queryByText(/device connected/i)).not.toBeInTheDocument()
   })
 

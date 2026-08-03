@@ -31,6 +31,16 @@ describe('navigation config integrity', () => {
     // Pages the audit found unreachable before this config existed:
     expect(hrefs.has('/branding')).toBe(true)
     expect(hrefs.has('/audit/dashboard')).toBe(true)
+    // The device-grant verification page shipped reachable only by typed URL.
+    expect(hrefs.has('/device')).toBe(true)
+  })
+
+  it('offers the device verification page to every signed-in user', () => {
+    // A television or CLI sends its user here by name; if the entry were
+    // admin-only, the people the flow is for could not see it.
+    const groups = filterNavigation({ roles: ['user'], viewMode: 'admin' })
+    const hrefs = groups.flatMap((g) => g.sections.flatMap((s) => s.items.map((i) => i.href)))
+    expect(hrefs).toContain('/device')
   })
 
   it('covers the three platform pillars as top-level domains', () => {

@@ -74,6 +74,7 @@ import {
   Brain,
   Server,
   Home,
+  Tv,
 } from 'lucide-react'
 import { hasMinRole, type MinRole } from '@/lib/roles'
 
@@ -128,6 +129,10 @@ export const navigation: NavDomainGroup[] = [
           { name: 'My Access', href: '/my-access', icon: Eye, minRole: 'user', keywords: ['entitlements', 'permissions'] },
           { name: 'My Privileged Access', href: '/my-privileged-access', icon: KeyRound, minRole: 'user', keywords: ['pam', 'my secrets', 'checkout', 'privileged'] },
           { name: 'My Devices', href: '/my-devices', icon: Smartphone, minRole: 'user', keywords: ['phone', 'enrollment'] },
+          // RFC 8628 verification page. A user sent here by a television or a
+          // CLI arrives by typing the URL, but one who opens the console first —
+          // or mistypes it — has nothing to click without this entry.
+          { name: 'Connect a Device', href: '/device', icon: Tv, minRole: 'user', keywords: ['device code', 'user code', 'tv', 'cli', 'kiosk', 'activate', 'pair', 'enter code', 'smart tv', 'console app'] },
           { name: 'My Security', href: '/my-security', icon: ShieldCheck, minRole: 'user', keywords: ['security score', 'risk', 'insights', 'mfa'] },
           { name: 'Trusted Browsers', href: '/trusted-browsers', icon: Monitor, minRole: 'user', keywords: ['remembered'] },
           { name: 'Access Requests', href: '/access-requests', icon: GitPullRequest, minRole: 'user', keywords: ['request access', 'approvals'] },
