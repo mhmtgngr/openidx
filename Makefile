@@ -421,9 +421,16 @@ generate:
 	@echo "⚙️  Generating code..."
 	$(GOCMD) generate ./...
 
-swagger:
-	@echo "📚 Generating Swagger documentation..."
-	swag init -g cmd/admin-api/main.go -o api/swagger
+swagger: deps-tools
+	@echo "📚 Generating Swagger documentation for all services..."
+	@for service in $(SERVICES); do \
+		if [ -d "./cmd/$$service" ] && [ -f "./cmd/$$service/main.go" ]; then \
+			echo "  Generating swagger for $$service..."; \
+			go run github.com/swaggo/swag/cmd/swag init -g ./cmd/$$service/main.go -o ./api/swagger/$$service; \
+		else \
+			echo "  Skipping $$service (no main.go found)"; \
+		fi \
+	done
 
 proto:
 	@echo "📝 Generating protobuf code..."
@@ -440,6 +447,13 @@ docs:
 docs-serve:
 	@echo "📖 Serving documentation..."
 	cd docs && mkdocs serve
+rindex:
+	@echo "🔍 Building vector store for documentation..."
+	python tools/rag/ingest.py
+
+rquery:
+	@echo "🔎 Querying documentation via RAG..."
+	python tools/rag/query.py $(filter-out $@,$(MAKECMDGOALS))
 
 #---------------------------------------------------------------------------
 # Cleanup
@@ -620,4 +634,6 @@ help:
 	@echo "  scan-config    Scan configuration files"
 	@echo "  scan-report    Generate combined security report"
 	@echo ""
+	@echo "  rag-index   Build vector store for documentation"
+	@echo "  rag-query   Query the documentation via RAG
 	@echo "  help           Show this help"

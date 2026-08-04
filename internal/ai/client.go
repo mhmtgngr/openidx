@@ -140,6 +140,90 @@ func (c *Client) Complete(ctx context.Context, systemPrompt, userPrompt string) 
 	return strings.TrimSpace(parsed.Choices[0].Message.Content), nil
 }
 
+// EmbeddingRequest represents a request to the embeddings endpoint.
+type EmbeddingRequest struct {
+	Model string   `json:"model"`
+	Input []string `json:"input"`
+}
+
+// EmbeddingResponse represents a response from the embeddings endpoint.
+type EmbeddingResponse struct {
+	Data []struct {
+		Embedding []float32 `json:"embedding"`
+		Index     int       `json:"index"`
+	} `json:"data"`
+	Error *struct {
+		Message string `json:"message"`
+	} `json:"error,omitempty"`
+	Usage struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		TotalTokens      int `json:"total_tokens"`
+	} `json:"usage"`
+}
+
+// Embedding returns an embedding vector for the given text using the local AI
+// provider's embeddings endpoint (if supported). If the provider does not
+// support embeddings or is disabled, an error is returned.
+func (c *Client) Embedding(ctx context.Context, text string) ([]float32, error) {
+	if !c.Enabled() {
+		return nil, fmt.Errorf("local AI provider is not enabled")
+	}
+
+	body, err := json.Marshal(EmbeddingRequest{
+		Model: c.model,
+		Input: []string{text},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/embeddings", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("local AI embedding request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("local AI embeddings returned status %d: %s", resp.StatusCode, truncate(string(respBody), 200))
+	}
+
+	var parsed EmbeddingResponse
+	if err := json.Unmarshal(respBody, &parsed); err != nil {
+		return nil, fmt.Errorf("parse local AI embedding response: %w", err)
+	}
+	if parsed.Error != nil {
+		return nil, fmt.Errorf("local AI embeddings error: %s", parsed.Error.Message)
+	}
+	if len(parsed.Data) == 0 {
+		return nil, fmt.Errorf("local AI embeddings returned no data")
+	}
+	return parsed.Data[0].Embedding, nil
+}
+
+// EmbedderFunc returns a function suitable for embedding text using the client.
+func (c *Client) EmbedderFunc() func(ctx context.Context, text string) ([]float32, error) {
+	return func(ctx context.Context, text string) ([]float32, error) {
+		return c.Embedding(ctx, text)
+	}
+}
+
+// NewRAGStore creates a store ready for use with the client.
+func (c *Client) NewRAGStore(log *zap.Logger) *Store {
+	if log == nil {
+		log = zap.NewNop()
+	}
+	return NewStore(c.EmbedderFunc(), log)
+}
 // Status probes the provider with a models list request and reports
 // reachability. Cheap enough to call from a status endpoint.
 type Status struct {
