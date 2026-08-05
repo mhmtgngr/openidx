@@ -138,6 +138,14 @@ jobs:
             done || true
           else
             echo "::warning::screenshare build failed; falling back to pure-Go (no video capture)"
+            # A release (tag) build must NOT silently ship a video-less agent —
+            # that is exactly the "remote support connects but the screen never
+            # appears" failure. Fail the release so it's fixed rather than
+            # shipped; branch/dispatch builds may still fall back for iteration.
+            if [[ "${GITHUB_REF}" == refs/tags/agent-v* ]]; then
+              echo "::error::Release build requires the screenshare (VP8 capture) variant, but it failed to compile. Refusing to ship a video-less agent."
+              exit 1
+            fi
             CGO_ENABLED=0 go build -trimpath -ldflags "$LDFLAGS" \
               -o dist/openidx-agent.exe ./cmd/openidx-agent
             echo "SCREENSHARE_BUILD=off" >> "$GITHUB_ENV"
