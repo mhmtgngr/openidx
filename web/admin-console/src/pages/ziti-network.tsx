@@ -303,6 +303,21 @@ interface AppZitiService {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+// Format an API timestamp for display. Ziti's edge-router/service payloads do
+// not always carry a created_at (the management-API struct omits it), so a bare
+// `new Date(x).toLocaleDateString()` rendered "Invalid Date". Return an em dash
+// for missing or unparseable values instead.
+function safeDate(value: unknown, kind: 'date' | 'datetime' | 'time' = 'date'): string {
+  if (value === null || value === undefined || value === '') return '—'
+  const d = new Date(value as string)
+  if (isNaN(d.getTime())) return '—'
+  return kind === 'datetime'
+    ? d.toLocaleString()
+    : kind === 'time'
+      ? d.toLocaleTimeString()
+      : d.toLocaleDateString()
+}
+
 function TruncatedId({ value, label }: { value: string; label?: string }) {
   const { toast } = useToast()
   if (!value) return <span className="text-xs text-muted-foreground">—</span>
@@ -757,7 +772,7 @@ function OverviewTab({ onNavigate }: { onNavigate: (tab: string) => void }) {
                     <TableCell className="text-sm text-muted-foreground">{router.hostname}</TableCell>
                     <TableCell><TruncatedId value={router.fingerprint} label="Fingerprint" /></TableCell>
                     <TableCell className="text-sm text-muted-foreground">
-                      {new Date(router.created_at).toLocaleDateString()}
+                      {safeDate(router.created_at)}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -889,7 +904,7 @@ function ServicesTab() {
                   </TableCell>
                   <TableCell><TruncatedId value={svc.ziti_id} label="Ziti ID" /></TableCell>
                   <TableCell className="text-sm text-muted-foreground">
-                    {new Date(svc.created_at).toLocaleDateString()}
+                    {safeDate(svc.created_at)}
                   </TableCell>
                   <TableCell>
                     <DropdownMenu>
@@ -1348,7 +1363,7 @@ function IdentitiesTab() {
                   </TableCell>
                   <TableCell><TruncatedId value={ident.ziti_id} label="Ziti ID" /></TableCell>
                   <TableCell className="text-sm text-muted-foreground">
-                    {new Date(ident.created_at).toLocaleDateString()}
+                    {safeDate(ident.created_at)}
                   </TableCell>
                   <TableCell>
                     <DropdownMenu>
@@ -2603,7 +2618,7 @@ function PostureSection() {
                     </Badge>
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">
-                    {new Date(check.created_at).toLocaleDateString()}
+                    {safeDate(check.created_at)}
                   </TableCell>
                   <TableCell>
                     <DropdownMenu>

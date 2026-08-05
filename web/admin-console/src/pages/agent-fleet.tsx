@@ -492,7 +492,12 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 function ComplianceBadge({ status, score }: { status: string; score: number }) {
-  const pct = Math.round((score || 0) * 100)
+  // The API reports compliance_score in the 0.0-1.0 range, but some agents have
+  // historically reported an already-percentage 0-100 value; multiplying that
+  // by 100 produced nonsense like "10000%". Normalize defensively: treat a
+  // score > 1 as already a percentage, and clamp to 0-100 either way.
+  const rawPct = (score || 0) <= 1 ? (score || 0) * 100 : score
+  const pct = Math.min(100, Math.max(0, Math.round(rawPct)))
   const variant = status === 'compliant' ? 'success'
     : status === 'grace_period' ? 'warning'
     : status === 'non_compliant' ? 'destructive' : 'secondary'
