@@ -1,7 +1,7 @@
-import { Link, Stack, useFocusEffect, useRouter } from 'expo-router';
+import { Link, useFocusEffect, useNavigation, useRouter } from 'expo-router';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -31,10 +31,25 @@ import { listAccounts, updateAccount } from '@/features/authenticator/store';
  */
 export default function AuthenticatorScreen() {
   const router = useRouter();
+  const navigation = useNavigation();
   const [accounts, setAccounts] = useState<OtpAccount[] | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [query, setQuery] = useState('');
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Put the "+ Add" action in the tab's header (Tabs manage the header, so we
+  // set it imperatively rather than with a <Stack.Screen>).
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      headerRight: () => (
+        <Link href="/(app)/authenticator/add" asChild>
+          <Pressable hitSlop={12} style={{ paddingHorizontal: 12 }}>
+            <Text style={styles.addBtn}>+ Add</Text>
+          </Pressable>
+        </Link>
+      ),
+    });
+  }, [navigation]);
 
   const reload = useCallback(async () => {
     setAccounts(await listAccounts());
@@ -75,18 +90,6 @@ export default function AuthenticatorScreen() {
 
   return (
     <>
-      <Stack.Screen
-        options={{
-          title: 'Authenticator',
-          headerRight: () => (
-            <Link href="/(app)/authenticator/add" asChild>
-              <Pressable hitSlop={12}>
-                <Text style={styles.addBtn}>+ Add</Text>
-              </Pressable>
-            </Link>
-          ),
-        }}
-      />
       {accounts === null ? (
         <ActivityIndicator style={{ marginTop: 32 }} />
       ) : accounts.length === 0 ? (
