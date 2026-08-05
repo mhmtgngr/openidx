@@ -901,5 +901,12 @@ func allMigrations() []*Migration {
 			UpSQL:       socialProvidersNullableProviderIDUp,
 			DownSQL:     socialProvidersNullableProviderIDDown,
 		},
+		{
+			Version:     128,
+			Name:        "normalize_agent_compliance_score",
+			Description: "Clamp enrolled_agents.compliance_score into its documented 0.0-1.0 range. Some agents reported an already-percentage 0-100 value that was stored verbatim; the console multiplies by 100 to render a percent, so a stored 100 showed as '10000%'. Values in (1,100] are divided by 100, >100 clamped to 1.0, negatives floored at 0.0. The write path now clamps too.",
+			UpSQL:       normalizeAgentComplianceScoreUp,
+			DownSQL:     normalizeAgentComplianceScoreDown,
+		},
 	}
 }

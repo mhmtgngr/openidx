@@ -824,6 +824,15 @@ func (h *AgentAPIHandler) HandleReport(c *gin.Context) {
 	if weightSum > 0 {
 		complianceScore = scoreSum / weightSum
 	}
+	// Clamp to the documented 0.0–1.0 range. A misbehaving agent that reports a
+	// per-check score outside [0,1] must not persist an out-of-range value (the
+	// console multiplies by 100, so 1.0 here is 100% there, and >1 rendered as
+	// nonsense like "10000%").
+	if complianceScore < 0 {
+		complianceScore = 0
+	} else if complianceScore > 1 {
+		complianceScore = 1
+	}
 
 	// Determine compliance status.
 	complianceStatus := "unknown"
