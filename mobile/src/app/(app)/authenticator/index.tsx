@@ -1,15 +1,18 @@
-import { Link, Stack, useFocusEffect } from 'expo-router';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Link, Stack, useFocusEffect, useRouter } from 'expo-router';
+import * as Clipboard from 'expo-clipboard';
+import * as Haptics from 'expo-haptics';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 
+import { CountdownRing, IssuerAvatar } from '@/components/authenticator/account-visuals';
 import {
   formatCode,
   generateHOTP,
@@ -17,24 +20,26 @@ import {
   secondsRemaining,
   type OtpAccount,
 } from '@/features/authenticator/otp';
-import { deleteAccount, listAccounts, updateAccount } from '@/features/authenticator/store';
+import { listAccounts, updateAccount } from '@/features/authenticator/store';
 
 /**
- * The authenticator home screen: a live list of one-time codes, exactly like
- * Google Authenticator / Microsoft Authenticator. TOTP rows refresh every
- * second with a shrinking countdown bar; HOTP rows advance on demand. All
- * computation is on-device — no network, no server round-trip.
+ * The authenticator home screen — a live list of one-time codes styled like
+ * Microsoft Authenticator: a colored issuer tile, the big grouped code, a
+ * one-tap copy, and a circular countdown. Tapping a row copies the code; the
+ * chevron opens the account's detail screen (rename / QR export / delete).
+ * All computation is on-device — no network, no server round-trip.
  */
 export default function AuthenticatorScreen() {
+  const router = useRouter();
   const [accounts, setAccounts] = useState<OtpAccount[] | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const [query, setQuery] = useState('');
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const reload = useCallback(async () => {
     setAccounts(await listAccounts());
   }, []);
 
-  // Reload whenever the screen regains focus (e.g. after adding an account).
   useFocusEffect(
     useCallback(() => {
       reload();
@@ -49,28 +54,6 @@ export default function AuthenticatorScreen() {
     };
   }, []);
 
-  const remove = useCallback(
-    (account: OtpAccount) => {
-      Alert.alert(
-        'Remove account',
-        `Delete the code for ${account.issuer}${account.label ? ` (${account.label})` : ''}? ` +
-          `You will need to re-add it from that service.`,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Remove',
-            style: 'destructive',
-            onPress: async () => {
-              await deleteAccount(account.id);
-              reload();
-            },
-          },
-        ]
-      );
-    },
-    [reload]
-  );
-
   const advanceHotp = useCallback(
     async (account: OtpAccount) => {
       const next = { ...account, counter: (account.counter ?? 0) + 1 };
@@ -80,24 +63,27 @@ export default function AuthenticatorScreen() {
     [reload]
   );
 
+  const filtered = useMemo(() => {
+    if (!accounts) return null;
+    const q = query.trim().toLowerCase();
+    if (!q) return accounts;
+    return accounts.filter(
+      (a) =>
+        a.issuer.toLowerCase().includes(q) || (a.label ?? '').toLowerCase().includes(q)
+    );
+  }, [accounts, query]);
+
   return (
     <>
       <Stack.Screen
         options={{
           title: 'Authenticator',
           headerRight: () => (
-            <View style={styles.headerActions}>
-              <Link href="/(app)/authenticator/backup" asChild>
-                <Pressable hitSlop={12}>
-                  <Text style={styles.headerLink}>Backup</Text>
-                </Pressable>
-              </Link>
-              <Link href="/(app)/authenticator/add" asChild>
-                <Pressable hitSlop={12}>
-                  <Text style={styles.addBtn}>+ Add</Text>
-                </Pressable>
-              </Link>
-            </View>
+            <Link href="/(app)/authenticator/add" asChild>
+              <Pressable hitSlop={12}>
+                <Text style={styles.addBtn}>+ Add</Text>
+              </Pressable>
+            </Link>
           ),
         }}
       />
@@ -105,9 +91,10 @@ export default function AuthenticatorScreen() {
         <ActivityIndicator style={{ marginTop: 32 }} />
       ) : accounts.length === 0 ? (
         <ScrollView contentContainerStyle={styles.empty}>
+          <IssuerAvatar issuer="OpenIDX" size={72} />
           <Text style={styles.emptyTitle}>No codes yet</Text>
           <Text style={styles.emptyBody}>
-            Add an account to generate the 6-digit verification codes for services like Google,
+            Add an account to generate 6-digit verification codes for services like Google,
             GitHub, Microsoft, AWS and any site that supports authenticator-app 2FA.
           </Text>
           <Link href="/(app)/authenticator/add" asChild>
@@ -117,16 +104,36 @@ export default function AuthenticatorScreen() {
           </Link>
         </ScrollView>
       ) : (
-        <ScrollView contentContainerStyle={styles.list}>
-          {accounts.map((a) => (
-            <CodeRow
-              key={a.id}
-              account={a}
-              now={now}
-              onRemove={() => remove(a)}
-              onAdvance={() => advanceHotp(a)}
+        <ScrollView
+          contentContainerStyle={styles.list}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+        >
+          {accounts.length >= 5 && (
+            <TextInput
+              style={styles.search}
+              placeholder="Search accounts"
+              placeholderTextColor="rgba(127,127,127,0.6)"
+              value={query}
+              onChangeText={setQuery}
+              autoCapitalize="none"
+              autoCorrect={false}
+              returnKeyType="search"
             />
-          ))}
+          )}
+          {filtered && filtered.length === 0 ? (
+            <Text style={styles.noMatch}>No accounts match “{query}”.</Text>
+          ) : (
+            filtered!.map((a) => (
+              <CodeRow
+                key={a.id}
+                account={a}
+                now={now}
+                onOpen={() => router.push(`/(app)/authenticator/${a.id}`)}
+                onAdvance={() => advanceHotp(a)}
+              />
+            ))
+          )}
           <Text style={styles.footer}>
             Codes are generated on this device from secrets stored in the secure keystore. They
             never leave your phone.
@@ -140,105 +147,118 @@ export default function AuthenticatorScreen() {
 function CodeRow({
   account,
   now,
-  onRemove,
+  onOpen,
   onAdvance,
 }: {
   account: OtpAccount;
   now: number;
-  onRemove: () => void;
+  onOpen: () => void;
   onAdvance: () => void;
 }) {
+  const [copied, setCopied] = useState(false);
   const isHotp = account.type === 'hotp';
   const code = isHotp
     ? generateHOTP(account.secret, account.counter ?? 0, account.digits, account.algorithm)
     : generateTOTP(account, now);
   const remaining = isHotp ? account.period : secondsRemaining(account.period, now);
-  const fraction = isHotp ? 1 : remaining / account.period;
-  const urgent = !isHotp && remaining <= 5;
+
+  const copy = useCallback(async () => {
+    await Clipboard.setStringAsync(code);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1200);
+  }, [code]);
 
   return (
-    <Pressable style={styles.row} onLongPress={onRemove} delayLongPress={400}>
-      <View style={styles.rowHeader}>
-        <Text style={styles.issuer} numberOfLines={1}>
-          {account.issuer}
-        </Text>
-        {!!account.label && account.label !== account.issuer && (
-          <Text style={styles.label} numberOfLines={1}>
-            {account.label}
+    <View style={styles.row}>
+      <Pressable style={styles.rowMain} onPress={copy} accessibilityRole="button">
+        <IssuerAvatar issuer={account.issuer} />
+        <View style={styles.rowText}>
+          <Text style={styles.issuer} numberOfLines={1}>
+            {account.issuer}
           </Text>
-        )}
-      </View>
-      <View style={styles.rowBody}>
-        <Text style={[styles.code, urgent && styles.codeUrgent]}>{formatCode(code)}</Text>
+          {!!account.label && account.label !== account.issuer && (
+            <Text style={styles.label} numberOfLines={1}>
+              {account.label}
+            </Text>
+          )}
+          <Text style={[styles.code, copied && styles.codeCopied]}>
+            {copied ? 'Copied' : formatCode(code)}
+          </Text>
+        </View>
         {isHotp ? (
-          <Pressable style={styles.nextBtn} onPress={onAdvance} hitSlop={8}>
-            <Text style={styles.nextBtnText}>Next ↻</Text>
+          <Pressable style={styles.hotpBtn} onPress={onAdvance} hitSlop={8}>
+            <Text style={styles.hotpBtnText}>↻</Text>
           </Pressable>
         ) : (
-          <Text style={[styles.remaining, urgent && styles.codeUrgent]}>{remaining}s</Text>
+          <CountdownRing remaining={remaining} period={account.period} />
         )}
-      </View>
-      {!isHotp && (
-        <View style={styles.progressTrack}>
-          <View
-            style={[
-              styles.progressFill,
-              { width: `${Math.max(0, Math.min(100, fraction * 100))}%` },
-              urgent && styles.progressUrgent,
-            ]}
-          />
-        </View>
-      )}
-    </Pressable>
+      </Pressable>
+      <Pressable style={styles.chevronHit} onPress={onOpen} hitSlop={8} accessibilityLabel="Account details">
+        <Text style={styles.chevron}>›</Text>
+      </Pressable>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   addBtn: { color: '#208AEF', fontSize: 16, fontWeight: '600' },
-  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 16 },
-  headerLink: { color: '#208AEF', fontSize: 16, fontWeight: '600' },
-  list: { padding: 16, gap: 12 },
-  row: {
-    borderRadius: 16,
-    padding: 16,
-    backgroundColor: 'rgba(127,127,127,0.12)',
-    gap: 10,
+  list: { padding: 16, gap: 10 },
+  search: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(127,127,127,0.4)',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    fontSize: 15,
+    backgroundColor: 'rgba(127,127,127,0.06)',
+    marginBottom: 2,
   },
-  rowHeader: { gap: 2 },
-  issuer: { fontSize: 16, fontWeight: '700' },
-  label: { fontSize: 13, opacity: 0.6 },
-  rowBody: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  noMatch: { textAlign: 'center', opacity: 0.5, marginTop: 16, fontSize: 14 },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(127,127,127,0.06)',
+    borderRadius: 16,
+    paddingRight: 6,
+  },
+  rowMain: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 12,
+  },
+  rowText: { flex: 1, gap: 1 },
+  issuer: { fontSize: 16, fontWeight: '600' },
+  label: { fontSize: 13, opacity: 0.55 },
   code: {
-    fontSize: 34,
+    fontSize: 26,
     fontWeight: '700',
     letterSpacing: 2,
     fontVariant: ['tabular-nums'],
-    color: '#208AEF',
+    marginTop: 2,
+    color: '#2563EB',
   },
-  codeUrgent: { color: '#E5484D' },
-  remaining: { fontSize: 15, fontWeight: '600', opacity: 0.7, fontVariant: ['tabular-nums'] },
-  nextBtn: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 10,
-    backgroundColor: 'rgba(32,138,239,0.15)',
+  codeCopied: { color: '#16A34A' },
+  hotpBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(37,99,235,0.12)',
   },
-  nextBtnText: { color: '#208AEF', fontWeight: '600' },
-  progressTrack: {
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: 'rgba(127,127,127,0.2)',
-    overflow: 'hidden',
-  },
-  progressFill: { height: 4, borderRadius: 2, backgroundColor: '#208AEF' },
-  progressUrgent: { backgroundColor: '#E5484D' },
-  footer: { fontSize: 12, opacity: 0.5, textAlign: 'center', marginTop: 8, paddingHorizontal: 8 },
+  hotpBtnText: { fontSize: 20, color: '#2563EB' },
+  chevronHit: { paddingHorizontal: 8, paddingVertical: 20 },
+  chevron: { fontSize: 26, opacity: 0.35 },
+  footer: { fontSize: 12, opacity: 0.45, lineHeight: 18, marginTop: 8, paddingHorizontal: 4 },
   empty: { flexGrow: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 14 },
-  emptyTitle: { fontSize: 22, fontWeight: '700' },
+  emptyTitle: { fontSize: 22, fontWeight: '700', marginTop: 6 },
   emptyBody: { fontSize: 15, opacity: 0.6, textAlign: 'center', lineHeight: 21 },
   emptyCta: {
     marginTop: 8,
-    height: 50,
+    height: 52,
     paddingHorizontal: 28,
     borderRadius: 14,
     backgroundColor: '#208AEF',
