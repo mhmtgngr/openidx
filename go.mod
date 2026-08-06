@@ -10,7 +10,7 @@ toolchain go1.25.12
 require (
 	github.com/alicebob/miniredis/v2 v2.38.0
 	github.com/aws/aws-sdk-go-v2 v1.43.3
-	github.com/aws/aws-sdk-go-v2/credentials v1.19.27
+	github.com/aws/aws-sdk-go-v2/credentials v1.19.33
 	github.com/aws/aws-sdk-go-v2/service/iam v1.56.2
 	github.com/aws/aws-sdk-go-v2/service/sts v1.45.3
 	github.com/beevik/etree v1.7.0
