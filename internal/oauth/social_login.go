@@ -217,6 +217,12 @@ func (s *Service) handleSocialLoginCallback(c *gin.Context) {
 			c.JSON(http.StatusConflict, gin.H{
 				"error":             "account_conflict",
 				"error_description": err.Error(),
+				// Tell the caller how to resolve it. The refusal above is the
+				// account-takeover guard; linking is the supported way out, and
+				// it requires an authenticated session plus a fresh proof of
+				// control over the external account.
+				"resolution":     "link_from_profile",
+				"link_start_url": "/oauth/social/link/" + providerID + "/start",
 			})
 			return
 		}
@@ -622,6 +628,11 @@ func (s *Service) linkOrCreateSocialUser(ctx context.Context, providerID string,
 			WHERE provider_id = $1 AND external_id = $2
 		`, providerID, userInfo.ID, userInfo.Name, userInfo.Email)
 
+		// Keep the profile-facing mirror in step with the login record.
+		if linkErr := s.upsertIdentityLink(ctx, providerID, existingUserID, userInfo); linkErr != nil {
+			s.logger.Warn("Failed to refresh identity link on social login", zap.Error(linkErr))
+		}
+
 		return existingUserID, nil
 	}
 
@@ -671,6 +682,12 @@ func (s *Service) linkOrCreateSocialUser(ctx context.Context, providerID string,
 	// Create the social account link
 	if linkErr := s.createSocialAccountLink(ctx, providerID, userID, userInfo); linkErr != nil {
 		s.logger.Warn("Failed to create social account link after user creation", zap.Error(linkErr))
+	}
+	// Mirror it into user_identity_links, which is what the "linked accounts"
+	// profile screen and the admin console read. Without this the login path
+	// leaves those screens empty for users it just provisioned.
+	if linkErr := s.upsertIdentityLink(ctx, providerID, userID, userInfo); linkErr != nil {
+		s.logger.Warn("Failed to mirror identity link after user creation", zap.Error(linkErr))
 	}
 
 	s.logger.Info("Created user from social login (JIT provisioning)",
