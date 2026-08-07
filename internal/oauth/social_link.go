@@ -230,6 +230,25 @@ func (s *Service) handleSocialLinkCallback(c *gin.Context) {
 		return
 	}
 
+	// The administrator's domain restriction applies here too. Without this
+	// check, linking would be a way around a restriction that the sign-in path
+	// enforces, and the linked account could then be used to sign in.
+	policy, err := s.loadSocialProviderPolicy(c.Request.Context(), providerID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to link account"})
+		return
+	}
+	if !policy.emailDomainAllowed(userInfo.Email) {
+		s.logger.Warn("Link callback: email domain not allowed for this provider",
+			zap.String("provider_id", providerID),
+			zap.String("user_id", userID))
+		c.JSON(http.StatusForbidden, gin.H{
+			"error":             "domain_not_allowed",
+			"error_description": ErrSocialDomainNotAllowed.Error(),
+		})
+		return
+	}
+
 	linked, err := s.linkSocialAccountToUser(c.Request.Context(), providerID, userID, userInfo)
 	if err != nil {
 		if err == errLinkOwnedByAnotherUser {

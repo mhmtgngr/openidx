@@ -23,6 +23,16 @@ import (
 // Auto-linking is refused to prevent account takeover.
 var ErrSocialAccountConflict = errors.New("an account with this email already exists; please log in and link your social account from your profile")
 
+// ErrSocialDomainNotAllowed is returned when an administrator restricted a
+// social login button to specific email domains and the account presented does
+// not belong to one of them.
+var ErrSocialDomainNotAllowed = errors.New("this sign-in method is not available for your email domain")
+
+// ErrSocialAutoCreateDisabled is returned when a social account has no local
+// user and the administrator disabled automatic account creation for the
+// provider, so an account must be created by other means first.
+var ErrSocialAutoCreateDisabled = errors.New("no account exists for this sign-in method; please contact your administrator")
+
 // SocialTokens represents tokens received from a social OAuth provider
 type SocialTokens struct {
 	AccessToken  string `json:"access_token"`
@@ -223,6 +233,22 @@ func (s *Service) handleSocialLoginCallback(c *gin.Context) {
 				// control over the external account.
 				"resolution":     "link_from_profile",
 				"link_start_url": "/oauth/social/link/" + providerID + "/start",
+			})
+			return
+		}
+		// Administrator policy refusals. These are deliberate configuration
+		// outcomes rather than faults, so they must not surface as a 500.
+		if errors.Is(err, ErrSocialDomainNotAllowed) {
+			c.JSON(http.StatusForbidden, gin.H{
+				"error":             "domain_not_allowed",
+				"error_description": err.Error(),
+			})
+			return
+		}
+		if errors.Is(err, ErrSocialAutoCreateDisabled) {
+			c.JSON(http.StatusForbidden, gin.H{
+				"error":             "account_required",
+				"error_description": err.Error(),
 			})
 			return
 		}
@@ -612,6 +638,20 @@ func (s *Service) linkOrCreateSocialUser(ctx context.Context, providerID string,
 		return "", err
 	}
 
+	// The administrator's settings for this login button. They gate who may
+	// register through the provider, so they are consulted before any account
+	// is selected or created.
+	policy, err := s.loadSocialProviderPolicy(ctx, providerID)
+	if err != nil {
+		return "", err
+	}
+	if !policy.emailDomainAllowed(userInfo.Email) {
+		s.logger.Warn("Social login blocked: email domain not allowed for this provider",
+			zap.String("provider_id", providerID),
+			zap.String("email", userInfo.Email))
+		return "", ErrSocialDomainNotAllowed
+	}
+
 	// Check if this social account is already linked
 	var existingUserID string
 	err = s.db.Pool.QueryRow(ctx, `
@@ -656,7 +696,16 @@ func (s *Service) linkOrCreateSocialUser(ctx context.Context, providerID string,
 		}
 	}
 
-	// No existing user - JIT provision a new user
+	// No existing user. Provisioning one on the spot is what
+	// auto_create_users governs, so an administrator who turned it off gets a
+	// provider usable only by people who already have an account.
+	if !policy.autoCreateUsers {
+		s.logger.Warn("Social login blocked: automatic account creation is disabled for this provider",
+			zap.String("provider_id", providerID),
+			zap.String("email", userInfo.Email))
+		return "", ErrSocialAutoCreateDisabled
+	}
+
 	userID := uuid.New().String()
 	username := s.deriveSocialUsername(userInfo)
 
