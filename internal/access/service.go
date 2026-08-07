@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -134,6 +135,9 @@ type Service struct {
 	// encryption is unconfigured — the recording download handler then streams
 	// plaintext unchanged. Same keyring the sealer worker uses.
 	guacRecordingRing *recordingKeyring
+	// groupCache memoizes per-user group membership for route authorization
+	// (allowed_groups), keyed by user id with a short TTL.
+	groupCache sync.Map
 }
 
 // handleAgentAPKDownload serves the hosted Android agent APK without auth so
@@ -429,6 +433,9 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 
 		// Ziti service connectivity test (diagnostic dial; read-like)
 		api.POST("/ziti/services/:id/test", svc.handleTestZitiService)
+		// Admin "behind the scenes": explain how a resource is wired end to end
+		// and which link is broken, so diagnosis needs no CLI.
+		api.GET("/ziti/services/by-name/:name/explain", adminOnly, svc.handleExplainZitiService)
 
 		// Edge router policy CRUD
 		api.GET("/ziti/edge-router-policies", svc.handleListEdgeRouterPolicies)
@@ -468,6 +475,10 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.POST("/users/:id/devices/:agentId/revoke", adminOnly, svc.handleRevokeUserDevice)
 		// Self-service: the caller's own correlated devices (compliance visibility).
 		api.GET("/my-devices", svc.handleMyDevices)
+
+		// Self-service: "My Network" — what the caller can reach, in plain
+		// language (no overlay vocabulary). Deliberately not adminOnly.
+		api.GET("/my/resources", svc.handleMyResources)
 
 		// Phase 3: Posture checks (definitions are admin-managed; device
 		// self-report + evaluate are data-plane and stay open).
@@ -1989,6 +2000,19 @@ func (s *Service) handleProxy(c *gin.Context) {
 		if len(route.AllowedRoles) > 0 && !hasAnyRole(session.Roles, route.AllowedRoles) {
 			s.logAuditEvent(c, "proxy_access_denied", route.ID, "proxy_route", map[string]interface{}{
 				"reason":  "insufficient_roles",
+				"user_id": session.UserID,
+				"path":    c.Request.URL.Path,
+			})
+			c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions"})
+			return
+		}
+
+		// Check groups. Stored in allowed_groups and settable in the admin UI,
+		// but historically never evaluated here.
+		if len(route.AllowedGroups) > 0 &&
+			!routeGroupsAllow(route.AllowedGroups, s.userGroupNames(c.Request.Context(), session.UserID)) {
+			s.logAuditEvent(c, "proxy_access_denied", route.ID, "proxy_route", map[string]interface{}{
+				"reason":  "insufficient_groups",
 				"user_id": session.UserID,
 				"path":    c.Request.URL.Path,
 			})
