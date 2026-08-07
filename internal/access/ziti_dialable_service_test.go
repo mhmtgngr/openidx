@@ -106,7 +106,6 @@ func TestProvisionDialableService(t *testing.T) {
 		Name:       "secops",
 		TargetHost: "192.168.152.113",
 		TargetPort: 443,
-		Protocol:   "tcp",
 	})
 	if err != nil {
 		t.Fatalf("ProvisionDialableService: %v", err)

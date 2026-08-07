@@ -189,8 +189,15 @@ func (s *Service) handleCreateZitiService(c *gin.Context) {
 	if req.Protocol == "" {
 		req.Protocol = "tcp"
 	}
-	if req.Protocol != "tcp" && req.Protocol != "udp" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "protocol must be 'tcp' or 'udp'"})
+	// The overlay this provisions is TCP end to end: the host.v1 config pins
+	// "protocol":"tcp" and the service-edge-router policy advertises
+	// allowedProtocols ["tcp"]. Accepting "udp" here would store a value the
+	// fabric does not honour, so the service would look like UDP in the console
+	// while silently carrying TCP. Refuse it instead of provisioning a lie.
+	if req.Protocol != "tcp" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "only 'tcp' services can be provisioned today; the overlay host and edge-router policy are TCP-only",
+		})
 		return
 	}
 	if req.Port < 1 || req.Port > 65535 {
@@ -230,7 +237,6 @@ func (s *Service) handleCreateZitiService(c *gin.Context) {
 		Name:              req.Name,
 		TargetHost:        req.Host,
 		TargetPort:        req.Port,
-		Protocol:          req.Protocol,
 		InterceptAddress:  interceptAddr,
 		DialIdentityRoles: dialRoles,
 		ExtraAttributes:   req.Attributes,

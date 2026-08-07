@@ -2688,10 +2688,15 @@ type DialableServiceSpec struct {
 	// Name is the service name (and its role attribute #<Name>).
 	Name string
 	// TargetHost/TargetPort is where the edge router forwards (the real backend,
-	// e.g. an internal IP:port). Protocol is tcp/udp.
+	// e.g. an internal IP:port).
+	//
+	// The transport is always TCP: CreateHostV1ConfigFixed pins "protocol":"tcp"
+	// and the service-edge-router policy advertises allowedProtocols ["tcp"], so
+	// carrying a caller-supplied protocol here would be a field that silently
+	// does nothing. UDP would need a different host.v1 shape, and is added by
+	// changing those config builders rather than by passing a string through.
 	TargetHost string
 	TargetPort int
-	Protocol   string
 	// InterceptAddress is the overlay name a client dials (e.g. "secops.ziti").
 	// Defaults to "<Name>.ziti" when empty.
 	InterceptAddress string
@@ -2718,10 +2723,6 @@ type DialableServiceSpec struct {
 func (zm *ZitiManager) ProvisionDialableService(ctx context.Context, spec DialableServiceSpec) (string, error) {
 	if spec.Name == "" || spec.TargetHost == "" || spec.TargetPort < 1 || spec.TargetPort > 65535 {
 		return "", fmt.Errorf("invalid dialable service spec: name/target host/port required")
-	}
-	protocol := spec.Protocol
-	if protocol == "" {
-		protocol = "tcp"
 	}
 	intercept := spec.InterceptAddress
 	if intercept == "" {
