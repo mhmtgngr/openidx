@@ -31,8 +31,8 @@ public rolündedir.
 ölçüldü ve doğrudan bunlar çıktı:
 
 ```
-supportedProtocols: {"tls": "tls://browzer.tdv.org:3022",
-                     "wss": "wss://browzer.tdv.org:3023"}
+supportedProtocols: {"tls": "tls://<ROUTER_FQDN>:3022",
+                     "wss": "wss://<ROUTER_FQDN>:3023"}
 ```
 
 Yani istemci, denetleyiciye bağlandıktan sonra **tam olarak bu adreslere**
@@ -108,8 +108,8 @@ Bunun teknik sebebi bu kurulumda ölçüldü:
 | Uç nokta | Ölçülen davranış | SSL decryption'a tepkisi |
 |---|---|---|
 | Denetleyici `:1280` | **mTLS** — sunucu istemci sertifikası **istiyor**, ALPN `ziti-ctrl` | **Kırılır.** Araya giren firewall istemcinin özel anahtarına sahip olmadığı için istemci sertifikasını sunamaz |
-| Router `:3022` | Sertifika **NetFoundry iç PKI**'sinden (`CN=NetFoundry Inc. Intermediate CA`), ALPN `ziti-edge` | **Kırılır.** İstemci bu sertifikayı Ziti'nin kendi CA'sına göre doğrular; firewall'ın ürettiği sertifika **kasten** reddedilir |
-| Router `:3023` (wss) | Sertifika **public CA** (GlobalSign), ALPN `http/1.1` | Bootstrap TLS'i teknik olarak açılabilir, ama **içindeki Ziti oturumu yine uçtan uca şifrelidir** — açmanın hiçbir görünürlük faydası yok, sadece risk ve gecikme ekler |
+| Router `:3022` | Sertifika **Ziti'nin kendi iç PKI**'sinden (public CA değil), ALPN `ziti-edge` | **Kırılır.** İstemci bu sertifikayı Ziti'nin kendi CA'sına göre doğrular; firewall'ın ürettiği sertifika **kasten** reddedilir |
+| Router `:3023` (wss) | Sertifika **public CA**'dan, ALPN `http/1.1` | Bootstrap TLS'i teknik olarak açılabilir, ama **içindeki Ziti oturumu yine uçtan uca şifrelidir** — açmanın hiçbir görünürlük faydası yok, sadece risk ve gecikme ekler |
 
 Yani Ziti'nin sertifika sabitleme (pinning) davranışı bir kusur değil,
 **tasarımın kendisidir**: araya girme girişimi başarısız olmalıdır.
