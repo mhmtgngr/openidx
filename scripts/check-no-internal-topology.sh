@@ -19,8 +19,9 @@
 #     and then it protects nothing.
 #
 # Usage:
-#   scripts/check-no-internal-topology.sh --staged   # gate (used by CI/hooks)
-#   scripts/check-no-internal-topology.sh --all      # advisory sweep
+#   scripts/check-no-internal-topology.sh --staged        # pre-commit hook
+#   scripts/check-no-internal-topology.sh --range <base>  # CI, diff vs base
+#   scripts/check-no-internal-topology.sh --all           # advisory sweep
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
@@ -42,13 +43,22 @@ ALLOW='192\.168\.[01]\.[0-9]{1,3}|10\.0\.0\.[0-9]{1,3}|10\.0\.2\.2|172\.(1[6-9]|
 
 mode="${1:---staged}"
 
+EXCL=(':!vendor/**' ':!**/node_modules/**' ':!**/*.lock' ':!**/package-lock.json')
+
 if [ "$mode" = "--staged" ]; then
-  raw=$(git diff --cached -U0 --diff-filter=ACM -- . \
-        ':!vendor/**' ':!**/node_modules/**' ':!**/*.lock' ':!**/package-lock.json' 2>/dev/null \
+  raw=$(git diff --cached -U0 --diff-filter=ACM -- . "${EXCL[@]}" 2>/dev/null \
+        | grep '^+' | grep -vE '^\+\+\+' || true)
+elif [ "$mode" = "--range" ]; then
+  base="${2:-}"
+  [ -n "$base" ] || { echo "usage: $0 --range <base-sha>"; exit 2; }
+  # Fail loudly if the base is missing: a shallow checkout would otherwise
+  # make this scan an empty diff and report success.
+  git rev-parse --verify --quiet "$base^{commit}" >/dev/null \
+    || { echo "FAIL: base commit '$base' not available (shallow checkout?)"; exit 2; }
+  raw=$(git diff -U0 --diff-filter=ACM "$base"...HEAD -- . "${EXCL[@]}" 2>/dev/null \
         | grep '^+' | grep -vE '^\+\+\+' || true)
 else
-  raw=$(git grep -PnI "$PATTERN" -- . \
-        ':!vendor/**' ':!**/node_modules/**' ':!**/*.lock' ':!**/package-lock.json' 2>/dev/null || true)
+  raw=$(git grep -PnI "$PATTERN" -- . "${EXCL[@]}" 2>/dev/null || true)
 fi
 
 hits=""

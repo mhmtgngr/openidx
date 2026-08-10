@@ -34,11 +34,14 @@ must_ignore() {
 }
 
 echo "must be caught (these are the values actually leaked into this repo):"
-must_catch 'gw = ipaddress.ip_address("192.168.31.1")'
-must_catch 'req.Header.Set("X-Forwarded-For", "10.10.2.22")'
-must_catch "target_host: '192.168.31.100'"
-must_catch '"192.168.31.64/26","192.168.31.128/25"'
-must_catch 'proxy: 172.20.5.8'
+# These are the exact values that leaked into this repo today. They live here
+# on purpose, as fixtures proving the checker catches them, so each line is
+# marked topology-ok -- otherwise the checker would flag its own test.
+must_catch 'gw = ipaddress.ip_address("192.168.31.1")'   # topology-ok
+must_catch 'req.Header.Set("X-Forwarded-For", "10.10.2.22")'  # topology-ok
+must_catch "target_host: '192.168.31.100'"               # topology-ok
+must_catch '"192.168.31.64/26","192.168.31.128/25"'      # topology-ok
+must_catch 'proxy: 172.20.5.8'                           # topology-ok
 
 echo "must be ignored (documentation ranges and generic CIDRs):"
 must_ignore 'real remote is 203.0.113.9'
@@ -49,7 +52,7 @@ must_ignore 'listen 127.0.0.1:8080'
 must_ignore 'version 1.10.2.22 of the library'
 
 echo "the ALLOW filter must not swallow a real leak (both stages together):"
-for v in '192.168.31.1' '10.10.2.22' '172.20.5.8'; do
+for v in '192.168.31.1' '10.10.2.22' '172.20.5.8'; do   # topology-ok
   if printf '%s' "$v" | grep -Pq "$(sed -n "s/^PATTERN='\(.*\)'$/\1/p" "$CHECK")" \
      && ! printf '%s' "$v" | grep -Pq "$(sed -n "s/^ALLOW='\(.*\)'$/\1/p" "$CHECK")"; then
     echo "  2stage OK    $v"
@@ -65,7 +68,7 @@ done
 # file was written for, so prove the check can still go red.
 echo "the script must be able to FAIL (guard against a silent no-op):"
 canary="../scripts/.topology-canary-$$.txt"
-printf 'gateway 192.168.31.1\n' > "$canary"
+printf 'gateway 192.168.31.1\n' > "$canary"   # topology-ok
 # --all sweeps tracked+untracked working tree; --staged only sees the index,
 # so the canary is checked in the mode that can actually observe it.
 if $CHECK --all >/dev/null 2>&1; then
