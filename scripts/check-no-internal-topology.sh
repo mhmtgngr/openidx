@@ -17,6 +17,11 @@
 #   - It is a heuristic. It is deliberately biased toward silence: a checker
 #     that fires on every 192.168.1.1 placeholder gets disabled within a week,
 #     and then it protects nothing.
+#   - --all therefore still reports false positives on the existing tree
+#     (invented test fixtures like 10.1.1.2, and boundary cases like
+#     10.255.255.255 in a "is this a private range?" table). Those are NOT
+#     leaks. --all is an advisory sweep for a human to read; only --staged
+#     and --range are gates.
 #
 # Usage:
 #   scripts/check-no-internal-topology.sh --staged        # pre-commit hook
