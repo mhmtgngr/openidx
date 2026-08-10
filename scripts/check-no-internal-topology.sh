@@ -18,8 +18,8 @@
 #     that fires on every 192.168.1.1 placeholder gets disabled within a week,
 #     and then it protects nothing.
 #   - --all therefore still reports false positives on the existing tree
-#     (invented test fixtures like 10.1.1.2, and boundary cases like
-#     10.255.255.255 in a "is this a private range?" table). Those are NOT
+#     (invented test fixtures, and boundary cases like a "is this private?"
+#     table listing the top of each RFC1918 range). Those are NOT
 #     leaks. --all is an advisory sweep for a human to read; only --staged
 #     and --range are gates.
 #
@@ -29,6 +29,15 @@
 #   scripts/check-no-internal-topology.sh --all           # advisory sweep
 set -uo pipefail
 cd "$(dirname "$0")/.."
+
+# grep -P (PCRE) is a GNU extension. BSD grep on macOS does not have it and
+# would exit non-zero on every call, which in a filter pipeline looks exactly
+# like "found nothing" -- i.e. a silent pass. Fail loudly instead.
+if ! echo x | grep -Pq x 2>/dev/null; then
+  echo "FAIL: this check needs GNU grep with -P (PCRE)."
+  echo "      macOS: brew install grep, then run with ggrep on PATH as grep."
+  exit 2
+fi
 
 # Any private IPv4 host address.
 PATTERN='(^|[^0-9.])(192\.168\.[0-9]{1,3}\.[0-9]{1,3}|10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]{1,3}\.[0-9]{1,3})([^0-9.]|$)'
