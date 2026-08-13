@@ -76,20 +76,19 @@ steps:
 
   - script: |
       set -euo pipefail
-      id="$(Agent.TempDirectory)/ci-identity.json"
-      # DownloadSecureFile puts the file in a temp location and exposes the
-      # path as a task output variable. Copy it where the rest of the job
-      # expects it, and fail loudly if the task did not run -- otherwise the
-      # error surfaces much later as a confusing enrolment failure.
-      src="$(zitiIdentity.secureFilePath)"
-      if [ -z "${src:-}" ] || [ ! -s "$src" ]; then
+      # Use the downloaded file WHERE IT IS. DownloadSecureFile already places
+      # it under Agent.TempDirectory, so copying it to a path built from that
+      # same directory makes source and destination identical and cp fails
+      # with "are the same file". Referencing the task output directly also
+      # keeps working if Azure changes the location.
+      id="$(zitiIdentity.secureFilePath)"
+      if [ -z "${id:-}" ] || [ ! -s "$id" ]; then
         echo "Secure file 'ci-identity.json' was not downloaded."
         echo "Upload it under Pipelines > Library > Secure files and grant this"
         echo "pipeline permission. See docs/ci-over-ziti-overlay.md section 5."
         exit 1
       fi
-      cp "$src" "$id"
-      chmod 600 "$id"
+      chmod 600 "$id" 2>/dev/null || true
       # An enrolled identity is JSON carrying the controller address (ztAPI);
       # a JWT is three dot-separated segments. Confusing the two is the most
       # common mistake and would otherwise surface as a TLS error much later.
