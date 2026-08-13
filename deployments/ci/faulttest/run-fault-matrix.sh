@@ -3,7 +3,7 @@ Fault matrix: for each origin failure mode, assert the pipeline's REACTION.
 #
 # The real OpenSecOps origin belongs to another team and currently flaps: on
 # 2026-08-13 it answered /api correctly on only 4 of 60 tries. Waiting for
-# someone else to fix that is not a measurable loop, and testing against a
+someone else to fix that is not a measurable loop, and testing against a
 # moving target gives results that cannot be reproduced. So the outage is
 # treated as an INPUT and reproduced locally, while the metric is our own
 # reaction to it.
