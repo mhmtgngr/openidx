@@ -180,8 +180,8 @@ Kimlik Secure Files'a taşındı, ama diğer değerler grupta kalır:
 
 | Değer | Yer | Neden |
 |---|---|---|
-| `DTRACK_API_KEY` | **Grup** (secret) | Kısa sır, paylaşılan |
-| `DTRACK_URL`, overlay adı/portu | **Grup** | Pipeline'lar arası sabit |
+| Uygulama API anahtarları | **Grup** (secret) | Kısa sır, pipeline'lar arası paylaşılan |
+| Overlay adı/portu, uygulama FQDN'i | **Grup** | Pipeline'lar arası sabit |
 | `$(Build.Repository.Name)`, `$(Build.BuildNumber)` | **Pipeline YAML** | Koşuma özel. Gruplar statiktir; içine konan `$(...)` makrosunun genişleyeceği garanti değildir |
 | Ziti kimliği | **Secure Files** | 4096 sınırını aşıyor |
 

@@ -25,9 +25,9 @@ variables:
   # group is used every entry must be a list item.
   #
   # Create the group in Pipelines > Library and authorise this pipeline to use
-  # it. The group holds SHORT secrets (e.g. DTRACK_API_KEY) and values SHARED
-  # across pipelines; per-run values belong below, and the Ziti identity is a
-  # Secure File because it exceeds the variable size limit.
+  # it. The group holds SHORT secrets and values SHARED across pipelines;
+  # per-run values belong below, and the Ziti identity is a Secure File
+  # because it exceeds the variable size limit.
   - group: ZitiCIVars
 
   # Tunneller release (github.com/openziti/ziti-tunnel-sdk-c). NOT the controller version.
@@ -44,13 +44,10 @@ variables:
   # carry its real name even though we connect via the overlay name.
   - name: SECOPS_HOST
     value: "secops.tdv.org"
-  # Per-RUN values must NOT live in a variable group: groups are static and
-  # shared, and a $(...) macro stored inside one is not guaranteed to expand,
-  # so it can arrive empty or as the literal text.
-  - name: DTRACK_PROJECT_NAME
-    value: $(Build.Repository.Name)
-  - name: DTRACK_PROJECT_VERSION
-    value: $(Build.BuildNumber)
+  # Per-RUN values (e.g. $(Build.Repository.Name)) belong HERE, not in a
+  # variable group: groups are static and shared, and a $(...) macro stored
+  # inside one is not guaranteed to expand -- it can arrive empty or as the
+  # literal text.
 
 steps:
   - script: |
@@ -139,36 +136,21 @@ steps:
 
   - script: |
       set -euo pipefail
-      ip="$(getent hosts "$ZITI_INTERCEPT_DNS" | awk '{print $1}' | head -1)"
-      # curl -sSf --resolve "${SECOPS_HOST}:${SECOPS_PORT}:${ip}" \
-      #   -H "Authorization: Bearer $OPENSECOPS_API_KEY" \
-      #   "https://${SECOPS_HOST}:${SECOPS_PORT}/api/ci/upload" \
-      #   -F "product_name=$(Build.Repository.Name)" -F "file=@results.sarif"
+      # Your existing steps go here. The overlay is already up, so reach the
+      # app by its real hostname pinned to the overlay address:
+      #
+      #   ip="$(getent hosts "$ZITI_INTERCEPT_DNS" | awk '{print $1}' | head -1)"
+      #   curl -sSf --resolve "${SECOPS_HOST}:${SECOPS_PORT}:${ip}" \
+      #     -H "Authorization: Bearer $OPENSECOPS_API_KEY" \
+      #     "https://${SECOPS_HOST}:${SECOPS_PORT}/<endpoint>" \
+      #     -F "project=$(Build.Repository.Name)" -F "file=@results.sarif"
+      #
+      # NOTE: the ingest endpoint is left as a placeholder on purpose. Probing
+      # the running app found only a web UI (/ and /login answer, /health
+      # returns JSON); /api/*, /openapi.json and /swagger.json all 404. So no
+      # scan/SBOM upload API is published yet. Fill this in once it exists
+      # rather than shipping a path that has never returned anything.
       echo "existing steps run here, talking to OpenSecOps over the overlay"
     displayName: "Existing job (talks to OpenSecOps over the overlay)"
     env:
       OPENSECOPS_API_KEY: $(OPENSECOPS_API_KEY)   # SECRET
-
-  # Example: publish an SBOM to Dependency-Track over the same overlay.
-  # Dependency-Track is a SEPARATE host name; if it is served from the same
-  # machine as OpenSecOps it is reachable through the existing service (the
-  # overlay carries TCP, and the origin picks the app by SNI/Host). If it
-  # lives elsewhere, publish it as its own service with
-  # setup-ci-overlay-access.sh and give it its own intercept name.
-  - script: |
-      set -euo pipefail
-      [ -f "$SBOM" ] || { echo "no SBOM at $SBOM; skipping"; exit 0; }
-      host="$(echo "$DTRACK_URL" | sed -E 's#^https?://##; s#/.*$##')"
-      ip="$(getent hosts "$ZITI_INTERCEPT_DNS" | awk '{print $1}' | head -1)"
-      curl -sSf --resolve "${host}:443:${ip}" \
-        -H "X-Api-Key: ${DTRACK_API_KEY}" \
-        -F "project=${DTRACK_PROJECT_NAME}" \
-        -F "projectVersion=${DTRACK_PROJECT_VERSION}" \
-        -F "bom=@${SBOM}" \
-        "https://${host}/api/v1/bom"
-      echo "SBOM published for ${DTRACK_PROJECT_NAME} ${DTRACK_PROJECT_VERSION}"
-    displayName: "Dependency-Track: publish SBOM over the overlay"
-    condition: succeededOrFailed()
-    env:
-      SBOM: "$(Build.SourcesDirectory)/bom.xml"
-      DTRACK_API_KEY: $(DTRACK_API_KEY)           # SECRET, from the variable group
