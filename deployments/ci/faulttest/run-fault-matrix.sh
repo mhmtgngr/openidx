@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fault matrix: for each origin failure mode, assert the pipeline's REACTION.
+Fault matrix: for each origin failure mode, assert the pipeline's REACTION.
 #
 # The real OpenSecOps origin belongs to another team and currently flaps: on
 # 2026-08-13 it answered /api correctly on only 4 of 60 tries. Waiting for
