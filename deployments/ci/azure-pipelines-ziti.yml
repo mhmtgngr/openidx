@@ -19,16 +19,36 @@
 # the download 404s.
 
 variables:
+  # A variable group is referenced with LIST syntax. Mixing the mapping form
+  # (KEY: value) with a group in the same block is a schema error, so once a
+  # group is used every entry must be a list item.
+  #
+  # Create the group in Pipelines > Library, add ZITI_CI_IDENTITY_B64 and mark
+  # it secret (lock icon), then authorise this pipeline to use it. The group
+  # holds values SHARED across pipelines; per-run values belong below.
+  - group: ZitiCIVars
+
   # Tunneller release (github.com/openziti/ziti-tunnel-sdk-c). NOT the controller version.
-  ZITI_TUNNELER_VERSION: "1.18.3"
-  # Overlay DNS name and port. These are asserted against the controller at run
-  # time (step 3) instead of being trusted, because a stale value here fails as
-  # a confusing DNS timeout rather than a clear error.
-  ZITI_INTERCEPT_DNS: "secops.ziti"
-  SECOPS_PORT: "443"
+  - name: ZITI_TUNNELER_VERSION
+    value: "1.18.3"
+  # Overlay DNS name and port. Asserted against the controller at run time
+  # (step 3) rather than trusted: a stale value here fails as a confusing DNS
+  # timeout instead of a clear error.
+  - name: ZITI_INTERCEPT_DNS
+    value: "secops.ziti"
+  - name: SECOPS_PORT
+    value: "443"
   # The app selects its certificate and routes by hostname, so TLS/Host must
   # carry its real name even though we connect via the overlay name.
-  SECOPS_HOST: "secops.tdv.org"
+  - name: SECOPS_HOST
+    value: "secops.tdv.org"
+  # Per-RUN values must NOT live in a variable group: groups are static and
+  # shared, and a $(...) macro stored inside one is not guaranteed to expand,
+  # so it can arrive empty or as the literal text.
+  - name: DTRACK_PROJECT_NAME
+    value: $(Build.Repository.Name)
+  - name: DTRACK_PROJECT_VERSION
+    value: $(Build.BuildNumber)
 
 steps:
   - script: |
@@ -124,3 +144,27 @@ steps:
     displayName: "Existing job (talks to OpenSecOps over the overlay)"
     env:
       OPENSECOPS_API_KEY: $(OPENSECOPS_API_KEY)   # SECRET
+
+  # Example: publish an SBOM to Dependency-Track over the same overlay.
+  # Dependency-Track is a SEPARATE host name; if it is served from the same
+  # machine as OpenSecOps it is reachable through the existing service (the
+  # overlay carries TCP, and the origin picks the app by SNI/Host). If it
+  # lives elsewhere, publish it as its own service with
+  # setup-ci-overlay-access.sh and give it its own intercept name.
+  - script: |
+      set -euo pipefail
+      [ -f "$SBOM" ] || { echo "no SBOM at $SBOM; skipping"; exit 0; }
+      host="$(echo "$DTRACK_URL" | sed -E 's#^https?://##; s#/.*$##')"
+      ip="$(getent hosts "$ZITI_INTERCEPT_DNS" | awk '{print $1}' | head -1)"
+      curl -sSf --resolve "${host}:443:${ip}" \
+        -H "X-Api-Key: ${DTRACK_API_KEY}" \
+        -F "project=${DTRACK_PROJECT_NAME}" \
+        -F "projectVersion=${DTRACK_PROJECT_VERSION}" \
+        -F "bom=@${SBOM}" \
+        "https://${host}/api/v1/bom"
+      echo "SBOM published for ${DTRACK_PROJECT_NAME} ${DTRACK_PROJECT_VERSION}"
+    displayName: "Dependency-Track: publish SBOM over the overlay"
+    condition: succeededOrFailed()
+    env:
+      SBOM: "$(Build.SourcesDirectory)/bom.xml"
+      DTRACK_API_KEY: $(DTRACK_API_KEY)           # SECRET, from the variable group

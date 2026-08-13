@@ -154,15 +154,30 @@ Azure tarafında elle tanımlamanız gerekir. İki yol var:
 - **Keep this value secret** kutusunu işaretleyin
 
 **Birden çok pipeline için (önerilen):** Pipelines > Library > Variable group
-oluşturun, değişkeni oraya koyup kilit simgesiyle secret yapın, sonra YAML'a
-ekleyin:
+oluşturun, secret'ları kilit simgesiyle işaretleyin, sonra **Pipeline
+permissions** altında bu pipeline'a yetki verin (yetki verilmezse koşum
+"variable group not found" ile düşer).
+
+> **Sözdizimi tuzağı:** Bir grup referansı **liste** biçimi gerektirir. Aynı
+> blokta `KEY: value` eşleme biçimiyle karıştırılamaz — grup kullanıldığı anda
+> **her satır** liste öğesi olmalıdır:
 
 ```yaml
 variables:
-  - group: ziti-ci
-  - name: ZITI_INTERCEPT_DNS
+  - group: ZitiCIVars              # paylaşılan + secret
+  - name: ZITI_INTERCEPT_DNS       # bu pipeline'a özel
     value: "<overlay-adi>"
+  - name: DTRACK_PROJECT_NAME      # KOŞUMA ÖZEL -> gruba KOYMAYIN
+    value: $(Build.Repository.Name)
 ```
+
+### Neye grup, neye pipeline?
+
+| Değer | Yer | Neden |
+|---|---|---|
+| `ZITI_CI_IDENTITY_B64`, `DTRACK_API_KEY` | **Grup** (secret) | Paylaşılan sır, tek yerden döndürülür |
+| `DTRACK_URL`, overlay adı/portu | **Grup** | Pipeline'lar arası sabit |
+| `$(Build.Repository.Name)`, `$(Build.BuildNumber)` | **Pipeline YAML** | Koşuma özel. Gruplar statiktir; içine konan bir `$(...)` makrosunun genişleyeceği garanti değildir, boş ya da düz metin gelebilir |
 
 > **Not:** Secret değişkenler script adımlarına **otomatik geçmez**. Adımın
 > `env:` bloğunda açıkça eşlenmeleri gerekir — hazır YAML'da bu yapılmıştır.
