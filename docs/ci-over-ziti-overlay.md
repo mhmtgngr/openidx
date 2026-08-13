@@ -9,7 +9,7 @@ kimliğiyle doğrulanır ve servise overlay üzerinden bağlanır; firewall'da
 **hiçbir gelen kural açılmaz**.
 
 Bu belgedeki her davranış çalışan bir kurulumda **ölçülerek** doğrulanmıştır.
-Doğrulama komutları bölüm 6'da.
+Doğrulama komutları bölüm 7'de.
 
 ---
 
@@ -61,7 +61,67 @@ yapacağını gösterir.
 
 ---
 
-## 3. Kimlik ve secret yönetimi
+## 3. Router adresi koda hiç yazılmaz
+
+En sık sorulan soru: *pipeline'da public router adresi nerede?* **Hiçbir
+yerde.** Ne YAML'da, ne kimlik dosyasında. Bu kasıtlı bir tasarım.
+
+Zincir ölçülerek doğrulandı:
+
+**a) Kayıt JWT'sinde yalnızca controller vardır.** Router yok:
+
+```
+iss   = https://<controller>:1280
+ctrls = ['tls:<controller>:1280']
+em    = ott          # one-time token
+```
+
+**b) Kayıttan sonra oluşan kimlik dosyasında da router yoktur.** Yalnızca
+`ztAPI` (controller adresi) ve istemcinin sertifikası/anahtarı bulunur.
+Dosyada router adresi araması **boş döner**.
+
+**c) Router kendi adresini kendisi ilan eder.** Router'ın yapılandırmasındaki
+`advertise` alanı, controller'a kaydolurken controller'a bildirilir:
+
+```
+advertise: <router-fqdn>:3022     # router config
+```
+
+**d) Controller bunu saklar ve çalışma anında istemciye verir:**
+
+```json
+{"tls": "tls://<router-fqdn>:3022", "wss": "wss://<router-fqdn>:3023"}
+```
+
+**e) Hangi router'ı göreceğini `edge-router-policy` belirler:**
+
+```
+ci-clients-erp: kimlik=['#ci-clients'] router=['#all']
+```
+
+Yani CI agent'ı yalnızca controller'a bağlanır, kimliğini doğrular, ve
+controller ona **o kimliğin yetkili olduğu** router'ların adresini döner. Canlı
+kanıt (bağlantı günlüğünden):
+
+```
+router=tls:<router-fqdn>:3022   status=200
+```
+
+### Bunun pratik sonuçları
+
+| Durum | Ne yapmanız gerekir |
+|---|---|
+| Router'ın adresi/IP'si değişti | **Hiçbir şey.** Router'ın `advertise` değeri güncellenir, istemciler yeni adresi otomatik alır |
+| İkinci bir router eklendi | **Hiçbir şey.** Politika izin veriyorsa istemci onu da görür; yük ve yedeklilik kendiliğinden gelir |
+| CI'ın erişimini kesmek | Kimliği silin veya rolünü kaldırın. Pipeline'a **dokunulmaz** |
+| Bir CI'ı başka bir sahaya taşımak | Aynı YAML; yalnızca secret değişir |
+
+Bu yüzden pipeline'da IP, port yönlendirmesi veya router adresi **yoktur** —
+tek yapılandırma controller adresidir ve o da kimlik dosyasının içindedir.
+
+---
+
+## 4. Kimlik ve secret yönetimi
 
 ```bash
 # 1) kimlik + tek kullanımlık JWT üret
@@ -83,7 +143,7 @@ shred -u ./ci-takim.json ./ci-takim.jwt
 
 ---
 
-## 4. Pipeline
+## 5. Pipeline
 
 Hazır dosya: `deployments/ci/azure-pipelines-ziti.yml`
 
@@ -122,7 +182,7 @@ echo "$body" | grep -q '"status":"ok"' || exit 1
 
 ---
 
-## 5. Sorun giderme
+## 6. Sorun giderme
 
 | Belirti | Sebep | Çözüm |
 |---|---|---|
@@ -135,7 +195,7 @@ echo "$body" | grep -q '"status":"ok"' || exit 1
 
 ---
 
-## 6. Doğrulama komutları
+## 7. Doğrulama komutları
 
 ```bash
 # DİKKAT: 'limit' vermezseniz sadece 10 kayıt döner. Bu, var olan nesnelerin
@@ -153,7 +213,7 @@ DARKPROBE_TLS=1 go run ./tools/darkprobe <rolsuz-kimlik>.json <servis> /health
 
 ---
 
-## 7. Geri alma
+## 8. Geri alma
 
 ```bash
 SERVICE=<svc> TARGET_HOST=<adres> ./setup-ci-overlay-access.sh --rollback
