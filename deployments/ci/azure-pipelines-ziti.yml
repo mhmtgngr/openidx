@@ -45,8 +45,37 @@ steps:
   - script: |
       set -euo pipefail
       id="$(Agent.TempDirectory)/ci-identity.json"
-      echo "$ZITI_CI_IDENTITY_B64" | base64 -d > "$id"
+      # Secrets are NOT created automatically. If the variable is missing,
+      # Azure passes the literal "$(ZITI_CI_IDENTITY_B64)" through, and
+      # base64 still writes a short garbage file before failing -- the run
+      # would then die later with a confusing enrolment error instead of
+      # here. Check explicitly so the cause is obvious.
+      if [ -z "${ZITI_CI_IDENTITY_B64:-}" ] || \
+         [ "${ZITI_CI_IDENTITY_B64}" = '$(ZITI_CI_IDENTITY_B64)' ]; then
+        echo "ZITI_CI_IDENTITY_B64 is not set."
+        echo "Add it as a SECRET variable (Pipeline > Edit > Variables, or a"
+        echo "variable group). It is the base64 of the ENROLLED identity JSON,"
+        echo "not the one-time JWT. See docs/ci-over-ziti-overlay.md section 4."
+        exit 1
+      fi
+      echo "$ZITI_CI_IDENTITY_B64" | base64 -d > "$id" || {
+        echo "ZITI_CI_IDENTITY_B64 is not valid base64."
+        echo "Produce it with: base64 -w0 <identity>.json"
+        exit 1
+      }
       chmod 600 "$id"
+      # An enrolled identity is JSON carrying the controller address; a JWT is
+      # three dot-separated segments. Confusing the two is the most common
+      # mistake, and without this check it surfaces as a TLS error later.
+      # An enrolled identity is JSON carrying the controller address (ztAPI);
+      # a JWT is three dot-separated segments. Confusing the two is the most
+      # common mistake and would otherwise surface as a TLS error much later.
+      if ! grep -q '"ztAPI"' "$id"; then
+        echo "The secret does not look like an enrolled identity (no ztAPI field)."
+        echo "Did you store the JWT instead? Enrol it first:"
+        echo "  ziti-edge-tunnel enroll --jwt <file>.jwt --identity <file>.json"
+        exit 1
+      fi
       # 'run' needs root: it creates a TUN device and installs a resolver so the
       # overlay DNS name resolves for ordinary tools like curl.
       sudo nohup ziti-edge-tunnel run --identity "$id" \

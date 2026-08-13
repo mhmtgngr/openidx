@@ -9,7 +9,7 @@ kimliğiyle doğrulanır ve servise overlay üzerinden bağlanır; firewall'da
 **hiçbir gelen kural açılmaz**.
 
 Bu belgedeki her davranış çalışan bir kurulumda **ölçülerek** doğrulanmıştır.
-Doğrulama komutları bölüm 7'de.
+Doğrulama komutları bölüm 8'de.
 
 ---
 
@@ -143,7 +143,52 @@ shred -u ./ci-takim.json ./ci-takim.jwt
 
 ---
 
-## 5. Pipeline
+## 5. Secret'ı Azure DevOps'a eklemek (otomatik değildir)
+
+**Secret kendiliğinden oluşmaz.** YAML dosyasını repoya koymak yetmez; değişkeni
+Azure tarafında elle tanımlamanız gerekir. İki yol var:
+
+**Tek pipeline için:** Pipeline > Edit > Variables > New variable
+- Name: `ZITI_CI_IDENTITY_B64`
+- Value: `base64 -w0 <kimlik>.json` çıktısı
+- **Keep this value secret** kutusunu işaretleyin
+
+**Birden çok pipeline için (önerilen):** Pipelines > Library > Variable group
+oluşturun, değişkeni oraya koyup kilit simgesiyle secret yapın, sonra YAML'a
+ekleyin:
+
+```yaml
+variables:
+  - group: ziti-ci
+  - name: ZITI_INTERCEPT_DNS
+    value: "<overlay-adi>"
+```
+
+> **Not:** Secret değişkenler script adımlarına **otomatik geçmez**. Adımın
+> `env:` bloğunda açıkça eşlenmeleri gerekir — hazır YAML'da bu yapılmıştır.
+> Bu, secret'ların yanlışlıkla alt süreçlere sızmasını önleyen bilinçli bir
+> Azure davranışıdır.
+
+### Yanlış kurulum sessizce başarısız olmaz
+
+Değişken tanımlı değilse Azure `$(ZITI_CI_IDENTITY_B64)` metnini **olduğu gibi**
+geçirir. Kontrol edilmezse `base64` kısa bir bozuk dosya yazar ve koşum çok
+sonra anlaşılmaz bir kayıt hatasıyla ölür. Pipeline bu yüzden dört durumu
+önden ayırt eder (hepsi test edildi):
+
+| Durum | Mesaj |
+|---|---|
+| Değişken yok | `ZITI_CI_IDENTITY_B64 is not set.` |
+| Makro çözülmemiş | `ZITI_CI_IDENTITY_B64 is not set.` |
+| Bozuk base64 | `ZITI_CI_IDENTITY_B64 is not valid base64.` |
+| JWT konmuş (kayıtlı JSON yerine) | `no ztAPI field` + kayıt komutu |
+
+Son satır en sık yapılan hatadır: **JWT tek kullanımlıktır**, uzun ömürlü
+kimlik bilgisi kayıttan sonra oluşan **JSON**'dur.
+
+---
+
+## 6. Pipeline
 
 Hazır dosya: `deployments/ci/azure-pipelines-ziti.yml`
 
@@ -182,7 +227,7 @@ echo "$body" | grep -q '"status":"ok"' || exit 1
 
 ---
 
-## 6. Sorun giderme
+## 7. Sorun giderme
 
 | Belirti | Sebep | Çözüm |
 |---|---|---|
@@ -195,7 +240,7 @@ echo "$body" | grep -q '"status":"ok"' || exit 1
 
 ---
 
-## 7. Doğrulama komutları
+## 8. Doğrulama komutları
 
 ```bash
 # DİKKAT: 'limit' vermezseniz sadece 10 kayıt döner. Bu, var olan nesnelerin
@@ -213,7 +258,7 @@ DARKPROBE_TLS=1 go run ./tools/darkprobe <rolsuz-kimlik>.json <servis> /health
 
 ---
 
-## 8. Geri alma
+## 9. Geri alma
 
 ```bash
 SERVICE=<svc> TARGET_HOST=<adres> ./setup-ci-overlay-access.sh --rollback
