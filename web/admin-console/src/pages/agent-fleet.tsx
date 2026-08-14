@@ -25,6 +25,7 @@ import {
 } from '../components/ui/alert-dialog'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { api } from '../lib/api'
+import { complianceTooltip, formatCompliancePercent } from '../lib/compliance'
 import { useToast } from '../hooks/use-toast'
 
 /**
@@ -253,7 +254,7 @@ export function AgentFleetPage() {
                       <StatusBadge status={agent.status} />
                     </TableCell>
                     <TableCell>
-                      <ComplianceBadge status={agent.compliance_status} score={agent.compliance_score} />
+                      <ComplianceBadge status={agent.compliance_status} score={agent.compliance_score} lastReportAt={agent.last_seen_at} />
                     </TableCell>
                     <TableCell className="text-muted-foreground">
                       {agent.last_seen_at ? new Date(agent.last_seen_at).toLocaleString() : '—'}
@@ -496,15 +497,19 @@ function StatusBadge({ status }: { status: string }) {
   return <Badge variant={variant as any}>{status}</Badge>
 }
 
-function ComplianceBadge({ status, score }: { status: string; score: number }) {
-  const pct = Math.round((score || 0) * 100)
+function ComplianceBadge({ status, score, lastReportAt }: { status: string; score: number; lastReportAt?: string | null }) {
   const variant = status === 'compliant' ? 'success'
     : status === 'grace_period' ? 'warning'
     : status === 'non_compliant' ? 'destructive' : 'secondary'
+  // "unknown 0%" reads as a measured score of zero when it actually means the
+  // agent never reported. See lib/compliance.ts.
+  const tip = complianceTooltip(status, lastReportAt)
   return (
     <div className="flex items-center gap-2">
       <Badge variant={variant as any}>{status}</Badge>
-      <span className="text-xs text-muted-foreground">{pct}%</span>
+      <span className="text-xs text-muted-foreground" title={tip}>
+        {formatCompliancePercent(status, score)}
+      </span>
     </div>
   )
 }
