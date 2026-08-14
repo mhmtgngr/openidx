@@ -57,7 +57,7 @@ steps:
       # `curl: (22)`. Under `set -euo pipefail` the step then stops with no
       # explanation of WHICH artifact was missing or what to change.
       if ! curl -sSLf "$url" -o zet.zip; then
-        echo "TUNNELLER NOT INSTALLED: could not download"
+        echo "TUNNELLER NOT XXX: could not download"
         echo "  $url"
         echo "Check that ZITI_TUNNELER_VERSION=${ZITI_TUNNELER_VERSION} is a"
         echo "published release, and that the agent can reach github.com."
@@ -66,7 +66,7 @@ steps:
       fi
       sudo apt-get update -y >/dev/null && sudo apt-get install -y unzip >/dev/null
       if ! unzip -o zet.zip -d /tmp/zet >/dev/null; then
-        echo "TUNNELLER NOT INSTALLED: the download is not a valid zip."
+        echo "TUNNELLER NOT XXX: the download is not a valid zip."
         echo "This usually means the URL returned an HTML error page."
         exit 1
       fi
