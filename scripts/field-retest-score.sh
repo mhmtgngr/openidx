@@ -42,11 +42,23 @@ chk CSP_MAIN_SAFE "$d" 0 "$([ "$d" = 0 ] && echo 1 || echo 0)"
 
 # 4. A percentage next to a status of "unknown" is a lie: it makes "the agent
 #    never reported" look identical to "the agent reported and scored zero".
-#    Counted as a defect while the badge prints a percent unconditionally.
-if [ -f "$FLEET" ]; then
-  u="$(awk '/function ComplianceBadge/,/^}/' "$FLEET" | grep -c "unknown" || true)"
-else u=0; fi
-chk UNKNOWN_HAS_GUARD "$u" ">=1" "$([ "$u" -ge 1 ] && echo 1 || echo 0)"
+#    Counting the word "unknown" only proved the word was present, so it also
+#    passed on pages that printed a wrong number confidently. It now counts the
+#    real defect: a percent built by hand from the raw score. Every such site
+#    must go through lib/compliance.ts. Verified by mutation: put one manual
+#    Math.round(score) back and this drops to 0.
+man=0
+for f in web/admin-console/src/pages/agent-fleet.tsx \
+         web/admin-console/src/pages/my-devices.tsx \
+         web/admin-console/src/pages/user-access-360.tsx; do
+  [ -f "$f" ] || continue
+  n="$(grep -cE 'Math\.round\((100 \* )?[A-Za-z_.]*([Ss]core|compliance)[A-Za-z_.]*\)[^)]*%' "$f" 2>/dev/null || true)"
+  man=$((man + n))
+done
+helper=0
+[ -f web/admin-console/src/lib/compliance.ts ] && helper=1
+ok=0; [ "$man" = 0 ] && [ "$helper" = 1 ] && ok=1
+chk UNKNOWN_HAS_GUARD "elle=$man yardimci=$helper" "elle=0" "$ok"
 
 # 5. The rotation connector count in the docs must match the rotators that
 #    actually compile. The checklist said 6 while the code shipped 8; a doc
