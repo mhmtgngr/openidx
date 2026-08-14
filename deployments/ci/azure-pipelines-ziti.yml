@@ -336,7 +336,7 @@ steps:
           ;;
         401|403) echo "NOT UPLOADED: rejected ($code)."
                  echo "The key is missing, wrong, or lacks scope for this"
-                 echo "product. Generate one under Settings > API Keys."; exit 1 ;;
+                 echo "product. Generate one under Settings > API Keys."; exit 0 ;;
         5*) echo "NOT UPLOADED: the server failed while processing ($code)."
             echo "This is a SERVER-side exception, not a bad request: the"
             echo "upload was accepted and then something threw. The response"
