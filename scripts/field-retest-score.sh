@@ -85,7 +85,21 @@ PYEOF
 )"
 chk SHADOWED_FLAGS "$s" 0 "$([ "$s" = 0 ] && echo 1 || echo 0)"
 
-# 8. Live probe, opt-in: proves the header the browser actually receives,
+# 8. The header is set by nginx, whose config used to live only on the box.
+#    A policy that decides security headers for every response is production
+#    code; keeping it unversioned is how the Guacamole defect stayed invisible
+#    to review. Committed copy must exist and must match what is deployed.
+if [ -f deployments/docker/oidx-nginx/nginx.conf ]; then
+  nd="$(bash scripts/check-nginx-drift.sh 2>/dev/null | head -1)"
+  case "$nd" in
+    NGINX_DRIFT=0|NGINX_DRIFT=skipped*) chk NGINX_IN_GIT "${nd#NGINX_}" "drift yok" 1 ;;
+    *) chk NGINX_IN_GIT "${nd#NGINX_}" "drift yok" 0 ;;
+  esac
+else
+  chk NGINX_IN_GIT "surum kontrolu disi" "drift yok" 0
+fi
+
+# 9. Live probe, opt-in: proves the header the browser actually receives,
 #    rather than the one we believe we configured.
 if [ "${LIVE:-0}" = "1" ]; then
   h="$(curl -sI --max-time 10 https://openidx.tdv.org/guacamole/ 2>/dev/null | grep -i '^content-security-policy' || true)"
