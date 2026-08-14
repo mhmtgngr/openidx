@@ -19,6 +19,13 @@ interface AuthContextType {
   logout: () => void
   hasRole: (role: string) => boolean
   hasPermission: (resource: string, action: string) => boolean
+  /**
+   * Exchange a refresh token for a new access token, returning whether it
+   * worked. Exposed because WebSocket callers must present a valid token
+   * themselves: unlike an axios request, a failed handshake cannot be retried
+   * after a 401, it just closes with 1006. See lib/session-token.ts.
+   */
+  refreshAccessToken: (refreshToken: string) => Promise<boolean>
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
@@ -362,6 +369,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         logout,
         hasRole,
         hasPermission,
+        refreshAccessToken,
       }}
     >
       {children}

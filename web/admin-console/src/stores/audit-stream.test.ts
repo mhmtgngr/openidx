@@ -641,8 +641,27 @@ describe('Audit Stream Store', () => {
     })
   })
 
+  describe('Session expiry reporting', () => {
+    it.each([
+      ['no_session' as const, /session has ended/i],
+      ['refresh_failed' as const, /could not be renewed/i],
+    ])('reports %s as a named session state, not a transport error', (reason, expected) => {
+      const { result } = renderHook(() => useAuditStreamStore())
+
+      act(() => {
+        result.current.reportSessionExpired(reason)
+      })
+
+      expect(result.current.connectionState).toBe('session_expired')
+      expect(result.current.isConnected).toBe(false)
+      expect(result.current.connectionError?.code).toBe('SESSION_EXPIRED')
+      expect(result.current.connectionError?.message).toMatch(expected)
+      expect(result.current.connectionError?.message).toMatch(/sign in again/i)
+    })
+  })
+
   describe('Close Code Messages', () => {
-    it('should provide meaningful error message for close code 1006', async () => {
+    it('should name the likely cause for close code 1006, not just the code', async () => {
       const { result } = renderHook(() => useAuditStreamStore())
 
       act(() => {
@@ -658,9 +677,16 @@ describe('Audit Stream Store', () => {
         }
       })
 
-      expect(result.current.connectionError?.message).toBe(
-        'Connection closed abnormally'
-      )
+      // 1006 is what the browser reports for every failed handshake, including
+      // a 401 from an expired session, because the upgrade's HTTP status is
+      // never exposed to JavaScript. The old text, "Connection closed
+      // abnormally", sent a field tester hunting a dead service, a blocked
+      // origin and a TLS fault when the session had simply expired. The message
+      // must point at the session and offer a next step.
+      const message = result.current.connectionError?.message ?? ''
+      expect(message).toMatch(/session/i)
+      expect(message).toMatch(/sign in again/i)
+      expect(result.current.connectionError?.code).toBe('WS_CLOSE_1006')
     })
 
     it('should provide meaningful error message for close code 1000', async () => {
