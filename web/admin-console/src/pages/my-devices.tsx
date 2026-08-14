@@ -33,6 +33,7 @@ import { Label } from '../components/ui/label'
 import { Textarea } from '../components/ui/textarea'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { api } from '../lib/api'
+import { complianceTooltip, formatCompliancePercent } from '../lib/compliance'
 import { useToast } from '../hooks/use-toast'
 
 interface MyZitiIdentity {
@@ -370,7 +371,12 @@ export function MyDevicesPage() {
                       </div>
                     )}
                   </div>
-                  <span className="text-sm font-semibold shrink-0">{Math.round(z.compliance_score)}%</span>
+                  <span
+                    className="text-sm font-semibold shrink-0"
+                    title={complianceTooltip(z.compliance_status)}
+                  >
+                    {formatCompliancePercent(z.compliance_status, z.compliance_score)}
+                  </span>
                 </div>
               )
             })}
