@@ -19,6 +19,7 @@ export type ConnectionState =
   | 'connected'
   | 'error'
   | 'origin_rejected'
+  | 'session_expired'
 
 export interface ConnectionError {
   code: string
@@ -51,6 +52,12 @@ interface AuditStreamState {
   setAllowedOrigins: (origins: string[]) => void
   setCurrentOrigin: (origin: string) => void
   clearError: () => void
+  /**
+   * Record that the session, not the service, is what stopped the stream.
+   * Called when the token cannot be refreshed before connecting, so the user
+   * is told to sign in again instead of being shown a transport error code.
+   */
+  reportSessionExpired: (reason: 'no_session' | 'refresh_failed') => void
 }
 
 export const useAuditStreamStore = create<AuditStreamState>((set, get) => ({
@@ -157,7 +164,15 @@ export const useAuditStreamStore = create<AuditStreamState>((set, get) => ({
             const errorMessage = {
               1002: 'Protocol error - check WebSocket subprotocol',
               1003: 'Unsupported data type',
-              1006: 'Connection closed abnormally',
+              // 1006 is what the browser reports for EVERY failed handshake,
+              // including a 401 from an expired session, because the HTTP
+              // status of a WebSocket upgrade is never exposed to JavaScript.
+              // Measured on production 2026-08-14: expired token -> 1006 with
+              // "401 token is expired" in the audit service log; valid token ->
+              // the stream opens and stays open. Reporting only "closed
+              // abnormally" sent the field tester looking for a dead service,
+              // a blocked origin and a TLS fault, none of which were wrong.
+              1006: 'Could not connect. Your session may have expired - sign in again, or retry. If it keeps failing, the audit service may be unreachable.',
               1007: 'Invalid message format',
               1008: 'Policy violation - origin may not be allowed',
               1010: 'Missing required extension',
@@ -231,6 +246,25 @@ export const useAuditStreamStore = create<AuditStreamState>((set, get) => ({
 
     clearError: () => {
       set({ connectionError: null })
+    },
+
+    reportSessionExpired: (reason) => {
+      // Reached when the token could not be made fresh before the handshake.
+      // Naming the cause here is the point: the same underlying condition used
+      // to arrive as WS_CLOSE_1006 "closed abnormally", which reads like a
+      // broken service and sends people to inspect TLS, origins and container
+      // health instead of simply signing in again.
+      set({
+        connectionState: 'session_expired',
+        isConnected: false,
+        connectionError: {
+          code: 'SESSION_EXPIRED',
+          message:
+            reason === 'no_session'
+              ? 'Your session has ended. Sign in again to watch the live audit stream.'
+              : 'Your session expired and could not be renewed. Sign in again to watch the live audit stream.',
+        },
+      })
     },
   })
 )

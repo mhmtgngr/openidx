@@ -1,5 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { useAuditStreamStore, type ConnectionState } from '../../stores/audit-stream'
+import { useAuth } from '../../lib/auth'
+import { ensureFreshToken } from '../../lib/session-token'
 import { Badge } from '../ui/badge'
 import { Button } from '../ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card'
@@ -57,6 +59,12 @@ const CONNECTION_STATUS_CONFIG: Record<
     icon: <Shield className="h-4 w-4" />,
     description: 'Your origin is not authorized to connect',
   },
+  session_expired: {
+    label: 'Session Expired',
+    color: 'destructive',
+    icon: <Shield className="h-4 w-4" />,
+    description: 'Sign in again to resume the stream',
+  },
 }
 
 export function AuditStream({
@@ -75,7 +83,10 @@ export function AuditStream({
     connect,
     disconnect,
     clearError,
+    reportSessionExpired,
   } = useAuditStreamStore()
+
+  const { refreshAccessToken } = useAuth()
 
   const prevConnectionState = useRef<ConnectionState>('disconnected')
   const wsUrlRef = useRef<string>(
@@ -96,7 +107,7 @@ export function AuditStream({
       prevConnectionState.current = connectionState
     }
 
-    if (connectionState === 'error' || connectionState === 'origin_rejected') {
+    if (connectionState === 'error' || connectionState === 'origin_rejected' || connectionState === 'session_expired') {
       onError?.(connectionError || { code: 'UNKNOWN', message: 'Unknown error' })
     }
   }, [connectionState, connectionError, onStateChange, onError])
@@ -130,9 +141,26 @@ export function AuditStream({
   }
 
   function handleConnect() {
-    // Get token from localStorage if not provided
-    const authToken = token || localStorage.getItem('token') || undefined
-    connect(wsUrlRef.current, authToken)
+    // A WebSocket handshake gets exactly one attempt: if the token is expired
+    // the server answers 401 and the browser reports only close code 1006, with
+    // no way to tell the user why. So the token is refreshed BEFORE connecting
+    // rather than after a failure. A backgrounded tab throttles the 30-second
+    // refresh interval in AuthProvider, which is how a valid session still ends
+    // up offering a dead token. Measured on production 2026-08-14: expired
+    // token -> 1006; valid token -> stream stays open.
+    if (token) {
+      connect(wsUrlRef.current, token)
+      return
+    }
+
+    void (async () => {
+      const result = await ensureFreshToken(refreshAccessToken)
+      if (!result.ok) {
+        reportSessionExpired(result.reason)
+        return
+      }
+      connect(wsUrlRef.current, result.token)
+    })()
   }
 
   function handleDisconnect() {
@@ -246,7 +274,9 @@ export function AuditStream({
             </Button>
           )}
 
-          {connectionState === 'error' || connectionState === 'origin_rejected' ? (
+          {connectionState === 'error' ||
+          connectionState === 'origin_rejected' ||
+          connectionState === 'session_expired' ? (
             <Button
               size="sm"
               variant="ghost"
@@ -289,6 +319,7 @@ function getStatusColor(state: ConnectionState): string {
       return '#f59e0b' // amber
     case 'error':
     case 'origin_rejected':
+    case 'session_expired':
       return '#ef4444' // red
     default:
       return '#6b7280' // gray

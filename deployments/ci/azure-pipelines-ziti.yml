@@ -436,8 +436,14 @@ steps:
           # findings_count 0 -- green pipelines, no findings, nobody noticed.
           # Surface the count so a silent regression is visible, and let the
           # build fail on it only if the caller opts in.
+          # `|| true` is load-bearing, not defensive noise. Under
+          # `set -euo pipefail` a grep that matches NOTHING exits 1 and
+          # kills the step on the spot, so a 200 whose body carries no
+          # count ended the step silently: no "UPLOADED", no error, just
+          # a red X. Measured 2026-08-14 with a stubbed 200 {"ok":true}.
+          # The `else` branch below was unreachable without this.
           found="$(grep -o '"findings_count"[[:space:]]*:[[:space:]]*[0-9]*' "$out" \
-                   | grep -o '[0-9]*$' | head -1)"
+                   | grep -o '[0-9]*$' | head -1 || true)"
           if [ -n "$found" ]; then
             echo "findings parsed: $found"
             # Only checking for 0 was too weak: a parser that DROPS findings
@@ -544,14 +550,36 @@ steps:
       syft --version
 
       # CycloneDX JSON: the format the endpoint documents.
-      syft scan "dir:${SCAN_PATH:-.}" -o cyclonedx-json="$SBOM_FILE" -q
+      # Measured 2026-08-14: when syft fails here it exits nonzero and
+      # `set -e` ends the step having printed NOTHING but its version.
+      # The reader cannot tell a failed scan from a failed upload, so the
+      # failure is named rather than left to the exit code.
+      if ! syft scan "dir:${SCAN_PATH:-.}" -o cyclonedx-json="$SBOM_FILE" -q; then
+        echo "SBOM NOT PRODUCED: syft failed while scanning ${SCAN_PATH:-.}"
+        echo "Nothing was inventoried, so NO SBOM was uploaded. Check that"
+        echo "SCAN_PATH exists inside the checkout and that the agent has"
+        echo "disk space left in $(Agent.TempDirectory)."
+        exit 1
+      fi
       [ -s "$SBOM_FILE" ] || { echo "syft produced no SBOM"; exit 1; }
 
       # An SBOM with zero components is the same trap as a scan of zero files:
       # it uploads cleanly and reports nothing. A repo that genuinely has no
       # dependencies is possible, so this is loud by default and fatal only on
       # request.
-      comps="$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(len(d.get('components') or []))" "$SBOM_FILE")"
+      #
+      # Measured 2026-08-14: a TRUNCATED report (syft killed mid-write by
+      # OOM or a full disk) made this python one-liner raise, and the step
+      # died showing a JSONDecodeError traceback and nothing else. An
+      # unreadable SBOM is a hard failure, but it must say so in words.
+      comps="$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(len(d.get('components') or []))" "$SBOM_FILE" 2>/dev/null || true)"
+      if [ -z "$comps" ]; then
+        echo "SBOM NOT UPLOADED: $SBOM_FILE is not readable CycloneDX JSON."
+        echo "$(wc -c <"$SBOM_FILE") bytes on disk. A truncated file usually"
+        echo "means syft was killed mid-write (out of memory or disk)."
+        echo "Uploading it would import a partial inventory as if complete."
+        exit 1
+      fi
       echo "components inventoried: $comps"
       if [ "$comps" -eq 0 ]; then
         echo "WARNING: the SBOM lists no components. Either this repo has no"
@@ -590,8 +618,11 @@ steps:
           # Same lesson as the findings upload: 2xx means ACCEPTED, not
           # ingested. Compare what we sent with what was stored, so a
           # component inventory that quietly shrinks is visible.
+          # See the findings upload: without `|| true` a body with no
+          # component count exits the step silently under `set -e`, so
+          # the "could not be verified" branch below never ran.
           stored="$(grep -o '"component[s_]*count"[[:space:]]*:[[:space:]]*[0-9]*' "$out" \
-                    | grep -o '[0-9]*$' | head -1)"
+                    | grep -o '[0-9]*$' | head -1 || true)"
           if [ -n "$stored" ]; then
             echo "components sent: $comps, stored: $stored"
             if [ "$comps" != "$stored" ]; then
