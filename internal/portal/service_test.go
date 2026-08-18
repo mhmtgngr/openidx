@@ -352,7 +352,7 @@ func TestHandleReviewGroupRequest_MissingID(t *testing.T) {
 	c, _ := gin.CreateTestContext(w)
 	c.Request, _ = http.NewRequest("POST", "/portal/groups/requests//review", strings.NewReader(`{"decision":"approved"}`))
 	c.Request.Header.Set("Content-Type", "application/json")
-	c.Set("user_id", "admin-1")
+	c.Set("user_id", "admin-1"); c.Set("roles", []string{"admin"})
 
 	svc := &Service{logger: zap.NewNop()}
 	svc.handleReviewGroupRequest(c)
@@ -368,7 +368,7 @@ func TestHandleReviewGroupRequest_InvalidDecision(t *testing.T) {
 	c.Request, _ = http.NewRequest("POST", "/portal/groups/requests/req-1/review", strings.NewReader(`{"decision":"invalid"}`))
 	c.Request.Header.Set("Content-Type", "application/json")
 	c.Params = gin.Params{{Key: "id", Value: "req-1"}}
-	c.Set("user_id", "admin-1")
+	c.Set("user_id", "admin-1"); c.Set("roles", []string{"admin"})
 
 	svc := &Service{logger: zap.NewNop()}
 	svc.handleReviewGroupRequest(c)
@@ -633,6 +633,25 @@ func TestHandleReviewGroupRequest_NoUserID(t *testing.T) {
 	svc.handleReviewGroupRequest(c)
 
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+// TestHandleReviewGroupRequest_NonAdminForbidden verifies a non-admin caller
+// cannot review (approve/deny) group join requests — otherwise any user could
+// self-approve into arbitrary groups.
+func TestHandleReviewGroupRequest_NonAdminForbidden(t *testing.T) {
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request, _ = http.NewRequest("POST", "/portal/groups/requests/req-1/review", strings.NewReader(`{"decision":"approved"}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = gin.Params{{Key: "id", Value: "req-1"}}
+	c.Set("user_id", "user-1")
+	c.Set("roles", []string{"user"})
+
+	svc := &Service{logger: zap.NewNop()}
+	svc.handleReviewGroupRequest(c)
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Contains(t, w.Body.String(), "admin role required")
 }
 
 // TestUserDeviceDefaults tests default values for UserDevice
@@ -1148,7 +1167,7 @@ func TestHandleReviewGroupRequest_ValidDecisions(t *testing.T) {
 			c.Request, _ = http.NewRequest("POST", "/portal/groups/requests/req-1/review", strings.NewReader(`{"decision":"`+decision+`"}`))
 			c.Request.Header.Set("Content-Type", "application/json")
 			c.Params = gin.Params{{Key: "id", Value: "req-1"}}
-			c.Set("user_id", "admin-1")
+			c.Set("user_id", "admin-1"); c.Set("roles", []string{"admin"})
 
 			svc := &Service{logger: zap.NewNop()}
 
@@ -1352,7 +1371,7 @@ func TestHandleReviewGroupRequest_ValidDecision_Approved(t *testing.T) {
 	c.Request, _ = http.NewRequest("POST", "/portal/groups/requests/req-1/review", strings.NewReader(`{"decision":"approved","comments":"Looks good"}`))
 	c.Request.Header.Set("Content-Type", "application/json")
 	c.Params = gin.Params{{Key: "id", Value: "req-1"}}
-	c.Set("user_id", "admin-1")
+	c.Set("user_id", "admin-1"); c.Set("roles", []string{"admin"})
 
 	svc := &Service{logger: zap.NewNop()}
 
@@ -1373,7 +1392,7 @@ func TestHandleReviewGroupRequest_ValidDecision_Denied(t *testing.T) {
 	c.Request, _ = http.NewRequest("POST", "/portal/groups/requests/req-1/review", strings.NewReader(`{"decision":"denied","comments":"Not justified"}`))
 	c.Request.Header.Set("Content-Type", "application/json")
 	c.Params = gin.Params{{Key: "id", Value: "req-1"}}
-	c.Set("user_id", "admin-1")
+	c.Set("user_id", "admin-1"); c.Set("roles", []string{"admin"})
 
 	svc := &Service{logger: zap.NewNop()}
 
@@ -1394,7 +1413,7 @@ func TestHandleReviewGroupRequest_NoComments(t *testing.T) {
 	c.Request, _ = http.NewRequest("POST", "/portal/groups/requests/req-1/review", strings.NewReader(`{"decision":"approved"}`))
 	c.Request.Header.Set("Content-Type", "application/json")
 	c.Params = gin.Params{{Key: "id", Value: "req-1"}}
-	c.Set("user_id", "admin-1")
+	c.Set("user_id", "admin-1"); c.Set("roles", []string{"admin"})
 
 	svc := &Service{logger: zap.NewNop()}
 
