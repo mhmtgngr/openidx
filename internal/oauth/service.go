@@ -899,8 +899,13 @@ func (s *Service) recordSessionAuthMethods(ctx context.Context, sessionID string
 	if sessionID == "" || len(methods) == 0 || s.db == nil {
 		return
 	}
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return
+	}
 	if _, err := s.db.Pool.Exec(ctx,
-		`UPDATE sessions SET auth_methods = $2 WHERE id = $1`, sessionID, methods); err != nil {
+		`UPDATE sessions SET auth_methods = $2 WHERE id = $1 AND org_id = $3`,
+		sessionID, methods, org.ID); err != nil {
 		s.logger.Warn("record session auth methods failed",
 			zap.String("session_id", sessionID), zap.Error(err))
 	}
