@@ -33,6 +33,7 @@ import {
 } from '../components/ui/select'
 import { Switch } from '../components/ui/switch'
 import { api } from '../lib/api'
+import { ConfirmAction } from '../components/confirm-action'
 import { useToast } from '../hooks/use-toast'
 
 // --- Interfaces ---
@@ -564,14 +565,24 @@ function RetentionPoliciesTab() {
                     />
                   </td>
                   <td className="py-3 px-4">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => deleteMutation.mutate(policy.id)}
-                      disabled={deleteMutation.isPending}
+                    <ConfirmAction
+                      title="Delete this retention policy?"
+                      description={`This removes the retention policy ${policy.name}. Data in the ${policy.data_category} category will no longer be governed by it.`}
+                      destructive
+                      confirmLabel="Delete"
+                      onConfirm={() => deleteMutation.mutateAsync(policy.id)}
                     >
-                      <Trash2 className="h-4 w-4 text-red-500" />
-                    </Button>
+                      {(open) => (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={open}
+                          disabled={deleteMutation.isPending}
+                        >
+                          <Trash2 className="h-4 w-4 text-red-500" />
+                        </Button>
+                      )}
+                    </ConfirmAction>
                   </td>
                 </tr>
               ))}
