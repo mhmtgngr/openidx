@@ -26,6 +26,7 @@ import { Textarea } from '../components/ui/textarea'
 import { Checkbox } from '../components/ui/checkbox'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { ConfirmAction } from '../components/confirm-action'
+import { QueryError } from '../components/query-error'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 
@@ -100,7 +101,7 @@ export function RiskPoliciesPage() {
   })
 
   // Fetch policies
-  const { data: policiesData, isLoading } = useQuery({
+  const { data: policiesData, isLoading, isError, error } = useQuery({
     queryKey: ['risk-policies'],
     queryFn: async () => {
       return api.get<{ policies: RiskPolicy[] }>('/api/v1/identity/risk/policies')
@@ -237,6 +238,10 @@ export function RiskPoliciesPage() {
         <LoadingSpinner size="lg" />
       </div>
     )
+  }
+
+  if (isError) {
+    return <QueryError error={error} resource="risk policies" />
   }
 
   return (
