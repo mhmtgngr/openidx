@@ -15,6 +15,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog'
 import { api } from '../lib/api'
 import { ConfirmAction } from '../components/confirm-action'
+import { QueryError } from '../components/query-error'
 import { useToast } from '../hooks/use-toast'
 
 interface NamedRef { id: string; name: string }
@@ -185,7 +186,7 @@ export function UserAccess360Page() {
   const [reason, setReason] = useState('')
   const [disableUser, setDisableUser] = useState(false)
 
-  const { data: map, isLoading, refetch, isFetching } = useQuery({
+  const { data: map, isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: ['user-access-map', id],
     queryFn: () => api.get<AccessMap>(`/api/v1/access/users/${id}/access-map`),
     enabled: !!id,
@@ -235,6 +236,18 @@ export function UserAccess360Page() {
     },
     onError: () => toast({ title: 'Kill switch failed', variant: 'destructive' }),
   })
+
+  if (isError) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center gap-3">
+          <Link to="/users"><Button variant="ghost" size="icon"><ArrowLeft className="h-4 w-4" /></Button></Link>
+          <h1 className="text-3xl font-bold tracking-tight">Access 360</h1>
+        </div>
+        <QueryError error={error} resource="the user access map" />
+      </div>
+    )
+  }
 
   if (isLoading || !map) {
     return (
