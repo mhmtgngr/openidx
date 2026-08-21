@@ -7,6 +7,7 @@ import { Button } from '../components/ui/button'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
+import { ConfirmAction } from '../components/confirm-action'
 
 // ── Interfaces ──────────────────────────────────────────────────────────────
 
@@ -405,9 +406,19 @@ export function NotificationAdminPage() {
                             <Button variant="ghost" size="sm" className="h-8 w-8 p-0" title="Edit" onClick={() => startEditRule(rule)}>
                               <Edit className="h-4 w-4" />
                             </Button>
-                            <Button variant="ghost" size="sm" className="h-8 w-8 p-0" title="Delete" onClick={() => deleteRuleMutation.mutate(rule.id)}>
-                              <Trash2 className="h-4 w-4 text-red-500" />
-                            </Button>
+                            <ConfirmAction
+                              title="Delete this routing rule?"
+                              description={`This deletes the "${rule.name}" notification routing rule. Notifications for the "${rule.event_type}" event will no longer be routed by this rule.`}
+                              destructive
+                              confirmLabel="Delete"
+                              onConfirm={() => deleteRuleMutation.mutateAsync(rule.id)}
+                            >
+                              {(open) => (
+                                <Button variant="ghost" size="sm" className="h-8 w-8 p-0" title="Delete" onClick={open}>
+                                  <Trash2 className="h-4 w-4 text-red-500" />
+                                </Button>
+                              )}
+                            </ConfirmAction>
                           </div>
                         </td>
                       </tr>
@@ -570,26 +581,47 @@ export function NotificationAdminPage() {
                           <div className="flex gap-1">
                             {broadcast.status === 'draft' && (
                               <>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  className="h-8 w-8 p-0"
-                                  title="Send"
-                                  onClick={() => sendBroadcastMutation.mutate(broadcast.id)}
-                                  disabled={sendBroadcastMutation.isPending}
+                                <ConfirmAction
+                                  title="Send this broadcast to all targeted users?"
+                                  description={`This sends the broadcast "${broadcast.title}" to ${broadcast.total_recipients || 'all targeted'} recipients immediately. Delivered notifications cannot be recalled.`}
+                                  destructive
+                                  requireReason
+                                  confirmLabel="Send Broadcast"
+                                  onConfirm={() => sendBroadcastMutation.mutateAsync(broadcast.id)}
                                 >
-                                  <Send className="h-4 w-4 text-green-600" />
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  className="h-8 w-8 p-0"
-                                  title="Delete"
-                                  onClick={() => deleteBroadcastMutation.mutate(broadcast.id)}
-                                  disabled={deleteBroadcastMutation.isPending}
+                                  {(open) => (
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-8 w-8 p-0"
+                                      title="Send"
+                                      onClick={open}
+                                      disabled={sendBroadcastMutation.isPending}
+                                    >
+                                      <Send className="h-4 w-4 text-green-600" />
+                                    </Button>
+                                  )}
+                                </ConfirmAction>
+                                <ConfirmAction
+                                  title="Delete this broadcast?"
+                                  description={`This permanently deletes the draft broadcast "${broadcast.title}". It has not been sent, and this cannot be undone.`}
+                                  destructive
+                                  confirmLabel="Delete"
+                                  onConfirm={() => deleteBroadcastMutation.mutateAsync(broadcast.id)}
                                 >
-                                  <Trash2 className="h-4 w-4 text-red-500" />
-                                </Button>
+                                  {(open) => (
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-8 w-8 p-0"
+                                      title="Delete"
+                                      onClick={open}
+                                      disabled={deleteBroadcastMutation.isPending}
+                                    >
+                                      <Trash2 className="h-4 w-4 text-red-500" />
+                                    </Button>
+                                  )}
+                                </ConfirmAction>
                               </>
                             )}
                           </div>
