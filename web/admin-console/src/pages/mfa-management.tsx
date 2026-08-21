@@ -12,6 +12,7 @@ import { Switch } from '../components/ui/switch'
 import { Label } from '../components/ui/label'
 import { Checkbox } from '../components/ui/checkbox'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
+import { ConfirmAction } from '../components/confirm-action'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 
@@ -76,9 +77,6 @@ export default function MFAManagement() {
   const [selectedPolicy, setSelectedPolicy] = useState<MFAPolicy | null>(null)
   const [formData, setFormData] = useState<Partial<MFAPolicy>>(emptyPolicy)
 
-  // Delete dialog state
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
-  const [policyToDelete, setPolicyToDelete] = useState<MFAPolicy | null>(null)
 
   // Pagination state for policies and users
   const [policyPage, setPolicyPage] = useState(1)
@@ -161,8 +159,6 @@ export default function MFAManagement() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['mfa-policies'] })
       toast({ title: 'Success', description: 'MFA policy has been deleted.' })
-      setDeleteDialogOpen(false)
-      setPolicyToDelete(null)
     },
     onError: (error: Error) => {
       toast({ variant: 'destructive', title: 'Error', description: error.message })
@@ -189,10 +185,6 @@ export default function MFAManagement() {
     setPolicyDialogOpen(true)
   }
 
-  const openDeletePolicy = (policy: MFAPolicy) => {
-    setPolicyToDelete(policy)
-    setDeleteDialogOpen(true)
-  }
 
   const handleSavePolicy = () => {
     if (selectedPolicy) {
@@ -398,9 +390,19 @@ export default function MFAManagement() {
                                 <Button variant="ghost" size="icon" onClick={() => openEditPolicy(policy)}>
                                   <Edit2 className="h-4 w-4" />
                                 </Button>
-                                <Button variant="ghost" size="icon" onClick={() => openDeletePolicy(policy)}>
-                                  <Trash2 className="h-4 w-4 text-red-500" />
-                                </Button>
+                                <ConfirmAction
+                                  title="Delete MFA Policy"
+                                  description={`Are you sure you want to delete the MFA policy ${policy.name}? This action cannot be undone.`}
+                                  destructive
+                                  confirmLabel="Delete"
+                                  onConfirm={() => deletePolicyMutation.mutateAsync(policy.id)}
+                                >
+                                  {(open) => (
+                                    <Button variant="ghost" size="icon" onClick={open}>
+                                      <Trash2 className="h-4 w-4 text-red-500" />
+                                    </Button>
+                                  )}
+                                </ConfirmAction>
                               </div>
                             </TableCell>
                           </TableRow>
@@ -629,27 +631,6 @@ export default function MFAManagement() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete Confirmation Dialog */}
-      <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Delete MFA Policy</DialogTitle>
-          </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            Are you sure you want to delete &quot;{policyToDelete?.name}&quot;? This action cannot be undone.
-          </p>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteDialogOpen(false)}>Cancel</Button>
-            <Button
-              variant="destructive"
-              disabled={deletePolicyMutation.isPending}
-              onClick={() => policyToDelete && deletePolicyMutation.mutate(policyToDelete.id)}
-            >
-              {deletePolicyMutation.isPending ? 'Deleting...' : 'Delete'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   )
 }
