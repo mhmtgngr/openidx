@@ -6,6 +6,7 @@ import { Badge } from '../components/ui/badge'
 import { Button } from '../components/ui/button'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { ClipboardCheck, Plus, Rocket, CheckCircle, X, ArrowRight, BarChart3 } from 'lucide-react'
+import { ConfirmAction } from '../components/confirm-action'
 
 interface AttestationCampaign {
   id: string
@@ -292,10 +293,20 @@ export function AttestationCampaignsPage() {
                           onClick={() => decideMutation.mutate({ campaignId: selectedCampaign, itemId: item.id, decision: 'certified', comments: '' })}>
                           <CheckCircle className="h-3 w-3 mr-1" />Certify
                         </Button>
-                        <Button size="sm" variant="outline"
-                          onClick={() => decideMutation.mutate({ campaignId: selectedCampaign, itemId: item.id, decision: 'revoked', comments: '' })}>
-                          <X className="h-3 w-3 mr-1" />Revoke
-                        </Button>
+                        <ConfirmAction
+                          title="Revoke this access?"
+                          description={`This revokes ${item.user_name}'s access to "${item.resource_name}". The access will be removed as part of this attestation campaign. Provide the reason; it is recorded with the decision and in the audit log.`}
+                          destructive
+                          requireReason
+                          confirmLabel="Revoke"
+                          onConfirm={(reason) => decideMutation.mutateAsync({ campaignId: selectedCampaign, itemId: item.id, decision: 'revoked', comments: reason! })}
+                        >
+                          {(open) => (
+                            <Button size="sm" variant="outline" onClick={open}>
+                              <X className="h-3 w-3 mr-1" />Revoke
+                            </Button>
+                          )}
+                        </ConfirmAction>
                       </>
                     ) : (
                       <Badge className={decisionColors[item.decision] || ''}>{item.decision}</Badge>
