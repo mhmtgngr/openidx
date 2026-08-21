@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
 import { Button } from '../components/ui/button'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
+import { QueryError } from '../components/query-error'
 import { Input } from '../components/ui/input'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog'
 import {
@@ -375,11 +376,7 @@ export function VaultSecretsPage() {
               <LoadingSpinner size="lg" />
             </div>
           ) : listError ? (
-            <div className="py-8 text-center text-sm text-red-600">
-              {(listError as { response?: { status?: number } })?.response?.status === 403
-                ? 'Vault admin access required'
-                : 'Failed to load vault secrets'}
-            </div>
+            <QueryError error={listError} resource="vault secrets" />
           ) : (
             <Table>
               <TableHeader>
