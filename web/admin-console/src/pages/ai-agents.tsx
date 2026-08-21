@@ -337,9 +337,19 @@ export function AIAgentsPage() {
 
                 {/* Actions */}
                 <div className="flex flex-wrap gap-2 pt-2 border-t">
-                  <Button size="sm" variant="outline" onClick={() => rotateMutation.mutate(selectedAgent)}>
-                    <RotateCw className="h-3 w-3 mr-1" />Rotate Key
-                  </Button>
+                  <ConfirmAction
+                    title="Rotate this agent's key?"
+                    description="A new credential is issued and the agent's current key stops working immediately. Update anything using the old key before rotating."
+                    destructive
+                    confirmLabel="Rotate"
+                    onConfirm={() => rotateMutation.mutate(selectedAgent)}
+                  >
+                    {(open) => (
+                      <Button size="sm" variant="outline" onClick={open}>
+                        <RotateCw className="h-3 w-3 mr-1" />Rotate Key
+                      </Button>
+                    )}
+                  </ConfirmAction>
                   {agentDetail.data.status === 'active' ? (
                     <Button size="sm" variant="outline" onClick={() => suspendMutation.mutate(selectedAgent)}>
                       <Pause className="h-3 w-3 mr-1" />Suspend
