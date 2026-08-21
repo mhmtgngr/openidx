@@ -41,6 +41,7 @@ import {
 } from '../components/ui/dialog'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { ConfirmAction } from '../components/confirm-action'
+import { QueryError } from '../components/query-error'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 
@@ -352,6 +353,8 @@ export function AppPublishPage() {
             <div className="flex items-center justify-center py-12">
               <LoadingSpinner />
             </div>
+          ) : appsQuery.isError ? (
+            <QueryError error={appsQuery.error} resource="published apps" />
           ) : apps.length === 0 ? (
             <Card>
               <CardContent className="py-12 text-center text-muted-foreground">
