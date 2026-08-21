@@ -6,8 +6,8 @@ import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Badge } from '../components/ui/badge'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table'
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
+import { ConfirmAction } from '../components/confirm-action'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 import { useAuth } from '../lib/auth'
@@ -43,9 +43,6 @@ export function SessionsAdminPage() {
   const isAdmin = hasRole('admin') || hasRole('super_admin') || hasRole('operator')
   const [userIdFilter, setUserIdFilter] = useState('')
   const [activeOnly, setActiveOnly] = useState(true)
-  const [revokeTarget, setRevokeTarget] = useState<Session | null>(null)
-  const [revokeReason, setRevokeReason] = useState('')
-  const [bulkRevokeUser, setBulkRevokeUser] = useState<string | null>(null)
 
   const { data, isLoading } = useQuery({
     queryKey: ['admin-sessions', isAdmin, userIdFilter, activeOnly],
@@ -76,8 +73,6 @@ export function SessionsAdminPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-sessions'] })
       toast({ title: isAdmin ? 'Session revoked' : 'Signed out of that session' })
-      setRevokeTarget(null)
-      setRevokeReason('')
     },
     onError: () => toast({ title: 'Failed to revoke session', variant: 'destructive' }),
   })
@@ -88,8 +83,6 @@ export function SessionsAdminPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-sessions'] })
       toast({ title: 'All user sessions revoked' })
-      setBulkRevokeUser(null)
-      setRevokeReason('')
     },
     onError: () => toast({ title: 'Failed to revoke sessions', variant: 'destructive' }),
   })
@@ -259,14 +252,36 @@ export function SessionsAdminPage() {
                     <TableCell>
                       <div className="flex gap-1">
                         {!s.revoked && new Date(s.expires_at) > new Date() && (
-                          <Button variant="ghost" size="sm" onClick={() => setRevokeTarget(s)}>
-                            <Trash2 className="h-4 w-4 text-red-500" />
-                          </Button>
+                          <ConfirmAction
+                            title="Revoke Session"
+                            description={`Revoke the session for ${s.username} from ${s.ip_address || 'unknown IP'}? The session will be signed out immediately.`}
+                            destructive
+                            requireReason
+                            confirmLabel="Revoke"
+                            onConfirm={(reason) => revokeMutation.mutateAsync({ id: s.id, reason: reason || '' })}
+                          >
+                            {(open) => (
+                              <Button variant="ghost" size="sm" onClick={open}>
+                                <Trash2 className="h-4 w-4 text-red-500" />
+                              </Button>
+                            )}
+                          </ConfirmAction>
                         )}
                         {isAdmin && (
-                        <Button variant="outline" size="sm" onClick={() => { setBulkRevokeUser(s.user_id); setRevokeReason('') }}>
-                          Revoke All
-                        </Button>
+                          <ConfirmAction
+                            title="Revoke All User Sessions"
+                            description="This will revoke all active sessions for this user. They will be signed out of every device immediately."
+                            destructive
+                            requireReason
+                            confirmLabel="Revoke All Sessions"
+                            onConfirm={(reason) => bulkRevokeMutation.mutateAsync({ userId: s.user_id, reason: reason || '' })}
+                          >
+                            {(open) => (
+                              <Button variant="outline" size="sm" onClick={open}>
+                                Revoke All
+                              </Button>
+                            )}
+                          </ConfirmAction>
                         )}
                       </div>
                     </TableCell>
@@ -278,47 +293,6 @@ export function SessionsAdminPage() {
         </CardContent>
       </Card>
 
-      {/* Revoke Single Session */}
-      <Dialog open={!!revokeTarget} onOpenChange={open => !open && setRevokeTarget(null)}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Revoke Session</DialogTitle></DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            Revoke session for {revokeTarget?.username} from {revokeTarget?.ip_address || 'unknown IP'}?
-          </p>
-          <div>
-            <label className="text-sm font-medium">Reason</label>
-            <Input placeholder="Reason for revocation" value={revokeReason}
-              onChange={e => setRevokeReason(e.target.value)} />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setRevokeTarget(null)}>Cancel</Button>
-            <Button variant="destructive" disabled={revokeMutation.isPending}
-              onClick={() => revokeTarget && revokeMutation.mutate({ id: revokeTarget.id, reason: revokeReason })}>
-              Revoke
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Bulk Revoke */}
-      <Dialog open={!!bulkRevokeUser} onOpenChange={open => !open && setBulkRevokeUser(null)}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Revoke All User Sessions</DialogTitle></DialogHeader>
-          <p className="text-sm text-muted-foreground">This will revoke all active sessions for this user.</p>
-          <div>
-            <label className="text-sm font-medium">Reason</label>
-            <Input placeholder="Reason for revocation" value={revokeReason}
-              onChange={e => setRevokeReason(e.target.value)} />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setBulkRevokeUser(null)}>Cancel</Button>
-            <Button variant="destructive" disabled={bulkRevokeMutation.isPending}
-              onClick={() => bulkRevokeUser && bulkRevokeMutation.mutate({ userId: bulkRevokeUser, reason: revokeReason })}>
-              Revoke All Sessions
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   )
 }
