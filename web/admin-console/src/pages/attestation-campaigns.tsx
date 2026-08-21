@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
 import { Button } from '../components/ui/button'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
+import { QueryError } from '../components/query-error'
 import { ClipboardCheck, Plus, Rocket, CheckCircle, X, ArrowRight, BarChart3 } from 'lucide-react'
 import { ConfirmAction } from '../components/confirm-action'
 
@@ -78,7 +79,7 @@ export function AttestationCampaignsPage() {
   const [formEscalation, setFormEscalation] = useState(14)
   const [formAutoRevoke, setFormAutoRevoke] = useState(false)
 
-  const { data: campaignsData, isLoading } = useQuery({
+  const { data: campaignsData, isLoading, isError, error } = useQuery({
     queryKey: ['attestation-campaigns'],
     queryFn: () => api.get<{ data: AttestationCampaign[] }>('/api/v1/attestation-campaigns'),
   })
@@ -134,6 +135,7 @@ export function AttestationCampaignsPage() {
   }
 
   if (isLoading) return <div className="flex justify-center py-12"><LoadingSpinner size="lg" /></div>
+  if (isError) return <QueryError error={error} resource="attestation campaigns" />
 
   const campaigns = campaignsData?.data || []
   const items = itemsData?.data || []
