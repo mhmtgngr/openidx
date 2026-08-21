@@ -6,6 +6,7 @@ import { Badge } from '../components/ui/badge'
 import { Button } from '../components/ui/button'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { api } from '../lib/api'
+import { ConfirmAction } from '../components/confirm-action'
 import { useToast } from '../hooks/use-toast'
 
 interface Notification {
@@ -317,16 +318,26 @@ export function NotificationCenterPage() {
                           <Check className="h-4 w-4 text-green-600" />
                         </Button>
                       )}
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 w-8 p-0"
-                        title="Delete"
-                        onClick={() => deleteMutation.mutate(notification.id)}
-                        disabled={deleteMutation.isPending}
+                      <ConfirmAction
+                        title="Delete this notification?"
+                        description="This permanently removes the notification. This cannot be undone."
+                        destructive
+                        confirmLabel="Delete"
+                        onConfirm={() => deleteMutation.mutateAsync(notification.id)}
                       >
-                        <Trash2 className="h-4 w-4 text-red-500" />
-                      </Button>
+                        {(open) => (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 w-8 p-0"
+                            title="Delete"
+                            onClick={open}
+                            disabled={deleteMutation.isPending}
+                          >
+                            <Trash2 className="h-4 w-4 text-red-500" />
+                          </Button>
+                        )}
+                      </ConfirmAction>
                     </div>
                   </div>
                 )
