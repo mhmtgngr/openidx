@@ -9,6 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
+import { ConfirmAction } from '../components/confirm-action'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 
@@ -344,13 +345,32 @@ export function TenantManagementPage() {
                           <TableCell>
                             <div className="flex gap-1">
                               {!d.verified && (
-                                <Button variant="ghost" size="sm" onClick={() => verifyDomainMutation.mutate(d.id)}>
-                                  <CheckCircle className="h-4 w-4 text-green-600" />
-                                </Button>
+                                <ConfirmAction
+                                  title="Verify this domain?"
+                                  description={`This marks ${d.domain} as a verified, trusted domain for this tenant. Verified domains are trusted for branded URLs and identity binding.`}
+                                  confirmLabel="Verify"
+                                  onConfirm={() => verifyDomainMutation.mutateAsync(d.id)}
+                                >
+                                  {(open) => (
+                                    <Button variant="ghost" size="sm" onClick={open}>
+                                      <CheckCircle className="h-4 w-4 text-green-600" />
+                                    </Button>
+                                  )}
+                                </ConfirmAction>
                               )}
-                              <Button variant="ghost" size="sm" onClick={() => deleteDomainMutation.mutate(d.id)}>
-                                <Trash2 className="h-4 w-4 text-red-500" />
-                              </Button>
+                              <ConfirmAction
+                                title="Delete this domain?"
+                                description={`This removes ${d.domain} from the tenant. Any branded URLs relying on it will stop working.`}
+                                destructive
+                                confirmLabel="Delete"
+                                onConfirm={() => deleteDomainMutation.mutateAsync(d.id)}
+                              >
+                                {(open) => (
+                                  <Button variant="ghost" size="sm" onClick={open}>
+                                    <Trash2 className="h-4 w-4 text-red-500" />
+                                  </Button>
+                                )}
+                              </ConfirmAction>
                             </div>
                           </TableCell>
                         </TableRow>
