@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
 import { Button } from '../components/ui/button'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
+import { ConfirmAction } from '../components/confirm-action'
 import { Bot, Plus, RotateCw, Pause, Play, Trash2, Shield, Activity, Key, Clock } from 'lucide-react'
 
 interface AIAgent {
@@ -343,9 +344,19 @@ export function AIAgentsPage() {
                       <Play className="h-3 w-3 mr-1" />Activate
                     </Button>
                   )}
-                  <Button size="sm" variant="destructive" onClick={() => { if (confirm('Delete this agent?')) deleteMutation.mutate(selectedAgent) }}>
-                    <Trash2 className="h-3 w-3 mr-1" />Delete
-                  </Button>
+                  <ConfirmAction
+                    title="Delete this agent?"
+                    description="This permanently removes the AI agent and its issued credentials. This cannot be undone."
+                    destructive
+                    confirmLabel="Delete"
+                    onConfirm={() => selectedAgent ? deleteMutation.mutateAsync(selectedAgent) : undefined}
+                  >
+                    {(open) => (
+                      <Button size="sm" variant="destructive" onClick={open}>
+                        <Trash2 className="h-3 w-3 mr-1" />Delete
+                      </Button>
+                    )}
+                  </ConfirmAction>
                 </div>
               </CardContent>
             </Card>
