@@ -24,6 +24,7 @@ import {
   api, WindowsApp, WindowsAppInput, WindowsAppPool, WindowsAppHostState,
   WindowsAppHostAgent, WindowsAppLaunchConflict, PamEntry,
 } from '../lib/api'
+import { ConfirmAction } from '../components/confirm-action'
 import { useToast } from '../hooks/use-toast'
 import { remoteAppArgsLookSecret, REMOTE_APP_SECRET_HINT } from '../lib/remote-app'
 import { isAxiosError } from 'axios'
@@ -605,9 +606,19 @@ function PoolsDialog({ open, onOpenChange, pools, appHosts, onChanged }: {
                       <SelectItem value="round_robin">Round robin</SelectItem>
                     </SelectContent>
                   </Select>
-                  <Button size="sm" variant="ghost" onClick={() => removePool.mutate(pool.id)} title="Delete pool">
-                    <Trash2 className="h-4 w-4 text-destructive" />
-                  </Button>
+                  <ConfirmAction
+                    title="Delete this app pool?"
+                    description="This removes the pool and all of its host mappings. Apps assigned to this pool will no longer place launches on these hosts."
+                    destructive
+                    confirmLabel="Delete"
+                    onConfirm={() => removePool.mutate(pool.id)}
+                  >
+                    {(open) => (
+                      <Button size="sm" variant="ghost" onClick={open} title="Delete pool">
+                        <Trash2 className="h-4 w-4 text-destructive" />
+                      </Button>
+                    )}
+                  </ConfirmAction>
                 </div>
               </div>
 
@@ -620,9 +631,19 @@ function PoolsDialog({ open, onOpenChange, pools, appHosts, onChanged }: {
                       </span>
                       <span className="flex items-center gap-2 shrink-0">
                         <Badge variant="outline">{m.active_sessions}/{m.max_sessions}</Badge>
-                        <Button size="sm" variant="ghost" onClick={() => removeMember.mutate({ poolId: pool.id, memberId: m.id })} title="Remove host">
-                          <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                        </Button>
+                        <ConfirmAction
+                          title="Remove this host from the pool?"
+                          description="This host will no longer receive launches for apps assigned to this pool."
+                          destructive
+                          confirmLabel="Remove"
+                          onConfirm={() => removeMember.mutate({ poolId: pool.id, memberId: m.id })}
+                        >
+                          {(open) => (
+                            <Button size="sm" variant="ghost" onClick={open} title="Remove host">
+                              <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                            </Button>
+                          )}
+                        </ConfirmAction>
                       </span>
                     </div>
                   ))}
