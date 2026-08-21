@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
 import { Button } from '../components/ui/button'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
+import { QueryError } from '../components/query-error'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 import { ConfirmAction } from '../components/confirm-action'
@@ -89,19 +90,19 @@ export function NotificationAdminPage() {
 
   // ── Queries ─────────────────────────────────────────────────────────────
 
-  const { data: rulesData, isLoading: rulesLoading } = useQuery({
+  const { data: rulesData, isLoading: rulesLoading, isError: rulesIsError, error: rulesError } = useQuery({
     queryKey: ['routing-rules'],
     queryFn: () => api.get<{ data: RoutingRule[] }>('/api/v1/notifications/routing-rules'),
   })
   const rules = rulesData?.data || []
 
-  const { data: broadcastsData, isLoading: broadcastsLoading } = useQuery({
+  const { data: broadcastsData, isLoading: broadcastsLoading, isError: broadcastsIsError, error: broadcastsError } = useQuery({
     queryKey: ['broadcasts'],
     queryFn: () => api.get<{ data: Broadcast[] }>('/api/v1/notifications/broadcasts'),
   })
   const broadcasts = broadcastsData?.data || []
 
-  const { data: statsData, isLoading: statsLoading } = useQuery({
+  const { data: statsData, isLoading: statsLoading, isError: statsIsError, error: statsError } = useQuery({
     queryKey: ['notification-stats'],
     queryFn: () => api.get<NotificationStats>('/api/v1/notifications/stats'),
   })
@@ -355,6 +356,8 @@ export function NotificationAdminPage() {
                 <LoadingSpinner size="lg" />
                 <p className="mt-4 text-sm text-muted-foreground">Loading routing rules...</p>
               </div>
+            ) : rulesIsError ? (
+              <QueryError error={rulesError} resource="routing rules" />
             ) : rules.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
                 <Route className="h-12 w-12 text-muted-foreground/40 mb-3" />
@@ -538,6 +541,8 @@ export function NotificationAdminPage() {
                 <LoadingSpinner size="lg" />
                 <p className="mt-4 text-sm text-muted-foreground">Loading broadcasts...</p>
               </div>
+            ) : broadcastsIsError ? (
+              <QueryError error={broadcastsError} resource="broadcasts" />
             ) : broadcasts.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
                 <Megaphone className="h-12 w-12 text-muted-foreground/40 mb-3" />
@@ -644,6 +649,8 @@ export function NotificationAdminPage() {
               <LoadingSpinner size="lg" />
               <p className="mt-4 text-sm text-muted-foreground">Loading delivery statistics...</p>
             </div>
+          ) : statsIsError ? (
+            <QueryError error={statsError} resource="delivery statistics" />
           ) : !statsData ? (
             <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
               <BarChart3 className="h-12 w-12 text-muted-foreground/40 mb-3" />
