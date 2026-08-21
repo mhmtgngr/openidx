@@ -462,9 +462,19 @@ docker restart openidx-oauth-tls-proxy openidx-ziti-controller-proxy openidx-zit
                         .map(cert => (
                           <div key={cert.id} className="flex items-center justify-between text-sm mt-1">
                             <span>{cert.name} — {cert.days_until_expiry}d remaining</span>
-                            <Button variant="outline" size="sm" onClick={() => rotateMutation.mutate(cert.id)}>
-                              Rotate
-                            </Button>
+                            <ConfirmAction
+                              title="Rotate this certificate?"
+                              description="A new certificate is issued and the old certificate stops working once rotated. Anything still presenting the old certificate will fail until it picks up the new one."
+                              destructive
+                              confirmLabel="Rotate"
+                              onConfirm={() => rotateMutation.mutate(cert.id)}
+                            >
+                              {(open) => (
+                                <Button variant="outline" size="sm" onClick={open}>
+                                  Rotate
+                                </Button>
+                              )}
+                            </ConfirmAction>
                           </div>
                         ))}
                     </div>
@@ -496,15 +506,25 @@ docker restart openidx-oauth-tls-proxy openidx-ziti-controller-proxy openidx-zit
                               </Badge>
                             </td>
                             <td className="p-2">
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => rotateMutation.mutate(cert.id)}
-                                disabled={rotateMutation.isPending}
-                                className="gap-1 text-xs"
+                              <ConfirmAction
+                                title="Rotate this certificate?"
+                                description="A new certificate is issued and the old certificate stops working once rotated. Anything still presenting the old certificate will fail until it picks up the new one."
+                                destructive
+                                confirmLabel="Rotate"
+                                onConfirm={() => rotateMutation.mutate(cert.id)}
                               >
-                                <RefreshCw className="h-3 w-3" /> Rotate
-                              </Button>
+                                {(open) => (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={open}
+                                    disabled={rotateMutation.isPending}
+                                    className="gap-1 text-xs"
+                                  >
+                                    <RefreshCw className="h-3 w-3" /> Rotate
+                                  </Button>
+                                )}
+                              </ConfirmAction>
                             </td>
                           </tr>
                         ))}
