@@ -25,6 +25,7 @@ import { Label } from '../components/ui/label'
 import { Textarea } from '../components/ui/textarea'
 import { Checkbox } from '../components/ui/checkbox'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
+import { ConfirmAction } from '../components/confirm-action'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 
@@ -87,7 +88,6 @@ export function RiskPoliciesPage() {
   const { toast } = useToast()
   const queryClient = useQueryClient()
   const [editDialog, setEditDialog] = useState(false)
-  const [deleteDialog, setDeleteDialog] = useState(false)
   const [testDialog, setTestDialog] = useState(false)
   const [selectedPolicy, setSelectedPolicy] = useState<RiskPolicy | null>(null)
   const [formData, setFormData] = useState<Partial<RiskPolicy>>(emptyPolicy)
@@ -159,7 +159,6 @@ export function RiskPoliciesPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['risk-policies'] })
       toast({ title: 'Policy Deleted', description: 'Risk policy has been deleted.' })
-      setDeleteDialog(false)
     }
   })
 
@@ -196,10 +195,6 @@ export function RiskPoliciesPage() {
     setEditDialog(true)
   }
 
-  const openDelete = (policy: RiskPolicy) => {
-    setSelectedPolicy(policy)
-    setDeleteDialog(true)
-  }
 
   const handleSave = () => {
     if (selectedPolicy) {
@@ -389,9 +384,19 @@ export function RiskPoliciesPage() {
                     <Button variant="ghost" size="icon" onClick={() => openEdit(policy)}>
                       <Edit2 className="h-4 w-4" />
                     </Button>
-                    <Button variant="ghost" size="icon" onClick={() => openDelete(policy)}>
-                      <Trash2 className="h-4 w-4 text-red-500" />
-                    </Button>
+                    <ConfirmAction
+                      title="Delete Policy"
+                      description={`Are you sure you want to delete the risk policy ${policy.name}? This action cannot be undone.`}
+                      destructive
+                      confirmLabel="Delete"
+                      onConfirm={() => deleteMutation.mutateAsync(policy.id)}
+                    >
+                      {(open) => (
+                        <Button variant="ghost" size="icon" onClick={open}>
+                          <Trash2 className="h-4 w-4 text-red-500" />
+                        </Button>
+                      )}
+                    </ConfirmAction>
                   </div>
                 </div>
               ))}
@@ -638,27 +643,6 @@ export function RiskPoliciesPage() {
             <Button variant="outline" onClick={() => setEditDialog(false)}>Cancel</Button>
             <Button onClick={handleSave} disabled={!formData.name}>
               {selectedPolicy ? 'Update Policy' : 'Create Policy'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Delete Confirmation */}
-      <Dialog open={deleteDialog} onOpenChange={setDeleteDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Delete Policy</DialogTitle>
-            <DialogDescription>
-              Are you sure you want to delete "{selectedPolicy?.name}"? This action cannot be undone.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteDialog(false)}>Cancel</Button>
-            <Button
-              variant="destructive"
-              onClick={() => selectedPolicy && deleteMutation.mutate(selectedPolicy.id)}
-            >
-              Delete
             </Button>
           </DialogFooter>
         </DialogContent>
