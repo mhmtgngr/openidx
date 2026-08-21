@@ -12,6 +12,7 @@ import { Switch } from '../components/ui/switch'
 import { Label } from '../components/ui/label'
 import { Checkbox } from '../components/ui/checkbox'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
+import { QueryError } from '../components/query-error'
 import { ConfirmAction } from '../components/confirm-action'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
@@ -84,7 +85,7 @@ export default function MFAManagement() {
   const pageSize = 20
 
   // Fetch enrollment stats
-  const { data: statsData, isLoading: statsLoading } = useQuery({
+  const { data: statsData, isLoading: statsLoading, isError: statsIsError, error: statsError } = useQuery({
     queryKey: ['mfa-enrollment-stats'],
     queryFn: () => api.get<EnrollmentStats>('/api/v1/mfa/enrollment-stats'),
   })
@@ -104,7 +105,7 @@ export default function MFAManagement() {
     : 0
 
   // Fetch policies
-  const { data: policiesData, isLoading: policiesLoading } = useQuery({
+  const { data: policiesData, isLoading: policiesLoading, isError: policiesIsError, error: policiesError } = useQuery({
     queryKey: ['mfa-policies', policyPage],
     queryFn: () =>
       api.get<{ policies: MFAPolicy[]; total: number; page: number; page_size: number }>(
@@ -116,7 +117,7 @@ export default function MFAManagement() {
   const policiesTotalPages = Math.ceil((policiesData?.total || 0) / pageSize)
 
   // Fetch user MFA status
-  const { data: usersData, isLoading: usersLoading } = useQuery({
+  const { data: usersData, isLoading: usersLoading, isError: usersIsError, error: usersError } = useQuery({
     queryKey: ['mfa-user-status', userPage],
     queryFn: () =>
       api.get<{ users: UserMFAStatus[]; total: number; page: number; page_size: number }>(
@@ -232,6 +233,8 @@ export default function MFAManagement() {
               <LoadingSpinner size="lg" />
               <p className="mt-4 text-sm text-muted-foreground">Loading enrollment stats...</p>
             </div>
+          ) : statsIsError ? (
+            <QueryError error={statsError} resource="enrollment stats" />
           ) : (
             <div className="grid gap-4 md:grid-cols-4">
               <Card>
@@ -331,6 +334,8 @@ export default function MFAManagement() {
                   <LoadingSpinner size="lg" />
                   <p className="mt-4 text-sm text-muted-foreground">Loading policies...</p>
                 </div>
+              ) : policiesIsError ? (
+                <QueryError error={policiesError} resource="MFA policies" />
               ) : policies.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
                   <Key className="h-12 w-12 text-muted-foreground/40 mb-3" />
@@ -450,6 +455,8 @@ export default function MFAManagement() {
                   <LoadingSpinner size="lg" />
                   <p className="mt-4 text-sm text-muted-foreground">Loading user MFA status...</p>
                 </div>
+              ) : usersIsError ? (
+                <QueryError error={usersError} resource="user MFA status" />
               ) : users.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
                   <Users className="h-12 w-12 text-muted-foreground/40 mb-3" />
