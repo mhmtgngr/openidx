@@ -12,6 +12,7 @@ import { Badge } from '../components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { useToast } from '../hooks/use-toast'
 import { ConfirmAction } from '../components/confirm-action'
+import { QueryError } from '../components/query-error'
 
 interface PlatformCertConsumer {
   name: string
@@ -76,7 +77,7 @@ export function CertificatesPage() {
   const certFileRef = useRef<HTMLInputElement>(null)
   const keyFileRef = useRef<HTMLInputElement>(null)
 
-  const { data: certStatus, isLoading } = useQuery<PlatformCertHealthStatus>({
+  const { data: certStatus, isLoading, isError, error } = useQuery<PlatformCertHealthStatus>({
     queryKey: ['certificates-status'],
     queryFn: () => api.get('/api/v1/access/certificates/status'),
     refetchInterval: 15000,
@@ -162,6 +163,8 @@ export function CertificatesPage() {
       </div>
     )
   }
+
+  if (isError) return <QueryError error={error} resource="certificates" />
 
   const platform = certStatus?.platform
   const apisix = certStatus?.apisix
