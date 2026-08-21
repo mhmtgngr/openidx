@@ -13,6 +13,7 @@ import { Button } from '../components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
+import { QueryError } from '../components/query-error'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 import { ConfirmAction } from '../components/confirm-action'
@@ -106,7 +107,7 @@ export function ZitiAIInsightsPage() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
 
-  const { data: insights, isLoading } = useQuery({
+  const { data: insights, isLoading, isError, error } = useQuery({
     queryKey: ['ziti-ai-insights'],
     queryFn: async () => api.get<Insights>('/api/v1/access/ziti/ai/insights'),
   })
@@ -184,6 +185,10 @@ export function ZitiAIInsightsPage() {
         <LoadingSpinner />
       </div>
     )
+  }
+
+  if (isError) {
+    return <QueryError error={error} resource="Ziti AI insights" />
   }
 
   return (
