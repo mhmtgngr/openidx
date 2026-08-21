@@ -8,6 +8,7 @@ import { Badge } from '../components/ui/badge'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { ConfirmAction } from '../components/confirm-action'
+import { QueryError } from '../components/query-error'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 import { useAuth } from '../lib/auth'
@@ -44,7 +45,7 @@ export function SessionsAdminPage() {
   const [userIdFilter, setUserIdFilter] = useState('')
   const [activeOnly, setActiveOnly] = useState(true)
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error } = useQuery({
     queryKey: ['admin-sessions', isAdmin, userIdFilter, activeOnly],
     queryFn: () => {
       if (!isAdmin) {
@@ -186,6 +187,8 @@ export function SessionsAdminPage() {
               <LoadingSpinner size="lg" />
               <p className="mt-4 text-sm text-muted-foreground">Loading sessions...</p>
             </div>
+          ) : isError ? (
+            <QueryError error={error} resource="sessions" />
           ) : sessions.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
               <MonitorSmartphone className="h-12 w-12 text-muted-foreground/40 mb-3" />
