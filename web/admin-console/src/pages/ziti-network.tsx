@@ -30,6 +30,7 @@ import {
   DropdownMenuSeparator, DropdownMenuTrigger,
 } from '../components/ui/dropdown-menu'
 import { api } from '../lib/api'
+import { QueryError } from '../components/query-error'
 import { useToast } from '../hooks/use-toast'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -823,7 +824,7 @@ function ServicesTab() {
   // actually dialable, instead of a bare service object nobody can reach.
   const [form, setForm] = useState({ name: '', description: '', host: '', port: 8080, protocol: 'tcp', intercept_address: '', dial_roles: '' })
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error } = useQuery({
     queryKey: ['ziti-services'],
     queryFn: () => api.get<{ services: ZitiService[] }>('/api/v1/access/ziti/services'),
   })
@@ -895,6 +896,7 @@ function ServicesTab() {
   )
 
   if (isLoading) return <Spinner />
+  if (isError) return <QueryError error={error} resource="Ziti services" />
 
   return (
     <div className="space-y-4 mt-4">
