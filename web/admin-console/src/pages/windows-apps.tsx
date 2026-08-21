@@ -11,6 +11,7 @@ import { Textarea } from '../components/ui/textarea'
 import { Badge } from '../components/ui/badge'
 import { Checkbox } from '../components/ui/checkbox'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
+import { QueryError } from '../components/query-error'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../components/ui/dialog'
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -48,7 +49,7 @@ export function WindowsAppsPage() {
   const [importData, setImportData] = useState('')
   const [showPools, setShowPools] = useState(false)
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error } = useQuery({
     queryKey: ['windows-apps'],
     queryFn: () => api.windowsApps.list(),
   })
@@ -223,6 +224,8 @@ export function WindowsAppsPage() {
 
       {isLoading ? (
         <div className="flex justify-center py-12"><LoadingSpinner /></div>
+      ) : isError ? (
+        <QueryError error={error} resource="Windows apps" />
       ) : apps.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center space-y-3">
