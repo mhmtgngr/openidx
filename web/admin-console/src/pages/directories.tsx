@@ -54,6 +54,7 @@ import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { SecretField } from '../components/secret-field'
+import { QueryError } from '../components/query-error'
 
 interface DirectoryConfig {
   // LDAP fields
@@ -262,7 +263,7 @@ export function DirectoriesPage() {
   const [activeTab, setActiveTab] = useState<'connection' | 'search' | 'mapping' | 'sync'>('connection')
   const [syncLogsId, setSyncLogsId] = useState<string | null>(null)
 
-  const { data: directories = [], isLoading } = useQuery({
+  const { data: directories = [], isLoading, isError, error } = useQuery({
     queryKey: ['directories'],
     queryFn: () => api.get<DirectoryIntegration[]>('/api/v1/directories'),
   })
@@ -469,6 +470,8 @@ export function DirectoriesPage() {
   }
 
   if (isLoading) return <div className="flex justify-center p-8"><LoadingSpinner size="lg" /></div>
+
+  if (isError) return <QueryError error={error} resource="directory integrations" />
 
   // Inline error text for a field path (empty when no error).
   const FieldError = ({ path }: { path: string }) =>
