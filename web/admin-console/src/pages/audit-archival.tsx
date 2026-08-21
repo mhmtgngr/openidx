@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
 import { Button } from '../components/ui/button'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
+import { QueryError } from '../components/query-error'
 import { ConfirmAction } from '../components/confirm-action'
 import { Archive, Plus, Trash2, RotateCcw, Database, Shield } from 'lucide-react'
 
@@ -70,7 +71,7 @@ export function AuditArchivalPage() {
     queryFn: () => api.get<{ data: RetentionPolicy[] }>('/api/v1/audit-retention'),
   })
 
-  const { data: archivesData, isLoading: arcLoading } = useQuery({
+  const { data: archivesData, isLoading: arcLoading, isError: arcError, error: arcErrorObj } = useQuery({
     queryKey: ['audit-archives'],
     queryFn: () => api.get<{ data: AuditArchive[] }>('/api/v1/audit-archives'),
     refetchInterval: 5000,
@@ -114,6 +115,7 @@ export function AuditArchivalPage() {
 
   const isLoading = retLoading || arcLoading
   if (isLoading) return <div className="flex justify-center py-12"><LoadingSpinner size="lg" /></div>
+  if (arcError) return <QueryError error={arcErrorObj} resource="audit archives" />
 
   const retentionPolicies = retentionData?.data || []
   const archives = archivesData?.data || []
