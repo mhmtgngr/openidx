@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
 import { Button } from '../components/ui/button'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
+import { ConfirmAction } from '../components/confirm-action'
 import { Archive, Plus, Trash2, RotateCcw, Database, Shield } from 'lucide-react'
 
 interface RetentionPolicy {
@@ -219,9 +220,19 @@ export function AuditArchivalPage() {
                       <Button size="sm" variant="outline" onClick={() => toggleRetentionMutation.mutate({ id: p.id, enabled: !p.enabled })}>
                         {p.enabled ? 'Disable' : 'Enable'}
                       </Button>
-                      <Button size="sm" variant="ghost" onClick={() => deleteRetentionMutation.mutate(p.id)}>
-                        <Trash2 className="h-3 w-3" />
-                      </Button>
+                      <ConfirmAction
+                        title="Delete this retention policy?"
+                        description={`This removes the retention policy ${p.name}. Audit events in the ${p.event_category} category will no longer be governed by it.`}
+                        destructive
+                        confirmLabel="Delete"
+                        onConfirm={() => deleteRetentionMutation.mutateAsync(p.id)}
+                      >
+                        {(open) => (
+                          <Button size="sm" variant="ghost" onClick={open}>
+                            <Trash2 className="h-3 w-3" />
+                          </Button>
+                        )}
+                      </ConfirmAction>
                     </div>
                   </div>
                 ))}
@@ -288,9 +299,18 @@ export function AuditArchivalPage() {
                     </div>
                     <div className="flex gap-2">
                       {a.status === 'completed' && (
-                        <Button size="sm" variant="outline" onClick={() => restoreMutation.mutate(a.id)} disabled={restoreMutation.isPending}>
-                          <RotateCcw className="h-3 w-3 mr-1" />Restore
-                        </Button>
+                        <ConfirmAction
+                          title="Restore this archive?"
+                          description="This re-ingests the archived audit events back into the live audit store. Depending on the archive size this can take a while and add load to the system."
+                          confirmLabel="Restore"
+                          onConfirm={() => restoreMutation.mutateAsync(a.id)}
+                        >
+                          {(open) => (
+                            <Button size="sm" variant="outline" onClick={open} disabled={restoreMutation.isPending}>
+                              <RotateCcw className="h-3 w-3 mr-1" />Restore
+                            </Button>
+                          )}
+                        </ConfirmAction>
                       )}
                     </div>
                   </div>
