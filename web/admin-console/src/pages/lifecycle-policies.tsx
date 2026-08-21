@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
 import { Button } from '../components/ui/button'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
+import { QueryError } from '../components/query-error'
 import { Trash2, Plus, Play, Eye, Clock, UserMinus, CheckCircle, AlertTriangle } from 'lucide-react'
 import { ConfirmAction } from '../components/confirm-action'
 
@@ -67,7 +68,7 @@ export function LifecyclePoliciesPage() {
   const [formSchedule, setFormSchedule] = useState('daily')
   const [formGrace, setFormGrace] = useState(7)
 
-  const { data: policiesData, isLoading } = useQuery({
+  const { data: policiesData, isLoading, isError, error } = useQuery({
     queryKey: ['lifecycle-policies'],
     queryFn: () => api.get<{ data: LifecyclePolicy[] }>('/api/v1/lifecycle-policies'),
   })
@@ -128,6 +129,8 @@ export function LifecyclePoliciesPage() {
   }
 
   if (isLoading) return <div className="flex justify-center py-12"><LoadingSpinner size="lg" /></div>
+
+  if (isError) return <QueryError error={error} resource="lifecycle policies" />
 
   const policies = policiesData?.data || []
   const executions = executionsData?.data || []
