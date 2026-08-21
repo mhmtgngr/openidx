@@ -25,6 +25,7 @@ import { Textarea } from '../components/ui/textarea'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
+import { ConfirmAction } from '../components/confirm-action'
 
 interface BypassCode {
   id: string
@@ -289,14 +290,24 @@ export function MFABypassCodesPage() {
                       </td>
                       <td className="py-3 px-2">
                         {code.status === 'active' && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => revokeMutation.mutate(code.id)}
-                            className="text-red-600"
+                          <ConfirmAction
+                            title="Revoke this MFA bypass code?"
+                            description={`This immediately revokes the active MFA bypass code for ${code.user_email}. The code can no longer be used to skip MFA. This cannot be undone.`}
+                            destructive
+                            confirmLabel="Revoke"
+                            onConfirm={() => revokeMutation.mutateAsync(code.id)}
                           >
-                            <Ban className="h-4 w-4" />
-                          </Button>
+                            {(open) => (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={open}
+                                className="text-red-600"
+                              >
+                                <Ban className="h-4 w-4" />
+                              </Button>
+                            )}
+                          </ConfirmAction>
                         )}
                       </td>
                     </tr>
