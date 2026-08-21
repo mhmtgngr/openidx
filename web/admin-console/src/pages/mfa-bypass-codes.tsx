@@ -23,6 +23,7 @@ import {
 import { Label } from '../components/ui/label'
 import { Textarea } from '../components/ui/textarea'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
+import { QueryError } from '../components/query-error'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 import { ConfirmAction } from '../components/confirm-action'
@@ -75,7 +76,7 @@ export function MFABypassCodesPage() {
   })
 
   // Fetch codes
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error } = useQuery({
     queryKey: ['bypass-codes', statusFilter, userFilter],
     queryFn: async () => {
       const params = new URLSearchParams()
@@ -256,6 +257,8 @@ export function MFABypassCodesPage() {
             <div className="flex justify-center py-8">
               <LoadingSpinner size="lg" />
             </div>
+          ) : isError ? (
+            <QueryError error={error} resource="MFA bypass codes" />
           ) : codes.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
               <Key className="h-12 w-12 mx-auto mb-3 opacity-40" />
