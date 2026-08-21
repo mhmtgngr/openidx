@@ -37,6 +37,7 @@ import {
 } from '../components/ui/table'
 import { KeyRound, Plus, Copy, Eye, Trash2, RefreshCw, Shield, X } from 'lucide-react'
 import { useToast } from '../hooks/use-toast'
+import { ConfirmAction } from '../components/confirm-action'
 import { useRevealedSecret, copyWithWarning } from '../lib/secret-reveal'
 
 const typeColors: Record<string, string> = {
@@ -435,16 +436,26 @@ export function VaultSecretsPage() {
                 {detail?.name || 'Loading...'}
               </span>
               <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => rotateNowMutation.mutate()}
-                  disabled={rotateNowMutation.isPending}
-                  data-testid="rotate-now-btn"
+                <ConfirmAction
+                  title="Rotate this secret now?"
+                  description="The current value is replaced immediately. Any dependents must be updated to use the new value or they will start failing."
+                  destructive
+                  confirmLabel="Rotate"
+                  onConfirm={() => rotateNowMutation.mutate()}
                 >
-                  <RefreshCw className="h-3 w-3 mr-1" />
-                  {rotateNowMutation.isPending ? 'Rotating...' : 'Rotate now'}
-                </Button>
+                  {(open) => (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={open}
+                      disabled={rotateNowMutation.isPending}
+                      data-testid="rotate-now-btn"
+                    >
+                      <RefreshCw className="h-3 w-3 mr-1" />
+                      {rotateNowMutation.isPending ? 'Rotating...' : 'Rotate now'}
+                    </Button>
+                  )}
+                </ConfirmAction>
                 <Button variant="outline" size="sm" onClick={() => setShowReveal(true)}>
                   <Eye className="h-3 w-3 mr-1" />
                   Reveal
