@@ -9,6 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
+import { QueryError } from '../components/query-error'
 import { ConfirmAction } from '../components/confirm-action'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
@@ -61,7 +62,7 @@ export function TenantManagementPage() {
 
   // Backend returns a bare JSON array (with X-Total-Count), not { data: [...] };
   // reading orgsData.data left the tenant picker permanently empty.
-  const { data: orgsData } = useQuery({
+  const { data: orgsData, isError: orgsError, error: orgsErrorObj } = useQuery({
     queryKey: ['organizations'],
     queryFn: () => api.get<Organization[]>('/api/v1/organizations'),
   })
@@ -143,6 +144,8 @@ export function TenantManagementPage() {
           <p className="text-muted-foreground">Configure branding, settings, and domains per organization</p>
         </div>
       </div>
+
+      {orgsError && <QueryError error={orgsErrorObj} resource="organizations" />}
 
       <div className="space-y-2">
         <label className="text-sm font-medium">Organization</label>
