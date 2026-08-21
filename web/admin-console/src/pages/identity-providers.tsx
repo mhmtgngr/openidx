@@ -55,6 +55,7 @@ import {
 import { api, IdentityProvider } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
+import { QueryError } from '../components/query-error'
 import { SecretField } from '../components/secret-field'
 
 interface ProviderFormData {
@@ -93,7 +94,7 @@ export function IdentityProvidersPage() {
   const [totalCount, setTotalCount] = useState(0)
   const PAGE_SIZE = 20
 
-  const { data: providers, isLoading } = useQuery({
+  const { data: providers, isLoading, isError, error } = useQuery({
     queryKey: ['identity-providers', page, search],
     queryFn: async () => {
       const params = new URLSearchParams()
@@ -223,6 +224,10 @@ export function IdentityProvidersPage() {
         <LoadingSpinner />
       </div>
     )
+  }
+
+  if (isError) {
+    return <QueryError error={error} resource="identity providers" />
   }
 
   const formContent = (
