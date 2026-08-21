@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
 import { Button } from '../components/ui/button'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
+import { QueryError } from '../components/query-error'
 import { ConfirmAction } from '../components/confirm-action'
 import { Bot, Plus, RotateCw, Pause, Play, Trash2, Shield, Activity, Key, Clock } from 'lucide-react'
 
@@ -73,7 +74,7 @@ export function AIAgentsPage() {
   const [newAgent, setNewAgent] = useState({ name: '', description: '', agent_type: 'assistant', trust_level: 'low' })
   const [newApiKey, setNewApiKey] = useState<string | null>(null)
 
-  const { data: agentsData, isLoading } = useQuery({
+  const { data: agentsData, isLoading, isError, error } = useQuery({
     queryKey: ['ai-agents'],
     queryFn: () => api.get<{ data: AIAgent[]; total: number }>('/api/v1/ai-agents'),
   })
@@ -135,6 +136,10 @@ export function AIAgentsPage() {
 
   if (isLoading) {
     return <div className="flex justify-center py-12"><LoadingSpinner size="lg" /></div>
+  }
+
+  if (isError) {
+    return <QueryError error={error} resource="AI agents" />
   }
 
   const agents = agentsData?.data || []
