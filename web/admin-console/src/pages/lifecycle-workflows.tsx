@@ -41,6 +41,7 @@ import { Textarea } from '../components/ui/textarea'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
+import { ConfirmAction } from '../components/confirm-action'
 
 interface LifecycleWorkflow {
   id: string
@@ -374,9 +375,22 @@ export function LifecycleWorkflowsPage() {
                               }}>
                                 <Eye className="h-4 w-4 mr-2" /> View History
                               </DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => deleteMutation.mutate(wf.id)} className="text-red-600">
-                                <Trash2 className="h-4 w-4 mr-2" /> Delete
-                              </DropdownMenuItem>
+                              <ConfirmAction
+                                title="Delete this workflow?"
+                                description={`This permanently deletes the "${wf.name}" lifecycle workflow and its trigger configuration. Any automation tied to it will stop running. This cannot be undone.`}
+                                destructive
+                                confirmLabel="Delete"
+                                onConfirm={() => deleteMutation.mutateAsync(wf.id)}
+                              >
+                                {(open) => (
+                                  <DropdownMenuItem
+                                    onSelect={(e) => { e.preventDefault(); open() }}
+                                    className="text-red-600"
+                                  >
+                                    <Trash2 className="h-4 w-4 mr-2" /> Delete
+                                  </DropdownMenuItem>
+                                )}
+                              </ConfirmAction>
                             </DropdownMenuContent>
                           </DropdownMenu>
                         </td>
