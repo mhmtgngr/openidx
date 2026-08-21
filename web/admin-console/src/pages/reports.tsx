@@ -9,6 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
 import { api } from '../lib/api'
+import { ConfirmAction } from '../components/confirm-action'
 import { useToast } from '../hooks/use-toast'
 
 interface ReportExport {
@@ -244,7 +245,17 @@ export function ReportsPage() {
                       <TableCell>
                         <div className="flex gap-1">
                           <Button variant="ghost" size="sm" onClick={() => openSchedule(s)}><Pencil className="h-4 w-4" /></Button>
-                          <Button variant="ghost" size="sm" onClick={() => deleteScheduleMutation.mutate(s.id)}><Trash2 className="h-4 w-4 text-red-500" /></Button>
+                          <ConfirmAction
+                            title="Delete this scheduled report?"
+                            description={`This removes the scheduled report ${s.name}. It will no longer run on its schedule.`}
+                            destructive
+                            confirmLabel="Delete"
+                            onConfirm={() => deleteScheduleMutation.mutateAsync(s.id)}
+                          >
+                            {(open) => (
+                              <Button variant="ghost" size="sm" onClick={open}><Trash2 className="h-4 w-4 text-red-500" /></Button>
+                            )}
+                          </ConfirmAction>
                         </div>
                       </TableCell>
                     </TableRow>
