@@ -14,7 +14,11 @@ export function SessionExpiredDialog({ open, onSignIn }: SessionExpiredDialogPro
   if (!open) return null
   return (
     <Dialog open={open}>
-      <DialogContent onPointerDownOutside={(e) => e.preventDefault()} onEscapeKeyDown={(e) => e.preventDefault()}>
+      <DialogContent
+        className="[&>button]:hidden"
+        onPointerDownOutside={(e) => e.preventDefault()}
+        onEscapeKeyDown={(e) => e.preventDefault()}
+      >
         <DialogHeader>
           <DialogTitle>Your session ended</DialogTitle>
           <DialogDescription>Please sign in again to continue.</DialogDescription>

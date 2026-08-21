@@ -10,7 +10,7 @@ export function setAuthExpiredHandler(fn: (() => void) | null) {
 }
 export function notifyAuthExpired(url: string | undefined) {
   const u = url || ''
-  const exempt = u.includes('/oauth/') || u.includes('/token') || u.endsWith('/login')
+  const exempt = u.includes('/oauth/') || u.endsWith('/login')
   if (!exempt && authExpiredHandler) authExpiredHandler()
 }
 
