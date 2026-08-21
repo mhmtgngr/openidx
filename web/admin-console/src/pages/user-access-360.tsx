@@ -14,6 +14,7 @@ import { Textarea } from '../components/ui/textarea'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog'
 import { api } from '../lib/api'
+import { ConfirmAction } from '../components/confirm-action'
 import { useToast } from '../hooks/use-toast'
 
 interface NamedRef { id: string; name: string }
@@ -197,8 +198,8 @@ export function UserAccess360Page() {
   })
 
   const revokeDeviceMutation = useMutation({
-    mutationFn: (agentId: string) =>
-      api.post<DeviceRevokeResult>(`/api/v1/access/users/${id}/devices/${agentId}/revoke`, { reason: 'admin action' }),
+    mutationFn: ({ agentId, reason }: { agentId: string; reason: string }) =>
+      api.post<DeviceRevokeResult>(`/api/v1/access/users/${id}/devices/${agentId}/revoke`, { reason }),
     onSuccess: (res) => {
       queryClient.invalidateQueries({ queryKey: ['user-devices', id] })
       queryClient.invalidateQueries({ queryKey: ['user-access-map', id] })
@@ -600,11 +601,22 @@ export function UserAccess360Page() {
                       )}
                     </div>
                     {d.ziti && d.ziti.status !== 'revoked' && (
-                      <Button variant="outline" size="sm" className="shrink-0 text-red-600 hover:text-red-700"
-                        disabled={revokeDeviceMutation.isPending}
-                        onClick={() => revokeDeviceMutation.mutate(d.ziti!.agent_id)}>
-                        <Ban className="mr-1 h-3.5 w-3.5" />Revoke
-                      </Button>
+                      <ConfirmAction
+                        title="Revoke this device's access?"
+                        description="This severs the device's Ziti network sessions and revokes its access. The user may need to re-enroll the device to regain access."
+                        destructive
+                        requireReason
+                        confirmLabel="Revoke"
+                        onConfirm={(reason) => revokeDeviceMutation.mutateAsync({ agentId: d.ziti!.agent_id, reason: reason || '' })}
+                      >
+                        {(open) => (
+                          <Button variant="outline" size="sm" className="shrink-0 text-red-600 hover:text-red-700"
+                            disabled={revokeDeviceMutation.isPending}
+                            onClick={open}>
+                            <Ban className="mr-1 h-3.5 w-3.5" />Revoke
+                          </Button>
+                        )}
+                      </ConfirmAction>
                     )}
                   </div>
                 )
