@@ -55,6 +55,7 @@ import {
 import { api, IdentityProvider } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
+import { SecretField } from '../components/secret-field'
 
 interface ProviderFormData {
   name: string
@@ -62,6 +63,7 @@ interface ProviderFormData {
   issuer_url: string
   client_id: string
   client_secret: string
+  client_secret_changed: boolean
   scopes: string
   enabled: boolean
 }
@@ -72,6 +74,7 @@ const emptyForm: ProviderFormData = {
   issuer_url: '',
   client_id: '',
   client_secret: '',
+  client_secret_changed: false,
   scopes: 'openid,profile,email',
   enabled: true,
 }
@@ -134,7 +137,9 @@ export function IdentityProvidersPage() {
         provider_type: data.provider_type,
         issuer_url: data.issuer_url,
         client_id: data.client_id,
-        client_secret: data.client_secret,
+        // Only transmit a new client_secret when the user actually typed one;
+        // otherwise omit it so the stored secret is preserved.
+        client_secret: data.client_secret_changed ? data.client_secret : undefined,
         scopes: data.scopes.split(',').map((s) => s.trim()).filter(Boolean),
         enabled: data.enabled,
       }),
@@ -168,6 +173,7 @@ export function IdentityProvidersPage() {
       issuer_url: template.issuer_url,
       client_id: '',
       client_secret: '',
+      client_secret_changed: false,
       scopes: template.scopes,
       enabled: true,
     })
@@ -187,7 +193,9 @@ export function IdentityProvidersPage() {
       provider_type: provider.provider_type,
       issuer_url: provider.issuer_url,
       client_id: provider.client_id,
-      client_secret: provider.client_secret,
+      // Never prefill a stored secret into the form; start blank on edit.
+      client_secret: '',
+      client_secret_changed: false,
       scopes: (provider.scopes || []).join(', '),
       enabled: provider.enabled,
     })
@@ -263,11 +271,11 @@ export function IdentityProvidersPage() {
       </div>
       <div>
         <Label htmlFor="client_secret">Client Secret</Label>
-        <Input
+        <SecretField
           id="client_secret"
-          type="password"
+          mode={editModal ? 'edit' : 'create'}
           value={formData.client_secret}
-          onChange={(e) => setFormData({ ...formData, client_secret: e.target.value })}
+          onChange={(v, changed) => setFormData({ ...formData, client_secret: v, client_secret_changed: changed })}
           placeholder="Client secret"
         />
       </div>
