@@ -32,6 +32,7 @@ import {
 import { api } from '../lib/api'
 import { QueryError } from '../components/query-error'
 import { useToast } from '../hooks/use-toast'
+import { ConfirmAction } from '../components/confirm-action'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -2968,9 +2969,19 @@ function CertificatesSection() {
                   <span className="text-yellow-700">
                     {cert.days_until_expiry < 0 ? `Expired ${Math.abs(cert.days_until_expiry)} days ago` : `${cert.days_until_expiry} days left`}
                   </span>
-                  <Button variant="outline" size="sm" onClick={() => rotateMutation.mutate(cert.id)} disabled={rotateMutation.isPending}>
-                    Rotate
-                  </Button>
+                  <ConfirmAction
+                    title="Rotate this certificate?"
+                    description="A new Ziti certificate is issued and the old certificate stops working once rotated. Any component still presenting the old certificate will fail until it picks up the new one."
+                    destructive
+                    confirmLabel="Rotate"
+                    onConfirm={() => rotateMutation.mutate(cert.id)}
+                  >
+                    {(open) => (
+                      <Button variant="outline" size="sm" onClick={open} disabled={rotateMutation.isPending}>
+                        Rotate
+                      </Button>
+                    )}
+                  </ConfirmAction>
                 </div>
               </div>
             ))}
@@ -3015,9 +3026,19 @@ function CertificatesSection() {
                         }}>
                           <Copy className="mr-2 h-4 w-4" /> Copy Fingerprint
                         </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => rotateMutation.mutate(cert.id)}>
-                          <RefreshCw className="mr-2 h-4 w-4" /> Rotate
-                        </DropdownMenuItem>
+                        <ConfirmAction
+                          title="Rotate this certificate?"
+                          description="A new Ziti certificate is issued and the old certificate stops working once rotated. Any component still presenting the old certificate will fail until it picks up the new one."
+                          destructive
+                          confirmLabel="Rotate"
+                          onConfirm={() => rotateMutation.mutate(cert.id)}
+                        >
+                          {(open) => (
+                            <DropdownMenuItem onSelect={(e) => { e.preventDefault(); open() }}>
+                              <RefreshCw className="mr-2 h-4 w-4" /> Rotate
+                            </DropdownMenuItem>
+                          )}
+                        </ConfirmAction>
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </TableCell>
