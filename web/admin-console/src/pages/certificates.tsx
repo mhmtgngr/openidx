@@ -11,6 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { useToast } from '../hooks/use-toast'
+import { ConfirmAction } from '../components/confirm-action'
 
 interface PlatformCertConsumer {
   name: string
@@ -312,15 +313,26 @@ export function CertificatesPage() {
                   Upload Certificate
                 </Button>
                 {platform?.cert_type === 'custom' && (
-                  <Button
-                    onClick={() => revertMutation.mutate()}
-                    disabled={revertMutation.isPending}
-                    variant="outline"
-                    className="gap-2"
+                  <ConfirmAction
+                    title="Revert to self-signed certificate?"
+                    description="This removes the uploaded CA-signed platform TLS certificate and restores the auto-generated self-signed certificate. Every platform TLS consumer (APISIX, OAuth proxy, Ziti controller/router) will serve the self-signed cert, and clients that pinned or trusted the CA-signed cert will see TLS errors until reconfigured. This cannot be undone without re-uploading the certificate."
+                    destructive
+                    requireReason
+                    confirmLabel="Revert to Self-Signed"
+                    onConfirm={() => revertMutation.mutateAsync()}
                   >
-                    <Trash2 className="h-4 w-4" />
-                    Revert to Self-Signed
-                  </Button>
+                    {(open) => (
+                      <Button
+                        onClick={open}
+                        disabled={revertMutation.isPending}
+                        variant="outline"
+                        className="gap-2"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                        Revert to Self-Signed
+                      </Button>
+                    )}
+                  </ConfirmAction>
                 )}
               </div>
             </CardContent>
