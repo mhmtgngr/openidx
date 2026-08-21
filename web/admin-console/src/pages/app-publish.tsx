@@ -40,6 +40,7 @@ import {
   DialogDescription,
 } from '../components/ui/dialog'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
+import { ConfirmAction } from '../components/confirm-action'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 
@@ -444,14 +445,24 @@ export function AppPublishPage() {
                         <ExternalLink className="h-4 w-4 mr-1" />
                         {app.public_host ? 'Published' : 'Publish App'}
                       </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="text-red-600 ml-auto"
-                        onClick={() => deleteApp.mutate(app.id)}
+                      <ConfirmAction
+                        title="Delete this app?"
+                        description={`This permanently removes ${app.name} and its published access configuration. This cannot be undone.`}
+                        destructive
+                        confirmLabel="Delete"
+                        onConfirm={() => deleteApp.mutateAsync(app.id)}
                       >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                        {(open) => (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="text-red-600 ml-auto"
+                            onClick={open}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        )}
+                      </ConfirmAction>
                     </div>
                   </CardContent>
                 </Card>
