@@ -81,13 +81,8 @@ jobs:
         run: |
           bash scripts/check-query-error-coverage.sh --enforce
           bash scripts/check-destructive-confirm.sh --enforce
-      # Design-system guards are advisory for now: they run in WARN mode (no
-      # --enforce) so the existing offender backlog doesn't red the build, but
-      # the counts are printed on every run so new regressions are visible.
-      - name: Design-system guards (warn only)
-        run: |
-          bash scripts/check-no-raw-neutral-literals.sh
-          bash scripts/check-no-handrolled-tables.sh
+          bash scripts/check-no-raw-neutral-literals.sh --enforce
+          bash scripts/check-no-handrolled-tables.sh --enforce
 
   # The fault matrix used to run only on a developer's machine, which is the
   # same defect the prose checker had: a gate nobody runs cannot fail, so the
