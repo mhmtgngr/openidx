@@ -152,7 +152,7 @@ export function AIIdentityIntelligencePage() {
         <Card>
           <CardHeader className="pb-2">
             <CardDescription>MFA Coverage</CardDescription>
-            <CardTitle className="text-2xl text-blue-600">
+            <CardTitle className="text-2xl text-primary">
               {(overview?.mfa_coverage_pct ?? 0).toFixed(0)}%
             </CardTitle>
           </CardHeader>
