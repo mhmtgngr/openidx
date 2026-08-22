@@ -263,7 +263,7 @@ export function RolesPage() {
         <CardHeader>
           <div className="flex items-center gap-4">
             <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500" />
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 placeholder="Search roles..."
                 value={search}
@@ -291,7 +291,7 @@ export function RolesPage() {
           <div className="rounded-md border">
             <table className="w-full">
               <thead>
-                <tr className="border-b bg-gray-50">
+                <tr className="border-b bg-muted">
                   <th className="p-3 text-left text-sm font-medium">Role</th>
                   <th className="p-3 text-left text-sm font-medium">Description</th>
                   <th className="p-3 text-left text-sm font-medium">Type</th>
@@ -301,7 +301,7 @@ export function RolesPage() {
               </thead>
               <tbody>
                 {filteredRoles.map((role) => (
-                    <tr key={role.id} className="border-b hover:bg-gray-50">
+                    <tr key={role.id} className="border-b hover:bg-muted">
                       <td className="p-3">
                         <div className="flex items-center gap-3">
                           <div className="h-10 w-10 rounded-full bg-purple-100 flex items-center justify-center">
@@ -312,7 +312,7 @@ export function RolesPage() {
                           </div>
                         </div>
                       </td>
-                      <td className="p-3 text-gray-600">
+                      <td className="p-3 text-muted-foreground">
                         {role.description || '-'}
                       </td>
                       <td className="p-3">
@@ -320,7 +320,7 @@ export function RolesPage() {
                           {role.is_composite ? 'Composite' : 'Simple'}
                         </Badge>
                       </td>
-                      <td className="p-3 text-gray-500">
+                      <td className="p-3 text-muted-foreground">
                         {new Date(role.created_at).toLocaleDateString()}
                       </td>
                       <td className="p-3 text-right">
@@ -366,7 +366,7 @@ export function RolesPage() {
           {/* Pagination Controls */}
           {totalCount > PAGE_SIZE && (
             <div className="flex items-center justify-between pt-4 px-1">
-              <p className="text-sm text-gray-500">
+              <p className="text-sm text-muted-foreground">
                 Showing {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, totalCount)} of {totalCount} roles
               </p>
               <div className="flex items-center gap-2">
@@ -379,7 +379,7 @@ export function RolesPage() {
                   <ChevronLeft className="h-4 w-4 mr-1" />
                   Previous
                 </Button>
-                <span className="text-sm text-gray-600">
+                <span className="text-sm text-muted-foreground">
                   Page {page + 1} of {Math.ceil(totalCount / PAGE_SIZE)}
                 </span>
                 <Button
@@ -545,7 +545,7 @@ export function RolesPage() {
                           <Label htmlFor={`perm-${perm.id}`} className="text-sm font-normal">
                             {perm.name}
                             {perm.description && (
-                              <span className="text-gray-500 ml-1">- {perm.description}</span>
+                              <span className="text-muted-foreground ml-1">- {perm.description}</span>
                             )}
                           </Label>
                         </div>
