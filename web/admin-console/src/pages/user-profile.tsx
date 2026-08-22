@@ -604,7 +604,7 @@ export function UserProfilePage() {
                     <CardDescription>Scan QR code or enter secret manually</CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-6">
-                    <div className="flex justify-center bg-white p-8 rounded-lg border">
+                    <div className="flex justify-center bg-background p-8 rounded-lg border">
                       <QRCodeSVG
                         value={mfaSetup.qrCodeUrl}
                         size={320}
@@ -961,11 +961,11 @@ export function UserProfilePage() {
                     <div
                       key={browser.id}
                       className={`flex items-center justify-between p-3 border rounded-lg ${
-                        browser.active ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200 opacity-60'
+                        browser.active ? 'bg-green-50 border-green-200' : 'bg-muted border-border opacity-60'
                       }`}
                     >
                       <div className="flex items-center gap-3">
-                        <Globe className={`h-5 w-5 ${browser.active ? 'text-green-600' : 'text-gray-400'}`} />
+                        <Globe className={`h-5 w-5 ${browser.active ? 'text-green-600' : 'text-muted-foreground'}`} />
                         <div>
                           <p className="font-medium">{browser.name}</p>
                           <p className="text-xs text-muted-foreground">
@@ -1196,7 +1196,7 @@ export function UserProfilePage() {
                   <div className="space-y-2 flex-1">
                     <p className="font-medium text-amber-900">Copy this token now. You won't be able to see it again.</p>
                     <div className="flex items-center gap-2">
-                      <code className="flex-1 bg-white border border-amber-200 px-3 py-2 rounded text-sm font-mono break-all select-all">
+                      <code className="flex-1 bg-background border border-amber-200 px-3 py-2 rounded text-sm font-mono break-all select-all">
                         {createdRawToken}
                       </code>
                       <Button
