@@ -21,6 +21,7 @@ import {
 import { Label } from '../components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '../components/ui/table'
 import { QueryError } from '../components/query-error'
 import { api } from '../lib/api'
 import {
@@ -411,21 +412,21 @@ export function ApplicationsPage() {
             </div>
           ) : (
           <div className="rounded-md border">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b bg-muted">
-                  <th className="p-3 text-left text-sm font-medium">Application</th>
-                  <th className="p-3 text-left text-sm font-medium">Client ID</th>
-                  <th className="p-3 text-left text-sm font-medium">Type</th>
-                  <th className="p-3 text-left text-sm font-medium">Protocol</th>
-                  <th className="p-3 text-left text-sm font-medium">Status</th>
-                  <th className="p-3 text-right text-sm font-medium">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
+            <Table>
+              <TableHeader>
+                <TableRow className="border-b bg-muted">
+                  <TableHead className="p-3 text-left text-sm font-medium">Application</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">Client ID</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">Type</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">Protocol</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">Status</TableHead>
+                  <TableHead className="p-3 text-right text-sm font-medium">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {filteredApps.map((app) => (
-                    <tr key={app.id} className="border-b hover:bg-muted">
-                      <td className="p-3">
+                    <TableRow key={app.id} className="border-b hover:bg-muted">
+                      <TableCell className="p-3">
                         <div className="flex items-center gap-3">
                           <div className={`h-10 w-10 rounded-lg ${typeColors[app.type] || 'bg-muted'} flex items-center justify-center`}>
                             {typeIcons[app.type] || <Globe className="h-5 w-5 text-foreground" />}
@@ -435,24 +436,24 @@ export function ApplicationsPage() {
                             <p className="text-sm text-muted-foreground max-w-xs truncate">{app.description || '-'}</p>
                           </div>
                         </div>
-                      </td>
-                      <td className="p-3">
+                      </TableCell>
+                      <TableCell className="p-3">
                         <code className="text-sm bg-muted px-2 py-1 rounded">{app.client_id}</code>
-                      </td>
-                      <td className="p-3">
+                      </TableCell>
+                      <TableCell className="p-3">
                         <Badge variant="outline" className="capitalize">
                           {app.type}
                         </Badge>
-                      </td>
-                      <td className="p-3">
+                      </TableCell>
+                      <TableCell className="p-3">
                         <span className="text-sm text-muted-foreground uppercase">{app.protocol}</span>
-                      </td>
-                      <td className="p-3">
+                      </TableCell>
+                      <TableCell className="p-3">
                         <Badge variant={app.enabled ? 'default' : 'secondary'}>
                           {app.enabled ? 'Active' : 'Disabled'}
                         </Badge>
-                      </td>
-                      <td className="p-3 text-right">
+                      </TableCell>
+                      <TableCell className="p-3 text-right">
                         <div className="flex items-center justify-end gap-1">
                           {app.base_url && (
                             <Button variant="ghost" size="icon" asChild>
@@ -500,12 +501,12 @@ export function ApplicationsPage() {
                             </DropdownMenuContent>
                           </DropdownMenu>
                         </div>
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   ))
                 }
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </div>
           )}
 
