@@ -461,7 +461,7 @@ export function GroupsPage() {
         <CardHeader>
           <div className="flex items-center gap-4">
             <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500" />
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 placeholder="Search groups..."
                 value={search}
@@ -489,7 +489,7 @@ export function GroupsPage() {
           <div className="rounded-md border">
             <table className="w-full">
               <thead>
-                <tr className="border-b bg-gray-50">
+                <tr className="border-b bg-muted">
                   <th className="p-3 text-left text-sm font-medium">Group</th>
                   <th className="p-3 text-left text-sm font-medium">Description</th>
                   <th className="p-3 text-left text-sm font-medium">Members</th>
@@ -501,7 +501,7 @@ export function GroupsPage() {
               </thead>
               <tbody>
                 {filteredGroups.map((group) => (
-                    <tr key={group.id} className="border-b hover:bg-gray-50">
+                    <tr key={group.id} className="border-b hover:bg-muted">
                       <td className="p-3">
                         <div className="flex items-center gap-3">
                           <div className="h-10 w-10 rounded-lg bg-purple-100 flex items-center justify-center">
@@ -514,7 +514,7 @@ export function GroupsPage() {
                           <div>
                             <p className="font-medium">{group.name}</p>
                             {group.parent_id && (
-                              <p className="text-xs text-gray-500 flex items-center gap-1">
+                              <p className="text-xs text-muted-foreground flex items-center gap-1">
                                 <ChevronRight className="h-3 w-3" />
                                 {getGroupHierarchy(group)}
                               </p>
@@ -522,15 +522,15 @@ export function GroupsPage() {
                           </div>
                         </div>
                       </td>
-                      <td className="p-3 text-gray-600 max-w-xs truncate">
+                      <td className="p-3 text-muted-foreground max-w-xs truncate">
                         {group.description || '-'}
                       </td>
                       <td className="p-3">
                         <div className="flex items-center gap-2">
-                          <Users className="h-4 w-4 text-gray-400" />
+                          <Users className="h-4 w-4 text-muted-foreground" />
                           <span>{group.member_count}</span>
                           {group.max_members && (
-                            <span className="text-gray-400">/ {group.max_members}</span>
+                            <span className="text-muted-foreground">/ {group.max_members}</span>
                           )}
                         </div>
                       </td>
@@ -552,7 +552,7 @@ export function GroupsPage() {
                           </Badge>
                         </div>
                       </td>
-                      <td className="p-3 text-gray-500">
+                      <td className="p-3 text-muted-foreground">
                         {new Date(group.created_at).toLocaleDateString()}
                       </td>
                       <td className="p-3 text-right">
@@ -597,7 +597,7 @@ export function GroupsPage() {
           {/* Pagination Controls */}
           {totalCount > PAGE_SIZE && (
             <div className="flex items-center justify-between pt-4 px-1">
-              <p className="text-sm text-gray-500">
+              <p className="text-sm text-muted-foreground">
                 Showing {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, totalCount)} of {totalCount} groups
               </p>
               <div className="flex items-center gap-2">
@@ -610,7 +610,7 @@ export function GroupsPage() {
                   <ChevronLeft className="h-4 w-4 mr-1" />
                   Previous
                 </Button>
-                <span className="text-sm text-gray-600">
+                <span className="text-sm text-muted-foreground">
                   Page {page + 1} of {Math.ceil(totalCount / PAGE_SIZE)}
                 </span>
                 <Button
@@ -768,7 +768,7 @@ export function GroupsPage() {
             <div className="space-y-2">
               <Label>Add Member</Label>
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500" />
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   placeholder="Search users by name or email..."
                   value={userSearchQuery}
@@ -776,19 +776,19 @@ export function GroupsPage() {
                   className="pl-9"
                 />
               </div>
-              {searchingUsers && <p className="text-sm text-gray-500">Searching...</p>}
+              {searchingUsers && <p className="text-sm text-muted-foreground">Searching...</p>}
               {availableUsers && availableUsers.length > 0 && (
                 <div className="border rounded-md max-h-40 overflow-y-auto">
                   {availableUsers.map((user) => (
                     <div
                       key={user.id}
-                      className="flex items-center justify-between p-2 hover:bg-gray-50 border-b last:border-b-0"
+                      className="flex items-center justify-between p-2 hover:bg-muted border-b last:border-b-0"
                     >
                       <div>
                         <p className="text-sm font-medium">
                           {user.first_name} {user.last_name}
                         </p>
-                        <p className="text-xs text-gray-500">{user.email}</p>
+                        <p className="text-xs text-muted-foreground">{user.email}</p>
                       </div>
                       <Button
                         size="sm"
@@ -802,7 +802,7 @@ export function GroupsPage() {
                 </div>
               )}
               {debouncedUserSearch.length >= 2 && availableUsers?.length === 0 && !searchingUsers && (
-                <p className="text-sm text-gray-500">No users found</p>
+                <p className="text-sm text-muted-foreground">No users found</p>
               )}
             </div>
 
@@ -812,7 +812,7 @@ export function GroupsPage() {
                 <Label>Current Members ({groupMembers?.length || 0})</Label>
                 {(groupMembers?.length || 0) > 5 && (
                   <div className="relative w-48">
-                    <Search className="absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-gray-500" />
+                    <Search className="absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
                     <Input
                       placeholder="Filter members..."
                       value={memberSearch}
@@ -824,20 +824,20 @@ export function GroupsPage() {
               </div>
               <div className="border rounded-md max-h-60 overflow-y-auto">
                 {membersLoading ? (
-                  <p className="p-4 text-center text-sm text-gray-500">Loading members...</p>
+                  <p className="p-4 text-center text-sm text-muted-foreground">Loading members...</p>
                 ) : filteredMembers?.length === 0 ? (
-                  <p className="p-4 text-center text-sm text-gray-500">
+                  <p className="p-4 text-center text-sm text-muted-foreground">
                     {memberSearch ? 'No members match your search' : 'No members in this group'}
                   </p>
                 ) : (
                   filteredMembers?.map((member) => (
                     <div
                       key={member.user_id}
-                      className="flex items-center justify-between p-2 hover:bg-gray-50 border-b last:border-b-0"
+                      className="flex items-center justify-between p-2 hover:bg-muted border-b last:border-b-0"
                     >
                       <div className="flex items-center gap-3">
-                        <div className="h-8 w-8 rounded-full bg-gray-200 flex items-center justify-center">
-                          <span className="text-sm font-medium text-gray-600">
+                        <div className="h-8 w-8 rounded-full bg-muted flex items-center justify-center">
+                          <span className="text-sm font-medium text-muted-foreground">
                             {member.first_name?.[0] || member.username[0].toUpperCase()}
                           </span>
                         </div>
@@ -845,7 +845,7 @@ export function GroupsPage() {
                           <p className="text-sm font-medium">
                             {member.first_name} {member.last_name}
                           </p>
-                          <p className="text-xs text-gray-500">{member.email}</p>
+                          <p className="text-xs text-muted-foreground">{member.email}</p>
                         </div>
                       </div>
                       <Button
