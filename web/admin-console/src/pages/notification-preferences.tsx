@@ -138,10 +138,10 @@ export function NotificationPreferencesPage() {
                         <button
                           onClick={() => toggle(et.key, ch.key)}
                           className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                            isEnabled(et.key, ch.key) ? 'bg-blue-600' : 'bg-gray-200'
+                            isEnabled(et.key, ch.key) ? 'bg-primary' : 'bg-muted'
                           }`}
                         >
-                          <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                          <span className={`inline-block h-4 w-4 transform rounded-full bg-background transition-transform ${
                             isEnabled(et.key, ch.key) ? 'translate-x-6' : 'translate-x-1'
                           }`} />
                         </button>
