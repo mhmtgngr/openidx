@@ -27,6 +27,7 @@ import {
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 import { QueryError } from '../components/query-error'
+import { RelatedLinks } from '../components/related-links'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -278,6 +279,13 @@ export function AdminAuditLogPage() {
           Export CSV
         </Button>
       </div>
+
+      <RelatedLinks
+        links={[
+          { to: '/audit-logs', label: 'Audit Logs' },
+          { to: '/unified-audit', label: 'Unified Audit' },
+        ]}
+      />
 
       {/* Filters */}
       <Card>

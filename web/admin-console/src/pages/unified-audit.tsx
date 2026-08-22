@@ -16,6 +16,7 @@ import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '../components/ui/table'
 import { api } from '../lib/api'
 import { QueryError } from '../components/query-error'
+import { RelatedLinks } from '../components/related-links'
 
 interface AuditEvent {
   id: string
@@ -116,6 +117,13 @@ export function UnifiedAuditPage() {
           Refresh
         </Button>
       </div>
+
+      <RelatedLinks
+        links={[
+          { to: '/audit-logs', label: 'Audit Logs' },
+          { to: '/admin-audit-log', label: 'Admin Audit Log' },
+        ]}
+      />
 
       {/* Summary Cards */}
       <div className="grid gap-4 md:grid-cols-4">
