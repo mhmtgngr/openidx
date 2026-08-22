@@ -14,8 +14,11 @@ cd "$(dirname "$0")/.."
 PAGES="${SH_PAGES_DIR:-web/admin-console/src/pages}"
 ENFORCE=0; [ "${1:-}" = "--enforce" ] && ENFORCE=1
 
-# Neutral/brand literals that break dark mode. These should be tokens.
-PATTERN='bg-white|text-gray-[0-9]|bg-gray-[0-9]|border-gray-[0-9]|text-black|text-blue-600|bg-blue-600'
+# Neutral/brand literals that break dark mode. These should be tokens. The set is
+# kept EXACTLY aligned with the token-migration mapping (spec Sub-project B): only
+# the light neutrals + brand blue that have a token equivalent. Darker semantic
+# grays (bg-gray-400..900 used as chart fills/dots) are intentionally NOT flagged.
+PATTERN='bg-white|text-gray-[3-9]00|bg-gray-(50|100|200|300)|border-gray-(100|200|300)|text-black|text-blue-600|bg-blue-600'
 
 offenders=0
 while IFS= read -r f; do
