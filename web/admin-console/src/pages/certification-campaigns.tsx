@@ -75,7 +75,7 @@ interface CampaignRun {
 const statusColors: Record<string, string> = {
   active: 'bg-green-100 text-green-800',
   paused: 'bg-yellow-100 text-yellow-800',
-  completed: 'bg-gray-100 text-gray-800',
+  completed: 'bg-muted text-foreground',
 }
 
 const statusIcons: Record<string, React.ReactNode> = {
@@ -212,7 +212,7 @@ export function CertificationCampaignsPage() {
               </div>
               <div>
                 <p className="text-2xl font-bold">{campaigns?.filter(c => c.status === 'active').length || 0}</p>
-                <p className="text-sm text-gray-500">Active Campaigns</p>
+                <p className="text-sm text-muted-foreground">Active Campaigns</p>
               </div>
             </div>
           </CardContent>
@@ -225,7 +225,7 @@ export function CertificationCampaignsPage() {
               </div>
               <div>
                 <p className="text-2xl font-bold">{campaigns?.filter(c => c.status === 'paused').length || 0}</p>
-                <p className="text-sm text-gray-500">Paused</p>
+                <p className="text-sm text-muted-foreground">Paused</p>
               </div>
             </div>
           </CardContent>
@@ -238,7 +238,7 @@ export function CertificationCampaignsPage() {
               </div>
               <div>
                 <p className="text-2xl font-bold">{campaigns?.filter(c => c.next_run_at).length || 0}</p>
-                <p className="text-sm text-gray-500">Scheduled</p>
+                <p className="text-sm text-muted-foreground">Scheduled</p>
               </div>
             </div>
           </CardContent>
@@ -250,7 +250,7 @@ export function CertificationCampaignsPage() {
         <CardHeader>
           <div className="flex items-center gap-4">
             <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500" />
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 placeholder="Search campaigns..."
                 value={search}
@@ -290,7 +290,7 @@ export function CertificationCampaignsPage() {
               <div className="rounded-md border">
                 <table className="w-full">
                   <thead>
-                    <tr className="border-b bg-gray-50">
+                    <tr className="border-b bg-muted">
                       <th className="p-3 text-left text-sm font-medium">Campaign</th>
                       <th className="p-3 text-left text-sm font-medium">Type</th>
                       <th className="p-3 text-left text-sm font-medium">Schedule</th>
@@ -302,7 +302,7 @@ export function CertificationCampaignsPage() {
                   </thead>
                   <tbody>
                     {filteredCampaigns.map((campaign) => (
-                      <tr key={campaign.id} className="border-b hover:bg-gray-50">
+                      <tr key={campaign.id} className="border-b hover:bg-muted">
                         <td className="p-3">
                           <div className="flex items-center gap-3">
                             <div className="h-9 w-9 rounded-lg bg-indigo-100 flex items-center justify-center">
@@ -310,7 +310,7 @@ export function CertificationCampaignsPage() {
                             </div>
                             <div>
                               <p className="font-medium">{campaign.name}</p>
-                              <p className="text-sm text-gray-500 max-w-xs truncate">{campaign.description || '-'}</p>
+                              <p className="text-sm text-muted-foreground max-w-xs truncate">{campaign.description || '-'}</p>
                             </div>
                           </div>
                         </td>
@@ -320,11 +320,11 @@ export function CertificationCampaignsPage() {
                         <td className="p-3">
                           <div className="text-sm">
                             <p>{scheduleLabels[campaign.schedule] || campaign.schedule}</p>
-                            <p className="text-gray-500">{campaign.duration_days}d duration</p>
+                            <p className="text-muted-foreground">{campaign.duration_days}d duration</p>
                           </div>
                         </td>
                         <td className="p-3">
-                          <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${statusColors[campaign.status] || 'bg-gray-100 text-gray-800'}`}>
+                          <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${statusColors[campaign.status] || 'bg-muted text-foreground'}`}>
                             {statusIcons[campaign.status]}
                             {campaign.status}
                           </span>
@@ -382,14 +382,14 @@ export function CertificationCampaignsPage() {
 
               {totalCount > PAGE_SIZE && (
                 <div className="flex items-center justify-between pt-4 px-1">
-                  <p className="text-sm text-gray-500">
+                  <p className="text-sm text-muted-foreground">
                     Showing {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, totalCount)} of {totalCount}
                   </p>
                   <div className="flex items-center gap-2">
                     <Button variant="outline" size="sm" onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0}>
                       <ChevronLeft className="h-4 w-4 mr-1" /> Previous
                     </Button>
-                    <span className="text-sm text-gray-600">Page {page + 1} of {Math.ceil(totalCount / PAGE_SIZE)}</span>
+                    <span className="text-sm text-muted-foreground">Page {page + 1} of {Math.ceil(totalCount / PAGE_SIZE)}</span>
                     <Button variant="outline" size="sm" onClick={() => setPage(p => p + 1)} disabled={(page + 1) * PAGE_SIZE >= totalCount}>
                       Next <ChevronRight className="h-4 w-4 ml-1" />
                     </Button>
@@ -462,14 +462,14 @@ export function CertificationCampaignsPage() {
             </div>
             <div className="flex items-center gap-4">
               <div className="flex items-center gap-2">
-                <input type="checkbox" id="auto_revoke" checked={newCampaign.auto_revoke} onChange={(e) => setNewCampaign(prev => ({ ...prev, auto_revoke: e.target.checked }))} className="rounded border-gray-300" />
+                <input type="checkbox" id="auto_revoke" checked={newCampaign.auto_revoke} onChange={(e) => setNewCampaign(prev => ({ ...prev, auto_revoke: e.target.checked }))} className="rounded border-border" />
                 <Label htmlFor="auto_revoke">Auto-revoke unreviewed items</Label>
               </div>
               {newCampaign.auto_revoke && (
                 <div className="flex items-center gap-2">
                   <Label>Grace period:</Label>
                   <Input type="number" value={newCampaign.grace_period_days} onChange={(e) => setNewCampaign(prev => ({ ...prev, grace_period_days: parseInt(e.target.value) || 7 }))} className="w-20" min={0} />
-                  <span className="text-sm text-gray-500">days</span>
+                  <span className="text-sm text-muted-foreground">days</span>
                 </div>
               )}
             </div>
@@ -499,7 +499,7 @@ export function CertificationCampaignsPage() {
               <div className="rounded-md border">
                 <table className="w-full">
                   <thead>
-                    <tr className="border-b bg-gray-50">
+                    <tr className="border-b bg-muted">
                       <th className="p-3 text-left text-sm font-medium">Started</th>
                       <th className="p-3 text-left text-sm font-medium">Deadline</th>
                       <th className="p-3 text-left text-sm font-medium">Status</th>
@@ -523,7 +523,7 @@ export function CertificationCampaignsPage() {
                               <span>{run.reviewed_items}/{run.total_items}</span>
                               <span>{getRunProgress(run)}%</span>
                             </div>
-                            <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+                            <div className="h-2 bg-muted rounded-full overflow-hidden">
                               <div className="h-full bg-indigo-600 rounded-full" style={{ width: `${getRunProgress(run)}%` }} />
                             </div>
                           </div>
