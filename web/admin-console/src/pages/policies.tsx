@@ -327,7 +327,7 @@ export function PoliciesPage() {
           </Button>
         </div>
         {rules.length === 0 && (
-          <p className="text-sm text-gray-500">No rules defined. Add rules to specify conditions and effects.</p>
+          <p className="text-sm text-muted-foreground">No rules defined. Add rules to specify conditions and effects.</p>
         )}
         {rules.map((rule, ruleIndex) => (
           <div key={ruleIndex} className="border rounded-lg p-3 space-y-3 relative">
@@ -416,7 +416,7 @@ export function PoliciesPage() {
                 <p className="text-2xl font-bold">
                   {policies?.filter(p => p.type === 'separation_of_duty').length || 0}
                 </p>
-                <p className="text-sm text-gray-500">SoD Policies</p>
+                <p className="text-sm text-muted-foreground">SoD Policies</p>
               </div>
             </div>
           </CardContent>
@@ -431,7 +431,7 @@ export function PoliciesPage() {
                 <p className="text-2xl font-bold">
                   {policies?.filter(p => p.type === 'risk_based').length || 0}
                 </p>
-                <p className="text-sm text-gray-500">Risk-based</p>
+                <p className="text-sm text-muted-foreground">Risk-based</p>
               </div>
             </div>
           </CardContent>
@@ -446,7 +446,7 @@ export function PoliciesPage() {
                 <p className="text-2xl font-bold">
                   {policies?.filter(p => p.enabled).length || 0}
                 </p>
-                <p className="text-sm text-gray-500">Active</p>
+                <p className="text-sm text-muted-foreground">Active</p>
               </div>
             </div>
           </CardContent>
@@ -454,12 +454,12 @@ export function PoliciesPage() {
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-4">
-              <div className="h-12 w-12 rounded-lg bg-gray-100 flex items-center justify-center">
-                <Scale className="h-6 w-6 text-gray-700" />
+              <div className="h-12 w-12 rounded-lg bg-muted flex items-center justify-center">
+                <Scale className="h-6 w-6 text-foreground" />
               </div>
               <div>
                 <p className="text-2xl font-bold">{policies?.length || 0}</p>
-                <p className="text-sm text-gray-500">Total Policies</p>
+                <p className="text-sm text-muted-foreground">Total Policies</p>
               </div>
             </div>
           </CardContent>
@@ -470,7 +470,7 @@ export function PoliciesPage() {
         <CardHeader>
           <div className="flex items-center gap-4">
             <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500" />
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 placeholder="Search policies..."
                 value={search}
@@ -498,7 +498,7 @@ export function PoliciesPage() {
           <div className="rounded-md border">
             <table className="w-full">
               <thead>
-                <tr className="border-b bg-gray-50">
+                <tr className="border-b bg-muted">
                   <th className="p-3 text-left text-sm font-medium">Policy</th>
                   <th className="p-3 text-left text-sm font-medium">Type</th>
                   <th className="p-3 text-left text-sm font-medium">Status</th>
@@ -508,20 +508,20 @@ export function PoliciesPage() {
               </thead>
               <tbody>
                 {filteredPolicies?.map((policy) => (
-                    <tr key={policy.id} className="border-b hover:bg-gray-50">
+                    <tr key={policy.id} className="border-b hover:bg-muted">
                       <td className="p-3">
                         <div className="flex items-center gap-3">
-                          <div className={`h-10 w-10 rounded-lg ${policyTypeColors[policy.type]?.split(' ')[0] || 'bg-gray-100'} flex items-center justify-center`}>
+                          <div className={`h-10 w-10 rounded-lg ${policyTypeColors[policy.type]?.split(' ')[0] || 'bg-muted'} flex items-center justify-center`}>
                             {policyTypeIcons[policy.type] || <Scale className="h-5 w-5" />}
                           </div>
                           <div>
                             <p className="font-medium">{policy.name}</p>
-                            <p className="text-sm text-gray-500 max-w-xs truncate">{policy.description || '-'}</p>
+                            <p className="text-sm text-muted-foreground max-w-xs truncate">{policy.description || '-'}</p>
                           </div>
                         </div>
                       </td>
                       <td className="p-3">
-                        <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${policyTypeColors[policy.type] || 'bg-gray-100 text-gray-800'}`}>
+                        <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${policyTypeColors[policy.type] || 'bg-muted text-foreground'}`}>
                           {policyTypeIcons[policy.type]}
                           {policyTypeLabels[policy.type] || policy.type}
                         </span>
@@ -532,7 +532,7 @@ export function PoliciesPage() {
                           className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium cursor-pointer ${
                             policy.enabled
                               ? 'bg-green-100 text-green-800'
-                              : 'bg-gray-100 text-gray-600'
+                              : 'bg-muted text-muted-foreground'
                           }`}
                         >
                           {policy.enabled ? (
@@ -597,7 +597,7 @@ export function PoliciesPage() {
           {/* Pagination Controls */}
           {totalCount > PAGE_SIZE && (
             <div className="flex items-center justify-between pt-4 px-1">
-              <p className="text-sm text-gray-500">
+              <p className="text-sm text-muted-foreground">
                 Showing {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, totalCount)} of {totalCount} policies
               </p>
               <div className="flex items-center gap-2">
@@ -610,7 +610,7 @@ export function PoliciesPage() {
                   <ChevronLeft className="h-4 w-4 mr-1" />
                   Previous
                 </Button>
-                <span className="text-sm text-gray-600">
+                <span className="text-sm text-muted-foreground">
                   Page {page + 1} of {Math.ceil(totalCount / PAGE_SIZE)}
                 </span>
                 <Button
@@ -682,7 +682,7 @@ export function PoliciesPage() {
                 min={0}
                 max={100}
               />
-              <p className="text-xs text-gray-500">Higher priority policies are evaluated first</p>
+              <p className="text-xs text-muted-foreground">Higher priority policies are evaluated first</p>
             </div>
             <div className="flex items-center gap-2">
               <input
