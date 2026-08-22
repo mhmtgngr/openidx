@@ -53,7 +53,7 @@ function SummaryCard({
           </div>
           <div>
             <p className="text-2xl font-bold">{value}</p>
-            <p className="text-sm text-gray-500">{title}</p>
+            <p className="text-sm text-muted-foreground">{title}</p>
           </div>
         </div>
       </CardContent>
@@ -77,7 +77,7 @@ function getStatusBadge(status: string) {
   }
 
   return (
-    <Badge className={styles[status] || 'bg-gray-100 text-gray-800'}>
+    <Badge className={styles[status] || 'bg-muted text-foreground'}>
       {labels[status] || status}
     </Badge>
   )
@@ -230,16 +230,16 @@ export function PrivacyDashboardPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b">
-                    <th className="text-left py-3 px-4 font-medium text-gray-500">
+                    <th className="text-left py-3 px-4 font-medium text-muted-foreground">
                       Consent Type
                     </th>
-                    <th className="text-right py-3 px-4 font-medium text-gray-500">
+                    <th className="text-right py-3 px-4 font-medium text-muted-foreground">
                       Granted
                     </th>
-                    <th className="text-right py-3 px-4 font-medium text-gray-500">
+                    <th className="text-right py-3 px-4 font-medium text-muted-foreground">
                       Revoked
                     </th>
-                    <th className="text-right py-3 px-4 font-medium text-gray-500">
+                    <th className="text-right py-3 px-4 font-medium text-muted-foreground">
                       Rate
                     </th>
                   </tr>
@@ -305,21 +305,21 @@ export function PrivacyDashboardPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b">
-                    <th className="text-left py-3 px-4 font-medium text-gray-500">Type</th>
-                    <th className="text-left py-3 px-4 font-medium text-gray-500">User</th>
-                    <th className="text-left py-3 px-4 font-medium text-gray-500">Status</th>
-                    <th className="text-left py-3 px-4 font-medium text-gray-500">Created</th>
+                    <th className="text-left py-3 px-4 font-medium text-muted-foreground">Type</th>
+                    <th className="text-left py-3 px-4 font-medium text-muted-foreground">User</th>
+                    <th className="text-left py-3 px-4 font-medium text-muted-foreground">Status</th>
+                    <th className="text-left py-3 px-4 font-medium text-muted-foreground">Created</th>
                   </tr>
                 </thead>
                 <tbody>
                   {d.recent_dsars.map((dsar) => (
-                    <tr key={dsar.id} className="border-b last:border-0 hover:bg-gray-50">
+                    <tr key={dsar.id} className="border-b last:border-0 hover:bg-muted">
                       <td className="py-3 px-4 font-medium">
                         {formatRequestType(dsar.request_type)}
                       </td>
-                      <td className="py-3 px-4 text-gray-600">{dsar.username}</td>
+                      <td className="py-3 px-4 text-muted-foreground">{dsar.username}</td>
                       <td className="py-3 px-4">{getStatusBadge(dsar.status)}</td>
-                      <td className="py-3 px-4 text-gray-500">
+                      <td className="py-3 px-4 text-muted-foreground">
                         {formatDate(dsar.created_at)}
                       </td>
                     </tr>
