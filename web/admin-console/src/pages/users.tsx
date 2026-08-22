@@ -33,6 +33,7 @@ import {
   AlertDialogTitle,
 } from '../components/ui/alert-dialog'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
+import { TableSkeleton } from '../components/ui/skeleton'
 import { QueryError } from '../components/query-error'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
@@ -445,10 +446,7 @@ export function UsersPage() {
         </CardHeader>
         <CardContent>
           {isLoading ? (
-            <div className="flex flex-col items-center justify-center py-12">
-              <LoadingSpinner size="lg" />
-              <p className="mt-4 text-sm text-muted-foreground">Loading users...</p>
-            </div>
+            <TableSkeleton rows={8} cols={6} />
           ) : isError ? (
             <QueryError error={error} resource="users" />
           ) : filteredUsers.length === 0 ? (
