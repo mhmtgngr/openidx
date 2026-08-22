@@ -137,6 +137,12 @@ export const navigation: NavDomainGroup[] = [
           { name: 'Notifications', href: '/notification-center', icon: Bell, minRole: 'user', keywords: ['inbox', 'alerts'] },
         ],
       },
+      {
+        label: 'Operations',
+        items: [
+          { name: 'Ops Cockpit', href: '/ops-cockpit', icon: Gauge, minRole: 'operator', keywords: ['operations', 'situational', 'overview', 'command center', 'noc'] },
+        ],
+      },
     ],
   },
   {
