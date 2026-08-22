@@ -172,7 +172,7 @@ export function ZitiDiscoveryPage() {
         <Card>
           <CardHeader className="pb-2">
             <CardDescription>Available to Import</CardDescription>
-            <CardTitle className="text-2xl text-blue-600">{data?.available_for_import || 0}</CardTitle>
+            <CardTitle className="text-2xl text-primary">{data?.available_for_import || 0}</CardTitle>
           </CardHeader>
         </Card>
       </div>
