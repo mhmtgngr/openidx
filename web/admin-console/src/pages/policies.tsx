@@ -24,7 +24,7 @@ import {
 import { Label } from '../components/ui/label'
 import { Textarea } from '../components/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
-import { LoadingSpinner } from '../components/ui/loading-spinner'
+import { TableSkeleton } from '../components/ui/skeleton'
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '../components/ui/table'
 import {
   DropdownMenu,
@@ -483,10 +483,7 @@ export function PoliciesPage() {
         </CardHeader>
         <CardContent>
           {isLoading ? (
-            <div className="flex flex-col items-center justify-center py-12">
-              <LoadingSpinner size="lg" />
-              <p className="mt-4 text-sm text-muted-foreground">Loading policies...</p>
-            </div>
+            <TableSkeleton rows={8} cols={5} />
           ) : isError ? (
             <QueryError error={error} resource="policies" />
           ) : !filteredPolicies || filteredPolicies.length === 0 ? (
