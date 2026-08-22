@@ -16,6 +16,7 @@ import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Card, CardContent, CardHeader } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '../components/ui/table'
 import {
   Dialog,
   DialogContent,
@@ -277,21 +278,21 @@ export function EntitlementsPage() {
           ) : (
             <>
               <div className="rounded-md border">
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b bg-muted">
-                      <th className="p-3 text-left text-sm font-medium">Entitlement</th>
-                      <th className="p-3 text-left text-sm font-medium">Type</th>
-                      <th className="p-3 text-left text-sm font-medium">Risk</th>
-                      <th className="p-3 text-left text-sm font-medium">Members</th>
-                      <th className="p-3 text-left text-sm font-medium">Tags</th>
-                      <th className="p-3 text-right text-sm font-medium">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
+                <Table>
+                  <TableHeader>
+                    <TableRow className="border-b bg-muted">
+                      <TableHead className="p-3 text-left text-sm font-medium">Entitlement</TableHead>
+                      <TableHead className="p-3 text-left text-sm font-medium">Type</TableHead>
+                      <TableHead className="p-3 text-left text-sm font-medium">Risk</TableHead>
+                      <TableHead className="p-3 text-left text-sm font-medium">Members</TableHead>
+                      <TableHead className="p-3 text-left text-sm font-medium">Tags</TableHead>
+                      <TableHead className="p-3 text-right text-sm font-medium">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
                     {entitlements.map((entry) => (
-                      <tr key={`${entry.type}-${entry.id}`} className="border-b hover:bg-muted">
-                        <td className="p-3">
+                      <TableRow key={`${entry.type}-${entry.id}`} className="border-b hover:bg-muted">
+                        <TableCell className="p-3">
                           <div className="flex items-center gap-3">
                             <div className="h-8 w-8 rounded-lg bg-muted flex items-center justify-center">
                               {typeIcons[entry.type] || <Package className="h-4 w-4" />}
@@ -301,19 +302,19 @@ export function EntitlementsPage() {
                               <p className="text-sm text-muted-foreground max-w-xs truncate">{entry.description || '-'}</p>
                             </div>
                           </div>
-                        </td>
-                        <td className="p-3">
+                        </TableCell>
+                        <TableCell className="p-3">
                           <Badge variant="outline">{typeLabels[entry.type] || entry.type}</Badge>
-                        </td>
-                        <td className="p-3">
+                        </TableCell>
+                        <TableCell className="p-3">
                           <span className={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${riskColors[entry.risk_level] || riskColors.low}`}>
                             {entry.risk_level}
                           </span>
-                        </td>
-                        <td className="p-3">
+                        </TableCell>
+                        <TableCell className="p-3">
                           <span className="text-sm">{entry.member_count}</span>
-                        </td>
-                        <td className="p-3">
+                        </TableCell>
+                        <TableCell className="p-3">
                           <div className="flex gap-1 flex-wrap">
                             {entry.tags?.length > 0 ? entry.tags.slice(0, 3).map((tag) => (
                               <Badge key={tag} variant="secondary" className="text-xs">{tag}</Badge>
@@ -324,8 +325,8 @@ export function EntitlementsPage() {
                               <Badge variant="secondary" className="text-xs">+{entry.tags.length - 3}</Badge>
                             )}
                           </div>
-                        </td>
-                        <td className="p-3 text-right">
+                        </TableCell>
+                        <TableCell className="p-3 text-right">
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
                               <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
@@ -339,11 +340,11 @@ export function EntitlementsPage() {
                               </DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>
-                        </td>
-                      </tr>
+                        </TableCell>
+                      </TableRow>
                     ))}
-                  </tbody>
-                </table>
+                  </TableBody>
+                </Table>
               </div>
 
               {totalCount > PAGE_SIZE && (
