@@ -25,6 +25,7 @@ import { Label } from '../components/ui/label'
 import { Textarea } from '../components/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '../components/ui/table'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -496,20 +497,20 @@ export function PoliciesPage() {
             </div>
           ) : (
           <div className="rounded-md border">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b bg-muted">
-                  <th className="p-3 text-left text-sm font-medium">Policy</th>
-                  <th className="p-3 text-left text-sm font-medium">Type</th>
-                  <th className="p-3 text-left text-sm font-medium">Status</th>
-                  <th className="p-3 text-left text-sm font-medium">Priority</th>
-                  <th className="p-3 text-right text-sm font-medium">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
+            <Table>
+              <TableHeader>
+                <TableRow className="border-b bg-muted">
+                  <TableHead className="p-3 text-left text-sm font-medium">Policy</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">Type</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">Status</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">Priority</TableHead>
+                  <TableHead className="p-3 text-right text-sm font-medium">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {filteredPolicies?.map((policy) => (
-                    <tr key={policy.id} className="border-b hover:bg-muted">
-                      <td className="p-3">
+                    <TableRow key={policy.id} className="border-b hover:bg-muted">
+                      <TableCell className="p-3">
                         <div className="flex items-center gap-3">
                           <div className={`h-10 w-10 rounded-lg ${policyTypeColors[policy.type]?.split(' ')[0] || 'bg-muted'} flex items-center justify-center`}>
                             {policyTypeIcons[policy.type] || <Scale className="h-5 w-5" />}
@@ -519,14 +520,14 @@ export function PoliciesPage() {
                             <p className="text-sm text-muted-foreground max-w-xs truncate">{policy.description || '-'}</p>
                           </div>
                         </div>
-                      </td>
-                      <td className="p-3">
+                      </TableCell>
+                      <TableCell className="p-3">
                         <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${policyTypeColors[policy.type] || 'bg-muted text-foreground'}`}>
                           {policyTypeIcons[policy.type]}
                           {policyTypeLabels[policy.type] || policy.type}
                         </span>
-                      </td>
-                      <td className="p-3">
+                      </TableCell>
+                      <TableCell className="p-3">
                         <button
                           onClick={() => handleToggleEnabled(policy)}
                           className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium cursor-pointer ${
@@ -547,11 +548,11 @@ export function PoliciesPage() {
                             </>
                           )}
                         </button>
-                      </td>
-                      <td className="p-3">
+                      </TableCell>
+                      <TableCell className="p-3">
                         <Badge variant="outline">{policy.priority}</Badge>
-                      </td>
-                      <td className="p-3 text-right">
+                      </TableCell>
+                      <TableCell className="p-3 text-right">
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <Button variant="ghost" size="sm">
@@ -586,11 +587,11 @@ export function PoliciesPage() {
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   ))}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </div>
           )}
 
