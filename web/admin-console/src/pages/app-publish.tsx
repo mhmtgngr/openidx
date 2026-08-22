@@ -112,7 +112,7 @@ const classificationIcons: Record<string, React.ComponentType<{ className?: stri
 }
 
 const statusColors: Record<string, string> = {
-  pending: 'bg-gray-100 text-gray-800',
+  pending: 'bg-muted text-foreground',
   discovering: 'bg-yellow-100 text-yellow-800',
   discovered: 'bg-green-100 text-green-800',
   published: 'bg-blue-100 text-blue-800',
@@ -373,7 +373,7 @@ export function AppPublishPage() {
                           {app.target_url}
                         </CardDescription>
                       </div>
-                      <Badge className={statusColors[app.status] || 'bg-gray-100'}>
+                      <Badge className={statusColors[app.status] || 'bg-muted'}>
                         {app.status === 'discovering' && (
                           <Loader2 className="h-3 w-3 mr-1 animate-spin" />
                         )}
@@ -744,7 +744,7 @@ export function AppPublishPage() {
                                 {path.route_id && (
                                   <a
                                     href="/proxy-routes"
-                                    className="text-blue-600 hover:underline flex items-center gap-1 text-sm"
+                                    className="text-primary hover:underline flex items-center gap-1 text-sm"
                                   >
                                     View Route
                                     <ExternalLink className="h-3 w-3" />
