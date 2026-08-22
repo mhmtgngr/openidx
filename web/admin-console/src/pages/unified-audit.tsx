@@ -49,7 +49,7 @@ const SourceIcon = ({ source }: { source: string }) => {
     case 'guacamole':
       return <Monitor className="h-4 w-4 text-green-500" />
     default:
-      return <Globe className="h-4 w-4 text-gray-500" />
+      return <Globe className="h-4 w-4 text-muted-foreground" />
   }
 }
 
@@ -60,7 +60,7 @@ const SourceBadge = ({ source }: { source: string }) => {
     guacamole: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200',
   }
   return (
-    <Badge className={colors[source] || 'bg-gray-100 text-gray-800'}>
+    <Badge className={colors[source] || 'bg-muted text-foreground'}>
       <SourceIcon source={source} />
       <span className="ml-1 capitalize">{source}</span>
     </Badge>
