@@ -113,7 +113,7 @@ const executionStatusColors: Record<string, string> = {
   in_progress: 'bg-blue-100 text-blue-800',
   completed: 'bg-green-100 text-green-800',
   failed: 'bg-red-100 text-red-800',
-  rejected: 'bg-gray-100 text-gray-800',
+  rejected: 'bg-muted text-foreground',
 }
 
 interface ActionInput {
@@ -254,7 +254,7 @@ export function LifecycleWorkflowsPage() {
                 </div>
                 <div>
                   <p className="text-xl font-bold">{workflows?.filter(w => w.event_type === evt).length || 0}</p>
-                  <p className="text-xs text-gray-500">{eventLabels[evt]}</p>
+                  <p className="text-xs text-muted-foreground">{eventLabels[evt]}</p>
                 </div>
               </div>
             </CardContent>
@@ -267,7 +267,7 @@ export function LifecycleWorkflowsPage() {
         <CardHeader>
           <div className="flex items-center gap-4">
             <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500" />
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 placeholder="Search workflows..."
                 value={search}
@@ -309,7 +309,7 @@ export function LifecycleWorkflowsPage() {
               <div className="rounded-md border">
                 <table className="w-full">
                   <thead>
-                    <tr className="border-b bg-gray-50">
+                    <tr className="border-b bg-muted">
                       <th className="p-3 text-left text-sm font-medium">Workflow</th>
                       <th className="p-3 text-left text-sm font-medium">Event</th>
                       <th className="p-3 text-left text-sm font-medium">Trigger</th>
@@ -320,7 +320,7 @@ export function LifecycleWorkflowsPage() {
                   </thead>
                   <tbody>
                     {filteredWorkflows.map((wf) => (
-                      <tr key={wf.id} className="border-b hover:bg-gray-50">
+                      <tr key={wf.id} className="border-b hover:bg-muted">
                         <td className="p-3">
                           <div className="flex items-center gap-3">
                             <div className="h-9 w-9 rounded-lg bg-indigo-100 flex items-center justify-center">
@@ -328,12 +328,12 @@ export function LifecycleWorkflowsPage() {
                             </div>
                             <div>
                               <p className="font-medium">{wf.name}</p>
-                              <p className="text-sm text-gray-500 max-w-xs truncate">{wf.description || '-'}</p>
+                              <p className="text-sm text-muted-foreground max-w-xs truncate">{wf.description || '-'}</p>
                             </div>
                           </div>
                         </td>
                         <td className="p-3">
-                          <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${eventColors[wf.event_type] || 'bg-gray-100 text-gray-800'}`}>
+                          <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${eventColors[wf.event_type] || 'bg-muted text-foreground'}`}>
                             {eventIcons[wf.event_type]}
                             {eventLabels[wf.event_type] || wf.event_type}
                           </span>
@@ -405,14 +405,14 @@ export function LifecycleWorkflowsPage() {
 
               {totalCount > PAGE_SIZE && (
                 <div className="flex items-center justify-between pt-4 px-1">
-                  <p className="text-sm text-gray-500">
+                  <p className="text-sm text-muted-foreground">
                     Showing {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, totalCount)} of {totalCount}
                   </p>
                   <div className="flex items-center gap-2">
                     <Button variant="outline" size="sm" onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0}>
                       <ChevronLeft className="h-4 w-4 mr-1" /> Previous
                     </Button>
-                    <span className="text-sm text-gray-600">Page {page + 1} of {Math.ceil(totalCount / PAGE_SIZE)}</span>
+                    <span className="text-sm text-muted-foreground">Page {page + 1} of {Math.ceil(totalCount / PAGE_SIZE)}</span>
                     <Button variant="outline" size="sm" onClick={() => setPage(p => p + 1)} disabled={(page + 1) * PAGE_SIZE >= totalCount}>
                       Next <ChevronRight className="h-4 w-4 ml-1" />
                     </Button>
@@ -472,11 +472,11 @@ export function LifecycleWorkflowsPage() {
               {newWorkflow.actions.length > 0 && (
                 <div className="space-y-2">
                   {newWorkflow.actions.map((action, idx) => (
-                    <div key={idx} className="flex items-center gap-2 p-2 bg-gray-50 rounded">
+                    <div key={idx} className="flex items-center gap-2 p-2 bg-muted rounded">
                       <Badge variant="secondary">{idx + 1}</Badge>
                       <span className="text-sm flex-1">{actionTypeLabels[action.type] || action.type}</span>
-                      {action.role_id && <span className="text-xs text-gray-500">Role: {action.role_id.slice(0, 8)}...</span>}
-                      {action.group_id && <span className="text-xs text-gray-500">Group: {action.group_id.slice(0, 8)}...</span>}
+                      {action.role_id && <span className="text-xs text-muted-foreground">Role: {action.role_id.slice(0, 8)}...</span>}
+                      {action.group_id && <span className="text-xs text-muted-foreground">Group: {action.group_id.slice(0, 8)}...</span>}
                       <Button type="button" variant="ghost" size="sm" onClick={() => removeAction(idx)} className="h-6 w-6 p-0">
                         <XCircle className="h-4 w-4 text-red-500" />
                       </Button>
@@ -520,7 +520,7 @@ export function LifecycleWorkflowsPage() {
             </div>
 
             <div className="flex items-center gap-2">
-              <input type="checkbox" id="require_approval" checked={newWorkflow.require_approval} onChange={(e) => setNewWorkflow(prev => ({ ...prev, require_approval: e.target.checked }))} className="rounded border-gray-300" />
+              <input type="checkbox" id="require_approval" checked={newWorkflow.require_approval} onChange={(e) => setNewWorkflow(prev => ({ ...prev, require_approval: e.target.checked }))} className="rounded border-border" />
               <Label htmlFor="require_approval">Require approval before execution</Label>
             </div>
 
@@ -556,7 +556,7 @@ export function LifecycleWorkflowsPage() {
               />
             </div>
             {selectedWorkflow && (
-              <div className="p-3 bg-gray-50 rounded-lg text-sm">
+              <div className="p-3 bg-muted rounded-lg text-sm">
                 <p className="font-medium mb-2">Actions to execute:</p>
                 <ol className="list-decimal ml-4 space-y-1">
                   {(selectedWorkflow.actions || []).map((a, i) => (
@@ -591,7 +591,7 @@ export function LifecycleWorkflowsPage() {
               <div className="rounded-md border">
                 <table className="w-full">
                   <thead>
-                    <tr className="border-b bg-gray-50">
+                    <tr className="border-b bg-muted">
                       <th className="p-3 text-left text-sm font-medium">Started</th>
                       <th className="p-3 text-left text-sm font-medium">User ID</th>
                       <th className="p-3 text-left text-sm font-medium">Status</th>
@@ -605,7 +605,7 @@ export function LifecycleWorkflowsPage() {
                         <td className="p-3 text-sm">{formatDate(exec.started_at)}</td>
                         <td className="p-3 text-sm font-mono">{exec.user_id.slice(0, 8)}...</td>
                         <td className="p-3">
-                          <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${executionStatusColors[exec.status] || 'bg-gray-100 text-gray-800'}`}>
+                          <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${executionStatusColors[exec.status] || 'bg-muted text-foreground'}`}>
                             {exec.status === 'completed' ? <CheckCircle className="h-3 w-3" /> : exec.status === 'failed' ? <XCircle className="h-3 w-3" /> : <Clock className="h-3 w-3" />}
                             {exec.status}
                           </span>
