@@ -5,6 +5,7 @@ import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Card, CardContent, CardHeader } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '../components/ui/table'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -289,20 +290,20 @@ export function RolesPage() {
             </div>
           ) : (
           <div className="rounded-md border">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b bg-muted">
-                  <th className="p-3 text-left text-sm font-medium">Role</th>
-                  <th className="p-3 text-left text-sm font-medium">Description</th>
-                  <th className="p-3 text-left text-sm font-medium">Type</th>
-                  <th className="p-3 text-left text-sm font-medium">Created</th>
-                  <th className="p-3 text-right text-sm font-medium">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
+            <Table>
+              <TableHeader>
+                <TableRow className="border-b bg-muted">
+                  <TableHead className="p-3 text-left text-sm font-medium">Role</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">Description</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">Type</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">Created</TableHead>
+                  <TableHead className="p-3 text-right text-sm font-medium">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {filteredRoles.map((role) => (
-                    <tr key={role.id} className="border-b hover:bg-muted">
-                      <td className="p-3">
+                    <TableRow key={role.id} className="border-b hover:bg-muted">
+                      <TableCell className="p-3">
                         <div className="flex items-center gap-3">
                           <div className="h-10 w-10 rounded-full bg-purple-100 flex items-center justify-center">
                             <Shield className="h-5 w-5 text-purple-700" />
@@ -311,19 +312,19 @@ export function RolesPage() {
                             <p className="font-medium capitalize">{role.name}</p>
                           </div>
                         </div>
-                      </td>
-                      <td className="p-3 text-muted-foreground">
+                      </TableCell>
+                      <TableCell className="p-3 text-muted-foreground">
                         {role.description || '-'}
-                      </td>
-                      <td className="p-3">
+                      </TableCell>
+                      <TableCell className="p-3">
                         <Badge variant={role.is_composite ? 'default' : 'secondary'}>
                           {role.is_composite ? 'Composite' : 'Simple'}
                         </Badge>
-                      </td>
-                      <td className="p-3 text-muted-foreground">
+                      </TableCell>
+                      <TableCell className="p-3 text-muted-foreground">
                         {new Date(role.created_at).toLocaleDateString()}
-                      </td>
-                      <td className="p-3 text-right">
+                      </TableCell>
+                      <TableCell className="p-3 text-right">
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <Button variant="ghost" size="icon">
@@ -354,12 +355,12 @@ export function RolesPage() {
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   ))
                 }
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </div>
           )}
 
