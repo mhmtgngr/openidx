@@ -20,7 +20,7 @@ import {
 } from '../components/ui/dialog'
 import { Label } from '../components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
-import { LoadingSpinner } from '../components/ui/loading-spinner'
+import { TableSkeleton } from '../components/ui/skeleton'
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '../components/ui/table'
 import { QueryError } from '../components/query-error'
 import { api } from '../lib/api'
@@ -398,10 +398,7 @@ export function ApplicationsPage() {
         </CardHeader>
         <CardContent>
           {isLoading ? (
-            <div className="flex flex-col items-center justify-center py-12">
-              <LoadingSpinner size="lg" />
-              <p className="mt-4 text-sm text-muted-foreground">Loading applications...</p>
-            </div>
+            <TableSkeleton rows={8} cols={6} />
           ) : isError ? (
             <QueryError error={error} resource="applications" />
           ) : !filteredApps || filteredApps.length === 0 ? (
