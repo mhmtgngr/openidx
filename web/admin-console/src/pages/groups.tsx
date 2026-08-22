@@ -6,6 +6,7 @@ import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Card, CardContent, CardHeader } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '../components/ui/table'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -487,22 +488,22 @@ export function GroupsPage() {
             </div>
           ) : (
           <div className="rounded-md border">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b bg-muted">
-                  <th className="p-3 text-left text-sm font-medium">Group</th>
-                  <th className="p-3 text-left text-sm font-medium">Description</th>
-                  <th className="p-3 text-left text-sm font-medium">Members</th>
-                  <th className="p-3 text-left text-sm font-medium">Type</th>
-                  <th className="p-3 text-left text-sm font-medium">Ziti Role</th>
-                  <th className="p-3 text-left text-sm font-medium">Created</th>
-                  <th className="p-3 text-right text-sm font-medium">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
+            <Table>
+              <TableHeader>
+                <TableRow className="border-b bg-muted">
+                  <TableHead className="p-3 text-left text-sm font-medium">Group</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">Description</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">Members</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">Type</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">Ziti Role</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">Created</TableHead>
+                  <TableHead className="p-3 text-right text-sm font-medium">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {filteredGroups.map((group) => (
-                    <tr key={group.id} className="border-b hover:bg-muted">
-                      <td className="p-3">
+                    <TableRow key={group.id} className="border-b hover:bg-muted">
+                      <TableCell className="p-3">
                         <div className="flex items-center gap-3">
                           <div className="h-10 w-10 rounded-lg bg-purple-100 flex items-center justify-center">
                             {group.parent_id ? (
@@ -521,11 +522,11 @@ export function GroupsPage() {
                             )}
                           </div>
                         </div>
-                      </td>
-                      <td className="p-3 text-muted-foreground max-w-xs truncate">
+                      </TableCell>
+                      <TableCell className="p-3 text-muted-foreground max-w-xs truncate">
                         {group.description || '-'}
-                      </td>
-                      <td className="p-3">
+                      </TableCell>
+                      <TableCell className="p-3">
                         <div className="flex items-center gap-2">
                           <Users className="h-4 w-4 text-muted-foreground" />
                           <span>{group.member_count}</span>
@@ -533,8 +534,8 @@ export function GroupsPage() {
                             <span className="text-muted-foreground">/ {group.max_members}</span>
                           )}
                         </div>
-                      </td>
-                      <td className="p-3">
+                      </TableCell>
+                      <TableCell className="p-3">
                         <div className="flex flex-col gap-1">
                           <Badge variant={group.parent_id ? 'secondary' : 'default'}>
                             {group.parent_id ? 'Subgroup' : 'Root'}
@@ -543,19 +544,19 @@ export function GroupsPage() {
                             <Badge variant="outline" className="text-xs">Self-join</Badge>
                           )}
                         </div>
-                      </td>
-                      <td className="p-3">
+                      </TableCell>
+                      <TableCell className="p-3">
                         <div className="flex items-center gap-1.5" title={`Members of "${group.name}" get Ziti role attribute "#${group.name}" on their identity`}>
                           <Network className="h-3.5 w-3.5 text-purple-500" />
                           <Badge variant="outline" className="text-xs bg-purple-50 text-purple-700 border-purple-200">
                             #{group.name}
                           </Badge>
                         </div>
-                      </td>
-                      <td className="p-3 text-muted-foreground">
+                      </TableCell>
+                      <TableCell className="p-3 text-muted-foreground">
                         {new Date(group.created_at).toLocaleDateString()}
-                      </td>
-                      <td className="p-3 text-right">
+                      </TableCell>
+                      <TableCell className="p-3 text-right">
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <Button variant="ghost" size="icon">
@@ -586,11 +587,11 @@ export function GroupsPage() {
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   ))}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </div>
           )}
 
