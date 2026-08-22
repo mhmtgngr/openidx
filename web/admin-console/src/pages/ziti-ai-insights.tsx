@@ -233,7 +233,7 @@ export function ZitiAIInsightsPage() {
         <Card>
           <CardHeader className="pb-2">
             <CardDescription>Recommendations</CardDescription>
-            <CardTitle className="text-2xl text-blue-600">{insights?.recommendation_count ?? 0}</CardTitle>
+            <CardTitle className="text-2xl text-primary">{insights?.recommendation_count ?? 0}</CardTitle>
           </CardHeader>
         </Card>
         <Card>
