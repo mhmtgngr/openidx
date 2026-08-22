@@ -432,7 +432,7 @@ export function UsersPage() {
         <CardHeader>
           <div className="flex items-center gap-4">
             <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500" />
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 placeholder="Search users..."
                 value={search}
@@ -460,7 +460,7 @@ export function UsersPage() {
           <div className="rounded-md border">
             <table className="w-full">
               <thead>
-                <tr className="border-b bg-gray-50">
+                <tr className="border-b bg-muted">
                   <th className="p-3 text-left text-sm font-medium">User</th>
                   <th className="p-3 text-left text-sm font-medium">Email</th>
                   <th className="p-3 text-left text-sm font-medium">Status</th>
@@ -471,7 +471,7 @@ export function UsersPage() {
               </thead>
               <tbody>
                 {filteredUsers.map((user) => (
-                    <tr key={user.id} className="border-b hover:bg-gray-50">
+                    <tr key={user.id} className="border-b hover:bg-muted">
                       <td className="p-3">
                         <div className="flex items-center gap-3">
                           <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center">
@@ -486,13 +486,13 @@ export function UsersPage() {
                                 ? `${user.first_name} ${user.last_name}`
                                 : user.username}
                             </p>
-                            <p className="text-sm text-gray-500">@{user.username}</p>
+                            <p className="text-sm text-muted-foreground">@{user.username}</p>
                           </div>
                         </div>
                       </td>
                       <td className="p-3">
                         <div className="flex items-center gap-2">
-                          <Mail className="h-4 w-4 text-gray-400" />
+                          <Mail className="h-4 w-4 text-muted-foreground" />
                           {user.email}
                           {user.email_verified && (
                             <Badge variant="outline" className="ml-2">Verified</Badge>
@@ -516,7 +516,7 @@ export function UsersPage() {
                           <span className="text-xs text-muted-foreground">—</span>
                         )}
                       </td>
-                      <td className="p-3 text-gray-500">
+                      <td className="p-3 text-muted-foreground">
                         {new Date(user.created_at).toLocaleDateString()}
                       </td>
                       <td className="p-3 text-right">
@@ -566,7 +566,7 @@ export function UsersPage() {
           {/* Pagination Controls */}
           {totalCount > PAGE_SIZE && (
             <div className="flex items-center justify-between pt-4 px-1">
-              <p className="text-sm text-gray-500">
+              <p className="text-sm text-muted-foreground">
                 Showing {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, totalCount)} of {totalCount} users
               </p>
               <div className="flex items-center gap-2">
@@ -579,7 +579,7 @@ export function UsersPage() {
                   <ChevronLeft className="h-4 w-4 mr-1" />
                   Previous
                 </Button>
-                <span className="text-sm text-gray-600">
+                <span className="text-sm text-muted-foreground">
                   Page {page + 1} of {Math.ceil(totalCount / PAGE_SIZE)}
                 </span>
                 <Button
@@ -750,7 +750,7 @@ export function UsersPage() {
                 onChange={(e) => setImportFile(e.target.files?.[0] || null)}
                 required
               />
-              <p className="text-xs text-gray-500">
+              <p className="text-xs text-muted-foreground">
                 CSV file with headers: username, email, first_name, last_name, enabled
               </p>
             </div>
@@ -794,7 +794,7 @@ export function UsersPage() {
                       <Label htmlFor={`role-${role.id}`} className="capitalize">
                         {role.name}
                         {role.description && (
-                          <span className="text-sm text-gray-500 ml-2">
+                          <span className="text-sm text-muted-foreground ml-2">
                             - {role.description}
                           </span>
                         )}
