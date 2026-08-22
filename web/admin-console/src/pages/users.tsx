@@ -7,6 +7,7 @@ import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Card, CardContent, CardHeader } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '../components/ui/table'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -458,21 +459,21 @@ export function UsersPage() {
             </div>
           ) : (
           <div className="rounded-md border">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b bg-muted">
-                  <th className="p-3 text-left text-sm font-medium">User</th>
-                  <th className="p-3 text-left text-sm font-medium">Email</th>
-                  <th className="p-3 text-left text-sm font-medium">Status</th>
-                  <th className="p-3 text-left text-sm font-medium">Ziti</th>
-                  <th className="p-3 text-left text-sm font-medium">Created</th>
-                  <th className="p-3 text-right text-sm font-medium">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
+            <Table>
+              <TableHeader>
+                <TableRow className="border-b bg-muted">
+                  <TableHead className="p-3 text-left text-sm font-medium">User</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">Email</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">Status</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">Ziti</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">Created</TableHead>
+                  <TableHead className="p-3 text-right text-sm font-medium">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {filteredUsers.map((user) => (
-                    <tr key={user.id} className="border-b hover:bg-muted">
-                      <td className="p-3">
+                    <TableRow key={user.id} className="border-b hover:bg-muted">
+                      <TableCell className="p-3">
                         <div className="flex items-center gap-3">
                           <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center">
                             <span className="text-blue-700 font-medium">
@@ -489,8 +490,8 @@ export function UsersPage() {
                             <p className="text-sm text-muted-foreground">@{user.username}</p>
                           </div>
                         </div>
-                      </td>
-                      <td className="p-3">
+                      </TableCell>
+                      <TableCell className="p-3">
                         <div className="flex items-center gap-2">
                           <Mail className="h-4 w-4 text-muted-foreground" />
                           {user.email}
@@ -498,13 +499,13 @@ export function UsersPage() {
                             <Badge variant="outline" className="ml-2">Verified</Badge>
                           )}
                         </div>
-                      </td>
-                      <td className="p-3">
+                      </TableCell>
+                      <TableCell className="p-3">
                         <Badge className={user.enabled ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}>
                           {user.enabled ? 'Active' : 'Disabled'}
                         </Badge>
-                      </td>
-                      <td className="p-3">
+                      </TableCell>
+                      <TableCell className="p-3">
                         {zitiMap && zitiMap[user.id] ? (
                           <div className="flex items-center gap-1.5" title={`Ziti: ${zitiMap[user.id].name}\nRoles: ${zitiMap[user.id].attributes.join(', ') || 'none'}`}>
                             <Network className="h-3.5 w-3.5 text-green-600" />
@@ -515,11 +516,11 @@ export function UsersPage() {
                         ) : (
                           <span className="text-xs text-muted-foreground">—</span>
                         )}
-                      </td>
-                      <td className="p-3 text-muted-foreground">
+                      </TableCell>
+                      <TableCell className="p-3 text-muted-foreground">
                         {new Date(user.created_at).toLocaleDateString()}
-                      </td>
-                      <td className="p-3 text-right">
+                      </TableCell>
+                      <TableCell className="p-3 text-right">
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <Button variant="ghost" size="icon">
@@ -555,11 +556,11 @@ export function UsersPage() {
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   ))}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </div>
           )}
 
