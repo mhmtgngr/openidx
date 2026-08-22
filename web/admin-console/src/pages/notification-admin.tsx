@@ -53,11 +53,11 @@ const CHANNELS = ['in_app', 'email', 'sms', 'push']
 
 const statusBadgeClass = (status: string) => {
   const map: Record<string, string> = {
-    draft: 'bg-gray-100 text-gray-800',
+    draft: 'bg-muted text-foreground',
     scheduled: 'bg-yellow-100 text-yellow-800',
     sent: 'bg-green-100 text-green-800',
   }
-  return map[status] || 'bg-gray-100 text-gray-800'
+  return map[status] || 'bg-muted text-foreground'
 }
 
 // ── Component ───────────────────────────────────────────────────────────────
@@ -396,10 +396,10 @@ export function NotificationAdminPage() {
                           <button
                             onClick={() => toggleRuleMutation.mutate({ id: rule.id, enabled: !rule.enabled })}
                             className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                              rule.enabled ? 'bg-blue-600' : 'bg-gray-200'
+                              rule.enabled ? 'bg-primary' : 'bg-muted'
                             }`}
                           >
-                            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                            <span className={`inline-block h-4 w-4 transform rounded-full bg-background transition-transform ${
                               rule.enabled ? 'translate-x-6' : 'translate-x-1'
                             }`} />
                           </button>
@@ -714,9 +714,9 @@ export function NotificationAdminPage() {
                               {channel}
                             </div>
                             <div className="flex-1">
-                              <div className="w-full bg-gray-200 rounded-full h-2.5">
+                              <div className="w-full bg-muted rounded-full h-2.5">
                                 <div
-                                  className="bg-blue-600 h-2.5 rounded-full transition-all"
+                                  className="bg-primary h-2.5 rounded-full transition-all"
                                   style={{ width: `${percentage}%` }}
                                 />
                               </div>
