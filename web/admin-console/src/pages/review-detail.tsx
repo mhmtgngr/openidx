@@ -15,6 +15,7 @@ import {
 import { Button } from '../components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '../components/ui/table'
 import {
   Dialog,
   DialogContent,
@@ -392,10 +393,10 @@ export function ReviewDetailPage() {
             <div className="text-center py-8 text-muted-foreground">No items to review</div>
           ) : (
             <div className="rounded-md border">
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b bg-muted">
-                    <th className="p-3 text-left w-10">
+              <Table>
+                <TableHeader>
+                  <TableRow className="border-b bg-muted">
+                    <TableHead className="p-3 text-left w-10">
                       <input
                         type="checkbox"
                         checked={selectedItems.length === pendingItems.length && pendingItems.length > 0}
@@ -403,18 +404,18 @@ export function ReviewDetailPage() {
                         disabled={pendingItems.length === 0}
                         className="h-4 w-4"
                       />
-                    </th>
-                    <th className="p-3 text-left text-sm font-medium">User</th>
-                    <th className="p-3 text-left text-sm font-medium">Resource</th>
-                    <th className="p-3 text-left text-sm font-medium">Type</th>
-                    <th className="p-3 text-left text-sm font-medium">Decision</th>
-                    <th className="p-3 text-right text-sm font-medium">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
+                    </TableHead>
+                    <TableHead className="p-3 text-left text-sm font-medium">User</TableHead>
+                    <TableHead className="p-3 text-left text-sm font-medium">Resource</TableHead>
+                    <TableHead className="p-3 text-left text-sm font-medium">Type</TableHead>
+                    <TableHead className="p-3 text-left text-sm font-medium">Decision</TableHead>
+                    <TableHead className="p-3 text-right text-sm font-medium">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
                   {items?.map((item) => (
-                    <tr key={item.id} className="border-b hover:bg-muted">
-                      <td className="p-3">
+                    <TableRow key={item.id} className="border-b hover:bg-muted">
+                      <TableCell className="p-3">
                         <input
                           type="checkbox"
                           checked={selectedItems.includes(item.id)}
@@ -422,8 +423,8 @@ export function ReviewDetailPage() {
                           disabled={item.decision !== 'pending'}
                           className="h-4 w-4"
                         />
-                      </td>
-                      <td className="p-3">
+                      </TableCell>
+                      <TableCell className="p-3">
                         <div className="flex items-center gap-3">
                           <div className="h-8 w-8 rounded-full bg-muted flex items-center justify-center">
                             <User className="h-4 w-4 text-muted-foreground" />
@@ -432,20 +433,20 @@ export function ReviewDetailPage() {
                             {item.user_id.substring(0, 8)}...
                           </span>
                         </div>
-                      </td>
-                      <td className="p-3">
+                      </TableCell>
+                      <TableCell className="p-3">
                         <p className="font-medium">{item.resource_name || item.resource_id}</p>
-                      </td>
-                      <td className="p-3">
+                      </TableCell>
+                      <TableCell className="p-3">
                         <Badge variant="outline">{item.resource_type}</Badge>
-                      </td>
-                      <td className="p-3">
+                      </TableCell>
+                      <TableCell className="p-3">
                         <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${decisionColors[item.decision]}`}>
                           {decisionIcons[item.decision]}
                           {item.decision}
                         </span>
-                      </td>
-                      <td className="p-3 text-right">
+                      </TableCell>
+                      <TableCell className="p-3 text-right">
                         {item.decision === 'pending' ? (
                           <div className="flex justify-end gap-1">
                             <Button
@@ -481,11 +482,11 @@ export function ReviewDetailPage() {
                             {item.decided_at ? formatDate(item.decided_at) : '-'}
                           </span>
                         )}
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   ))}
-                </tbody>
-              </table>
+                </TableBody>
+              </Table>
             </div>
           )}
         </CardContent>
