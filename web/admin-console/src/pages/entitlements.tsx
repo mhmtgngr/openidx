@@ -172,7 +172,7 @@ export function EntitlementsPage() {
               </div>
               <div>
                 <p className="text-2xl font-bold">{stats?.total_entitlements || 0}</p>
-                <p className="text-sm text-gray-500">Total Entitlements</p>
+                <p className="text-sm text-muted-foreground">Total Entitlements</p>
               </div>
             </div>
           </CardContent>
@@ -187,7 +187,7 @@ export function EntitlementsPage() {
                 <p className="text-2xl font-bold">
                   {stats?.by_type?.role || 0} / {stats?.by_type?.group || 0} / {stats?.by_type?.application || 0}
                 </p>
-                <p className="text-sm text-gray-500">Roles / Groups / Apps</p>
+                <p className="text-sm text-muted-foreground">Roles / Groups / Apps</p>
               </div>
             </div>
           </CardContent>
@@ -202,7 +202,7 @@ export function EntitlementsPage() {
                 <p className="text-2xl font-bold">
                   {(stats?.by_risk_level?.high || 0) + (stats?.by_risk_level?.critical || 0)}
                 </p>
-                <p className="text-sm text-gray-500">High/Critical Risk</p>
+                <p className="text-sm text-muted-foreground">High/Critical Risk</p>
               </div>
             </div>
           </CardContent>
@@ -215,7 +215,7 @@ export function EntitlementsPage() {
               </div>
               <div>
                 <p className="text-2xl font-bold">{stats?.orphan_count || 0}</p>
-                <p className="text-sm text-gray-500">Orphan Entitlements</p>
+                <p className="text-sm text-muted-foreground">Orphan Entitlements</p>
               </div>
             </div>
           </CardContent>
@@ -227,7 +227,7 @@ export function EntitlementsPage() {
         <CardHeader>
           <div className="flex items-center gap-4">
             <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500" />
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 placeholder="Search entitlements..."
                 value={search}
@@ -279,7 +279,7 @@ export function EntitlementsPage() {
               <div className="rounded-md border">
                 <table className="w-full">
                   <thead>
-                    <tr className="border-b bg-gray-50">
+                    <tr className="border-b bg-muted">
                       <th className="p-3 text-left text-sm font-medium">Entitlement</th>
                       <th className="p-3 text-left text-sm font-medium">Type</th>
                       <th className="p-3 text-left text-sm font-medium">Risk</th>
@@ -290,15 +290,15 @@ export function EntitlementsPage() {
                   </thead>
                   <tbody>
                     {entitlements.map((entry) => (
-                      <tr key={`${entry.type}-${entry.id}`} className="border-b hover:bg-gray-50">
+                      <tr key={`${entry.type}-${entry.id}`} className="border-b hover:bg-muted">
                         <td className="p-3">
                           <div className="flex items-center gap-3">
-                            <div className="h-8 w-8 rounded-lg bg-gray-100 flex items-center justify-center">
+                            <div className="h-8 w-8 rounded-lg bg-muted flex items-center justify-center">
                               {typeIcons[entry.type] || <Package className="h-4 w-4" />}
                             </div>
                             <div>
                               <p className="font-medium">{entry.name}</p>
-                              <p className="text-sm text-gray-500 max-w-xs truncate">{entry.description || '-'}</p>
+                              <p className="text-sm text-muted-foreground max-w-xs truncate">{entry.description || '-'}</p>
                             </div>
                           </div>
                         </td>
@@ -318,7 +318,7 @@ export function EntitlementsPage() {
                             {entry.tags?.length > 0 ? entry.tags.slice(0, 3).map((tag) => (
                               <Badge key={tag} variant="secondary" className="text-xs">{tag}</Badge>
                             )) : (
-                              <span className="text-sm text-gray-400">-</span>
+                              <span className="text-sm text-muted-foreground">-</span>
                             )}
                             {entry.tags?.length > 3 && (
                               <Badge variant="secondary" className="text-xs">+{entry.tags.length - 3}</Badge>
@@ -348,14 +348,14 @@ export function EntitlementsPage() {
 
               {totalCount > PAGE_SIZE && (
                 <div className="flex items-center justify-between pt-4 px-1">
-                  <p className="text-sm text-gray-500">
+                  <p className="text-sm text-muted-foreground">
                     Showing {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, totalCount)} of {totalCount}
                   </p>
                   <div className="flex items-center gap-2">
                     <Button variant="outline" size="sm" onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0}>
                       <ChevronLeft className="h-4 w-4 mr-1" /> Previous
                     </Button>
-                    <span className="text-sm text-gray-600">Page {page + 1} of {Math.ceil(totalCount / PAGE_SIZE)}</span>
+                    <span className="text-sm text-muted-foreground">Page {page + 1} of {Math.ceil(totalCount / PAGE_SIZE)}</span>
                     <Button variant="outline" size="sm" onClick={() => setPage(p => p + 1)} disabled={(page + 1) * PAGE_SIZE >= totalCount}>
                       Next <ChevronRight className="h-4 w-4 ml-1" />
                     </Button>
@@ -375,7 +375,7 @@ export function EntitlementsPage() {
           </DialogHeader>
           {selectedEntry && (
             <form onSubmit={handleSaveMetadata} className="space-y-4">
-              <div className="flex items-center gap-2 p-3 bg-gray-50 rounded-lg">
+              <div className="flex items-center gap-2 p-3 bg-muted rounded-lg">
                 {typeIcons[selectedEntry.type]}
                 <span className="font-medium">{selectedEntry.name}</span>
                 <Badge variant="outline" className="ml-auto">{typeLabels[selectedEntry.type]}</Badge>
@@ -414,7 +414,7 @@ export function EntitlementsPage() {
                   id="review_required"
                   checked={metadata.review_required}
                   onChange={(e) => setMetadata(prev => ({ ...prev, review_required: e.target.checked }))}
-                  className="rounded border-gray-300"
+                  className="rounded border-border"
                 />
                 <Label htmlFor="review_required">Require periodic review</Label>
               </div>
