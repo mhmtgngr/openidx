@@ -18,7 +18,7 @@ ENFORCE=0; [ "${1:-}" = "--enforce" ] && ENFORCE=1
 # kept EXACTLY aligned with the token-migration mapping (spec Sub-project B): only
 # the light neutrals + brand blue that have a token equivalent. Darker semantic
 # grays (bg-gray-400..900 used as chart fills/dots) are intentionally NOT flagged.
-PATTERN='bg-white|text-gray-[3-9]00|bg-gray-(50|100|200|300)|border-gray-(100|200|300)|text-black|text-blue-600|bg-blue-600'
+PATTERN='bg-white|text-gray-[3-9]00\b|bg-gray-(50|100|200|300)\b|border-gray-(100|200|300)\b|text-black|text-blue-600\b|bg-blue-600\b'
 
 offenders=0
 while IFS= read -r f; do
