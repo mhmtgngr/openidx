@@ -131,7 +131,7 @@ export function MFABypassCodesPage() {
       case 'used':
         return <Badge className="bg-blue-100 text-blue-800"><CheckCircle2 className="h-3 w-3 mr-1" />Used</Badge>
       case 'expired':
-        return <Badge className="bg-gray-100 text-gray-800"><Clock className="h-3 w-3 mr-1" />Expired</Badge>
+        return <Badge className="bg-muted text-foreground"><Clock className="h-3 w-3 mr-1" />Expired</Badge>
       case 'revoked':
         return <Badge className="bg-red-100 text-red-800"><XCircle className="h-3 w-3 mr-1" />Revoked</Badge>
       default:
@@ -207,19 +207,19 @@ export function MFABypassCodesPage() {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Used</CardTitle>
-            <Key className="h-4 w-4 text-blue-600" />
+            <Key className="h-4 w-4 text-primary" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-blue-600">{used}</div>
+            <div className="text-2xl font-bold text-primary">{used}</div>
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Expired/Revoked</CardTitle>
-            <Key className="h-4 w-4 text-gray-600" />
+            <Key className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-gray-600">{expired}</div>
+            <div className="text-2xl font-bold text-muted-foreground">{expired}</div>
           </CardContent>
         </Card>
       </div>
@@ -431,10 +431,10 @@ export function MFABypassCodesPage() {
                 <div className={`p-1 rounded ${
                   entry.action === 'generated' ? 'bg-green-100' :
                   entry.action === 'used' ? 'bg-blue-100' :
-                  entry.action === 'revoked' ? 'bg-red-100' : 'bg-gray-100'
+                  entry.action === 'revoked' ? 'bg-red-100' : 'bg-muted'
                 }`}>
                   {entry.action === 'generated' && <Plus className="h-4 w-4 text-green-600" />}
-                  {entry.action === 'used' && <CheckCircle2 className="h-4 w-4 text-blue-600" />}
+                  {entry.action === 'used' && <CheckCircle2 className="h-4 w-4 text-primary" />}
                   {entry.action === 'revoked' && <Ban className="h-4 w-4 text-red-600" />}
                 </div>
                 <div className="flex-1">
