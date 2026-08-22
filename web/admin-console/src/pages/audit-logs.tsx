@@ -8,6 +8,7 @@ import { Badge } from '../components/ui/badge'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '../components/ui/table'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 import { QueryError } from '../components/query-error'
@@ -475,63 +476,63 @@ export function AuditLogsPage() {
             </div>
           ) : (
           <div className="rounded-md border">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b bg-muted">
-                  <th className="p-3 text-left text-sm font-medium">Timestamp</th>
-                  <th className="p-3 text-left text-sm font-medium">Event Type</th>
-                  <th className="p-3 text-left text-sm font-medium">Action</th>
-                  <th className="p-3 text-left text-sm font-medium">Actor</th>
-                  <th className="p-3 text-left text-sm font-medium">Target</th>
-                  <th className="p-3 text-left text-sm font-medium">Outcome</th>
-                </tr>
-              </thead>
-              <tbody>
+            <Table>
+              <TableHeader>
+                <TableRow className="border-b bg-muted">
+                  <TableHead className="p-3 text-left text-sm font-medium">Timestamp</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">Event Type</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">Action</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">Actor</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">Target</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">Outcome</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {filteredEvents.map((event) => (
-                    <tr key={event.id} onClick={() => setSelectedEvent(event)} className="border-b hover:bg-muted cursor-pointer">
-                      <td className="p-3">
+                    <TableRow key={event.id} onClick={() => setSelectedEvent(event)} className="border-b hover:bg-muted cursor-pointer">
+                      <TableCell className="p-3">
                         <span className="text-sm text-muted-foreground">
                           {formatTimestamp(event.timestamp)}
                         </span>
-                      </td>
-                      <td className="p-3">
+                      </TableCell>
+                      <TableCell className="p-3">
                         <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${eventTypeColors[event.event_type] || 'bg-muted text-foreground'}`}>
                           {eventTypeIcons[event.event_type]}
                           {event.event_type.replace('_', ' ')}
                         </span>
-                      </td>
-                      <td className="p-3">
+                      </TableCell>
+                      <TableCell className="p-3">
                         <p className="font-medium text-sm">{event.action}</p>
                         <p className="text-xs text-muted-foreground">{event.category}</p>
-                      </td>
-                      <td className="p-3">
+                      </TableCell>
+                      <TableCell className="p-3">
                         <div className="text-sm">
                           <p className="truncate max-w-[150px]" title={event.actor_id}>
                             {event.actor_id ? event.actor_id.substring(0, 8) + '...' : '-'}
                           </p>
                           <p className="text-xs text-muted-foreground">{event.actor_ip || '-'}</p>
                         </div>
-                      </td>
-                      <td className="p-3">
+                      </TableCell>
+                      <TableCell className="p-3">
                         <div className="text-sm">
                           <p className="truncate max-w-[150px]" title={event.target_id}>
                             {event.target_id ? event.target_id.substring(0, 8) + '...' : '-'}
                           </p>
                           <p className="text-xs text-muted-foreground">{event.target_type || '-'}</p>
                         </div>
-                      </td>
-                      <td className="p-3">
+                      </TableCell>
+                      <TableCell className="p-3">
                         <div className="flex items-center gap-1">
                           {outcomeIcons[event.outcome]}
                           <Badge variant={event.outcome === 'success' ? 'default' : event.outcome === 'failure' ? 'destructive' : 'secondary'}>
                             {event.outcome}
                           </Badge>
                         </div>
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   ))}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </div>
           )}
 
