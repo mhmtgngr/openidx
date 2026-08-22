@@ -162,7 +162,7 @@ export function DeviceTrustApprovalPage() {
       case 'rejected':
         return <Badge className="bg-red-100 text-red-800"><XCircle className="h-3 w-3 mr-1" />Rejected</Badge>
       case 'expired':
-        return <Badge className="bg-gray-100 text-gray-800"><AlertCircle className="h-3 w-3 mr-1" />Expired</Badge>
+        return <Badge className="bg-muted text-foreground"><AlertCircle className="h-3 w-3 mr-1" />Expired</Badge>
       default:
         return <Badge>{status}</Badge>
     }
