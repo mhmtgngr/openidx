@@ -23,6 +23,7 @@ import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Card, CardContent, CardHeader } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '../components/ui/table'
 import {
   Dialog,
   DialogContent,
@@ -307,21 +308,21 @@ export function LifecycleWorkflowsPage() {
           ) : (
             <>
               <div className="rounded-md border">
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b bg-muted">
-                      <th className="p-3 text-left text-sm font-medium">Workflow</th>
-                      <th className="p-3 text-left text-sm font-medium">Event</th>
-                      <th className="p-3 text-left text-sm font-medium">Trigger</th>
-                      <th className="p-3 text-left text-sm font-medium">Actions</th>
-                      <th className="p-3 text-left text-sm font-medium">Status</th>
-                      <th className="p-3 text-right text-sm font-medium">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
+                <Table>
+                  <TableHeader>
+                    <TableRow className="border-b bg-muted">
+                      <TableHead className="p-3 text-left text-sm font-medium">Workflow</TableHead>
+                      <TableHead className="p-3 text-left text-sm font-medium">Event</TableHead>
+                      <TableHead className="p-3 text-left text-sm font-medium">Trigger</TableHead>
+                      <TableHead className="p-3 text-left text-sm font-medium">Actions</TableHead>
+                      <TableHead className="p-3 text-left text-sm font-medium">Status</TableHead>
+                      <TableHead className="p-3 text-right text-sm font-medium">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
                     {filteredWorkflows.map((wf) => (
-                      <tr key={wf.id} className="border-b hover:bg-muted">
-                        <td className="p-3">
+                      <TableRow key={wf.id} className="border-b hover:bg-muted">
+                        <TableCell className="p-3">
                           <div className="flex items-center gap-3">
                             <div className="h-9 w-9 rounded-lg bg-indigo-100 flex items-center justify-center">
                               <Workflow className="h-4 w-4 text-indigo-700" />
@@ -331,17 +332,17 @@ export function LifecycleWorkflowsPage() {
                               <p className="text-sm text-muted-foreground max-w-xs truncate">{wf.description || '-'}</p>
                             </div>
                           </div>
-                        </td>
-                        <td className="p-3">
+                        </TableCell>
+                        <TableCell className="p-3">
                           <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${eventColors[wf.event_type] || 'bg-muted text-foreground'}`}>
                             {eventIcons[wf.event_type]}
                             {eventLabels[wf.event_type] || wf.event_type}
                           </span>
-                        </td>
-                        <td className="p-3">
+                        </TableCell>
+                        <TableCell className="p-3">
                           <Badge variant="outline">{wf.trigger_type}</Badge>
-                        </td>
-                        <td className="p-3">
+                        </TableCell>
+                        <TableCell className="p-3">
                           <div className="flex gap-1 flex-wrap">
                             {(wf.actions || []).slice(0, 3).map((a, i) => (
                               <Badge key={i} variant="secondary" className="text-xs">
@@ -352,13 +353,13 @@ export function LifecycleWorkflowsPage() {
                               <Badge variant="secondary" className="text-xs">+{wf.actions.length - 3}</Badge>
                             )}
                           </div>
-                        </td>
-                        <td className="p-3">
+                        </TableCell>
+                        <TableCell className="p-3">
                           <Badge variant={wf.enabled ? 'default' : 'secondary'}>
                             {wf.enabled ? 'Enabled' : 'Disabled'}
                           </Badge>
-                        </td>
-                        <td className="p-3 text-right">
+                        </TableCell>
+                        <TableCell className="p-3 text-right">
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
                               <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
@@ -396,11 +397,11 @@ export function LifecycleWorkflowsPage() {
                               </ConfirmAction>
                             </DropdownMenuContent>
                           </DropdownMenu>
-                        </td>
-                      </tr>
+                        </TableCell>
+                      </TableRow>
                     ))}
-                  </tbody>
-                </table>
+                  </TableBody>
+                </Table>
               </div>
 
               {totalCount > PAGE_SIZE && (
@@ -589,37 +590,37 @@ export function LifecycleWorkflowsPage() {
               </div>
             ) : (
               <div className="rounded-md border">
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b bg-muted">
-                      <th className="p-3 text-left text-sm font-medium">Started</th>
-                      <th className="p-3 text-left text-sm font-medium">User ID</th>
-                      <th className="p-3 text-left text-sm font-medium">Status</th>
-                      <th className="p-3 text-left text-sm font-medium">Completed/Failed</th>
-                      <th className="p-3 text-left text-sm font-medium">Completed At</th>
-                    </tr>
-                  </thead>
-                  <tbody>
+                <Table>
+                  <TableHeader>
+                    <TableRow className="border-b bg-muted">
+                      <TableHead className="p-3 text-left text-sm font-medium">Started</TableHead>
+                      <TableHead className="p-3 text-left text-sm font-medium">User ID</TableHead>
+                      <TableHead className="p-3 text-left text-sm font-medium">Status</TableHead>
+                      <TableHead className="p-3 text-left text-sm font-medium">Completed/Failed</TableHead>
+                      <TableHead className="p-3 text-left text-sm font-medium">Completed At</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
                     {executions.map((exec) => (
-                      <tr key={exec.id} className="border-b">
-                        <td className="p-3 text-sm">{formatDate(exec.started_at)}</td>
-                        <td className="p-3 text-sm font-mono">{exec.user_id.slice(0, 8)}...</td>
-                        <td className="p-3">
+                      <TableRow key={exec.id} className="border-b">
+                        <TableCell className="p-3 text-sm">{formatDate(exec.started_at)}</TableCell>
+                        <TableCell className="p-3 text-sm font-mono">{exec.user_id.slice(0, 8)}...</TableCell>
+                        <TableCell className="p-3">
                           <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${executionStatusColors[exec.status] || 'bg-muted text-foreground'}`}>
                             {exec.status === 'completed' ? <CheckCircle className="h-3 w-3" /> : exec.status === 'failed' ? <XCircle className="h-3 w-3" /> : <Clock className="h-3 w-3" />}
                             {exec.status}
                           </span>
-                        </td>
-                        <td className="p-3 text-sm">
+                        </TableCell>
+                        <TableCell className="p-3 text-sm">
                           <span className="text-green-600">{exec.actions_completed?.length || 0}</span>
                           {' / '}
                           <span className="text-red-600">{exec.actions_failed?.length || 0}</span>
-                        </td>
-                        <td className="p-3 text-sm">{formatDate(exec.completed_at)}</td>
-                      </tr>
+                        </TableCell>
+                        <TableCell className="p-3 text-sm">{formatDate(exec.completed_at)}</TableCell>
+                      </TableRow>
                     ))}
-                  </tbody>
-                </table>
+                  </TableBody>
+                </Table>
               </div>
             )}
           </div>
