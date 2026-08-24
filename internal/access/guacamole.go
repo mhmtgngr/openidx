@@ -1323,6 +1323,9 @@ func (gc *GuacamoleClient) getOrCreateReadOnlyShareProfile(ctx context.Context, 
 		"name":                        profileName,
 		"primaryConnectionIdentifier": connIdentifier,
 		"parameters":                  map[string]string{"read-only": "true"},
+		// Same NPE guard as connections/users: Guacamole dereferences the
+		// attributes map on create, so omitting it 500s on strict builds.
+		"attributes": map[string]string{},
 	}
 	respData, statusCode, err := gc.apiRequest("POST", "/sharingProfiles", body)
 	if err != nil {
