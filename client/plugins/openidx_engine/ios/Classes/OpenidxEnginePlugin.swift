@@ -1,13 +1,14 @@
 import Flutter
 import UIKit
 
-// `Mobile` is the Swift module produced by
+// `Engine` is the Swift module produced by
 //   gomobile bind -target=ios -o Engine.xcframework ./agent/mobile
-// It exposes the package funcs as `Mobile<Func>` free functions with the
-// gomobile calling convention: value-returning funcs take an
-// `NSErrorPointer` out-param and return the String; error-only funcs return
-// (throw) an error. See README.md for how the xcframework is linked.
-import Mobile
+// gomobile names the module after the -o output (Engine), while the Go package
+// (`mobile`) determines the function PREFIX — so the module is `Engine` but the
+// funcs are `Mobile<Func>`. The funcs use the gomobile calling convention:
+// value-returning funcs take an `NSErrorPointer` out-param and return the
+// String; error-only funcs return (throw) an error. See README.md.
+import Engine
 
 public class OpenidxEnginePlugin: NSObject, FlutterPlugin {
   public static func register(with registrar: FlutterPluginRegistrar) {
