@@ -63,7 +63,7 @@ jobs:
         working-directory: agent
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/26.1.10909125
-        run: gomobile bind -target=android -androidapi 21 -o ../engine.aar ./mobile
+        run: gomobile bind -target=android -androidapi 21 -ldflags=-checklinkname=0 -o ../engine.aar ./mobile
 
       - uses: actions/upload-artifact@v4
         with:
@@ -94,7 +94,7 @@ jobs:
       - name: Build Engine.xcframework
         # Run inside the agent module (see the android job for why).
         working-directory: agent
-        run: gomobile bind -target=ios -o ../Engine.xcframework ./mobile
+        run: gomobile bind -target=ios -ldflags=-checklinkname=0 -o ../Engine.xcframework ./mobile
 
       - name: Zip framework (preserve symlinks)
         run: zip -ry Engine.xcframework.zip Engine.xcframework

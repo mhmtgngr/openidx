@@ -61,7 +61,7 @@ jobs:
           ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/${{ env.NDK_VERSION }}
         run: |
           mkdir -p "$GITHUB_WORKSPACE/client/plugins/openidx_engine/android/libs"
-          gomobile bind -target=android -androidapi 21 -o "$GITHUB_WORKSPACE/client/plugins/openidx_engine/android/libs/engine.aar" ./mobile
+          gomobile bind -target=android -androidapi 21 -ldflags=-checklinkname=0 -o "$GITHUB_WORKSPACE/client/plugins/openidx_engine/android/libs/engine.aar" ./mobile
 
       - uses: subosito/flutter-action@v2
         with:
