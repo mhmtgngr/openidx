@@ -58,9 +58,12 @@ jobs:
         run: gomobile init
 
       - name: Build engine.aar
+        # Must run inside the agent module (its go.mod requires golang.org/x/mobile);
+        # from the repo root, gobind can't resolve x/mobile/bind for ./agent/mobile.
+        working-directory: agent
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/26.1.10909125
-        run: gomobile bind -target=android -androidapi 21 -o engine.aar ./agent/mobile
+        run: gomobile bind -target=android -androidapi 21 -o ../engine.aar ./mobile
 
       - uses: actions/upload-artifact@v4
         with:
@@ -89,7 +92,9 @@ jobs:
         run: gomobile init
 
       - name: Build Engine.xcframework
-        run: gomobile bind -target=ios -o Engine.xcframework ./agent/mobile
+        # Run inside the agent module (see the android job for why).
+        working-directory: agent
+        run: gomobile bind -target=ios -o ../Engine.xcframework ./mobile
 
       - name: Zip framework (preserve symlinks)
         run: zip -ry Engine.xcframework.zip Engine.xcframework
