@@ -360,6 +360,15 @@ func (gc *GuacamoleClient) UpdateConnection(connID, name, protocol, hostname str
 		"name":       name,
 		"protocol":   protocol,
 		"parameters": params,
+		// Guacamole's update handler dereferences the attributes map
+		// unconditionally; omitting it makes newer builds NPE with HTTP 500
+		// ("Cannot invoke Map.get because attributes is null"), which broke every
+		// reconnect to an existing PAM connection. Send the same attributes the
+		// create path sends so update is symmetric and never null.
+		"attributes": map[string]string{
+			"max-connections":          "10",
+			"max-connections-per-user": "3",
+		},
 	}
 
 	_, statusCode, err := gc.apiRequest("PUT", "/connections/"+connID, body)
