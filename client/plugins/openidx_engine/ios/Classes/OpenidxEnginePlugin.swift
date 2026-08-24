@@ -45,14 +45,14 @@ public class OpenidxEnginePlugin: NSObject, FlutterPlugin {
   private func dispatch(_ method: String, _ args: [String: Any]?) throws -> Any? {
     switch method {
     case "start":
-      try MobileStart(str(args, "configDir"))
+      try callVoid { MobileStart(str(args, "configDir"), $0) }
       return nil
     case "status":
       return try callString { MobileStatus($0) }
     case "login":
       return try callString { MobileLogin($0) }
     case "logout":
-      try MobileLogout()
+      try callVoid { MobileLogout($0) }
       return nil
     case "enroll":
       let code = str(args, "code")
@@ -65,13 +65,13 @@ public class OpenidxEnginePlugin: NSObject, FlutterPlugin {
       let entryID = str(args, "entryId")
       return try callString { MobilePamConnect(entryID, $0) }
     case "pamRequest":
-      try MobilePamRequest(str(args, "entryId"), str(args, "reason"))
+      try callVoid { MobilePamRequest(str(args, "entryId"), str(args, "reason"), $0) }
       return nil
     case "zitiDial":
       let service = str(args, "service")
       return try callString { MobileZitiDial(service, $0) }
     case "zitiClose":
-      try MobileZitiClose(str(args, "service"))
+      try callVoid { MobileZitiClose(str(args, "service"), $0) }
       return nil
     default:
       throw NSError(
@@ -88,6 +88,16 @@ public class OpenidxEnginePlugin: NSObject, FlutterPlugin {
     let value = body(&error)
     if let error = error { throw error }
     return value
+  }
+
+  /// Invokes a gomobile error-only func. gomobile generates these as
+  /// `BOOL MobileX(..., NSError**)` (success flag + out-param), NOT as Swift
+  /// `throws`, so we pass the NSErrorPointer explicitly, discard the BOOL, and
+  /// rethrow any error.
+  private func callVoid(_ body: (NSErrorPointer) -> Bool) throws {
+    var error: NSError?
+    _ = body(&error)
+    if let error = error { throw error }
   }
 
   private func str(_ args: [String: Any]?, _ key: String) -> String {
