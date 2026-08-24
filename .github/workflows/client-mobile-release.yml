@@ -58,7 +58,7 @@ jobs:
           ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/${{ env.NDK_VERSION }}
         run: |
           mkdir -p client/plugins/openidx_engine/android/libs
-          gomobile bind -target=android -o client/plugins/openidx_engine/android/libs/engine.aar ./agent/mobile
+          gomobile bind -target=android -androidapi 21 -o client/plugins/openidx_engine/android/libs/engine.aar ./agent/mobile
 
       - uses: subosito/flutter-action@v2
         with:

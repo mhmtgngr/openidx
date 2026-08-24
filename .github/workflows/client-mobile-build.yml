@@ -60,7 +60,7 @@ jobs:
       - name: Build engine.aar
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/26.1.10909125
-        run: gomobile bind -target=android -o engine.aar ./agent/mobile
+        run: gomobile bind -target=android -androidapi 21 -o engine.aar ./agent/mobile
 
       - uses: actions/upload-artifact@v4
         with:

@@ -203,7 +203,7 @@ class _PostureCard extends StatelessWidget {
   Widget _chip(BuildContext context, String label, int n, Color color) {
     return Chip(
       label: Text('$label: $n'),
-      side: BorderSide(color: color.withValues(alpha: 0.5)),
+      side: BorderSide(color: color.withOpacity(0.5)),
     );
   }
 
