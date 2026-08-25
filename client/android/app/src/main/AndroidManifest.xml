@@ -7,7 +7,7 @@
       does not overwrite existing files, this hand-written manifest wins.
 
       Package/applicationId is com.example.openidx_client, matching
-      `flutter create --project-name openidx_client`; keep .MainActivity in sync.
+      `flutter create` with project-name openidx_client; keep .MainActivity in sync.
     -->
 
     <uses-permission android:name="android.permission.INTERNET"/>
