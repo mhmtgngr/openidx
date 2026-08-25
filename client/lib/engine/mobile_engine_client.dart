@@ -89,6 +89,12 @@ class MobileEngineClient implements EngineClient {
   }
 
   @override
+  Future<void> setServer(String serverUrl) async {
+    await _ensureStarted();
+    await _guard(() => _engine.setServer(serverUrl), 'setServer');
+  }
+
+  @override
   Future<EnrollResult> enroll(String code) async {
     await _ensureStarted();
     final json = await _guard(() => _engine.enroll(code), 'enroll');

@@ -230,6 +230,20 @@ class DesktopEngineClient implements EngineClient {
     await _send('POST', '/logout');
   }
 
+  /// Not available over the control socket: on desktop the server is chosen by
+  /// `openidx-agent enroll --server …` (or the installer) and lives in the
+  /// agent config the sidecar already loaded. Fails loudly rather than silently
+  /// no-op'ing, so a mobile-only caller reaching the desktop transport is
+  /// obvious.
+  @override
+  Future<void> setServer(String serverUrl) async {
+    throw const EngineException(
+      0,
+      'setServer is not supported on desktop; the server is configured via '
+      '`openidx-agent enroll --server <url>`',
+    );
+  }
+
   @override
   Future<EnrollResult> enroll(String code) async => EnrollResult.fromJson(
       _asMap(await _send('POST', '/enroll', {'code': code}), '/enroll'));

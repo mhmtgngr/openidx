@@ -15,6 +15,17 @@ sealed class OpenidxDeepLink {
         final code = uri.queryParameters['code'];
         if (code == null || code.isEmpty) return null;
         return OAuthCallbackLink(code: code, raw: uri);
+      case 'enroll':
+        // openidx://enroll?code=<token>&server=<baseUrl> — issued by the admin
+        // console (POST /agent/enroll/session) as a QR / copyable link. The
+        // `server` is the half mobile cannot get any other way: the engine
+        // starts with no configured server and has no CLI flag to set one.
+        final code = uri.queryParameters['code'];
+        if (code == null || code.isEmpty) return null;
+        return EnrollLink(
+          code: code,
+          server: uri.queryParameters['server'] ?? '',
+        );
       case 'approve':
         // openidx://approve/<challengeId>
         final id = uri.pathSegments.isNotEmpty ? uri.pathSegments.first : '';
@@ -31,6 +42,16 @@ class OAuthCallbackLink extends OpenidxDeepLink {
   const OAuthCallbackLink({required this.code, required this.raw});
   final String code;
   final Uri raw;
+}
+
+/// `openidx://enroll?code=…&server=…` — the admin console's enrollment link.
+///
+/// [server] may be empty if the console omitted it, in which case the enroll
+/// screen keeps whatever the user typed rather than clearing it.
+class EnrollLink extends OpenidxDeepLink {
+  const EnrollLink({required this.code, required this.server});
+  final String code;
+  final String server;
 }
 
 /// `openidx://approve/<challengeId>` — a push-approval deep link.

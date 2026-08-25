@@ -15,6 +15,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -187,21 +188,60 @@ type enrollPayload struct {
 	ZitiIdentity string `json:"ziti_identity,omitempty"`
 }
 
+// SetServer records the OpenIDX server this device enrolls against and persists
+// it to agent.json, so a subsequent Enroll has a target.
+//
+// Desktop supplies it via `openidx-agent enroll --server …` (or the installer),
+// which is why the engine previously only ever *read* it. Mobile has no CLI: the
+// app calls this with the `server` carried by the
+// `openidx://enroll?code=…&server=…` deep link the admin console issues, or with
+// a URL the user typed. Without it, Enroll fails with "no server configured for
+// enrollment" before any request leaves the device.
+func (e *Engine) SetServer(serverURL string) error {
+	serverURL = strings.TrimRight(strings.TrimSpace(serverURL), "/")
+	if serverURL == "" {
+		return fmt.Errorf("server URL is required")
+	}
+	u, err := url.Parse(serverURL)
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return fmt.Errorf("invalid server URL %q: want http(s)://host", serverURL)
+	}
+
+	// Preserve any already-persisted fields; only the server changes here.
+	cfg, err := agent.LoadConfig(e.configDir)
+	if err != nil || cfg == nil {
+		cfg = &agent.AgentConfig{}
+	}
+	cfg.ServerURL = serverURL
+	if err := cfg.Save(e.configDir); err != nil {
+		return fmt.Errorf("saving server URL: %w", err)
+	}
+
+	e.serverURL = serverURL
+	e.logger.Info("server configured", zap.String("server_url", serverURL))
+	return nil
+}
+
 // Enroll enrolls this device with the (already-resolved) server using the
 // supplied one-time enrollment code/token, and returns the result as JSON. The
-// server URL is picked up from config on the next NewEngine; here we reuse the
-// currently-loaded serverURL if present, otherwise require it be pre-set via
-// config (Phase 0 keeps enrollment server-selection in the config dir).
+// server URL comes from the config dir (see SetServer, or the desktop
+// `--server` flag) and is refreshed from the freshly-written config afterwards.
 func (e *Engine) Enroll(code string) (string, error) {
 	code = strings.TrimSpace(code)
 	if code == "" {
 		return "", fmt.Errorf("enrollment code is required")
 	}
 	if e.serverURL == "" {
+		// Logged, not merely returned: this is the failure a user hits on a
+		// fresh device, and an empty control.log gives them nothing to report.
+		e.logger.Error("enroll rejected: no server configured",
+			zap.String("config_dir", e.configDir))
 		return "", fmt.Errorf("no server configured for enrollment")
 	}
 	agentID, deviceID, zitiIdentity, err := e.be.Enroll(e.logger, e.serverURL, code, e.configDir)
 	if err != nil {
+		e.logger.Error("enrollment failed",
+			zap.String("server_url", e.serverURL), zap.Error(err))
 		return "", fmt.Errorf("enrollment failed: %w", err)
 	}
 	// Refresh the cached serverURL from the freshly-written config.

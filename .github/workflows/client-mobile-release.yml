@@ -70,6 +70,12 @@ jobs:
       - name: Materialize platform runners
         working-directory: client
         run: flutter create --platforms=ios,android --project-name openidx_client .
+      # flutter create writes stock runners that know nothing about our custom
+      # URL scheme, so openidx:// (enroll / oauth-callback / approve) would not
+      # reach the app. Must run after every materialize.
+      - name: Register the openidx:// URL scheme
+        working-directory: client
+        run: python3 tool/patch_platform_runners.py
 
       - name: Resolve dependencies
         working-directory: client

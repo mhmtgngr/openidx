@@ -55,6 +55,15 @@ class OpenidxEngine {
     await _channel.invokeMethod<void>('logout');
   }
 
+  /// Point the engine at an OpenIDX server and persist it. Must precede
+  /// [enroll] on a fresh device — the engine has no server until this is called
+  /// (mobile has no `--server` CLI flag).
+  Future<void> setServer(String serverUrl) async {
+    await _channel.invokeMethod<void>('setServer', <String, Object?>{
+      'serverUrl': serverUrl,
+    });
+  }
+
   Future<String> enroll(String code) =>
       _invokeString('enroll', <String, Object?>{'code': code});
 

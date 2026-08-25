@@ -54,6 +54,9 @@ public class OpenidxEnginePlugin: NSObject, FlutterPlugin {
     case "logout":
       try callVoid { MobileLogout($0) }
       return nil
+    case "setServer":
+      try callVoid { MobileSetServer(str(args, "serverUrl"), $0) }
+      return nil
     case "enroll":
       let code = str(args, "code")
       return try callString { MobileEnroll(code, $0) }
