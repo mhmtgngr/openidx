@@ -143,7 +143,21 @@ func Logout() error {
 	return e.Logout()
 }
 
-// Enroll onboards this device with a one-time enrollment code.
+// SetServer points the engine at an OpenIDX server and persists the choice,
+// which must happen before Enroll on a fresh device. The app passes the `server`
+// carried by the `openidx://enroll?code=…&server=…` deep link, or a URL the user
+// typed. Desktop uses the `--server` flag for the same purpose; mobile has no
+// CLI, so this is the only way in.
+func SetServer(serverURL string) error {
+	e, err := get()
+	if err != nil {
+		return err
+	}
+	return e.SetServer(serverURL)
+}
+
+// Enroll onboards this device with a one-time enrollment code. Requires a server
+// to have been configured (SetServer) — otherwise it fails before any request.
 func Enroll(code string) (string, error) {
 	e, err := get()
 	if err != nil {

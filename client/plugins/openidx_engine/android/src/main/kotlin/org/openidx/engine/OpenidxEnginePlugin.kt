@@ -55,6 +55,7 @@ class OpenidxEnginePlugin : FlutterPlugin, MethodCallHandler {
       "status" -> Mobile.status()
       "login" -> Mobile.login()
       "logout" -> { Mobile.logout(); null }
+      "setServer" -> { Mobile.setServer(arg(call, "serverUrl")); null }
       "enroll" -> Mobile.enroll(arg(call, "code"))
       "posture" -> Mobile.posture()
       "pamList" -> Mobile.pamList()

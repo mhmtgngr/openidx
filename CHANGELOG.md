@@ -181,6 +181,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Mobile devices can be enrolled at all (the server URL had no way in).** The
+  engine reads its server from `agent.json`, which on desktop is written by
+  `openidx-agent enroll --server …`. Mobile has no CLI and the gomobile facade
+  exposed no setter, so a fresh install had `serverURL == ""` and every enrollment
+  died at `EngineException(0): no server configured for enrollment` — before a
+  single request left the device, no matter how valid the code. Adds
+  `Engine.SetServer` (validates the URL, persists it, preserves existing config
+  fields) plus `mobile.SetServer`, a `setServer` channel method across all three
+  plugin layers (Dart/Kotlin/Swift), and `EngineClient.setServer` (desktop throws —
+  it is configured by CLI). The enroll screen now takes a **Server URL** on mobile
+  and handles the admin console's `openidx://enroll?code=…&server=…` link, which
+  `deep_links.dart` previously dropped, having parsed only `oauth-callback` and
+  `approve`.
+
+- **`openidx://` links now actually reach the Android/iOS app.** `client/` does not
+  commit its platform runners; CI regenerates them with `flutter create`, whose
+  stock template registers no custom URL scheme — so on a shipped build
+  `cmd package resolve-activity -d openidx://…` answered *"No activity found"*.
+  That silently broke **every** deep link, including the pre-existing
+  `openidx://oauth-callback` browser-PKCE redirect and `openidx://approve` push
+  approvals. Adds `client/tool/patch_platform_runners.py` (idempotent:
+  VIEW/BROWSABLE intent-filter on Android, `CFBundleURLTypes` on iOS), run after
+  every `flutter create` in the mobile build and release workflows.
+
+- **Enrollment failures are now visible.** `Engine` never called its logger on the
+  enroll path, so `control.log` stayed 0 bytes through exactly the failures the
+  v1.33.1 log viewer was added to explain. The "no server configured" rejection and
+  backend enroll errors are now logged, and the viewer is reachable *before*
+  enrollment via a "View control logs" action on the enroll screen — it previously
+  lived only in Settings, inside the shell that renders after `enrolled && loggedIn`.
+
 - **Android/iOS client no longer boots to a blank white screen.** `main()` ran
   the desktop boot path on every platform: it awaited
   `windowManager.ensureInitialized()` (and later `TrayController.init()`), but

@@ -23,6 +23,15 @@ abstract class EngineClient {
 
   Future<void> logout();
 
+  /// Point the engine at an OpenIDX server, persisted for later calls.
+  ///
+  /// Mobile-only in practice: the engine has no server on a fresh install and no
+  /// CLI to set one, so [enroll] fails until this is called with the value from
+  /// an `openidx://enroll?code=…&server=…` deep link (or typed by the user).
+  /// Desktop is configured by `openidx-agent enroll --server …` / the installer
+  /// and throws [EngineException] here.
+  Future<void> setServer(String serverUrl);
+
   Future<EnrollResult> enroll(String code);
 
   Future<Posture> posture();

@@ -103,6 +103,9 @@ class EngineActions {
     await _refreshAll();
   }
 
+  /// Persist the server to enroll against — see [EngineClient.setServer].
+  Future<void> setServer(String serverUrl) => _engine.setServer(serverUrl);
+
   Future<EnrollResult> enroll(String code) async {
     final result = await _engine.enroll(code);
     await _refreshAll();
