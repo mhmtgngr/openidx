@@ -49,12 +49,18 @@ generated platform dirs. Commit the regenerated `firebase_options.dart`.
 
 ## 3. iOS APNs
 
+The iOS app is registered (`com.example.openidxClient`) and its options are in
+`firebase_options.dart`, so the client fetches an FCM token on iOS. To actually
+*deliver* push on iOS you still need:
+
 1. Apple Developer → create an **APNs auth key** (.p8).
 2. Firebase Console → Project Settings → Cloud Messaging → upload the .p8 (Key
    ID + Team ID).
 3. Xcode: enable **Push Notifications** + **Background Modes → Remote
    notifications** capability on the Runner target (the release job must apply
-   these; `flutter create` does not).
+   these; `flutter create` does not). On a simulator / unsigned build,
+   `getToken()` returns null → the app degrades to ntfy on iOS until a signed
+   build with the entitlement runs on a real device.
 
 ## 4. Server: FCM service account (HTTP v1)
 

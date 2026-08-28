@@ -1,13 +1,10 @@
 // Firebase configuration for the OpenIDX native client.
 //
-// Generated from the Android google-services.json for project "openidx-14ce9".
-// The apiKey/appId here are CLIENT identifiers (they ship inside the APK) — not
-// secrets — so embedding them is the standard FlutterFire approach.
-//
-// Android is configured. iOS is not yet: add a GoogleService-Info.plist and
-// extend `currentPlatform` (or re-run `flutterfire configure`) to enable FCM on
-// iOS. Until then iOS falls back to the ntfy transport. See
-// docs/mobile/firebase-fcm-setup.md.
+// Generated from google-services.json (Android) + GoogleService-Info.plist (iOS)
+// for project "openidx-14ce9". The apiKey/appId values are CLIENT
+// identifiers (they ship in the app binary) — not secrets — so embedding them is
+// the standard FlutterFire approach. Regenerate with `flutterfire configure`.
+// See docs/mobile/firebase-fcm-setup.md.
 import 'package:firebase_core/firebase_core.dart' show FirebaseOptions;
 import 'package:flutter/foundation.dart'
     show defaultTargetPlatform, kIsWeb, TargetPlatform;
@@ -21,8 +18,10 @@ class DefaultFirebaseOptions {
     switch (defaultTargetPlatform) {
       case TargetPlatform.android:
         return android;
+      case TargetPlatform.iOS:
+        return ios;
       default:
-        // iOS/macOS/other not configured yet → caller degrades to ntfy.
+        // macOS/other not configured → caller degrades to ntfy.
         throw UnsupportedError(
             'Firebase is not configured for $defaultTargetPlatform; push-MFA '
             'uses the ntfy fallback until a config is added.');
@@ -35,5 +34,14 @@ class DefaultFirebaseOptions {
     messagingSenderId: '609475994536',
     projectId: 'openidx-14ce9',
     storageBucket: 'openidx-14ce9.firebasestorage.app',
+  );
+
+  static const FirebaseOptions ios = FirebaseOptions(
+    apiKey: 'AIzaSyA6blbfckvR5_dxfO-uiA11Yl8gqvtOdHQ',
+    appId: '1:609475994536:ios:5eaa161747eaeca47a339d',
+    messagingSenderId: '609475994536',
+    projectId: 'openidx-14ce9',
+    storageBucket: 'openidx-14ce9.firebasestorage.app',
+    iosBundleId: 'com.example.openidxClient',
   );
 }
