@@ -68,9 +68,10 @@ class PushTokenService {
     if (platform == null) return null; // desktop / unsupported
 
     // Preferred: a real FCM/APNs token when Firebase is wired.
-    if (_firebaseTokenFetcher != null) {
+    final fetcher = _firebaseTokenFetcher;
+    if (fetcher != null) {
       try {
-        final t = await _firebaseTokenFetcher!();
+        final t = await fetcher();
         if (t != null && t.trim().isNotEmpty) {
           return PushToken(
               token: t.trim(), platform: platform, transport: Transport.fcm);

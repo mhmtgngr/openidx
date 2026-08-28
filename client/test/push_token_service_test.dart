@@ -20,7 +20,7 @@ void main() {
     store.clear();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(storageChannel, (call) async {
-      final key = call.arguments['key'] as String?;
+      final key = call.arguments['key'] as String;
       switch (call.method) {
         case 'read':
           return store[key];
