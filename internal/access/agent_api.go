@@ -16,11 +16,13 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/common/pushenroll"
 )
 
 // AgentAPIHandler handles HTTP endpoints for agent communication.
@@ -30,6 +32,7 @@ type AgentAPIHandler struct {
 	zm            *ZitiManager
 	conf          *config.Config
 	playIntegrity *PlayIntegrityVerifier
+	redis         *redis.Client
 }
 
 // NewAgentAPIHandler constructs an AgentAPIHandler. conf is the access-service
@@ -66,6 +69,14 @@ func (h *AgentAPIHandler) cfg() *config.Config {
 // they're trusting unverified attestations.
 func (h *AgentAPIHandler) SetPlayIntegrityVerifier(v *PlayIntegrityVerifier) {
 	h.playIntegrity = v
+}
+
+// SetRedis installs the Redis client used to mint push-enrollment tickets at
+// agent-enrollment time (FastPass convergence). Optional — when nil, enrollment
+// still succeeds; the response simply omits the push-enroll ticket and the
+// device registers as a push approver via the normal (separate) QR flow.
+func (h *AgentAPIHandler) SetRedis(c *redis.Client) {
+	h.redis = c
 }
 
 // logAuditEvent emits a structured audit log entry for an agent lifecycle event.
@@ -551,6 +562,7 @@ func (h *AgentAPIHandler) HandleEnroll(c *gin.Context) {
 				creds.AgentID, tokenID)
 		}
 
+		var enrollExtra gin.H
 		if sess != nil {
 			// Enroll-time auto-trust. No posture report exists yet, so postureOK is
 			// false — when posture is required this defers trust to a later report
@@ -562,9 +574,15 @@ func (h *AgentAPIHandler) HandleEnroll(c *gin.Context) {
 			h.logger.Info("enrollment session redeemed",
 				zap.String("agent_id", creds.AgentID), zap.Bool("auto_trusted", trusted),
 				zap.String("autotrust_mode", mode))
+			// FastPass convergence: mint a push-enrollment ticket bound to this
+			// enrolled device so the phone can self-register as a push-MFA approver
+			// in one step (no separate login). The ticket carries the enrollment's
+			// server-verified user/org and its auto-trust decision; the client
+			// completes at push_enroll_path with its FCM token.
+			enrollExtra = h.mintPushEnrollExtra(ctx, sess, creds, trusted)
 		}
 
-		writeEnrollResponse(c, creds, method)
+		writeEnrollResponse(c, creds, method, enrollExtra)
 		h.logAuditEvent("agent.enrolled", creds.AgentID, "success", "method="+method)
 		h.logAuditEventToDB(ctx, "agent.enrolled", creds.AgentID, "success", "method="+method)
 		return
@@ -572,13 +590,15 @@ func (h *AgentAPIHandler) HandleEnroll(c *gin.Context) {
 
 	// Dev mode: no DB, accept any non-empty token.
 	creds := h.issueAgentCredentials(c.Request.Context(), enrollReq, "token", "")
-	writeEnrollResponse(c, creds, "token")
+	writeEnrollResponse(c, creds, "token", nil)
 	h.logAuditEvent("agent.enrolled", creds.AgentID, "success", "method=token (no-db)")
 }
 
 // writeEnrollResponse serializes the agent credentials into the standard
-// enrollment response shape that all enrollment paths share.
-func writeEnrollResponse(c *gin.Context, creds issuedAgentCredentials, method string) {
+// enrollment response shape that all enrollment paths share. extra carries
+// optional path-specific fields (e.g. the push-enrollment ticket from the
+// enrollment-session path); nil is fine.
+func writeEnrollResponse(c *gin.Context, creds issuedAgentCredentials, method string, extra gin.H) {
 	response := gin.H{
 		"agent_id":          creds.AgentID,
 		"device_id":         creds.DeviceID,
@@ -597,7 +617,42 @@ func writeEnrollResponse(c *gin.Context, creds issuedAgentCredentials, method st
 	if creds.ZitiService != "" {
 		response["ziti_service"] = creds.ZitiService
 	}
+	for k, v := range extra {
+		response[k] = v
+	}
 	c.JSON(http.StatusOK, response)
+}
+
+// pushEnrollCompletePath is the public identity-service route the client POSTs
+// its FCM token + ticket to, to finish push-approver registration.
+const pushEnrollCompletePath = "/api/v1/identity/mfa/push/enroll/complete"
+
+// mintPushEnrollExtra mints a push-enrollment ticket for a freshly-enrolled,
+// session-backed device and returns the response fields the client needs to
+// complete push-approver registration. Best-effort: on any failure (no Redis,
+// mint error) it returns nil and enrollment proceeds without the ticket.
+func (h *AgentAPIHandler) mintPushEnrollExtra(ctx context.Context, sess *enrollmentSession, creds issuedAgentCredentials, trusted bool) gin.H {
+	if h.redis == nil {
+		return nil
+	}
+	tok, err := pushenroll.Mint(ctx, h.redis, pushenroll.TicketData{
+		UserID:              sess.CreatedByUID,
+		OrgID:               sess.OrgID,
+		Trusted:             trusted,
+		AgentID:             creds.AgentID,
+		DeviceID:            creds.DeviceID,
+		EnrollmentSessionID: sess.ID,
+	}, pushenroll.DefaultTTL)
+	if err != nil {
+		h.logger.Warn("push-enroll ticket mint failed",
+			zap.String("agent_id", creds.AgentID), zap.Error(err))
+		return nil
+	}
+	return gin.H{
+		"push_enroll_token":      tok,
+		"push_enroll_path":       pushEnrollCompletePath,
+		"push_enroll_expires_in": int(pushenroll.DefaultTTL.Seconds()),
+	}
 }
 
 // HandleEnrollOAuth enrolls an agent on behalf of an authenticated OpenIDX
@@ -630,7 +685,7 @@ func (h *AgentAPIHandler) HandleEnrollOAuth(c *gin.Context) {
 	org, _ := orgctx.From(c.Request.Context())
 	h.linkAgentToKnownDevice(c.Request.Context(), c.ClientIP(), creds.AgentID, creds.DeviceID, userID, org.ID, enrollReq, false)
 
-	writeEnrollResponse(c, creds, "oauth")
+	writeEnrollResponse(c, creds, "oauth", nil)
 
 	h.logAuditEvent("agent.enrolled", creds.AgentID, "success", "method=oauth user="+userID)
 	h.logAuditEventToDB(c.Request.Context(), "agent.enrolled", creds.AgentID, "success", "method=oauth user="+userID)

@@ -831,6 +831,11 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// revoke, OAuth-based mobile enrollment, Android QR helpers). Inherits
 		// the auth middleware applied to `api`.
 		agentHandler := NewAgentAPIHandler(svc.logger, svc.db, svc.ziti(), svc.config)
+		// Redis lets enrollment mint a push-enrollment ticket so a freshly-enrolled
+		// device self-registers as a push-MFA approver in one step (FastPass).
+		if svc.redis != nil {
+			agentHandler.SetRedis(svc.redis.Client)
+		}
 		agentHandler.RegisterAgentAdminRoutes(api)
 		agentHandler.StartGracePeriodEnforcer(context.Background(), 5*time.Minute)
 		svc.agentHandler = agentHandler

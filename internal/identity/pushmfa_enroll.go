@@ -8,28 +8,23 @@
 // device to the user — no separate mobile login required, because possession of
 // the freshly-minted, single-use, short-TTL ticket (shown only on the already-
 // authenticated user's screen) is the proof.
+//
+// The access-service mints the same kind of ticket at agent-enrollment time (see
+// internal/common/pushenroll), so a freshly-enrolled device auto-registers as a
+// push approver without a second login. Both paths converge on
+// CompletePushEnrollment below.
 package identity
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"time"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/common/pushenroll"
 
 	"go.uber.org/zap"
 )
-
-// pushEnrollTTL is how long an enrollment ticket is valid. Short by design: the
-// user scans it within a minute or two, and a stale ticket must not linger as a
-// bindable credential.
-const pushEnrollTTL = 5 * time.Minute
-
-// pushEnrollKeyPrefix namespaces the Redis ticket keys.
-const pushEnrollKeyPrefix = "push_enroll:"
 
 // PushEnrollmentTicket is what StartPushEnrollment returns. QRPayload is the
 // string the console renders as a QR code; the authenticator scans it, reads the
@@ -38,12 +33,6 @@ type PushEnrollmentTicket struct {
 	EnrollmentToken string `json:"enrollment_token"`
 	ExpiresInSecond int    `json:"expires_in"`
 	QRPayload       string `json:"qr_payload"`
-}
-
-// pushEnrollTicketData is the JSON stored in Redis against the ticket token.
-type pushEnrollTicketData struct {
-	UserID string `json:"user_id"`
-	OrgID  string `json:"org_id"`
 }
 
 // pushEnrollQRPayload is the JSON encoded into the QR the phone scans. The app
@@ -77,18 +66,10 @@ func (s *Service) StartPushEnrollment(ctx context.Context, userID string) (*Push
 		account = userID
 	}
 
-	tokenBytes := make([]byte, 32)
-	if _, err := rand.Read(tokenBytes); err != nil {
-		return nil, fmt.Errorf("failed to generate enrollment token: %w", err)
-	}
-	token := base64.RawURLEncoding.EncodeToString(tokenBytes)
-
-	data, err := json.Marshal(pushEnrollTicketData{UserID: userID, OrgID: org.ID})
+	token, err := pushenroll.Mint(ctx, s.redis.Client,
+		pushenroll.TicketData{UserID: userID, OrgID: org.ID}, pushenroll.DefaultTTL)
 	if err != nil {
 		return nil, err
-	}
-	if err := s.redis.Client.Set(ctx, pushEnrollKeyPrefix+token, string(data), pushEnrollTTL).Err(); err != nil {
-		return nil, fmt.Errorf("failed to store enrollment ticket: %w", err)
 	}
 
 	apiBase := s.cfg.OAuthIssuer
@@ -105,7 +86,7 @@ func (s *Service) StartPushEnrollment(ctx context.Context, userID string) (*Push
 
 	return &PushEnrollmentTicket{
 		EnrollmentToken: token,
-		ExpiresInSecond: int(pushEnrollTTL.Seconds()),
+		ExpiresInSecond: int(pushenroll.DefaultTTL.Seconds()),
 		QRPayload:       string(payload),
 	}, nil
 }
@@ -115,6 +96,10 @@ func (s *Service) StartPushEnrollment(ctx context.Context, userID string) (*Push
 // need not be authenticated as the user — the ticket is the authorization — but
 // the org context must match the ticket's org so a ticket minted for one tenant
 // cannot register a device under another.
+//
+// When the ticket came from a device enrollment it also carries the enrolled
+// agent's identity and its server-verified auto-trust decision, so the resulting
+// push device is linked to that agent and inherits its trust.
 func (s *Service) CompletePushEnrollment(ctx context.Context, token string, enrollment *PushMFAEnrollment, ipAddress string) (*PushMFADevice, error) {
 	if s.redis == nil {
 		return nil, fmt.Errorf("enrollment temporarily unavailable")
@@ -123,15 +108,9 @@ func (s *Service) CompletePushEnrollment(ctx context.Context, token string, enro
 		return nil, fmt.Errorf("enrollment token is required")
 	}
 
-	key := pushEnrollKeyPrefix + token
-	raw, err := s.redis.Client.Get(ctx, key).Result()
+	ticket, err := pushenroll.Peek(ctx, s.redis.Client, token)
 	if err != nil {
-		return nil, fmt.Errorf("enrollment ticket is invalid or expired")
-	}
-
-	var ticket pushEnrollTicketData
-	if err := json.Unmarshal([]byte(raw), &ticket); err != nil {
-		return nil, fmt.Errorf("enrollment ticket is invalid or expired")
+		return nil, err
 	}
 
 	// The request context must be scoped to the same org the ticket was minted
@@ -146,11 +125,16 @@ func (s *Service) CompletePushEnrollment(ctx context.Context, token string, enro
 	}
 
 	// Consume the ticket first (single-use) so a replay can't double-register.
-	if delErr := s.redis.Client.Del(ctx, key).Err(); delErr != nil {
+	if delErr := pushenroll.Consume(ctx, s.redis.Client, token); delErr != nil {
 		s.logger.Warn("failed to delete consumed push enrollment ticket", zap.Error(delErr))
 	}
 
-	device, err := s.RegisterPushMFADevice(ctx, ticket.UserID, enrollment, ipAddress)
+	device, err := s.registerPushMFADevice(ctx, ticket.UserID, enrollment, ipAddress, PushDeviceLink{
+		Trusted:             ticket.Trusted,
+		AgentID:             ticket.AgentID,
+		DeviceID:            ticket.DeviceID,
+		EnrollmentSessionID: ticket.EnrollmentSessionID,
+	})
 	if err != nil {
 		return nil, err
 	}

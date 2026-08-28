@@ -950,5 +950,12 @@ func allMigrations() []*Migration {
 			UpSQL:       selfHealPermUp,
 			DownSQL:     selfHealPermDown,
 		},
+		{
+			Version:     135,
+			Name:        "push_device_agent_link",
+			Description: "Link mfa_push_devices to the enrolled agent that auto-registered it (FastPass convergence): nullable agent_id/device_id/enrollment_session_id + an agent_id index. Set when a device enrollment mints a push-enrollment ticket so the phone self-registers as a push approver in one step; the existing QR self-enroll path leaves them NULL. agent_id is the de-dup key across FCM-token rotation and the join for login-time device preference.",
+			UpSQL:       pushDeviceAgentLinkUp,
+			DownSQL:     pushDeviceAgentLinkDown,
+		},
 	}
 }
