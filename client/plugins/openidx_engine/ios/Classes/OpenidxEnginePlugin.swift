@@ -66,6 +66,10 @@ public class OpenidxEnginePlugin: NSObject, FlutterPlugin {
     case "enroll":
       let code = str(args, "code")
       return try callString { MobileEnroll(code, $0) }
+    case "registerPushDevice":
+      let deviceToken = str(args, "deviceToken")
+      let platform = str(args, "platform")
+      return try callString { MobileRegisterPushDevice(deviceToken, platform, $0) }
     case "posture":
       return try callString { MobilePosture($0) }
     case "pamList":

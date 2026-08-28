@@ -82,6 +82,16 @@ class OpenidxEngine {
   Future<String> enroll(String code) =>
       _invokeString('enroll', <String, Object?>{'code': code});
 
+  /// Redeems the pending push-MFA enrollment ticket (left by [enroll]) using
+  /// this device's push token, so the enrolled phone becomes a push approver in
+  /// one step (FastPass). Returns a small JSON status: `{"registered":true}` or
+  /// `{"registered":false,"reason":...}` when there is nothing pending.
+  Future<String> registerPushDevice(String deviceToken, String platform) =>
+      _invokeString('registerPushDevice', <String, Object?>{
+        'deviceToken': deviceToken,
+        'platform': platform,
+      });
+
   Future<String> posture() => _invokeString('posture');
 
   Future<String> pamList() => _invokeString('pamList');

@@ -43,6 +43,12 @@ abstract class EngineClient {
   /// desktop resolves it from the installed sidecar config and ignores it.
   Future<EnrollResult> enroll(String code, {String? serverUrl});
 
+  /// Redeems the pending push-MFA enrollment ticket (left by [enroll]) using
+  /// this device's push token, so the enrolled phone becomes a push approver in
+  /// one step (FastPass convergence). Returns true when a device was registered,
+  /// false when there was nothing pending. Mobile-only; desktop is a no-op.
+  Future<bool> registerPushDevice(String deviceToken, String platform);
+
   Future<Posture> posture();
 
   Future<List<PamEntry>> pamList();

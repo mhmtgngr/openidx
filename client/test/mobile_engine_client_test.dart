@@ -130,6 +130,29 @@ void main() {
     expect(addr, '127.0.0.1:54321');
   });
 
+  test('registerPushDevice() reports registered=true', () async {
+    mockEngine({
+      'start': () => null,
+      'registerPushDevice': () => '{"registered":true}',
+    });
+    final ok = await newClient().registerPushDevice('fcm-tok', 'android');
+    expect(ok, isTrue);
+    final call = calls.firstWhere((c) => c.method == 'registerPushDevice');
+    expect(call.arguments['deviceToken'], 'fcm-tok');
+    expect(call.arguments['platform'], 'android');
+  });
+
+  test('registerPushDevice() reports registered=false when nothing pending',
+      () async {
+    mockEngine({
+      'start': () => null,
+      'registerPushDevice': () =>
+          '{"registered":false,"reason":"no pending push enrollment ticket"}',
+    });
+    final ok = await newClient().registerPushDevice('tok', 'ios');
+    expect(ok, isFalse);
+  });
+
   test('channel errors surface as EngineException', () async {
     mockEngine({
       'start': () => null,
