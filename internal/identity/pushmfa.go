@@ -364,7 +364,9 @@ func (s *Service) GetPushMFADevices(ctx context.Context, userID string) ([]PushM
 	query := `
 		SELECT id, user_id, device_token, platform, device_name, device_model,
 		       os_version, app_version, enabled, trusted, last_ip,
-		       created_at, last_used_at, expires_at
+		       created_at, last_used_at, expires_at,
+		       COALESCE(agent_id, ''), COALESCE(device_id, ''),
+		       COALESCE(enrollment_session_id::text, '')
 		FROM mfa_push_devices
 		WHERE user_id = $1
 		ORDER BY created_at DESC
@@ -394,6 +396,9 @@ func (s *Service) GetPushMFADevices(ctx context.Context, userID string) ([]PushM
 			&device.CreatedAt,
 			&device.LastUsedAt,
 			&device.ExpiresAt,
+			&device.AgentID,
+			&device.DeviceID,
+			&device.EnrollmentSessionID,
 		)
 		if err != nil {
 			return nil, err
