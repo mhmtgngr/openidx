@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -6,6 +7,7 @@ import 'package:window_manager/window_manager.dart';
 
 import 'engine/engine_client_factory.dart';
 import 'engine/engine_supervisor.dart';
+import 'mobile/firebase_push.dart';
 import 'state/providers.dart';
 import 'ui/app.dart';
 import 'ui/tray.dart';
@@ -34,6 +36,9 @@ Future<void> main() async {
 /// platform through [EngineClientFactory] (→ `MobileEngineClient`), which
 /// starts the engine lazily against the app-support sandbox on first call.
 void runMobile() {
+  // Best-effort Firebase init for push-MFA (FCM/APNs). No-op + silent when no
+  // Firebase project is configured — the app then delivers push over ntfy.
+  unawaited(FirebasePush.ensureInitialized());
   runApp(const ProviderScope(child: OpenIdxApp()));
 }
 
