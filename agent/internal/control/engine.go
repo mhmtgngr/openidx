@@ -42,6 +42,7 @@ type backend interface {
 	PamList(ctx context.Context, serverURL, token string) ([]desktoppam.Entry, error)
 	PamConnect(ctx context.Context, serverURL, token, entryID string) (connectURL string, err error)
 	PamRequest(ctx context.Context, serverURL, token, entryID, reason string) error
+	CompletePushEnroll(serverURL, path, ticket, deviceToken, platform, deviceName string, insecure bool) error
 }
 
 // zitiDialer is the seam over the embedded Ziti bridge so tests do not require a
@@ -326,6 +327,52 @@ func (e *Engine) Enroll(code string) (string, error) {
 		ServerURL:    e.serverURL,
 		ZitiIdentity: zitiIdentity,
 	})
+}
+
+type pushRegisterResult struct {
+	Registered bool   `json:"registered"`
+	Reason     string `json:"reason,omitempty"`
+}
+
+// RegisterPushDevice redeems the pending push-MFA enrollment ticket (stamped in
+// config at Enroll) using this device's push token, making the enrolled phone a
+// push approver in one step — the FastPass convergence. deviceToken is the FCM
+// (Android) / APNs (iOS) token obtained by the mobile layer; platform is "ios",
+// "android", or "web".
+//
+// Best-effort by design: a failure here never undoes the (already-successful)
+// device enrollment. Returns {"registered":true} on success, or
+// {"registered":false,"reason":...} when there is no pending ticket (e.g. the
+// device was enrolled by a non-session path, or push was already registered).
+func (e *Engine) RegisterPushDevice(deviceToken, platform string) (string, error) {
+	deviceToken = strings.TrimSpace(deviceToken)
+	if deviceToken == "" {
+		return "", fmt.Errorf("device push token is required")
+	}
+	cfg, err := agent.LoadConfig(e.configDir)
+	if err != nil {
+		return "", fmt.Errorf("load config: %w", err)
+	}
+	if cfg.PushEnrollToken == "" || cfg.PushEnrollPath == "" {
+		return toJSON(pushRegisterResult{Registered: false, Reason: "no pending push enrollment ticket"})
+	}
+	server := strings.TrimRight(cfg.ServerURL, "/")
+	if server == "" {
+		server = e.serverURL
+	}
+	deviceName := strings.TrimSpace(platform + " device")
+	if err := e.be.CompletePushEnroll(server, cfg.PushEnrollPath, cfg.PushEnrollToken,
+		deviceToken, platform, deviceName, cfg.InsecureSkipVerify); err != nil {
+		return "", fmt.Errorf("push registration failed: %w", err)
+	}
+	// Single-use: clear the consumed ticket so a later call is a clean no-op.
+	cfg.PushEnrollToken = ""
+	cfg.PushEnrollPath = ""
+	if serr := cfg.Save(e.configDir); serr != nil {
+		e.logger.Warn("failed to clear push-enroll ticket from config", zap.Error(serr))
+	}
+	e.logger.Info("push device registered via enrollment ticket", zap.String("platform", platform))
+	return toJSON(pushRegisterResult{Registered: true})
 }
 
 type postureCheck struct {
