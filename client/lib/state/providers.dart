@@ -6,12 +6,16 @@ import '../engine/engine_client.dart';
 import '../engine/engine_client_factory.dart';
 import '../engine/engine_supervisor.dart';
 import '../engine/models.dart';
+import '../mobile/firebase_push.dart';
 import '../mobile/push_token_service.dart';
 
 /// Resolves the push token used to auto-register the enrolled phone as a push
-/// approver. Overridable in tests.
-final pushTokenServiceProvider =
-    Provider<PushTokenService>((ref) => PushTokenService());
+/// approver. Wires the Firebase/FCM token source; when no Firebase project is
+/// configured the fetcher returns null and [PushTokenService] degrades to the
+/// ntfy transport. Overridable in tests.
+final pushTokenServiceProvider = Provider<PushTokenService>(
+  (ref) => PushTokenService(firebaseTokenFetcher: FirebasePush.fetchToken),
+);
 
 /// The active [EngineSupervisor] on **desktop**. Overridden at app boot in
 /// `main.dart` with a supervisor that has already spawned/attached the engine.
