@@ -25,6 +25,12 @@ type AgentConfig struct {
 	// InsecureSkipVerify skips TLS verification for the signaling WebSocket
 	// (dev/self-signed only). Defaults false. Mirrors the HTTP client posture.
 	InsecureSkipVerify bool `json:"insecure_skip_verify,omitempty"`
+	// PushEnrollToken / PushEnrollPath carry a pending push-MFA enrollment ticket
+	// stamped at device enrollment (FastPass convergence). RegisterPushDevice
+	// redeems it by POSTing the device's FCM token, then clears the token (single-
+	// use, ~5-min TTL). Empty once redeemed or when the server did not issue one.
+	PushEnrollToken string `json:"push_enroll_token,omitempty"`
+	PushEnrollPath  string `json:"push_enroll_path,omitempty"`
 }
 
 // CheckConfig is an alias for checks.CheckConfig so callers that import the

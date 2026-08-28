@@ -23,6 +23,13 @@ type EnrollResponse struct {
 	// set (alongside ZitiJWT), the agent routes config/report/consent over the
 	// overlay by dialing this service instead of the public HTTPS endpoint.
 	ZitiService string `json:"ziti_service,omitempty"`
+	// PushEnrollToken is a single-use ticket (FastPass convergence) that lets this
+	// freshly-enrolled device self-register as a push-MFA approver by POSTing its
+	// FCM token to PushEnrollPath — no separate MFA setup. Only present on the
+	// enrollment-session path. PushEnrollExpiresIn is its lifetime in seconds.
+	PushEnrollToken     string `json:"push_enroll_token,omitempty"`
+	PushEnrollPath      string `json:"push_enroll_path,omitempty"`
+	PushEnrollExpiresIn int    `json:"push_enroll_expires_in,omitempty"`
 }
 
 // Client is an HTTP client for communicating with the OpenIDX access API.

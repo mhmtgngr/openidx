@@ -48,6 +48,10 @@ func (realBackend) PamRequest(ctx context.Context, serverURL, token, entryID, re
 	return desktoppam.RequestAccess(ctx, serverURL, token, entryID, reason)
 }
 
+func (realBackend) CompletePushEnroll(serverURL, path, ticket, deviceToken, platform, deviceName string, insecure bool) error {
+	return enrollment.CompletePushEnroll(serverURL, path, ticket, deviceToken, platform, deviceName, insecure)
+}
+
 func fileExists(path string) bool {
 	if path == "" {
 		return false

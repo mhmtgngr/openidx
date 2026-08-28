@@ -32,6 +32,12 @@ type fakeBackend struct {
 
 	requestedEntry  string
 	requestedReason string
+
+	pushErr         error
+	pushServerURL   string
+	pushTicket      string
+	pushDeviceToken string
+	pushPlatform    string
 }
 
 func (f *fakeBackend) Login(ctx context.Context, serverURL string) (*sso.Tokens, error) {
@@ -53,6 +59,13 @@ func (f *fakeBackend) PamRequest(ctx context.Context, serverURL, token, entryID,
 	f.requestedEntry = entryID
 	f.requestedReason = reason
 	return f.requestErr
+}
+func (f *fakeBackend) CompletePushEnroll(serverURL, path, ticket, deviceToken, platform, deviceName string, insecure bool) error {
+	f.pushServerURL = serverURL
+	f.pushTicket = ticket
+	f.pushDeviceToken = deviceToken
+	f.pushPlatform = platform
+	return f.pushErr
 }
 
 // fakeDialer implements zitiDialer.

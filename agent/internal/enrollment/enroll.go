@@ -49,6 +49,11 @@ func EnrollWithManifest(logger *zap.Logger, serverURL, token, configDir, manifes
 		AuthToken:         resp.AuthToken,
 		EnrolledAt:        time.Now().UTC().Format(time.RFC3339),
 		UpdateManifestURL: manifestURL,
+		// FastPass: stash the pending push-MFA enrollment ticket so the mobile
+		// engine can redeem it with the device's FCM token right after enroll,
+		// making this phone a push approver in one step. Cleared once redeemed.
+		PushEnrollToken: resp.PushEnrollToken,
+		PushEnrollPath:  resp.PushEnrollPath,
 	}
 
 	// If the server advertises a Ziti overlay service and an identity file is

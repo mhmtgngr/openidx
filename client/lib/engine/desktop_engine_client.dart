@@ -253,6 +253,12 @@ class DesktopEngineClient implements EngineClient {
           '/enroll'));
 
   @override
+  Future<bool> registerPushDevice(String deviceToken, String platform) async {
+    // Desktop is not a push-MFA authenticator; nothing to register.
+    return false;
+  }
+
+  @override
   Future<Posture> posture() async =>
       Posture.fromJson(_asMap(await _send('GET', '/posture'), '/posture'));
 

@@ -6,6 +6,12 @@ import '../engine/engine_client.dart';
 import '../engine/engine_client_factory.dart';
 import '../engine/engine_supervisor.dart';
 import '../engine/models.dart';
+import '../mobile/push_token_service.dart';
+
+/// Resolves the push token used to auto-register the enrolled phone as a push
+/// approver. Overridable in tests.
+final pushTokenServiceProvider =
+    Provider<PushTokenService>((ref) => PushTokenService());
 
 /// The active [EngineSupervisor] on **desktop**. Overridden at app boot in
 /// `main.dart` with a supervisor that has already spawned/attached the engine.
@@ -117,8 +123,25 @@ class EngineActions {
 
   Future<EnrollResult> enroll(String code, {String? serverUrl}) async {
     final result = await _engine.enroll(code, serverUrl: serverUrl);
+    // FastPass convergence: the enrolled phone auto-registers as a push-MFA
+    // approver in the same step. Best-effort — a failure here (no push token,
+    // no pending ticket, transient network) must never fail the enrollment.
+    unawaited(_autoRegisterPush());
     await _refreshAll();
     return result;
+  }
+
+  /// Resolves this device's push token and redeems the pending push-enroll
+  /// ticket so the enrolled phone becomes an approver. Swallows all errors.
+  Future<void> _autoRegisterPush() async {
+    try {
+      final push = await _ref.read(pushTokenServiceProvider).resolve();
+      if (push == null) return; // desktop / unsupported platform
+      await _engine.registerPushDevice(push.token, push.platform);
+      _ref.invalidate(statusProvider);
+    } catch (_) {
+      // Non-fatal: enrollment already succeeded; push can be set up later.
+    }
   }
 
   Future<PamConnectResult> pamConnect(String entryId) =>

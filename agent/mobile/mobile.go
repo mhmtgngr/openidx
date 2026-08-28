@@ -199,6 +199,20 @@ func Enroll(code string) (string, error) {
 	return e.Enroll(code)
 }
 
+// RegisterPushDevice redeems the pending push-MFA enrollment ticket left by
+// Enroll, using this device's push token, so the enrolled phone becomes a push
+// approver in one step (FastPass). deviceToken is the FCM/APNs token the Flutter
+// layer obtains; platform is "ios" or "android". Returns a small JSON status
+// ({"registered":true} or {"registered":false,"reason":...}). Safe to call when
+// there is no pending ticket (reports registered=false).
+func RegisterPushDevice(deviceToken, platform string) (string, error) {
+	e, err := get()
+	if err != nil {
+		return "", err
+	}
+	return e.RegisterPushDevice(deviceToken, platform)
+}
+
 // Posture runs the device posture checks and returns the compliance summary JSON.
 func Posture() (string, error) {
 	e, err := get()

@@ -35,6 +35,13 @@ type PushMFADevice struct {
 	CreatedAt   time.Time  `json:"created_at"`
 	LastUsedAt  *time.Time `json:"last_used_at,omitempty"`
 	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
+	// Agent linkage (migration v135): set when this push device was auto-
+	// registered by a device enrollment, tying it to the enrolled agent so
+	// "this approver == this enrolled network device" is queryable. AgentID is
+	// also the de-dup key across FCM-token rotation.
+	AgentID             string `json:"agent_id,omitempty"`
+	DeviceID            string `json:"device_id,omitempty"`
+	EnrollmentSessionID string `json:"enrollment_session_id,omitempty"`
 }
 
 // PushMFAChallenge represents a push notification challenge
@@ -85,8 +92,30 @@ type PushMFAChallengeResponse struct {
 	Reported bool `json:"reported,omitempty"`
 }
 
-// RegisterPushMFADevice registers a new push notification device
+// PushDeviceLink optionally ties a registered push device to an enrolled agent
+// and conveys the enrollment's server-verified auto-trust decision. The zero
+// value is a plain self-enrolled device (untrusted, no agent linkage).
+type PushDeviceLink struct {
+	// Trusted marks the push device trusted. It must derive ONLY from a
+	// server-verified device-enrollment session, never from client input.
+	Trusted             bool
+	AgentID             string
+	DeviceID            string
+	EnrollmentSessionID string
+}
+
+// RegisterPushMFADevice registers a new push notification device (self-enrolled,
+// untrusted, no agent linkage).
 func (s *Service) RegisterPushMFADevice(ctx context.Context, userID string, enrollment *PushMFAEnrollment, ipAddress string) (*PushMFADevice, error) {
+	return s.registerPushMFADevice(ctx, userID, enrollment, ipAddress, PushDeviceLink{})
+}
+
+// registerPushMFADevice is the shared implementation. link carries optional
+// device-enrollment provenance: when set, the push device is stamped with the
+// enrolled agent's identity and may be marked trusted (FastPass convergence —
+// the enrolled phone becomes an approver in one step). Re-registering the same
+// token updates in place, and trust only ever upgrades (never downgrades).
+func (s *Service) registerPushMFADevice(ctx context.Context, userID string, enrollment *PushMFAEnrollment, ipAddress string, link PushDeviceLink) (*PushMFADevice, error) {
 	// Validate platform
 	if enrollment.Platform != "ios" && enrollment.Platform != "android" && enrollment.Platform != "web" {
 		return nil, fmt.Errorf("invalid platform: must be ios, android, or web")
@@ -102,6 +131,17 @@ func (s *Service) RegisterPushMFADevice(ctx context.Context, userID string, enro
 		existingDevice.AppVersion = enrollment.AppVersion
 		existingDevice.Enabled = true
 		existingDevice.LastIP = ipAddress
+		// Trust only upgrades; agent linkage is (re)applied when supplied.
+		existingDevice.Trusted = existingDevice.Trusted || link.Trusted
+		if link.AgentID != "" {
+			existingDevice.AgentID = link.AgentID
+		}
+		if link.DeviceID != "" {
+			existingDevice.DeviceID = link.DeviceID
+		}
+		if link.EnrollmentSessionID != "" {
+			existingDevice.EnrollmentSessionID = link.EnrollmentSessionID
+		}
 
 		if err := s.updatePushDevice(ctx, existingDevice); err != nil {
 			return nil, fmt.Errorf("failed to update device: %w", err)
@@ -110,25 +150,30 @@ func (s *Service) RegisterPushMFADevice(ctx context.Context, userID string, enro
 		s.logger.Info("Push MFA device updated",
 			zap.String("user_id", userID),
 			zap.String("device_id", existingDevice.ID),
-			zap.String("platform", enrollment.Platform))
+			zap.String("platform", enrollment.Platform),
+			zap.Bool("trusted", existingDevice.Trusted),
+			zap.String("agent_id", existingDevice.AgentID))
 
 		return existingDevice, nil
 	}
 
 	// Create new device
 	device := &PushMFADevice{
-		ID:          uuid.New().String(),
-		UserID:      userID,
-		DeviceToken: enrollment.DeviceToken,
-		Platform:    enrollment.Platform,
-		DeviceName:  enrollment.DeviceName,
-		DeviceModel: enrollment.DeviceModel,
-		OSVersion:   enrollment.OSVersion,
-		AppVersion:  enrollment.AppVersion,
-		Enabled:     true,
-		Trusted:     false, // Require trust establishment
-		LastIP:      ipAddress,
-		CreatedAt:   time.Now(),
+		ID:                  uuid.New().String(),
+		UserID:              userID,
+		DeviceToken:         enrollment.DeviceToken,
+		Platform:            enrollment.Platform,
+		DeviceName:          enrollment.DeviceName,
+		DeviceModel:         enrollment.DeviceModel,
+		OSVersion:           enrollment.OSVersion,
+		AppVersion:          enrollment.AppVersion,
+		Enabled:             true,
+		Trusted:             link.Trusted, // only ever true via a server-verified enrollment
+		LastIP:              ipAddress,
+		CreatedAt:           time.Now(),
+		AgentID:             link.AgentID,
+		DeviceID:            link.DeviceID,
+		EnrollmentSessionID: link.EnrollmentSessionID,
 	}
 
 	if err := s.storePushDevice(ctx, device); err != nil {
@@ -138,7 +183,9 @@ func (s *Service) RegisterPushMFADevice(ctx context.Context, userID string, enro
 	s.logger.Info("Push MFA device registered",
 		zap.String("user_id", userID),
 		zap.String("device_id", device.ID),
-		zap.String("platform", enrollment.Platform))
+		zap.String("platform", enrollment.Platform),
+		zap.Bool("trusted", device.Trusted),
+		zap.String("agent_id", device.AgentID))
 
 	return device, nil
 }
@@ -317,7 +364,9 @@ func (s *Service) GetPushMFADevices(ctx context.Context, userID string) ([]PushM
 	query := `
 		SELECT id, user_id, device_token, platform, device_name, device_model,
 		       os_version, app_version, enabled, trusted, last_ip,
-		       created_at, last_used_at, expires_at
+		       created_at, last_used_at, expires_at,
+		       COALESCE(agent_id, ''), COALESCE(device_id, ''),
+		       COALESCE(enrollment_session_id::text, '')
 		FROM mfa_push_devices
 		WHERE user_id = $1
 		ORDER BY created_at DESC
@@ -347,6 +396,9 @@ func (s *Service) GetPushMFADevices(ctx context.Context, userID string) ([]PushM
 			&device.CreatedAt,
 			&device.LastUsedAt,
 			&device.ExpiresAt,
+			&device.AgentID,
+			&device.DeviceID,
+			&device.EnrollmentSessionID,
 		)
 		if err != nil {
 			return nil, err
@@ -382,7 +434,9 @@ func (s *Service) getPushDeviceByToken(ctx context.Context, token string) (*Push
 	query := `
 		SELECT id, user_id, device_token, platform, device_name, device_model,
 		       os_version, app_version, enabled, trusted, last_ip,
-		       created_at, last_used_at, expires_at
+		       created_at, last_used_at, expires_at,
+		       COALESCE(agent_id, ''), COALESCE(device_id, ''),
+		       COALESCE(enrollment_session_id::text, '')
 		FROM mfa_push_devices
 		WHERE device_token = $1
 	`
@@ -403,6 +457,9 @@ func (s *Service) getPushDeviceByToken(ctx context.Context, token string) (*Push
 		&device.CreatedAt,
 		&device.LastUsedAt,
 		&device.ExpiresAt,
+		&device.AgentID,
+		&device.DeviceID,
+		&device.EnrollmentSessionID,
 	)
 
 	if err != nil {
@@ -425,8 +482,9 @@ func (s *Service) storePushDevice(ctx context.Context, device *PushMFADevice) er
 	query := `
 		INSERT INTO mfa_push_devices
 		(id, user_id, device_token, platform, device_name, device_model,
-		 os_version, app_version, enabled, trusted, last_ip, created_at, org_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+		 os_version, app_version, enabled, trusted, last_ip, created_at, org_id,
+		 agent_id, device_id, enrollment_session_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 	`
 
 	_, err = s.db.Pool.Exec(ctx, query,
@@ -443,17 +501,32 @@ func (s *Service) storePushDevice(ctx context.Context, device *PushMFADevice) er
 		device.LastIP,
 		device.CreatedAt,
 		org.ID,
+		nullStr(device.AgentID),
+		nullStr(device.DeviceID),
+		nullStr(device.EnrollmentSessionID),
 	)
 
 	return err
+}
+
+// nullStr maps "" to a SQL NULL so nullable TEXT/UUID columns stay NULL rather
+// than empty-string (important for the enrollment_session_id UUID column).
+func nullStr(s string) interface{} {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 func (s *Service) updatePushDevice(ctx context.Context, device *PushMFADevice) error {
 	query := `
 		UPDATE mfa_push_devices
 		SET device_name = $1, device_model = $2, os_version = $3,
-		    app_version = $4, enabled = $5, last_ip = $6
-		WHERE id = $7
+		    app_version = $4, enabled = $5, last_ip = $6, trusted = $7,
+		    agent_id = COALESCE($8, agent_id),
+		    device_id = COALESCE($9, device_id),
+		    enrollment_session_id = COALESCE($10, enrollment_session_id)
+		WHERE id = $11
 	`
 
 	_, err := s.db.Pool.Exec(ctx, query,
@@ -463,6 +536,10 @@ func (s *Service) updatePushDevice(ctx context.Context, device *PushMFADevice) e
 		device.AppVersion,
 		device.Enabled,
 		device.LastIP,
+		device.Trusted,
+		nullStr(device.AgentID),
+		nullStr(device.DeviceID),
+		nullStr(device.EnrollmentSessionID),
 		device.ID,
 	)
 

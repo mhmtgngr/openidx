@@ -121,6 +121,16 @@ class MobileEngineClient implements EngineClient {
   }
 
   @override
+  Future<bool> registerPushDevice(String deviceToken, String platform) async {
+    await _ensureStarted();
+    final json = await _guard(
+        () => _engine.registerPushDevice(deviceToken, platform),
+        'registerPushDevice');
+    final map = _decodeMap(json, 'registerPushDevice');
+    return map['registered'] == true;
+  }
+
+  @override
   Future<Posture> posture() async {
     await _ensureStarted();
     final json = await _guard(_engine.posture, 'posture');

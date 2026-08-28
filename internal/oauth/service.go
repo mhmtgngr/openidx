@@ -2110,6 +2110,14 @@ func (s *Service) handleLogin(c *gin.Context) {
 		availableMFAMethods = append(availableMFAMethods, "push")
 		hasPrimaryFactor = true
 	}
+	// FastPass preference: if the user has a push approver that was auto-
+	// registered by a device enrollment (agent_id linked) and is enabled, the
+	// enrolled phone IS their authenticator — offer push first so it is the
+	// default method, matching Okta Verify / MS Authenticator. Purely a
+	// reordering: it never adds a method or weakens the risk decision.
+	if hasEnrolledPushApprover(pushDevices) {
+		availableMFAMethods = preferMethod(availableMFAMethods, "push")
+	}
 	// Check for verified SMS OTP enrollment
 	if smsEnr, _ := s.identityService.GetSMSEnrollment(c.Request.Context(), user.ID); smsEnr != nil && smsEnr.Verified && smsEnr.Enabled {
 		availableMFAMethods = append(availableMFAMethods, "sms")

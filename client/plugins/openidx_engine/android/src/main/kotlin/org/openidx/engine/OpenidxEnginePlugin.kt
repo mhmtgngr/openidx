@@ -60,6 +60,7 @@ class OpenidxEnginePlugin : FlutterPlugin, MethodCallHandler {
       "accessToken" -> Mobile.accessToken()
       "logout" -> { Mobile.logout(); null }
       "enroll" -> Mobile.enroll(arg(call, "code"))
+      "registerPushDevice" -> Mobile.registerPushDevice(arg(call, "deviceToken"), arg(call, "platform"))
       "posture" -> Mobile.posture()
       "pamList" -> Mobile.pamList()
       "pamConnect" -> Mobile.pamConnect(arg(call, "entryId"))
