@@ -164,4 +164,30 @@ describe('MyNetworkPage', () => {
     render(<MyNetworkPage />, { wrapper: createWrapper() })
     expect(await screen.findByText(/2 ready to use/i)).toBeInTheDocument()
   })
+
+  it('shows both the "sign in" apps section and the "connect" network section', async () => {
+    // URL-aware mock: SSO apps for the app portal, resources for the network,
+    // empty zero-trust — so both top-level sections render together.
+    vi.mocked(api.get).mockImplementation((url: string) => {
+      if (url.includes('/portal/applications')) {
+        return Promise.resolve({
+          applications: [
+            { id: 'a1', name: 'Es-Dev', description: '', base_url: 'https://es-dev.example', protocol: 'oidc', logo_url: '', sso_enabled: true },
+          ],
+        })
+      }
+      if (url.includes('/my/ziti/services')) {
+        return Promise.resolve({ linked: false, enrolled: false, services: [] })
+      }
+      return Promise.resolve({ resources, summary: { total: resources.length, ready: 2 } })
+    })
+
+    render(<MyNetworkPage />, { wrapper: createWrapper() })
+
+    // Section 1 (sign in) and its app, plus Section 2 (connect) both present.
+    expect(await screen.findByText('Sign in to your apps')).toBeInTheDocument()
+    expect(await screen.findByText('Es-Dev')).toBeInTheDocument()
+    expect(await screen.findByText('Connect over the network')).toBeInTheDocument()
+    expect(await screen.findByText('wiki.example.org:443')).toBeInTheDocument()
+  })
 })

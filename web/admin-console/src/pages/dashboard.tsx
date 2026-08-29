@@ -140,7 +140,7 @@ function activityIcon(type: string) {
 function PersonalDashboard({ name }: { name?: string }) {
   const firstName = (name ?? '').trim().split(/\s+/)[0] || 'there'
   const actions = [
-    { title: 'My Apps', description: 'Launch the applications assigned to you', icon: Rocket, link: '/app-launcher', color: 'text-primary' },
+    { title: 'My Apps & Network', description: 'Sign in to your apps, or connect to servers and databases', icon: Rocket, link: '/my-network', color: 'text-primary' },
     { title: 'My Access', description: 'See your roles and groups; request more', icon: Eye, link: '/my-access', color: 'text-green-600' },
     { title: 'My Security', description: 'Your security score and recommendations', icon: ShieldCheck, link: '/my-security', color: 'text-purple-600' },
     { title: 'My Devices', description: 'Manage your registered devices', icon: Smartphone, link: '/my-devices', color: 'text-orange-600' },

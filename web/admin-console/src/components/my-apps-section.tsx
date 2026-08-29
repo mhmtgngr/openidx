@@ -1,12 +1,9 @@
-import { useState } from 'react'
-import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { AppWindow, ExternalLink, Search } from 'lucide-react'
-import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
-import { Input } from '../components/ui/input'
-import { Badge } from '../components/ui/badge'
-import { Button } from '../components/ui/button'
-import { QueryError } from '../components/query-error'
+import { AppWindow, ExternalLink } from 'lucide-react'
+import { Card, CardContent, CardHeader, CardTitle } from './ui/card'
+import { Badge } from './ui/badge'
+import { Button } from './ui/button'
+import { QueryError } from './query-error'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 
@@ -20,16 +17,24 @@ interface UserApp {
   sso_enabled: boolean
 }
 
-export function AppLauncherPage() {
-  const [search, setSearch] = useState('')
+/**
+ * MyAppsSection renders the user's single-sign-on applications as launchable
+ * tiles. It is the "Sign in to your apps" half of the combined My Apps & Network
+ * page; the caller owns the shared search box and passes the term in. The whole
+ * section hides itself when the user has no assigned apps, so it never adds an
+ * empty block above the network resources.
+ */
+export function MyAppsSection({ search }: { search: string }) {
   const { toast } = useToast()
 
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ['my-applications'],
     queryFn: () => api.get<{ applications: UserApp[] }>('/api/v1/identity/portal/applications'),
   })
+
+  const term = search.trim().toLowerCase()
   const apps = (data?.applications || []).filter(a =>
-    !search || a.name.toLowerCase().includes(search.toLowerCase()) || a.description.toLowerCase().includes(search.toLowerCase())
+    !term || a.name.toLowerCase().includes(term) || a.description.toLowerCase().includes(term)
   )
 
   const launchApp = (app: UserApp) => {
@@ -48,37 +53,27 @@ export function AppLauncherPage() {
     }
   }
 
-  return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">My Applications</h1>
-        <p className="text-muted-foreground">
-          Apps you sign in to. Click one and OpenIDX logs you in automatically (single sign-on) —
-          no separate password.
-        </p>
-        <p className="text-sm text-muted-foreground mt-1">
-          Looking to reach a server, database, or an internal/zero-trust app? See{' '}
-          <Link to="/my-network" className="underline underline-offset-2 hover:text-foreground">My Network</Link>.
-        </p>
-      </div>
+  // Hide the whole section when the user has no apps at all (not just no search
+  // match) — the network section below carries the page on its own.
+  if (!isLoading && !isError && (data?.applications || []).length === 0) {
+    return null
+  }
 
-      <div className="relative max-w-md">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-        <Input className="pl-10" placeholder="Search applications..." value={search} onChange={e => setSearch(e.target.value)} />
+  return (
+    <section className="space-y-3">
+      <div>
+        <h2 className="text-xl font-semibold tracking-tight">Sign in to your apps</h2>
+        <p className="text-sm text-muted-foreground">
+          Click one and OpenIDX signs you in automatically (single sign-on) — no separate password.
+        </p>
       </div>
 
       {isLoading ? (
-        <p className="text-center py-12 text-muted-foreground">Loading applications...</p>
+        <p className="text-center py-8 text-muted-foreground">Loading applications...</p>
       ) : isError ? (
         <QueryError error={error} resource="applications" />
       ) : apps.length === 0 ? (
-        <Card>
-          <CardContent className="py-12 text-center">
-            <AppWindow className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-            <p className="text-lg font-medium">No applications assigned</p>
-            <p className="text-muted-foreground">Contact your administrator to get access to applications.</p>
-          </CardContent>
-        </Card>
+        <p className="text-sm text-muted-foreground">No apps match “{search}”.</p>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {apps.map(app => (
@@ -112,6 +107,6 @@ export function AppLauncherPage() {
           ))}
         </div>
       )}
-    </div>
+    </section>
   )
 }

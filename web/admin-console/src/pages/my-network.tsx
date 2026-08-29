@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import {
   AppWindow,
@@ -21,6 +20,7 @@ import { Input } from '../components/ui/input'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 import { QueryError } from '../components/query-error'
+import { MyAppsSection } from '../components/my-apps-section'
 
 // The user-facing contract. It deliberately describes a journey (from -> to on a
 // port) and one action; nothing about how the connection is carried underneath.
@@ -171,16 +171,32 @@ export function MyNetworkPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold tracking-tight">My Network</h1>
+        <h1 className="text-3xl font-bold tracking-tight">My Apps &amp; Network</h1>
         <p className="text-muted-foreground">
-          Things you connect to over the secure network — servers, desktops, databases, and
-          internal or zero-trust web apps. Most open right in this browser with nothing to install.
+          Everything you can reach — sign in to your apps, or connect to servers, databases and
+          internal apps. Most of it opens right in this browser with nothing to install.
         </p>
-        <p className="text-sm text-muted-foreground mt-1">
-          An app can appear here and in{' '}
-          <Link to="/app-launcher" className="underline underline-offset-2 hover:text-foreground">My Apps</Link>:
-          here you <span className="font-medium">connect</span> to it over the network; there you{' '}
-          <span className="font-medium">sign in</span> to it with single sign-on.
+      </div>
+
+      {/* One search box filters both the apps section and the network resources. */}
+      <div className="relative max-w-md">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+        <Input
+          className="pl-10"
+          placeholder="Search apps, servers, addresses..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+      </div>
+
+      {/* Section 1 — sign in to your SSO apps. Hides itself when the user has none. */}
+      <MyAppsSection search={search} />
+
+      {/* Section 2 — connect to servers, databases, web + zero-trust over the network. */}
+      <div>
+        <h2 className="text-xl font-semibold tracking-tight">Connect over the network</h2>
+        <p className="text-sm text-muted-foreground">
+          Servers, desktops, databases, and internal or zero-trust web apps.
         </p>
       </div>
 
@@ -193,18 +209,6 @@ export function MyNetworkPage() {
           <span className="text-sm text-muted-foreground">
             {data?.summary.total ?? 0} total
           </span>
-        </div>
-      )}
-
-      {resources.length > 0 && (
-        <div className="relative max-w-md">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            className="pl-10"
-            placeholder="Search by name or address..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
         </div>
       )}
 

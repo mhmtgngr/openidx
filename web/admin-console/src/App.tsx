@@ -32,7 +32,6 @@ import {
   Reports,
   Settings,
   Applications,
-  AppLauncher,
   QuickLinks,
   QuickLinksAdmin,
   AppPublish,
@@ -240,7 +239,8 @@ function App() {
 
         {/* My Pages (user-facing) */}
         <Route path="profile" element={<UserProfile />} />
-        <Route path="app-launcher" element={<AppLauncher />} />
+        {/* My Apps merged into My Network (now "My Apps & Network"). Redirect old bookmarks. */}
+        <Route path="app-launcher" element={<Navigate to="/my-network" replace />} />
         <Route path="quick-links" element={<QuickLinks />} />
         <Route path="quick-links-admin" element={<AdminRoute><QuickLinksAdmin /></AdminRoute>} />
         <Route path="my-access" element={<MyAccess />} />
