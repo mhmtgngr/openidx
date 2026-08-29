@@ -11,6 +11,9 @@
     -->
 
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Camera: the enroll screen can scan the console's QR code (mobile_scanner). -->
+    <uses-permission android:name="android.permission.CAMERA"/>
+    <uses-feature android:name="android.hardware.camera" android:required="false"/>
 
     <!--
       Android 11 (API 30) package visibility: without this, url_launcher's

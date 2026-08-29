@@ -1,10 +1,12 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../mobile/deep_links.dart';
 import '../../state/providers.dart';
+import 'qr_scan_screen.dart';
 
 /// Shown when the device is not yet enrolled. The user pastes an enrollment
 /// code, which the engine exchanges via `/enroll`.
@@ -51,6 +53,13 @@ class _EnrollScreenState extends ConsumerState<EnrollScreen> {
     _enroll();
   }
 
+  Future<void> _scanQr() async {
+    final link = await Navigator.of(context).push<EnrollLink>(
+      MaterialPageRoute<EnrollLink>(builder: (_) => const QrScanScreen()),
+    );
+    if (link != null && mounted) _applyEnrollLink(link);
+  }
+
   @override
   void dispose() {
     _linkSub?.cancel();
@@ -76,7 +85,13 @@ class _EnrollScreenState extends ConsumerState<EnrollScreen> {
     });
     try {
       await ref.read(engineActionsProvider).enroll(code, serverUrl: server);
-      // Status refresh drives the router to the login screen.
+      // On the fresh-install flow this screen is the router's home and the
+      // status change advances it. When it was PUSHED (e.g. from Settings →
+      // "Set up network access" by an already-signed-in user), pop back so the
+      // user returns to the app rather than being stranded on the enroll form.
+      if (mounted && Navigator.of(context).canPop()) {
+        Navigator.of(context).pop();
+      }
     } on Object catch (e) {
       if (mounted) setState(() => _error = e.toString());
     } finally {
@@ -106,15 +121,23 @@ class _EnrollScreenState extends ConsumerState<EnrollScreen> {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'Tap the enrollment link on this phone, or paste the code '
-                  'from your OpenIDX console below — no QR scan needed.',
+                  'Scan the QR in your OpenIDX console, tap the enrollment link '
+                  'on this phone, or paste the code below.',
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
-                const SizedBox(height: 24),
+                const SizedBox(height: 20),
+                // Primary on mobile: point the camera at the console's QR.
+                if (Platform.isAndroid || Platform.isIOS)
+                  OutlinedButton.icon(
+                    onPressed: _busy ? null : _scanQr,
+                    icon: const Icon(Icons.qr_code_scanner),
+                    label: const Text('Scan QR code'),
+                  ),
+                const SizedBox(height: 12),
                 TextField(
                   controller: _controller,
-                  autofocus: true,
+                  autofocus: false,
                   enabled: !_busy,
                   decoration: const InputDecoration(
                     labelText: 'Enrollment code',
