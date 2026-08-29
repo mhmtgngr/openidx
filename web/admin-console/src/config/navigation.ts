@@ -121,9 +121,7 @@ export const navigation: NavDomainGroup[] = [
         items: [
           { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, minRole: 'user', keywords: ['overview', 'home'] },
           { name: 'My Profile', href: '/profile', icon: User, minRole: 'user', keywords: ['account', 'password'] },
-          { name: 'My Apps & Network', href: '/my-network', icon: Globe, minRole: 'user', keywords: ['what can i reach', 'connect', 'remote', 'servers', 'access', 'resources', 'apps', 'launcher', 'portal', 'sso', 'sign in'] },
-          { name: 'My Windows Apps', href: '/my-apps', icon: AppWindow, minRole: 'user', keywords: ['remoteapp', 'ssms', 'published', 'rds', 'windows', 'launch', 'desktop app'] },
-          { name: 'Quick Links', href: '/quick-links', icon: Link2, minRole: 'user', keywords: ['support', 'shortcuts', 'teams', 'zoom', 'launcher', 'connect'] },
+          { name: 'My Apps & Network', href: '/my-network', icon: Globe, minRole: 'user', keywords: ['what can i reach', 'connect', 'remote', 'servers', 'access', 'resources', 'apps', 'launcher', 'portal', 'sso', 'sign in', 'windows', 'remoteapp', 'ssms', 'rds', 'quick links', 'shortcuts', 'teams', 'zoom', 'support'] },
           { name: 'My Access', href: '/my-access', icon: Eye, minRole: 'user', keywords: ['entitlements', 'permissions'] },
           { name: 'My Privileged Access', href: '/my-privileged-access', icon: KeyRound, minRole: 'user', keywords: ['pam', 'my secrets', 'checkout', 'privileged'] },
           { name: 'My Devices', href: '/my-devices', icon: Smartphone, minRole: 'user', keywords: ['phone', 'enrollment'] },

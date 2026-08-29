@@ -19,7 +19,6 @@ export const IdentityProviders = lazy(() => import('./identity-providers').then(
 
 // Applications
 export const Applications = lazy(() => import('./applications').then((m) => ({ default: m.ApplicationsPage })))
-export const QuickLinks = lazy(() => import('./quick-links').then((m) => ({ default: m.QuickLinksPage })))
 export const QuickLinksAdmin = lazy(() => import('./quick-links-admin').then((m) => ({ default: m.QuickLinksAdminPage })))
 export const AppPublish = lazy(() => import('./app-publish').then((m) => ({ default: m.AppPublishPage })))
 export const ZeroTrust = lazy(() => import('./zero-trust').then((m) => ({ default: m.ZeroTrustPage })))
@@ -97,7 +96,6 @@ export const PAMDashboard = lazy(() => import('./pam-dashboard').then((m) => ({ 
 export const PamConnections = lazy(() => import('./pam-connections').then((m) => ({ default: m.PamConnectionsPage })))
 export const PamSessionWindow = lazy(() => import('./pam-session-window').then((m) => ({ default: m.PamSessionWindow })))
 export const WindowsApps = lazy(() => import('./windows-apps').then((m) => ({ default: m.WindowsAppsPage })))
-export const MyWindowsApps = lazy(() => import('./my-windows-apps').then((m) => ({ default: m.MyWindowsAppsPage })))
 
 // Developer
 export const APIExplorer = lazy(() => import('./api-explorer').then((m) => ({ default: m.ApiExplorerPage })))

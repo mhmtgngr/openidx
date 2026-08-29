@@ -15,7 +15,7 @@ vi.mock('../lib/api', () => ({
 }))
 vi.mock('../hooks/use-toast', () => ({ useToast: () => ({ toast: vi.fn() }) }))
 
-import { MyWindowsAppsPage } from './my-windows-apps'
+import { MyWindowsAppsSection } from './my-windows-apps-section'
 import { api } from '../lib/api'
 
 const wa = api.windowsApps as unknown as Record<string, ReturnType<typeof vi.fn>>
@@ -25,16 +25,16 @@ const app = {
   host_name: 'RDS01', has_icon: false, require_approval: false,
 }
 
-function renderPage() {
+function renderSection() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={qc}>
-      <MemoryRouter><MyWindowsAppsPage /></MemoryRouter>
+      <MemoryRouter><MyWindowsAppsSection search="" /></MemoryRouter>
     </QueryClientProvider>,
   )
 }
 
-describe('MyWindowsAppsPage', () => {
+describe('MyWindowsAppsSection', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     wa.listMine.mockResolvedValue({ apps: [app] })
@@ -42,20 +42,23 @@ describe('MyWindowsAppsPage', () => {
     window.open = vi.fn()
   })
 
-  it('renders launchable app tiles', async () => {
-    renderPage()
+  it('renders launchable app tiles under the Windows apps heading', async () => {
+    renderSection()
     expect(await screen.findByText('SQL Server Management Studio')).toBeInTheDocument()
     expect(screen.getByText('RDS01')).toBeInTheDocument()
+    expect(screen.getByText('Windows apps')).toBeInTheDocument()
   })
 
-  it('shows the empty state when no apps are published to the user', async () => {
+  it('hides itself entirely when no apps are published to the user', async () => {
     wa.listMine.mockResolvedValue({ apps: [] })
-    renderPage()
-    expect(await screen.findByText(/no apps available/i)).toBeInTheDocument()
+    renderSection()
+    // Once the empty list resolves the section returns null, so its heading
+    // disappears (it shows briefly while loading).
+    await waitFor(() => expect(screen.queryByText('Windows apps')).not.toBeInTheDocument())
   })
 
   it('launches an app and opens the connect URL', async () => {
-    renderPage()
+    renderSection()
     fireEvent.click(await screen.findByRole('button', { name: /launch/i }))
     await waitFor(() => expect(wa.launch).toHaveBeenCalledWith('a1', undefined))
     await waitFor(() => expect(window.open).toHaveBeenCalledWith('https://guac/x', '_blank', 'noopener'))
@@ -71,7 +74,7 @@ describe('MyWindowsAppsPage', () => {
       },
     })
     wa.launch.mockRejectedValueOnce(err)
-    renderPage()
+    renderSection()
     fireEvent.click(await screen.findByRole('button', { name: /launch/i }))
     expect(await screen.findByText(/you have an active session/i)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /disconnect & launch here/i }))

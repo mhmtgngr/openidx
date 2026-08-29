@@ -1,14 +1,14 @@
 import { useState } from 'react'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { AppWindow, Play, Layers, Server, AlertTriangle, CheckCircle2, ShieldCheck } from 'lucide-react'
-import { Card, CardContent } from '../components/ui/card'
-import { Button } from '../components/ui/button'
-import { Badge } from '../components/ui/badge'
-import { LoadingSpinner } from '../components/ui/loading-spinner'
-import { QueryError } from '../components/query-error'
+import { Card, CardContent } from './ui/card'
+import { Button } from './ui/button'
+import { Badge } from './ui/badge'
+import { LoadingSpinner } from './ui/loading-spinner'
+import { QueryError } from './query-error'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
-} from '../components/ui/dialog'
+} from './ui/dialog'
 import { api, MyWindowsApp, WindowsAppLaunchConflict } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 import { isAxiosError } from 'axios'
@@ -16,12 +16,14 @@ import { isAxiosError } from 'axios'
 // A launch conflict the user must resolve (server replied 409).
 type Conflict = { app: MyWindowsApp; body: WindowsAppLaunchConflict }
 
-// MyWindowsAppsPage — the end-user portal surface: the Windows apps this user
-// may launch, as tiles. Distinct from the admin catalog page: no editing, no
-// hosts/pools internals — just launch. Launching runs the same placement +
-// approval gates server-side, and a placement conflict opens the same explicit
-// "disconnect & launch here" resolution the admin page uses.
-export function MyWindowsAppsPage() {
+/**
+ * MyWindowsAppsSection is the "Windows apps" block of the combined My Apps &
+ * Network page: the RemoteApp Windows programs the user may launch in the
+ * browser, with the same placement + approval gates as before (a 409 opens the
+ * explicit "disconnect & launch here" dialog). The caller owns the shared search
+ * box; the section hides itself when the user has no published apps.
+ */
+export function MyWindowsAppsSection({ search }: { search: string }) {
   const { toast } = useToast()
   const [conflict, setConflict] = useState<Conflict | null>(null)
 
@@ -29,7 +31,13 @@ export function MyWindowsAppsPage() {
     queryKey: ['my-windows-apps'],
     queryFn: () => api.windowsApps.listMine(),
   })
-  const apps = data?.apps ?? []
+  const all = data?.apps ?? []
+  const term = search.trim().toLowerCase()
+  const apps = all.filter((a) =>
+    !term ||
+    a.display_name.toLowerCase().includes(term) ||
+    (a.pool_name || a.host_name || '').toLowerCase().includes(term)
+  )
 
   const launch = useMutation({
     mutationFn: (v: { app: MyWindowsApp; replaceSessionId?: string }) =>
@@ -48,31 +56,26 @@ export function MyWindowsAppsPage() {
     },
   })
 
+  // Hide the whole section when no Windows apps are published to the user.
+  if (!isLoading && !isError && all.length === 0) {
+    return null
+  }
+
   return (
-    <div className="space-y-6">
+    <section className="space-y-3">
       <div>
-        <h1 className="text-2xl font-bold flex items-center gap-2">
-          <AppWindow className="h-6 w-6" /> My Apps
-        </h1>
-        <p className="text-muted-foreground">
-          Windows applications published to you. Launch one in your browser — no install, no full desktop.
+        <h2 className="text-xl font-semibold tracking-tight">Windows apps</h2>
+        <p className="text-sm text-muted-foreground">
+          Windows programs published to you. Launch one in your browser — no install, no full desktop.
         </p>
       </div>
 
       {isLoading ? (
-        <div className="flex justify-center py-12"><LoadingSpinner /></div>
+        <div className="flex justify-center py-8"><LoadingSpinner /></div>
       ) : isError ? (
-        <QueryError error={error} resource="your apps" />
+        <QueryError error={error} resource="your Windows apps" />
       ) : apps.length === 0 ? (
-        <Card>
-          <CardContent className="py-12 text-center space-y-2">
-            <AppWindow className="h-10 w-10 mx-auto text-muted-foreground" />
-            <p className="font-medium">No apps available</p>
-            <p className="text-sm text-muted-foreground">
-              An administrator hasn't published any Windows apps to your account yet.
-            </p>
-          </CardContent>
-        </Card>
+        <p className="text-sm text-muted-foreground">No Windows apps match “{search}”.</p>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {apps.map((app) => (
@@ -108,8 +111,7 @@ export function MyWindowsAppsPage() {
         </div>
       )}
 
-      {/* Placement conflict — explicit, never a silent disconnect. Mirrors the
-          admin page's contract so a user is never surprised by a killed session. */}
+      {/* Placement conflict — explicit, never a silent disconnect. */}
       <Dialog open={!!conflict} onOpenChange={(o) => { if (!o) setConflict(null) }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
@@ -152,6 +154,6 @@ export function MyWindowsAppsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </section>
   )
 }
