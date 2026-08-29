@@ -957,5 +957,12 @@ func allMigrations() []*Migration {
 			UpSQL:       pushDeviceAgentLinkUp,
 			DownSQL:     pushDeviceAgentLinkDown,
 		},
+		{
+			Version:     136,
+			Name:        "group_application_assignments",
+			Description: "Add group_application_assignments (group→app) so SSO/OIDC app access can be granted to a group, not just a user. GetMyApplications returns the UNION of user- and group-assigned apps. Additive; the user-assignment path is unchanged.",
+			UpSQL:       groupAppAssignmentsUp,
+			DownSQL:     groupAppAssignmentsDown,
+		},
 	}
 }

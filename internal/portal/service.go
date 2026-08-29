@@ -107,12 +107,21 @@ func (s *Service) GetMyApplications(ctx context.Context, userID string) ([]UserA
 		return nil, err
 	}
 
+	// Apps assigned directly to the user OR to any group the user belongs to.
+	// Group membership grants access — a group→app assignment applies to every
+	// member (group_application_assignments, migration v136).
 	query := `
-		SELECT a.id, a.name, COALESCE(a.description, '') AS description,
+		SELECT DISTINCT a.id, a.name, COALESCE(a.description, '') AS description,
 		       COALESCE(a.base_url, '') AS base_url, COALESCE(a.protocol, '') AS protocol
-		FROM user_application_assignments uaa
-		JOIN applications a ON a.id = uaa.application_id
-		WHERE uaa.user_id = $1 AND uaa.org_id = $2 AND a.enabled = true
+		FROM applications a
+		WHERE a.enabled = true AND a.org_id = $2
+		  AND (
+		    EXISTS (SELECT 1 FROM user_application_assignments uaa
+		             WHERE uaa.application_id = a.id AND uaa.user_id = $1 AND uaa.org_id = $2)
+		    OR EXISTS (SELECT 1 FROM group_application_assignments gaa
+		                JOIN group_memberships gm ON gm.group_id = gaa.group_id
+		               WHERE gaa.application_id = a.id AND gm.user_id = $1 AND gaa.org_id = $2)
+		  )
 		ORDER BY a.name`
 
 	rows, err := s.db.Pool.Query(ctx, query, userID, org.ID)
@@ -954,6 +963,13 @@ func generateFingerprint(userAgent, ipAddress string) string {
 // RegisterRoutes registers all portal HTTP routes on the given router group.
 func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 	router.GET("/portal/applications", svc.handleGetMyApplications)
+
+	// Application access management (admin-gated): one-click assign an app to a
+	// user or a group, list assignees, revoke. Powers the "Manage access" dialog.
+	router.GET("/portal/applications/:id/assignments", svc.handleListAppAssignments)
+	router.POST("/portal/applications/:id/assignments", svc.handleCreateAppAssignment)
+	router.DELETE("/portal/applications/:id/assignments/:pid", svc.handleDeleteAppAssignment)
+
 	router.GET("/portal/groups/available", svc.handleGetAvailableGroups)
 	router.POST("/portal/groups/request", svc.handleRequestGroupJoin)
 	router.GET("/portal/groups/requests", svc.handleGetMyGroupRequests)

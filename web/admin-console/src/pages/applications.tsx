@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Search, MoreHorizontal, Globe, Smartphone, Server, ExternalLink, Edit, Trash2, Settings, Copy, RefreshCw, ChevronLeft, ChevronRight, AppWindow } from 'lucide-react'
+import { Plus, Search, MoreHorizontal, Globe, Smartphone, Server, ExternalLink, Edit, Trash2, Settings, Copy, RefreshCw, ChevronLeft, ChevronRight, AppWindow, Users } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Card, CardContent, CardHeader } from '../components/ui/card'
@@ -35,6 +35,7 @@ import {
   AlertDialogTitle,
 } from '../components/ui/alert-dialog'
 import { useToast } from '../hooks/use-toast'
+import { ManageAppAccessDialog } from '../components/manage-app-access-dialog'
 
 interface Application {
   id: string
@@ -83,6 +84,7 @@ export function ApplicationsPage() {
   })
   const [regenerateModal, setRegenerateModal] = useState(false)
   const [regenerateApp, setRegenerateApp] = useState<Application | null>(null)
+  const [manageAccessApp, setManageAccessApp] = useState<Application | null>(null)
   const [newSecret, setNewSecret] = useState<string | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<{id: string, name: string} | null>(null)
   const [page, setPage] = useState(0)
@@ -486,6 +488,10 @@ export function ApplicationsPage() {
                                 <Settings className="mr-2 h-4 w-4" />
                                 SSO Settings
                               </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => setManageAccessApp(app)}>
+                                <Users className="mr-2 h-4 w-4" />
+                                Manage Access
+                              </DropdownMenuItem>
                               <DropdownMenuSeparator />
                               <DropdownMenuItem
                                 className="text-red-600"
@@ -879,6 +885,15 @@ export function ApplicationsPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {manageAccessApp && (
+        <ManageAppAccessDialog
+          appId={manageAccessApp.id}
+          appName={manageAccessApp.name}
+          open={!!manageAccessApp}
+          onOpenChange={(open) => !open && setManageAccessApp(null)}
+        />
+      )}
     </div>
   )
 }

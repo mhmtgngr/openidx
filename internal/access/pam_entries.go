@@ -155,8 +155,14 @@ func (s *Service) pamEntryAllowed(ctx context.Context, orgID, entryID, userID st
 	if roles == nil {
 		roles = []string{}
 	}
+	// Group membership grants access too: expand the user's groups so a
+	// ('group', <group_id>) grant on the entry applies to every member.
+	groups, err := s.userGroupIDs(ctx, orgID, userID)
+	if err != nil {
+		return false, err
+	}
 	var ok bool
-	err := s.db.Pool.QueryRow(ctx, `
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1 FROM pam_entry_grants
 			WHERE org_id = $1 AND entry_id = $2
@@ -165,9 +171,36 @@ func (s *Service) pamEntryAllowed(ctx context.Context, orgID, entryID, userID st
 			  AND (
 			    (principal_type = 'user' AND principal_id = $4)
 			    OR (principal_type = 'role' AND principal_id = ANY($5))
+			    OR (principal_type = 'group' AND principal_id = ANY($6))
 			  )
-		)`, orgID, entryID, action, userID, roles).Scan(&ok)
+		)`, orgID, entryID, action, userID, roles, groups).Scan(&ok)
 	return ok, err
+}
+
+// userGroupIDs returns the group IDs (as strings) the user belongs to in the
+// org, so group-principal grants expand alongside user/role grants.
+// group_memberships.group_id is UUID; cast to text since pam_entry_grants /
+// group_application_assignments compare principal ids as text.
+func (s *Service) userGroupIDs(ctx context.Context, orgID, userID string) ([]string, error) {
+	if userID == "" || orgID == "" {
+		return nil, nil
+	}
+	rows, err := s.db.Pool.Query(ctx,
+		`SELECT group_id::text FROM group_memberships WHERE user_id = $1 AND org_id = $2`,
+		userID, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	ids := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
 
 // ---- DTOs ----
@@ -536,13 +569,22 @@ func (s *Service) handlePamListEntries(c *gin.Context) {
 		if roles == nil {
 			roles = []string{}
 		}
+		groups, gerr := s.userGroupIDs(ctx, org.ID, userID)
+		if gerr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to resolve access"})
+			return
+		}
 		args = append(args, roles)
+		rolesIdx := len(args)
+		args = append(args, groups)
+		groupsIdx := len(args)
 		query += fmt.Sprintf(`
 		   AND EXISTS (SELECT 1 FROM pam_entry_grants g
 		                WHERE g.entry_id = e.id
 		                  AND (g.expires_at IS NULL OR g.expires_at > NOW())
 		                  AND ((g.principal_type = 'user' AND g.principal_id = $2)
-		                    OR (g.principal_type = 'role' AND g.principal_id = ANY($%d))))`, len(args))
+		                    OR (g.principal_type = 'role' AND g.principal_id = ANY($%d))
+		                    OR (g.principal_type = 'group' AND g.principal_id = ANY($%d))))`, rolesIdx, groupsIdx)
 	}
 
 	if folderID := c.Query("folder_id"); folderID != "" {

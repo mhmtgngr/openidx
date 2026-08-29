@@ -310,12 +310,19 @@ func (s *Service) brokeredResources(ctx context.Context, orgID, userID string, c
 		 WHERE e.org_id = $1`
 	args := []interface{}{orgID, userID, roles}
 	if !s.pamCallerIsAdmin(c) {
+		groups, gerr := s.userGroupIDs(ctx, orgID, userID)
+		if gerr != nil {
+			s.logger.Error("my-resources: group resolve failed", zap.Error(gerr))
+			return nil
+		}
+		args = append(args, groups) // $4
 		query += `
 		   AND EXISTS (SELECT 1 FROM pam_entry_grants g
 		                WHERE g.entry_id = e.id
 		                  AND (g.expires_at IS NULL OR g.expires_at > NOW())
 		                  AND ((g.principal_type = 'user' AND g.principal_id = $2)
-		                    OR (g.principal_type = 'role' AND g.principal_id = ANY($3))))`
+		                    OR (g.principal_type = 'role' AND g.principal_id = ANY($3))
+		                    OR (g.principal_type = 'group' AND g.principal_id = ANY($4))))`
 	}
 	query += ` ORDER BY e.name`
 
