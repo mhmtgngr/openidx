@@ -10,6 +10,7 @@ import {
   Monitor,
   Search,
   Send,
+  ShieldCheck,
   Terminal,
 } from 'lucide-react'
 import { Badge } from '../components/ui/badge'
@@ -47,6 +48,23 @@ interface MyResourcesResponse {
   summary: { total: number; ready: number }
 }
 
+// Zero-trust (OpenZiti) apps the caller can reach over the network. These open
+// through the OpenIDX agent or a clientless BrowZer session rather than in this
+// browser directly, so they get their own section.
+interface MyZitiService {
+  name: string
+  description?: string
+  host?: string
+  port?: number
+  protocol?: string
+}
+
+interface MyZitiServicesResponse {
+  linked: boolean
+  enrolled: boolean
+  services: MyZitiService[]
+}
+
 const KIND_META: Record<MyResource['kind'], { icon: typeof Globe; label: string }> = {
   web: { icon: Globe, label: 'Web app' },
   remote_desktop: { icon: Monitor, label: 'Remote desktop' },
@@ -72,6 +90,12 @@ export function MyNetworkPage() {
     queryKey: ['my-network-resources'],
     queryFn: () => api.get<MyResourcesResponse>('/api/v1/access/my/resources'),
   })
+
+  const { data: ziti } = useQuery({
+    queryKey: ['my-ziti-services'],
+    queryFn: () => api.get<MyZitiServicesResponse>('/api/v1/access/my/ziti/services'),
+  })
+  const zitiServices = ziti?.services ?? []
 
   // Opens the session in a new tab. Used for anything the session broker renders.
   const connectMutation = useMutation({
@@ -262,6 +286,55 @@ export function MyNetworkPage() {
               </Card>
             )
           })}
+        </div>
+      )}
+
+      {/* Zero-trust apps: reachable OpenZiti services. Shown only when the user
+          actually has some, so it never clutters an unenrolled user's view. */}
+      {zitiServices.length > 0 && (
+        <div className="space-y-3 pt-2">
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="h-5 w-5 text-primary" />
+            <h2 className="text-xl font-semibold tracking-tight">Zero-trust apps</h2>
+          </div>
+          <p className="text-sm text-muted-foreground">
+            Private apps you can reach over the secure network. Connect through the OpenIDX
+            agent on your device{ziti?.enrolled ? '' : ' (enroll a device to start using these)'}.
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {zitiServices.map((svc) => (
+              <Card key={svc.name} className="flex flex-col">
+                <CardHeader className="pb-3">
+                  <div className="flex items-start gap-3">
+                    <div className="h-10 w-10 rounded-lg bg-green-100 flex items-center justify-center shrink-0">
+                      <ShieldCheck className="h-5 w-5 text-green-700" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <CardTitle className="text-base truncate">{svc.name}</CardTitle>
+                      {svc.protocol && (
+                        <Badge variant="outline" className="text-xs mt-1 uppercase">
+                          {svc.protocol}
+                        </Badge>
+                      )}
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent className="flex flex-col flex-1 gap-2">
+                  {svc.description && (
+                    <p className="text-sm text-muted-foreground">{svc.description}</p>
+                  )}
+                  {svc.host && (
+                    <div className="text-sm text-muted-foreground">
+                      <span className="font-medium text-foreground">
+                        {svc.host}
+                        {svc.port ? `:${svc.port}` : ''}
+                      </span>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            ))}
+          </div>
         </div>
       )}
     </div>

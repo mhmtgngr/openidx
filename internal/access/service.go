@@ -485,6 +485,10 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// language (no overlay vocabulary). Deliberately not adminOnly.
 		api.GET("/my/resources", svc.handleMyResources)
 
+		// Self-service: the OpenZiti (zero-trust) apps the caller can reach,
+		// enriched with connection details. Deliberately not adminOnly.
+		api.GET("/my/ziti/services", svc.handleMyZitiServices)
+
 		// Phase 3: Posture checks (definitions are admin-managed; device
 		// self-report + evaluate are data-plane and stay open).
 		api.GET("/ziti/posture/checks", svc.handleListPostureChecks)
