@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import '../api/access.dart';
 import '../api/api_client.dart';
 import '../api/auth.dart';
 import '../api/governance.dart';
@@ -63,6 +64,9 @@ final qrLoginApiProvider =
 final governanceApiProvider =
     Provider<GovernanceApi>((ref) => GovernanceApi(ref.watch(apiClientProvider)));
 
+final accessApiProvider =
+    Provider<AccessApi>((ref) => AccessApi(ref.watch(apiClientProvider)));
+
 final notificationsApiProvider = Provider<NotificationsApi>(
     (ref) => NotificationsApi(ref.watch(apiClientProvider)));
 
@@ -74,6 +78,11 @@ final myApprovalsProvider = FutureProvider<List<ApprovalItem>>((ref) {
 
 final myRequestsProvider = FutureProvider<List<AccessRequest>>((ref) {
   return ref.watch(governanceApiProvider).myRequests();
+});
+
+/// The zero-trust (OpenZiti) apps the signed-in user can reach over the network.
+final myZitiServicesProvider = FutureProvider<List<ZitiService>>((ref) {
+  return ref.watch(accessApiProvider).myZitiServices();
 });
 
 final notificationsProvider = FutureProvider<List<AppNotification>>((ref) {

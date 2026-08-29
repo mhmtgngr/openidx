@@ -3,13 +3,16 @@ package portal
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/notifications"
 )
 
 // AppAssignment is one principal (a user or a group) granted access to an
@@ -175,17 +178,18 @@ func (s *Service) CreateAppAssignment(ctx context.Context, appID, principalType,
 		return err
 	}
 
-	// Application must exist in this org.
-	var exists bool
+	// Application must exist in this org (grab its name for the notification).
+	var appName string
 	if err := s.db.Pool.QueryRow(ctx,
-		`SELECT EXISTS(SELECT 1 FROM applications WHERE id = $1 AND org_id = $2)`, appID, org.ID,
-	).Scan(&exists); err != nil {
+		`SELECT name FROM applications WHERE id = $1 AND org_id = $2`, appID, org.ID,
+	).Scan(&appName); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return errApplicationNotFound
+		}
 		return err
 	}
-	if !exists {
-		return errApplicationNotFound
-	}
 
+	var exists bool
 	switch principalType {
 	case "user":
 		if err := s.db.Pool.QueryRow(ctx,
@@ -196,10 +200,11 @@ func (s *Service) CreateAppAssignment(ctx context.Context, appID, principalType,
 		if !exists {
 			return errPrincipalNotFound
 		}
-		_, err = s.db.Pool.Exec(ctx,
+		if _, err = s.db.Pool.Exec(ctx,
 			`INSERT INTO user_application_assignments (user_id, application_id, org_id)
-			 VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, principalID, appID, org.ID)
-		return err
+			 VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, principalID, appID, org.ID); err != nil {
+			return err
+		}
 	case "group":
 		if err := s.db.Pool.QueryRow(ctx,
 			`SELECT EXISTS(SELECT 1 FROM groups WHERE id = $1 AND org_id = $2)`, principalID, org.ID,
@@ -209,12 +214,65 @@ func (s *Service) CreateAppAssignment(ctx context.Context, appID, principalType,
 		if !exists {
 			return errPrincipalNotFound
 		}
-		_, err = s.db.Pool.Exec(ctx,
+		if _, err = s.db.Pool.Exec(ctx,
 			`INSERT INTO group_application_assignments (group_id, application_id, org_id, assigned_by)
-			 VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`, principalID, appID, org.ID, assignerID)
-		return err
+			 VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`, principalID, appID, org.ID, assignerID); err != nil {
+			return err
+		}
 	default:
 		return errInvalidPrincipalType
+	}
+
+	// Best-effort notify the recipient(s) that they have a new app. A group
+	// grant notifies every member. Never fails the assignment.
+	s.notifyAppGranted(ctx, org.ID, principalType, principalID, appName)
+	return nil
+}
+
+// notifyAppGranted tells the granted user (or every member of a granted group)
+// that a new application is available. Best-effort: logged, never fatal.
+func (s *Service) notifyAppGranted(ctx context.Context, orgID, principalType, principalID, appName string) {
+	recipients, err := s.grantRecipients(ctx, orgID, principalType, principalID)
+	if err != nil {
+		s.logger.Warn("notify app grant: resolve recipients failed", zap.Error(err))
+		return
+	}
+	notif := notifications.NewService(s.db, s.logger)
+	body := fmt.Sprintf("You've been granted access to %s.", appName)
+	for _, uid := range recipients {
+		if err := notif.CreateMultiChannelNotification(ctx, uid, orgID, "access_granted",
+			"New app available", body, "/portal/applications",
+			map[string]interface{}{"application": appName}); err != nil {
+			s.logger.Warn("notify app grant failed", zap.String("user_id", uid), zap.Error(err))
+		}
+	}
+}
+
+// grantRecipients resolves a grant principal to the user IDs that should be
+// notified: a user is itself; a group expands to its members.
+func (s *Service) grantRecipients(ctx context.Context, orgID, principalType, principalID string) ([]string, error) {
+	switch principalType {
+	case "user":
+		return []string{principalID}, nil
+	case "group":
+		rows, err := s.db.Pool.Query(ctx,
+			`SELECT user_id::text FROM group_memberships WHERE group_id = $1 AND org_id = $2`,
+			principalID, orgID)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		ids := []string{}
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				return nil, err
+			}
+			ids = append(ids, id)
+		}
+		return ids, rows.Err()
+	default:
+		return nil, nil
 	}
 }
 
