@@ -2,15 +2,35 @@ package access
 
 import (
 	"context"
-	"fmt"
+	"crypto/rand"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
+
+// enrollCodeAlphabet is an unambiguous base-31 set (no 0/O/1/I/L) so a code can
+// be read aloud / typed without confusion. enrollCodeLen 12 → ~31^12 ≈ 8e17
+// entropy — ample for a single-use, rate-limited, 15-min code.
+const enrollCodeAlphabet = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+const enrollCodeLen = 12
+
+// generateEnrollShortCode returns a short, unambiguous, uppercase enrollment
+// code. Short by design: it keeps the QR sparse (scannable off a screen) and
+// lets the user read it out / type it. Errors only if crypto/rand fails.
+func generateEnrollShortCode() (string, error) {
+	b := make([]byte, enrollCodeLen)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	out := make([]byte, enrollCodeLen)
+	for i, v := range b {
+		out[i] = enrollCodeAlphabet[int(v)%len(enrollCodeAlphabet)]
+	}
+	return string(out), nil
+}
 
 // enrollmentSession is a row of the enrollment_sessions table (migration v132):
 // the unified onboarding primitive that ties a short code / QR / deep-link to
@@ -80,10 +100,18 @@ func (h *AgentAPIHandler) HandleCreateEnrollSession(c *gin.Context) {
 	}
 	ctx := c.Request.Context()
 
-	// The enrollment token IS the code (high-entropy, single-use). It is carried
-	// in the QR / deep-link and used by the agent as its enrollment bearer, so no
-	// separate (leaky) short-code→token resolve endpoint is needed.
-	token := uuid.New().String()
+	// The enrollment token IS the code (single-use, rate-limited, 15-min TTL). It
+	// is carried in the QR / deep-link and used by the agent as its enrollment
+	// bearer, so no separate (leaky) short-code→token resolve endpoint is needed.
+	// A SHORT code (not a UUID) keeps the QR sparse enough to scan off a screen
+	// and short enough to read out / type. ~31^12 ≈ 8e17 entropy over an
+	// unambiguous alphabet is ample for a single-use, rate-limited, expiring code.
+	token, err := generateEnrollShortCode()
+	if err != nil {
+		h.logger.Error("HandleCreateEnrollSession: code generation failed", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to start enrollment session"})
+		return
+	}
 	tokenHash := sha256Hex(token)
 	expiresAt := time.Now().UTC().Add(h.enrollSessionTTL())
 
@@ -108,7 +136,11 @@ func (h *AgentAPIHandler) HandleCreateEnrollSession(c *gin.Context) {
 	}
 
 	server := h.enrollServerURL(c)
-	deepLink := fmt.Sprintf("openidx://enroll?code=%s&server=%s", token, server)
+	// Encode only the code in the QR/deep-link — the shorter the payload, the
+	// sparser (more scannable) the QR. The app defaults + shows an editable
+	// server field, and `server` is still returned below for the console to
+	// display / communicate for non-default deployments.
+	deepLink := "openidx://enroll?code=" + token
 
 	h.logAuditEventToDB(ctx, "enroll.session_created", sessionID, "success", "user="+userID)
 	c.JSON(http.StatusOK, gin.H{
