@@ -264,6 +264,16 @@ type Config struct {
 	// preserves local-dev ergonomics; production always hard-blocks.
 	AdminAPIRequireAuth bool `mapstructure:"admin_api_require_auth"`
 
+	// ShowAllAppsWhenUnassigned, when true, makes the self app portal
+	// (GetMyApplications) fall back to ALL enabled applications for a user who
+	// has no direct or group-derived app assignment. Default false is the
+	// least-privilege behaviour: an unassigned user sees nothing (and the
+	// "no apps assigned — contact your admin" empty state) rather than the whole
+	// org's app catalog. Group-based assignment (migration v136) is the intended
+	// way to grant apps, so the blanket fallback is off by default; set
+	// SHOW_ALL_APPS_WHEN_UNASSIGNED=true only to restore the old open behaviour.
+	ShowAllAppsWhenUnassigned bool `mapstructure:"show_all_apps_when_unassigned"`
+
 	// OpenZiti configuration
 	ZitiEnabled           bool   `mapstructure:"ziti_enabled"`
 	ZitiReconcilerEnabled bool   `mapstructure:"ziti_reconciler"`
@@ -738,6 +748,7 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("dev_admin_bypass", false)
 	v.SetDefault("access_api_require_auth", false)
 	v.SetDefault("admin_api_require_auth", false)
+	v.SetDefault("show_all_apps_when_unassigned", false)
 
 	// Database defaults
 	v.SetDefault("database_url", "postgres://openidx:openidx_secret@localhost:5432/openidx?sslmode=disable")
@@ -973,6 +984,7 @@ func bindEnvVars(v *viper.Viper) {
 		"dev_admin_bypass":                    "DEV_ADMIN_BYPASS",
 		"access_api_require_auth":             "ACCESS_API_REQUIRE_AUTH",
 		"admin_api_require_auth":              "ADMIN_API_REQUIRE_AUTH",
+		"show_all_apps_when_unassigned":       "SHOW_ALL_APPS_WHEN_UNASSIGNED",
 		"shutdown_timeout_seconds":            "SHUTDOWN_TIMEOUT_SECONDS",
 		"public_base_url":                     "PUBLIC_BASE_URL",
 		"oauth_issuer":                        "OAUTH_ISSUER",

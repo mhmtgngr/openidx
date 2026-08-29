@@ -89,14 +89,33 @@ type Service struct {
 	db       *database.PostgresDB
 	logger   *zap.Logger
 	aiClient *ai.Client // optional local-LLM client for security insights
+
+	// showAllAppsWhenUnassigned gates the GetMyApplications fallback: when false
+	// (default, least-privilege) a user with no direct or group app assignment
+	// sees no apps rather than the whole org catalog. See config.Config.
+	showAllAppsWhenUnassigned bool
+}
+
+// Option configures a portal Service at construction. Kept variadic so existing
+// NewService(db, logger) callers stay unchanged.
+type Option func(*Service)
+
+// WithShowAllAppsWhenUnassigned sets whether the self app portal falls back to
+// all enabled apps for an unassigned user (default false).
+func WithShowAllAppsWhenUnassigned(v bool) Option {
+	return func(s *Service) { s.showAllAppsWhenUnassigned = v }
 }
 
 // NewService creates a new portal service
-func NewService(db *database.PostgresDB, logger *zap.Logger) *Service {
-	return &Service{
+func NewService(db *database.PostgresDB, logger *zap.Logger, opts ...Option) *Service {
+	s := &Service{
 		db:     db,
 		logger: logger,
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // GetMyApplications returns the applications assigned to a user.
@@ -142,8 +161,12 @@ func (s *Service) GetMyApplications(ctx context.Context, userID string) ([]UserA
 		return nil, fmt.Errorf("error iterating application rows: %w", err)
 	}
 
-	// Fallback: if no assignments exist, return all enabled applications
-	if len(apps) == 0 {
+	// Fallback: if no assignments exist, optionally return all enabled apps.
+	// Off by default (least-privilege) — an unassigned user sees nothing and the
+	// UI's "no apps assigned — contact your admin" empty state; group assignment
+	// (migration v136) is the intended way to grant access. Flip
+	// SHOW_ALL_APPS_WHEN_UNASSIGNED=true to restore the old open behaviour.
+	if len(apps) == 0 && s.showAllAppsWhenUnassigned {
 		fallbackQuery := `
 			SELECT id, name, COALESCE(description, '') AS description,
 			       COALESCE(base_url, '') AS base_url, COALESCE(protocol, '') AS protocol
