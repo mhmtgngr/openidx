@@ -69,7 +69,13 @@ class _EnrollScreenState extends ConsumerState<EnrollScreen> {
   }
 
   Future<void> _enroll() async {
-    final code = _controller.text.trim();
+    // Codes are short + uppercase from an unambiguous alphabet, and are shown
+    // grouped (ABCD-2345-EFGH). Normalize hand-typed input — uppercase and drop
+    // any spaces/dashes — so it matches the raw code the server issued. The
+    // QR/deep-link paths already carry the exact code, so this is idempotent.
+    final code = _controller.text
+        .toUpperCase()
+        .replaceAll(RegExp(r'[^A-Z0-9]'), '');
     final server = _serverController.text.trim();
     if (code.isEmpty) {
       setState(() => _error = 'Enter an enrollment code.');
