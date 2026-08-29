@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../state/mobile_providers.dart';
 import '../state/providers.dart';
 import 'deep_links.dart';
 
@@ -65,11 +66,30 @@ class _MobileOAuthLoginHandlerState
       // Success: stop replaying this callback to any future subscriber so a
       // spent authorization code is never re-submitted.
       ref.read(deepLinkServiceProvider).clearOAuthCallback();
+      // "Sign in = your authenticator": once signed in, register this phone as a
+      // push approver automatically (no enrollment code needed). Best-effort.
+      unawaited(_autoRegisterPush());
     } on Object {
       // Quietly ignore: a stale/duplicate callback (e.g. "no login in progress")
       // must not crash the app. The user can retry sign-in; a genuine failure is
       // surfaced by the login screen staying put.
       _handled.remove(code); // allow a genuine retry of the same code
+    }
+  }
+
+  /// Registers this phone as a push-MFA approver against the just-signed-in
+  /// session, so signing in makes the phone your authenticator with no
+  /// enrollment code. Swallows all errors — login already succeeded.
+  Future<void> _autoRegisterPush() async {
+    try {
+      final push = await ref.read(pushTokenServiceProvider).resolve();
+      if (push == null) return; // desktop / unsupported
+      await ref
+          .read(mfaApiProvider)
+          .registerPush(deviceToken: push.token, platform: push.platform);
+      ref.invalidate(statusProvider);
+    } catch (_) {
+      // Non-fatal: the user is signed in; push can be added later from Settings.
     }
   }
 

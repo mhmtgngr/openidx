@@ -6,14 +6,17 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../mobile/oauth_login_handler.dart';
 import '../state/providers.dart';
 import 'mobile_shell.dart';
-import 'screens/enroll_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
+import 'screens/welcome_screen.dart';
 
 /// Root widget. Chooses the initial screen from live agent status:
-///   not enrolled            → EnrollScreen
-///   enrolled, not logged in → LoginScreen
-///   enrolled + logged in    → HomeScreen
+///   signed in                    → shell / HomeScreen (works with or without
+///                                   device enrollment — authenticator-only is
+///                                   a valid state)
+///   enrolled, not signed in      → LoginScreen
+///   neither                      → WelcomeScreen (sign in as authenticator, or
+///                                   enroll a device with a code)
 class OpenIdxApp extends ConsumerWidget {
   const OpenIdxApp({super.key});
 
@@ -50,12 +53,16 @@ class _RootRouter extends ConsumerWidget {
       loading: () => const _Splash(),
       error: (err, _) => _EngineError(message: err.toString()),
       data: (status) {
-        if (!status.enrolled) return const EnrollScreen();
-        if (!status.loggedIn) return const LoginScreen();
-        // Mobile gets the bottom-nav shell (Codes/Approvals/Access/Settings);
-        // desktop keeps its single-pane HomeScreen inside the window/tray shell.
-        if (Platform.isIOS || Platform.isAndroid) return const MobileShell();
-        return const HomeScreen();
+        // Signed in → straight to the app, whether or not the device is enrolled
+        // (authenticator-only sign-in is a first-class flow).
+        if (status.loggedIn) {
+          if (Platform.isIOS || Platform.isAndroid) return const MobileShell();
+          return const HomeScreen();
+        }
+        // Enrolled but not signed in → the plain sign-in screen (server known).
+        if (status.enrolled) return const LoginScreen();
+        // Fresh: choose "sign in as authenticator" or "enroll with a code".
+        return const WelcomeScreen();
       },
     );
   }
