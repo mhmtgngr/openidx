@@ -32,7 +32,6 @@ import {
   Reports,
   Settings,
   Applications,
-  QuickLinks,
   QuickLinksAdmin,
   AppPublish,
   ZeroTrust,
@@ -111,7 +110,6 @@ import {
   PAMDashboard,
   PamConnections,
   WindowsApps,
-  MyWindowsApps,
   MyPrivilegedAccess,
 } from '@/pages'
 import { useAppStore } from '@/lib/store'
@@ -241,7 +239,8 @@ function App() {
         <Route path="profile" element={<UserProfile />} />
         {/* My Apps merged into My Network (now "My Apps & Network"). Redirect old bookmarks. */}
         <Route path="app-launcher" element={<Navigate to="/my-network" replace />} />
-        <Route path="quick-links" element={<QuickLinks />} />
+        {/* Quick Links folded into My Apps & Network. Redirect old bookmarks. */}
+        <Route path="quick-links" element={<Navigate to="/my-network" replace />} />
         <Route path="quick-links-admin" element={<AdminRoute><QuickLinksAdmin /></AdminRoute>} />
         <Route path="my-access" element={<MyAccess />} />
         <Route path="my-privileged-access" element={<MyPrivilegedAccess />} />
@@ -344,7 +343,8 @@ function App() {
         <Route path="pam-dashboard" element={<AdminRoute><PAMDashboard /></AdminRoute>} />
         <Route path="pam-connections" element={<PamConnections />} />
         <Route path="windows-apps" element={<WindowsApps />} />
-        <Route path="my-apps" element={<MyWindowsApps />} />
+        {/* My Windows Apps folded into My Apps & Network. Redirect old bookmarks. */}
+        <Route path="my-apps" element={<Navigate to="/my-network" replace />} />
         <Route path="vault-secrets" element={<AdminRoute><VaultSecrets /></AdminRoute>} />
         <Route path="rotation-policies" element={<AdminRoute><RotationPolicies /></AdminRoute>} />
         <Route path="guacamole-sessions" element={<AdminRoute><GuacamoleSessions /></AdminRoute>} />

@@ -21,6 +21,8 @@ import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 import { QueryError } from '../components/query-error'
 import { MyAppsSection } from '../components/my-apps-section'
+import { MyWindowsAppsSection } from '../components/my-windows-apps-section'
+import { QuickLinksSection } from '../components/quick-links-section'
 
 // The user-facing contract. It deliberately describes a journey (from -> to on a
 // port) and one action; nothing about how the connection is carried underneath.
@@ -189,10 +191,14 @@ export function MyNetworkPage() {
         />
       </div>
 
-      {/* Section 1 — sign in to your SSO apps. Hides itself when the user has none. */}
+      {/* Sign in (SSO apps), launch (Windows apps), shortcuts (quick links) —
+          each self-hides when the user has none, so the page never shows empty
+          blocks. Then the network resources below. */}
       <MyAppsSection search={search} />
+      <MyWindowsAppsSection search={search} />
+      <QuickLinksSection search={search} />
 
-      {/* Section 2 — connect to servers, databases, web + zero-trust over the network. */}
+      {/* Connect to servers, databases, web + zero-trust over the network. */}
       <div>
         <h2 className="text-xl font-semibold tracking-tight">Connect over the network</h2>
         <p className="text-sm text-muted-foreground">
