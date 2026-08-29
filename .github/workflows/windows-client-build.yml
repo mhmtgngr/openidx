@@ -194,13 +194,24 @@ jobs:
       # fallback was explicitly permitted (allow_pure_go on a non-release build).
       - name: Verify agent capabilities (screen capture)
         shell: bash
+        working-directory: agent
         run: |
           set -euo pipefail
-          caps="$(./dist/openidx-agent.exe capabilities)"
+          # Run from dist/ so Windows resolves libvpx-1.dll (the exe's own dir is
+          # on the DLL search path). dist/ is under agent/ (working-directory
+          # above) — the ORIGINAL exit 127 was this exe not being found from the
+          # repo root, not python. Parse the JSON with grep, NOT python — the
+          # runner's `python` isn't on the Git-bash PATH and threw exit 127,
+          # aborting the whole build under `set -e`.
+          caps="$(cd dist && ./openidx-agent.exe capabilities)"
           echo "$caps"
-          sc="$(echo "$caps" | python -c 'import sys,json;print(json.load(sys.stdin)["screen_capture"])')"
+          if echo "$caps" | grep -Eqi '"screen_capture"[[:space:]]*:[[:space:]]*true'; then
+            sc=true
+          else
+            sc=false
+          fi
           if [ "${SCREENSHARE_BUILD:-off}" = "on" ]; then
-            if [ "$sc" != "True" ]; then
+            if [ "$sc" != "true" ]; then
               echo "::error::screenshare build reported screen_capture=$sc — the packaged agent cannot capture the screen."
               exit 1
             fi
