@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../api/governance.dart';
 import '../../../state/mobile_providers.dart';
+import '../qr_scan_screen.dart';
 
 /// Pending governance approvals inbox. Approve/deny each with an optional
 /// comment; the list refreshes after each decision.
@@ -14,7 +15,18 @@ class ApprovalsScreen extends ConsumerWidget {
     final approvals = ref.watch(myApprovalsProvider);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Approvals')),
+      appBar: AppBar(
+        title: const Text('Approvals'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.qr_code_scanner),
+            tooltip: 'Scan to sign in',
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(builder: (_) => const QrScanScreen()),
+            ),
+          ),
+        ],
+      ),
       body: RefreshIndicator(
         onRefresh: () async => ref.invalidate(myApprovalsProvider),
         child: approvals.when(
