@@ -224,7 +224,7 @@ export function MyAccessPage() {
               <CardTitle className="flex items-center gap-2 text-lg">
                 <Lock className="h-5 w-5 text-amber-600" />My Privileged Access
               </CardTitle>
-              <Link to="/my-privileged-access">
+              <Link to="/my-network">
                 <Button variant="ghost" size="sm">Manage<ArrowRight className="ml-1 h-4 w-4" /></Button>
               </Link>
             </div>

@@ -23,6 +23,7 @@ import { QueryError } from '../components/query-error'
 import { MyAppsSection } from '../components/my-apps-section'
 import { MyWindowsAppsSection } from '../components/my-windows-apps-section'
 import { QuickLinksSection } from '../components/quick-links-section'
+import { MyPrivilegedAccessSection } from '../components/my-privileged-access-section'
 
 // The user-facing contract. It deliberately describes a journey (from -> to on a
 // port) and one action; nothing about how the connection is carried underneath.
@@ -354,6 +355,10 @@ export function MyNetworkPage() {
           </div>
         </div>
       )}
+
+      {/* Privileged access — brokered sessions + credential checkouts. Last
+          because it's the most advanced; self-hides when the user has none. */}
+      <MyPrivilegedAccessSection search={search} />
     </div>
   )
 }
