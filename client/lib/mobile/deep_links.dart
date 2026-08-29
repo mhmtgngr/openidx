@@ -38,6 +38,14 @@ sealed class OpenidxDeepLink {
         final id = uri.pathSegments.isNotEmpty ? uri.pathSegments.first : '';
         if (id.isEmpty) return null;
         return ApproveLink(challengeId: id);
+      case 'enroll':
+        // openidx://enroll?code=…&server=… — QR-free device enrollment.
+        final code = uri.queryParameters['code'];
+        if (code == null || code.isEmpty) return null;
+        return EnrollLink(
+          code: code,
+          server: uri.queryParameters['server'] ?? '',
+        );
       default:
         return null;
     }
@@ -55,6 +63,14 @@ class OAuthCallbackLink extends OpenidxDeepLink {
 class ApproveLink extends OpenidxDeepLink {
   const ApproveLink({required this.challengeId});
   final String challengeId;
+}
+
+/// `openidx://enroll?code=…&server=…` — QR-free device enrollment. The app
+/// prefills the enroll screen and enrolls without a QR scan.
+class EnrollLink extends OpenidxDeepLink {
+  const EnrollLink({required this.code, required this.server});
+  final String code;
+  final String server;
 }
 
 /// Listens for inbound deep links (cold-start + while running) via `app_links`
@@ -81,7 +97,25 @@ class DeepLinkService {
   /// [oauthCallbackUris].
   Uri? _lastOAuthCallback;
 
+  /// The most recent `openidx://enroll` link, retained so the enroll screen —
+  /// which mounts *after* a cold-start deep link was delivered — can still pick
+  /// it up. Cleared once consumed via [clearEnrollLink].
+  EnrollLink? _lastEnroll;
+
   Stream<OpenidxDeepLink> get links => _controller.stream;
+
+  /// The cold-start `openidx://enroll` link, if the app was launched by one and
+  /// it hasn't been consumed yet. The enroll screen checks this on mount so a
+  /// cold start prefills + enrolls even though it subscribed to [links] late.
+  Future<EnrollLink?> initialEnrollLink() async {
+    await init();
+    return _lastEnroll;
+  }
+
+  /// Called once the enroll screen has applied the link, so it isn't re-applied.
+  void clearEnrollLink() {
+    _lastEnroll = null;
+  }
 
   /// Full callback URIs for the browser deep-link OAuth flow. This stream
   /// **replays** the last-seen oauth-callback to every new subscriber before the
@@ -127,6 +161,7 @@ class DeepLinkService {
   void _emit(Uri uri) {
     final link = OpenidxDeepLink.parse(uri);
     if (link == null) return;
+    if (link is EnrollLink) _lastEnroll = link;
     _controller.add(link);
     // Also push the FULL callback Uri onto the oauth stream so the login flow
     // can complete the code+state exchange with the engine, and retain it so a

@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../mobile/app_lock.dart';
 import '../../state/providers.dart';
 import 'mobile/control_logs_screen.dart';
 
@@ -56,6 +57,17 @@ class SettingsScreen extends ConsumerWidget {
             subtitle: Text(status.deviceId.isEmpty ? '—' : status.deviceId),
           ),
           const Divider(),
+          // Biometric app-lock — opt-in (off by default) so an authenticator
+          // app never traps the user out on a device where biometrics fail.
+          if (Platform.isIOS || Platform.isAndroid)
+            SwitchListTile(
+              secondary: const Icon(Icons.fingerprint),
+              title: const Text('Require biometric unlock'),
+              subtitle: const Text(
+                  'Lock the app with Face ID / fingerprint / device PIN'),
+              value: ref.watch(appLockProvider).enabled,
+              onChanged: (v) => ref.read(appLockProvider.notifier).setEnabled(v),
+            ),
           // Control logs viewer — mobile only (the engine runs in-process via
           // the gomobile plugin, which exposes its log tail over the channel).
           if (Platform.isIOS || Platform.isAndroid)
