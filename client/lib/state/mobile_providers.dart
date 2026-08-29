@@ -6,6 +6,7 @@ import '../api/auth.dart';
 import '../api/governance.dart';
 import '../api/mfa.dart';
 import '../api/notifications.dart';
+import '../api/qr_login.dart';
 import '../api/token_store.dart';
 import '../features/totp.dart';
 import 'providers.dart';
@@ -55,6 +56,9 @@ final authServiceProvider = Provider<AuthService>((ref) {
 
 final mfaApiProvider =
     Provider<MfaApi>((ref) => MfaApi(ref.watch(apiClientProvider)));
+
+final qrLoginApiProvider =
+    Provider<QrLoginApi>((ref) => QrLoginApi(ref.watch(apiClientProvider)));
 
 final governanceApiProvider =
     Provider<GovernanceApi>((ref) => GovernanceApi(ref.watch(apiClientProvider)));

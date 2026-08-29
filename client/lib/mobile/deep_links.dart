@@ -46,6 +46,11 @@ sealed class OpenidxDeepLink {
           code: code,
           server: uri.queryParameters['server'] ?? '',
         );
+      case 'qr-login':
+        // openidx://qr-login?session=… — scan a desktop login QR to sign it in.
+        final session = uri.queryParameters['session'];
+        if (session == null || session.isEmpty) return null;
+        return LoginQrLink(sessionToken: session);
       default:
         return null;
     }
@@ -71,6 +76,13 @@ class EnrollLink extends OpenidxDeepLink {
   const EnrollLink({required this.code, required this.server});
   final String code;
   final String server;
+}
+
+/// `openidx://qr-login?session=…` — a desktop "sign in with QR" request. The
+/// signed-in phone scans it, then approves to log the desktop in.
+class LoginQrLink extends OpenidxDeepLink {
+  const LoginQrLink({required this.sessionToken});
+  final String sessionToken;
 }
 
 /// Listens for inbound deep links (cold-start + while running) via `app_links`

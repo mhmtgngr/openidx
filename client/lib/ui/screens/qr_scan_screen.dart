@@ -2,12 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../../mobile/deep_links.dart';
+import 'mobile/qr_login_approve_screen.dart';
 
-/// Full-screen camera QR scanner for enrollment. Point the phone at the
-/// console's QR (which encodes `openidx://enroll?code=…&server=…`). On a valid
-/// enroll QR it pops with the parsed [EnrollLink]; the caller then enrolls.
-///
-/// Returns the [EnrollLink] via `Navigator.pop`, or null if cancelled.
+/// Full-screen camera QR scanner. Handles two OpenIDX QR types:
+///  - `openidx://enroll?code=…&server=…` → pops with the [EnrollLink] so the
+///    caller (the enroll screen) can enrol.
+///  - `openidx://qr-login?session=…` → replaces itself with the QR sign-in
+///    approval screen (scan a desktop login QR to sign it in).
 class QrScanScreen extends StatefulWidget {
   const QrScanScreen({super.key});
 
@@ -36,13 +37,24 @@ class _QrScanScreenState extends State<QrScanScreen> {
         Navigator.of(context).pop(link);
         return;
       }
+      if (link is LoginQrLink) {
+        _handled = true;
+        // Swap the scanner for the approval screen (don't leave it in the stack).
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute<void>(
+            builder: (_) =>
+                QrLoginApproveScreen(sessionToken: link.sessionToken),
+          ),
+        );
+        return;
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Scan enrollment QR')),
+      appBar: AppBar(title: const Text('Scan QR code')),
       body: Stack(
         children: [
           MobileScanner(controller: _controller, onDetect: _onDetect),

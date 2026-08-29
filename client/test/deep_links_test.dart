@@ -27,6 +27,19 @@ void main() {
       expect(OpenidxDeepLink.parse(Uri.parse('openidx://enroll?code=')), isNull);
     });
 
+    test('parses openidx://qr-login?session=…', () {
+      final link =
+          OpenidxDeepLink.parse(Uri.parse('openidx://qr-login?session=tok123'));
+      expect(link, isA<LoginQrLink>());
+      expect((link! as LoginQrLink).sessionToken, 'tok123');
+    });
+
+    test('qr-login without a session is rejected', () {
+      expect(OpenidxDeepLink.parse(Uri.parse('openidx://qr-login')), isNull);
+      expect(
+          OpenidxDeepLink.parse(Uri.parse('openidx://qr-login?session=')), isNull);
+    });
+
     test('still parses oauth-callback and approve', () {
       expect(
           OpenidxDeepLink.parse(Uri.parse('openidx://oauth-callback?code=c')),
