@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import {
   AppWindow,
@@ -172,8 +173,14 @@ export function MyNetworkPage() {
       <div>
         <h1 className="text-3xl font-bold tracking-tight">My Network</h1>
         <p className="text-muted-foreground">
-          Everything you can reach, and how to get there. Most of it opens right in this
-          browser with nothing to install.
+          Things you connect to over the secure network — servers, desktops, databases, and
+          internal or zero-trust web apps. Most open right in this browser with nothing to install.
+        </p>
+        <p className="text-sm text-muted-foreground mt-1">
+          An app can appear here and in{' '}
+          <Link to="/app-launcher" className="underline underline-offset-2 hover:text-foreground">My Apps</Link>:
+          here you <span className="font-medium">connect</span> to it over the network; there you{' '}
+          <span className="font-medium">sign in</span> to it with single sign-on.
         </p>
       </div>
 

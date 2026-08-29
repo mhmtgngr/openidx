@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { AppWindow, ExternalLink, Search } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
@@ -51,7 +52,14 @@ export function AppLauncherPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold tracking-tight">My Applications</h1>
-        <p className="text-muted-foreground">Launch your assigned applications with single sign-on</p>
+        <p className="text-muted-foreground">
+          Apps you sign in to. Click one and OpenIDX logs you in automatically (single sign-on) —
+          no separate password.
+        </p>
+        <p className="text-sm text-muted-foreground mt-1">
+          Looking to reach a server, database, or an internal/zero-trust app? See{' '}
+          <Link to="/my-network" className="underline underline-offset-2 hover:text-foreground">My Network</Link>.
+        </p>
       </div>
 
       <div className="relative max-w-md">
