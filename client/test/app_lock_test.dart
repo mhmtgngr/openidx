@@ -1,4 +1,5 @@
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:openidx_client/mobile/app_lock.dart';
 
@@ -17,7 +18,7 @@ void main() {
   void mockStorage() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(storageChannel, (call) async {
-      final key = call.arguments['key'] as String?;
+      final key = call.arguments['key'] as String;
       switch (call.method) {
         case 'read':
           return store[key];
@@ -61,31 +62,36 @@ void main() {
     });
   });
 
-  test('lock is OFF by default (opt-in) — never locks until enabled', () async {
-    // storage read returns null → not enabled.
-    final c = AppLockController();
-    // Let the async _init settle.
+  // Controller tests read state through a ProviderContainer (the public API),
+  // avoiding the @protected/deprecated notifier internals.
+  Future<ProviderContainer> settledContainer() async {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    // Reading the notifier constructs it, kicking off the async _init.
+    container.read(appLockProvider.notifier);
     await Future<void>.delayed(const Duration(milliseconds: 20));
-    expect(c.debugState.enabled, isFalse);
-    expect(c.debugState.locked, isFalse);
-    c.dispose();
+    return container;
+  }
+
+  test('lock is OFF by default (opt-in) — never locks until enabled', () async {
+    final container = await settledContainer(); // storage read → null → disabled
+    final state = container.read(appLockProvider);
+    expect(state.enabled, isFalse);
+    expect(state.locked, isFalse);
   });
 
   test('setEnabled(false) persists and clears the lock', () async {
-    final c = AppLockController();
-    await Future<void>.delayed(const Duration(milliseconds: 20));
-    await c.setEnabled(false);
-    expect(c.debugState.enabled, isFalse);
-    expect(c.debugState.locked, isFalse);
+    final container = await settledContainer();
+    await container.read(appLockProvider.notifier).setEnabled(false);
+    final state = container.read(appLockProvider);
+    expect(state.enabled, isFalse);
+    expect(state.locked, isFalse);
     expect(store['openidx.applock_enabled'], 'false');
-    c.dispose();
   });
 
   test('bypass() unlocks (the escape hatch)', () async {
-    final c = AppLockController();
-    await Future<void>.delayed(const Duration(milliseconds: 20));
-    c.bypass();
-    expect(c.debugState.locked, isFalse);
-    c.dispose();
+    final container = await settledContainer();
+    container.read(appLockProvider.notifier).bypass();
+    expect(container.read(appLockProvider).locked, isFalse);
   });
 }
