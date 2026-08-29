@@ -124,3 +124,8 @@ tools/minttok/
 # Python bytecode
 __pycache__/
 *.pyc
+
+# Firebase service-account keys (server secret — NEVER commit)
+*-firebase-adminsdk-*.json
+GoogleService-Info.plist
+google-services.json
