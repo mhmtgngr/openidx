@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../engine/models.dart';
 import '../../state/providers.dart';
@@ -55,6 +56,30 @@ class HomeScreen extends ConsumerWidget {
               onTap: () => Navigator.of(context).push(
                 MaterialPageRoute<void>(builder: (_) => const PamScreen()),
               ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          // Windows Hello / passkey sign-in: opens the browser to the
+          // security-keys page, where the WebAuthn ceremony uses the platform
+          // authenticator (Windows Hello on Windows, Touch ID on macOS). No
+          // phone needed — subsequent logins offer this passkey.
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.fingerprint),
+              title: const Text('Set up Windows Hello sign-in'),
+              subtitle: const Text(
+                  'Sign in with fingerprint / PIN / face — no phone needed'),
+              trailing: const Icon(Icons.open_in_new),
+              onTap: status.serverUrl.isEmpty
+                  ? null
+                  : () {
+                      final base =
+                          status.serverUrl.replaceAll(RegExp(r'/+$'), '');
+                      launchUrl(
+                        Uri.parse('$base/security-keys'),
+                        mode: LaunchMode.externalApplication,
+                      );
+                    },
             ),
           ),
         ],
