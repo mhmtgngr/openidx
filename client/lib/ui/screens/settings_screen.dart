@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../mobile/app_lock.dart';
 import '../../state/providers.dart';
+import 'enroll_screen.dart';
 import 'mobile/control_logs_screen.dart';
 
 /// Settings: shows the connected server, signs out, or quits the app.
@@ -56,6 +57,35 @@ class SettingsScreen extends ConsumerWidget {
             title: const Text('Device ID'),
             subtitle: Text(status.deviceId.isEmpty ? '—' : status.deviceId),
           ),
+          // Network access (OpenZiti) is a separate step from the authenticator:
+          // it needs device enrollment with a code. Signed-in-but-not-enrolled
+          // users reach it here (scan QR / tap link / paste code). Once enrolled,
+          // show the overlay status instead.
+          if (Platform.isIOS || Platform.isAndroid)
+            status.enrolled
+                ? ListTile(
+                    leading: const Icon(Icons.hub_outlined),
+                    title: const Text('Network access'),
+                    subtitle: Text(status.zitiEnrolled
+                        ? 'OpenZiti overlay connected'
+                        : 'Device enrolled'),
+                    trailing: Icon(
+                      status.zitiEnrolled ? Icons.check_circle : Icons.check,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                  )
+                : ListTile(
+                    leading: const Icon(Icons.hub_outlined),
+                    title: const Text('Set up network access'),
+                    subtitle: const Text(
+                        'Enroll this device for OpenZiti access (needs a code)'),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => const EnrollScreen(),
+                      ),
+                    ),
+                  ),
           const Divider(),
           // Biometric app-lock — opt-in (off by default) so an authenticator
           // app never traps the user out on a device where biometrics fail.
