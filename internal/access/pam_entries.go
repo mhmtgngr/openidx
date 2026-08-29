@@ -1115,8 +1115,8 @@ func (s *Service) handlePamAddEntryGrant(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if req.PrincipalType != "user" && req.PrincipalType != "role" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "principal_type must be user or role"})
+	if req.PrincipalType != "user" && req.PrincipalType != "role" && req.PrincipalType != "group" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "principal_type must be user, role, or group"})
 		return
 	}
 	if len(req.Actions) == 0 {
@@ -1159,6 +1159,8 @@ func (s *Service) handlePamAddEntryGrant(c *gin.Context) {
 	s.logAuditEvent(c, "pam.entry_grant_added", entryID, "pam_entry", map[string]interface{}{
 		"principal": req.PrincipalType + ":" + req.PrincipalID, "actions": req.Actions,
 	})
+	// Best-effort: tell the granted user (or every member of a granted group).
+	s.notifyPamGrant(ctx, org.ID, entryID, req.PrincipalType, req.PrincipalID)
 	c.JSON(http.StatusCreated, gin.H{"id": id})
 }
 
