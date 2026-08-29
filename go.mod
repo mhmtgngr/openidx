@@ -13,7 +13,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.36
 	github.com/aws/aws-sdk-go-v2/service/iam v1.58.1
 	github.com/aws/aws-sdk-go-v2/service/sts v1.45.6
-	github.com/beevik/etree v1.7.0
+	github.com/beevik/etree v1.7.1
 	github.com/briandowns/spinner v1.23.2
 	github.com/elastic/go-elasticsearch/v8 v8.19.7
 	github.com/fatih/color v1.19.0
