@@ -197,6 +197,52 @@ func TestCreateAndListAppAssignment(t *testing.T) {
 	}
 }
 
+// TestGetMyApplications_UnassignedFallbackGate proves the app over-share
+// fallback is off by default (an unassigned user sees nothing) and only returns
+// all enabled apps when ShowAllAppsWhenUnassigned is enabled.
+func TestGetMyApplications_UnassignedFallbackGate(t *testing.T) {
+	db, cleanup := setupPortalTestDB(t)
+	if db == nil {
+		return
+	}
+	defer cleanup()
+
+	const (
+		org  = "00000000-0000-0000-0000-000000000010"
+		user = "11111111-1111-1111-1111-111111111111"
+	)
+	// Two enabled org apps, but the user has NO direct or group assignment.
+	seed := func(s *Service) {
+		appAccessSchema(t, s)
+		mustExec(t, s, `INSERT INTO users (id, username, email, org_id) VALUES ($1,'u','u@x',$2)`, user, org)
+		mustExec(t, s, `INSERT INTO applications (id, name, enabled, org_id)
+			VALUES ('aaaaaaaa-0000-0000-0000-000000000001','A',true,$1),
+			       ('aaaaaaaa-0000-0000-0000-000000000002','B',true,$1)`, org)
+	}
+	octx := orgctx.With(context.Background(), orgctx.Org{ID: org})
+
+	// Default (flag off) → unassigned user sees nothing.
+	secure := &Service{db: db, logger: zap.NewNop()}
+	seed(secure)
+	apps, err := secure.GetMyApplications(octx, user)
+	if err != nil {
+		t.Fatalf("GetMyApplications (secure): %v", err)
+	}
+	if len(apps) != 0 {
+		t.Fatalf("flag off: unassigned user should see 0 apps, got %d", len(apps))
+	}
+
+	// Flag on → fallback returns all enabled apps (legacy open behaviour).
+	open := &Service{db: db, logger: zap.NewNop(), showAllAppsWhenUnassigned: true}
+	apps, err = open.GetMyApplications(octx, user)
+	if err != nil {
+		t.Fatalf("GetMyApplications (open): %v", err)
+	}
+	if len(apps) != 2 {
+		t.Fatalf("flag on: unassigned user should see all 2 enabled apps, got %d", len(apps))
+	}
+}
+
 func mustExec(t *testing.T, s *Service, q string, args ...any) {
 	t.Helper()
 	if _, err := s.db.Pool.Exec(context.Background(), q, args...); err != nil {

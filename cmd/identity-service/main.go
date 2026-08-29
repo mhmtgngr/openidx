@@ -259,7 +259,8 @@ func main() {
 
 	// Initialize portal service (with the optional local AI client for
 	// plain-language security insights; template output when disabled)
-	portalService := portal.NewService(db, log)
+	portalService := portal.NewService(db, log,
+		portal.WithShowAllAppsWhenUnassigned(cfg.ShowAllAppsWhenUnassigned))
 	portalService.SetAIClient(ai.NewClient(cfg, log))
 
 	// Initialize notification service
