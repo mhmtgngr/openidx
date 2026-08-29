@@ -2,18 +2,18 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { KeyRound, MonitorPlay, Play, Send, Timer, Undo2, Copy } from 'lucide-react'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card'
-import { Button } from '../components/ui/button'
-import { Input } from '../components/ui/input'
-import { Badge } from '../components/ui/badge'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card'
+import { Button } from './ui/button'
+import { Input } from './ui/input'
+import { Badge } from './ui/badge'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog'
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
-} from '../components/ui/alert-dialog'
-import { QueryError } from '../components/query-error'
+} from './ui/alert-dialog'
+import { QueryError } from './query-error'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 
@@ -64,7 +64,14 @@ const statusBadge = (status: string) => {
 const formatDate = (d: string) =>
   new Date(d).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
 
-export function MyPrivilegedAccessPage() {
+/**
+ * MyPrivilegedAccessSection is the "Privileged access" block of the combined
+ * My Apps & Network page: brokered remote sessions and time-boxed credential
+ * checkouts, keeping the original two internal tabs. The caller owns the shared
+ * search box (it filters the tables here too); the section hides itself when the
+ * user has no connections, requests, or checkouts at all.
+ */
+export function MyPrivilegedAccessSection({ search }: { search: string }) {
   const queryClient = useQueryClient()
   const { toast } = useToast()
   const [activeTab, setActiveTab] = useState('sessions')
@@ -97,6 +104,18 @@ export function MyPrivilegedAccessPage() {
   })
   const credentialCheckouts = (myRequestsData?.requests || []).filter(
     (r) => r.resource_type === 'vault_credential',
+  )
+
+  // The shared search box filters the visible rows in each table.
+  const term = search.trim().toLowerCase()
+  const fConnections = connections.filter(
+    (c) => !term || c.name.toLowerCase().includes(term) || c.hostname.toLowerCase().includes(term),
+  )
+  const fSessionRequests = sessionRequests.filter(
+    (r) => !term || r.route_name.toLowerCase().includes(term),
+  )
+  const fCheckouts = credentialCheckouts.filter(
+    (r) => !term || r.resource_name.toLowerCase().includes(term),
   )
 
   const requestMutation = useMutation({
@@ -159,12 +178,21 @@ export function MyPrivilegedAccessPage() {
         (!r.expires_at || new Date(r.expires_at) > new Date()),
     )
 
+  // Hide the whole section when the user genuinely has no privileged access at
+  // all (based on the unfiltered totals), so it never adds an empty block.
+  const anyLoading = connsLoading || sessionReqsLoading || checkoutsLoading
+  const anyError = connsIsError || sessionReqsIsError || checkoutsIsError
+  const hasAny = connections.length > 0 || sessionRequests.length > 0 || credentialCheckouts.length > 0
+  if (!anyLoading && !anyError && !hasAny) {
+    return null
+  }
+
   return (
-    <div className="space-y-6">
+    <section className="space-y-4">
       <div>
-        <h1 className="text-3xl font-bold tracking-tight">My Privileged Access</h1>
-        <p className="text-muted-foreground">
-          Launch brokered remote sessions and manage your credential checkouts
+        <h2 className="text-xl font-semibold tracking-tight">Privileged access</h2>
+        <p className="text-sm text-muted-foreground">
+          Launch brokered remote sessions and manage your time-boxed credential checkouts.
         </p>
       </div>
 
@@ -199,7 +227,7 @@ export function MyPrivilegedAccessPage() {
                 <p className="text-center py-8 text-muted-foreground">Loading...</p>
               ) : connsIsError ? (
                 <QueryError error={connsError} resource="available connections" />
-              ) : connections.length === 0 ? (
+              ) : fConnections.length === 0 ? (
                 <p className="text-center py-8 text-muted-foreground">No connections available</p>
               ) : (
                 <Table>
@@ -213,7 +241,7 @@ export function MyPrivilegedAccessPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {connections.map((conn) => (
+                    {fConnections.map((conn) => (
                       <TableRow key={conn.route_id}>
                         <TableCell className="font-medium">{conn.name}</TableCell>
                         <TableCell>
@@ -266,7 +294,7 @@ export function MyPrivilegedAccessPage() {
                 <p className="text-center py-8 text-muted-foreground">Loading...</p>
               ) : sessionReqsIsError ? (
                 <QueryError error={sessionReqsError} resource="your session requests" />
-              ) : sessionRequests.length === 0 ? (
+              ) : fSessionRequests.length === 0 ? (
                 <p className="text-center py-8 text-muted-foreground">No session requests</p>
               ) : (
                 <Table>
@@ -280,7 +308,7 @@ export function MyPrivilegedAccessPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {sessionRequests.map((r) => (
+                    {fSessionRequests.map((r) => (
                       <TableRow key={r.id}>
                         <TableCell className="font-medium">
                           {r.route_name}
@@ -341,7 +369,7 @@ export function MyPrivilegedAccessPage() {
                 <p className="text-center py-8 text-muted-foreground">Loading...</p>
               ) : checkoutsIsError ? (
                 <QueryError error={checkoutsError} resource="your credential checkouts" />
-              ) : credentialCheckouts.length === 0 ? (
+              ) : fCheckouts.length === 0 ? (
                 <p className="text-center py-8 text-muted-foreground">No credential checkouts</p>
               ) : (
                 <Table>
@@ -354,7 +382,7 @@ export function MyPrivilegedAccessPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {credentialCheckouts.map((r) => (
+                    {fCheckouts.map((r) => (
                       <TableRow key={r.id}>
                         <TableCell className="font-medium">{r.resource_name}</TableCell>
                         <TableCell>
@@ -527,6 +555,6 @@ export function MyPrivilegedAccessPage() {
           </div>
         </DialogContent>
       </Dialog>
-    </div>
+    </section>
   )
 }

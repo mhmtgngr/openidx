@@ -17,7 +17,7 @@ vi.mock('../hooks/use-toast', () => ({
   useToast: () => ({ toast: vi.fn() }),
 }))
 
-import { MyPrivilegedAccessPage } from './my-privileged-access'
+import { MyPrivilegedAccessSection } from './my-privileged-access-section'
 import { api } from '../lib/api'
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -108,11 +108,15 @@ function createWrapper() {
   )
 }
 
+function renderSection() {
+  return render(<MyPrivilegedAccessSection search="" />, { wrapper: createWrapper() })
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Tests
 // ──────────────────────────────────────────────────────────────────────────────
 
-describe('MyPrivilegedAccessPage', () => {
+describe('MyPrivilegedAccessSection', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     document.body.innerHTML = ''
@@ -121,13 +125,19 @@ describe('MyPrivilegedAccessPage', () => {
     )
   })
 
-  it('renders the page heading', async () => {
-    render(<MyPrivilegedAccessPage />, { wrapper: createWrapper() })
-    expect(await screen.findByText('My Privileged Access')).toBeInTheDocument()
+  it('renders the section heading', async () => {
+    renderSection()
+    expect(await screen.findByText('Privileged access')).toBeInTheDocument()
+  })
+
+  it('hides itself entirely when the user has no privileged access', async () => {
+    vi.mocked(api.get).mockResolvedValue({ connections: [], requests: [] })
+    renderSection()
+    await waitFor(() => expect(screen.queryByText('Privileged access')).not.toBeInTheDocument())
   })
 
   it('lists available connections with PAM control badges', async () => {
-    render(<MyPrivilegedAccessPage />, { wrapper: createWrapper() })
+    renderSection()
     expect(await screen.findByText('staging-web')).toBeInTheDocument()
     const gatedCells = screen.getAllByText('prod-db-bastion')
     expect(gatedCells.length).toBeGreaterThan(0)
@@ -141,7 +151,7 @@ describe('MyPrivilegedAccessPage', () => {
       connect_url: 'https://guac.example.com/#/client/abc',
     })
 
-    render(<MyPrivilegedAccessPage />, { wrapper: createWrapper() })
+    renderSection()
     await screen.findByText('staging-web')
 
     const launchBtns = screen.getAllByRole('button', { name: /launch/i })
@@ -162,7 +172,7 @@ describe('MyPrivilegedAccessPage', () => {
   it('gated connection without an approved request shows Request Access and submits a reason', async () => {
     vi.mocked(api.post).mockResolvedValueOnce({ request_id: 'req-new' })
 
-    render(<MyPrivilegedAccessPage />, { wrapper: createWrapper() })
+    renderSection()
     await screen.findByText('staging-web')
 
     fireEvent.click(screen.getByRole('button', { name: /request access/i }))
@@ -182,7 +192,7 @@ describe('MyPrivilegedAccessPage', () => {
   })
 
   it('shows my session requests with status and a Launch button on the approved one', async () => {
-    render(<MyPrivilegedAccessPage />, { wrapper: createWrapper() })
+    renderSection()
     expect(await screen.findByText('prod-app-01')).toBeInTheDocument()
     expect(screen.getByText('deploy hotfix')).toBeInTheDocument()
     expect(screen.getByText('approved')).toBeInTheDocument()
@@ -191,7 +201,7 @@ describe('MyPrivilegedAccessPage', () => {
 
   it('credential checkouts tab shows only vault_credential requests with Retrieve/Return', async () => {
     const user = userEvent.setup()
-    render(<MyPrivilegedAccessPage />, { wrapper: createWrapper() })
+    renderSection()
     await screen.findByText('staging-web')
 
     await user.click(screen.getByRole('tab', { name: /credential checkouts/i }))
@@ -206,7 +216,7 @@ describe('MyPrivilegedAccessPage', () => {
     const user = userEvent.setup()
     vi.mocked(api.post).mockResolvedValueOnce({ value: 's3cr3t-value' })
 
-    render(<MyPrivilegedAccessPage />, { wrapper: createWrapper() })
+    renderSection()
     await screen.findByText('staging-web')
 
     await user.click(screen.getByRole('tab', { name: /credential checkouts/i }))
@@ -223,7 +233,7 @@ describe('MyPrivilegedAccessPage', () => {
     const user = userEvent.setup()
     vi.mocked(api.post).mockResolvedValueOnce({})
 
-    render(<MyPrivilegedAccessPage />, { wrapper: createWrapper() })
+    renderSection()
     await screen.findByText('staging-web')
 
     await user.click(screen.getByRole('tab', { name: /credential checkouts/i }))

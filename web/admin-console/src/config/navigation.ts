@@ -121,9 +121,8 @@ export const navigation: NavDomainGroup[] = [
         items: [
           { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, minRole: 'user', keywords: ['overview', 'home'] },
           { name: 'My Profile', href: '/profile', icon: User, minRole: 'user', keywords: ['account', 'password'] },
-          { name: 'My Apps & Network', href: '/my-network', icon: Globe, minRole: 'user', keywords: ['what can i reach', 'connect', 'remote', 'servers', 'access', 'resources', 'apps', 'launcher', 'portal', 'sso', 'sign in', 'windows', 'remoteapp', 'ssms', 'rds', 'quick links', 'shortcuts', 'teams', 'zoom', 'support'] },
+          { name: 'My Apps & Network', href: '/my-network', icon: Globe, minRole: 'user', keywords: ['what can i reach', 'connect', 'remote', 'servers', 'access', 'resources', 'apps', 'launcher', 'portal', 'sso', 'sign in', 'windows', 'remoteapp', 'ssms', 'rds', 'quick links', 'shortcuts', 'teams', 'zoom', 'support', 'privileged', 'pam', 'secrets', 'checkout', 'sessions'] },
           { name: 'My Access', href: '/my-access', icon: Eye, minRole: 'user', keywords: ['entitlements', 'permissions'] },
-          { name: 'My Privileged Access', href: '/my-privileged-access', icon: KeyRound, minRole: 'user', keywords: ['pam', 'my secrets', 'checkout', 'privileged'] },
           { name: 'My Devices', href: '/my-devices', icon: Smartphone, minRole: 'user', keywords: ['phone', 'enrollment'] },
           { name: 'My Sessions', href: '/sessions', icon: Monitor, minRole: 'user', keywords: ['active sessions', 'sign out', 'devices', 'logged in'] },
           { name: 'My Security', href: '/my-security', icon: ShieldCheck, minRole: 'user', keywords: ['security score', 'risk', 'insights', 'mfa'] },

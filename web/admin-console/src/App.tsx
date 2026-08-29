@@ -110,7 +110,6 @@ import {
   PAMDashboard,
   PamConnections,
   WindowsApps,
-  MyPrivilegedAccess,
 } from '@/pages'
 import { useAppStore } from '@/lib/store'
 import { useAuth } from '@/lib/auth'
@@ -243,7 +242,8 @@ function App() {
         <Route path="quick-links" element={<Navigate to="/my-network" replace />} />
         <Route path="quick-links-admin" element={<AdminRoute><QuickLinksAdmin /></AdminRoute>} />
         <Route path="my-access" element={<MyAccess />} />
-        <Route path="my-privileged-access" element={<MyPrivilegedAccess />} />
+        {/* My Privileged Access folded into My Apps & Network. Redirect old bookmarks. */}
+        <Route path="my-privileged-access" element={<Navigate to="/my-network" replace />} />
         <Route path="my-devices" element={<MyDevices />} />
         <Route path="add-device" element={<AddDevice />} />
         <Route path="my-network" element={<MyNetwork />} />

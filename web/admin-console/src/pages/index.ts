@@ -122,7 +122,6 @@ export const MagicLinkVerify = lazy(() => import('./magic-link-verify').then((m)
 // My Pages
 export const UserProfile = lazy(() => import('./user-profile').then((m) => ({ default: m.UserProfilePage })))
 export const MyAccess = lazy(() => import('./my-access').then((m) => ({ default: m.MyAccessPage })))
-export const MyPrivilegedAccess = lazy(() => import('./my-privileged-access').then((m) => ({ default: m.MyPrivilegedAccessPage })))
 export const MyDevices = lazy(() => import('./my-devices').then((m) => ({ default: m.MyDevicesPage })))
 export const AddDevice = lazy(() => import('./add-device').then((m) => ({ default: m.AddDevicePage })))
 export const MyNetwork = lazy(() => import('./my-network').then((m) => ({ default: m.MyNetworkPage })))
