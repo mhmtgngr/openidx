@@ -197,7 +197,7 @@ export function AddDevicePage() {
                 <summary className="cursor-pointer">Registering from another device? Show QR</summary>
                 <div className="mt-3 flex flex-col items-center gap-2">
                   <div className="rounded-lg border bg-background p-4">
-                    <QRCodeCanvas value={session.deep_link} size={180} includeMargin />
+                    <QRCodeCanvas value={session.deep_link} size={240} level="H" includeMargin />
                   </div>
                   <span>Scan this from inside the OpenIDX app on the other device.</span>
                 </div>
