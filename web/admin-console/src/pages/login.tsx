@@ -1359,7 +1359,7 @@ export function LoginPage() {
                 <div className="space-y-3 text-center">
                   <p className="text-sm text-muted-foreground">Scan with the OpenIDX mobile app</p>
                   <div className="flex justify-center">
-                    <QRCodeSVG value={qrSession.qr_content} size={160} />
+                    <QRCodeSVG value={qrSession.qr_content} size={220} level="H" marginSize={4} />
                   </div>
                   <p className="text-xs text-muted-foreground">Waiting for approval...</p>
                   <Button variant="ghost" size="sm" onClick={() => { setShowQRLogin(false); setQrSession(null); if (qrPollingRef2.current) clearInterval(qrPollingRef2.current) }}>
