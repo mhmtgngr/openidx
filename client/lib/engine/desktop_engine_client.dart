@@ -259,6 +259,11 @@ class DesktopEngineClient implements EngineClient {
   }
 
   @override
+  Future<void> setServer(String url) async {
+    // Desktop resolves the server from the installed sidecar config.
+  }
+
+  @override
   Future<Posture> posture() async =>
       Posture.fromJson(_asMap(await _send('GET', '/posture'), '/posture'));
 

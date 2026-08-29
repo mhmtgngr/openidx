@@ -30,6 +30,11 @@ abstract class EngineClient {
 
   Future<User> loginFinish(String callbackUrl);
 
+  /// Point the engine at [url] before login/enroll. Mobile has no seeded server
+  /// config, so the authenticator sign-in and enroll flows call this first.
+  /// Desktop resolves the server from its installed config and ignores this.
+  Future<void> setServer(String url);
+
   /// A valid OAuth access token for the signed-in user, refreshed transparently
   /// if needed. The backend REST journeys (governance/mfa/notifications) use
   /// this so they authenticate against the SAME session the engine owns. Throws

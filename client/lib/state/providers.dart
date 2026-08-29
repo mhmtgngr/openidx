@@ -108,6 +108,9 @@ class EngineActions {
     return user;
   }
 
+  /// Point the engine at [url] before signing in (mobile has no seeded server).
+  Future<void> setServer(String url) => _engine.setServer(url);
+
   /// Mobile deep-link login: returns the OAuth authorize URL to open in a
   /// browser.
   Future<String> loginStart() => _engine.loginStart();
