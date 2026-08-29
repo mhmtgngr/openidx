@@ -170,20 +170,38 @@ export function AddDevicePage() {
             <QueryError error={error} resource="enrollment status" />
           ) : (
             <div className="flex flex-col items-center gap-4">
-              <div className="rounded-lg border bg-background p-4">
-                <QRCodeCanvas value={session.deep_link} size={180} includeMargin />
-              </div>
-              <p className="text-sm text-muted-foreground">
-                Scan this in the OpenIDX app, or open the link on this device.
+              {/* On the phone itself, no scanning is needed — tap "Open in app"
+                  or paste the code. The QR is only for a second device. */}
+              <p className="text-sm text-muted-foreground text-center">
+                On this phone, tap <span className="font-medium">Open in app</span> —
+                or paste the code below into the OpenIDX app. No QR scan needed.
               </p>
               <div className="flex flex-wrap justify-center gap-2">
-                <Button asChild size="sm">
+                <Button asChild>
                   <a href={session.deep_link}>Open in app</a>
                 </Button>
-                <Button variant="outline" size="sm" onClick={() => copy(session.code, 'Connect code')}>
+                <Button variant="outline" onClick={() => copy(session.code, 'Connect code')}>
                   <Copy className="mr-1.5 h-3.5 w-3.5" /> Copy code
                 </Button>
               </div>
+              {/* Prominent, selectable plain code — the QR-free path. */}
+              <button
+                type="button"
+                onClick={() => copy(session.code, 'Connect code')}
+                className="w-full max-w-sm rounded-lg border bg-muted px-4 py-3 text-center font-mono text-sm break-all select-all hover:bg-muted/70"
+                title="Click to copy"
+              >
+                {session.code}
+              </button>
+              <details className="text-sm text-muted-foreground">
+                <summary className="cursor-pointer">Registering from another device? Show QR</summary>
+                <div className="mt-3 flex flex-col items-center gap-2">
+                  <div className="rounded-lg border bg-background p-4">
+                    <QRCodeCanvas value={session.deep_link} size={180} includeMargin />
+                  </div>
+                  <span>Scan this from inside the OpenIDX app on the other device.</span>
+                </div>
+              </details>
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <Loader2 className="h-4 w-4 animate-spin" /> Waiting for this device to connect…
               </div>

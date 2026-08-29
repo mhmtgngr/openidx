@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../mobile/deep_links.dart';
 import '../../state/providers.dart';
 
 /// Shown when the device is not yet enrolled. The user pastes an enrollment
@@ -20,9 +23,37 @@ class _EnrollScreenState extends ConsumerState<EnrollScreen> {
       TextEditingController(text: 'https://openidx.tdv.org');
   bool _busy = false;
   String? _error;
+  StreamSubscription<OpenidxDeepLink>? _linkSub;
+
+  @override
+  void initState() {
+    super.initState();
+    // QR-free enrollment: if the app was opened by an openidx://enroll link
+    // (cold start) or one arrives while this screen is up, prefill + enroll.
+    Future.microtask(() async {
+      final svc = ref.read(deepLinkServiceProvider);
+      final initial = await svc.initialEnrollLink();
+      if (initial != null) {
+        svc.clearEnrollLink();
+        _applyEnrollLink(initial);
+      }
+      _linkSub = svc.links
+          .where((l) => l is EnrollLink)
+          .cast<EnrollLink>()
+          .listen(_applyEnrollLink);
+    });
+  }
+
+  void _applyEnrollLink(EnrollLink link) {
+    if (_busy) return;
+    _controller.text = link.code;
+    if (link.server.isNotEmpty) _serverController.text = link.server;
+    _enroll();
+  }
 
   @override
   void dispose() {
+    _linkSub?.cancel();
     _controller.dispose();
     _serverController.dispose();
     super.dispose();
@@ -75,7 +106,8 @@ class _EnrollScreenState extends ConsumerState<EnrollScreen> {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'Enter the enrollment code from your OpenIDX admin console.',
+                  'Tap the enrollment link on this phone, or paste the code '
+                  'from your OpenIDX console below — no QR scan needed.',
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.bodySmall,
                 ),

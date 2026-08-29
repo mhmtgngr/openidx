@@ -62,6 +62,19 @@
                 <category android:name="android.intent.category.BROWSABLE"/>
                 <data android:scheme="openidx" android:host="oauth-callback"/>
             </intent-filter>
+
+            <!--
+              QR-free enrollment: the console / an emailed link uses
+              openidx://enroll?code=…&server=…. Tapping it on the phone opens the
+              app, which prefills the code + server and enrolls in one tap — no QR
+              scan needed. Same custom-scheme routing as oauth-callback above.
+            -->
+            <intent-filter android:autoVerify="false">
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="openidx" android:host="enroll"/>
+            </intent-filter>
         </activity>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
