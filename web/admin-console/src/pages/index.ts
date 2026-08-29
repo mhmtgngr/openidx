@@ -19,7 +19,6 @@ export const IdentityProviders = lazy(() => import('./identity-providers').then(
 
 // Applications
 export const Applications = lazy(() => import('./applications').then((m) => ({ default: m.ApplicationsPage })))
-export const AppLauncher = lazy(() => import('./app-launcher').then((m) => ({ default: m.AppLauncherPage })))
 export const QuickLinks = lazy(() => import('./quick-links').then((m) => ({ default: m.QuickLinksPage })))
 export const QuickLinksAdmin = lazy(() => import('./quick-links-admin').then((m) => ({ default: m.QuickLinksAdminPage })))
 export const AppPublish = lazy(() => import('./app-publish').then((m) => ({ default: m.AppPublishPage })))
