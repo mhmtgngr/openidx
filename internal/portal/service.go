@@ -349,9 +349,20 @@ func (s *Service) GetAccessOverview(ctx context.Context, userID string) (*Access
 		return nil, fmt.Errorf("failed to count groups: %w", err)
 	}
 
-	// Count apps
-	err = s.db.Pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM user_application_assignments WHERE user_id = $1 AND org_id = $2`, userID, org.ID,
+	// Count apps. This must use the SAME predicate as GetMyApplications above:
+	// counting only user_application_assignments reported 0 apps to a user whose
+	// access comes from a group→app assignment, while My Apps listed them.
+	err = s.db.Pool.QueryRow(ctx, `
+		SELECT COUNT(DISTINCT a.id)
+		  FROM applications a
+		 WHERE a.enabled = true AND a.org_id = $2
+		   AND (
+		     EXISTS (SELECT 1 FROM user_application_assignments uaa
+		              WHERE uaa.application_id = a.id AND uaa.user_id = $1 AND uaa.org_id = $2)
+		     OR EXISTS (SELECT 1 FROM group_application_assignments gaa
+		                 JOIN group_memberships gm ON gm.group_id = gaa.group_id
+		                WHERE gaa.application_id = a.id AND gm.user_id = $1 AND gaa.org_id = $2)
+		   )`, userID, org.ID,
 	).Scan(&overview.AppsCount)
 	if err != nil {
 		return nil, fmt.Errorf("failed to count apps: %w", err)

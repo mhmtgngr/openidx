@@ -146,7 +146,8 @@ func (s *Service) handleMyResources(c *gin.Context) {
 // them the default path for everyone.
 func (s *Service) browserResources(ctx context.Context, orgID string, c *gin.Context) []MyResource {
 	rows, err := s.db.Pool.Query(ctx, `
-		SELECT id, name, from_url, COALESCE(allowed_roles, '[]'::jsonb)::text
+		SELECT id, name, from_url, COALESCE(allowed_roles, '[]'::jsonb)::text,
+		       COALESCE(allowed_groups, '[]'::jsonb)::text
 		  FROM proxy_routes
 		 WHERE org_id = $1 AND enabled = true AND browzer_enabled = true
 		 ORDER BY name`, orgID)
@@ -157,18 +158,35 @@ func (s *Service) browserResources(ctx context.Context, orgID string, c *gin.Con
 	defer rows.Close()
 
 	callerRoles := pamCallerRoles(c)
+	// Group membership is resolved once for the whole listing (the helper caches
+	// it briefly anyway) and only when a route actually restricts by group.
+	callerGroups := []string(nil)
+	groupsLoaded := false
+
 	out := []MyResource{}
 	for rows.Next() {
-		var id, name, fromURL, allowedRolesJSON string
-		if err := rows.Scan(&id, &name, &fromURL, &allowedRolesJSON); err != nil {
+		var id, name, fromURL, allowedRolesJSON, allowedGroupsJSON string
+		if err := rows.Scan(&id, &name, &fromURL, &allowedRolesJSON, &allowedGroupsJSON); err != nil {
 			s.logger.Warn("my-resources: browser scan failed", zap.Error(err))
 			continue
 		}
-		// Route-level role restriction mirrors what the proxy enforces at
-		// request time, so we never advertise a route the user would be
-		// bounced from.
+		// Route-level restrictions mirror what the proxy enforces at request
+		// time, so we never advertise a route the user would be bounced from.
+		// Both dimensions must be checked: handleProxy evaluates allowed_roles
+		// AND allowed_groups, and listing only the role half meant a route
+		// restricted purely by group showed up here as "ready" and then 403'd
+		// on click.
 		if !rolesAllow(allowedRolesJSON, callerRoles) {
 			continue
+		}
+		if allowedGroups := parseJSONStringArray(allowedGroupsJSON); len(allowedGroups) > 0 {
+			if !groupsLoaded {
+				callerGroups = s.userGroupNames(ctx, c.GetString("user_id"))
+				groupsLoaded = true
+			}
+			if !routeGroupsAllow(allowedGroups, callerGroups) {
+				continue
+			}
 		}
 
 		host, port := hostPortFromURL(fromURL)
