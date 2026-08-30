@@ -24,6 +24,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/appaccess"
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/middleware"
@@ -67,6 +68,15 @@ type ProxyRoute struct {
 	HostingMode           string            `json:"hosting_mode,omitempty"`
 	CreatedAt             time.Time         `json:"created_at"`
 	UpdatedAt             time.Time         `json:"updated_at"`
+	// ApplicationID/ApplicationName identify the application (if any) whose
+	// applications.route_id points at this route — the same link appForRoute
+	// (proxy_assignment_cache.go) resolves to decide real access under
+	// ACCESS_ASSIGNMENT_ENFORCE. Populated read-only by handleListRoutes so the
+	// console can point admins at "Manage Access" on that application instead
+	// of editing AllowedRoles/AllowedGroups, which enforcement ignores once a
+	// route is app-backed. Empty when no application links to this route.
+	ApplicationID   string `json:"application_id,omitempty"`
+	ApplicationName string `json:"application_name,omitempty"`
 }
 
 // normalizeHostingMode validates a hosting_mode value from the API. An empty
@@ -138,6 +148,13 @@ type Service struct {
 	// groupCache memoizes per-user group membership for route authorization
 	// (allowed_groups), keyed by user id with a short TTL.
 	groupCache sync.Map
+	// routeAppCache memoizes the route→application resolution used by the
+	// assignment overlay in handleProxy, keyed by route id with a short TTL —
+	// see proxy_assignment_cache.go.
+	routeAppCache sync.Map
+	// assignCache memoizes the assignment predicate used by the same overlay,
+	// keyed by "userID|applicationID" with a short TTL.
+	assignCache sync.Map
 }
 
 // handleAgentDownload serves the per-OS agent installers + manifest + APK
@@ -473,6 +490,10 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// everything a user can reach, and one switch that severs it all.
 		api.GET("/users/:id/access-map", adminOnly, svc.handleUserAccessMap)
 		api.POST("/users/:id/kill-switch", adminOnly, svc.handleUserKillSwitch)
+
+		// Assignment report: who loses reach if ACCESS_ASSIGNMENT_ENFORCE is
+		// flipped on — diffs today's Ziti reach against assignment-derived reach.
+		api.GET("/assignment-report", adminOnly, svc.handleAssignmentReport)
 
 		// Cross-pillar device correlation: a user's devices with IAM trust +
 		// Ziti compliance/posture side by side, and a device-scoped revoke.
@@ -1067,7 +1088,12 @@ func (s *Service) handleListRoutes(c *gin.Context) {
 		        COALESCE(max_risk_score, 100), guacamole_connection_id,
 		        COALESCE(landing_path, '/'),
 		        COALESCE(hosting_mode, 'identity'),
-		        created_at, updated_at
+		        created_at, updated_at,
+		        -- ORDER BY id LIMIT 1 mirrors appForRoute + ziti_reconciler's pick when
+		        -- more than one application links to the same route (Ruling 13: the
+		        -- route<->application link is a convention, not a DB-enforced 1:1).
+		        COALESCE((SELECT id::text FROM applications WHERE route_id = proxy_routes.id AND enabled = true ORDER BY id LIMIT 1), '') AS application_id,
+		        COALESCE((SELECT name FROM applications WHERE route_id = proxy_routes.id AND enabled = true ORDER BY id LIMIT 1), '') AS application_name
 		 FROM proxy_routes WHERE org_id = $3 ORDER BY priority DESC, name ASC LIMIT $1 OFFSET $2`, limit, offset, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to list routes", zap.Error(err))
@@ -1091,7 +1117,8 @@ func (s *Service) handleListRoutes(c *gin.Context) {
 			&r.RequireDeviceTrust, &allowedCountries,
 			&r.MaxRiskScore, &guacConnID,
 			&r.LandingPath, &r.HostingMode,
-			&r.CreatedAt, &r.UpdatedAt)
+			&r.CreatedAt, &r.UpdatedAt,
+			&r.ApplicationID, &r.ApplicationName)
 		if err != nil {
 			s.logger.Error("Failed to scan route", zap.Error(err))
 			continue
@@ -1969,6 +1996,74 @@ func (s *Service) handleSessionInfo(c *gin.Context) {
 
 // ---- Reverse Proxy ----
 
+// proxyAssignmentDecision returns (allow, recordWouldDeny) for one request.
+//
+// A route with no application behind it keeps the legacy role/group verdict
+// untouched. For an app-backed route the assignment predicate replaces that
+// verdict under enforcement; in report mode the request is allowed and the gap
+// is recorded so the report shows it before anyone loses access.
+func proxyAssignmentDecision(applicationID string, assigned, enforce, legacyAllowed bool) (allow, recordWouldDeny bool) {
+	if applicationID == "" {
+		return legacyAllowed, false
+	}
+	if assigned {
+		return true, false
+	}
+	if enforce {
+		return false, true
+	}
+	return true, true
+}
+
+// recordAssignmentDecision durably records one assignment-gate decision.
+//
+// It writes to unified_audit_events (via the UnifiedAuditService this package
+// already uses for its other 40k+ healthy rows) rather than relying on the
+// audit-service POST in logAuditEvent, which lands in audit_events — a table
+// the org-scoped RLS policy rejects these writes from, so on the live box it
+// has taken a single row since June while unified_audit_events takes writes
+// today. In report mode these records are the ONLY evidence that
+// ACCESS_ASSIGNMENT_ENFORCE is safe to flip, so they must land somewhere that
+// accepts them.
+//
+// This is a side-effect recorder only: it never influences the verdict, and
+// every failure path below returns without changing the caller's behaviour.
+//
+// auditService is set post-construction (SetAuditService) and may be nil. A
+// nil service is logged at WARN and never silently swallowed — a dropped
+// decision record is the exact defect this exists to fix.
+func (s *Service) recordAssignmentDecision(ctx context.Context, route *ProxyRoute, userID, appID, actorIP string, enforced bool) {
+	eventType := appaccess.DecisionEventType(enforced)
+
+	var routeID, routeName string
+	if route != nil {
+		routeID, routeName = route.ID, route.Name
+	}
+	details := appaccess.DecisionDetails(appaccess.EnforcementPointProxy, userID, appID, enforced,
+		map[string]interface{}{"route": routeName})
+
+	if s.auditService == nil {
+		s.logger.Warn("assignment decision not recorded: unified audit service unavailable",
+			zap.String("event_type", eventType),
+			zap.String("user_id", userID),
+			zap.String("application_id", appID),
+			zap.String("route_id", routeID),
+			zap.Bool("enforced", enforced))
+		return
+	}
+
+	if err := s.auditService.RecordEvent(ctx, appaccess.SourceProxy, eventType,
+		routeID, userID, actorIP, details); err != nil {
+		s.logger.Warn("assignment decision not recorded: unified audit write failed",
+			zap.String("event_type", eventType),
+			zap.String("user_id", userID),
+			zap.String("application_id", appID),
+			zap.String("route_id", routeID),
+			zap.Bool("enforced", enforced),
+			zap.Error(err))
+	}
+}
+
 func (s *Service) handleProxy(c *gin.Context) {
 	// Find matching route by host header
 	host := c.Request.Host
@@ -2011,27 +2106,101 @@ func (s *Service) handleProxy(c *gin.Context) {
 			return
 		}
 
-		// Check roles
-		if len(route.AllowedRoles) > 0 && !hasAnyRole(session.Roles, route.AllowedRoles) {
-			s.logAuditEvent(c, "proxy_access_denied", route.ID, "proxy_route", map[string]interface{}{
-				"reason":  "insufficient_roles",
-				"user_id": session.UserID,
-				"path":    c.Request.URL.Path,
-			})
-			c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions"})
-			return
+		// Assignment overlay lookup. Resolve the application (if any) behind this
+		// route before the role/group checks run — under enforcement the
+		// assignment predicate must pre-empt those checks, not just override
+		// their outcome after a denial has already fired. Cached (see
+		// proxy_assignment_cache.go): forward-auth fires on every request the
+		// proxy forwards, not once per page load.
+		appID, appOrgID := s.appForRoute(c.Request.Context(), route.ID)
+
+		// Under enforcement, an app-backed route's verdict comes solely from
+		// assignment: the role/group check below is skipped entirely rather than
+		// intersected with the assignment predicate — checking both would be the
+		// intersect model this design rejected. Every other case — the route has
+		// no application, or the flag is off — runs the role/group check exactly
+		// as it always has, so both the verdict and its audit trail are
+		// byte-for-byte unchanged there.
+		assignmentReplacesLegacy := appID != "" && s.config.AccessAssignmentEnforce
+
+		if !assignmentReplacesLegacy {
+			// Check roles
+			if len(route.AllowedRoles) > 0 && !hasAnyRole(session.Roles, route.AllowedRoles) {
+				s.logAuditEvent(c, "proxy_access_denied", route.ID, "proxy_route", map[string]interface{}{
+					"reason":  "insufficient_roles",
+					"user_id": session.UserID,
+					"path":    c.Request.URL.Path,
+				})
+				c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions"})
+				return
+			}
+
+			// Check groups. Stored in allowed_groups and settable in the admin UI,
+			// but historically never evaluated here.
+			if len(route.AllowedGroups) > 0 &&
+				!routeGroupsAllow(route.AllowedGroups, s.userGroupNames(c.Request.Context(), session.UserID)) {
+				s.logAuditEvent(c, "proxy_access_denied", route.ID, "proxy_route", map[string]interface{}{
+					"reason":  "insufficient_groups",
+					"user_id": session.UserID,
+					"path":    c.Request.URL.Path,
+				})
+				c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions"})
+				return
+			}
 		}
 
-		// Check groups. Stored in allowed_groups and settable in the admin UI,
-		// but historically never evaluated here.
-		if len(route.AllowedGroups) > 0 &&
-			!routeGroupsAllow(route.AllowedGroups, s.userGroupNames(c.Request.Context(), session.UserID)) {
-			s.logAuditEvent(c, "proxy_access_denied", route.ID, "proxy_route", map[string]interface{}{
-				"reason":  "insufficient_groups",
-				"user_id": session.UserID,
-				"path":    c.Request.URL.Path,
-			})
-			c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions"})
+		// Assignment overlay. When assignmentReplacesLegacy is false, reaching
+		// this line means either the route has no application (appID == "", so
+		// proxyAssignmentDecision below is a pass-through no-op) or the role and
+		// group checks above just passed — either way the legacy verdict for
+		// this request is allow, so legacyAllowed is true here. When
+		// assignmentReplacesLegacy is true, proxyAssignmentDecision ignores the
+		// legacyAllowed argument entirely (see its doc comment), so the value
+		// passed is moot.
+		var assigned, freshAssignment bool
+		if appID != "" {
+			assigned, freshAssignment = s.assignmentAllowed(c.Request.Context(), session.UserID, appOrgID, appID)
+		}
+		allow, wouldDeny := proxyAssignmentDecision(appID, assigned, s.config.AccessAssignmentEnforce, true)
+		if wouldDeny {
+			// Durable decision record, on BOTH branches: enforcement must not
+			// be quieter than report mode. This is the write that has to
+			// survive — see recordAssignmentDecision. The logAuditEvent calls
+			// below are kept as-is (harmless duplication; audit_events may be
+			// repaired later) but nothing depends on them landing.
+			if !allow || freshAssignment {
+				s.recordAssignmentDecision(c.Request.Context(), route, session.UserID, appID, c.ClientIP(), !allow)
+			}
+			if !allow {
+				// A real denial under enforcement: audit it as an actual proxy
+				// denial (action "proxy_access_denied" is the only action
+				// logAuditEvent stamps outcome:"failure" for) so an operator
+				// filtering the proxy audit stream for denials finds this
+				// request, instead of it landing as a success-outcome
+				// "would_deny" record indistinguishable from the report-mode
+				// case below.
+				s.logAuditEvent(c, "proxy_access_denied", route.ID, "proxy_route", map[string]interface{}{
+					"reason":         "not_assigned",
+					"user_id":        session.UserID,
+					"path":           c.Request.URL.Path,
+					"application_id": appID,
+				})
+			} else if freshAssignment {
+				// Report mode: record the gap. This fires on every allowed
+				// request from an unassigned caller to an app-backed route —
+				// every asset load, not just the page — so it is throttled to
+				// once per assignmentAllowed cache TTL per (user, application)
+				// via the freshAssignment flag, rather than one audit POST per
+				// request.
+				s.logAuditEvent(c, "access.assignment.would_deny", appID, "application", map[string]interface{}{
+					"enforcement_point": "proxy",
+					"user_id":           session.UserID,
+					"route":             route.Name,
+				})
+			}
+		}
+		if !allow {
+			c.JSON(http.StatusForbidden, gin.H{"error": "not assigned to this application"})
 			return
 		}
 

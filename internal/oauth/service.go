@@ -31,6 +31,7 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/oauth2"
 
+	"github.com/openidx/openidx/internal/appaccess"
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/middleware"
@@ -1617,30 +1618,56 @@ func (s *Service) handleAuthorize(c *gin.Context) {
 	s.redis.Client.Set(c.Request.Context(), "login_session:"+loginSession, string(paramsJSON), 10*time.Minute)
 
 	// For public OIDC clients (like BrowZer), serve a server-rendered login page
-	// instead of redirecting back to the client with login_session
-	if client != nil && client.Type == "public" && c.GetHeader("Accept") != "application/json" {
+	// instead of redirecting back to the client with login_session. This is
+	// the DEFAULT path here — it stays on for OAUTH_LOGIN_UI unset, "server",
+	// or any unrecognised value, and only the explicit opt-in
+	// OAUTH_LOGIN_UI=spa turns it off. That direction matters: a typo'd or
+	// missing flag value must fail toward today's behaviour, not silently
+	// strand a public client (like BrowZer) with a login_session redirect to
+	// its own redirect_uri and no page to handle it.
+	//
+	// This is not the only path that reaches renderLoginPage: GET /oauth/login
+	// (handleLoginPage) and /oauth/authorize/v2 both render it unconditionally
+	// today, regardless of this flag — a later task deleting the page must
+	// account for those too.
+	if s.config.OAuthLoginUI != "spa" && client != nil && client.Type == "public" && c.GetHeader("Accept") != "application/json" {
 		s.renderLoginPage(c, loginSession, "")
 		return
 	}
 
-	// SPA flow: redirect back to the client's login page with the login_session parameter
 	redirectURI := oauthParams["redirect_uri"]
 	if redirectURI == "" {
 		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "redirect_uri is required"})
 		return
 	}
 
-	// Parse redirect URI to add login_session parameter
-	loginURL, err := url.Parse(redirectURI)
-	if err != nil {
+	target := loginRedirectURL(s.issuer, redirectURI, loginSession, s.config.OAuthLoginUI)
+	if target == "" {
 		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "invalid redirect_uri"})
 		return
 	}
-	query := loginURL.Query()
-	query.Set("login_session", loginSession)
-	loginURL.RawQuery = query.Encode()
+	c.Redirect(302, target)
+}
 
-	c.Redirect(302, loginURL.String())
+// loginRedirectURL decides where the browser goes to authenticate.
+//
+// In "spa" mode every client is sent to the IdP's own login page, which is the
+// ordinary hosted-IdP pattern and the thing that makes a single login UI
+// possible: a native client (redirect_uri openidx://oauth-callback) cannot host
+// one, which is why a second, server-rendered login existed at all.
+func loginRedirectURL(issuer, clientRedirectURI, loginSession, ui string) string {
+	target := clientRedirectURI
+	if ui == "spa" {
+		target = strings.TrimRight(issuer, "/") + "/login"
+	}
+	u, err := url.Parse(target)
+	if err != nil {
+		return ""
+	}
+	q := u.Query()
+	q.Set("login_session", loginSession)
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 // handleAuthorizeV2 handles authorization using the new AuthorizeHandler with full PKCE support
@@ -2240,8 +2267,147 @@ func (s *Service) handleLogin(c *gin.Context) {
 	s.issueAuthorizationCode(c, oauthParams, user.ID)
 }
 
+// authorizeAssignmentDecision returns (issueCode, recordWouldDeny) for a client
+// whose application row may require assignment. The gate is opt-in per client:
+// a client that does not require it is never affected, which is what keeps
+// first-party clients working on the first deploy.
+func authorizeAssignmentDecision(requiresAssignment, assigned, enforce bool) (issue, recordWouldDeny bool) {
+	if !requiresAssignment || assigned {
+		return true, false
+	}
+	if enforce {
+		return false, true
+	}
+	return true, true
+}
+
+// assignmentGateAllows is the /oauth/authorize enforcement point for
+// applications that have no published route: those are reached only by
+// obtaining a token for their OAuth client, so the overlay and reverse-proxy
+// gates (the enforcement points for route-backed applications) never see
+// them. There are SIX places in this service that mint an authorization
+// code — issueAuthorizationCode, handleAuthorizeConsent, handleCallback,
+// issueHostedAuthorizationCode (hosted_mfa.go), handleMagicLinkVerify
+// (handlers_passwordless.go), and AuthorizeHandler.IssueAuthorizationCode
+// (authorize.go) — and every one of them is gated: the first five call this
+// directly before minting, and the sixth (IssueAuthorizationCode) has no
+// *gin.Context to gate with, so its only caller, handleAuthorizeConsentV2,
+// calls this before invoking it instead. mintSiteDisposition in
+// authorize_assignment_test.go is the canonical list of these six — keep
+// this enumeration in sync with it. TestEveryMintSiteCallsAssignmentGate
+// guards the ordering at each known site and TestNoUngatedMintSite guards
+// that no new mint site (a seventh) goes unlisted; a missed call site fails
+// silently (a code is issued, no error, no audit record) rather than
+// loudly.
+//
+// Returns true when the request may proceed to mint a code. false means a
+// 403 has already been written and the caller must return without minting.
+//
+// The application row and the assignment check both run under c's ordinary
+// request context, scoped by the SAME org id (the resolved tenant's), so
+// they agree on RLS scope by construction — unlike the proxy's forward-auth
+// path, this handler already runs inside a resolved org context (the
+// tenant-resolution middleware ran before /oauth/authorize), so there is no
+// need for orgctx.WithBypassRLS here.
+func (s *Service) assignmentGateAllows(c *gin.Context, clientID, userID string) bool {
+	if clientID == "" {
+		return true
+	}
+	ctx := c.Request.Context()
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		// No tenant context: cannot resolve the application row. Preserve
+		// existing behavior (issue the code) but make it visible, matching
+		// consentRequired's fail-open handling of the same condition.
+		s.logger.Debug("assignment gate skipped: no org context", zap.String("client_id", clientID))
+		return true
+	}
+
+	var appID string
+	var requiresAssignment bool
+	// Deliberate interaction, not a bug: this lookup does NOT filter on
+	// applications.enabled, while appaccess.Allowed() only matches rows with
+	// `a.enabled = true`. So a DISABLED application that also has
+	// require_assignment=true denies everyone, including its assignees — the
+	// gate reads the flag, then Allowed() answers false for every principal.
+	// That is the intended reading of "disabled": an application an admin has
+	// switched off should not mint tokens. Do not "fix" it by ignoring
+	// require_assignment on disabled applications.
+	err = s.db.Pool.QueryRow(ctx,
+		`SELECT id, require_assignment FROM applications WHERE client_id = $1 AND org_id = $2`,
+		clientID, org.ID).Scan(&appID, &requiresAssignment)
+	if err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			s.logger.Error("assignment gate: application lookup failed",
+				zap.String("client_id", clientID), zap.Error(err))
+		}
+		// No application row behind this client (or a lookup failure): there is
+		// nothing to gate on, same as a client that does not require assignment.
+		return true
+	}
+	if !requiresAssignment {
+		// Skip the Allowed() query entirely: authorizeAssignmentDecision would
+		// discard its result anyway (its first branch is
+		// `!requiresAssignment || assigned`), and every application defaults to
+		// require_assignment=false, so this keeps the common case to one query
+		// on the /oauth/authorize hot path instead of two, and a transient
+		// Allowed() failure never logs an Error for a client that isn't gated.
+		return true
+	}
+
+	assigned, aerr := appaccess.Allowed(ctx, s.db, userID, org.ID, appID)
+	if aerr != nil {
+		s.logger.Error("assignment gate: allowed check failed",
+			zap.String("application_id", appID), zap.Error(aerr))
+		return true
+	}
+
+	enforce := s.config != nil && s.config.AccessAssignmentEnforce
+	issue, recordWouldDeny := authorizeAssignmentDecision(requiresAssignment, assigned, enforce)
+	if recordWouldDeny {
+		// Durable decision record, on BOTH branches: enforcement must not be
+		// quieter than report mode. This is the write that has to survive —
+		// see recordAssignmentDecision (assignment_audit.go). The logAuditEvent
+		// calls below are kept as-is (harmless duplication; audit_events may be
+		// repaired later) but nothing depends on them landing.
+		s.recordAssignmentDecision(ctx, userID, clientID, appID, c.ClientIP(), !issue)
+		if !issue {
+			// A real denial under enforcement: a distinct action (mirroring the
+			// proxy's proxy_access_denied — see access/service.go) so an operator
+			// filtering the oauth audit stream for actual denials finds this
+			// request, rather than it landing indistinguishable-by-action from
+			// the report-mode case below.
+			s.logAuditEvent(ctx, "authentication", "oauth", "oauth_access_denied", "denied",
+				userID, c.ClientIP(), appID, "application",
+				map[string]interface{}{
+					"reason":            "not_assigned",
+					"enforcement_point": "oidc",
+					"client_id":         clientID,
+				})
+		} else {
+			// Report mode: the request is allowed, but record the gap so the
+			// assignment report can be reviewed before anyone loses reach.
+			s.logAuditEvent(ctx, "authentication", "oauth", "access.assignment.would_deny", "would_deny",
+				userID, c.ClientIP(), appID, "application",
+				map[string]interface{}{
+					"enforcement_point": "oidc",
+					"client_id":         clientID,
+				})
+		}
+	}
+	if !issue {
+		c.JSON(403, gin.H{"error": "access_denied", "error_description": "You are not assigned to this application."})
+		return false
+	}
+	return true
+}
+
 // issueAuthorizationCode generates an auth code and returns the redirect URL
 func (s *Service) issueAuthorizationCode(c *gin.Context, oauthParams map[string]string, userID string) {
+	if !s.assignmentGateAllows(c, oauthParams["client_id"], userID) {
+		return
+	}
+
 	// Enforce per-application consent unless it was just granted in this flow.
 	if oauthParams["consent_granted"] != "true" {
 		required, cerr := s.consentRequired(c.Request.Context(), oauthParams["client_id"], userID, oauthParams["scope"])
@@ -2875,6 +3041,10 @@ func (s *Service) handleCallback(c *gin.Context) {
 	s.logAuditEvent(c.Request.Context(), "authentication", "sso", "sso_login", "success",
 		user.ID, c.ClientIP(), user.ID, "user", map[string]interface{}{"idp_id": idp.ID.String()})
 
+	if !s.assignmentGateAllows(c, originalParams["client_id"], user.ID) {
+		return
+	}
+
 	authCode := &AuthorizationCode{
 		Code:        GenerateRandomToken(32),
 		ClientID:    originalParams["client_id"],
@@ -2946,6 +3116,10 @@ func (s *Service) handleAuthorizeConsent(c *gin.Context) {
 	}
 	if !validRedirect {
 		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "redirect_uri not registered for client"})
+		return
+	}
+
+	if !s.assignmentGateAllows(c, req.ClientID, userID) {
 		return
 	}
 
@@ -3029,6 +3203,33 @@ func (s *Service) handleAuthorizeConsentV2(c *gin.Context) {
 
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(400, gin.H{"error": "invalid_request", "error_description": err.Error()})
+		return
+	}
+
+	// This handler learns client_id only from the stored auth session, and
+	// IssueAuthorizationCode below consumes (deletes) that session as part of
+	// minting. So the gate needs its own, separate, non-destructive read of the
+	// same session up front. A session that is genuinely missing or expired
+	// here fails the mint call below too (same key), so falling through to its
+	// existing error path for that case is unchanged from before this gate
+	// existed. But a TRANSIENT pre-fetch failure (a Redis timeout or
+	// connection blip that does not recur on the very next call) must not
+	// silently skip the gate while the mint goes on to succeed — that would be
+	// a fail-open on exactly the request an operator turned enforcement on to
+	// catch. So: under enforcement, an unresolved client id refuses rather
+	// than proceeds; with enforcement off the gate can never deny anything
+	// regardless of client id, so skipping is harmless and today's behavior is
+	// preserved exactly — this keeps the flag-off path byte-for-byte
+	// unchanged, which is this plan's binding constraint.
+	preReq, perr := s.authorizeHandler.GetStoredAuthorizationRequest(c.Request.Context(), req.AuthSession)
+	if perr == nil {
+		if !s.assignmentGateAllows(c, preReq.ClientID, userID) {
+			return
+		}
+	} else if s.config != nil && s.config.AccessAssignmentEnforce {
+		s.logger.Warn("assignment gate: pre-fetch failed while enforcement is on; refusing rather than risk an unchecked mint",
+			zap.String("auth_session", req.AuthSession), zap.Error(perr))
+		c.JSON(403, gin.H{"error": "access_denied", "error_description": "You are not assigned to this application."})
 		return
 	}
 

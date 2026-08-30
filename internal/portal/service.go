@@ -13,10 +13,12 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	apperrors "github.com/openidx/openidx/internal/common/errors"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/ai"
+	"github.com/openidx/openidx/internal/appaccess"
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
@@ -120,35 +122,43 @@ func NewService(db *database.PostgresDB, logger *zap.Logger, opts ...Option) *Se
 
 // GetMyApplications returns the applications assigned to a user.
 // If no assignments exist, it falls back to returning all enabled applications.
+//
+// The set of applications comes from appaccess.AppsForUser — the same
+// predicate GetAccessOverview's app count uses, with the same
+// showAllAppsWhenUnassigned fallback applied to both — so the catalogue and
+// the count cannot disagree about who has access to what (#874).
 func (s *Service) GetMyApplications(ctx context.Context, userID string) ([]UserApplication, error) {
 	org, err := orgctx.From(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	// Apps assigned directly to the user OR to any group the user belongs to.
-	// Group membership grants access — a group→app assignment applies to every
-	// member (group_application_assignments, migration v136).
-	query := `
-		SELECT DISTINCT a.id, a.name, COALESCE(a.description, '') AS description,
-		       COALESCE(a.base_url, '') AS base_url, COALESCE(a.protocol, '') AS protocol
-		FROM applications a
-		WHERE a.enabled = true AND a.org_id = $2
-		  AND (
-		    EXISTS (SELECT 1 FROM user_application_assignments uaa
-		             WHERE uaa.application_id = a.id AND uaa.user_id = $1 AND uaa.org_id = $2)
-		    OR EXISTS (SELECT 1 FROM group_application_assignments gaa
-		                JOIN group_memberships gm ON gm.group_id = gaa.group_id
-		               WHERE gaa.application_id = a.id AND gm.user_id = $1 AND gaa.org_id = $2)
-		  )
-		ORDER BY a.name`
-
-	rows, err := s.db.Pool.Query(ctx, query, userID, org.ID)
+	refs, err := appaccess.AppsForUser(ctx, s.db, userID, org.ID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query user applications: %w", err)
+		return nil, err
 	}
-	defer rows.Close()
 
+	// Fallback: if no assignments exist, optionally return all enabled apps.
+	// Off by default (least-privilege) — an unassigned user sees nothing and the
+	// UI's "no apps assigned — contact your admin" empty state; group assignment
+	// (migration v136) is the intended way to grant access. Flip
+	// SHOW_ALL_APPS_WHEN_UNASSIGNED=true to restore the old open behaviour.
+	if len(refs) == 0 && s.showAllAppsWhenUnassigned {
+		return s.allEnabledApplications(ctx, org.ID)
+	}
+
+	ids := make([]string, 0, len(refs))
+	for _, r := range refs {
+		ids = append(ids, r.ID)
+	}
+	return s.applicationsByID(ctx, org.ID, ids)
+}
+
+// scanApplications drains the rows of a query projecting
+// (id, name, description, base_url, protocol) into UserApplication values.
+// Shared by applicationsByID and allEnabledApplications so the two hydration
+// queries below cannot drift in what they scan.
+func scanApplications(rows pgx.Rows) ([]UserApplication, error) {
 	var apps []UserApplication
 	for rows.Next() {
 		var app UserApplication
@@ -160,39 +170,41 @@ func (s *Service) GetMyApplications(ctx context.Context, userID string) ([]UserA
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("error iterating application rows: %w", err)
 	}
-
-	// Fallback: if no assignments exist, optionally return all enabled apps.
-	// Off by default (least-privilege) — an unassigned user sees nothing and the
-	// UI's "no apps assigned — contact your admin" empty state; group assignment
-	// (migration v136) is the intended way to grant access. Flip
-	// SHOW_ALL_APPS_WHEN_UNASSIGNED=true to restore the old open behaviour.
-	if len(apps) == 0 && s.showAllAppsWhenUnassigned {
-		fallbackQuery := `
-			SELECT id, name, COALESCE(description, '') AS description,
-			       COALESCE(base_url, '') AS base_url, COALESCE(protocol, '') AS protocol
-			FROM applications
-			WHERE enabled = true AND org_id = $1
-			ORDER BY name`
-
-		fallbackRows, err := s.db.Pool.Query(ctx, fallbackQuery, org.ID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to query all applications: %w", err)
-		}
-		defer fallbackRows.Close()
-
-		for fallbackRows.Next() {
-			var app UserApplication
-			if err := fallbackRows.Scan(&app.ID, &app.Name, &app.Description, &app.BaseURL, &app.Protocol); err != nil {
-				return nil, fmt.Errorf("failed to scan fallback application: %w", err)
-			}
-			apps = append(apps, app)
-		}
-		if err := fallbackRows.Err(); err != nil {
-			return nil, fmt.Errorf("error iterating fallback application rows: %w", err)
-		}
-	}
-
 	return apps, nil
+}
+
+// applicationsByID hydrates the rows the predicate selected. Splitting the
+// predicate (appaccess) from the projection (here) is what stops the catalogue
+// and the enforcement drifting: only one of them knows who may reach what.
+func (s *Service) applicationsByID(ctx context.Context, orgID string, ids []string) ([]UserApplication, error) {
+	if len(ids) == 0 {
+		return []UserApplication{}, nil
+	}
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT a.id, a.name, COALESCE(a.description, ''), COALESCE(a.base_url, ''), COALESCE(a.protocol, '')
+		  FROM applications a
+		 WHERE a.org_id = $1 AND a.id = ANY($2)
+		 ORDER BY a.name`, orgID, ids)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query applications by id: %w", err)
+	}
+	defer rows.Close()
+	return scanApplications(rows)
+}
+
+// allEnabledApplications is the ShowAllAppsWhenUnassigned fallback, unchanged in
+// behaviour: an org that has opted into the open catalogue still gets it.
+func (s *Service) allEnabledApplications(ctx context.Context, orgID string) ([]UserApplication, error) {
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT a.id, a.name, COALESCE(a.description, ''), COALESCE(a.base_url, ''), COALESCE(a.protocol, '')
+		  FROM applications a
+		 WHERE a.enabled = true AND a.org_id = $1
+		 ORDER BY a.name`, orgID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query all applications: %w", err)
+	}
+	defer rows.Close()
+	return scanApplications(rows)
 }
 
 // GetAvailableGroups returns groups that allow self-join, along with membership and pending request status for the user.
@@ -349,23 +361,24 @@ func (s *Service) GetAccessOverview(ctx context.Context, userID string) (*Access
 		return nil, fmt.Errorf("failed to count groups: %w", err)
 	}
 
-	// Count apps. This must use the SAME predicate as GetMyApplications above:
-	// counting only user_application_assignments reported 0 apps to a user whose
-	// access comes from a group→app assignment, while My Apps listed them.
-	err = s.db.Pool.QueryRow(ctx, `
-		SELECT COUNT(DISTINCT a.id)
-		  FROM applications a
-		 WHERE a.enabled = true AND a.org_id = $2
-		   AND (
-		     EXISTS (SELECT 1 FROM user_application_assignments uaa
-		              WHERE uaa.application_id = a.id AND uaa.user_id = $1 AND uaa.org_id = $2)
-		     OR EXISTS (SELECT 1 FROM group_application_assignments gaa
-		                 JOIN group_memberships gm ON gm.group_id = gaa.group_id
-		                WHERE gaa.application_id = a.id AND gm.user_id = $1 AND gaa.org_id = $2)
-		   )`, userID, org.ID,
-	).Scan(&overview.AppsCount)
+	// Count apps. This calls the SAME predicate GetMyApplications uses
+	// (appaccess.AppsForUser) so the count and the catalogue cannot drift again
+	// (#874): counting only user_application_assignments reported 0 apps to a
+	// user whose access comes from a group→app assignment, while My Apps listed
+	// them. Also applies the SAME showAllAppsWhenUnassigned fallback
+	// GetMyApplications does above, so the two agree when that flag is on too
+	// (default off, so this has no effect on the common path).
+	appRefs, err := appaccess.AppsForUser(ctx, s.db, userID, org.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to count apps: %w", err)
+	}
+	overview.AppsCount = len(appRefs)
+	if overview.AppsCount == 0 && s.showAllAppsWhenUnassigned {
+		allApps, err := s.allEnabledApplications(ctx, org.ID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to count apps: %w", err)
+		}
+		overview.AppsCount = len(allApps)
 	}
 
 	// Count pending requests

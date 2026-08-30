@@ -56,6 +56,12 @@ type DesiredRoute struct {
 	// assignHopPorts). For hop routes the host.v1 target is hopHost:HopPort so the
 	// hop demuxes by PORT (the runtime sends no SNI). Stamped in reconcileOnce.
 	HopPort int
+	// ApplicationID is the id of the enabled application whose route_id points at
+	// this route, if any ("" when the route has no linked application). Used by
+	// dialIdentityRoles to scope the Dial policy to the app's assignees once
+	// AccessAssignmentEnforce is on; while it's off the marker is added beside the
+	// blanket grant instead of replacing it.
+	ApplicationID string
 }
 
 // EffectiveMode resolves the hosting mode. identity mode is never valid for a
@@ -170,6 +176,13 @@ type ZitiReconciler struct {
 	// tier dial policies are unchanged, so single-tenant installs behave exactly
 	// as before.
 	perOrgAttributes bool
+
+	// assignmentEnforce mirrors config.AccessAssignmentEnforce. When true, an
+	// app-backed route's Dial policy grants ONLY identities carrying that app's
+	// marker attribute (#app-<uuid>), replacing the blanket #access-proxy-clients/
+	// #browzer-users grant. Off by default: the per-app marker is added beside the
+	// blanket grant instead, so nobody's access changes until the flag flips.
+	assignmentEnforce bool
 
 	// mirror holds the last mirror-refresh outcome (counts, including how many
 	// controller policies could NOT be attributed to an org and were therefore
@@ -294,6 +307,17 @@ func (rec *ZitiReconciler) SetPerOrgAttributes(on bool) *ZitiReconciler {
 	return rec
 }
 
+// SetAssignmentEnforce toggles enforcement of per-app dial scoping (staged
+// rollout of application-assignment-as-the-grant). When enabled, an app-backed
+// route's Dial policy grants ONLY identities carrying that app's marker
+// attribute, replacing the blanket grant every enrolled identity previously
+// held. Off by default; access-service main sets it from
+// config.AccessAssignmentEnforce. Returns the receiver for chaining.
+func (rec *ZitiReconciler) SetAssignmentEnforce(on bool) *ZitiReconciler {
+	rec.assignmentEnforce = on
+	return rec
+}
+
 // Enqueue requests a reconcile; coalesces (non-blocking send to a size-1 chan).
 func (rec *ZitiReconciler) Enqueue() {
 	select {
@@ -331,8 +355,16 @@ func (rec *ZitiReconciler) runLocked(ctx context.Context) {
 func (rec *ZitiReconciler) loadDesiredRoutes(ctx context.Context) ([]DesiredRoute, error) {
 	ctx = orgctx.WithBypassRLS(ctx)
 	rows, err := rec.db.Pool.Query(ctx,
+		// One-app-per-route is a convention of the publish path (app_publish.go
+		// upserts a single tile per route under the deterministic client id
+		// proxy-app-<routeid>), not a schema constraint — applications.route_id
+		// has only a non-unique index (sql_v49.go), so nothing stops a second
+		// application from pointing at the same route. ORDER BY id makes the pick
+		// deterministic (lowest id wins) if that convention is ever violated,
+		// instead of an unspecified row winning under a bare LIMIT 1.
 		//orgscope:ignore install-wide Ziti reconcile; keyed by globally-unique ziti_service_name across all orgs
-		`SELECT ziti_service_name, to_url, COALESCE(hosting_mode,'identity'), COALESCE(browzer_enabled,false), COALESCE(org_id::text,'')
+		`SELECT ziti_service_name, to_url, COALESCE(hosting_mode,'identity'), COALESCE(browzer_enabled,false), COALESCE(org_id::text,''),
+		        COALESCE((SELECT id::text FROM applications WHERE route_id = proxy_routes.id AND enabled = true ORDER BY id LIMIT 1), '')
 		 FROM proxy_routes
 		 WHERE ziti_enabled = true AND enabled = true
 		   AND ziti_service_name IS NOT NULL AND ziti_service_name != ''`)
@@ -343,7 +375,7 @@ func (rec *ZitiReconciler) loadDesiredRoutes(ctx context.Context) ([]DesiredRout
 	var out []DesiredRoute
 	for rows.Next() {
 		var d DesiredRoute
-		if err := rows.Scan(&d.ServiceName, &d.ToURL, &d.HostingMode, &d.BrowZerEnabled, &d.OrgID); err != nil {
+		if err := rows.Scan(&d.ServiceName, &d.ToURL, &d.HostingMode, &d.BrowZerEnabled, &d.OrgID, &d.ApplicationID); err != nil {
 			rec.logger.Warn("reconciler: scan route failed", zap.Error(err))
 			continue
 		}
@@ -493,8 +525,12 @@ func (rec *ZitiReconciler) ensurePolicies(ctx context.Context, zm *ZitiManager, 
 		[]string{svcRole}, []string{bindIdentity}); err != nil {
 		rec.logger.Warn("bind policy converge failed", zap.String("svc", d.ServiceName), zap.Error(err))
 	}
+	// Roles come from this branch's assignment work (a per-app marker beside, or
+	// under enforcement instead of, the blanket grant); the ForOrg variant is the
+	// mirror-writing path, so the row it upserts carries the route's org.
+	dialRoles := dialIdentityRoles(dialIdentity, d.ApplicationID, rec.assignmentEnforce)
 	if _, err := zm.EnsureServicePolicyForOrg(ctx, d.OrgID, "openidx-dial-"+d.ServiceName, "Dial",
-		[]string{svcRole}, []string{dialIdentity}); err != nil {
+		[]string{svcRole}, dialRoles); err != nil {
 		rec.logger.Warn("dial policy converge failed", zap.String("svc", d.ServiceName), zap.Error(err))
 	}
 	if err := zm.EnsureServiceEdgeRouterPolicy(ctx, "openidx-serp-"+d.ServiceName,
@@ -518,6 +554,25 @@ func (rec *ZitiReconciler) ensurePolicies(ctx context.Context, zm *ZitiManager, 
 		}
 	}
 	return nil
+}
+
+// dialIdentityRoles decides who may dial a service.
+//
+// A route with no application behind it is unchanged — the blanket grant is the
+// only thing that can express "any enrolled client". For an app-backed route the
+// per-app marker is added beside the blanket grant while enforcement is off (so
+// the policy exists and can be inspected before it bites), and REPLACES it once
+// enforcement is on — which is the whole point: the blanket grant is what makes
+// every enrolled identity able to dial an app they were never assigned.
+func dialIdentityRoles(blanket, applicationID string, enforce bool) []string {
+	if applicationID == "" {
+		return []string{blanket}
+	}
+	marker := "#" + appMarkerAttr(applicationID)
+	if enforce {
+		return []string{marker}
+	}
+	return []string{blanket, marker}
 }
 
 // orgMarkerAttr is the bare per-org role attribute (org-<sanitized-id>) that

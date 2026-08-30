@@ -45,14 +45,10 @@ import (
 // nullable plus every reader matching `org_id = $1 OR org_id IS NULL`. Until
 // then they are surfaced as a count (mirror stats + a warn log), not stored.
 
-// zitiPagination is the controller's meta.pagination block. Its ABSENCE means
-// completeness is UNKNOWN — never "the collection is empty" — so a response
-// without it is an error, not an empty success.
-type zitiPagination struct {
-	Limit      int `json:"limit"`
-	Offset     int `json:"offset"`
-	TotalCount int `json:"totalCount"`
-}
+// zitiPagination is declared in ziti_paging.go. Its fields are POINTERS so an
+// absent meta.pagination block and a zero-valued one stay distinguishable: a
+// `totalCount: 0` is a legitimate empty collection, whereas a missing one means
+// completeness is UNKNOWN and is an error, never an empty success.
 
 // zitiListPageLimit is the page size requested from the controller. The
 // controller is free to ignore it (and does, above its own maximum), so the
@@ -100,7 +96,12 @@ func listAllEdgeEntities[T any](zm *ZitiManager, collection string) ([]T, error)
 			// as a complete empty listing would let a refresh delete every row.
 			return nil, fmt.Errorf("ziti: %s listing has no meta.pagination; completeness unknown", collection)
 		}
-		total := resp.Meta.Pagination.TotalCount
+		if resp.Meta.Pagination.TotalCount == nil {
+			// Same reasoning as an absent block: a missing totalCount tells us
+			// nothing about completeness, and must not read as an empty listing.
+			return nil, fmt.Errorf("ziti: %s listing has no meta.pagination.totalCount; completeness unknown", collection)
+		}
+		total := *resp.Meta.Pagination.TotalCount
 		out = append(out, resp.Data...)
 		if len(resp.Data) == 0 {
 			if len(out) < total {

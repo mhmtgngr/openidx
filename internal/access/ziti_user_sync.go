@@ -10,6 +10,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/appaccess"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -278,7 +279,28 @@ func (zm *ZitiManager) buildUserAttributes(ctx context.Context, userID string) (
 	// #browzer-users when BrowZer is enabled.
 	_, browzer := zm.browzerAuthPolicy(ctx)
 
-	attrs := assembleAttributes(groups, hasTrusted, browzer)
+	// Per-app markers: one attribute per route-linked application the user is
+	// assigned, so the reconciler can fold #app-<uuid> into the service's Dial
+	// policy identity roles alongside the blanket #access-proxy-clients/
+	// #browzer-users grant (see dialIdentityRoles in ziti_reconciler.go) — added
+	// beside the blanket grant while ACCESS_ASSIGNMENT_ENFORCE is off, replacing
+	// it once enforcement is on. Applications with no route are gated at
+	// /oauth/authorize instead and get no attribute.
+	var appAttrs []string
+	if orgID := zm.userOrgID(ctx, userID); orgID != "" {
+		refs, aerr := appaccess.AppsForUser(ctx, zm.db, userID, orgID)
+		if aerr != nil {
+			zm.logger.Warn("failed to load app assignments for ziti attributes",
+				zap.String("user_id", userID), zap.Error(aerr))
+		}
+		for _, r := range refs {
+			if r.RouteID != "" {
+				appAttrs = append(appAttrs, appMarkerAttr(r.ID))
+			}
+		}
+	}
+
+	attrs := assembleAttributes(groups, hasTrusted, browzer, appAttrs)
 
 	// Per-org overlay scoping (Wave A2): when the flag is on, tag the identity
 	// with a bare org marker (org-<id>) so the reconciler's per-org Dial policy
@@ -306,18 +328,25 @@ func (zm *ZitiManager) userOrgID(ctx context.Context, userID string) string {
 	return *orgID
 }
 
+// appMarkerAttr is the identity role attribute that carries an application
+// assignment onto the overlay. It is keyed on the application UUID, never its
+// name: buildUserAttributes replaces the whole attribute set on every sync, so
+// a rename would silently drop the user's reach.
+func appMarkerAttr(appID string) string { return "app-" + appID }
+
 // assembleAttributes is the pure attribute-assembly for a synced Ziti identity,
 // factored out of buildUserAttributes so the policy can be unit-tested without a
 // database. The canonical set is:
 //   - the user's group names,
 //   - #enrolled-users on EVERY identity (Tier 1 dial gate: any enrolled user),
 //   - #device-trusted iff the user has a trusted device (Tier 2 dial gate),
-//   - #browzer-users iff BrowZer is enabled.
+//   - #browzer-users iff BrowZer is enabled,
+//   - one #app-<uuid> per route-linked application the user is assigned.
 //
 // This is the whole roleAttributes set; the periodic group-attribute reconcile
 // replaces roleAttributes wholesale, so anything omitted here is stripped off.
-func assembleAttributes(groups []string, deviceTrusted, browzer bool) []string {
-	attrs := make([]string, 0, len(groups)+3)
+func assembleAttributes(groups []string, deviceTrusted, browzer bool, appAttrs []string) []string {
+	attrs := make([]string, 0, len(groups)+len(appAttrs)+3)
 	attrs = append(attrs, groups...)
 	// Every enrolled identity carries #enrolled-users so the Tier-1 dial policy
 	// (#enrolled-users -> Tier-1 services) applies to any logged-in user.
@@ -328,6 +357,7 @@ func assembleAttributes(groups []string, deviceTrusted, browzer bool) []string {
 	if browzer {
 		attrs = append(attrs, "browzer-users")
 	}
+	attrs = append(attrs, appAttrs...)
 	return attrs
 }
 

@@ -130,6 +130,7 @@ export const AIIdentityIntelligence = lazy(() => import('./ai-identity-intellige
 export const TrustedBrowsers = lazy(() => import('./trusted-browsers').then((m) => ({ default: m.TrustedBrowsersPage })))
 export const DeviceAuthorization = lazy(() => import('./device-authorization').then((m) => ({ default: m.DeviceAuthorizationPage })))
 export const AccessRequests = lazy(() => import('./access-requests').then((m) => ({ default: m.AccessRequestsPage })))
+export const AssignmentReport = lazy(() => import('./assignment-report').then((m) => ({ default: m.AssignmentReportPage })))
 export const NotificationCenter = lazy(() => import('./notification-center').then((m) => ({ default: m.NotificationCenterPage })))
 export const NotificationPreferences = lazy(() => import('./notification-preferences').then((m) => ({ default: m.NotificationPreferencesPage })))
 

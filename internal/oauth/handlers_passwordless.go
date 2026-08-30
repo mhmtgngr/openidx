@@ -499,6 +499,10 @@ func (s *Service) handleMagicLinkVerify(c *gin.Context) {
 		oauthParams["session_id"] = session.ID
 	}
 
+	if !s.assignmentGateAllows(c, oauthParams["client_id"], userID) {
+		return
+	}
+
 	// Build the authorization code manually (since this is a redirect, not a JSON response)
 	code := GenerateRandomToken(32)
 	authCode := &AuthorizationCode{

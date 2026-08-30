@@ -1205,3 +1205,23 @@ func TestValidateDarkModeBind(t *testing.T) {
 		})
 	}
 }
+
+func TestAccessAssignmentEnforceDefaultsOff(t *testing.T) {
+	t.Setenv("ACCESS_ASSIGNMENT_ENFORCE", "")
+	cfg, err := Load("test")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.AccessAssignmentEnforce {
+		t.Error("ACCESS_ASSIGNMENT_ENFORCE must default to false: the first deploy reports, it does not remove access")
+	}
+
+	t.Setenv("ACCESS_ASSIGNMENT_ENFORCE", "true")
+	cfg, err = Load("test")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.AccessAssignmentEnforce {
+		t.Error("ACCESS_ASSIGNMENT_ENFORCE=true must enable enforcement")
+	}
+}
