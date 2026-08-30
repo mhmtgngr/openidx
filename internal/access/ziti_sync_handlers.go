@@ -124,14 +124,14 @@ func (s *Service) handleGetUnsyncedUsers(c *gin.Context) {
 // handleGetMyZitiIdentity returns the current user's Ziti identity (self-service).
 // GET /api/v1/access/ziti/sync/my-identity
 func (s *Service) handleGetMyZitiIdentity(c *gin.Context) {
-	userID, exists := c.Get("user_id")
-	if !exists {
-		// In dev mode, try query param
-		userID = c.Query("user_id")
-		if userID == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
-			return
-		}
+	// Caller identity comes from the verified token only — never from a query
+	// param: under SoftAuth (development) an unauthenticated request still
+	// reaches this handler, and a ?user_id= override would expose any user's
+	// overlay identity.
+	userID := c.GetString("user_id")
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
 	}
 
 	org, oerr := orgctx.From(c.Request.Context())
