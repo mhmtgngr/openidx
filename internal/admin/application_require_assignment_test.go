@@ -154,7 +154,10 @@ func TestApplicationReadPathsReturnRequireAssignment(t *testing.T) {
 	}
 	seen := map[string]bool{}
 	for _, a := range apps {
-		seen[a.ID] = a.RequireAssignment
+		if a.RequireAssignment == nil {
+			t.Fatalf("ListApplications (service-level, not the gated handler) returned a nil require_assignment for %s", a.ID)
+		}
+		seen[a.ID] = *a.RequireAssignment
 	}
 	if !seen[gatedID] {
 		t.Errorf("list did not report require_assignment=true for the gated application")
@@ -184,4 +187,100 @@ func TestApplicationReadPathsReturnRequireAssignment(t *testing.T) {
 	if v != false {
 		t.Errorf("require_assignment = %v, want false", v)
 	}
+}
+
+// TestListApplicationsRequireAssignmentAdminOnly is the disclosure guard: the
+// applications LIST endpoint (unlike the detail endpoint) is deliberately
+// reachable by any authenticated org user because the end-user Access
+// Requests page reads it. require_assignment marks which applications are
+// assignment-gated, so it must only ever reach an admin caller — and for an
+// admin it must still carry a real `false`, not be silently dropped by
+// omitempty, or "not disclosed to you" becomes indistinguishable from "this
+// app isn't gated".
+func TestListApplicationsRequireAssignmentAdminOnly(t *testing.T) {
+	db, cleanup := setupPAMTestDB(t)
+	if db == nil {
+		return
+	}
+	defer cleanup()
+
+	gin.SetMode(gin.TestMode)
+	seedCtx := orgctx.WithBypassRLS(context.Background())
+
+	const (
+		orgID   = "00000000-0000-0000-0000-0000000000d1"
+		gatedID = "11111111-0000-0000-0000-0000000000d1"
+		openID  = "11111111-0000-0000-0000-0000000000d2"
+	)
+	exec := func(q string, args ...interface{}) {
+		t.Helper()
+		if _, err := db.Pool.Exec(seedCtx, q, args...); err != nil {
+			t.Fatalf("seed (%s): %v", q, err)
+		}
+	}
+	exec(`INSERT INTO organizations (id, name, slug) VALUES ($1, 'Org D (ra)', 'org-d-ra')`, orgID)
+	exec(`INSERT INTO applications (id, client_id, name, type, enabled, require_assignment, org_id)
+		VALUES ($1, 'ra-client-gated-d', 'Gated App D', 'web', true, true, $2)`, gatedID, orgID)
+	exec(`INSERT INTO applications (id, client_id, name, type, enabled, require_assignment, org_id)
+		VALUES ($1, 'ra-client-open-d', 'Open App D', 'web', true, false, $2)`, openID, orgID)
+
+	s := &Service{db: db, logger: zap.NewNop()}
+	ctx := orgctx.With(context.Background(), orgctx.Org{ID: orgID})
+
+	list := func(roles []string) []map[string]interface{} {
+		t.Helper()
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Set("roles", roles)
+		// limit=100 so the default limit-of-1 doesn't truncate the two seeded apps.
+		c.Request = httptest.NewRequest("GET", "/api/v1/applications?limit=100", nil).WithContext(ctx)
+		s.handleListApplications(c)
+		if w.Code != 200 {
+			t.Fatalf("handleListApplications (roles=%v): status = %d, body = %s", roles, w.Code, w.Body.String())
+		}
+		var raw []map[string]interface{}
+		if err := json.Unmarshal(w.Body.Bytes(), &raw); err != nil {
+			t.Fatalf("bad json: %v", err)
+		}
+		return raw
+	}
+	byID := func(raw []map[string]interface{}) map[string]map[string]interface{} {
+		m := map[string]map[string]interface{}{}
+		for _, a := range raw {
+			m[a["id"].(string)] = a
+		}
+		return m
+	}
+
+	t.Run("admin receives the real value, false included", func(t *testing.T) {
+		apps := byID(list([]string{"admin"}))
+		v, ok := apps[gatedID]["require_assignment"]
+		if !ok {
+			t.Fatalf("admin list omits require_assignment for the gated app: %v", apps[gatedID])
+		}
+		if v != true {
+			t.Errorf("gated app require_assignment = %v, want true", v)
+		}
+		v, ok = apps[openID]["require_assignment"]
+		if !ok {
+			t.Fatalf("admin list omits require_assignment for the open app — false must not be hidden: %v", apps[openID])
+		}
+		if v != false {
+			t.Errorf("open app require_assignment = %v, want false", v)
+		}
+	})
+
+	t.Run("non-admin does not receive the key at all", func(t *testing.T) {
+		apps := byID(list([]string{"user"}))
+		for id, a := range apps {
+			if v, ok := a["require_assignment"]; ok {
+				t.Errorf("non-admin list leaked require_assignment for %s: %v", id, v)
+			}
+		}
+		// Sanity: the endpoint still worked and returned the seeded apps, it just
+		// omitted the gated field — this isn't accidentally passing on an empty list.
+		if len(apps) < 2 {
+			t.Fatalf("expected both seeded apps in the non-admin list, got %d", len(apps))
+		}
+	})
 }

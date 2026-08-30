@@ -15,6 +15,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/ai"
+	"github.com/openidx/openidx/internal/auth"
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/orgctx"
@@ -80,10 +81,15 @@ type Application struct {
 	RedirectURIs []string `json:"redirect_uris"`
 	Enabled      bool     `json:"enabled"`
 	// RequireAssignment mirrors applications.require_assignment: the opt-in OIDC
-	// gate that refuses a token to a caller who is not assigned. Always returned
-	// (no omitempty) so the console can render the control's current state —
-	// false must be distinguishable from absent.
-	RequireAssignment bool      `json:"require_assignment"`
+	// gate that refuses a token to a caller who is not assigned. A *bool so
+	// "absent" (nil, omitted from the JSON) and "present and false" are
+	// distinguishable: the detail endpoint (admin-only) and an admin caller of
+	// the list endpoint always get the real value, including false; the list
+	// endpoint is also read by any authenticated org user (the end-user Access
+	// Requests page), and for a non-admin caller the field is left nil so the
+	// key is omitted entirely rather than leaking which applications are
+	// assignment-gated.
+	RequireAssignment *bool     `json:"require_assignment,omitempty"`
 	CreatedAt         time.Time `json:"created_at"`
 	UpdatedAt         time.Time `json:"updated_at"`
 }
@@ -1446,6 +1452,17 @@ func (s *Service) handleListApplications(c *gin.Context) {
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
+
+	// This route is intentionally reachable by any authenticated org user (the
+	// end-user Access Requests page reads it), unlike the admin-only detail
+	// endpoint. require_assignment marks which applications are assignment-
+	// gated, so strip it for non-admins rather than disclose that to everyone.
+	if isAdmin, _ := auth.IsAdminInContext(c); !isAdmin {
+		for i := range apps {
+			apps[i].RequireAssignment = nil
+		}
+	}
+
 	c.Header("X-Total-Count", fmt.Sprintf("%d", totalCount))
 	c.JSON(200, apps)
 }
