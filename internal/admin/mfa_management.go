@@ -187,6 +187,11 @@ func (s *Service) handleCreateMFAPolicy(c *gin.Context) {
 		return
 	}
 
+	if err := validateMFAConditions(req.Conditions); err != nil {
+		respondError(c, nil, apperrors.BadRequest(err.Error()))
+		return
+	}
+
 	conditions := req.Conditions
 	if conditions == nil {
 		conditions = json.RawMessage("{}")
@@ -267,6 +272,13 @@ func (s *Service) handleUpdateMFAPolicy(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		respondError(c, nil, apperrors.BadRequest("Invalid request body"))
 		return
+	}
+
+	if req.Conditions != nil {
+		if err := validateMFAConditions(*req.Conditions); err != nil {
+			respondError(c, nil, apperrors.BadRequest(err.Error()))
+			return
+		}
 	}
 
 	sets := []string{"updated_at = NOW()"}
