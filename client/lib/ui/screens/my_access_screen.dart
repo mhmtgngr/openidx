@@ -227,20 +227,21 @@ class _Section extends StatelessWidget {
   }
 }
 
-/// Shows a message without assuming the widget is still mounted afterwards.
-void _say(BuildContext context, String message) {
-  if (!context.mounted) return;
-  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+/// Messaging takes the messenger captured BEFORE any await rather than a
+/// BuildContext, so nothing reaches for the element tree across an async gap.
+void _say(ScaffoldMessengerState messenger, String message) {
+  messenger.showSnackBar(SnackBar(content: Text(message)));
 }
 
-Future<void> _openUrl(BuildContext context, String url, String name) async {
+Future<void> _openUrl(
+    ScaffoldMessengerState messenger, String url, String name) async {
   final uri = Uri.tryParse(url);
   if (uri == null) {
-    _say(context, 'Could not open $name: bad address');
+    _say(messenger, 'Could not open $name: bad address');
     return;
   }
   if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
-    _say(context, 'Could not open $name');
+    _say(messenger, 'Could not open $name');
   }
 }
 
@@ -261,7 +262,8 @@ class _AppTile extends StatelessWidget {
         subtitle: app.description.isEmpty ? null : Text(app.description),
         trailing: app.canOpen
             ? TextButton(
-                onPressed: () => _openUrl(context, app.url, app.name),
+                onPressed: () => _openUrl(
+                    ScaffoldMessenger.of(context), app.url, app.name),
                 child: const Text('Open'),
               )
             : null,
@@ -302,16 +304,17 @@ class _ZitiTile extends ConsumerWidget {
   }
 
   Future<void> _connect(BuildContext context, WidgetRef ref) async {
+    final messenger = ScaffoldMessenger.of(context);
     try {
       final where = await ref.read(engineClientProvider).zitiDial(service.name);
       _say(
-        context,
+        messenger,
         where.isEmpty
             ? 'Connected to ${service.name}'
             : 'Connect ${service.name} at $where',
       );
     } catch (e) {
-      _say(context, 'Could not connect to ${service.name}: $e');
+      _say(messenger, 'Could not connect to ${service.name}: $e');
     }
   }
 }
@@ -361,34 +364,34 @@ class _ResourceTile extends ConsumerWidget {
       };
 
   Future<void> _act(BuildContext context, WidgetRef ref) async {
+    final messenger = ScaffoldMessenger.of(context);
     switch (resource.actionKind) {
       case 'open_url':
-        await _openUrl(context, resource.actionUrl, resource.name);
+        await _openUrl(messenger, resource.actionUrl, resource.name);
       case 'broker_connect':
         try {
-          final url = await ref
+          final result = await ref
               .read(engineClientProvider)
               .pamConnect(resource.actionTarget);
-          if (url.url.isNotEmpty) {
-            await _openUrl(context, url.url, resource.name);
+          if (result.url.isNotEmpty) {
+            await _openUrl(messenger, result.url, resource.name);
           } else {
-            _say(context, 'Connected to ${resource.name}');
+            _say(messenger, 'Connected to ${resource.name}');
           }
         } catch (e) {
-          _say(context, 'Could not connect to ${resource.name}: $e');
+          _say(messenger, 'Could not connect to ${resource.name}: $e');
         }
       case 'request':
         try {
-          await ref
-              .read(engineClientProvider)
-              .pamRequest(resource.actionTarget, 'Requested from the OpenIDX app');
-          _say(context, 'Request sent for ${resource.name}');
+          await ref.read(engineClientProvider).pamRequest(
+              resource.actionTarget, 'Requested from the OpenIDX app');
+          _say(messenger, 'Request sent for ${resource.name}');
           ref.invalidate(myRequestsProvider);
         } catch (e) {
-          _say(context, 'Could not send the request: $e');
+          _say(messenger, 'Could not send the request: $e');
         }
       default:
-        _say(context, 'Nothing to do for ${resource.name}');
+        _say(messenger, 'Nothing to do for ${resource.name}');
     }
   }
 }
@@ -422,27 +425,29 @@ class _PamTile extends ConsumerWidget {
   }
 
   Future<void> _connect(BuildContext context, WidgetRef ref) async {
+    final messenger = ScaffoldMessenger.of(context);
     try {
       final result = await ref.read(engineClientProvider).pamConnect(entry.id);
       if (result.url.isNotEmpty) {
-        await _openUrl(context, result.url, entry.name);
+        await _openUrl(messenger, result.url, entry.name);
       } else {
-        _say(context, 'Session opened for ${entry.name}');
+        _say(messenger, 'Session opened for ${entry.name}');
       }
     } catch (e) {
-      _say(context, 'Could not connect to ${entry.name}: $e');
+      _say(messenger, 'Could not connect to ${entry.name}: $e');
     }
   }
 
   Future<void> _request(BuildContext context, WidgetRef ref) async {
+    final messenger = ScaffoldMessenger.of(context);
     try {
       await ref
           .read(engineClientProvider)
           .pamRequest(entry.id, 'Requested from the OpenIDX app');
-      _say(context, 'Request sent for ${entry.name}');
+      _say(messenger, 'Request sent for ${entry.name}');
       ref.invalidate(myRequestsProvider);
     } catch (e) {
-      _say(context, 'Could not send the request: $e');
+      _say(messenger, 'Could not send the request: $e');
     }
   }
 }

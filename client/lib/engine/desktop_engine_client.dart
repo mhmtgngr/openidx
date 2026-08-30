@@ -242,7 +242,7 @@ class DesktopEngineClient implements EngineClient {
     final json = _asMap(await _send('GET', '/token'), '/token');
     final token = json['access_token'];
     if (token is String && token.isNotEmpty) return token;
-    throw EngineException(0, 'engine returned no access token');
+    throw const EngineException(0, 'engine returned no access token');
   }
 
   @override
