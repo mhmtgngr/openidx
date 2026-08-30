@@ -2285,14 +2285,20 @@ func authorizeAssignmentDecision(requiresAssignment, assigned, enforce bool) (is
 // applications that have no published route: those are reached only by
 // obtaining a token for their OAuth client, so the overlay and reverse-proxy
 // gates (the enforcement points for route-backed applications) never see
-// them. There are FIVE places in this service that mint an authorization
-// code — issueAuthorizationCode, handleAuthorizeConsent,
-// handleAuthorizeConsentV2, issueHostedAuthorizationCode (hosted_mfa.go) and
-// handleMagicLinkVerify (handlers_passwordless.go) — and every one of them
-// must call this before minting; TestEveryMintSiteCallsAssignmentGate in
-// authorize_assignment_test.go guards that invariant in source, because a
-// missed call site here fails silently (a code is issued, no error, no audit
-// record) rather than loudly.
+// them. There are SIX places in this service that mint an authorization
+// code — issueAuthorizationCode, handleAuthorizeConsent, handleCallback,
+// issueHostedAuthorizationCode (hosted_mfa.go), handleMagicLinkVerify
+// (handlers_passwordless.go), and AuthorizeHandler.IssueAuthorizationCode
+// (authorize.go) — and every one of them is gated: the first five call this
+// directly before minting, and the sixth (IssueAuthorizationCode) has no
+// *gin.Context to gate with, so its only caller, handleAuthorizeConsentV2,
+// calls this before invoking it instead. mintSiteDisposition in
+// authorize_assignment_test.go is the canonical list of these six — keep
+// this enumeration in sync with it. TestEveryMintSiteCallsAssignmentGate
+// guards the ordering at each known site and TestNoUngatedMintSite guards
+// that no new mint site (a seventh) goes unlisted; a missed call site fails
+// silently (a code is issued, no error, no audit record) rather than
+// loudly.
 //
 // Returns true when the request may proceed to mint a code. false means a
 // 403 has already been written and the caller must return without minting.
