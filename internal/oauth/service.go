@@ -1908,12 +1908,27 @@ func (s *Service) handleAuthorizeCallback(c *gin.Context) {
 	clientIP := c.ClientIP()
 	userAgent := c.GetHeader("User-Agent")
 	fingerprint := ""
+	location := ""
 	deviceTrusted := false
+	riskScore := 0
+	var riskFactors []string
 	if s.riskService != nil {
 		fingerprint = s.riskService.ComputeDeviceFingerprint(clientIP, userAgent)
+		var lat, lon float64
+		if geo, _ := s.riskService.GeoIPLookup(c.Request.Context(), clientIP); geo != nil {
+			location = geo.City + ", " + geo.Country
+			lat, lon = geo.Lat, geo.Lon
+		}
 		deviceTrusted = s.riskService.IsDeviceTrusted(c.Request.Context(), user.ID, fingerprint)
+		riskScore, riskFactors = s.riskService.CalculateRiskScore(c.Request.Context(), user.ID, clientIP, userAgent, fingerprint, location, lat, lon)
+		// Record the sign-in, as the JSON path does. Without this, logins through
+		// the hosted page — BrowZer, the mobile app, the desktop client, i.e. most
+		// of them — never reached login_history, so they were missing from the
+		// user's recent sign-ins, from login analytics, and from the
+		// impossible-travel/anomaly checks that read that table.
+		s.riskService.RecordLogin(c.Request.Context(), user.ID, clientIP, userAgent, location, lat, lon, fingerprint, true, []string{"password"}, riskScore)
 	}
-	ev := s.evaluateMFA(c.Request.Context(), user, clientIP, userAgent, fingerprint, "", deviceTrusted, 0, nil)
+	ev := s.evaluateMFA(c.Request.Context(), user, clientIP, userAgent, fingerprint, location, deviceTrusted, riskScore, riskFactors)
 	if ev.DenyAccess {
 		s.logger.Warn("hosted login denied by risk assessment",
 			zap.String("user_id", user.ID), zap.Int("risk_score", ev.RiskScore))
@@ -1922,7 +1937,7 @@ func (s *Service) handleAuthorizeCallback(c *gin.Context) {
 		return
 	}
 	if ev.Challenge {
-		s.beginHostedMFA(c, user, oauthParams, loginSession, ev, fingerprint, "")
+		s.beginHostedMFA(c, user, oauthParams, loginSession, ev, fingerprint, location)
 		return
 	}
 

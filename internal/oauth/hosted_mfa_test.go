@@ -236,6 +236,9 @@ func TestHostedLoginRecordsSession(t *testing.T) {
 	if !strings.Contains(fn, "CreateSession(") {
 		t.Error("the hosted login path must create a session, like the JSON path does")
 	}
+	if !strings.Contains(fn, "RecordLogin(") {
+		t.Error("the hosted login path must record the sign-in: login_history feeds recent sign-ins, analytics and the anomaly checks")
+	}
 	if !strings.Contains(fn, "recordSessionAuthMethods(") {
 		t.Error("the hosted login path must stamp the auth methods on the session")
 	}
