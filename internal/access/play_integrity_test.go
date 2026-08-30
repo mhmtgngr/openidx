@@ -1,6 +1,7 @@
 package access
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -66,11 +67,21 @@ func TestPlayIntegrityVerifier_parseAndValidate_PackageMismatch(t *testing.T) {
 func TestPlayIntegrityVerifier_parseAndValidate_TokenTooOld(t *testing.T) {
 	v := &PlayIntegrityVerifier{packageName: "com.openidx.agent", maxTokenAge: 1 * time.Second}
 	staleResp := canonicalResponse("com.openidx.agent", "PLAY_RECOGNIZED", []string{"MEETS_DEVICE_INTEGRITY"})
-	// Replace the "now" timestamp with one 10 minutes ago.
-	staleResp = strings.Replace(staleResp,
-		"\"timestampMillis\": \""+millis(time.Now())+"\"",
-		"\"timestampMillis\": \""+millis(time.Now().Add(-10*time.Minute))+"\"",
-		1)
+	// Replace the "now" timestamp with one 10 minutes ago. We match the
+	// timestampMillis field by name (regexp) rather than reconstructing its
+	// exact current value with a second time.Now() call: canonicalResponse
+	// already called time.Now() once when it built staleResp, and calling
+	// time.Now() again here to build the search string can straddle a
+	// millisecond boundary, producing a different value that never matches.
+	// strings.Replace would then silently no-op, leaving the original fresh
+	// timestamp in place and making the "too old" assertion below flaky
+	// (require.Error fails intermittently because the token isn't stale).
+	// Asserting the match below turns any future canonicalResponse refactor
+	// that breaks this substitution into a loud failure instead of a flake.
+	timestampField := regexp.MustCompile(`"timestampMillis":\s*"\d+"`)
+	require.True(t, timestampField.MatchString(staleResp), "expected canonicalResponse output to contain a timestampMillis field")
+	staleResp = timestampField.ReplaceAllString(staleResp,
+		`"timestampMillis": "`+millis(time.Now().Add(-10*time.Minute))+`"`)
 	_, err := v.parseAndValidate([]byte(staleResp))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "too old")
