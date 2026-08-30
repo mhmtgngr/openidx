@@ -26,6 +26,12 @@ import (
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
+// sessionSlidingWindow is how far each activity update pushes a session's
+// expiry into the future. It matches the 24h TTL the OAuth login flows create
+// sessions with, turning that fixed TTL into an idle-timeout: the session lives
+// 24h from the LAST activity rather than dying 24h after login regardless of use.
+const sessionSlidingWindow = 24 * time.Hour
+
 // ErrSessionNotFound is the sentinel for a session miss / revoked / expired
 // within the tenant.
 var ErrSessionNotFound = errors.New("session not found")
@@ -168,10 +174,17 @@ func (r *PostgresSessionRepository) UpdateActivity(ctx context.Context, sessionI
 	if err != nil {
 		return err
 	}
+	// Sliding expiry: an actively-used session must not silently die at its
+	// original TTL. Every activity update (the token-refresh path fires one,
+	// debounced ~30s) pushes expires_at forward by the sliding window, so a
+	// user who keeps working stays "active" and visible on My Sessions; an idle
+	// session still lapses naturally once activity stops. GREATEST never shortens
+	// a longer expiry another flow may have set.
+	now := time.Now()
 	result, err := r.db.Pool.Exec(ctx, `
-		UPDATE sessions SET last_seen_at = $2
+		UPDATE sessions SET last_seen_at = $2, expires_at = GREATEST(expires_at, $4)
 		WHERE id = $1 AND org_id = $3 AND (revoked IS NULL OR revoked = false) AND expires_at > NOW()
-	`, sessionID, time.Now(), org.ID)
+	`, sessionID, now, org.ID, now.Add(sessionSlidingWindow))
 	if err != nil {
 		return fmt.Errorf("update session activity: %w", err)
 	}
