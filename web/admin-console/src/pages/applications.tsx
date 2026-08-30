@@ -48,6 +48,9 @@ interface Application {
   redirect_uris: string[]
   enabled: boolean
   pkce_required?: boolean
+  // Opt-in OIDC gate: when true, only assigned users and groups can obtain a
+  // token for this application. Edited in the Manage Access dialog.
+  require_assignment?: boolean
   created_at: string
   updated_at: string
 }
@@ -893,6 +896,7 @@ export function ApplicationsPage() {
         <ManageAppAccessDialog
           appId={manageAccessApp.id}
           appName={manageAccessApp.name}
+          requireAssignment={!!manageAccessApp.require_assignment}
           open={!!manageAccessApp}
           onOpenChange={(open) => !open && setManageAccessApp(null)}
         />

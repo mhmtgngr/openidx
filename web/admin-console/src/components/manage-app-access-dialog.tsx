@@ -4,8 +4,19 @@ import { Trash2, UserPlus } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from './ui/dialog'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from './ui/alert-dialog'
 import { Button } from './ui/button'
 import { Badge } from './ui/badge'
+import { Label } from './ui/label'
 import {
   Select,
   SelectContent,
@@ -31,16 +42,39 @@ interface ManageAppAccessDialogProps {
   appName: string
   open: boolean
   onOpenChange: (open: boolean) => void
+  /**
+   * Current value of applications.require_assignment, from the applications
+   * list. Undefined means the caller did not supply it (an older read path);
+   * the control then renders unchecked, matching the column's default.
+   */
+  requireAssignment?: boolean
 }
 
 // ManageAppAccessDialog is the one-click way an admin grants an application to a
 // user or a group (group grants apply to every member). It lists current
 // assignees and lets the admin revoke them.
-export function ManageAppAccessDialog({ appId, appName, open, onOpenChange }: ManageAppAccessDialogProps) {
+export function ManageAppAccessDialog({
+  appId,
+  appName,
+  open,
+  onOpenChange,
+  requireAssignment = false,
+}: ManageAppAccessDialogProps) {
   const queryClient = useQueryClient()
   const { toast } = useToast()
   const [principalType, setPrincipalType] = useState<'user' | 'group'>('group')
   const [principalId, setPrincipalId] = useState('')
+  // Mirrors the server value so the checkbox reflects a save immediately. When
+  // the dialog is pointed at a different application (or the server value
+  // changes underneath it) the mirror is re-seeded during render — React's
+  // documented way to reset state from a prop, and quieter than an effect.
+  const [gateOn, setGateOn] = useState(requireAssignment)
+  const [gateSeed, setGateSeed] = useState({ appId, requireAssignment })
+  if (gateSeed.appId !== appId || gateSeed.requireAssignment !== requireAssignment) {
+    setGateSeed({ appId, requireAssignment })
+    setGateOn(requireAssignment)
+  }
+  const [confirmLockout, setConfirmLockout] = useState(false)
 
   const assignmentsKey = ['app-assignments', appId]
 
@@ -106,6 +140,41 @@ export function ManageAppAccessDialog({ appId, appName, open, onOpenChange }: Ma
     },
   })
 
+  // The only write path for applications.require_assignment. It rides the same
+  // allowlisted application updater as every other field, so nothing else on the
+  // application row is touched.
+  const requireAssignmentMutation = useMutation({
+    mutationFn: (next: boolean) =>
+      api.put(`/api/v1/applications/${appId}`, { require_assignment: next }),
+    onSuccess: (_data, next) => {
+      setGateOn(next)
+      queryClient.invalidateQueries({ queryKey: ['applications'] })
+      toast({
+        title: next ? 'Assignment now required' : 'Assignment no longer required',
+        description: next
+          ? `Only assigned users and groups can sign in to ${appName}.`
+          : `Any user who can reach ${appName} may sign in to it.`,
+        variant: 'success',
+      })
+    },
+    onError: (err: Error) => {
+      toast({ title: 'Failed to save', description: err.message, variant: 'destructive' })
+    },
+  })
+
+  const assigneeCount = assignments?.length ?? 0
+
+  // Turning the gate ON with nothing assigned locks every user out, so that one
+  // combination asks first. It is a warning, not a veto: an admin may be about
+  // to assign principals. Every other transition saves straight away.
+  const onToggleRequireAssignment = (next: boolean) => {
+    if (next && !isLoading && assigneeCount === 0) {
+      setConfirmLockout(true)
+      return
+    }
+    requireAssignmentMutation.mutate(next)
+  }
+
   const options = principalType === 'group' ? groups : users
 
   return (
@@ -166,6 +235,34 @@ export function ManageAppAccessDialog({ appId, appName, open, onOpenChange }: Ma
           </div>
 
           <div className="border-t pt-3">
+            <div className="flex items-start gap-2">
+              <input
+                type="checkbox"
+                id="require_assignment"
+                className="mt-1 rounded"
+                checked={gateOn}
+                disabled={requireAssignmentMutation.isPending}
+                onChange={(e) => onToggleRequireAssignment(e.target.checked)}
+              />
+              <div className="space-y-1">
+                <Label htmlFor="require_assignment">Require assignment to sign in</Label>
+                <p className="text-sm text-muted-foreground">
+                  When enabled, only users or groups assigned above can obtain a token for
+                  this application. Users who are not assigned will be refused at sign-in.
+                  Leave this off until the assignment list below is complete.
+                </p>
+                {!isLoading && (
+                  <p className="text-sm text-muted-foreground">
+                    {assigneeCount === 0
+                      ? 'No principals are assigned — enabling this would refuse everyone.'
+                      : `${assigneeCount} principal${assigneeCount === 1 ? '' : 's'} assigned and would keep access.`}
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="border-t pt-3">
             <p className="mb-2 text-sm font-medium">Current access</p>
             {isLoading ? (
               <p className="text-sm text-muted-foreground">Loading…</p>
@@ -202,6 +299,29 @@ export function ManageAppAccessDialog({ appId, appName, open, onOpenChange }: Ma
           </div>
         </div>
       </DialogContent>
+
+      <AlertDialog open={confirmLockout} onOpenChange={setConfirmLockout}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Require assignment for {appName}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Nobody is assigned to {appName} yet. Turning this on now refuses every user
+              at sign-in until you assign a user or a group.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                setConfirmLockout(false)
+                requireAssignmentMutation.mutate(true)
+              }}
+            >
+              Require assignment
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Dialog>
   )
 }
