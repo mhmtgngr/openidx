@@ -141,6 +141,13 @@ func (s *Service) beginHostedMFA(c *gin.Context, user *identity.User, oauthParam
 // login page it follows. No JavaScript: code factors submit a form, push starts
 // a challenge and then waits on a meta-refresh page.
 func (s *Service) renderMFAPage(c *gin.Context, mfaSession string, methods []string, selected, errorMsg, notice string) {
+	if len(methods) == 0 {
+		// Nothing left this challenge can be completed with (every offered
+		// factor was removed mid-flow). Refuse rather than index into an empty
+		// list — and never fall through to issuing a code.
+		s.renderExpiredMFA(c)
+		return
+	}
 	b := s.loadLoginBranding(c.Request.Context())
 
 	if selected == "" || !containsString(methods, selected) {

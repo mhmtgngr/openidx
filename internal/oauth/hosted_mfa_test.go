@@ -243,3 +243,49 @@ func TestHostedLoginRecordsSession(t *testing.T) {
 		t.Error("the hosted login path should issue through the shared helper so the session is linked to the code")
 	}
 }
+
+// TestRenderMFAPageWithNoMethods: every offered factor can disappear mid-flow
+// (an admin removes the user's TOTP while they are on the challenge page). The
+// page must refuse rather than index into an empty method list — and must never
+// fall through to issuing anything.
+func TestRenderMFAPageWithNoMethods(t *testing.T) {
+	s := &Service{logger: zap.NewNop()}
+	c, w := newRenderContext(t)
+
+	s.renderMFAPage(c, "sess-1", nil, "totp", "", "")
+
+	body := w.Body.String()
+	if !strings.Contains(body, "expired") {
+		t.Errorf("expected the expired/refused page, got: %s", body)
+	}
+	if strings.Contains(body, "/oauth/authorize/mfa\"") {
+		t.Error("must not render a verify form with no completable factor")
+	}
+}
+
+// TestHostedMFAStepsAreRateLimited pins the hosted challenge onto the strict
+// auth tier. Its JSON twin (/oauth/mfa-verify) has always been there; without
+// the same treatment the server-rendered TOTP form would accept unlimited
+// guesses against a 5-minute session. The push wait page is the exception: it
+// refreshes every 3s by design and only reads one challenge's status.
+func TestHostedMFAStepsAreRateLimited(t *testing.T) {
+	src, err := os.ReadFile("../common/middleware/ratelimit.go")
+	if err != nil {
+		t.Fatalf("read ratelimit.go: %v", err)
+	}
+	text := string(src)
+	authAt := strings.Index(text, "var authPaths")
+	pollAt := strings.Index(text, "var pollPaths")
+	if authAt < 0 || pollAt < 0 {
+		t.Fatal("could not find the path lists")
+	}
+	authBlock := text[authAt:pollAt]
+	pollBlock := text[pollAt:]
+
+	if !strings.Contains(authBlock, `"/oauth/authorize/mfa"`) {
+		t.Error("the hosted MFA steps must be on the strict auth rate-limit tier")
+	}
+	if !strings.Contains(pollBlock, `"/oauth/authorize/mfa/wait"`) {
+		t.Error("the hosted push wait page must be exempt as a status poll")
+	}
+}
