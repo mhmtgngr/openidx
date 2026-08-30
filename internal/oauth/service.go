@@ -1929,37 +1929,18 @@ func (s *Service) handleAuthorizeCallback(c *gin.Context) {
 	// Clean up login session
 	s.redis.Client.Del(c.Request.Context(), "login_session:"+loginSession)
 
-	// Generate authorization code
-	code := GenerateRandomToken(32)
-	authCode := &AuthorizationCode{
-		Code:                code,
-		ClientID:            oauthParams["client_id"],
-		UserID:              user.ID,
-		RedirectURI:         oauthParams["redirect_uri"],
-		Scope:               oauthParams["scope"],
-		State:               oauthParams["state"],
-		Nonce:               oauthParams["nonce"],
-		CodeChallenge:       oauthParams["code_challenge"],
-		CodeChallengeMethod: oauthParams["code_challenge_method"],
+	// Record the session, exactly as the JSON login path does. Without this a
+	// login through the hosted page produced no `sessions` row at all: the
+	// user's own "My Sessions" never listed their BrowZer / mobile / desktop
+	// sign-ins, and an admin revoking sessions could not reach them.
+	if session, serr := s.identityService.CreateSession(c.Request.Context(), user.ID, oauthParams["client_id"], clientIP, userAgent, 24*time.Hour); serr != nil {
+		s.logger.Warn("Failed to create session during hosted login", zap.Error(serr))
+	} else if session != nil {
+		oauthParams["session_id"] = session.ID
+		s.recordSessionAuthMethods(c.Request.Context(), session.ID, []string{"pwd"})
 	}
 
-	if err := s.CreateAuthorizationCode(c.Request.Context(), authCode); err != nil {
-		// DB write failure: a transient outage becomes a retryable 503, a real
-		// error stays a 500 (see unavailable.go).
-		writeServerOrUnavailable(c, err)
-		return
-	}
-
-	// 302 redirect to client with auth code (standard OIDC flow)
-	redirectURL, _ := url.Parse(oauthParams["redirect_uri"])
-	query := redirectURL.Query()
-	query.Set("code", code)
-	if oauthParams["state"] != "" {
-		query.Set("state", oauthParams["state"])
-	}
-	redirectURL.RawQuery = query.Encode()
-
-	c.Redirect(302, redirectURL.String())
+	s.issueHostedAuthorizationCode(c, oauthParams, user.ID)
 }
 
 // handleLogin handles username/password login for direct OpenIDX authentication

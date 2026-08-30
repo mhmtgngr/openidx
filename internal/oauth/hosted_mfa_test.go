@@ -154,7 +154,7 @@ func TestHostedLoginEnforcesMFA(t *testing.T) {
 
 	evalAt := strings.Index(fn, "s.evaluateMFA(")
 	challengeAt := strings.Index(fn, "s.beginHostedMFA(")
-	issueAt := strings.Index(fn, "s.CreateAuthorizationCode(")
+	issueAt := strings.Index(fn, "s.issueHostedAuthorizationCode(")
 
 	if evalAt < 0 {
 		t.Fatal("handleAuthorizeCallback must evaluate MFA (s.evaluateMFA) — without it the hosted login page skips the second factor")
@@ -164,6 +164,9 @@ func TestHostedLoginEnforcesMFA(t *testing.T) {
 	}
 	if issueAt < 0 {
 		t.Fatal("handleAuthorizeCallback should still issue a code when no factor is required")
+	}
+	if strings.Contains(fn[:issueAt], "s.CreateAuthorizationCode(") {
+		t.Error("the hosted path must not mint a code of its own; issue through the shared helper")
 	}
 	if evalAt > issueAt || challengeAt > issueAt {
 		t.Error("the MFA evaluation and challenge must come BEFORE the authorization code is issued")
@@ -205,5 +208,38 @@ func TestSessionMethodsHonoursPinnedList(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestHostedLoginRecordsSession guards the other half of the divergence between
+// the two login implementations: the server-rendered path issued a code without
+// ever calling CreateSession, so a BrowZer / mobile / desktop sign-in produced
+// no sessions row — the user's own "My Sessions" never listed it and an admin
+// revoking sessions could not reach it.
+func TestHostedLoginRecordsSession(t *testing.T) {
+	src, err := os.ReadFile("service.go")
+	if err != nil {
+		t.Fatalf("read service.go: %v", err)
+	}
+	fn := string(src)
+	start := strings.Index(fn, "func (s *Service) handleAuthorizeCallback(")
+	if start < 0 {
+		t.Fatal("handleAuthorizeCallback not found")
+	}
+	fn = fn[start:]
+	end := strings.Index(fn, "\n}\n")
+	if end < 0 {
+		t.Fatal("could not delimit handleAuthorizeCallback")
+	}
+	fn = fn[:end]
+
+	if !strings.Contains(fn, "CreateSession(") {
+		t.Error("the hosted login path must create a session, like the JSON path does")
+	}
+	if !strings.Contains(fn, "recordSessionAuthMethods(") {
+		t.Error("the hosted login path must stamp the auth methods on the session")
+	}
+	if !strings.Contains(fn, "s.issueHostedAuthorizationCode(") {
+		t.Error("the hosted login path should issue through the shared helper so the session is linked to the code")
 	}
 }
