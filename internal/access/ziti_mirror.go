@@ -294,13 +294,6 @@ func (a *mirrorAttributor) candidateServiceNames(serviceRoles []string) []string
 	return out
 }
 
-// attributionSkip explains why a policy could not be attributed. It is carried
-// into the stats and the log so a partial mirror is legible.
-type attributionSkip struct {
-	Name   string
-	Reason string
-}
-
 // attribute resolves an org for the given serviceRoles. It requires EXACTLY one
 // matching org: zero (platform-wide or unknown services) and more than one both
 // mean "skip and count".
