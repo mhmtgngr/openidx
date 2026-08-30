@@ -474,6 +474,10 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.GET("/users/:id/access-map", adminOnly, svc.handleUserAccessMap)
 		api.POST("/users/:id/kill-switch", adminOnly, svc.handleUserKillSwitch)
 
+		// Assignment report: who loses reach if ACCESS_ASSIGNMENT_ENFORCE is
+		// flipped on — diffs today's Ziti reach against assignment-derived reach.
+		api.GET("/assignment-report", adminOnly, svc.handleAssignmentReport)
+
 		// Cross-pillar device correlation: a user's devices with IAM trust +
 		// Ziti compliance/posture side by side, and a device-scoped revoke.
 		api.GET("/users/:id/devices", adminOnly, svc.handleUserDevices)
