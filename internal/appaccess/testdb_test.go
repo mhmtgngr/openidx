@@ -10,11 +10,15 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/testsupport"
 )
 
 // setupTestDB starts a throwaway Postgres and creates only the tables this
-// package reads. It returns (nil, nil) when Docker is unavailable so the suite
-// stays green on machines without it — the same contract as
+// package reads. It skips the calling test cleanly when no container runtime
+// is reachable — via testsupport.RunOrSkip, which recovers the panic that
+// testcontainers-go raises in that case (see
+// internal/common/testsupport/container.go) — so the suite stays green on
+// machines without Docker, the same contract as
 // internal/portal/device_org_scope_test.go:20.
 func setupTestDB(t *testing.T) (*database.PostgresDB, func()) {
 	t.Helper()
@@ -30,14 +34,13 @@ func setupTestDB(t *testing.T) (*database.PostgresDB, func()) {
 		},
 		WaitingFor: wait.ForListeningPort("5432/tcp").WithStartupTimeout(60 * time.Second),
 	}
-	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
-		ContainerRequest: req,
-		Started:          true,
+	container := testsupport.RunOrSkip(t, req.Image, func() (testcontainers.Container, error) {
+		return testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+			ContainerRequest: req,
+			Started:          true,
+		})
 	})
-	if err != nil {
-		t.Skipf("docker unavailable, skipping DB-backed test: %v", err)
-		return nil, nil
-	}
+
 	host, _ := container.Host(ctx)
 	port, _ := container.MappedPort(ctx, "5432")
 	dsn := fmt.Sprintf("postgres://test:test@%s:%s/testdb?sslmode=disable", host, port.Port())

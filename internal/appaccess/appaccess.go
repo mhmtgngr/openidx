@@ -111,7 +111,11 @@ func PrincipalsForApp(ctx context.Context, db *database.PostgresDB, appID, orgID
 		}
 		p.UserIDs = append(p.UserIDs, id)
 	}
+	err = rows.Err()
 	rows.Close()
+	if err != nil {
+		return p, fmt.Errorf("appaccess: iterate user principals: %w", err)
+	}
 
 	rows, err = db.Pool.Query(ctx,
 		`SELECT group_id FROM group_application_assignments WHERE application_id = $1 AND org_id = $2`,
