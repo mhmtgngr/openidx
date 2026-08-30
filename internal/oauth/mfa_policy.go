@@ -3,6 +3,8 @@ package oauth
 import (
 	"context"
 
+	"go.uber.org/zap"
+
 	"github.com/openidx/openidx/internal/identity"
 )
 
@@ -31,6 +33,9 @@ type mfaEvaluation struct {
 	DenyAccess bool
 	// SkipMFA means a trusted browser at acceptable risk stands in for the factor.
 	SkipMFA bool
+	// PolicyRequired reports that an admin-authored mfa_policies row matched this
+	// login. It can only ever ADD to the challenge decision, never remove from it.
+	PolicyRequired bool
 	// Challenge is the final answer: this login must be completed with a second
 	// factor before an authorization code may be issued.
 	Challenge   bool
@@ -152,6 +157,35 @@ func (s *Service) evaluateMFA(
 	}
 
 	ev.SkipMFA = ev.BrowserTrusted && ev.RiskScore < 70
-	ev.Challenge = ev.Enabled && !ev.SkipMFA && (ev.RequireMFA || totpEnabled)
+
+	// A policy can only RAISE the requirement, so evaluate it after everything
+	// else that feeds the decision. Failing open (treating an error as "no
+	// policy matched") is deliberate: this evaluator ORs the policy in, it
+	// never uses it to skip a challenge the risk engine or TOTP already
+	// require, so a DB hiccup here just reproduces today's pre-policy
+	// behaviour instead of locking someone out.
+	if s.identityService != nil && user != nil {
+		if required, _, err := s.identityService.IsMFARequired(ctx, user.ID, clientIP); err != nil {
+			s.logger.Warn("MFA policy evaluation failed, treating as not required", zap.Error(err))
+		} else {
+			ev.PolicyRequired = required
+		}
+	}
+
+	ev.Challenge = challengeRequired(ev.Enabled, ev.SkipMFA, ev.RequireMFA, totpEnabled, ev.PolicyRequired)
 	return ev
+}
+
+// challengeRequired is the single rule deciding whether a password login must be
+// completed with a second factor.
+//
+// A policy can only RAISE the requirement: it is ORed in, never consulted to
+// skip. A user with no enrolled factor is never challenged whatever the policy
+// says — requiring a factor from someone who has none is a lockout with extra
+// steps; they belong in the enrollment-gap report instead.
+func challengeRequired(enabled, skipMFA, riskRequires, totpEnabled, policyRequires bool) bool {
+	if !enabled || skipMFA {
+		return false
+	}
+	return riskRequires || totpEnabled || policyRequires
 }
