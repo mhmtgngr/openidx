@@ -505,15 +505,27 @@ func TestRefreshDoesNotDeleteUnattributedRows(t *testing.T) {
 	defer cleanup()
 	ctx := context.Background()
 
+	// The fixture needs BOTH shapes. An ATTRIBUTABLE policy is what makes the
+	// prune path actually run: pruneMirrorPolicies refuses to act on an empty
+	// `present` set, so a listing containing only the unattributable policy would
+	// let the row survive for the wrong reason — the guard, not the rule — and a
+	// build that stopped counting skipped policies as present would still pass.
+	mustExec(t, db, `INSERT INTO proxy_routes (org_id, to_url, ziti_enabled, ziti_service_name)
+	                 VALUES ($1,'http://a.internal:80',true,'svc-a')`, mirrorOrgA)
+
 	// No route names openidx-console, so the policy is unattributable — but a row
 	// for it already exists (written when a route did exist, say).
 	mustExec(t, db, `INSERT INTO ziti_service_policies (ziti_id, name, policy_type, service_roles, identity_roles, org_id)
 	                 VALUES ('pol-platform','openidx-console-dial','Dial','["#openidx-console"]','["#enrolled-users"]',$1)`, mirrorOrgA)
 
 	f := &fakeController{
+		services: []ZitiServiceInfo{{ID: "s-a", Name: "svc-a"}},
 		policies: []ZitiServicePolicyInfo{
 			{ID: "pol-platform", Name: "openidx-console-dial", Type: "Dial",
 				ServiceRoles: []string{"#openidx-console"}, IdentityRoles: []string{"#enrolled-users"}},
+			// Attributable, so `present` is non-empty and the prune really runs.
+			{ID: "pol-a", Name: "openidx-dial-svc-a", Type: "Dial",
+				ServiceRoles: []string{"#svc-a"}, IdentityRoles: []string{"#browzer-users"}},
 		},
 	}
 	zm, closeFn := newFakeZiti(t, f, db)
@@ -525,6 +537,12 @@ func TestRefreshDoesNotDeleteUnattributedRows(t *testing.T) {
 	}
 	if stats.PoliciesSkipped != 1 {
 		t.Fatalf("want the policy skipped, got %+v", stats)
+	}
+	// Precondition for this test to mean anything: the prune had something to
+	// compare against. Without the attributable policy, `present` is empty and
+	// pruneMirrorPolicies short-circuits before it can delete anything.
+	if _, _, _, _, found := mirrorRow(t, db, "pol-a"); !found {
+		t.Fatal("fixture precondition: the attributable policy must be mirrored so the prune path runs")
 	}
 	if stats.PoliciesDeleted != 0 {
 		t.Fatalf("want no deletions, got %d", stats.PoliciesDeleted)
