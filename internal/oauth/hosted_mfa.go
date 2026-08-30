@@ -64,13 +64,19 @@ var hostedMFAMethodLabels = map[string]string{
 // createMFASession stashes the partially-authenticated login in Redis exactly
 // the way the JSON path does, so /oauth/mfa-verify, /oauth/mfa-send-otp and the
 // hosted pages below all read the same session shape.
-func (s *Service) createMFASession(ctx context.Context, userID string, oauthParams map[string]string, riskScore int, fingerprint, location string) (string, error) {
+func (s *Service) createMFASession(ctx context.Context, userID string, oauthParams map[string]string, riskScore int, fingerprint, location string, methods []string) (string, error) {
 	mfaSession := GenerateRandomToken(32)
 	mfaData := map[string]string{
 		"user_id":     userID,
 		"risk_score":  fmt.Sprintf("%d", riskScore),
 		"fingerprint": fingerprint,
 		"location":    location,
+		// The factors this challenge may be completed with, decided ONCE by the
+		// risk evaluation. Without pinning them here, a later step could
+		// re-derive them from enrollment alone and quietly drop a restriction
+		// the risk policy imposed (e.g. "this login needs a phishing-resistant
+		// factor"), letting the user finish with a weaker one instead.
+		"allowed_methods": strings.Join(methods, ","),
 	}
 	for k, v := range oauthParams {
 		mfaData[k] = v
@@ -119,7 +125,7 @@ func (s *Service) beginHostedMFA(c *gin.Context, user *identity.User, oauthParam
 		return
 	}
 
-	mfaSession, err := s.createMFASession(c.Request.Context(), user.ID, oauthParams, ev.RiskScore, fingerprint, location)
+	mfaSession, err := s.createMFASession(c.Request.Context(), user.ID, oauthParams, ev.RiskScore, fingerprint, location, ev.Methods)
 	if err != nil {
 		s.logger.Error("failed to create hosted MFA session", zap.Error(err))
 		s.renderLoginPage(c, loginSession, "Could not start verification. Please try again.")
@@ -216,11 +222,13 @@ func (s *Service) handleAuthorizeMFAMethod(c *gin.Context) {
 		s.renderExpiredMFA(c)
 		return
 	}
-	methods := s.hostedMethodsForUser(c.Request.Context(), data["user_id"])
+	methods := s.sessionMethods(c.Request.Context(), data)
 	if len(methods) == 0 {
 		s.renderExpiredMFA(c)
 		return
 	}
+	// renderMFAPage falls back to methods[0] for anything not in the list, so a
+	// forged method here can only pick among the factors this challenge offers.
 	s.renderMFAPage(c, mfaSession, methods, c.PostForm("method"), "", "")
 }
 
@@ -236,6 +244,12 @@ func (s *Service) handleAuthorizeMFASend(c *gin.Context) {
 	userID := data["user_id"]
 	ctx := c.Request.Context()
 
+	if !s.methodAllowed(ctx, data, method) {
+		s.renderMFAPage(c, mfaSession, s.sessionMethods(ctx, data), "",
+			"That verification method is not available for this sign-in.", "")
+		return
+	}
+
 	var err error
 	switch method {
 	case "sms":
@@ -246,7 +260,7 @@ func (s *Service) handleAuthorizeMFASend(c *gin.Context) {
 		err = fmt.Errorf("unsupported method")
 	}
 
-	methods := s.hostedMethodsForUser(ctx, userID)
+	methods := s.sessionMethods(ctx, data)
 	if err != nil {
 		s.logger.Error("hosted MFA: failed to send OTP", zap.String("method", sanitizeForLog(method)), zap.Error(err))
 		s.renderMFAPage(c, mfaSession, methods, method, "Could not send the code. Try another method.", "")
@@ -273,13 +287,15 @@ func (s *Service) handleAuthorizeMFA(c *gin.Context) {
 	// A session pinned to one method (passwordless phone sign-in) must not be
 	// completable with a different, weaker factor.
 	if pinned := requiredMFAMethodFromSession(data); pinned != "" && pinned != method {
-		s.renderMFAPage(c, mfaSession, s.hostedMethodsForUser(c.Request.Context(), data["user_id"]), pinned,
+		s.renderMFAPage(c, mfaSession, s.sessionMethods(c.Request.Context(), data), pinned,
 			"This sign-in must be completed with "+pinned+".", "")
 		return
 	}
-	if !codeEntryMethod(method) {
-		s.renderMFAPage(c, mfaSession, s.hostedMethodsForUser(c.Request.Context(), data["user_id"]), method,
-			"Unsupported verification method.", "")
+	if !codeEntryMethod(method) || !s.methodAllowed(c.Request.Context(), data, method) {
+		// The challenge only accepts a factor it offered: the risk policy may
+		// have narrowed the list, and a posted method must not widen it again.
+		s.renderMFAPage(c, mfaSession, s.sessionMethods(c.Request.Context(), data), "",
+			"That verification method is not available for this sign-in.", "")
 		return
 	}
 
@@ -290,7 +306,7 @@ func (s *Service) handleAuthorizeMFA(c *gin.Context) {
 	valid, verifyErr := s.verifyStepUpFactor(c.Request.Context(), userID, method, code, clientIP, userAgent)
 	if verifyErr != nil || !valid {
 		s.auditMFAResult(userID, clientIP, method, false, trustBrowser)
-		s.renderMFAPage(c, mfaSession, s.hostedMethodsForUser(c.Request.Context(), userID), method,
+		s.renderMFAPage(c, mfaSession, s.sessionMethods(c.Request.Context(), data), method,
 			"Invalid verification code.", "")
 		return
 	}
@@ -310,6 +326,12 @@ func (s *Service) handleAuthorizeMFAPush(c *gin.Context) {
 	}
 	userID := data["user_id"]
 
+	if !s.methodAllowed(c.Request.Context(), data, "push") {
+		s.renderMFAPage(c, mfaSession, s.sessionMethods(c.Request.Context(), data), "",
+			"That verification method is not available for this sign-in.", "")
+		return
+	}
+
 	appName := ""
 	if cid := data["client_id"]; cid != "" {
 		if cl, err := s.GetClient(c.Request.Context(), cid); err == nil && cl != nil {
@@ -324,7 +346,7 @@ func (s *Service) handleAuthorizeMFAPush(c *gin.Context) {
 	})
 	if err != nil {
 		s.logger.Error("hosted MFA: failed to create push challenge", zap.Error(err))
-		s.renderMFAPage(c, mfaSession, s.hostedMethodsForUser(c.Request.Context(), userID), "push",
+		s.renderMFAPage(c, mfaSession, s.sessionMethods(c.Request.Context(), data), "push",
 			"Could not send a push notification. Try another method.", "")
 		return
 	}
@@ -349,19 +371,24 @@ func (s *Service) handleAuthorizeMFAWait(c *gin.Context) {
 
 	challenge, err := s.identityService.GetPushMFAChallenge(c.Request.Context(), challengeID)
 	if err != nil || challenge == nil || challenge.UserID != userID {
-		s.renderMFAPage(c, mfaSession, s.hostedMethodsForUser(c.Request.Context(), userID), "push",
+		s.renderMFAPage(c, mfaSession, s.sessionMethods(c.Request.Context(), data), "push",
 			"That approval request is no longer valid.", "")
 		return
 	}
 
 	switch {
 	case challenge.Status == "approved" && time.Now().Before(challenge.ExpiresAt):
+		if !s.methodAllowed(c.Request.Context(), data, "push") {
+			s.renderMFAPage(c, mfaSession, s.sessionMethods(c.Request.Context(), data), "",
+				"That verification method is not available for this sign-in.", "")
+			return
+		}
 		s.completeHostedMFA(c, mfaSession, data, "push", trustBrowser)
 	case challenge.Status == "denied":
-		s.renderMFAPage(c, mfaSession, s.hostedMethodsForUser(c.Request.Context(), userID), "push",
+		s.renderMFAPage(c, mfaSession, s.sessionMethods(c.Request.Context(), data), "push",
 			"The sign-in was denied on your device.", "")
 	case time.Now().After(challenge.ExpiresAt):
-		s.renderMFAPage(c, mfaSession, s.hostedMethodsForUser(c.Request.Context(), userID), "push",
+		s.renderMFAPage(c, mfaSession, s.sessionMethods(c.Request.Context(), data), "push",
 			"The approval request expired. Try again.", "")
 	default:
 		s.renderPushWaitPage(c, mfaSession, challengeID, challenge.ChallengeCode, trustBrowser, "")
@@ -467,9 +494,47 @@ func (s *Service) issueHostedAuthorizationCode(c *gin.Context, oauthParams map[s
 	c.Redirect(302, authorizationRedirectURL(oauthParams["redirect_uri"], code, oauthParams["state"]))
 }
 
-// hostedMethodsForUser re-derives the completable factors for a user mid-flow
-// (the evaluation itself only runs at password time).
-func (s *Service) hostedMethodsForUser(ctx context.Context, userID string) []string {
+// sessionMethods returns the factors this challenge may still be completed
+// with: the set pinned when the challenge was created (the risk policy's
+// verdict), intersected with what the user still has enrolled and with what a
+// server-rendered page can actually complete. Re-deriving from enrollment alone
+// would drop the risk restriction, so the pinned list is authoritative when it
+// is present; a session created before this field existed falls back to
+// enrollment.
+func (s *Service) sessionMethods(ctx context.Context, data map[string]string) []string {
+	return s.filterSessionMethods(s.enrolledMethods(ctx, data["user_id"]), data["allowed_methods"])
+}
+
+// filterSessionMethods intersects the pinned list with current enrollment and
+// with what a server-rendered page can complete.
+func (s *Service) filterSessionMethods(enrolled []string, allowedMethods string) []string {
+	pinned := []string{}
+	for _, m := range strings.Split(allowedMethods, ",") {
+		if m = strings.TrimSpace(m); m != "" {
+			pinned = append(pinned, m)
+		}
+	}
+	if len(pinned) == 0 {
+		return hostedMFAMethods(enrolled)
+	}
+	out := []string{}
+	for _, m := range pinned {
+		if containsString(enrolled, m) {
+			out = append(out, m)
+		}
+	}
+	return hostedMFAMethods(out)
+}
+
+// methodAllowed reports whether a caller-supplied method may complete this
+// challenge. Every hosted step gates on it, so switching method, asking for an
+// OTP or submitting a code cannot reach a factor the challenge never offered.
+func (s *Service) methodAllowed(ctx context.Context, data map[string]string, method string) bool {
+	return containsString(s.sessionMethods(ctx, data), method)
+}
+
+// enrolledMethods lists the primary and supplemental factors a user currently has.
+func (s *Service) enrolledMethods(ctx context.Context, userID string) []string {
 	methods := []string{}
 	if s.identityService == nil || userID == "" {
 		return methods
@@ -492,7 +557,7 @@ func (s *Service) hostedMethodsForUser(ctx context.Context, userID string) []str
 	if ok, _ := s.identityService.HasActiveBypassCode(ctx, userID); ok {
 		methods = append(methods, "bypass")
 	}
-	return hostedMFAMethods(methods)
+	return methods
 }
 
 func (s *Service) auditMFAResult(userID, clientIP, method string, ok, trustBrowser bool) {

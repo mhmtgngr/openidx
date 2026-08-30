@@ -169,3 +169,41 @@ func TestHostedLoginEnforcesMFA(t *testing.T) {
 		t.Error("the MFA evaluation and challenge must come BEFORE the authorization code is issued")
 	}
 }
+
+// TestSessionMethodsHonoursPinnedList is the regression guard for a policy
+// bypass in the first cut of this flow: the challenge pages re-derived the
+// offerable factors from enrollment on every step, so a restriction the risk
+// policy imposed at password time (e.g. "this login may only be completed with
+// a phishing-resistant factor") silently disappeared as soon as the user
+// switched method — they could finish with a weaker factor the challenge never
+// offered. The list pinned into the session is authoritative.
+func TestSessionMethodsHonoursPinnedList(t *testing.T) {
+	s := &Service{logger: zap.NewNop()}
+
+	// enrolledMethods returns nothing without an identity service, which is the
+	// intersection's other half; assert on the pinned parsing and filtering.
+	tests := []struct {
+		name    string
+		pinned  string
+		want    []string
+		enrolls []string
+	}{
+		{"pinned narrows enrollment", "totp", []string{"totp"}, []string{"totp", "backup", "push"}},
+		{"pinned drops unenrolled", "totp,push", []string{"totp"}, []string{"totp"}},
+		{"pinned filtered for completability", "webauthn,totp", []string{"totp"}, []string{"webauthn", "totp"}},
+		{"absent pin falls back to enrollment", "", []string{"totp", "backup"}, []string{"totp", "backup"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := s.filterSessionMethods(tt.enrolls, tt.pinned)
+			if len(got) != len(tt.want) {
+				t.Fatalf("got %v, want %v", got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Fatalf("got %v, want %v", got, tt.want)
+				}
+			}
+		})
+	}
+}

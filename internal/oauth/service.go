@@ -2142,19 +2142,15 @@ func (s *Service) handleLogin(c *gin.Context) {
 	riskFactors = ev.RiskFactors
 
 	if ev.Challenge {
-		// MFA required — store partial auth in Redis and return MFA challenge
-		mfaSession := GenerateRandomToken(32)
-		mfaData := map[string]string{
-			"user_id":     user.ID,
-			"risk_score":  fmt.Sprintf("%d", riskScore),
-			"fingerprint": fingerprint,
-			"location":    location,
+		// MFA required — store partial auth in Redis and return MFA challenge.
+		// createMFASession is shared with the server-rendered path so both
+		// flows pin the same allowed-method list into the session.
+		mfaSession, mfaErr := s.createMFASession(c.Request.Context(), user.ID, oauthParams, riskScore, fingerprint, location, availableMFAMethods)
+		if mfaErr != nil {
+			s.logger.Error("failed to create MFA session", zap.Error(mfaErr))
+			c.JSON(500, gin.H{"error": "server_error"})
+			return
 		}
-		for k, v := range oauthParams {
-			mfaData[k] = v
-		}
-		mfaDataJSON, _ := json.Marshal(mfaData)
-		s.redis.Client.Set(c.Request.Context(), "mfa_session:"+mfaSession, string(mfaDataJSON), 5*time.Minute)
 
 		// Delete the login session from Redis (password step is done)
 		s.redis.Client.Del(c.Request.Context(), "login_session:"+req.LoginSession)
