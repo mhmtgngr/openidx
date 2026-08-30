@@ -152,7 +152,14 @@ export function ManageAppAccessDialog({
       toast({
         title: next ? 'Assignment now required' : 'Assignment no longer required',
         description: next
-          ? `Only assigned users and groups can sign in to ${appName}.`
+          ? // Future-conditional on purpose. Assignment enforcement is a
+            // deployment-level flag (ACCESS_ASSIGNMENT_ENFORCE) and it is off
+            // here: authorizeAssignmentDecision still issues the token and
+            // records a would-deny. Saying "only assigned users can sign in"
+            // would describe enforcement that is not happening -- the same
+            // display-vs-enforcement defect this project already shipped once.
+            // This wording is correct whether the flag is on or off.
+            `Once assignment enforcement is enabled, only assigned users and groups can sign in to ${appName}.`
           : `Any user who can reach ${appName} may sign in to it.`,
         variant: 'success',
       })
@@ -248,8 +255,20 @@ export function ManageAppAccessDialog({
                 <Label htmlFor="require_assignment">Require assignment to sign in</Label>
                 <p className="text-sm text-muted-foreground">
                   When enabled, only users or groups assigned above can obtain a token for
-                  this application. Users who are not assigned will be refused at sign-in.
-                  Leave this off until the assignment list below is complete.
+                  this application. Once assignment enforcement is enabled, users who are not
+                  assigned will be refused at sign-in. Leave this off until the assignment
+                  list below is complete.
+                </p>
+                {/* The gate is per-application, but whether it REFUSES anyone is
+                    a deployment-level decision. With assignment enforcement off
+                    the authorize gate still issues the token and only records a
+                    would-deny, so a control that promised a refusal here would
+                    be describing enforcement that is not happening. This line is
+                    true in both states. */}
+                <p className="text-sm text-muted-foreground">
+                  This setting only refuses anyone while assignment enforcement is enabled for
+                  the deployment. Until then it is recorded, and the assignment report shows who
+                  would be refused, but no sign-in is denied.
                 </p>
                 {!isLoading && (
                   <p className="text-sm text-muted-foreground">
@@ -305,8 +324,9 @@ export function ManageAppAccessDialog({
           <AlertDialogHeader>
             <AlertDialogTitle>Require assignment for {appName}?</AlertDialogTitle>
             <AlertDialogDescription>
-              Nobody is assigned to {appName} yet. Turning this on now refuses every user
-              at sign-in until you assign a user or a group.
+              Nobody is assigned to {appName} yet. Once assignment enforcement is enabled,
+              turning this on refuses every user at sign-in until you assign a user or a
+              group.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

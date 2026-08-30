@@ -152,4 +152,38 @@ describe('ManageAppAccessDialog', () => {
     )
     expect(screen.queryByText(/Require assignment for Grafana\?/)).not.toBeInTheDocument()
   })
+
+  // F3. The display-vs-enforcement class this project already shipped once
+  // (#874): the console asserted that unassigned users "will be refused at
+  // sign-in" when, with ACCESS_ASSIGNMENT_ENFORCE off -- the live deployment --
+  // authorizeAssignmentDecision issues the token anyway and only writes a
+  // would-deny record. The console has no trustworthy view of that
+  // deployment-level flag, so every string here is future-conditional, which is
+  // correct whether enforcement is on or off.
+  it('describes the gate in wording that is true whether or not enforcement is on', async () => {
+    withAssignees(0)
+    render(
+      <ManageAppAccessDialog appId="app-1" appName="Grafana" open onOpenChange={() => {}} />,
+      { wrapper: wrapper() },
+    )
+
+    const box = (await screen.findByLabelText(/Require assignment to sign in/)) as HTMLInputElement
+
+    // No present-tense promise of a refusal.
+    expect(
+      screen.getByText(/once assignment enforcement is enabled, users who are not assigned will be refused at sign-in/i),
+    ).toBeInTheDocument()
+    // And the state it is actually in is stated outright.
+    expect(
+      screen.getByText(/only refuses anyone while assignment enforcement is enabled for the deployment/i),
+    ).toBeInTheDocument()
+
+    // Wait for the assignee list to settle: the lockout confirmation is only
+    // raised once the dialog knows the list is empty.
+    await waitFor(() => expect(screen.getByText(/No principals are assigned/)).toBeInTheDocument())
+    fireEvent.click(box)
+    expect(
+      await screen.findByText(/once assignment enforcement is enabled, turning this on refuses every user at sign-in/i),
+    ).toBeInTheDocument()
+  })
 })
