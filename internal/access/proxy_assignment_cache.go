@@ -47,7 +47,10 @@ type routeAppEntry struct {
 // here would let one transient Postgres error black out every app-backed
 // route on the proxy at once. Falling back to "no application" instead just
 // means that one request is decided by the legacy role/group check, same as
-// it always was.
+// it always was. That fallback is deliberately not cached, though: a real
+// "no application" result (no matching row) is memoized as usual, but a
+// query error returns the fallback without storing it, so the next request
+// retries instead of being decided by the legacy check for a full TTL.
 func (s *Service) appForRoute(ctx context.Context, routeID string) (appID, orgID string) {
 	if v, ok := s.routeAppCache.Load(routeID); ok {
 		if e, ok := v.(routeAppEntry); ok && time.Since(e.at) < groupCacheTTL {
@@ -58,9 +61,12 @@ func (s *Service) appForRoute(ctx context.Context, routeID string) (appID, orgID
 	var id, org string
 	err := s.db.Pool.QueryRow(orgctx.WithBypassRLS(ctx),
 		//orgscope:ignore proxy data-plane assignment check; the route→application link is looked up by route_id, scoped by that row's own org_id, before any org context is resolved — same reasoning as findRouteByHost
-		"SELECT id, org_id FROM applications WHERE route_id = $1 ORDER BY id LIMIT 1", routeID).Scan(&id, &org)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		s.logger.Error("proxy: application lookup for route failed", zap.String("route_id", routeID), zap.Error(err))
+		"SELECT id, org_id FROM applications WHERE route_id = $1 AND enabled = true ORDER BY id LIMIT 1", routeID).Scan(&id, &org)
+	if err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			s.logger.Error("proxy: application lookup for route failed", zap.String("route_id", routeID), zap.Error(err))
+			return "", ""
+		}
 		id, org = "", ""
 	}
 
@@ -91,8 +97,12 @@ func (s *Service) assignmentAllowed(ctx context.Context, userID, orgID, appID st
 
 	ok, err := appaccess.Allowed(orgctx.WithBypassRLS(ctx), s.db, userID, orgID, appID)
 	if err != nil {
+		// Fail closed: unlike a route lookup miss, a failed assignment check
+		// must not silently allow. Also not cached, for the same reason as
+		// appForRoute's error path: the next request should retry rather than
+		// being denied for a full TTL on a transient failure.
 		s.logger.Error("proxy: assignment check failed", zap.String("application_id", appID), zap.Error(err))
-		ok = false // fail closed: unlike a route lookup miss, a failed assignment check must not silently allow
+		return false, true
 	}
 
 	s.assignCache.Store(key, assignCacheEntry{assigned: ok, at: time.Now()})

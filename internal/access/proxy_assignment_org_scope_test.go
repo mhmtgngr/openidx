@@ -79,6 +79,9 @@ func TestAssignmentAllowed_BypassesRLS(t *testing.T) {
 		userID   = "cccccccc-0000-0000-0000-000000000003"
 		appID    = "dddddddd-0000-0000-0000-000000000004"
 		routeID  = "eeeeeeee-0000-0000-0000-000000000005"
+
+		disabledAppID   = "ffffffff-0000-0000-0000-000000000006"
+		disabledRouteID = "11111111-0000-0000-0000-000000000007"
 	)
 
 	adminDSN := fmt.Sprintf("postgres://test:test@%s:%s/testdb?sslmode=disable", host, port.Port())
@@ -117,6 +120,7 @@ func TestAssignmentAllowed_BypassesRLS(t *testing.T) {
 	setup = append(setup, orgScopePolicy("group_memberships")...)
 	setup = append(setup,
 		fmt.Sprintf(`INSERT INTO applications (id, route_id, org_id, enabled) VALUES ('%s','%s','%s', true)`, appID, routeID, org),
+		fmt.Sprintf(`INSERT INTO applications (id, route_id, org_id, enabled) VALUES ('%s','%s','%s', false)`, disabledAppID, disabledRouteID, org),
 		fmt.Sprintf(`INSERT INTO user_application_assignments (user_id, application_id, org_id) VALUES ('%s','%s','%s')`, userID, appID, org),
 		// RLS does not apply to superusers, so the pool under test must log in
 		// as an ordinary role for this test to prove anything.
@@ -181,6 +185,19 @@ func TestAssignmentAllowed_BypassesRLS(t *testing.T) {
 		if gotAppID != appID || gotOrgID != org {
 			t.Fatalf("appForRoute under a mismatched ambient org: got (%q,%q), want (%q,%q)",
 				gotAppID, gotOrgID, appID, org)
+		}
+	})
+
+	t.Run("appForRoute yields no application when the application is disabled", func(t *testing.T) {
+		// A disabled application must not make assignmentReplacesLegacy true
+		// (service.go: appID != "" && enforce) — otherwise the proxy skips the
+		// legacy role/group check and appaccess.Allowed denies everyone (it
+		// requires a.enabled = true), while the Ziti reconciler sees no
+		// application at all and keeps the blanket dial grant open.
+		gotAppID, gotOrgID := s.appForRoute(reqCtx, disabledRouteID)
+		if gotAppID != "" || gotOrgID != "" {
+			t.Fatalf("appForRoute for a disabled application: got (%q,%q), want (\"\",\"\")",
+				gotAppID, gotOrgID)
 		}
 	})
 }

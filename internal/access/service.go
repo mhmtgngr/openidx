@@ -1091,8 +1091,8 @@ func (s *Service) handleListRoutes(c *gin.Context) {
 		        -- ORDER BY id LIMIT 1 mirrors appForRoute + ziti_reconciler's pick when
 		        -- more than one application links to the same route (Ruling 13: the
 		        -- route<->application link is a convention, not a DB-enforced 1:1).
-		        COALESCE((SELECT id::text FROM applications WHERE route_id = proxy_routes.id ORDER BY id LIMIT 1), '') AS application_id,
-		        COALESCE((SELECT name FROM applications WHERE route_id = proxy_routes.id ORDER BY id LIMIT 1), '') AS application_name
+		        COALESCE((SELECT id::text FROM applications WHERE route_id = proxy_routes.id AND enabled = true ORDER BY id LIMIT 1), '') AS application_id,
+		        COALESCE((SELECT name FROM applications WHERE route_id = proxy_routes.id AND enabled = true ORDER BY id LIMIT 1), '') AS application_name
 		 FROM proxy_routes WHERE org_id = $3 ORDER BY priority DESC, name ASC LIMIT $1 OFFSET $2`, limit, offset, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to list routes", zap.Error(err))
