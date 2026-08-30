@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Search, MoreHorizontal, Globe, Shield, Edit, Trash2, Power, PowerOff, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Terminal, Monitor, Network, Zap } from 'lucide-react'
 import { Button } from '../components/ui/button'
@@ -71,6 +72,12 @@ interface ProxyRoute {
   hosting_mode: string
   created_at: string
   updated_at: string
+  // Set when an application's route_id points at this route — the same link
+  // that decides real access under ACCESS_ASSIGNMENT_ENFORCE. When present,
+  // allowed_roles/allowed_groups are vestigial: Manage Access on that
+  // application is the actual grant.
+  application_id?: string
+  application_name?: string
 }
 
 // Ziti/BrowZer hosting mode. "identity" (Auto) lets the reconciler auto-select
@@ -505,6 +512,14 @@ export function ProxyRoutesPage() {
                       ))}
                     </div>
                   )}
+                  {route.application_id && (
+                    <div className="col-span-2">
+                      <span className="text-muted-foreground">Access managed by:</span>{' '}
+                      <Link to="/applications" className="underline text-xs">
+                        {route.application_name || route.application_id} → Manage Access
+                      </Link>
+                    </div>
+                  )}
                 </div>
                 <div className="flex items-center gap-2 mt-3 pt-3 border-t">
                   <ConnectionTestButton routeId={route.id} size="sm" />
@@ -588,6 +603,11 @@ export function ProxyRoutesPage() {
             onSubmit={() => selectedRoute && updateMutation.mutate({ id: selectedRoute.id, data: buildPayload() })}
             isLoading={updateMutation.isPending}
             submitLabel="Save Changes"
+            managedApplication={
+              selectedRoute?.application_id
+                ? { id: selectedRoute.application_id, name: selectedRoute.application_name || selectedRoute.application_id }
+                : null
+            }
           />
         </DialogContent>
       </Dialog>
@@ -738,7 +758,9 @@ function RouteForm({
   onSubmit,
   isLoading,
   submitLabel,
+  managedApplication = null,
 }: {
+  managedApplication?: { id: string; name: string } | null
   formData: {
     name: string
     description: string
@@ -883,6 +905,18 @@ function RouteForm({
         </div>
       )}
 
+      {managedApplication && (
+        <p className="text-xs text-muted-foreground bg-muted/50 rounded p-2">
+          This route is backed by the application <strong>{managedApplication.name}</strong>.
+          Its assignees are the actual grant — the roles and groups below are no
+          longer consulted. Manage access from{' '}
+          <Link to="/applications" className="underline">
+            Applications → Manage Access
+          </Link>
+          .
+        </p>
+      )}
+
       <div className="grid grid-cols-2 gap-4">
         <div className="space-y-2">
           <Label>Allowed Roles (comma-separated)</Label>
@@ -890,6 +924,8 @@ function RouteForm({
             value={formData.allowed_roles}
             onChange={(e) => setFormData({ ...formData, allowed_roles: e.target.value })}
             placeholder="admin, developer"
+            disabled={!!managedApplication}
+            readOnly={!!managedApplication}
           />
         </div>
         <div className="space-y-2">
@@ -898,6 +934,8 @@ function RouteForm({
             value={formData.allowed_groups}
             onChange={(e) => setFormData({ ...formData, allowed_groups: e.target.value })}
             placeholder="engineering, devops"
+            disabled={!!managedApplication}
+            readOnly={!!managedApplication}
           />
         </div>
       </div>

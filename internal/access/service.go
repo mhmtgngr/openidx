@@ -67,6 +67,15 @@ type ProxyRoute struct {
 	HostingMode           string            `json:"hosting_mode,omitempty"`
 	CreatedAt             time.Time         `json:"created_at"`
 	UpdatedAt             time.Time         `json:"updated_at"`
+	// ApplicationID/ApplicationName identify the application (if any) whose
+	// applications.route_id points at this route — the same link appForRoute
+	// (proxy_assignment_cache.go) resolves to decide real access under
+	// ACCESS_ASSIGNMENT_ENFORCE. Populated read-only by handleListRoutes so the
+	// console can point admins at "Manage Access" on that application instead
+	// of editing AllowedRoles/AllowedGroups, which enforcement ignores once a
+	// route is app-backed. Empty when no application links to this route.
+	ApplicationID   string `json:"application_id,omitempty"`
+	ApplicationName string `json:"application_name,omitempty"`
 }
 
 // normalizeHostingMode validates a hosting_mode value from the API. An empty
@@ -1078,7 +1087,12 @@ func (s *Service) handleListRoutes(c *gin.Context) {
 		        COALESCE(max_risk_score, 100), guacamole_connection_id,
 		        COALESCE(landing_path, '/'),
 		        COALESCE(hosting_mode, 'identity'),
-		        created_at, updated_at
+		        created_at, updated_at,
+		        -- ORDER BY id LIMIT 1 mirrors appForRoute + ziti_reconciler's pick when
+		        -- more than one application links to the same route (Ruling 13: the
+		        -- route<->application link is a convention, not a DB-enforced 1:1).
+		        COALESCE((SELECT id::text FROM applications WHERE route_id = proxy_routes.id ORDER BY id LIMIT 1), '') AS application_id,
+		        COALESCE((SELECT name FROM applications WHERE route_id = proxy_routes.id ORDER BY id LIMIT 1), '') AS application_name
 		 FROM proxy_routes WHERE org_id = $3 ORDER BY priority DESC, name ASC LIMIT $1 OFFSET $2`, limit, offset, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to list routes", zap.Error(err))
@@ -1102,7 +1116,8 @@ func (s *Service) handleListRoutes(c *gin.Context) {
 			&r.RequireDeviceTrust, &allowedCountries,
 			&r.MaxRiskScore, &guacConnID,
 			&r.LandingPath, &r.HostingMode,
-			&r.CreatedAt, &r.UpdatedAt)
+			&r.CreatedAt, &r.UpdatedAt,
+			&r.ApplicationID, &r.ApplicationName)
 		if err != nil {
 			s.logger.Error("Failed to scan route", zap.Error(err))
 			continue

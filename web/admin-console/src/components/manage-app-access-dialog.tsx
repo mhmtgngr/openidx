@@ -114,7 +114,10 @@ export function ManageAppAccessDialog({ appId, appName, open, onOpenChange }: Ma
         <DialogHeader>
           <DialogTitle>Manage access — {appName}</DialogTitle>
           <DialogDescription>
-            Grant this application to a user or a group. Group grants apply to every member.
+            This is the grant: it decides who can actually reach {appName}, on the web
+            and over the network. Assign a user or a group here — group grants apply to
+            every member. Any route restrictions shown elsewhere for this application are
+            derived from this list, not a separate grant.
           </DialogDescription>
         </DialogHeader>
 

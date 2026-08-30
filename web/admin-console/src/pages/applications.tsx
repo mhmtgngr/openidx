@@ -488,7 +488,10 @@ export function ApplicationsPage() {
                                 <Settings className="mr-2 h-4 w-4" />
                                 SSO Settings
                               </DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => setManageAccessApp(app)}>
+                              <DropdownMenuItem
+                                onClick={() => setManageAccessApp(app)}
+                                title="The single grant surface — assigning access here is what decides real access"
+                              >
                                 <Users className="mr-2 h-4 w-4" />
                                 Manage Access
                               </DropdownMenuItem>

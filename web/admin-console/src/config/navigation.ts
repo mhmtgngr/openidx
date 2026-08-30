@@ -176,6 +176,7 @@ export const navigation: NavDomainGroup[] = [
           { name: 'Cert Campaigns', href: '/certification-campaigns', icon: Target, minRole: 'admin', keywords: ['certification', 'campaign'] },
           { name: 'Attestation', href: '/attestation-campaigns', icon: ClipboardSignature, minRole: 'admin', keywords: ['attest', 'campaign'] },
           { name: 'Entitlements', href: '/entitlements', icon: Package, minRole: 'admin', keywords: ['grants', 'catalog'] },
+          { name: 'Assignment Report', href: '/assignment-report', icon: ClipboardList, minRole: 'admin', keywords: ['assignment', 'enforcement', 'who loses access'] },
           { name: 'ABAC Policies', href: '/abac-policies', icon: Filter, minRole: 'admin', keywords: ['attribute', 'context'] },
           { name: 'Lifecycle Policies', href: '/lifecycle-policies', icon: UserMinus, minRole: 'admin', keywords: ['deprovision', 'dormant', 'offboarding'] },
           { name: 'Sessions', href: '/sessions', icon: Monitor, minRole: 'operator', keywords: ['active sessions', 'revoke'] },

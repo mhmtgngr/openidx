@@ -101,6 +101,7 @@ import {
   TrustedBrowsers,
   DeviceAuthorization,
   AccessRequests,
+  AssignmentReport,
   NotificationCenter,
   NotificationPreferences,
   ReviewDetail,
@@ -265,6 +266,7 @@ function App() {
 
         {/* Applications - Admin Protected */}
         <Route path="applications" element={<Applications />} />
+        <Route path="assignment-report" element={<AssignmentReport />} />
         <Route path="identity-providers" element={<IdentityProviders />} />
         <Route path="provisioning-rules" element={<ProvisioningRules />} />
         <Route path="lifecycle-workflows" element={<LifecycleWorkflows />} />
