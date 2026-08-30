@@ -1,8 +1,13 @@
 # Access model: four parallel systems, and how to converge them
 
-Status: **proposal**. Nothing here is implemented. It is written down because
-the current model surprises the people who configure it, and the surprise is
-structural rather than a bug in any one place.
+Status: **superseded by `access-and-login-convergence-design.md`**, which turns
+this finding into an agreed design (assignment as the only grant, staged behind
+a report-only flag) and adds the login and MFA-policy convergences alongside it.
+This document stays as the record of what was found and why.
+
+Nothing here is implemented. It is written down because the current model
+surprises the people who configure it, and the surprise is structural rather
+than a bug in any one place.
 
 ## What is true today
 
