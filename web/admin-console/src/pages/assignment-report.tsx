@@ -20,11 +20,20 @@ interface AssignmentEntry {
   application_name: string
 }
 
+interface IdentitylessUser {
+  user_id: string
+  username: string
+}
+
 interface Report {
   entries: ReportEntry[]
   // What assignment grants today. DB-only, so it stays correct even when the
   // reach half could not be computed.
   assignments?: AssignmentEntry[]
+  // The users with no Ziti identity, themselves. The page asks the operator to
+  // check whether any of them should have been enrolled, so it has to name
+  // them; summary.users_without_identity counts the same list.
+  users_without_identity?: IdentitylessUser[]
   // Where the reachability half came from. "controller" = live data, the
   // answer can be trusted. "unavailable" = the Ziti controller could not be
   // read, so the report cannot say who would lose access; it deliberately does
@@ -57,6 +66,12 @@ interface Report {
     // see the number and decide whether a given user SHOULD have had an
     // identity. We surface it; we fold it into neither "safe" nor "incomplete".
     users_without_identity?: number
+    // How many application-backed routes this report did NOT model. The reach
+    // half covers the Ziti overlay only, but the same flag also gates the
+    // reverse proxy for every application-backed route, including routes with
+    // no Ziti service. Without this number a clean headline speaks for an
+    // enforcement surface nobody measured.
+    routes_outside_reach_model?: number
     // The go/no-go, computed server-side so every consumer reads one rule
     // instead of re-deriving it from four fields. True only when reach came
     // from the live controller, no user was skipped, and at least one user was
@@ -90,6 +105,8 @@ export function AssignmentReportPage() {
   const usersEvaluated = summary?.users_evaluated ?? 0
   const usersTotal = summary?.users_total ?? 0
   const usersWithoutIdentity = summary?.users_without_identity ?? 0
+  const identitylessUsers = data?.users_without_identity ?? []
+  const routesOutside = summary?.routes_outside_reach_model
 
   // The go/no-go comes from the server, which computes it once for every
   // consumer. Re-deriving it here is what let a zero-user org read as clean.
@@ -104,7 +121,10 @@ export function AssignmentReportPage() {
           ? 'Report incomplete — some users could not be evaluated'
           : wouldLose
         : entries.length === 0
-          ? 'No one would lose access — safe to enforce'
+          ? // Scoped deliberately. This report models overlay reach; the same
+            // flag also enforces at the reverse proxy, which this page never
+            // looked at. The headline may only speak for what was measured.
+            'No one would lose Ziti overlay reach — safe to enforce for the overlay'
           : wouldLose
 
   return (
@@ -119,6 +139,27 @@ export function AssignmentReportPage() {
       <Card>
         <CardHeader>
           <CardTitle>{headline}</CardTitle>
+          {/* Shown ALWAYS, not only when the counts look odd: the headline is
+              about the overlay, and every reader has to know what it leaves
+              out. The proxy half is a follow-up, not something this page can
+              silently imply it covered. */}
+          {!isLoading && (
+            <p className="text-sm text-muted-foreground">
+              This report models Ziti overlay reach only. Assignment enforcement also applies at
+              the reverse proxy for every application-backed route, including routes with no Ziti
+              service, and to users with no Ziti identity. Those are not measured here.
+              {routesOutside !== undefined && (
+                <>
+                  {' '}
+                  <span className="font-medium">
+                    {routesOutside} application-backed route{routesOutside === 1 ? '' : 's'}{' '}
+                    {routesOutside === 1 ? 'is' : 'are'} enforced at the proxy and{' '}
+                    {routesOutside === 1 ? 'is' : 'are'} not covered by this report.
+                  </span>
+                </>
+              )}
+            </p>
+          )}
           {!isLoading && !fromController && (
             <div
               role="alert"
@@ -182,6 +223,18 @@ export function AssignmentReportPage() {
               read from the database and is still accurate; only the "who can reach what today" half
               is missing.
             </p>
+          )}
+          {/* F2: the line above asks the operator to adjudicate these users, so
+              the page has to name them rather than hand over a count. */}
+          {!isLoading && fromController && identitylessUsers.length > 0 && (
+            <div className="mt-3">
+              <p className="text-sm font-medium">Users with no Ziti identity</p>
+              <ul className="mt-1 text-sm text-muted-foreground">
+                {identitylessUsers.map((u) => (
+                  <li key={u.user_id}>{u.username || u.user_id}</li>
+                ))}
+              </ul>
+            </div>
           )}
           {entries.length > 0 && (
             <Table>

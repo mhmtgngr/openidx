@@ -16,6 +16,16 @@ const renderPage = () =>
     </QueryClientProvider>
   )
 
+// The clean headline names the OVERLAY, because that is all this report models.
+// The same flag also enforces at the reverse proxy, for routes with no Ziti
+// service and users with no Ziti identity, and this page never looks there.
+const CLEAN_HEADLINE = /no one would lose ziti overlay reach — safe to enforce for the overlay/i
+
+// Shown in every state, clean or not: a reader must always know what the report
+// left out.
+const OVERLAY_CAVEAT =
+  /this report models ziti overlay reach only\. assignment enforcement also applies at the reverse proxy/i
+
 const CONTROLLER_WARNING =
   /could not read the ziti controller, so this report cannot tell you who would lose access\. do not enable enforcement based on this page\./i
 
@@ -47,7 +57,7 @@ describe('AssignmentReportPage', () => {
     })
     renderPage()
     await waitFor(() =>
-      expect(screen.getByText(/no one would lose access/i)).toBeInTheDocument()
+      expect(screen.getByText(CLEAN_HEADLINE)).toBeInTheDocument()
     )
     expect(screen.queryByText(CONTROLLER_WARNING)).not.toBeInTheDocument()
     // The denominator is on the page: "safe" is only meaningful next to how
@@ -73,7 +83,7 @@ describe('AssignmentReportPage', () => {
     })
     renderPage()
     await waitFor(() =>
-      expect(screen.getByText(/no one would lose access/i)).toBeInTheDocument()
+      expect(screen.getByText(CLEAN_HEADLINE)).toBeInTheDocument()
     )
     expect(screen.getByText(/evaluated 4 of 6 users/i)).toBeInTheDocument()
     expect(
@@ -97,7 +107,7 @@ describe('AssignmentReportPage', () => {
     })
     renderPage()
     await waitFor(() => expect(screen.getByText(/report incomplete/i)).toBeInTheDocument())
-    expect(screen.queryByText(/no one would lose access/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(CLEAN_HEADLINE)).not.toBeInTheDocument()
   })
 
   // An org whose Ziti sync has never run evaluates nobody. Without a
@@ -118,12 +128,15 @@ describe('AssignmentReportPage', () => {
     await waitFor(() =>
       expect(screen.getByText(/evaluated 5 of 8 users/i)).toBeInTheDocument()
     )
-    expect(screen.queryByText(/no one would lose access/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(CLEAN_HEADLINE)).not.toBeInTheDocument()
     expect(screen.getByText(/report incomplete/i)).toBeInTheDocument()
     // These three had identities the report could not finish reading — a
     // different thing from having no identity at all, and the alarming one.
     expect(screen.getByText(/3 users could not be evaluated/i)).toBeInTheDocument()
-    expect(screen.queryByText(/no ziti identity/i)).not.toBeInTheDocument()
+    // Narrowed to the without-identity EXPLANATION line: the always-on overlay
+    // caveat also contains the phrase "no Ziti identity", and it is meant to be
+    // on the page in every state.
+    expect(screen.queryByText(/no ziti identity, so/i)).not.toBeInTheDocument()
   })
 
   it('does not read as clean when the organization has no users at all', async () => {
@@ -140,7 +153,7 @@ describe('AssignmentReportPage', () => {
     await waitFor(() =>
       expect(screen.getByText(/no users were found in this organization/i)).toBeInTheDocument()
     )
-    expect(screen.queryByText(/no one would lose access/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(CLEAN_HEADLINE)).not.toBeInTheDocument()
     expect(screen.getByText(/report incomplete/i)).toBeInTheDocument()
   })
 
@@ -155,7 +168,7 @@ describe('AssignmentReportPage', () => {
     })
     renderPage()
     await waitFor(() => expect(screen.getByText(/report incomplete/i)).toBeInTheDocument())
-    expect(screen.queryByText(/no one would lose access/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(CLEAN_HEADLINE)).not.toBeInTheDocument()
     expect(screen.getByText(/user counts not reported by the server/i)).toBeInTheDocument()
     expect(screen.queryByText(/evaluated 0 of 0/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/no users were found in this organization/i)).not.toBeInTheDocument()
@@ -175,7 +188,7 @@ describe('AssignmentReportPage', () => {
     })
     renderPage()
     await waitFor(() => expect(screen.getByText(CONTROLLER_WARNING)).toBeInTheDocument())
-    expect(screen.queryByText(/no one would lose access/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(CLEAN_HEADLINE)).not.toBeInTheDocument()
     expect(screen.getByText('the Ziti controller is not connected')).toBeInTheDocument()
   })
 
@@ -186,7 +199,7 @@ describe('AssignmentReportPage', () => {
     })
     renderPage()
     await waitFor(() => expect(screen.getByText(CONTROLLER_WARNING)).toBeInTheDocument())
-    expect(screen.queryByText(/no one would lose access/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(CLEAN_HEADLINE)).not.toBeInTheDocument()
   })
 
   it('qualifies the clean headline when users could not be evaluated', async () => {
@@ -202,7 +215,7 @@ describe('AssignmentReportPage', () => {
     await waitFor(() =>
       expect(screen.getByText(/3 users? could not be evaluated/i)).toBeInTheDocument()
     )
-    expect(screen.queryByText(/no one would lose access/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(CLEAN_HEADLINE)).not.toBeInTheDocument()
     expect(screen.getByText(/report incomplete/i)).toBeInTheDocument()
   })
 
@@ -232,5 +245,76 @@ describe('AssignmentReportPage', () => {
     renderPage()
     await waitFor(() => expect(screen.getByText(CONTROLLER_WARNING)).toBeInTheDocument())
     expect(screen.getByText(/assignment currently grants 1 user–application pair/i)).toBeInTheDocument()
+  })
+
+  // F1 (round 4). ACCESS_ASSIGNMENT_ENFORCE has two unconditional enforcement
+  // points; this report models one of them. The reverse-proxy gate fires for
+  // every application-backed route -- including routes with no Ziti service at
+  // all -- and for every user, identity or not. The caveat is therefore shown
+  // in EVERY state, not only when the counts look odd: a green headline that
+  // silently implies the whole flag was measured is the defect.
+  it('always says what it did not measure, beside a clean headline', async () => {
+    get.mockResolvedValue({
+      entries: [],
+      reachability_source: 'controller',
+      summary: {
+        users: 0, applications: 0, would_deny: 0, incomplete_users: 0,
+        users_evaluated: 4, users_total: 4, users_without_identity: 0,
+        routes_outside_reach_model: 7,
+        evaluation_complete: true,
+      },
+    })
+    renderPage()
+    await waitFor(() => expect(screen.getByText(CLEAN_HEADLINE)).toBeInTheDocument())
+    expect(screen.getByText(OVERLAY_CAVEAT)).toBeInTheDocument()
+    expect(
+      screen.getByText(/7 application-backed routes are enforced at the proxy and are not covered by this report/i)
+    ).toBeInTheDocument()
+  })
+
+  it('says what it did not measure in the incomplete state too', async () => {
+    get.mockResolvedValue({
+      entries: [],
+      reachability_source: 'controller',
+      summary: {
+        users: 0, applications: 0, would_deny: 0, incomplete_users: 3,
+        users_evaluated: 5, users_total: 8, users_without_identity: 0,
+        routes_outside_reach_model: 1,
+        evaluation_complete: false,
+      },
+    })
+    renderPage()
+    await waitFor(() => expect(screen.getByText(/report incomplete/i)).toBeInTheDocument())
+    expect(screen.getByText(OVERLAY_CAVEAT)).toBeInTheDocument()
+    // Singular, because "1 routes are" reads like a bug in the report itself.
+    expect(
+      screen.getByText(/1 application-backed route is enforced at the proxy and is not covered by this report/i)
+    ).toBeInTheDocument()
+  })
+
+  // F2 (round 4). The page tells the operator to check that none of these users
+  // should have been enrolled. A count gives them nothing to check.
+  it('names the users with no Ziti identity, not just how many', async () => {
+    get.mockResolvedValue({
+      entries: [],
+      reachability_source: 'controller',
+      users_without_identity: [
+        { user_id: 'u9', username: 'svc-backup' },
+        { user_id: 'u10', username: 'carol@x.io' },
+      ],
+      summary: {
+        users: 0, applications: 0, would_deny: 0, incomplete_users: 0,
+        users_evaluated: 4, users_total: 6, users_without_identity: 2,
+        routes_outside_reach_model: 0,
+        evaluation_complete: true,
+      },
+    })
+    renderPage()
+    await waitFor(() => expect(screen.getByText(CLEAN_HEADLINE)).toBeInTheDocument())
+    expect(screen.getByText('svc-backup')).toBeInTheDocument()
+    expect(screen.getByText('carol@x.io')).toBeInTheDocument()
+    // The list and the count are the same fact; if they disagree the operator
+    // cannot trust either.
+    expect(screen.getByText(/2 of 6 users in this organization have no ziti identity/i)).toBeInTheDocument()
   })
 })
