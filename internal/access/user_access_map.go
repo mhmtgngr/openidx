@@ -510,12 +510,7 @@ func (s *Service) collectZitiPillar(ctx context.Context, orgID, userID string, o
 		return nil
 	}
 
-	type policyRow struct {
-		name          string
-		identityRoles []string
-		serviceRoles  []string
-	}
-	var policies []policyRow
+	var policies []zitiDialPolicy
 	rows, err = s.db.Pool.Query(ctx,
 		`SELECT name, identity_roles, service_roles
 		   FROM ziti_service_policies
@@ -525,14 +520,14 @@ func (s *Service) collectZitiPillar(ctx context.Context, orgID, userID string, o
 		return err
 	}
 	for rows.Next() {
-		var p policyRow
+		var p zitiDialPolicy
 		var identJSON, svcJSON []byte
-		if err := rows.Scan(&p.name, &identJSON, &svcJSON); err != nil {
+		if err := rows.Scan(&p.Name, &identJSON, &svcJSON); err != nil {
 			rows.Close()
 			return err
 		}
-		_ = json.Unmarshal(identJSON, &p.identityRoles)
-		_ = json.Unmarshal(svcJSON, &p.serviceRoles)
+		_ = json.Unmarshal(identJSON, &p.IdentityRoles)
+		_ = json.Unmarshal(svcJSON, &p.ServiceRoles)
 		policies = append(policies, p)
 	}
 	rows.Close()
@@ -563,23 +558,67 @@ func (s *Service) collectZitiPillar(ctx context.Context, orgID, userID string, o
 		return err
 	}
 
+	// The matching itself lives in reachabilityForIdentity, which the
+	// controller-backed assignment report also calls. Only the INPUT differs
+	// (this path feeds it the local mirror; the report feeds it live
+	// controller data) — the role-matching rules cannot drift apart. The
+	// mirror cannot populate byAttr: ziti_services does not mirror service
+	// role attributes, so a `#tag` service role stays unresolved here exactly
+	// as it always has.
+	applied, reachable := reachabilityForIdentity(policies, ident.ZitiID, ident.Attributes,
+		zitiServiceIndex{byZitiID: svcByZitiID, all: allServices})
+	out.DialPolicies = append(out.DialPolicies, applied...)
+	out.ReachableServices = append(out.ReachableServices, reachable...)
+
+	return nil
+}
+
+// zitiDialPolicy is one Dial policy's role pair, independent of where it was
+// read from: the local ziti_service_policies mirror or the live controller.
+type zitiDialPolicy struct {
+	Name          string
+	IdentityRoles []string
+	ServiceRoles  []string
+}
+
+// zitiServiceIndex is the service side of role resolution: service names by
+// Ziti id (for `@id` roles), every service name (for `#all`), and the names
+// carrying each role attribute (for `#tag`). byAttr is populated only from
+// live controller data; the local mirror does not record service role
+// attributes, so it leaves it nil and `#tag` roles stay unresolved.
+type zitiServiceIndex struct {
+	byZitiID map[string]string
+	all      []string
+	byAttr   map[string][]string
+}
+
+// reachabilityForIdentity resolves which Dial policies apply to one identity
+// and, from those, which service names it can reach (sorted, de-duplicated).
+//
+// This is the single implementation of OpenZiti Dial matching in this package.
+// It is shared by the mirror-backed user access map and by the
+// controller-backed assignment report precisely so a change to the matching
+// rules can never make the report disagree with the rest of the system. What
+// the two callers legitimately differ on is the DATA they feed in.
+func reachabilityForIdentity(policies []zitiDialPolicy, zitiID string, attrs []string, idx zitiServiceIndex) ([]AccessMapDialPolicy, []string) {
+	var applied []AccessMapDialPolicy
 	reachable := map[string]bool{}
 	for _, p := range policies {
-		if !policyAppliesToIdentity(p.identityRoles, ident.ZitiID, ident.Attributes) {
+		if !policyAppliesToIdentity(p.IdentityRoles, zitiID, attrs) {
 			continue
 		}
-		resolved := resolveServiceRoles(p.serviceRoles, svcByZitiID, allServices)
-		out.DialPolicies = append(out.DialPolicies, AccessMapDialPolicy{Name: p.name, Services: resolved})
+		resolved := resolveServiceRolesIndexed(p.ServiceRoles, idx)
+		applied = append(applied, AccessMapDialPolicy{Name: p.Name, Services: resolved})
 		for _, svc := range resolved {
 			reachable[svc] = true
 		}
 	}
+	out := make([]string, 0, len(reachable))
 	for svc := range reachable {
-		out.ReachableServices = append(out.ReachableServices, svc)
+		out = append(out, svc)
 	}
-	sort.Strings(out.ReachableServices)
-
-	return nil
+	sort.Strings(out)
+	return applied, out
 }
 
 // policyAppliesToIdentity implements OpenZiti role-attribute matching for the
@@ -612,6 +651,18 @@ func policyAppliesToIdentity(identityRoles []string, zitiID string, attrs []stri
 // via ziti_services.ziti_id, and `#tag` references (service attributes are not
 // mirrored locally) are surfaced as-is so the caller still sees the intent.
 func resolveServiceRoles(serviceRoles []string, svcByZitiID map[string]string, allServices []string) []string {
+	return resolveServiceRolesIndexed(serviceRoles,
+		zitiServiceIndex{byZitiID: svcByZitiID, all: allServices})
+}
+
+// resolveServiceRolesIndexed is resolveServiceRoles with the optional
+// attribute index. When idx.byAttr knows which services carry a `#tag`, the
+// tag resolves to those service names; when it does not (the local mirror,
+// which has no service attributes), the raw role is surfaced as before so the
+// caller still sees the intent. With a nil byAttr this is byte-for-byte the
+// old behaviour.
+func resolveServiceRolesIndexed(serviceRoles []string, idx zitiServiceIndex) []string {
+	svcByZitiID, allServices := idx.byZitiID, idx.all
 	var resolved []string
 	seen := map[string]bool{}
 	add := func(name string) {
@@ -631,7 +682,14 @@ func resolveServiceRoles(serviceRoles []string, svcByZitiID map[string]string, a
 				add(name)
 			}
 		case strings.HasPrefix(role, "#"):
-			add(role) // unresolvable tag reference — keep the intent visible
+			names := idx.byAttr[strings.TrimPrefix(role, "#")]
+			if len(names) == 0 {
+				add(role) // unresolvable tag reference — keep the intent visible
+				continue
+			}
+			for _, name := range names {
+				add(name)
+			}
 		}
 	}
 	if resolved == nil {
