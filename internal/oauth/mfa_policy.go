@@ -163,8 +163,11 @@ func (s *Service) evaluateMFA(
 	// policy matched") is deliberate: this evaluator ORs the policy in, it
 	// never uses it to skip a challenge the risk engine or TOTP already
 	// require, so a DB hiccup here just reproduces today's pre-policy
-	// behaviour instead of locking someone out.
-	if s.identityService != nil && user != nil {
+	// behaviour instead of locking someone out. Skipped entirely when
+	// challengeRequired would discard the result anyway (no enrolled factor,
+	// or a trusted browser standing in for one) — s.identityService and user
+	// are already guaranteed non-nil by the early return above.
+	if ev.Enabled && !ev.SkipMFA {
 		if required, _, err := s.identityService.IsMFARequired(ctx, user.ID, clientIP); err != nil {
 			s.logger.Warn("MFA policy evaluation failed, treating as not required", zap.Error(err))
 		} else {
