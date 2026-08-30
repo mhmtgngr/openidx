@@ -39,6 +39,13 @@ import (
 // never attached to the default org, and never deleted. A visibly partial mirror
 // is a correct outcome; a wrong org assignment leaks reach across tenants.
 //
+// SYSTEM FLAG. ziti_service_policies.is_system is a guard the fabric API reads:
+// handleUpdateServicePolicy and handleDeleteServicePolicy refuse a row that
+// carries it, and the delete path deletes from the CONTROLLER. Every mirror
+// write therefore has to decide it deliberately — write-through writes are
+// platform writes and set it, a refresh sets it only for the policy names the
+// reconciler itself converges, and no write may ever clear it.
+//
 // KNOWN GAP (deliberate follow-up, not this change): platform-wide policies have
 // no org at all and org_id is NOT NULL with an FK, so there is no honest way to
 // store them today. Representing them properly needs a migration making org_id
@@ -140,6 +147,17 @@ func (zm *ZitiManager) mirrorServicePolicy(ctx context.Context, orgID, zitiID, n
 		ServiceRoles:  serviceRoles,
 		IdentityRoles: identityRoles,
 		OrgID:         orgID,
+		// Every write that reaches here is a PLATFORM write: this helper is
+		// called only from EnsureServicePolicyForOrg (the reconciler) and from
+		// SetupZitiForRoute (provisioning). Those policies are re-converged
+		// continuously, so an admin edit through the fabric API is not a change,
+		// it is a fight the reconciler wins ~30s later -- and
+		// handleDeleteServicePolicy deletes from the CONTROLLER, so the loser is
+		// live reach. is_system is what blocks that (see
+		// handleUpdateServicePolicy / handleDeleteServicePolicy).
+		// An admin-created policy never comes through here:
+		// handleCreateServicePolicy does its own INSERT with is_system = false.
+		IsSystem: true,
 	}); err != nil {
 		zm.logger.Warn("ziti mirror: policy upsert failed",
 			zap.String("policy", name), zap.Error(err))
@@ -159,6 +177,13 @@ type mirrorPolicyRow struct {
 	ServiceRoles  []string
 	IdentityRoles []string
 	OrgID         string
+	// IsSystem marks a platform-managed policy. It is a GUARD, not a label:
+	// handleUpdateServicePolicy and handleDeleteServicePolicy refuse to touch a
+	// row that carries it, and the delete path removes the policy from the Ziti
+	// CONTROLLER, not just from this mirror. A mirror write that leaves it false
+	// therefore hands an org admin an edit/delete button on the reconciler's own
+	// bind/dial policies.
+	IsSystem bool
 }
 
 // upsertMirrorPolicy writes one mirror row keyed on the controller's policy id.
@@ -167,6 +192,12 @@ type mirrorPolicyRow struct {
 // ON CONFLICT (ziti_id) DO UPDATE — never DO NOTHING. DO NOTHING is exactly the
 // bug this replaces: the four stale rows on the box kept identity_roles that no
 // user identity carries, and no later write could correct them.
+//
+// is_system is the one column that does NOT simply take the incoming value:
+// `is_system = existing OR EXCLUDED` means a write can SET the guard but never
+// CLEAR it. A refresh that failed to recognise a policy as platform-managed
+// (a renamed route, a route row read mid-delete) must not be able to unlock a
+// policy that some earlier, better-informed write already locked.
 func upsertMirrorPolicy(ctx context.Context, db *database.PostgresDB, r mirrorPolicyRow) (inserted bool, err error) {
 	svcJSON, err := json.Marshal(nonNilRoles(r.ServiceRoles))
 	if err != nil {
@@ -178,16 +209,17 @@ func upsertMirrorPolicy(ctx context.Context, db *database.PostgresDB, r mirrorPo
 	}
 	ctx = orgctx.WithBypassRLS(ctx)
 	err = db.Pool.QueryRow(ctx,
-		`INSERT INTO ziti_service_policies (ziti_id, name, policy_type, service_roles, identity_roles, org_id)
-		 VALUES ($1, $2, $3, $4, $5, $6)
+		`INSERT INTO ziti_service_policies (ziti_id, name, policy_type, service_roles, identity_roles, org_id, is_system)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)
 		 ON CONFLICT (ziti_id) DO UPDATE
 		    SET name = EXCLUDED.name,
 		        policy_type = EXCLUDED.policy_type,
 		        service_roles = EXCLUDED.service_roles,
 		        identity_roles = EXCLUDED.identity_roles,
-		        org_id = EXCLUDED.org_id
+		        org_id = EXCLUDED.org_id,
+		        is_system = ziti_service_policies.is_system OR EXCLUDED.is_system
 		 RETURNING (xmax = 0)`,
-		r.ZitiID, r.Name, r.PolicyType, svcJSON, identJSON, r.OrgID).Scan(&inserted)
+		r.ZitiID, r.Name, r.PolicyType, svcJSON, identJSON, r.OrgID, r.IsSystem).Scan(&inserted)
 	return inserted, err
 }
 
@@ -292,6 +324,40 @@ func (a *mirrorAttributor) candidateServiceNames(serviceRoles []string) []string
 		}
 	}
 	return out
+}
+
+// reconcilerPolicyNamePrefixes are the policy names the platform itself owns.
+// The reconciler (reconcileRoute) and provisioning (SetupZitiForRoute) both
+// build their policy names as <prefix><ziti service name> and re-converge them
+// every pass, so these are exactly the policies an admin must not be able to
+// edit or delete out from under the control loop.
+var reconcilerPolicyNamePrefixes = []string{
+	"openidx-bind-",
+	"openidx-dial-",
+	"openidx-orgdial-",
+}
+
+// isReconcilerManaged reports whether a controller policy NAME is one the
+// platform's own control loop owns.
+//
+// This deliberately does NOT weaken org attribution: a name is still never
+// evidence of OWNERSHIP (which org a policy belongs to). It is only evidence of
+// AUTHORSHIP, and only when the suffix is a service name the route table
+// actually knows — i.e. when the reconciler is provably converging that exact
+// policy name on every pass. An admin policy that happens to occupy one of the
+// platform's reserved names for a live route is locked too, which is the safe
+// direction: the reconciler would overwrite it anyway.
+func (a *mirrorAttributor) isReconcilerManaged(name string) bool {
+	for _, prefix := range reconcilerPolicyNamePrefixes {
+		svc, ok := strings.CutPrefix(name, prefix)
+		if !ok || svc == "" {
+			continue
+		}
+		if _, known := a.routesByService[svc]; known {
+			return true
+		}
+	}
+	return false
 }
 
 // attribute resolves an org for the given serviceRoles. It requires EXACTLY one
@@ -445,6 +511,12 @@ func refreshZitiMirror(ctx context.Context, zm *ZitiManager, db *database.Postgr
 			ServiceRoles:  p.ServiceRoles,
 			IdentityRoles: p.IdentityRoles,
 			OrgID:         org,
+			// A refresh mirrors whatever the controller holds, which includes
+			// policies an org admin created through the fabric API. Those must
+			// stay editable, so the flag is set only for the names the platform
+			// itself converges. It is never CLEARED here (see upsertMirrorPolicy):
+			// false means "this pass has no opinion", not "unlock it".
+			IsSystem: attributor.isReconcilerManaged(p.Name),
 		})
 		if err != nil {
 			logger.Warn("ziti mirror: policy upsert failed",
