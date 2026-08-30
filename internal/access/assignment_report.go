@@ -111,22 +111,40 @@ func (s *Service) handleAssignmentReport(c *gin.Context) {
 	reachable := map[string][]string{}
 	assigned := map[string][]string{}
 	appNames := map[string]string{}
+	incompleteUsers := 0
+	// Deliberately re-runs the same collectZitiPillar computation the rest of
+	// the system uses (about five queries per user) rather than a bespoke
+	// "reachable services only" query, even though that costs N+ queries here.
+	// The value of this report is that it can never drift from what actually
+	// governs reach: a faster bespoke query is a second implementation that
+	// could disagree with the real one, and a report that lies is worse than
+	// a slow admin endpoint run a handful of times before a flip. Revisit
+	// only if this proves slow in practice, and any replacement must preserve
+	// the same computation, not just its current answer.
 	for _, uid := range userIDs {
 		var pillar AccessMapZiti
-		if perr := s.collectZitiPillar(ctx, org.ID, uid, &pillar); perr != nil {
-			s.logger.Warn("assignment report: pillar failed", zap.String("user_id", uid), zap.Error(perr))
+		pillarErr := s.collectZitiPillar(ctx, org.ID, uid, &pillar)
+		if pillarErr != nil {
+			s.logger.Warn("assignment report: pillar failed", zap.String("user_id", uid), zap.Error(pillarErr))
+			incompleteUsers++
 			continue
 		}
+		refs, aerr := appaccess.AppsForUser(ctx, s.db, uid, org.ID)
+		if aerr != nil {
+			s.logger.Warn("assignment report: assignments failed", zap.String("user_id", uid), zap.Error(aerr))
+			incompleteUsers++
+			continue
+		}
+		// Both lookups succeeded: only now is the user entered into either
+		// side of the diff. A user whose reach or assignment could not be
+		// computed must contribute zero entries in either direction — never
+		// a false "loses nothing" (reach missing) nor a false "loses
+		// everything" (assignment missing).
 		for _, svcName := range pillar.ReachableServices {
 			if ref, ok := serviceApp[svcName]; ok {
 				reachable[uid] = append(reachable[uid], ref.ID)
 				appNames[ref.ID] = ref.Name
 			}
-		}
-		refs, aerr := appaccess.AppsForUser(ctx, s.db, uid, org.ID)
-		if aerr != nil {
-			s.logger.Warn("assignment report: assignments failed", zap.String("user_id", uid), zap.Error(aerr))
-			continue
 		}
 		for _, r := range refs {
 			assigned[uid] = append(assigned[uid], r.ID)
@@ -134,6 +152,20 @@ func (s *Service) handleAssignmentReport(c *gin.Context) {
 		}
 	}
 
+	entries, summary := buildReport(reachable, assigned, names, appNames, incompleteUsers)
+
+	c.JSON(http.StatusOK, gin.H{
+		"entries": entries,
+		"summary": summary,
+	})
+}
+
+// buildReport diffs reachability against assignment and packages the result
+// for the API response. incompleteUsers is the count of users excluded from
+// both reachable and assigned because their lookup failed; it is surfaced in
+// the summary so an operator can tell a low would_deny count is genuine and
+// not a symptom of silently-skipped users.
+func buildReport(reachable, assigned map[string][]string, names, appNames map[string]string, incompleteUsers int) ([]ReportEntry, gin.H) {
 	entries := diffReachability(reachable, assigned)
 	affectedUsers := map[string]bool{}
 	affectedApps := map[string]bool{}
@@ -144,12 +176,11 @@ func (s *Service) handleAssignmentReport(c *gin.Context) {
 		affectedApps[entries[i].ApplicationID] = true
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"entries": entries,
-		"summary": gin.H{
-			"users":        len(affectedUsers),
-			"applications": len(affectedApps),
-			"would_deny":   len(entries),
-		},
-	})
+	summary := gin.H{
+		"users":            len(affectedUsers),
+		"applications":     len(affectedApps),
+		"would_deny":       len(entries),
+		"incomplete_users": incompleteUsers,
+	}
+	return entries, summary
 }

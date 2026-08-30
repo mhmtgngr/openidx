@@ -45,3 +45,50 @@ func TestReportEmptyWhenAssignmentsCoverReach(t *testing.T) {
 		t.Errorf("expected no entries, got %+v", got)
 	}
 }
+
+// TestReportSummaryExcludesIncompleteUsers: a user whose evaluation failed
+// (pillar lookup or assignment lookup) must be excluded from the diff
+// entirely — no would-deny entries attributed to them in either direction —
+// and the summary must say how many users were skipped, so a clean report
+// can't be confused with a silently incomplete one.
+//
+// handleAssignmentReport itself needs a live DB (ziti_identities/applications
+// queries plus collectZitiPillar), so simulating a mid-loop failure there
+// would need a fair amount of fixture/mock scaffolding. buildReport is the
+// pure seam that turns (reachable, assigned, incompleteUsers) into the actual
+// API summary, so a failed user is represented here the same way the handler
+// produces it: simply absent from both reachable and assigned, with the
+// failure counted separately in incompleteUsers.
+func TestReportSummaryExcludesIncompleteUsers(t *testing.T) {
+	reachable := map[string][]string{
+		"alice": {"app-es"},
+		// "carol" is intentionally absent: her collectZitiPillar (or
+		// AppsForUser) call failed, so the handler never adds her to either
+		// map — she must not read as "loses nothing" nor "loses everything".
+	}
+	assigned := map[string][]string{
+		"alice": {"app-es"},
+	}
+	names := map[string]string{"alice": "Alice", "carol": "Carol"}
+	appNames := map[string]string{"app-es": "ES"}
+
+	entries, summary := buildReport(reachable, assigned, names, appNames, 1)
+
+	if len(entries) != 0 {
+		t.Fatalf("expected no would-deny entries (alice is fully covered, carol is excluded), got %+v", entries)
+	}
+	for _, e := range entries {
+		if e.UserID == "carol" {
+			t.Errorf("carol's failed lookup must not produce a would-deny entry: %+v", e)
+		}
+	}
+	if got := summary["incomplete_users"]; got != 1 {
+		t.Errorf("summary incomplete_users = %v, want 1", got)
+	}
+	if got := summary["would_deny"]; got != 0 {
+		t.Errorf("summary would_deny = %v, want 0", got)
+	}
+	if got := summary["users"]; got != 0 {
+		t.Errorf("summary users = %v, want 0 (no affected users)", got)
+	}
+}
