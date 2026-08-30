@@ -5,6 +5,7 @@ import { Button } from '../components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card'
 import { Input } from '../components/ui/input'
 import { Label } from '../components/ui/label'
+import { Checkbox } from '../components/ui/checkbox'
 import { useAuth } from '../lib/auth'
 import { api, baseURL, IdentityProvider } from '../lib/api'
 import { getProviderIcon } from '../components/icons/social-providers'
@@ -49,10 +50,18 @@ export function LoginPage() {
   const [pushChallengeCode, setPushChallengeCode] = useState('')
   const pushPollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  // Trust browser state
-  const [showTrustPrompt, setShowTrustPrompt] = useState(false)
+  // Trust browser state. The decision is made ON the MFA screen and travels
+  // with the verification (`trust_browser`), because that is the only request
+  // the server can act on: it trusts the browser server-side while it still
+  // holds the MFA session. A ref mirrors the checkbox so the in-flight push /
+  // WebAuthn closures read the current value instead of a stale capture.
   const [trustBrowser, setTrustBrowser] = useState(false)
-  const [pendingRedirectUrl, setPendingRedirectUrl] = useState('')
+  const [canTrustBrowser, setCanTrustBrowser] = useState(false)
+  const trustBrowserRef = useRef(false)
+  const setTrustBrowserChoice = (value: boolean) => {
+    trustBrowserRef.current = value
+    setTrustBrowser(value)
+  }
 
   // Concurrent session state
   const [concurrentLimitReached, setConcurrentLimitReached] = useState(false)
@@ -317,6 +326,10 @@ export function LoginPage() {
         setMfaSession(data.mfa_session)
         setMfaCode('')
         setError('')
+        // Offer "trust this browser" only when the server says this browser
+        // isn't trusted yet; the choice is sent with the verification below.
+        setCanTrustBrowser(!!data.can_trust_browser)
+        setTrustBrowserChoice(false)
 
         // Check if multiple MFA methods are available
         const methods = data.mfa_methods || ['totp']
@@ -416,7 +429,7 @@ export function LoginPage() {
           mfa_session: session,
           code: assertionJSON,
           method: 'webauthn',
-          trust_browser: trustBrowser,
+          trust_browser: trustBrowserRef.current,
         }),
       })
 
@@ -434,7 +447,7 @@ export function LoginPage() {
       setError(message)
       setWebauthnLoading(false)
     }
-  }, [trustBrowser])
+  }, [])
 
   // Begin Push MFA challenge with polling
   const beginPushChallenge = useCallback(async (session: string) => {
@@ -476,7 +489,7 @@ export function LoginPage() {
                 mfa_session: session,
                 code: data.challenge_id,
                 method: 'push',
-                trust_browser: trustBrowser,
+                trust_browser: trustBrowserRef.current,
               }),
             })
 
@@ -513,7 +526,7 @@ export function LoginPage() {
       setError(message)
       setPushLoading(false)
     }
-  }, [trustBrowser])
+  }, [])
 
   // Cleanup push polling and QR polling on unmount
   useEffect(() => {
@@ -565,7 +578,7 @@ export function LoginPage() {
           mfa_session: mfaSession,
           code: mfaCode,
           method: selectedMfaMethod || 'totp',
-          trust_browser: trustBrowser,
+          trust_browser: trustBrowserRef.current,
         }),
       })
 
@@ -578,13 +591,6 @@ export function LoginPage() {
         return
       }
 
-      // Check if we should show trust browser prompt
-      if (data.can_trust_browser && !trustBrowser) {
-        setPendingRedirectUrl(data.redirect_url)
-        setShowTrustPrompt(true)
-        return
-      }
-
       if (data.redirect_url) {
         completeOIDCRedirect(data.redirect_url)
       }
@@ -593,22 +599,6 @@ export function LoginPage() {
     } finally {
       setIsSubmitting(false)
     }
-  }
-
-  // Handle trust browser decision
-  const handleTrustDecision = async (trust: boolean) => {
-    if (trust) {
-      try {
-        await fetch(`${baseURL}/api/v1/identity/trusted-browsers`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-        })
-      } catch (err) {
-        console.error('Failed to trust browser:', err)
-      }
-    }
-    completeOIDCRedirect(pendingRedirectUrl)
   }
 
   const handleBackToOptions = () => {
@@ -636,9 +626,8 @@ export function LoginPage() {
     setUsername('')
     setPassword('')
     setError('')
-    setShowTrustPrompt(false)
-    setTrustBrowser(false)
-    setPendingRedirectUrl('')
+    setTrustBrowserChoice(false)
+    setCanTrustBrowser(false)
   }
 
   const handleForceLogin = async (terminateSessionId: string) => {
@@ -817,69 +806,6 @@ export function LoginPage() {
     }
   }
 
-  // Show trust browser prompt
-  if (showTrustPrompt) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
-        <Card className="w-full max-w-md shadow-xl">
-          <CardHeader className="text-center space-y-4">
-            <div className="flex justify-center">
-              <div className="h-16 w-16 rounded-full bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center shadow-lg">
-                <Check className="h-9 w-9 text-white" />
-              </div>
-            </div>
-            <div>
-              <CardTitle className="text-2xl font-bold">
-                Authentication Successful
-              </CardTitle>
-              <CardDescription className="text-base mt-2">
-                Would you like to trust this browser?
-              </CardDescription>
-            </div>
-          </CardHeader>
-
-          <CardContent className="space-y-4">
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-              <p className="text-sm text-blue-800">
-                Trusting this browser will skip MFA verification for the next 30 days on this device.
-              </p>
-            </div>
-
-            <div className="space-y-3">
-              <Button
-                onClick={() => handleTrustDecision(true)}
-                className="w-full bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700"
-                size="lg"
-              >
-                <Check className="mr-2 h-4 w-4" />
-                Trust This Browser
-              </Button>
-
-              <Button
-                variant="outline"
-                onClick={() => handleTrustDecision(false)}
-                className="w-full"
-                size="lg"
-              >
-                No, Don't Trust
-              </Button>
-            </div>
-          </CardContent>
-
-          <div className="px-6 py-4 bg-muted border-t border-border rounded-b-lg">
-            <div className="flex items-center justify-center gap-4 text-xs text-muted-foreground">
-              <span>Privacy</span>
-              <span>•</span>
-              <span>Terms</span>
-              <span>•</span>
-              <span>Help</span>
-            </div>
-          </div>
-        </Card>
-      </div>
-    )
-  }
-
   // Show MFA method selection
   if (mfaRequired && loginSession && mfaMethodSelectionStep) {
     return (
@@ -1001,6 +927,26 @@ export function LoginPage() {
               <div className="flex items-center gap-2 p-3 mb-4 bg-red-50 border border-red-200 rounded-md">
                 <AlertCircle className="h-4 w-4 text-red-600 flex-shrink-0" />
                 <p className="text-sm text-red-600">{error}</p>
+              </div>
+            )}
+
+            {/* Trust this browser: sent WITH the verification below, which is
+                what actually records the trust server-side (and lets adaptive
+                MFA skip the challenge next time on this device). */}
+            {canTrustBrowser && (
+              <div className="flex items-start gap-3 mb-4 rounded-md border border-border bg-muted/50 p-3">
+                <Checkbox
+                  id="trust-browser"
+                  checked={trustBrowser}
+                  onCheckedChange={(checked) => setTrustBrowserChoice(checked === true)}
+                  className="mt-0.5"
+                />
+                <Label htmlFor="trust-browser" className="text-sm font-normal leading-snug cursor-pointer">
+                  Trust this browser
+                  <span className="block text-xs text-muted-foreground">
+                    Skip verification on this device for the next 30 days.
+                  </span>
+                </Label>
               </div>
             )}
 

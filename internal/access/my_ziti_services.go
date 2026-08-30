@@ -35,11 +35,12 @@ type MyZitiServicesResponse struct {
 // service names with host/port/protocol from the local service mirror so the
 // user sees where each app lives, not just its name.
 func (s *Service) handleMyZitiServices(c *gin.Context) {
+	// The caller comes from the verified token only. A ?user_id= fallback used to
+	// stand in "for dev mode", but nothing gates it on the environment: under
+	// SoftAuth (development) an unauthenticated request reaches this handler with
+	// no user_id in context, so the query param would let any caller read another
+	// user's reachable apps.
 	userID := c.GetString("user_id")
-	if userID == "" {
-		// Dev-mode convenience, mirroring handleGetMyZitiIdentity.
-		userID = c.Query("user_id")
-	}
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return

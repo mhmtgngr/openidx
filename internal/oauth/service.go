@@ -2357,17 +2357,43 @@ func (s *Service) issueAuthorizationCode(c *gin.Context, oauthParams map[string]
 		s.redis.Client.Set(c.Request.Context(), "authcode_session:"+code, sessionID, 5*time.Minute)
 	}
 
-	redirectURL, _ := url.Parse(oauthParams["redirect_uri"])
+	c.JSON(200, authorizationCodeResponse(
+		authorizationRedirectURL(oauthParams["redirect_uri"], code, oauthParams["state"]),
+		c.GetString(ctxTrustedBrowserID),
+	))
+}
+
+// ctxTrustedBrowserID carries the id of a browser that was trusted earlier in
+// this same request (the MFA flow) so the shared issuance path can echo it back
+// to the client without every caller needing the parameter.
+const ctxTrustedBrowserID = "trusted_browser_id"
+
+// authorizationRedirectURL builds the client redirect that carries an issued
+// authorization code back to the relying party.
+func authorizationRedirectURL(redirectURI, code, state string) string {
+	redirectURL, err := url.Parse(redirectURI)
+	if err != nil || redirectURL == nil {
+		return ""
+	}
 	query := redirectURL.Query()
 	query.Set("code", code)
-	if oauthParams["state"] != "" {
-		query.Set("state", oauthParams["state"])
+	if state != "" {
+		query.Set("state", state)
 	}
 	redirectURL.RawQuery = query.Encode()
+	return redirectURL.String()
+}
 
-	c.JSON(200, gin.H{
-		"redirect_url": redirectURL.String(),
-	})
+// authorizationCodeResponse is the JSON body every browser-facing login step
+// returns once an authorization code exists: the login page navigates on
+// redirect_url, and trusted_browser_id (when a browser was just trusted) lets
+// it surface that fact.
+func authorizationCodeResponse(redirectURL, trustedBrowserID string) gin.H {
+	body := gin.H{"redirect_url": redirectURL}
+	if trustedBrowserID != "" {
+		body["trusted_browser_id"] = trustedBrowserID
+	}
+	return body
 }
 
 // handleMFAVerify handles MFA verification after password authentication
@@ -2684,42 +2710,19 @@ func (s *Service) handleMFAPushStatus(c *gin.Context) {
 	})
 }
 
-// issueAuthorizationCodeWithTrust issues auth code and includes trusted browser info
+// issueAuthorizationCodeWithTrust completes a login that just passed MFA.
+// It delegates to issueAuthorizationCode — the single issuance path that
+// persists the code in oauth_authorization_codes (where the token endpoint
+// consumes it), enforces consent and returns the redirect_url the login page
+// navigates on — and only annotates the response with the id of a browser this
+// flow just trusted. It must never mint a code of its own: a code the token
+// endpoint cannot consume, or a response without redirect_url, leaves the user
+// stranded on the MFA screen.
 func (s *Service) issueAuthorizationCodeWithTrust(c *gin.Context, params map[string]string, userID, trustedBrowserID string) {
-	// Generate authorization code
-	authCode := GenerateRandomToken(32)
-
-	// Store code in Redis with user info
-	codeData := map[string]string{
-		"user_id":      userID,
-		"client_id":    params["client_id"],
-		"redirect_uri": params["redirect_uri"],
-		"scope":        params["scope"],
-		"nonce":        params["nonce"],
-	}
-	if params["code_challenge"] != "" {
-		codeData["code_challenge"] = params["code_challenge"]
-		codeData["code_challenge_method"] = params["code_challenge_method"]
-	}
-
-	codeDataJSON, _ := json.Marshal(codeData)
-	s.redis.Client.Set(c.Request.Context(), "auth_code:"+authCode, string(codeDataJSON), 10*time.Minute)
-
-	// Store session_id alongside the auth code in Redis (5-minute TTL)
-	if sessionID := params["session_id"]; sessionID != "" {
-		s.redis.Client.Set(c.Request.Context(), "authcode_session:"+authCode, sessionID, 5*time.Minute)
-	}
-
-	response := gin.H{
-		"code":  authCode,
-		"state": params["state"],
-	}
-
 	if trustedBrowserID != "" {
-		response["trusted_browser_id"] = trustedBrowserID
+		c.Set(ctxTrustedBrowserID, trustedBrowserID)
 	}
-
-	c.JSON(200, response)
+	s.issueAuthorizationCode(c, params, userID)
 }
 
 // parseBrowserNameFromUA extracts browser name from user agent
