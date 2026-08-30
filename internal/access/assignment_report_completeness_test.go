@@ -87,7 +87,7 @@ func TestScanReportUsersRowError(t *testing.T) {
 		rows:    [][]any{userRow("u1", "alice", "z1", `["browzer-users"]`)},
 		iterErr: boom,
 	}
-	users, names, incomplete, err := scanReportUsers(rows)
+	users, names, incomplete, unidentified, err := scanReportUsers(rows)
 	if err == nil {
 		t.Fatal("a row-iteration failure must be reported: the user list is partial, " +
 			"and diffing over a partial list is exactly how this report reaches a false \"safe\"")
@@ -98,7 +98,7 @@ func TestScanReportUsersRowError(t *testing.T) {
 	if users != nil || names != nil {
 		t.Errorf("a failed iteration must not hand back the rows it did read: %v / %v", users, names)
 	}
-	_ = incomplete
+	_, _ = incomplete, unidentified
 }
 
 // TestScanReportUsersPerRowFailures: a row that cannot be scanned, and a row
@@ -114,15 +114,18 @@ func TestScanReportUsersPerRowFailures(t *testing.T) {
 			},
 			scanErrs: map[int]error{1: errors.New("bad column type")},
 		}
-		users, _, incomplete, err := scanReportUsers(rows)
+		users, _, incomplete, unidentified, err := scanReportUsers(rows)
 		if err != nil {
 			t.Fatalf("a single bad row is not a fatal input failure: %v", err)
 		}
 		if len(users) != 1 {
 			t.Fatalf("want the one readable user, got %+v", users)
 		}
-		if incomplete != 1 {
-			t.Fatalf("incomplete = %d, want 1: the skipped row must be counted", incomplete)
+		// The row could not be attributed to a user at all, so it cannot join
+		// the incomplete SET — it is counted separately, and still counted.
+		if unidentified != 1 || len(incomplete) != 0 {
+			t.Fatalf("unidentified/incomplete = %d/%v, want 1/none: the skipped row must be counted",
+				unidentified, incomplete)
 		}
 	})
 
@@ -136,15 +139,42 @@ func TestScanReportUsersPerRowFailures(t *testing.T) {
 				userRow("u2", "bob", "z2", `"not-an-array"`),
 			},
 		}
-		users, _, incomplete, err := scanReportUsers(rows)
+		users, _, incomplete, unidentified, err := scanReportUsers(rows)
 		if err != nil {
 			t.Fatalf("unexpected fatal error: %v", err)
 		}
 		if len(users) != 1 || users[0].ID != "u1" {
 			t.Fatalf("the user with unreadable attributes must be excluded, got %+v", users)
 		}
-		if incomplete != 1 {
-			t.Fatalf("incomplete = %d, want 1", incomplete)
+		// The user id IS readable here, so the user joins the incomplete set
+		// by id — which is what makes a second, readable identity row for the
+		// same user unable to cancel this one out.
+		if !incomplete["u2"] || len(incomplete) != 1 || unidentified != 0 {
+			t.Fatalf("incomplete/unidentified = %v/%d, want {u2}/0", incomplete, unidentified)
+		}
+	})
+
+	t.Run("a user's other identity does not cancel out an unreadable one", func(t *testing.T) {
+		// Two enrolled devices, one of which has unreadable attributes. The
+		// user's reach is partial either way, so they must still be counted
+		// incomplete — the set does that; a counter would have been offset by
+		// the good row's evaluation.
+		rows := &fakeRows{
+			rows: [][]any{
+				userRow("u1", "alice", "z-laptop", `"not-an-array"`),
+				userRow("u1", "alice", "z-phone", `["browzer-users"]`),
+			},
+		}
+		users, _, incomplete, _, err := scanReportUsers(rows)
+		if err != nil {
+			t.Fatalf("unexpected fatal error: %v", err)
+		}
+		if len(users) != 1 || users[0].ZitiID != "z-phone" {
+			t.Fatalf("the readable identity must still be returned, got %+v", users)
+		}
+		if !incomplete["u1"] {
+			t.Fatal("a user with one unreadable identity has partial reach and must be " +
+				"counted incomplete even though another identity read cleanly")
 		}
 	})
 }

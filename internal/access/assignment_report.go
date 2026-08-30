@@ -58,6 +58,13 @@ type ReportEntry struct {
 // diffReachability returns every (user, application) pair the user can reach
 // today but would not be granted by assignment. Both maps are keyed by user id
 // and hold application ids. Names are filled in by the caller, which has them.
+//
+// A user's reach is the UNION over all their Ziti identities — one per enrolled
+// device is the normal shape — so the same application can arrive several times
+// for the same user. Emitting it once per arrival would inflate
+// `summary.would_deny` N× while `summary.users` stayed at one, i.e. the two
+// halves of the same summary would contradict each other. De-duplicate per
+// user.
 func diffReachability(reachable, assigned map[string][]string) []ReportEntry {
 	out := []ReportEntry{}
 	for user, apps := range reachable {
@@ -65,16 +72,45 @@ func diffReachability(reachable, assigned map[string][]string) []ReportEntry {
 		for _, a := range assigned[user] {
 			granted[a] = true
 		}
+		seen := make(map[string]bool, len(apps))
 		for _, a := range apps {
-			if !granted[a] {
-				out = append(out, ReportEntry{
-					UserID:           user,
-					ApplicationID:    a,
-					EnforcementPoint: "ziti",
-					Reason:           "reachable today via the blanket dial policy, but not assigned",
-				})
+			if granted[a] || seen[a] {
+				continue
 			}
+			seen[a] = true
+			out = append(out, ReportEntry{
+				UserID:           user,
+				ApplicationID:    a,
+				EnforcementPoint: "ziti",
+				Reason:           "reachable today via the blanket dial policy, but not assigned",
+			})
 		}
+	}
+	return out
+}
+
+// addPair records a (user, application) pair once, however many identity rows
+// the user has. The reach of a user's several identities must be unioned — each
+// identity carries its own attributes and therefore matches its own policies —
+// but the union must not repeat an application.
+func addPair(m map[string]map[string]bool, user, app string) {
+	if m[user] == nil {
+		m[user] = map[string]bool{}
+	}
+	m[user][app] = true
+}
+
+// flattenPairs turns the union sets back into the sorted slices the diff and
+// the assignment view consume. Sorting also makes the response stable.
+func flattenPairs(m map[string]map[string]bool) map[string][]string {
+	out := make(map[string][]string, len(m))
+	for user, apps := range m {
+		list := make([]string, 0, len(apps))
+		for a := range apps {
+			list = append(list, a)
+		}
+		sort.Strings(list)
+		out[user] = list
 	}
 	return out
 }
@@ -178,35 +214,40 @@ type reportRows interface {
 	Err() error
 }
 
-// scanReportUsers reads the org's users that have a synced Ziti identity.
+// scanReportUsers reads the org's users that have a synced Ziti identity. One
+// row is one IDENTITY, not one user: a user with two enrolled devices has two
+// rows, and both must be read because each carries its own attributes.
 //
-// It returns the users, their display names, the number of rows it could not
-// read (each of which must show up as an incomplete user rather than silently
-// vanish), and a FATAL error when the iteration itself failed. An iteration
+// It returns the identity rows, their display names, the set of USER IDS whose
+// row could not be used (returned as a set so that a user with several rows is
+// counted once), the number of rows so broken that not even the user id could
+// be read, and a FATAL error when the iteration itself failed. An iteration
 // failure is not a per-user problem: it means the user list is partial, so the
 // report's inputs are untrustworthy and the caller must report the reach half
 // as unavailable rather than diff over whatever arrived first.
-func scanReportUsers(rows reportRows) ([]reportUser, map[string]string, int, error) {
+func scanReportUsers(rows reportRows) ([]reportUser, map[string]string, map[string]bool, int, error) {
 	names := map[string]string{}
 	users := []reportUser{}
-	incomplete := 0
+	incomplete := map[string]bool{}
+	unidentified := 0
 	for rows.Next() {
 		var u reportUser
 		var attrsJSON []byte
 		if err := rows.Scan(&u.ID, &u.Username, &u.ZitiID, &attrsJSON); err != nil {
-			// The row cannot even be identified, so it cannot be named — but
-			// it must still be counted, or the report claims to have covered
-			// a user it never looked at.
-			incomplete++
+			// The row cannot even be identified, so it cannot be named or
+			// attributed to a user — but it must still be counted, or the
+			// report claims to have covered a user it never looked at.
+			unidentified++
 			continue
 		}
 		if len(attrsJSON) > 0 {
 			if err := json.Unmarshal(attrsJSON, &u.Attrs); err != nil {
 				// Malformed attributes would leave the identity matching
 				// fewer policies than it really does, i.e. under-report reach.
-				// Skip the user and count them instead of guessing "no
-				// attributes".
-				incomplete++
+				// Skip the identity and mark its user incomplete instead of
+				// guessing "no attributes" — even if another of that user's
+				// identities reads cleanly, their reach is now partial.
+				incomplete[u.ID] = true
 				continue
 			}
 		}
@@ -214,10 +255,10 @@ func scanReportUsers(rows reportRows) ([]reportUser, map[string]string, int, err
 		users = append(users, u)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, nil, incomplete,
+		return nil, nil, incomplete, unidentified,
 			fmt.Errorf("could not read this organization's Ziti identities: %w", err)
 	}
-	return users, names, incomplete, nil
+	return users, names, incomplete, unidentified, nil
 }
 
 // scanServiceApps reads the ziti-service-name → application index.
@@ -253,33 +294,53 @@ func (s *Service) handleAssignmentReport(c *gin.Context) {
 		return
 	}
 
-	// Every user with a synced Ziti identity, with their name for display and
-	// the identity attributes their reach is matched against.
+	// Every identity of every user in this org, with the user's name for
+	// display and the identity attributes their reach is matched against. One
+	// row per IDENTITY: a user with several enrolled devices has several rows,
+	// and all of them are read because each carries its own attributes and its
+	// own reach.
+	//
+	// Both sides of the join are org-scoped. Filtering only zi.org_id would let
+	// a cross-org ziti_identities row put a user into the numerator who is not
+	// in the denominator below — the same masking mechanism as counting rows
+	// instead of users, with a narrower trigger.
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT zi.user_id, COALESCE(u.username, ''), COALESCE(zi.ziti_id, ''),
 		       COALESCE(zi.attributes, '[]'::jsonb)
 		  FROM ziti_identities zi
 		  JOIN users u ON u.id = zi.user_id
-		 WHERE zi.org_id = $1`, org.ID)
+		 WHERE zi.org_id = $1 AND u.org_id = $1`, org.ID)
 	if err != nil {
 		s.logger.Error("assignment report: user query failed", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to build report"})
 		return
 	}
-	users, names, incompleteUsers, inputErr := scanReportUsers(rows)
+	users, names, incompleteIDs, unidentifiedRows, inputErr := scanReportUsers(rows)
 	rows.Close()
 
-	// usersTotal is the denominator the report is answerable for. The user set
-	// above comes from ziti_identities, so an org whose sync poller has never
-	// run — or that has gained users since the last poll — would otherwise
-	// evaluate NOBODY and still render "safe to enforce". Org-scoped like every
-	// other query here.
-	// It is read even when the identity read already failed, so a partial
-	// listing still reports a denominator the shortfall can be measured
-	// against.
-	usersTotal := 0
-	if err := s.db.Pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM users WHERE org_id = $1`, org.ID).Scan(&usersTotal); err != nil {
+	// usersTotal is the denominator the report is answerable for; the identity
+	// rows above come from ziti_identities, so an org whose sync poller has
+	// never run would otherwise evaluate NOBODY and still render "safe to
+	// enforce".
+	//
+	// usersWithoutIdentity is the honest explanation for the gap between the
+	// two. A user with no Ziti identity has no Ziti reach, and therefore has no
+	// Ziti reach to LOSE, so they are not "incomplete" — but an operator must
+	// still be able to see the number and decide whether such a user SHOULD
+	// have had an identity. We surface it; we fold it into neither "safe" nor
+	// "incomplete".
+	//
+	// Read even when the identity read already failed, so a partial listing
+	// still reports a denominator against which it can be judged.
+	usersTotal, usersWithoutIdentity := 0, 0
+	if err := s.db.Pool.QueryRow(ctx, `
+		SELECT COUNT(*)::int,
+		       COUNT(*) FILTER (
+		         WHERE NOT EXISTS (
+		           SELECT 1 FROM ziti_identities zi
+		            WHERE zi.user_id = u.id AND zi.org_id = $1))::int
+		  FROM users u
+		 WHERE u.org_id = $1`, org.ID).Scan(&usersTotal, &usersWithoutIdentity); err != nil {
 		if inputErr == nil {
 			inputErr = fmt.Errorf("could not count this organization's users: %w", err)
 		}
@@ -340,29 +401,45 @@ func (s *Service) handleAssignmentReport(c *gin.Context) {
 		}
 	}
 
-	reachable := map[string][]string{}
-	assigned := map[string][]string{}
+	// The loop below walks IDENTITY rows, but the report counts USERS. Both
+	// tallies are therefore sets of user ids, not counters: a user with two
+	// enrolled devices contributes two rows, and counting rows lets that user
+	// silently cancel out a user who was never evaluated at all —
+	// evaluated == total, shortfall zero, "safe to enforce" over someone nobody
+	// looked at. That is the exact hole this denominator exists to close.
+	reachSet := map[string]map[string]bool{}
+	assignedSet := map[string]map[string]bool{}
 	appNames := map[string]string{}
-	usersEvaluated := 0
+	evaluated := map[string]bool{}
+	incomplete := map[string]bool{}
+	for id := range incompleteIDs {
+		incomplete[id] = true
+	}
+	assignmentsRead := map[string]bool{}
 	for _, u := range users {
-		refs, aerr := appaccess.AppsForUser(ctx, s.db, u.ID, org.ID)
-		if aerr != nil {
-			s.logger.Warn("assignment report: assignments failed",
-				zap.String("user_id", u.ID), zap.Error(aerr))
-			incompleteUsers++
-			continue
+		// Assignment is per user, not per identity: read it once however many
+		// devices the user has enrolled.
+		if !assignmentsRead[u.ID] {
+			refs, aerr := appaccess.AppsForUser(ctx, s.db, u.ID, org.ID)
+			if aerr != nil {
+				s.logger.Warn("assignment report: assignments failed",
+					zap.String("user_id", u.ID), zap.Error(aerr))
+				incomplete[u.ID] = true
+				continue
+			}
+			assignmentsRead[u.ID] = true
+			for _, r := range refs {
+				addPair(assignedSet, u.ID, r.ID)
+				appNames[r.ID] = r.Name
+			}
 		}
 		if source != ReachabilityFromController {
 			// Reach is unknown for everyone. The user counts as incomplete and
 			// is entered into NEITHER side of the diff: no fallback to the
 			// mirror, and no empty diff that would read as "loses nothing".
-			// The assignment half is still recorded — it is DB-only and
+			// The assignment half is still recorded above — it is DB-only and
 			// correct — so the page can still show what assignment covers.
-			incompleteUsers++
-			for _, r := range refs {
-				assigned[u.ID] = append(assigned[u.ID], r.ID)
-				appNames[r.ID] = r.Name
-			}
+			incomplete[u.ID] = true
 			continue
 		}
 		// Both halves are known: only now is the user entered into either side
@@ -373,30 +450,38 @@ func (s *Service) handleAssignmentReport(c *gin.Context) {
 		_, svcNames := reachabilityForIdentity(policies, u.ZitiID, u.Attrs, svcIdx)
 		for _, svcName := range svcNames {
 			if ref, ok := serviceApp[svcName]; ok {
-				reachable[u.ID] = append(reachable[u.ID], ref.ID)
+				addPair(reachSet, u.ID, ref.ID)
 				appNames[ref.ID] = ref.Name
 			}
 		}
-		for _, r := range refs {
-			assigned[u.ID] = append(assigned[u.ID], r.ID)
-			appNames[r.ID] = r.Name
-		}
-		usersEvaluated++
+		evaluated[u.ID] = true
 	}
+	// A user with several identities can be evaluated through one and fail
+	// through another. Partial reach is not an evaluation, so incompleteness
+	// wins — the direction that withholds reassurance rather than granting it.
+	for id := range incomplete {
+		delete(evaluated, id)
+	}
+	usersEvaluated := len(evaluated)
+	// Rows too broken to attribute to a user cannot join a set, so they are
+	// added as a count. They still have to be counted: an unevaluated user
+	// scored as zero is indistinguishable from an evaluated one who loses
+	// nothing.
+	incompleteUsers := len(incomplete) + unidentifiedRows
 
-	// Anyone in the org the loop never even saw — no ziti_identities row, so
-	// absent from `users` entirely — is not evaluated and must not read as
-	// evaluated-and-clean. incompleteUsers already accounts for the users the
-	// loop saw and could not finish, so only the remainder is added.
-	if missing := usersTotal - usersEvaluated - incompleteUsers; missing > 0 {
-		incompleteUsers += missing
-	}
+	reachable := flattenPairs(reachSet)
+	assigned := flattenPairs(assignedSet)
 
 	// buildReport only ever diffs users present in `reachable`; the
 	// unavailable path leaves that map empty, so entries stay empty while
 	// incomplete_users equals the user count.
-	entries, summary := buildReport(reachable, assigned, names, appNames,
-		incompleteUsers, usersEvaluated, usersTotal)
+	entries, summary := buildReport(reachable, assigned, names, appNames, reportCounts{
+		IncompleteUsers:      incompleteUsers,
+		UsersEvaluated:       usersEvaluated,
+		UsersTotal:           usersTotal,
+		UsersWithoutIdentity: usersWithoutIdentity,
+		EvaluationComplete:   evaluationComplete(source, incompleteUsers, usersEvaluated),
+	})
 
 	body := gin.H{
 		"entries":             entries,
@@ -433,18 +518,48 @@ func buildAssignments(assigned map[string][]string, names, appNames map[string]s
 	return out
 }
 
-// buildReport diffs reachability against assignment and packages the result
-// for the API response. incompleteUsers is the count of users excluded from
-// both reachable and assigned because their lookup failed; it is surfaced in
-// the summary so an operator can tell a low would_deny count is genuine and
-// not a symptom of silently-skipped users.
+// reportCounts is the denominator half of the summary — everything an operator
+// needs to judge how much of the org the report actually covered.
+type reportCounts struct {
+	// IncompleteUsers is the number of users excluded from both reachable and
+	// assigned because their lookup failed. Surfaced so an operator can tell a
+	// low would_deny count is genuine and not a symptom of skipped users.
+	IncompleteUsers int
+	// UsersEvaluated / UsersTotal are the denominator: without them an org
+	// that evaluated nobody is textually indistinguishable from one that
+	// evaluated everybody and found nothing to take away.
+	UsersEvaluated int
+	UsersTotal     int
+	// UsersWithoutIdentity is how much of the gap between the two is explained
+	// by users who have no Ziti identity at all.
+	UsersWithoutIdentity int
+	// EvaluationComplete is the go/no-go, computed once server-side so that
+	// every consumer reads the same rule instead of re-deriving it from four
+	// fields — a non-console client that re-derived it wrongly would read a
+	// zero-user org as clean.
+	EvaluationComplete bool
+}
+
+// evaluationComplete is the single definition of "this report earned the
+// reassuring headline".
 //
-// usersEvaluated / usersTotal are the report's denominator: without them an
-// org that evaluated nobody (no synced Ziti identities at all) is textually
-// indistinguishable from one that evaluated everybody and found nothing to
-// take away.
+// It deliberately does NOT require UsersEvaluated == UsersTotal. Every org on
+// this deployment has users with no Ziti identity — disabled accounts, service
+// accounts, admins who never onboarded ZTNA — and such a user has no Ziti reach
+// and therefore no Ziti reach to LOSE. Requiring equality would keep the signal
+// permanently amber, and a go/no-go that is always amber teaches operators to
+// ignore it, which is its own failure.
+//
+// usersEvaluated > 0 still catches the case the strict rule was written for: an
+// org whose sync has never run evaluates nobody and cannot read as clean.
+func evaluationComplete(source string, incompleteUsers, usersEvaluated int) bool {
+	return source == ReachabilityFromController && incompleteUsers == 0 && usersEvaluated > 0
+}
+
+// buildReport diffs reachability against assignment and packages the result
+// for the API response.
 func buildReport(reachable, assigned map[string][]string, names, appNames map[string]string,
-	incompleteUsers, usersEvaluated, usersTotal int) ([]ReportEntry, gin.H) {
+	counts reportCounts) ([]ReportEntry, gin.H) {
 	entries := diffReachability(reachable, assigned)
 	affectedUsers := map[string]bool{}
 	affectedApps := map[string]bool{}
@@ -456,12 +571,14 @@ func buildReport(reachable, assigned map[string][]string, names, appNames map[st
 	}
 
 	summary := gin.H{
-		"users":            len(affectedUsers),
-		"applications":     len(affectedApps),
-		"would_deny":       len(entries),
-		"incomplete_users": incompleteUsers,
-		"users_evaluated":  usersEvaluated,
-		"users_total":      usersTotal,
+		"users":                  len(affectedUsers),
+		"applications":           len(affectedApps),
+		"would_deny":             len(entries),
+		"incomplete_users":       counts.IncompleteUsers,
+		"users_evaluated":        counts.UsersEvaluated,
+		"users_total":            counts.UsersTotal,
+		"users_without_identity": counts.UsersWithoutIdentity,
+		"evaluation_complete":    counts.EvaluationComplete,
 	}
 	return entries, summary
 }

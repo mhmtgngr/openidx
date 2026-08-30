@@ -162,12 +162,14 @@ var reportSchema = []string{
 type reportResponse struct {
 	Entries []ReportEntry `json:"entries"`
 	Summary struct {
-		Users           int `json:"users"`
-		Applications    int `json:"applications"`
-		WouldDeny       int `json:"would_deny"`
-		IncompleteUsers int `json:"incomplete_users"`
-		UsersEvaluated  int `json:"users_evaluated"`
-		UsersTotal      int `json:"users_total"`
+		Users                int  `json:"users"`
+		Applications         int  `json:"applications"`
+		WouldDeny            int  `json:"would_deny"`
+		IncompleteUsers      int  `json:"incomplete_users"`
+		UsersEvaluated       int  `json:"users_evaluated"`
+		UsersTotal           int  `json:"users_total"`
+		UsersWithoutIdentity int  `json:"users_without_identity"`
+		EvaluationComplete   bool `json:"evaluation_complete"`
 	} `json:"summary"`
 	Assignments        []AssignmentEntry `json:"assignments"`
 	ReachabilitySource string            `json:"reachability_source"`
@@ -309,6 +311,10 @@ func TestAssignmentReportReadsController(t *testing.T) {
 			t.Fatalf("users_evaluated/users_total = %d/%d, want 2/2",
 				got.Summary.UsersEvaluated, got.Summary.UsersTotal)
 		}
+		if !got.Summary.EvaluationComplete {
+			t.Fatal("live controller, every user evaluated, nothing skipped: " +
+				"evaluation_complete must be true")
+		}
 		if len(got.Entries) != 1 {
 			t.Fatalf("want exactly one would-deny entry (alice reaches Es-Dev unassigned), got %+v", got.Entries)
 		}
@@ -390,11 +396,17 @@ func TestAssignmentReportReadsController(t *testing.T) {
 		}
 	})
 
-	// F2. The user set comes from ziti_identities, which the sync poller
-	// maintains. A user it has not reached yet is simply absent — so without a
-	// denominator the report evaluates fewer people than the org has and still
-	// renders "safe to enforce".
-	t.Run("a user with no synced Ziti identity counts against the denominator", func(t *testing.T) {
+	// F2 / section 2. The user set comes from ziti_identities, so a user with
+	// no identity is simply absent from it. They must show up in the
+	// denominator and in users_without_identity — never folded silently into
+	// either "safe" or "incomplete".
+	//
+	// The ruling: such a user has no Ziti reach, therefore no Ziti reach to
+	// LOSE, so they do NOT block completeness. Every org on this deployment has
+	// them (service accounts, disabled accounts, admins who never onboarded),
+	// and a go/no-go that can never read clean is one operators learn to
+	// ignore. Without this subtest the signal is permanently amber.
+	t.Run("a user with no Ziti identity is surfaced, not counted incomplete", func(t *testing.T) {
 		const carol = "11111111-0000-0000-0000-0000000000c1"
 		if _, err := db.Pool.Exec(ctx,
 			`INSERT INTO users (id, org_id, username, email) VALUES ($1,$2,'carol','carol@x.io')`,
@@ -417,10 +429,141 @@ func TestAssignmentReportReadsController(t *testing.T) {
 			t.Fatalf("users_evaluated/users_total = %d/%d, want 2/3",
 				got.Summary.UsersEvaluated, got.Summary.UsersTotal)
 		}
-		if got.Summary.IncompleteUsers != 1 {
-			t.Fatalf("incomplete_users = %d, want 1: the shortfall between evaluated and total "+
-				"must be counted, or an unevaluated user reads as an evaluated-and-clean one",
-				got.Summary.IncompleteUsers)
+		if got.Summary.UsersWithoutIdentity != 1 {
+			t.Fatalf("users_without_identity = %d, want 1 (carol): the gap between evaluated "+
+				"and total must be explained, not hidden", got.Summary.UsersWithoutIdentity)
+		}
+		if got.Summary.IncompleteUsers != 0 {
+			t.Fatalf("incomplete_users = %d, want 0: carol has no Ziti reach and therefore "+
+				"no Ziti reach to lose", got.Summary.IncompleteUsers)
+		}
+		if !got.Summary.EvaluationComplete {
+			t.Fatal("an org whose only shortfall is users with no Ziti identity must be able " +
+				"to read as complete — a permanently amber go/no-go gets ignored")
+		}
+	})
+
+	// Section 1, the reviewer's exact probe. ziti_identities.user_id has only a
+	// NON-unique index, and one identity per enrolled device is the normal
+	// shape. Counting identity ROWS lets a two-device user cancel out a user
+	// with none: evaluated == total, and the report claims to have covered
+	// somebody it never looked at.
+	t.Run("a two-device user does not cancel out a user with no identity", func(t *testing.T) {
+		const ann = "11111111-0000-0000-0000-0000000000e1"
+		const ben = "11111111-0000-0000-0000-0000000000e2"
+		seedProbe := []struct {
+			sql  string
+			args []any
+		}{
+			{`INSERT INTO users (id, org_id, username, email) VALUES ($1,$2,'ann','ann@x.io')`,
+				[]any{ann, reportOrg}},
+			{`INSERT INTO users (id, org_id, username, email) VALUES ($1,$2,'ben','ben@x.io')`,
+				[]any{ben, reportOrg}},
+			// ann's laptop and phone: two rows, one user.
+			{`INSERT INTO ziti_identities (id, org_id, ziti_id, name, user_id, enrolled, attributes)
+			  VALUES (gen_random_uuid(),$1,'z-ann-laptop','ann-laptop',$2,true,'["browzer-users"]'::jsonb)`,
+				[]any{reportOrg, ann}},
+			{`INSERT INTO ziti_identities (id, org_id, ziti_id, name, user_id, enrolled, attributes)
+			  VALUES (gen_random_uuid(),$1,'z-ann-phone','ann-phone',$2,true,'["browzer-users"]'::jsonb)`,
+				[]any{reportOrg, ann}},
+			// ben has no identity at all.
+		}
+		for _, st := range seedProbe {
+			if _, err := db.Pool.Exec(ctx, st.sql, st.args...); err != nil {
+				t.Fatalf("seed probe: %v", err)
+			}
+		}
+		defer func() {
+			_, _ = db.Pool.Exec(ctx, `DELETE FROM ziti_identities WHERE user_id = $1`, ann)
+			_, _ = db.Pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, ann)
+			_, _ = db.Pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, ben)
+		}()
+
+		srv := liveControllerServer(t)
+		defer srv.Close()
+		s := reportService(t, db, srv.URL)
+		c, w := newCtx()
+		s.handleAssignmentReport(c)
+		got := decode(t, w)
+
+		// alice + ann evaluated; bob evaluated too (he has an identity, it just
+		// reaches nothing). ben is not evaluated. Row-counting would have said
+		// 4 of 4 — ann twice, ben never — and reported no shortfall at all.
+		if got.Summary.UsersTotal != 4 {
+			t.Fatalf("users_total = %d, want 4 (alice, bob, ann, ben)", got.Summary.UsersTotal)
+		}
+		if got.Summary.UsersEvaluated != 3 {
+			t.Fatalf("users_evaluated = %d, want 3: ann's two identity rows are ONE user, "+
+				"and counting rows lets her cancel out ben, who was never evaluated",
+				got.Summary.UsersEvaluated)
+		}
+		if got.Summary.UsersWithoutIdentity != 1 {
+			t.Fatalf("users_without_identity = %d, want 1 (ben): the shortfall must be "+
+				"named, not silently absorbed", got.Summary.UsersWithoutIdentity)
+		}
+		// ann's reach is the UNION of her two identities, counted once. A
+		// per-row diff would emit the same would-deny entry twice and leave
+		// would_deny disagreeing with users.
+		annEntries := 0
+		for _, e := range got.Entries {
+			if e.UserID == ann {
+				annEntries++
+			}
+		}
+		if annEntries != 1 {
+			t.Fatalf("ann has %d would-deny entries for one application, want 1: %+v",
+				annEntries, got.Entries)
+		}
+		if got.Summary.WouldDeny != len(got.Entries) || got.Summary.Users > got.Summary.WouldDeny {
+			t.Fatalf("summary users/would_deny = %d/%d disagree with %d entries",
+				got.Summary.Users, got.Summary.WouldDeny, len(got.Entries))
+		}
+	})
+
+	// Section 4. The identity query joins users, so a ziti_identities row
+	// pointing at a user in ANOTHER org would put that user into the numerator
+	// while the denominator — which filters users.org_id — excludes them. Same
+	// masking mechanism as counting rows, narrower trigger.
+	t.Run("a cross-org identity row does not inflate the numerator", func(t *testing.T) {
+		const otherOrg = "00000000-0000-0000-0000-0000000000cc"
+		const outsider = "11111111-0000-0000-0000-0000000000f1"
+		seedCross := []struct {
+			sql  string
+			args []any
+		}{
+			{`INSERT INTO users (id, org_id, username, email) VALUES ($1,$2,'outsider','out@x.io')`,
+				[]any{outsider, otherOrg}},
+			// The identity row claims this org; the user does not belong to it.
+			{`INSERT INTO ziti_identities (id, org_id, ziti_id, name, user_id, enrolled, attributes)
+			  VALUES (gen_random_uuid(),$1,'z-outsider','outsider',$2,true,'["browzer-users"]'::jsonb)`,
+				[]any{reportOrg, outsider}},
+		}
+		for _, st := range seedCross {
+			if _, err := db.Pool.Exec(ctx, st.sql, st.args...); err != nil {
+				t.Fatalf("seed cross-org: %v", err)
+			}
+		}
+		defer func() {
+			_, _ = db.Pool.Exec(ctx, `DELETE FROM ziti_identities WHERE user_id = $1`, outsider)
+			_, _ = db.Pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, outsider)
+		}()
+
+		srv := liveControllerServer(t)
+		defer srv.Close()
+		s := reportService(t, db, srv.URL)
+		c, w := newCtx()
+		s.handleAssignmentReport(c)
+		got := decode(t, w)
+
+		if got.Summary.UsersTotal != 2 || got.Summary.UsersEvaluated != 2 {
+			t.Fatalf("users_evaluated/users_total = %d/%d, want 2/2: a user from another org "+
+				"must not be evaluated against this org's denominator",
+				got.Summary.UsersEvaluated, got.Summary.UsersTotal)
+		}
+		for _, e := range got.Entries {
+			if e.UserID == outsider {
+				t.Fatalf("another org's user leaked into the report: %+v", e)
+			}
 		}
 	})
 
@@ -445,9 +588,47 @@ func TestAssignmentReportReadsController(t *testing.T) {
 		if len(got.Entries) != 0 {
 			t.Fatalf("an empty org has nothing to report, got %+v", got.Entries)
 		}
-		// The counts are the whole point: the console withholds "safe to
-		// enforce" whenever users_evaluated is zero, which it cannot do unless
-		// the endpoint reports the denominator at all.
+		// Section 3. The go/no-go is computed here, once, so that a client
+		// reading only `summary` cannot mistake would_deny:0 + incomplete:0 +
+		// source:"controller" for a clean sweep over an evaluation of nobody.
+		if got.Summary.EvaluationComplete {
+			t.Fatal("evaluation_complete must be false when nobody was evaluated: an empty " +
+				"evaluation is not evidence that enforcement is safe")
+		}
+	})
+
+	// Section 2's other edge: an org whose sync has never run has users, but
+	// every one of them lacks an identity. Nobody is evaluated, so it cannot
+	// read as complete however clean the diff looks.
+	t.Run("an org where every user lacks an identity does not read as complete", func(t *testing.T) {
+		const syncOrg = "00000000-0000-0000-0000-0000000000df"
+		const unsynced = "11111111-0000-0000-0000-0000000000f9"
+		if _, err := db.Pool.Exec(ctx,
+			`INSERT INTO users (id, org_id, username, email) VALUES ($1,$2,'unsynced','uns@x.io')`,
+			unsynced, syncOrg); err != nil {
+			t.Fatalf("seed unsynced: %v", err)
+		}
+		defer func() { _, _ = db.Pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, unsynced) }()
+
+		srv := liveControllerServer(t)
+		defer srv.Close()
+		s := reportService(t, db, srv.URL)
+
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		req := httptest.NewRequest(http.MethodGet, "/assignment-report", nil)
+		c.Request = req.WithContext(orgctx.With(req.Context(), orgctx.Org{ID: syncOrg}))
+		s.handleAssignmentReport(c)
+		got := decode(t, w)
+
+		if got.Summary.UsersTotal != 1 || got.Summary.UsersWithoutIdentity != 1 {
+			t.Fatalf("users_total/users_without_identity = %d/%d, want 1/1",
+				got.Summary.UsersTotal, got.Summary.UsersWithoutIdentity)
+		}
+		if got.Summary.EvaluationComplete {
+			t.Fatal("an org whose Ziti sync has never run evaluates nobody and must not " +
+				"read as complete — this is the case users_evaluated > 0 exists to catch")
+		}
 	})
 
 	// F1. A malformed attributes value would leave the identity matching fewer
@@ -489,6 +670,15 @@ func TestAssignmentReportReadsController(t *testing.T) {
 		if got.Summary.IncompleteUsers != 1 {
 			t.Fatalf("incomplete_users = %d, want 1 (dave's attributes could not be read)",
 				got.Summary.IncompleteUsers)
+		}
+		// Dave HAS an identity — it just could not be read — so he is not a
+		// without-identity user, and he does block completeness.
+		if got.Summary.UsersWithoutIdentity != 0 {
+			t.Fatalf("users_without_identity = %d, want 0: dave has an identity row",
+				got.Summary.UsersWithoutIdentity)
+		}
+		if got.Summary.EvaluationComplete {
+			t.Fatal("a user whose identity could not be read leaves the report incomplete")
 		}
 	})
 

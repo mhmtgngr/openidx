@@ -73,7 +73,12 @@ func TestReportSummaryExcludesIncompleteUsers(t *testing.T) {
 	appNames := map[string]string{"app-es": "ES"}
 
 	// One of two users evaluated, one counted incomplete.
-	entries, summary := buildReport(reachable, assigned, names, appNames, 1, 1, 2)
+	entries, summary := buildReport(reachable, assigned, names, appNames, reportCounts{
+		IncompleteUsers:    1,
+		UsersEvaluated:     1,
+		UsersTotal:         2,
+		EvaluationComplete: evaluationComplete(ReachabilityFromController, 1, 1),
+	})
 
 	if len(entries) != 0 {
 		t.Fatalf("expected no would-deny entries (alice is fully covered, carol is excluded), got %+v", entries)
@@ -99,5 +104,73 @@ func TestReportSummaryExcludesIncompleteUsers(t *testing.T) {
 	}
 	if got := summary["users_total"]; got != 2 {
 		t.Errorf("summary users_total = %v, want 2", got)
+	}
+	// A user the report could not finish is exactly the case the go/no-go must
+	// refuse, whatever the diff looks like.
+	if got := summary["evaluation_complete"]; got != false {
+		t.Errorf("summary evaluation_complete = %v, want false while a user is incomplete", got)
+	}
+}
+
+// TestDiffReachabilityDeduplicatesAUsersIdentities: a user's reach is the union
+// over all their enrolled devices, so the same application arrives once per
+// identity. Emitting one entry per arrival inflates would_deny N× while `users`
+// stays at one, leaving the two halves of the same summary contradicting each
+// other.
+func TestDiffReachabilityDeduplicatesAUsersIdentities(t *testing.T) {
+	// ann has a laptop and a phone; both identities reach app-es.
+	reachable := map[string][]string{"ann": {"app-es", "app-es"}}
+	assigned := map[string][]string{}
+
+	entries, summary := buildReport(reachable, assigned,
+		map[string]string{"ann": "Ann"}, map[string]string{"app-es": "ES"},
+		reportCounts{UsersEvaluated: 1, UsersTotal: 1,
+			EvaluationComplete: evaluationComplete(ReachabilityFromController, 0, 1)})
+
+	if len(entries) != 1 {
+		t.Fatalf("got %d would-deny entries for one user losing one application, want 1: %+v",
+			len(entries), entries)
+	}
+	if got := summary["would_deny"]; got != 1 {
+		t.Errorf("summary would_deny = %v, want 1", got)
+	}
+	if got := summary["users"]; got != 1 {
+		t.Errorf("summary users = %v, want 1", got)
+	}
+	// The invariant the duplication broke: one affected user cannot account for
+	// more would-deny entries than they have distinct applications.
+	if summary["would_deny"].(int) < summary["users"].(int) {
+		t.Errorf("would_deny %v is inconsistent with users %v", summary["would_deny"], summary["users"])
+	}
+}
+
+// TestEvaluationCompleteIsComputedOnce pins the ruling on what "complete"
+// means, so that every consumer reads one rule instead of re-deriving it.
+func TestEvaluationCompleteIsComputedOnce(t *testing.T) {
+	cases := []struct {
+		name       string
+		source     string
+		incomplete int
+		evaluated  int
+		want       bool
+	}{
+		{"clean, everyone evaluated", ReachabilityFromController, 0, 4, true},
+		// The ruling: identity-less users do not block completeness. Two of the
+		// org's six users have no Ziti identity and so have no Ziti reach to
+		// lose; the four that do were all evaluated cleanly.
+		{"some users have no identity", ReachabilityFromController, 0, 4, true},
+		// The case the strict rule was written for survives: an org whose sync
+		// has never run evaluates nobody.
+		{"nobody evaluated", ReachabilityFromController, 0, 0, false},
+		{"a user could not be finished", ReachabilityFromController, 1, 4, false},
+		{"reach unknown", ReachabilityUnavailable, 0, 4, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := evaluationComplete(tc.source, tc.incomplete, tc.evaluated); got != tc.want {
+				t.Fatalf("evaluationComplete(%q, %d, %d) = %v, want %v",
+					tc.source, tc.incomplete, tc.evaluated, got, tc.want)
+			}
+		})
 	}
 }
