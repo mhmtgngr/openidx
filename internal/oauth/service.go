@@ -1793,6 +1793,11 @@ func (s *Service) renderBrandedPage(c *gin.Context, b loginBranding, heading, bo
 		footerHTML = `<p class="footer">Powered by OpenIDX</p>`
 	}
 
+	// Tenant branding can point the logo/background at an external host, and
+	// these pages carry sign-in state; no-referrer keeps any of it out of the
+	// Referer on those requests.
+	c.Header("Referrer-Policy", "no-referrer")
+
 	page := `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>` + html.EscapeString(heading) + ` — ` + html.EscapeString(b.PortalTitle) + `</title>` + faviconHTML + headExtra + `
 <style>
