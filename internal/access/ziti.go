@@ -1779,28 +1779,56 @@ func (zm *ZitiManager) SetupZitiForRoute(ctx context.Context, routeID, serviceNa
 	zitiServiceID := svcResp.Data.ID
 	zm.logger.Info("Created Ziti service", zap.String("name", serviceName), zap.String("id", zitiServiceID))
 
+	// The org for everything written below comes from the ROUTE this provisioning
+	// belongs to. An internal/install-wide service (routeID == "") has no org, so
+	// its policies are converged on the controller but NOT mirrored — see
+	// mirrorServicePolicy. Previously these rows were inserted with no org_id at
+	// all, which the column DEFAULT silently turned into "the default org".
+	policyOrgID := zm.routeOrgID(ctx, routeID)
+
 	// 2. Persist to ziti_services table. route_id is a UUID column; internal
 	// services (e.g. browzer-router-zt) have no owning route, so pass NULL
 	// rather than "" (which errors as invalid uuid, SQLSTATE 22P02).
+	//
+	// org_id has the same DEFAULT-to-the-default-org trap the policy insert had:
+	// omitting it files a tenant's service row under the default org, where that
+	// tenant's admins cannot see it and the default org's admins can. The refresh
+	// pass repairs this within 5 minutes for services that have a Ziti-enabled
+	// route, but a service without one stays misfiled forever. So the route's own
+	// org is written explicitly, and on conflict it is corrected in place.
 	var routeIDArg interface{}
 	if routeID != "" {
 		routeIDArg = routeID
 	}
-	_, err = zm.db.Pool.Exec(ctx,
-		//orgscope:ignore startup/infra Ziti provisioning reachable from cross-org seeded-route reconciliation; keyed by globally-unique ziti service name
-		`INSERT INTO ziti_services (ziti_id, name, host, port, route_id) VALUES ($1, $2, $3, $4, $5)
-		 ON CONFLICT (name) DO UPDATE SET ziti_id=$1, host=$3, port=$4, route_id=$5, updated_at=NOW()`,
-		zitiServiceID, serviceName, host, port, routeIDArg)
+	switch {
+	case policyOrgID != "":
+		_, err = zm.db.Pool.Exec(ctx,
+			//orgscope:ignore startup/infra Ziti provisioning reachable from cross-org seeded-route reconciliation; org_id is the owning route's own org_id, read by route id
+			`INSERT INTO ziti_services (ziti_id, name, host, port, route_id, org_id) VALUES ($1, $2, $3, $4, $5, $6)
+			 ON CONFLICT (name) DO UPDATE SET ziti_id=$1, host=$3, port=$4, route_id=$5, org_id=$6, updated_at=NOW()`,
+			zitiServiceID, serviceName, host, port, routeIDArg, policyOrgID)
+	case routeID == "":
+		// Install-wide infra service with no owning route at all (browzer-router-zt
+		// and friends). There is no tenant to attribute it to and org_id is NOT
+		// NULL, so the column default stands — the same KNOWN GAP the policy mirror
+		// documents. The row is still written because it is looked up by its
+		// globally-unique NAME, never per tenant (see EnsureBrowZerRouterService).
+		_, err = zm.db.Pool.Exec(ctx,
+			//orgscope:ignore startup/infra Ziti provisioning; install-wide service with no owning route, keyed by globally-unique ziti service name
+			`INSERT INTO ziti_services (ziti_id, name, host, port, route_id) VALUES ($1, $2, $3, $4, $5)
+			 ON CONFLICT (name) DO UPDATE SET ziti_id=$1, host=$3, port=$4, route_id=$5, updated_at=NOW()`,
+			zitiServiceID, serviceName, host, port, routeIDArg)
+	default:
+		// A real route whose org could not be read. Filing it under the default
+		// org would be the exact cross-tenant bug above, so the row is skipped and
+		// warned about rather than guessed at.
+		err = nil
+		zm.logger.Warn("ziti service not persisted: its route has no readable org_id (a row with no org would be filed under the default org)",
+			zap.String("service", serviceName), zap.String("route_id", routeID))
+	}
 	if err != nil {
 		zm.logger.Error("Failed to persist ziti service to DB", zap.Error(err))
 	}
-
-	// The mirror row's org comes from the ROUTE this provisioning belongs to.
-	// An internal/install-wide service (routeID == "") has no org, so its
-	// policies are converged on the controller but NOT mirrored — see
-	// mirrorServicePolicy. Previously these rows were inserted with no org_id at
-	// all, which the column DEFAULT silently turned into "the default org".
-	policyOrgID := zm.routeOrgID(ctx, routeID)
 
 	// 3. Create Bind policy: access-proxy can host this service
 	// Use "#" prefix for role-based matching (the service has roleAttributes=[serviceName])
