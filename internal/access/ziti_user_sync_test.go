@@ -12,7 +12,7 @@ func containsAttr(attrs []string, want string) bool {
 }
 
 func TestAssembleAttributesAlwaysIncludesEnrolledUsers(t *testing.T) {
-	attrs := assembleAttributes([]string{"engineering"}, false /*deviceTrusted*/, false /*browzer*/)
+	attrs := assembleAttributes([]string{"engineering"}, false /*deviceTrusted*/, false /*browzer*/, nil)
 	if !containsAttr(attrs, "enrolled-users") {
 		t.Errorf("attrs %v missing enrolled-users", attrs)
 	}
@@ -22,8 +22,8 @@ func TestAssembleAttributesAlwaysIncludesEnrolledUsers(t *testing.T) {
 }
 
 func TestAssembleAttributesDeviceTrustedGated(t *testing.T) {
-	trusted := assembleAttributes(nil, true, false)
-	untrusted := assembleAttributes(nil, false, false)
+	trusted := assembleAttributes(nil, true, false, nil)
+	untrusted := assembleAttributes(nil, false, false, nil)
 	if !containsAttr(trusted, "device-trusted") {
 		t.Error("a trusted device should carry #device-trusted")
 	}
@@ -37,8 +37,8 @@ func TestAssembleAttributesDeviceTrustedGated(t *testing.T) {
 }
 
 func TestAssembleAttributesBrowZerGated(t *testing.T) {
-	on := assembleAttributes(nil, false, true)
-	off := assembleAttributes(nil, false, false)
+	on := assembleAttributes(nil, false, true, nil)
+	off := assembleAttributes(nil, false, false, nil)
 	if !containsAttr(on, "browzer-users") {
 		t.Error("browzer on should carry #browzer-users")
 	}
