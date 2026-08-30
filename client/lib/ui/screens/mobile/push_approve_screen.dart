@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../api/mfa.dart';
-import '../../../state/mobile_providers.dart';
+import '../../../state/api_providers.dart';
 
 /// Number-match push approval. Reached via the `openidx://approve/<challengeId>`
 /// deep link (or a push tap). Shows the sign-in context and three numbers; the

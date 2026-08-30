@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../api/notifications.dart';
-import '../../../state/mobile_providers.dart';
+import '../../../state/api_providers.dart';
 
 /// Notification inbox: list with unread markers and a mark-all-read action.
 class NotificationsScreen extends ConsumerWidget {

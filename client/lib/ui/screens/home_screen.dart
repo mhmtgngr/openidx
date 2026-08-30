@@ -4,7 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../engine/models.dart';
 import '../../state/providers.dart';
-import 'pam_screen.dart';
+import 'my_access_screen.dart';
 import 'settings_screen.dart';
 
 /// Landing screen once enrolled + signed in: status card, posture summary,
@@ -49,12 +49,12 @@ class HomeScreen extends ConsumerWidget {
           const SizedBox(height: 16),
           Card(
             child: ListTile(
-              leading: const Icon(Icons.dns_outlined),
-              title: const Text('Privileged Access'),
-              subtitle: const Text('Connect to servers and secrets'),
+              leading: const Icon(Icons.grid_view),
+              title: const Text('My Access'),
+              subtitle: const Text('Apps, network resources and privileged connections'),
               trailing: const Icon(Icons.chevron_right),
               onTap: () => Navigator.of(context).push(
-                MaterialPageRoute<void>(builder: (_) => const PamScreen()),
+                MaterialPageRoute<void>(builder: (_) => const MyAccessScreen()),
               ),
             ),
           ),

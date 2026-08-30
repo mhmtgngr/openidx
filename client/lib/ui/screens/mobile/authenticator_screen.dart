@@ -6,7 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../../../features/totp.dart';
-import '../../../state/mobile_providers.dart';
+import '../../../state/api_providers.dart';
 
 /// Offline TOTP authenticator: the user's saved accounts with live 6-digit
 /// codes and a per-period countdown ring. Secrets never leave the device;

@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../state/mobile_providers.dart';
+import '../state/api_providers.dart';
 import '../state/providers.dart';
 import 'deep_links.dart';
 
