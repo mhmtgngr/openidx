@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
@@ -39,6 +40,19 @@ const sshRoute = {
   enabled: false,
   require_auth: false,
   description: 'SSH bastion',
+}
+
+const appBackedRoute = {
+  id: 'rt-3',
+  name: 'confluence',
+  from_url: 'confluence.example.com',
+  to_url: 'http://confluence-internal:8090',
+  route_type: 'http',
+  enabled: true,
+  require_auth: true,
+  description: 'Atlassian Confluence',
+  application_id: 'app-1',
+  application_name: 'Confluence',
 }
 
 function createWrapper() {
@@ -94,6 +108,55 @@ describe('ProxyRoutesPage', () => {
     render(<ProxyRoutesPage />, { wrapper: createWrapper() })
 
     expect(await screen.findByText('SSH')).toBeInTheDocument()
+  })
+
+  it('shows the application-backed annotation and keeps roles/groups editable when application_id is set', async () => {
+    const user = userEvent.setup()
+    vi.mocked(api.get).mockResolvedValue({ routes: [appBackedRoute], total: 1 })
+
+    render(<ProxyRoutesPage />, { wrapper: createWrapper() })
+
+    expect(await screen.findByText('confluence')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '' }))
+    await user.click(await screen.findByText(/^edit$/i))
+
+    expect(
+      await screen.findByText(/this route is backed by the application/i),
+    ).toBeInTheDocument()
+    expect(screen.getByText('Confluence')).toBeInTheDocument()
+    expect(
+      screen.getByText(/once assignment enforcement is enabled/i),
+    ).toBeInTheDocument()
+
+    const rolesInput = screen.getByPlaceholderText('admin, developer')
+    const groupsInput = screen.getByPlaceholderText('engineering, devops')
+    expect(rolesInput).not.toBeDisabled()
+    expect(groupsInput).not.toBeDisabled()
+    expect(rolesInput).not.toHaveAttribute('readonly')
+    expect(groupsInput).not.toHaveAttribute('readonly')
+  })
+
+  it('does not render the annotation, and keeps roles/groups editable, when application_id is absent', async () => {
+    const user = userEvent.setup()
+    vi.mocked(api.get).mockResolvedValue({ routes: [activeRoute], total: 1 })
+
+    render(<ProxyRoutesPage />, { wrapper: createWrapper() })
+
+    expect(await screen.findByText('jira')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '' }))
+    await user.click(await screen.findByText(/^edit$/i))
+
+    expect(await screen.findByPlaceholderText('admin, developer')).toBeInTheDocument()
+    expect(
+      screen.queryByText(/this route is backed by the application/i),
+    ).not.toBeInTheDocument()
+
+    const rolesInput = screen.getByPlaceholderText('admin, developer')
+    const groupsInput = screen.getByPlaceholderText('engineering, devops')
+    expect(rolesInput).not.toBeDisabled()
+    expect(groupsInput).not.toBeDisabled()
+    expect(rolesInput).not.toHaveAttribute('readonly')
+    expect(groupsInput).not.toHaveAttribute('readonly')
   })
 
   it('shows the empty state when no routes exist', async () => {

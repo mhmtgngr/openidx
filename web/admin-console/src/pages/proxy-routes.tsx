@@ -908,8 +908,9 @@ function RouteForm({
       {managedApplication && (
         <p className="text-xs text-muted-foreground bg-muted/50 rounded p-2">
           This route is backed by the application <strong>{managedApplication.name}</strong>.
-          Its assignees are the actual grant — the roles and groups below are no
-          longer consulted. Manage access from{' '}
+          Once assignment enforcement is enabled, that application's assignees
+          become the grant and the roles and groups below stop being
+          consulted. Manage access from{' '}
           <Link to="/applications" className="underline">
             Applications → Manage Access
           </Link>
@@ -924,8 +925,6 @@ function RouteForm({
             value={formData.allowed_roles}
             onChange={(e) => setFormData({ ...formData, allowed_roles: e.target.value })}
             placeholder="admin, developer"
-            disabled={!!managedApplication}
-            readOnly={!!managedApplication}
           />
         </div>
         <div className="space-y-2">
@@ -934,8 +933,6 @@ function RouteForm({
             value={formData.allowed_groups}
             onChange={(e) => setFormData({ ...formData, allowed_groups: e.target.value })}
             placeholder="engineering, devops"
-            disabled={!!managedApplication}
-            readOnly={!!managedApplication}
           />
         </div>
       </div>
