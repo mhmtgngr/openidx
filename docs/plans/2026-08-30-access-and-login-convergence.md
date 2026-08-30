@@ -2154,7 +2154,7 @@ a single consumer; the divergence that produced #873 is gone."
 
 - [ ] **Step 1: Deploy phases A and C (no behaviour change).** Build and install `oidx-{access,identity,oauth}-service` from main with rollback copies, apply migration v137, restart. Verify: all seven `/health` endpoints `up`, `GET /api/v1/access/my/ziti/services` unchanged for `mehmet.gungor`, `openidx-appdial-*` policies present beside the blanket ones in the Ziti controller, and no `mfa_policies` rows.
 
-- [ ] **Step 2: Review the report.** Open `/assignment-report`, create the assignments you actually want, and re-check until the entries you care about are gone.
+- [ ] **Step 2: Review the report.** Open `/assignment-report`, create the assignments you actually want, and re-check until the entries you care about are gone. The report is only a go/no-go signal when its `reachability_source` is `controller` and `incomplete_users` is 0 — the page says so in place of the headline otherwise. An "unavailable" report means the Ziti controller could not be read, NOT that nobody would lose access; do not proceed to step 5 on one.
 
 - [ ] **Step 3: Flip the login UI.** Set `OAUTH_LOGIN_UI=spa`, restart oauth, then sign in through the console, the mobile client and BrowZer. BrowZer is the one to watch: it bootstraps its own OIDC dance from `browzer.tdv.org`, so verify the cross-origin bounce to `openidx.tdv.org/login` and back lands on `browzer.tdv.org/auth/callback` with a working code. Revert the env var if any flow fails.
 
