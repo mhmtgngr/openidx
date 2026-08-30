@@ -285,6 +285,44 @@ func scanServiceApps(rows reportRows) (map[string]appaccess.AppRef, error) {
 	return serviceApp, nil
 }
 
+// IdentitylessUser is one org user with no Ziti identity at all. Such a user
+// has no Ziti reach and therefore no Ziti reach to LOSE, so they do not make the
+// report incomplete - but the page asks the operator to check whether any of
+// them should have been enrolled, and a bare count gives them nothing to check.
+// The shape matches ReportEntry's user half so the console renders both the same
+// way.
+type IdentitylessUser struct {
+	UserID   string `json:"user_id"`
+	Username string `json:"username"`
+}
+
+// scanOrgUsers reads the org's user denominator: the total, and the users with
+// no Ziti identity row.
+//
+// A scan failure is FATAL rather than per-row. Dropping a user row shrinks the
+// denominator, which makes the report look like it covered MORE of the
+// organization than it did - the same "fails toward safe to enforce" direction
+// scanServiceApps refuses, and the opposite of what this endpoint is for.
+func scanOrgUsers(rows reportRows) (int, []IdentitylessUser, error) {
+	total := 0
+	without := []IdentitylessUser{}
+	for rows.Next() {
+		var u IdentitylessUser
+		var noIdentity bool
+		if err := rows.Scan(&u.UserID, &u.Username, &noIdentity); err != nil {
+			return 0, nil, fmt.Errorf("could not read this organization's users: %w", err)
+		}
+		total++
+		if noIdentity {
+			without = append(without, u)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return 0, nil, fmt.Errorf("could not read this organization's users: %w", err)
+	}
+	return total, without, nil
+}
+
 // handleAssignmentReport answers GET /api/v1/access/assignment-report.
 func (s *Service) handleAssignmentReport(c *gin.Context) {
 	ctx := c.Request.Context()
@@ -332,17 +370,76 @@ func (s *Service) handleAssignmentReport(c *gin.Context) {
 	//
 	// Read even when the identity read already failed, so a partial listing
 	// still reports a denominator against which it can be judged.
-	usersTotal, usersWithoutIdentity := 0, 0
-	if err := s.db.Pool.QueryRow(ctx, `
-		SELECT COUNT(*)::int,
-		       COUNT(*) FILTER (
-		         WHERE NOT EXISTS (
-		           SELECT 1 FROM ziti_identities zi
-		            WHERE zi.user_id = u.id AND zi.org_id = $1))::int
+	//
+	// The identity-less users are LISTED, not merely counted: the page tells the
+	// operator to "check that none of them should have been enrolled", and a
+	// bare number gives them nothing to check. The count is derived from the
+	// list length so the two can never disagree.
+	usersTotal := 0
+	identityless := []IdentitylessUser{}
+	userRows, uerr := s.db.Pool.Query(ctx, `
+		SELECT u.id,
+		       COALESCE(NULLIF(u.username, ''), u.email, ''),
+		       NOT EXISTS (
+		         SELECT 1 FROM ziti_identities zi
+		          WHERE zi.user_id = u.id AND zi.org_id = $1)
 		  FROM users u
-		 WHERE u.org_id = $1`, org.ID).Scan(&usersTotal, &usersWithoutIdentity); err != nil {
+		 WHERE u.org_id = $1
+		 ORDER BY 2, 1`, org.ID)
+	if uerr != nil {
 		if inputErr == nil {
-			inputErr = fmt.Errorf("could not count this organization's users: %w", err)
+			inputErr = fmt.Errorf("could not read this organization's users: %w", uerr)
+		}
+	} else {
+		total, without, serr := scanOrgUsers(userRows)
+		userRows.Close()
+		if serr != nil {
+			if inputErr == nil {
+				inputErr = serr
+			}
+		} else {
+			usersTotal, identityless = total, without
+		}
+	}
+	usersWithoutIdentity := len(identityless)
+
+	// The unmeasured denominator. ACCESS_ASSIGNMENT_ENFORCE does not only gate
+	// the overlay: the reverse-proxy gate fires for EVERY application-backed
+	// route (appForRoute looks up `applications WHERE route_id = $1 AND enabled
+	// = true`, with no Ziti predicate) and for every user, identity or not.
+	// This report models overlay reach only, so it cannot say who loses a
+	// proxy-enforced route — but it can and must say HOW MUCH it did not look
+	// at, or a green headline speaks for a surface it never measured.
+	//
+	// The predicate is the exact complement of the reach model's own service
+	// query above: a route is covered only when it is ziti_enabled AND carries a
+	// service name. A route flagged ziti_enabled with no service name is
+	// app-backed, enforced at the proxy, and invisible to the reach half, so it
+	// belongs on this side of the line too — counting only `ziti_enabled =
+	// false` would under-report the unmeasured surface, which is the direction
+	// this whole endpoint exists to avoid.
+	//
+	// Route-level `enabled` is deliberately NOT filtered, matching appForRoute,
+	// which does not filter it either; the number is a floor on the unmeasured
+	// surface and must not shrink below what the proxy actually consults.
+	//
+	// Org scope comes from `applications`, which is the only side that carries
+	// an org: proxy_routes is install-wide and has no org_id column at all
+	// (migrations/016_proxy_routes.up.sql), so joining through a.org_id is what
+	// keeps another org's routes out of this count — the same anchor the
+	// serviceApp query above uses.
+	routesOutsideReachModel := 0
+	if err := s.db.Pool.QueryRow(ctx, `
+		SELECT COUNT(DISTINCT r.id)::int
+		  FROM proxy_routes r
+		  JOIN applications a ON a.route_id = r.id
+		 WHERE a.org_id = $1 AND a.enabled = true
+		   AND NOT (COALESCE(r.ziti_enabled, false)
+		            AND COALESCE(r.ziti_service_name, '') <> '')`, org.ID).
+		Scan(&routesOutsideReachModel); err != nil {
+		if inputErr == nil {
+			inputErr = fmt.Errorf(
+				"could not count this organization's application-backed routes: %w", err)
 		}
 	}
 
@@ -476,18 +573,24 @@ func (s *Service) handleAssignmentReport(c *gin.Context) {
 	// unavailable path leaves that map empty, so entries stay empty while
 	// incomplete_users equals the user count.
 	entries, summary := buildReport(reachable, assigned, names, appNames, reportCounts{
-		IncompleteUsers:      incompleteUsers,
-		UsersEvaluated:       usersEvaluated,
-		UsersTotal:           usersTotal,
-		UsersWithoutIdentity: usersWithoutIdentity,
-		EvaluationComplete:   evaluationComplete(source, incompleteUsers, usersEvaluated),
+		IncompleteUsers:         incompleteUsers,
+		UsersEvaluated:          usersEvaluated,
+		UsersTotal:              usersTotal,
+		UsersWithoutIdentity:    usersWithoutIdentity,
+		RoutesOutsideReachModel: routesOutsideReachModel,
+		ReachabilitySource:      source,
+		EvaluationComplete:      evaluationComplete(source, incompleteUsers, usersEvaluated),
+		IncompleteReason:        incompleteReason(source, incompleteUsers, usersEvaluated),
 	})
 
 	body := gin.H{
-		"entries":             entries,
-		"summary":             summary,
-		"assignments":         buildAssignments(assigned, names, appNames),
-		"reachability_source": source,
+		"entries":     entries,
+		"summary":     summary,
+		"assignments": buildAssignments(assigned, names, appNames),
+		// The identity-less users themselves, beside summary.users_without_identity
+		// which counts them. Same relationship as entries and summary.would_deny.
+		"users_without_identity": identityless,
+		"reachability_source":    source,
 	}
 	if reachErr != "" {
 		body["reachability_error"] = reachErr
@@ -533,6 +636,20 @@ type reportCounts struct {
 	// UsersWithoutIdentity is how much of the gap between the two is explained
 	// by users who have no Ziti identity at all.
 	UsersWithoutIdentity int
+	// RoutesOutsideReachModel is how many application-backed proxy routes this
+	// report did NOT model: the reach half covers Ziti-published routes only,
+	// but ACCESS_ASSIGNMENT_ENFORCE also gates the reverse proxy for every
+	// application-backed route. Without this number a clean headline speaks for
+	// an enforcement surface the report never looked at.
+	RoutesOutsideReachModel int
+	// ReachabilitySource mirrors the top-level reachability_source. A client
+	// that reads only `summary` would otherwise see evaluation_complete:false
+	// beside incomplete_users:0 and have no way to explain it.
+	ReachabilitySource string
+	// IncompleteReason is the short machine-readable "why not complete", empty
+	// when the report IS complete. Same purpose as the mirror above, but usable
+	// without re-deriving the rule from four fields.
+	IncompleteReason string
 	// EvaluationComplete is the go/no-go, computed once server-side so that
 	// every consumer reads the same rule instead of re-deriving it from four
 	// fields — a non-console client that re-derived it wrongly would read a
@@ -554,6 +671,25 @@ type reportCounts struct {
 // org whose sync has never run evaluates nobody and cannot read as clean.
 func evaluationComplete(source string, incompleteUsers, usersEvaluated int) bool {
 	return source == ReachabilityFromController && incompleteUsers == 0 && usersEvaluated > 0
+}
+
+// incompleteReason names, in one machine-readable token, why evaluationComplete
+// returned false. It is the summary-only client's answer to "incomplete_users
+// is 0 and users_evaluated is 5, so why is this report not complete?" - a
+// question the top-level reachability_source could answer but a client reading
+// `summary` alone could not. Empty exactly when the report is complete, so the
+// two can never disagree.
+func incompleteReason(source string, incompleteUsers, usersEvaluated int) string {
+	switch {
+	case source != ReachabilityFromController:
+		return "reachability_unavailable"
+	case incompleteUsers > 0:
+		return "users_incomplete"
+	case usersEvaluated == 0:
+		return "no_users_evaluated"
+	default:
+		return ""
+	}
 }
 
 // buildReport diffs reachability against assignment and packages the result
@@ -578,7 +714,15 @@ func buildReport(reachable, assigned map[string][]string, names, appNames map[st
 		"users_evaluated":        counts.UsersEvaluated,
 		"users_total":            counts.UsersTotal,
 		"users_without_identity": counts.UsersWithoutIdentity,
-		"evaluation_complete":    counts.EvaluationComplete,
+		// The part of the enforcement surface this report does not model at
+		// all: application-backed routes gated at the reverse proxy rather than
+		// on the overlay.
+		"routes_outside_reach_model": counts.RoutesOutsideReachModel,
+		"evaluation_complete":        counts.EvaluationComplete,
+		// Mirrored so a client reading only `summary` can explain an incomplete
+		// report instead of staring at four fields that look clean.
+		"reachability_source": counts.ReachabilitySource,
+		"incomplete_reason":   counts.IncompleteReason,
 	}
 	return entries, summary
 }

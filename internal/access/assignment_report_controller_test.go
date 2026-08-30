@@ -170,10 +170,19 @@ type reportResponse struct {
 		UsersTotal           int  `json:"users_total"`
 		UsersWithoutIdentity int  `json:"users_without_identity"`
 		EvaluationComplete   bool `json:"evaluation_complete"`
+		// The unmeasured denominator: application-backed routes gated at the
+		// reverse proxy that the overlay reach model never looked at.
+		RoutesOutsideReachModel int `json:"routes_outside_reach_model"`
+		// Mirrored into the summary so a client that reads only `summary` can
+		// explain an incomplete report.
+		ReachabilitySource string `json:"reachability_source"`
+		IncompleteReason   string `json:"incomplete_reason"`
 	} `json:"summary"`
-	Assignments        []AssignmentEntry `json:"assignments"`
-	ReachabilitySource string            `json:"reachability_source"`
-	ReachabilityError  string            `json:"reachability_error"`
+	Assignments []AssignmentEntry `json:"assignments"`
+	// The identity-less users themselves, beside the count in the summary.
+	IdentitylessUsers  []IdentitylessUser `json:"users_without_identity"`
+	ReachabilitySource string             `json:"reachability_source"`
+	ReachabilityError  string             `json:"reachability_error"`
 }
 
 // TestAssignmentReportReadsController is the regression test for the defect
@@ -728,6 +737,141 @@ func TestAssignmentReportReadsController(t *testing.T) {
 		}
 		if len(got.Entries) != 0 {
 			t.Fatalf("a report built on partial inputs must not present a diff: %+v", got.Entries)
+		}
+	})
+
+	// F2 (round 4). The page tells the operator to "check that none of them
+	// should have been enrolled" - an instruction a bare count gives them no way
+	// to follow. The users must be enumerated, and the count must be the length
+	// of that enumeration so the two can never drift apart.
+	t.Run("identity-less users are listed, not merely counted", func(t *testing.T) {
+		const erin = "11111111-0000-0000-0000-0000000000c2"
+		if _, err := db.Pool.Exec(ctx,
+			`INSERT INTO users (id, org_id, username, email) VALUES ($1,$2,'erin','erin@x.io')`,
+			erin, reportOrg); err != nil {
+			t.Fatalf("seed erin: %v", err)
+		}
+		defer func() { _, _ = db.Pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, erin) }()
+
+		srv := liveControllerServer(t)
+		defer srv.Close()
+		s := reportService(t, db, srv.URL)
+		c, w := newCtx()
+		s.handleAssignmentReport(c)
+		got := decode(t, w)
+
+		if len(got.IdentitylessUsers) != 1 {
+			t.Fatalf("users_without_identity = %+v, want exactly erin: a count alone gives "+
+				"the operator nothing to adjudicate", got.IdentitylessUsers)
+		}
+		if got.IdentitylessUsers[0].UserID != erin || got.IdentitylessUsers[0].Username != "erin" {
+			t.Fatalf("listed user = %+v, want %s/erin", got.IdentitylessUsers[0], erin)
+		}
+		if got.Summary.UsersWithoutIdentity != len(got.IdentitylessUsers) {
+			t.Fatalf("summary users_without_identity = %d but %d users were listed: "+
+				"the count and the list must come from one read",
+				got.Summary.UsersWithoutIdentity, len(got.IdentitylessUsers))
+		}
+	})
+
+	// F1 (round 4). ACCESS_ASSIGNMENT_ENFORCE also gates the REVERSE PROXY, for
+	// every application-backed route and every user - including routes with no
+	// Ziti service at all, which this report's reach half (ziti_enabled = true
+	// AND a service name) never looks at. The report may not model that surface,
+	// but it must say how large it is, or the green headline speaks for
+	// enforcement it never measured.
+	t.Run("application-backed routes outside the reach model are counted, per org", func(t *testing.T) {
+		const otherOrg = "00000000-0000-0000-0000-0000000000c7"
+		const plainRoute = "33333333-0000-0000-0000-0000000000c1"
+		const plainApp = "22222222-0000-0000-0000-0000000000c1"
+		const halfRoute = "33333333-0000-0000-0000-0000000000c2"
+		const halfApp = "22222222-0000-0000-0000-0000000000c2"
+		const foreignRoute = "33333333-0000-0000-0000-0000000000c3"
+		const foreignApp = "22222222-0000-0000-0000-0000000000c3"
+		const disabledRoute = "33333333-0000-0000-0000-0000000000c4"
+		const disabledApp = "22222222-0000-0000-0000-0000000000c4"
+		seedRoutes := []struct {
+			sql  string
+			args []any
+		}{
+			// A plain web route behind an application: enforced at the proxy,
+			// invisible to the overlay reach model. This is the case the
+			// headline was overclaiming about.
+			{`INSERT INTO proxy_routes (id, name, ziti_enabled) VALUES ($1,'intranet',false)`,
+				[]any{plainRoute}},
+			{`INSERT INTO applications (id, org_id, name, route_id, enabled) VALUES ($1,$2,'Intranet',$3,true)`,
+				[]any{plainApp, reportOrg, plainRoute}},
+			// Flagged ziti_enabled but with no service name: the reach half
+			// requires BOTH, so this route is unmeasured too and must be
+			// counted on this side of the line.
+			{`INSERT INTO proxy_routes (id, name, ziti_enabled, ziti_service_name) VALUES ($1,'half',true,'')`,
+				[]any{halfRoute}},
+			{`INSERT INTO applications (id, org_id, name, route_id, enabled) VALUES ($1,$2,'Half',$3,true)`,
+				[]any{halfApp, reportOrg, halfRoute}},
+			// Another org's application-backed route. proxy_routes has no
+			// org_id at all, so `applications` is the only thing keeping this
+			// out of the count - which is exactly what the orgscope linter
+			// cannot check for us.
+			{`INSERT INTO proxy_routes (id, name, ziti_enabled) VALUES ($1,'foreign',false)`,
+				[]any{foreignRoute}},
+			{`INSERT INTO applications (id, org_id, name, route_id, enabled) VALUES ($1,$2,'Foreign',$3,true)`,
+				[]any{foreignApp, otherOrg, foreignRoute}},
+			// A disabled application backs no route on the proxy either
+			// (appForRoute filters enabled = true), so it is not part of the
+			// enforcement surface and must not inflate the count.
+			{`INSERT INTO proxy_routes (id, name, ziti_enabled) VALUES ($1,'retired',false)`,
+				[]any{disabledRoute}},
+			{`INSERT INTO applications (id, org_id, name, route_id, enabled) VALUES ($1,$2,'Retired',$3,false)`,
+				[]any{disabledApp, reportOrg, disabledRoute}},
+		}
+		for _, st := range seedRoutes {
+			if _, err := db.Pool.Exec(ctx, st.sql, st.args...); err != nil {
+				t.Fatalf("seed %q: %v", st.sql, err)
+			}
+		}
+		defer func() {
+			for _, id := range []string{plainApp, halfApp, foreignApp, disabledApp} {
+				_, _ = db.Pool.Exec(ctx, `DELETE FROM applications WHERE id = $1`, id)
+			}
+			for _, id := range []string{plainRoute, halfRoute, foreignRoute, disabledRoute} {
+				_, _ = db.Pool.Exec(ctx, `DELETE FROM proxy_routes WHERE id = $1`, id)
+			}
+		}()
+
+		srv := liveControllerServer(t)
+		defer srv.Close()
+		s := reportService(t, db, srv.URL)
+		c, w := newCtx()
+		s.handleAssignmentReport(c)
+		got := decode(t, w)
+
+		// The base fixture's own route (ziti_enabled with a service name) IS
+		// modelled, so it must not appear here; the other org's must not
+		// either; the disabled application's must not either. That leaves the
+		// plain route and the half-published one.
+		if got.Summary.RoutesOutsideReachModel != 2 {
+			t.Fatalf("routes_outside_reach_model = %d, want 2 (the plain route and the "+
+				"half-published one; not the modelled Ziti route, not the other org's, "+
+				"not the disabled application's)", got.Summary.RoutesOutsideReachModel)
+		}
+	})
+
+	// F4 (round 4). reachability_source lives at the top level, so a client that
+	// reads only `summary` saw evaluation_complete:false beside
+	// incomplete_users:0 and could not explain it.
+	t.Run("the summary explains its own incompleteness", func(t *testing.T) {
+		s := &Service{db: db, logger: zap.NewNop()} // no controller
+		c, w := newCtx()
+		s.handleAssignmentReport(c)
+		got := decode(t, w)
+
+		if got.Summary.IncompleteReason != "reachability_unavailable" {
+			t.Fatalf("summary incomplete_reason = %q, want %q",
+				got.Summary.IncompleteReason, "reachability_unavailable")
+		}
+		if got.Summary.ReachabilitySource != ReachabilityUnavailable {
+			t.Fatalf("summary reachability_source = %q, want %q",
+				got.Summary.ReachabilitySource, ReachabilityUnavailable)
 		}
 	})
 }

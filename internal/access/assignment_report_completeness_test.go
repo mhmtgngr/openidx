@@ -66,6 +66,12 @@ func (f *fakeRows) Scan(dest ...any) error {
 				return fmt.Errorf("fakeRows: value %d is not []byte", i)
 			}
 			*d = b
+		case *bool:
+			b, ok := v.(bool)
+			if !ok {
+				return fmt.Errorf("fakeRows: value %d is not a bool", i)
+			}
+			*d = b
 		default:
 			return fmt.Errorf("fakeRows: unsupported destination %T", dest[i])
 		}
@@ -428,5 +434,139 @@ func TestServiceNameIndexLeavesTheMirrorPathAlone(t *testing.T) {
 			t.Fatalf("mirror resolution = %v, want %v — the name index must not reach the mirror path",
 				got, want)
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// F2 / F4 - the denominator explains itself
+// ---------------------------------------------------------------------------
+
+// TestScanOrgUsersListAndCountCannotDisagree: the page asks the operator to
+// "check that none of them should have been enrolled", so the identity-less
+// users are LISTED. The count the summary reports is the length of that list -
+// one source, so a stale count can never contradict the rows on screen.
+func TestScanOrgUsersListAndCountCannotDisagree(t *testing.T) {
+	rows := &fakeRows{rows: [][]any{
+		{"u1", "alice", false},
+		{"u2", "svc-backup", true},
+		{"u3", "carol@x.io", true},
+	}}
+
+	total, without, err := scanOrgUsers(rows)
+	if err != nil {
+		t.Fatalf("scanOrgUsers: %v", err)
+	}
+	if total != 3 {
+		t.Fatalf("users_total = %d, want 3", total)
+	}
+	if len(without) != 2 {
+		t.Fatalf("identity-less users = %+v, want 2", without)
+	}
+	if without[0].UserID != "u2" || without[0].Username != "svc-backup" {
+		t.Errorf("first identity-less user = %+v, want u2/svc-backup", without[0])
+	}
+	if without[1].UserID != "u3" || without[1].Username != "carol@x.io" {
+		t.Errorf("second identity-less user = %+v, want u3/carol@x.io", without[1])
+	}
+}
+
+// TestScanOrgUsersFailureIsFatal: a dropped user row shrinks the denominator,
+// which makes the report look like it covered MORE of the organization than it
+// did - the same direction toward a false "safe to enforce" that every other
+// failure path in this file refuses.
+func TestScanOrgUsersFailureIsFatal(t *testing.T) {
+	boom := errors.New("connection reset by peer")
+
+	t.Run("per-row scan failure", func(t *testing.T) {
+		rows := &fakeRows{
+			rows:     [][]any{{"u1", "alice", false}, {"u2", "bob", true}},
+			scanErrs: map[int]error{1: boom},
+		}
+		total, without, err := scanOrgUsers(rows)
+		if err == nil {
+			t.Fatal("a user row that could not be read must fail the denominator, " +
+				"not silently shrink it")
+		}
+		if !errors.Is(err, boom) {
+			t.Errorf("error must carry the cause, got %v", err)
+		}
+		if total != 0 || without != nil {
+			t.Errorf("a failed read must not hand back a partial denominator: %d / %+v", total, without)
+		}
+	})
+
+	t.Run("iteration failure", func(t *testing.T) {
+		rows := &fakeRows{rows: [][]any{{"u1", "alice", false}}, iterErr: boom}
+		total, without, err := scanOrgUsers(rows)
+		if err == nil {
+			t.Fatal("an aborted iteration leaves a partial user list and must be reported")
+		}
+		if total != 0 || without != nil {
+			t.Errorf("a failed iteration must not hand back what it did read: %d / %+v", total, without)
+		}
+	})
+}
+
+// TestSummaryExplainsItselfWithoutTheTopLevel: a client reading only `summary`
+// used to see evaluation_complete:false beside incomplete_users:0 and
+// users_evaluated:5 with no way to explain it - reachability_source lived at the
+// top level. The reason travels with the summary now, and is empty exactly when
+// the report is complete.
+func TestSummaryExplainsItselfWithoutTheTopLevel(t *testing.T) {
+	cases := []struct {
+		name       string
+		source     string
+		incomplete int
+		evaluated  int
+		wantReason string
+	}{
+		{"controller unreadable", ReachabilityUnavailable, 5, 0, "reachability_unavailable"},
+		{"some users skipped", ReachabilityFromController, 2, 5, "users_incomplete"},
+		{"nobody evaluated", ReachabilityFromController, 0, 0, "no_users_evaluated"},
+		{"complete", ReachabilityFromController, 0, 5, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, summary := buildReport(map[string][]string{}, map[string][]string{},
+				map[string]string{}, map[string]string{}, reportCounts{
+					IncompleteUsers:    tc.incomplete,
+					UsersEvaluated:     tc.evaluated,
+					UsersTotal:         5,
+					ReachabilitySource: tc.source,
+					EvaluationComplete: evaluationComplete(tc.source, tc.incomplete, tc.evaluated),
+					IncompleteReason:   incompleteReason(tc.source, tc.incomplete, tc.evaluated),
+				})
+
+			if got := summary["incomplete_reason"]; got != tc.wantReason {
+				t.Errorf("summary incomplete_reason = %v, want %q", got, tc.wantReason)
+			}
+			if got := summary["reachability_source"]; got != tc.source {
+				t.Errorf("summary reachability_source = %v, want %q", got, tc.source)
+			}
+			complete := summary["evaluation_complete"] == true
+			if complete != (tc.wantReason == "") {
+				t.Errorf("incomplete_reason %q disagrees with evaluation_complete %v: "+
+					"a client cannot trust one against the other", tc.wantReason, complete)
+			}
+		})
+	}
+}
+
+// TestSummaryCarriesTheUnmeasuredRouteCount: the reach half models the OVERLAY.
+// ACCESS_ASSIGNMENT_ENFORCE also gates the reverse proxy for every
+// application-backed route, so the summary must carry how many of those the
+// report did not look at - otherwise a green headline speaks for a surface it
+// never measured.
+func TestSummaryCarriesTheUnmeasuredRouteCount(t *testing.T) {
+	_, summary := buildReport(map[string][]string{}, map[string][]string{},
+		map[string]string{}, map[string]string{}, reportCounts{
+			UsersEvaluated:          5,
+			UsersTotal:              5,
+			RoutesOutsideReachModel: 4,
+			ReachabilitySource:      ReachabilityFromController,
+			EvaluationComplete:      true,
+		})
+	if got := summary["routes_outside_reach_model"]; got != 4 {
+		t.Errorf("summary routes_outside_reach_model = %v, want 4", got)
 	}
 }
