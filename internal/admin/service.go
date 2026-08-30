@@ -70,17 +70,22 @@ type SecurityAlertDetail struct {
 
 // Application represents a registered application/client
 type Application struct {
-	ID           string    `json:"id"`
-	ClientID     string    `json:"client_id"`
-	Name         string    `json:"name"`
-	Description  string    `json:"description,omitempty"`
-	Type         string    `json:"type"`
-	Protocol     string    `json:"protocol"`
-	BaseURL      string    `json:"base_url,omitempty"`
-	RedirectURIs []string  `json:"redirect_uris"`
-	Enabled      bool      `json:"enabled"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID           string   `json:"id"`
+	ClientID     string   `json:"client_id"`
+	Name         string   `json:"name"`
+	Description  string   `json:"description,omitempty"`
+	Type         string   `json:"type"`
+	Protocol     string   `json:"protocol"`
+	BaseURL      string   `json:"base_url,omitempty"`
+	RedirectURIs []string `json:"redirect_uris"`
+	Enabled      bool     `json:"enabled"`
+	// RequireAssignment mirrors applications.require_assignment: the opt-in OIDC
+	// gate that refuses a token to a caller who is not assigned. Always returned
+	// (no omitempty) so the console can render the control's current state —
+	// false must be distinguishable from absent.
+	RequireAssignment bool      `json:"require_assignment"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }
 
 // ApplicationSSOSettings represents SSO settings for an application
@@ -714,6 +719,15 @@ func (s *Service) UpdateApplication(ctx context.Context, id string, updates map[
 		argCount++
 	}
 
+	// The opt-in OIDC assignment gate (see oauth.assignmentGateAllows). Absent
+	// from the payload the column is left alone, so an edit of any other field
+	// can never flip enforcement on or off by omission.
+	if requireAssignment, ok := updates["require_assignment"].(bool); ok {
+		setParts = append(setParts, "require_assignment = $"+fmt.Sprintf("%d", argCount))
+		args = append(args, requireAssignment)
+		argCount++
+	}
+
 	if len(setParts) == 0 {
 		return fmt.Errorf("no valid fields to update")
 	}
@@ -786,7 +800,7 @@ func (s *Service) ListApplications(ctx context.Context, offset, limit int) ([]Ap
 
 	query := `
 		SELECT id, client_id, name, COALESCE(description, ''), type, protocol,
-		       COALESCE(base_url, ''), redirect_uris, enabled, created_at, updated_at
+		       COALESCE(base_url, ''), redirect_uris, enabled, require_assignment, created_at, updated_at
 		FROM applications
 		WHERE org_id = $1
 		ORDER BY name
@@ -815,7 +829,8 @@ func (s *Service) ListApplications(ctx context.Context, offset, limit int) ([]Ap
 		var app Application
 		if err := rows.Scan(
 			&app.ID, &app.ClientID, &app.Name, &app.Description, &app.Type,
-			&app.Protocol, &app.BaseURL, &app.RedirectURIs, &app.Enabled, &app.CreatedAt, &app.UpdatedAt,
+			&app.Protocol, &app.BaseURL, &app.RedirectURIs, &app.Enabled, &app.RequireAssignment,
+			&app.CreatedAt, &app.UpdatedAt,
 		); err != nil {
 			return nil, 0, err
 		}
@@ -1459,11 +1474,12 @@ func (s *Service) handleGetApplication(c *gin.Context) {
 	var app Application
 	err = s.db.Pool.QueryRow(c.Request.Context(), `
 		SELECT id, client_id, name, COALESCE(description, ''), type, protocol,
-		       COALESCE(base_url, ''), redirect_uris, enabled, created_at, updated_at
+		       COALESCE(base_url, ''), redirect_uris, enabled, require_assignment, created_at, updated_at
 		FROM applications WHERE id = $1 AND org_id = $2
 	`, id, org.ID).Scan(
 		&app.ID, &app.ClientID, &app.Name, &app.Description, &app.Type,
-		&app.Protocol, &app.BaseURL, &app.RedirectURIs, &app.Enabled, &app.CreatedAt, &app.UpdatedAt,
+		&app.Protocol, &app.BaseURL, &app.RedirectURIs, &app.Enabled, &app.RequireAssignment,
+		&app.CreatedAt, &app.UpdatedAt,
 	)
 	if err != nil {
 		c.JSON(404, gin.H{"error": "Application not found"})

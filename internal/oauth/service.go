@@ -2325,6 +2325,14 @@ func (s *Service) assignmentGateAllows(c *gin.Context, clientID, userID string) 
 
 	var appID string
 	var requiresAssignment bool
+	// Deliberate interaction, not a bug: this lookup does NOT filter on
+	// applications.enabled, while appaccess.Allowed() only matches rows with
+	// `a.enabled = true`. So a DISABLED application that also has
+	// require_assignment=true denies everyone, including its assignees — the
+	// gate reads the flag, then Allowed() answers false for every principal.
+	// That is the intended reading of "disabled": an application an admin has
+	// switched off should not mint tokens. Do not "fix" it by ignoring
+	// require_assignment on disabled applications.
 	err = s.db.Pool.QueryRow(ctx,
 		`SELECT id, require_assignment FROM applications WHERE client_id = $1 AND org_id = $2`,
 		clientID, org.ID).Scan(&appID, &requiresAssignment)
