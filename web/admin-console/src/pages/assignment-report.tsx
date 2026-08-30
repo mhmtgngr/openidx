@@ -13,8 +13,27 @@ interface ReportEntry {
   reason: string
 }
 
+interface AssignmentEntry {
+  user_id: string
+  username: string
+  application_id: string
+  application_name: string
+}
+
 interface Report {
   entries: ReportEntry[]
+  // What assignment grants today. DB-only, so it stays correct even when the
+  // reach half could not be computed.
+  assignments?: AssignmentEntry[]
+  // Where the reachability half came from. "controller" = live data, the
+  // answer can be trusted. "unavailable" = the Ziti controller could not be
+  // read, so the report cannot say who would lose access; it deliberately does
+  // NOT fall back to the local policy mirror, which the reconciler never
+  // writes and which therefore reads as "nobody loses anything" no matter what
+  // the truth is. Anything else (including a missing field) is treated as
+  // untrustworthy for the same reason.
+  reachability_source?: string
+  reachability_error?: string
   summary: {
     users: number
     applications: number
@@ -40,12 +59,25 @@ export function AssignmentReportPage() {
   const entries = data?.entries ?? []
   const summary = data?.summary
   const incompleteUsers = summary?.incomplete_users ?? 0
+  const assignments = data?.assignments ?? []
+  // Trust the reach half only when the server says it came from the live
+  // controller. Fail closed on anything else.
+  const fromController = data?.reachability_source === 'controller'
+  const wouldLose = `${summary?.users ?? 0} user(s) would lose access to ${summary?.applications ?? 0} application(s)`
 
+  // The reassuring headline is reserved for the one case that earns it: live
+  // controller data, every user evaluated, nothing lost.
   const headline = isLoading
     ? 'Checking…'
-    : entries.length === 0
-      ? 'No one would lose access — safe to enforce'
-      : `${summary?.users ?? 0} user(s) would lose access to ${summary?.applications ?? 0} application(s)`
+    : !fromController
+      ? 'Reachability unavailable'
+      : incompleteUsers > 0
+        ? entries.length === 0
+          ? 'Report incomplete — some users could not be evaluated'
+          : wouldLose
+        : entries.length === 0
+          ? 'No one would lose access — safe to enforce'
+          : wouldLose
 
   return (
     <div className="space-y-4">
@@ -59,7 +91,21 @@ export function AssignmentReportPage() {
       <Card>
         <CardHeader>
           <CardTitle>{headline}</CardTitle>
-          {!isLoading && incompleteUsers > 0 && (
+          {!isLoading && !fromController && (
+            <div
+              role="alert"
+              className="rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm"
+            >
+              <p className="font-medium text-destructive">
+                Could not read the Ziti controller, so this report cannot tell you who would lose
+                access. Do not enable enforcement based on this page.
+              </p>
+              {data?.reachability_error && (
+                <p className="mt-1 text-muted-foreground">{data.reachability_error}</p>
+              )}
+            </div>
+          )}
+          {!isLoading && fromController && incompleteUsers > 0 && (
             <p className="text-sm font-medium text-amber-600">
               {entries.length === 0 ? 'But ' : ''}
               {incompleteUsers} user{incompleteUsers === 1 ? '' : 's'} could not be evaluated and{' '}
@@ -69,6 +115,14 @@ export function AssignmentReportPage() {
           )}
         </CardHeader>
         <CardContent>
+          {!isLoading && !fromController && (
+            <p className="text-sm text-muted-foreground">
+              Assignment currently grants {assignments.length} user–application pair
+              {assignments.length === 1 ? '' : 's'} in this organization. That half of the report is
+              read from the database and is still accurate; only the "who can reach what today" half
+              is missing.
+            </p>
+          )}
           {entries.length > 0 && (
             <Table>
               <TableHeader>
