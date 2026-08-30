@@ -274,6 +274,13 @@ type Config struct {
 	// SHOW_ALL_APPS_WHEN_UNASSIGNED=true only to restore the old open behaviour.
 	ShowAllAppsWhenUnassigned bool `mapstructure:"show_all_apps_when_unassigned"`
 
+	// AccessAssignmentEnforce turns application assignment from a catalogue into
+	// a grant. When false (the default) every enforcement point computes the
+	// decision and records a would-be denial without acting on it, so the report
+	// can be reviewed before anyone loses reach. See
+	// docs/access-and-login-convergence-design.md.
+	AccessAssignmentEnforce bool `mapstructure:"access_assignment_enforce"`
+
 	// OpenZiti configuration
 	ZitiEnabled           bool   `mapstructure:"ziti_enabled"`
 	ZitiReconcilerEnabled bool   `mapstructure:"ziti_reconciler"`
@@ -749,6 +756,7 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("access_api_require_auth", false)
 	v.SetDefault("admin_api_require_auth", false)
 	v.SetDefault("show_all_apps_when_unassigned", false)
+	v.SetDefault("access_assignment_enforce", false)
 
 	// Database defaults
 	v.SetDefault("database_url", "postgres://openidx:openidx_secret@localhost:5432/openidx?sslmode=disable")
@@ -985,6 +993,7 @@ func bindEnvVars(v *viper.Viper) {
 		"access_api_require_auth":             "ACCESS_API_REQUIRE_AUTH",
 		"admin_api_require_auth":              "ADMIN_API_REQUIRE_AUTH",
 		"show_all_apps_when_unassigned":       "SHOW_ALL_APPS_WHEN_UNASSIGNED",
+		"access_assignment_enforce":           "ACCESS_ASSIGNMENT_ENFORCE",
 		"shutdown_timeout_seconds":            "SHUTDOWN_TIMEOUT_SECONDS",
 		"public_base_url":                     "PUBLIC_BASE_URL",
 		"oauth_issuer":                        "OAUTH_ISSUER",
