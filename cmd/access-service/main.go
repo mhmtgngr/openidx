@@ -459,7 +459,8 @@ func main() {
 
 			if cfg.ZitiReconcilerEnabled {
 				reconciler := access.NewZitiReconciler(db, log, zitiProvider, cfg.ZitiBrowZerHopAddr).
-					SetPerOrgAttributes(cfg.ZitiPerOrgAttributes)
+					SetPerOrgAttributes(cfg.ZitiPerOrgAttributes).
+					SetAssignmentEnforce(cfg.AccessAssignmentEnforce)
 				// Dark-platform: when a DARK_MODE tier is enabled, the reconciler
 				// also models OpenIDX's OWN surfaces as tier'd overlay-only Ziti
 				// services (host.v1 → loopback, tier dial policy). Inert otherwise.
