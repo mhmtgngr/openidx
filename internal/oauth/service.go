@@ -2357,6 +2357,12 @@ func (s *Service) assignmentGateAllows(c *gin.Context, clientID, userID string) 
 	enforce := s.config != nil && s.config.AccessAssignmentEnforce
 	issue, recordWouldDeny := authorizeAssignmentDecision(requiresAssignment, assigned, enforce)
 	if recordWouldDeny {
+		// Durable decision record, on BOTH branches: enforcement must not be
+		// quieter than report mode. This is the write that has to survive —
+		// see recordAssignmentDecision (assignment_audit.go). The logAuditEvent
+		// calls below are kept as-is (harmless duplication; audit_events may be
+		// repaired later) but nothing depends on them landing.
+		s.recordAssignmentDecision(ctx, userID, clientID, appID, c.ClientIP(), !issue)
 		if !issue {
 			// A real denial under enforcement: a distinct action (mirroring the
 			// proxy's proxy_access_denied — see access/service.go) so an operator
