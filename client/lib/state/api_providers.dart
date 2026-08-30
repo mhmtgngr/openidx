@@ -7,15 +7,18 @@ import '../api/auth.dart';
 import '../api/governance.dart';
 import '../api/mfa.dart';
 import '../api/notifications.dart';
+import '../api/portal.dart';
 import '../api/qr_login.dart';
 import '../api/token_store.dart';
 import '../features/totp.dart';
 import 'providers.dart';
 
-/// Riverpod wiring for the mobile-only backend journeys (MFA, governance,
-/// notifications, authenticator). These sit alongside the Phase-1 engine
-/// providers in `providers.dart`; the engine handles enroll/PAM/Ziti, while
-/// these talk HTTP to the backend directly.
+/// Riverpod wiring for the backend HTTP journeys (apps, resources, MFA,
+/// governance, notifications, authenticator), shared by mobile AND desktop.
+/// These sit alongside the engine providers in `providers.dart`: the engine
+/// handles enroll/PAM/Ziti and owns the OAuth session, while these talk HTTP to
+/// the backend using a token sourced from it — on desktop too, since the engine
+/// gained GET /token.
 
 /// Secure keystore for tokens + otpauth secrets.
 final tokenStoreProvider = Provider<TokenStore>((ref) => SecureTokenStore());
@@ -67,6 +70,9 @@ final governanceApiProvider =
 final accessApiProvider =
     Provider<AccessApi>((ref) => AccessApi(ref.watch(apiClientProvider)));
 
+final portalApiProvider =
+    Provider<PortalApi>((ref) => PortalApi(ref.watch(apiClientProvider)));
+
 final notificationsApiProvider = Provider<NotificationsApi>(
     (ref) => NotificationsApi(ref.watch(apiClientProvider)));
 
@@ -83,6 +89,16 @@ final myRequestsProvider = FutureProvider<List<AccessRequest>>((ref) {
 /// The zero-trust (OpenZiti) apps the signed-in user can reach over the network.
 final myZitiServicesProvider = FutureProvider<List<ZitiService>>((ref) {
   return ref.watch(accessApiProvider).myZitiServices();
+});
+
+/// Published web apps and brokered (PAM) systems the user can reach.
+final myResourcesProvider = FutureProvider<List<MyResource>>((ref) {
+  return ref.watch(accessApiProvider).myResources();
+});
+
+/// Sign-in (SSO) applications assigned to the user.
+final myApplicationsProvider = FutureProvider<List<PortalApp>>((ref) {
+  return ref.watch(portalApiProvider).myApplications();
 });
 
 final notificationsProvider = FutureProvider<List<AppNotification>>((ref) {

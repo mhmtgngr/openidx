@@ -234,8 +234,16 @@ class DesktopEngineClient implements EngineClient {
       throw UnsupportedError('desktop uses login()');
 
   @override
-  Future<String> accessToken() =>
-      throw UnsupportedError('desktop engine does not expose the access token');
+  Future<String> accessToken() async {
+    // The engine owns the OAuth session on desktop too, so the ApiClient has no
+    // token of its own: without this the backend REST calls behind the apps and
+    // resources screens would go out with no Authorization header. The agent
+    // refreshes transparently and answers 401 when signed out.
+    final json = _asMap(await _send('GET', '/token'), '/token');
+    final token = json['access_token'];
+    if (token is String && token.isNotEmpty) return token;
+    throw EngineException(0, 'engine returned no access token');
+  }
 
   @override
   Future<void> logout() async {

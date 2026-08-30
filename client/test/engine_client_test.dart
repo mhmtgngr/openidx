@@ -84,6 +84,9 @@ Future<HttpServer> _startFakeEngine() async {
       case '/posture':
         body = _postureJson;
         break;
+      case '/token':
+        body = {'access_token': 'engine-issued-token'};
+        break;
       case '/pam/connect':
         body = {
           'launch_type': 'rdp',
@@ -190,5 +193,12 @@ void main() {
       throwsA(isA<EngineException>()
           .having((e) => e.status, 'status', HttpStatus.notFound)),
     );
+  });
+
+  test('accessToken returns the session token the engine owns', () async {
+    // The desktop GUI has no token store of its own: without this the backend
+    // REST calls behind the apps/resources screens would send no Authorization
+    // header at all. It used to throw UnsupportedError.
+    expect(await client.accessToken(), 'engine-issued-token');
   });
 }

@@ -4,12 +4,15 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../mobile/app_lock.dart';
 import 'screens/mobile/approvals_screen.dart';
 import 'screens/mobile/authenticator_screen.dart';
-import 'screens/mobile/my_access_screen.dart';
-import 'screens/pam_screen.dart';
+import 'screens/my_access_screen.dart';
 import 'screens/settings_screen.dart';
 
 /// Bottom-navigation shell used on iOS/Android (desktop keeps its window/tray
 /// shell in `main.dart`). Tabs: Codes / Approvals / Access / Settings.
+///
+/// "Access" is the one place that answers "what can I reach": sign-in apps,
+/// network apps, other resources and privileged connections all live there, so
+/// privileged access is no longer a separate destination.
 ///
 /// The whole shell is wrapped in an [AppLockGate] so biometric app-lock covers
 /// every tab. Notifications and push-approval are reached via deep links /
@@ -29,7 +32,6 @@ class _MobileShellState extends ConsumerState<MobileShell> {
     AuthenticatorScreen(),
     ApprovalsScreen(),
     MyAccessScreen(),
-    PamScreen(),
     SettingsScreen(),
   ];
 
@@ -54,10 +56,6 @@ class _MobileShellState extends ConsumerState<MobileShell> {
                 icon: Icon(Icons.vpn_key_outlined),
                 selectedIcon: Icon(Icons.vpn_key),
                 label: 'Access'),
-            NavigationDestination(
-                icon: Icon(Icons.dns_outlined),
-                selectedIcon: Icon(Icons.dns),
-                label: 'PAM'),
             NavigationDestination(
                 icon: Icon(Icons.settings_outlined),
                 selectedIcon: Icon(Icons.settings),

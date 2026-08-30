@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../api/qr_login.dart';
-import '../../../state/mobile_providers.dart';
+import '../../../state/api_providers.dart';
 
 /// Approve (or deny) a desktop "sign in with QR" request. Reached after the
 /// camera scanner reads an `openidx://qr-login?session=…` QR.

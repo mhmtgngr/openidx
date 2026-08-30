@@ -106,6 +106,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /logout", s.handleLogout)
 	mux.HandleFunc("POST /enroll", s.handleEnroll)
 	mux.HandleFunc("GET /posture", s.handlePosture)
+	mux.HandleFunc("GET /token", s.handleToken)
 	mux.HandleFunc("GET /pam/entries", s.handlePamList)
 	mux.HandleFunc("POST /pam/connect", s.handlePamConnect)
 	mux.HandleFunc("POST /pam/request", s.handlePamRequest)
@@ -152,6 +153,21 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handlePosture(w http.ResponseWriter, r *http.Request) {
 	out, err := s.engine.Posture()
 	writeEngineJSON(w, out, err)
+}
+
+// handleToken hands the desktop GUI an access token for the session the engine
+// owns, so it can call the backend REST APIs (the apps/resources screens) as
+// the signed-in user instead of sending no Authorization header at all. The
+// engine refreshes transparently, so the caller always gets a usable token or a
+// 401 telling it to sign in. The token never leaves this machine: the control
+// socket is 0600 (unix) or loopback with a bearer token (Windows).
+func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
+	tok, err := s.engine.AccessToken()
+	if err != nil {
+		writeEngineErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"access_token": tok})
 }
 
 func (s *Server) handlePamList(w http.ResponseWriter, r *http.Request) {

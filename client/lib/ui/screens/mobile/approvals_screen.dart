@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../api/governance.dart';
-import '../../../state/mobile_providers.dart';
+import '../../../state/api_providers.dart';
 import '../qr_scan_screen.dart';
 
 /// Pending governance approvals inbox. Approve/deny each with an optional
