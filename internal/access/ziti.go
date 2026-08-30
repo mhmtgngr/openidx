@@ -57,6 +57,12 @@ type ZitiManager struct {
 	configTypeCacheMu sync.RWMutex
 	configTypeCache   map[string]string
 
+	// mirrorSkippedNoOrg counts converged policies that could NOT be written to
+	// the local mirror because no org could be attributed to them (the
+	// platform-wide policies). They are counted and surfaced rather than being
+	// dropped silently or attached to a default org — see ziti_mirror.go.
+	mirrorSkippedNoOrg atomic.Int64
+
 	// pool holds the controller management endpoints (primary + optional HA
 	// cluster members from ZitiCtrlURLs) with cooldown-based failover. Nil in
 	// tests that construct the struct directly; all callers fall back to
@@ -1464,21 +1470,46 @@ func (zm *ZitiManager) GetServicePolicyByName(ctx context.Context, name string) 
 // policy is corrected rather than left untouched (plain create-if-exists would
 // silently keep the wrong identity roles, which manifests as BrowZer error 1003).
 func (zm *ZitiManager) EnsureServicePolicy(ctx context.Context, name, policyType string, serviceRoles, identityRoles []string) (string, error) {
+	return zm.EnsureServicePolicyForOrg(ctx, "", name, policyType, serviceRoles, identityRoles)
+}
+
+// EnsureServicePolicyForOrg is EnsureServicePolicy plus the local mirror write.
+// orgID is the org the policy belongs to; on success the mirror row is upserted
+// to match exactly what was applied to the controller, so the two stop drifting
+// (ziti_service_policies is what collectZitiPillar — and therefore
+// GET /my/ziti/services and the admin access map — resolve reach from).
+//
+// An EMPTY orgID means the caller has no honest org for this policy (the
+// platform-wide dark-tier and agent policies, or a route with no org_id). Such a
+// policy is converged on the controller as before but NOT mirrored: org_id is
+// NOT NULL with an FK, so there is nowhere truthful to put it. It is counted
+// (MirrorWritesSkippedNoOrg) and warned about instead of being attached to some
+// default org, which would grant one tenant a view of another's reach.
+func (zm *ZitiManager) EnsureServicePolicyForOrg(ctx context.Context, orgID, name, policyType string, serviceRoles, identityRoles []string) (string, error) {
 	existing, err := zm.GetServicePolicyByName(ctx, name)
 	if err != nil {
 		return "", err
 	}
 	if existing == nil {
-		return zm.CreateServicePolicy(ctx, name, policyType, serviceRoles, identityRoles)
+		id, cerr := zm.CreateServicePolicy(ctx, name, policyType, serviceRoles, identityRoles)
+		if cerr != nil {
+			return "", cerr
+		}
+		zm.mirrorServicePolicy(ctx, orgID, id, name, policyType, serviceRoles, identityRoles)
+		return id, nil
 	}
 	if existing.Type == policyType &&
 		sameRoleSet(existing.ServiceRoles, serviceRoles) &&
 		sameRoleSet(existing.IdentityRoles, identityRoles) {
-		return existing.ID, nil // already converged
+		// Already converged on the CONTROLLER — but the mirror can still be
+		// stale (that is precisely today's defect), so mirror it anyway.
+		zm.mirrorServicePolicy(ctx, orgID, existing.ID, name, policyType, serviceRoles, identityRoles)
+		return existing.ID, nil
 	}
 	if err := zm.UpdateServicePolicy(ctx, existing.ID, name, policyType, serviceRoles, identityRoles); err != nil {
 		return "", err
 	}
+	zm.mirrorServicePolicy(ctx, orgID, existing.ID, name, policyType, serviceRoles, identityRoles)
 	return existing.ID, nil
 }
 
@@ -1764,6 +1795,13 @@ func (zm *ZitiManager) SetupZitiForRoute(ctx context.Context, routeID, serviceNa
 		zm.logger.Error("Failed to persist ziti service to DB", zap.Error(err))
 	}
 
+	// The mirror row's org comes from the ROUTE this provisioning belongs to.
+	// An internal/install-wide service (routeID == "") has no org, so its
+	// policies are converged on the controller but NOT mirrored — see
+	// mirrorServicePolicy. Previously these rows were inserted with no org_id at
+	// all, which the column DEFAULT silently turned into "the default org".
+	policyOrgID := zm.routeOrgID(ctx, routeID)
+
 	// 3. Create Bind policy: access-proxy can host this service
 	// Use "#" prefix for role-based matching (the service has roleAttributes=[serviceName])
 	bindPolicyID, err := zm.CreateServicePolicy(ctx,
@@ -1774,12 +1812,9 @@ func (zm *ZitiManager) SetupZitiForRoute(ctx context.Context, routeID, serviceNa
 	if err != nil {
 		zm.logger.Warn("Failed to create Bind policy", zap.Error(err))
 	} else {
-		zm.db.Pool.Exec(ctx,
-			//orgscope:ignore startup/infra Ziti provisioning reachable from cross-org seeded-route reconciliation; system policy keyed by globally-unique ziti policy id
-			`INSERT INTO ziti_service_policies (ziti_id, name, policy_type, service_roles, identity_roles, is_system)
-			 VALUES ($1, $2, $3, $4, $5, true) ON CONFLICT (ziti_id) DO NOTHING`,
-			bindPolicyID, fmt.Sprintf("openidx-bind-%s", serviceName), "Bind",
-			`["#`+serviceName+`"]`, `["#access-proxy-clients"]`)
+		zm.mirrorServicePolicy(ctx, policyOrgID, bindPolicyID,
+			fmt.Sprintf("openidx-bind-%s", serviceName), "Bind",
+			[]string{"#" + serviceName}, []string{"#access-proxy-clients"})
 	}
 
 	// 4. Create Dial policy: access-proxy can dial this service
@@ -1791,12 +1826,9 @@ func (zm *ZitiManager) SetupZitiForRoute(ctx context.Context, routeID, serviceNa
 	if err != nil {
 		zm.logger.Warn("Failed to create Dial policy", zap.Error(err))
 	} else {
-		zm.db.Pool.Exec(ctx,
-			//orgscope:ignore startup/infra Ziti provisioning reachable from cross-org seeded-route reconciliation; system policy keyed by globally-unique ziti policy id
-			`INSERT INTO ziti_service_policies (ziti_id, name, policy_type, service_roles, identity_roles, is_system)
-			 VALUES ($1, $2, $3, $4, $5, true) ON CONFLICT (ziti_id) DO NOTHING`,
-			dialPolicyID, fmt.Sprintf("openidx-dial-%s", serviceName), "Dial",
-			`["#`+serviceName+`"]`, `["#access-proxy-clients"]`)
+		zm.mirrorServicePolicy(ctx, policyOrgID, dialPolicyID,
+			fmt.Sprintf("openidx-dial-%s", serviceName), "Dial",
+			[]string{"#" + serviceName}, []string{"#access-proxy-clients"})
 	}
 
 	// 5. Create Service Edge Router Policy so the service is available on all edge routers

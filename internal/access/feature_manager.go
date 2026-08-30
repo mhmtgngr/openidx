@@ -615,11 +615,19 @@ func (fm *FeatureManager) provisionFeature(ctx context.Context, routeID string, 
 		if err != nil {
 			fm.logger.Warn("Failed to create Bind policy", zap.Error(err))
 		} else {
-			fm.db.Pool.Exec(ctx,
-				`INSERT INTO ziti_service_policies (ziti_id, name, policy_type, service_roles, identity_roles, org_id)
-				 VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (ziti_id) DO NOTHING`,
-				bindPolicyID, fmt.Sprintf("openidx-bind-%s", serviceName), "Bind",
-				`["#`+serviceName+`"]`, `["#access-proxy-clients"]`, org.ID)
+			// DO UPDATE, not DO NOTHING: a re-published app with different roles
+			// must correct the mirror row, otherwise the local view of who can
+			// reach the service stays frozen at whatever was written first.
+			if _, mErr := upsertMirrorPolicy(ctx, fm.db, mirrorPolicyRow{
+				ZitiID:        bindPolicyID,
+				Name:          fmt.Sprintf("openidx-bind-%s", serviceName),
+				PolicyType:    "Bind",
+				ServiceRoles:  []string{"#" + serviceName},
+				IdentityRoles: []string{"#access-proxy-clients"},
+				OrgID:         org.ID,
+			}); mErr != nil {
+				fm.logger.Warn("Failed to mirror Bind policy", zap.Error(mErr))
+			}
 		}
 
 		// Create Dial policy so access-proxy can dial this service
@@ -631,11 +639,16 @@ func (fm *FeatureManager) provisionFeature(ctx context.Context, routeID string, 
 		if err != nil {
 			fm.logger.Warn("Failed to create Dial policy", zap.Error(err))
 		} else {
-			fm.db.Pool.Exec(ctx,
-				`INSERT INTO ziti_service_policies (ziti_id, name, policy_type, service_roles, identity_roles, org_id)
-				 VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (ziti_id) DO NOTHING`,
-				dialPolicyID, fmt.Sprintf("openidx-dial-%s", serviceName), "Dial",
-				`["#`+serviceName+`"]`, `["#access-proxy-clients"]`, org.ID)
+			if _, mErr := upsertMirrorPolicy(ctx, fm.db, mirrorPolicyRow{
+				ZitiID:        dialPolicyID,
+				Name:          fmt.Sprintf("openidx-dial-%s", serviceName),
+				PolicyType:    "Dial",
+				ServiceRoles:  []string{"#" + serviceName},
+				IdentityRoles: []string{"#access-proxy-clients"},
+				OrgID:         org.ID,
+			}); mErr != nil {
+				fm.logger.Warn("Failed to mirror Dial policy", zap.Error(mErr))
+			}
 		}
 
 		// Create Service Edge Router Policy so the service is available on all edge routers

@@ -650,9 +650,14 @@ func policyAppliesToIdentity(identityRoles []string, zitiID string, attrs []stri
 }
 
 // resolveServiceRoles maps a policy's service_roles onto service names using
-// the local mirror. `#all` expands to every enabled service, `@id` resolves
-// via ziti_services.ziti_id, and `#tag` references (service attributes are not
-// mirrored locally) are surfaced as-is so the caller still sees the intent.
+// the local mirror. `#all` expands to every enabled service, `@id` resolves via
+// ziti_services.ziti_id, and a `#tag` resolves to the service of the SAME NAME
+// when the mirror has one — every service OpenIDX provisions is tagged with its
+// own name as a role attribute (CreateService / ensureServiceAttr), and the real
+// dial policies are keyed that way (`#openidx-<app>`), so without this a user's
+// reachable app came back as the literal string "#openidx-<app>" and matched no
+// mirror row for host/port. A tag with no same-named service is still surfaced
+// as-is, so an unresolvable reference stays visible instead of vanishing.
 func resolveServiceRoles(serviceRoles []string, svcByZitiID map[string]string, allServices []string) []string {
 	return resolveServiceRolesIndexed(serviceRoles,
 		zitiServiceIndex{byZitiID: svcByZitiID, all: allServices})
@@ -666,9 +671,15 @@ func resolveServiceRoles(serviceRoles []string, svcByZitiID map[string]string, a
 // that predates it — or one created by hand — would otherwise degrade to the
 // literal "#name" string, match no application, and drop out of reach, i.e.
 // fail toward "safe to enforce"). When neither index knows the tag (the local
-// mirror, which records no service attributes at all), the raw role is
-// surfaced as before so the caller still sees the intent. With a nil byAttr
-// and a nil byName this is byte-for-byte the old behaviour.
+// mirror, which records no service attributes at all), the tag is matched
+// against the mirrored service names, and only a tag that matches nothing is
+// surfaced raw so the caller still sees the intent.
+//
+// With a nil byAttr and byName — the mirror path — resolution therefore falls
+// through to the name match over allServices. That is deliberate and is what
+// makes a mirrored `#openidx-<app>` role resolve to a service with a host and
+// port instead of a literal string; before it, the mirror fix would only
+// half-work.
 func resolveServiceRolesIndexed(serviceRoles []string, idx zitiServiceIndex) []string {
 	svcByZitiID, allServices := idx.byZitiID, idx.all
 	var resolved []string
@@ -693,8 +704,11 @@ func resolveServiceRolesIndexed(serviceRoles []string, idx zitiServiceIndex) []s
 			tag := strings.TrimPrefix(role, "#")
 			names := idx.byAttr[tag]
 			if len(names) == 0 {
-				if idx.byName[tag] {
-					add(tag) // the tag names a service outright
+				// byName is the controller-derived index; knownService covers the
+				// mirror path, whose indices are nil. Either way a tag that names
+				// a service outright resolves to it rather than surfacing raw.
+				if idx.byName[tag] || knownService(tag, allServices) {
+					add(tag)
 					continue
 				}
 				add(role) // unresolvable tag reference — keep the intent visible
@@ -709,6 +723,16 @@ func resolveServiceRolesIndexed(serviceRoles []string, idx zitiServiceIndex) []s
 		resolved = []string{}
 	}
 	return resolved
+}
+
+// knownService reports whether name is one of the org's mirrored services.
+func knownService(name string, allServices []string) bool {
+	for _, s := range allServices {
+		if s == name {
+			return true
+		}
+	}
+	return false
 }
 
 // verifyOrgUser confirms a user id belongs to the given org (used by the

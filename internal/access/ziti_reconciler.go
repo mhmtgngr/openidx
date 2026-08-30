@@ -183,7 +183,18 @@ type ZitiReconciler struct {
 	// #browzer-users grant. Off by default: the per-app marker is added beside the
 	// blanket grant instead, so nobody's access changes until the flag flips.
 	assignmentEnforce bool
+
+	// mirror holds the last mirror-refresh outcome (counts, including how many
+	// controller policies could NOT be attributed to an org and were therefore
+	// skipped) for the reconciler status endpoint.
+	mirror mirrorState
+	// lastMirrorRefresh throttles the refresh pass: the reconcile loop ticks
+	// every 30s, but a full controller listing does not need to run that often.
+	lastMirrorRefresh time.Time
 }
+
+// mirrorRefreshPeriod is the minimum gap between two mirror-refresh passes.
+const mirrorRefreshPeriod = 5 * time.Minute
 
 // darkService is one OpenIDX surface to make overlay-only: a Ziti service named
 // `name`, host.v1-hosted at loopback `upstream` (host:port), dialable only by
@@ -504,12 +515,21 @@ func (rec *ZitiReconciler) ensurePolicies(ctx context.Context, zm *ZitiManager, 
 	// has its stale #access-proxy-clients Bind/Dial corrected to
 	// #ziti-routers/#browzer-users. Plain create-if-exists left them stale,
 	// surfacing as BrowZer error 1003 (service not dialable by #browzer-users).
-	if _, err := zm.EnsureServicePolicy(ctx, "openidx-bind-"+d.ServiceName, "Bind",
+	//
+	// The org-aware variant also writes the LOCAL MIRROR to match what was just
+	// applied, so ziti_service_policies stops drifting from the controller (the
+	// mirror is what collectZitiPillar resolves a user's reach from). d.OrgID
+	// comes straight from the route row; when it is empty the policy is not
+	// mirrored at all rather than being attached to some default org.
+	if _, err := zm.EnsureServicePolicyForOrg(ctx, d.OrgID, "openidx-bind-"+d.ServiceName, "Bind",
 		[]string{svcRole}, []string{bindIdentity}); err != nil {
 		rec.logger.Warn("bind policy converge failed", zap.String("svc", d.ServiceName), zap.Error(err))
 	}
+	// Roles come from this branch's assignment work (a per-app marker beside, or
+	// under enforcement instead of, the blanket grant); the ForOrg variant is the
+	// mirror-writing path, so the row it upserts carries the route's org.
 	dialRoles := dialIdentityRoles(dialIdentity, d.ApplicationID, rec.assignmentEnforce)
-	if _, err := zm.EnsureServicePolicy(ctx, "openidx-dial-"+d.ServiceName, "Dial",
+	if _, err := zm.EnsureServicePolicyForOrg(ctx, d.OrgID, "openidx-dial-"+d.ServiceName, "Dial",
 		[]string{svcRole}, dialRoles); err != nil {
 		rec.logger.Warn("dial policy converge failed", zap.String("svc", d.ServiceName), zap.Error(err))
 	}
@@ -527,7 +547,7 @@ func (rec *ZitiReconciler) ensurePolicies(ctx context.Context, zm *ZitiManager, 
 	// is off — the install-wide Dial policy above is untouched.
 	if rec.perOrgAttributes && d.OrgID != "" {
 		orgAttr := "#" + orgMarkerAttr(d.OrgID)
-		if _, err := zm.EnsureServicePolicy(ctx, "openidx-orgdial-"+d.ServiceName, "Dial",
+		if _, err := zm.EnsureServicePolicyForOrg(ctx, d.OrgID, "openidx-orgdial-"+d.ServiceName, "Dial",
 			[]string{svcRole}, []string{orgAttr}); err != nil {
 			rec.logger.Warn("per-org dial policy converge failed",
 				zap.String("svc", d.ServiceName), zap.String("org", d.OrgID), zap.Error(err))
@@ -672,6 +692,17 @@ func (rec *ZitiReconciler) reconcileOnce(ctx context.Context) {
 	// dark mode. Gated by REMOTE_SUPPORT_OVER_ZITI so it's inert unless opted in.
 	if remoteSupportOverZitiEnabled() {
 		rec.reconcileRemoteSupportZiti(ctx, zm)
+	}
+	// Converge the LOCAL MIRROR against the controller. Write-through (above)
+	// only covers policies this process touches; this pass is what repairs rows
+	// nothing has written since they went stale. Throttled — a full controller
+	// listing does not need to run on every 30s tick — and failure-safe: a failed
+	// refresh leaves the mirror exactly as it was.
+	if time.Since(rec.lastMirrorRefresh) >= mirrorRefreshPeriod {
+		rec.lastMirrorRefresh = time.Now()
+		if _, err := rec.RefreshMirror(ctx); err != nil {
+			rec.logger.Warn("reconcile: mirror refresh failed (mirror unchanged)", zap.Error(err))
+		}
 	}
 	rec.logger.Info("reconcile pass complete", zap.Int("routes", len(desired)))
 }

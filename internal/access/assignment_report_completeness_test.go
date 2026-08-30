@@ -416,8 +416,15 @@ func TestServiceTagResolvesByName(t *testing.T) {
 }
 
 // TestServiceNameIndexLeavesTheMirrorPathAlone: the mirror path passes a nil
-// byAttr AND a nil byName. Both index lookups must therefore be no-ops there,
-// which is what keeps the mirror-backed access map byte-for-byte what it was.
+// byAttr AND a nil byName, so neither CONTROLLER-derived index may influence it.
+//
+// It does not follow that the mirror path resolves nothing. The Ziti mirror fix
+// (#879) made a `#tag` that names a mirrored service resolve to that service,
+// over allServices — otherwise a reachable app surfaces as the literal
+// "#openidx-<app>" with no host or port. So `#prod-db` resolves here via the
+// NAME match, `#web-apps` matches nothing and stays raw, and `@s1` dedupes
+// against the already-resolved prod-db. What this pins is that the nil indices
+// contribute nothing of their own on top of that.
 func TestServiceNameIndexLeavesTheMirrorPathAlone(t *testing.T) {
 	mirror := zitiServiceIndex{
 		byZitiID: map[string]string{"s1": "prod-db"},
@@ -425,7 +432,7 @@ func TestServiceNameIndexLeavesTheMirrorPathAlone(t *testing.T) {
 		// byAttr and byName deliberately nil, as collectZitiPillar leaves them
 	}
 	got := resolveServiceRolesIndexed([]string{"#prod-db", "#web-apps", "@s1"}, mirror)
-	want := []string{"#prod-db", "#web-apps", "prod-db"}
+	want := []string{"prod-db", "#web-apps"}
 	if len(got) != len(want) {
 		t.Fatalf("mirror resolution = %v, want %v", got, want)
 	}
