@@ -1,7 +1,11 @@
 package oauth
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -38,9 +42,16 @@ func TestAuthorizeAssignmentDecision(t *testing.T) {
 
 // TestEveryMintSiteCallsAssignmentGate is a source-shape guard, in the style of
 // TestSingleAuthorizationCodeIssuancePath (authcode_issuance_test.go) and
-// TestHostedLoginEnforcesMFA (hosted_mfa_test.go): it asserts every place this
-// service mints an authorization code calls assignmentGateAllows before it
-// mints.
+// TestHostedLoginEnforcesMFA (hosted_mfa_test.go): it asserts every KNOWN place
+// this service mints an authorization code calls assignmentGateAllows before
+// it mints. It answers "is the ordering right at each site I already know
+// about" — TestNoUngatedMintSite below answers the complementary question,
+// "did I miss a site", by enumerating every call to CreateAuthorizationCode in
+// the package rather than trusting a hand-maintained list. Both are needed:
+// this test's hand-maintained `sites` list is exactly the kind of list a new
+// mint site can silently fall outside of, which is why round 2 of this gate's
+// review found a sixth mint site (handleCallback, the federated-SSO return
+// leg) that this test's list did not cover.
 //
 // This is the regression guard for the Critical the first cut of this gate
 // shipped with: issueAuthorizationCode was gated, but four other live mint
@@ -60,6 +71,7 @@ func TestEveryMintSiteCallsAssignmentGate(t *testing.T) {
 		{"service.go", "func (s *Service) issueAuthorizationCode(", "s.CreateAuthorizationCode("},
 		{"service.go", "func (s *Service) handleAuthorizeConsent(", "s.CreateAuthorizationCode("},
 		{"service.go", "func (s *Service) handleAuthorizeConsentV2(", "s.authorizeHandler.IssueAuthorizationCode("},
+		{"service.go", "func (s *Service) handleCallback(", "s.CreateAuthorizationCode("},
 		{"hosted_mfa.go", "func (s *Service) issueHostedAuthorizationCode(", "s.CreateAuthorizationCode("},
 		{"handlers_passwordless.go", "func (s *Service) handleMagicLinkVerify(", "s.CreateAuthorizationCode("},
 	}
@@ -94,5 +106,106 @@ func TestEveryMintSiteCallsAssignmentGate(t *testing.T) {
 				t.Errorf("%q calls %q before the assignment gate — the gate must run first so a refusal can pre-empt the mint", site.funcSig, site.mintCall)
 			}
 		})
+	}
+}
+
+// mintSiteDisposition records, for every function in this package that calls
+// CreateAuthorizationCode, why that is safe:
+//
+//   - "gated": the function itself calls s.assignmentGateAllows before the
+//     mint — TestEveryMintSiteCallsAssignmentGate above asserts the ordering
+//     for each of these by name.
+//   - anything else: a specific reason the mint site is deliberately exempt
+//     from calling the gate itself.
+//
+// TestNoUngatedMintSite below enumerates every real call site by parsing this
+// package's source (not by trusting this map, or the hand-maintained list in
+// TestEveryMintSiteCallsAssignmentGate, to be complete) and fails if it finds
+// one that is not a key here, or if a key here no longer corresponds to a
+// real call site. Extending the allowlist is exactly the point when a new
+// mint site is added: the failure forces a person to decide, in the same
+// commit, whether it needs the gate — rather than a seventh mint site
+// surviving three review rounds the way the sixth (handleCallback) survived
+// two.
+var mintSiteDisposition = map[string]string{
+	"issueAuthorizationCode":       "gated",
+	"handleAuthorizeConsent":       "gated",
+	"handleCallback":               "gated",
+	"issueHostedAuthorizationCode": "gated",
+	"handleMagicLinkVerify":        "gated",
+
+	// AuthorizeHandler.IssueAuthorizationCode (authorize.go) takes a plain
+	// context.Context, not a *gin.Context — it has no request to attach a 403
+	// or an audit event to, and returns (string, error) to its caller. Its
+	// only caller, handleAuthorizeConsentV2, gates before invoking it: since
+	// this function's own client_id is only known from the same Redis session
+	// IssueAuthorizationCode consumes as part of minting, the caller takes an
+	// extra non-destructive pre-fetch of that session up front purely to learn
+	// client_id for the gate. See handleAuthorizeConsentV2's comment for the
+	// fail-closed-under-enforcement handling of that pre-fetch's own error case.
+	"IssueAuthorizationCode": "exempt: no *gin.Context to gate with; gated by its caller handleAuthorizeConsentV2 instead",
+}
+
+// TestNoUngatedMintSite is the exhaustiveness half of the mint-site guard
+// (TestEveryMintSiteCallsAssignmentGate is the ordering half — the two answer
+// different questions). It parses every non-test .go file in this package,
+// finds every function whose body calls CreateAuthorizationCode (by selector
+// name, so it catches both s.CreateAuthorizationCode(...) and
+// h.service.CreateAuthorizationCode(...)), and asserts that set is EXACTLY
+// mintSiteDisposition — no unlisted function (a new, unreviewed mint site),
+// and no stale entry (a listed function that no longer mints).
+func TestNoUngatedMintSite(t *testing.T) {
+	goFiles, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatalf("glob *.go: %v", err)
+	}
+
+	fset := token.NewFileSet()
+	found := map[string]bool{}
+	for _, path := range goFiles {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", path, err)
+		}
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Body == nil || fn.Name.Name == "CreateAuthorizationCode" {
+				continue // skip the definition itself
+			}
+			mints := false
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "CreateAuthorizationCode" {
+					mints = true
+				}
+				return true
+			})
+			if mints {
+				found[fn.Name.Name] = true
+			}
+		}
+	}
+
+	if len(found) == 0 {
+		t.Fatal("found no function calling CreateAuthorizationCode at all — the AST walk is broken, not the codebase")
+	}
+
+	for name := range found {
+		if _, ok := mintSiteDisposition[name]; !ok {
+			t.Errorf("function %q calls CreateAuthorizationCode but is not in mintSiteDisposition — "+
+				"decide whether it needs s.assignmentGateAllows before minting a code, then add it to the map "+
+				"(as \"gated\" plus a subtest in TestEveryMintSiteCallsAssignmentGate, or with a specific exemption reason)", name)
+		}
+	}
+	for name := range mintSiteDisposition {
+		if !found[name] {
+			t.Errorf("mintSiteDisposition lists %q but it no longer calls CreateAuthorizationCode — remove the stale entry", name)
+		}
 	}
 }

@@ -2995,6 +2995,10 @@ func (s *Service) handleCallback(c *gin.Context) {
 	s.logAuditEvent(c.Request.Context(), "authentication", "sso", "sso_login", "success",
 		user.ID, c.ClientIP(), user.ID, "user", map[string]interface{}{"idp_id": idp.ID.String()})
 
+	if !s.assignmentGateAllows(c, originalParams["client_id"], user.ID) {
+		return
+	}
+
 	authCode := &AuthorizationCode{
 		Code:        GenerateRandomToken(32),
 		ClientID:    originalParams["client_id"],
@@ -3159,13 +3163,28 @@ func (s *Service) handleAuthorizeConsentV2(c *gin.Context) {
 	// This handler learns client_id only from the stored auth session, and
 	// IssueAuthorizationCode below consumes (deletes) that session as part of
 	// minting. So the gate needs its own, separate, non-destructive read of the
-	// same session up front — this pre-fetch failing is not itself an error:
-	// if the session is missing or expired, the mint call below will fail with
-	// its own, existing error path, unchanged from before this gate existed.
-	if preReq, perr := s.authorizeHandler.GetStoredAuthorizationRequest(c.Request.Context(), req.AuthSession); perr == nil {
+	// same session up front. A session that is genuinely missing or expired
+	// here fails the mint call below too (same key), so falling through to its
+	// existing error path for that case is unchanged from before this gate
+	// existed. But a TRANSIENT pre-fetch failure (a Redis timeout or
+	// connection blip that does not recur on the very next call) must not
+	// silently skip the gate while the mint goes on to succeed — that would be
+	// a fail-open on exactly the request an operator turned enforcement on to
+	// catch. So: under enforcement, an unresolved client id refuses rather
+	// than proceeds; with enforcement off the gate can never deny anything
+	// regardless of client id, so skipping is harmless and today's behavior is
+	// preserved exactly — this keeps the flag-off path byte-for-byte
+	// unchanged, which is this plan's binding constraint.
+	preReq, perr := s.authorizeHandler.GetStoredAuthorizationRequest(c.Request.Context(), req.AuthSession)
+	if perr == nil {
 		if !s.assignmentGateAllows(c, preReq.ClientID, userID) {
 			return
 		}
+	} else if s.config != nil && s.config.AccessAssignmentEnforce {
+		s.logger.Warn("assignment gate: pre-fetch failed while enforcement is on; refusing rather than risk an unchecked mint",
+			zap.String("auth_session", req.AuthSession), zap.Error(perr))
+		c.JSON(403, gin.H{"error": "access_denied", "error_description": "You are not assigned to this application."})
+		return
 	}
 
 	// Issue authorization code using the handler
