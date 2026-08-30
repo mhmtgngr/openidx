@@ -46,6 +46,12 @@ var authPaths = []string{
 	"/oauth/stepup-verify",
 	"/oauth/magic-link",
 	"/oauth/authorize/callback",
+	// The server-rendered second factor (hosted_mfa.go). Prefix-matched, so it
+	// covers the code submission, the method switch, the OTP send and the push
+	// start — every step that submits or triggers a credential. Without it the
+	// hosted TOTP form would take unlimited guesses against a 5-minute session,
+	// while its JSON twin /oauth/mfa-verify has always been rate limited.
+	"/oauth/authorize/mfa",
 	"/oauth/token",
 	"/api/v1/identity/users/login",
 	"/api/v1/identity/users/forgot-password",
@@ -75,6 +81,11 @@ var skipPaths = []string{
 // tier; only the read-only status polls are exempt.
 var pollPaths = []string{
 	"/oauth/mfa-push-status/",
+	// The hosted push wait page refreshes itself every 3s while the user reaches
+	// for their phone; like its JSON twin above it only reads one challenge's
+	// status by unguessable id, so it must not burn the shared per-IP budget.
+	// Listed after the auth prefix above and matched first (isPollPath wins).
+	"/oauth/authorize/mfa/wait",
 	"/oauth/qr-login/poll",
 	"/api/v1/identity/mfa/push/challenge/",
 	"/api/v1/identity/passwordless/qr-login/poll",

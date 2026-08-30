@@ -1312,6 +1312,12 @@ func RegisterRoutes(router *gin.Engine, svc *Service, clientMgmtAuth gin.Handler
 
 		// Server-rendered login form callback (for standard OIDC clients)
 		oauth.POST("/authorize/callback", svc.handleAuthorizeCallback)
+		// Second-factor steps for the server-rendered login page (hosted_mfa.go).
+		oauth.POST("/authorize/mfa", svc.handleAuthorizeMFA)
+		oauth.POST("/authorize/mfa/method", svc.handleAuthorizeMFAMethod)
+		oauth.POST("/authorize/mfa/send", svc.handleAuthorizeMFASend)
+		oauth.POST("/authorize/mfa/push", svc.handleAuthorizeMFAPush)
+		oauth.GET("/authorize/mfa/wait", svc.handleAuthorizeMFAWait)
 
 		// Login page (GET) — the target of the /oauth/authorize[/v2] redirect for
 		// native/redirect clients; renders the server-side login form.
@@ -1741,9 +1747,33 @@ func (s *Service) renderLoginPage(c *gin.Context, loginSession, errorMsg string)
 	if errorMsg != "" {
 		errHTML = `<div style="color:#ef4444;background:#fef2f2;border:1px solid #fecaca;padding:12px;border-radius:8px;margin-bottom:16px;font-size:14px">` + html.EscapeString(errorMsg) + `</div>`
 	}
+	msgHTML := ""
+	if b.LoginPageMessage != "" {
+		msgHTML = `<p class="sub">` + html.EscapeString(b.LoginPageMessage) + `</p>`
+	} else {
+		msgHTML = `<p class="sub">` + html.EscapeString(b.PortalTitle) + `</p>`
+	}
 
-	// Colors and custom_css are trusted tenant-admin input (same trust level as
-	// the admin Branding page); user-visible text and URL attributes are escaped.
+	body := msgHTML + errHTML + `
+<form method="POST" action="/oauth/authorize/callback">
+<input type="hidden" name="login_session" value="` + html.EscapeString(loginSession) + `">
+<div class="field"><label>Username</label><input type="text" name="username" required autofocus></div>
+<div class="field"><label>Password</label><input type="password" name="password" required></div>
+<button type="submit">Sign In</button>
+</form>`
+
+	s.renderBrandedPage(c, b, b.LoginPageTitle, body, "")
+}
+
+// renderBrandedPage is the shell every server-rendered auth step shares (the
+// login form and the second-factor steps in hosted_mfa.go), so the tenant's
+// branding is applied once and a new step cannot drift out of style.
+// headExtra carries per-page <head> content, e.g. the push wait page's meta
+// refresh — the page must stay JavaScript-free under script-src 'self'.
+//
+// Colors and custom_css are trusted tenant-admin input (same trust level as the
+// admin Branding page); user-visible text and URL attributes are escaped.
+func (s *Service) renderBrandedPage(c *gin.Context, b loginBranding, heading, bodyHTML, headExtra string) {
 	logoHTML := ""
 	if b.LogoURL != "" {
 		logoHTML = `<img src="` + html.EscapeString(b.LogoURL) + `" alt="" style="max-height:48px;margin-bottom:16px">`
@@ -1762,15 +1792,9 @@ func (s *Service) renderLoginPage(c *gin.Context, loginSession, errorMsg string)
 	} else if b.PoweredByVisible {
 		footerHTML = `<p class="footer">Powered by OpenIDX</p>`
 	}
-	msgHTML := ""
-	if b.LoginPageMessage != "" {
-		msgHTML = `<p class="sub">` + html.EscapeString(b.LoginPageMessage) + `</p>`
-	} else {
-		msgHTML = `<p class="sub">` + html.EscapeString(b.PortalTitle) + `</p>`
-	}
 
 	page := `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>` + html.EscapeString(b.LoginPageTitle) + ` — ` + html.EscapeString(b.PortalTitle) + `</title>` + faviconHTML + `
+<title>` + html.EscapeString(heading) + ` — ` + html.EscapeString(b.PortalTitle) + `</title>` + faviconHTML + headExtra + `
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:` + bodyBg + `;color:#e2e8f0;display:flex;align-items:center;justify-content:center;min-height:100vh}
@@ -1789,15 +1813,8 @@ button:hover{background:` + b.SecondaryColor + `}
 <style>` + b.CustomCSS + `</style></head><body>
 <div class="card">
 ` + logoHTML + `
-<h1>` + html.EscapeString(b.LoginPageTitle) + `</h1>
-` + msgHTML + `
-` + errHTML + `
-<form method="POST" action="/oauth/authorize/callback">
-<input type="hidden" name="login_session" value="` + html.EscapeString(loginSession) + `">
-<div class="field"><label>Username</label><input type="text" name="username" required autofocus></div>
-<div class="field"><label>Password</label><input type="password" name="password" required></div>
-<button type="submit">Sign In</button>
-</form>
+<h1>` + html.EscapeString(heading) + `</h1>
+` + bodyHTML + `
 ` + footerHTML + `
 </div></body></html>`
 	c.Data(200, "text/html; charset=utf-8", []byte(page))
@@ -1881,40 +1898,64 @@ func (s *Service) handleAuthorizeCallback(c *gin.Context) {
 		}
 	}
 
-	// Clean up login session
-	s.redis.Client.Del(c.Request.Context(), "login_session:"+loginSession)
-
-	// Generate authorization code
-	code := GenerateRandomToken(32)
-	authCode := &AuthorizationCode{
-		Code:                code,
-		ClientID:            oauthParams["client_id"],
-		UserID:              user.ID,
-		RedirectURI:         oauthParams["redirect_uri"],
-		Scope:               oauthParams["scope"],
-		State:               oauthParams["state"],
-		Nonce:               oauthParams["nonce"],
-		CodeChallenge:       oauthParams["code_challenge"],
-		CodeChallengeMethod: oauthParams["code_challenge_method"],
+	// Second factor. This server-rendered path is what every PUBLIC client gets
+	// in a browser (BrowZer, the mobile app, the desktop client), and it used to
+	// issue an authorization code straight after the password — so a user with
+	// TOTP or push enrolled skipped MFA entirely here while the JSON path
+	// (/oauth/login) enforced it. Both flows now share one decision
+	// (evaluateMFA) and this one completes the challenge on server-rendered
+	// pages; a login that cannot complete its factor is refused, never issued.
+	clientIP := c.ClientIP()
+	userAgent := c.GetHeader("User-Agent")
+	fingerprint := ""
+	location := ""
+	deviceTrusted := false
+	riskScore := 0
+	var riskFactors []string
+	if s.riskService != nil {
+		fingerprint = s.riskService.ComputeDeviceFingerprint(clientIP, userAgent)
+		var lat, lon float64
+		if geo, _ := s.riskService.GeoIPLookup(c.Request.Context(), clientIP); geo != nil {
+			location = geo.City + ", " + geo.Country
+			lat, lon = geo.Lat, geo.Lon
+		}
+		deviceTrusted = s.riskService.IsDeviceTrusted(c.Request.Context(), user.ID, fingerprint)
+		riskScore, riskFactors = s.riskService.CalculateRiskScore(c.Request.Context(), user.ID, clientIP, userAgent, fingerprint, location, lat, lon)
+		// Record the sign-in, as the JSON path does. Without this, logins through
+		// the hosted page — BrowZer, the mobile app, the desktop client, i.e. most
+		// of them — never reached login_history, so they were missing from the
+		// user's recent sign-ins, from login analytics, and from the
+		// impossible-travel/anomaly checks that read that table.
+		s.riskService.RecordLogin(c.Request.Context(), user.ID, clientIP, userAgent, location, lat, lon, fingerprint, true, []string{"password"}, riskScore)
 	}
-
-	if err := s.CreateAuthorizationCode(c.Request.Context(), authCode); err != nil {
-		// DB write failure: a transient outage becomes a retryable 503, a real
-		// error stays a 500 (see unavailable.go).
-		writeServerOrUnavailable(c, err)
+	ev := s.evaluateMFA(c.Request.Context(), user, clientIP, userAgent, fingerprint, location, deviceTrusted, riskScore, riskFactors)
+	if ev.DenyAccess {
+		s.logger.Warn("hosted login denied by risk assessment",
+			zap.String("user_id", user.ID), zap.Int("risk_score", ev.RiskScore))
+		s.renderLoginPage(c, loginSession,
+			"Sign-in from this device or location is not allowed. Please enable MFA or contact your administrator.")
+		return
+	}
+	if ev.Challenge {
+		s.beginHostedMFA(c, user, oauthParams, loginSession, ev, fingerprint, location)
 		return
 	}
 
-	// 302 redirect to client with auth code (standard OIDC flow)
-	redirectURL, _ := url.Parse(oauthParams["redirect_uri"])
-	query := redirectURL.Query()
-	query.Set("code", code)
-	if oauthParams["state"] != "" {
-		query.Set("state", oauthParams["state"])
-	}
-	redirectURL.RawQuery = query.Encode()
+	// Clean up login session
+	s.redis.Client.Del(c.Request.Context(), "login_session:"+loginSession)
 
-	c.Redirect(302, redirectURL.String())
+	// Record the session, exactly as the JSON login path does. Without this a
+	// login through the hosted page produced no `sessions` row at all: the
+	// user's own "My Sessions" never listed their BrowZer / mobile / desktop
+	// sign-ins, and an admin revoking sessions could not reach them.
+	if session, serr := s.identityService.CreateSession(c.Request.Context(), user.ID, oauthParams["client_id"], clientIP, userAgent, 24*time.Hour); serr != nil {
+		s.logger.Warn("Failed to create session during hosted login", zap.Error(serr))
+	} else if session != nil {
+		oauthParams["session_id"] = session.ID
+		s.recordSessionAuthMethods(c.Request.Context(), session.ID, []string{"pwd"})
+	}
+
+	s.issueHostedAuthorizationCode(c, oauthParams, user.ID)
 }
 
 // handleLogin handles username/password login for direct OpenIDX authentication
@@ -2084,155 +2125,33 @@ func (s *Service) handleLogin(c *gin.Context) {
 		}
 	}
 
-	// Gather available MFA methods. MFA enforcement must key on ANY enrolled
-	// primary factor (TOTP, WebAuthn, push, SMS, email OTP) — not TOTP alone.
-	// Previously mfaEnabled was `totpStatus.Enabled`, so a user enrolled solely
-	// in WebAuthn/push/SMS/email silently bypassed MFA on password login.
-	// Backup and bypass codes are supplemental and never independently force MFA.
-	totpStatus, _ := s.identityService.GetTOTPStatus(c.Request.Context(), user.ID)
+	// MFA decision — shared with the server-rendered login path
+	// (POST /oauth/authorize/callback) so the two browser login flows can never
+	// disagree about whether a second factor is required. See mfa_policy.go.
+	ev := s.evaluateMFA(c.Request.Context(), user, clientIP, userAgent, fingerprint, location, deviceTrusted, riskScore, riskFactors)
+	availableMFAMethods := ev.Methods
+	mfaEnabled := ev.Enabled
+	browserTrusted := ev.BrowserTrusted
+	denyAccess := ev.DenyAccess
+	skipMFA := ev.SkipMFA
+	riskScore = ev.RiskScore
+	riskFactors = ev.RiskFactors
 
-	var availableMFAMethods []string
-	var hasPrimaryFactor bool
-
-	if totpStatus != nil && totpStatus.Enabled {
-		availableMFAMethods = append(availableMFAMethods, "totp")
-		hasPrimaryFactor = true
-	}
-	// Check for WebAuthn credentials
-	webauthnCreds, _ := s.identityService.GetWebAuthnCredentials(c.Request.Context(), user.ID)
-	if len(webauthnCreds) > 0 {
-		availableMFAMethods = append(availableMFAMethods, "webauthn")
-		hasPrimaryFactor = true
-	}
-	// Check for push MFA devices
-	pushDevices, _ := s.identityService.GetPushDevices(c.Request.Context(), user.ID)
-	if len(pushDevices) > 0 {
-		availableMFAMethods = append(availableMFAMethods, "push")
-		hasPrimaryFactor = true
-	}
-	// FastPass preference: if the user has a push approver that was auto-
-	// registered by a device enrollment (agent_id linked) and is enabled, the
-	// enrolled phone IS their authenticator — offer push first so it is the
-	// default method, matching Okta Verify / MS Authenticator. Purely a
-	// reordering: it never adds a method or weakens the risk decision.
-	if hasEnrolledPushApprover(pushDevices) {
-		availableMFAMethods = preferMethod(availableMFAMethods, "push")
-	}
-	// Check for verified SMS OTP enrollment
-	if smsEnr, _ := s.identityService.GetSMSEnrollment(c.Request.Context(), user.ID); smsEnr != nil && smsEnr.Verified && smsEnr.Enabled {
-		availableMFAMethods = append(availableMFAMethods, "sms")
-		hasPrimaryFactor = true
-	}
-	// Check for email OTP enrollment
-	if emailEnr, _ := s.identityService.GetEmailOTPEnrollment(c.Request.Context(), user.ID); emailEnr != nil && emailEnr.Enabled {
-		availableMFAMethods = append(availableMFAMethods, "email")
-		hasPrimaryFactor = true
-	}
-	// Check for backup codes (supplemental — only offered alongside a primary factor)
-	backupCount, _ := s.identityService.GetBackupCodeCount(c.Request.Context(), user.ID)
-	if backupCount > 0 {
-		availableMFAMethods = append(availableMFAMethods, "backup")
-	}
-	// Check for active bypass codes (admin-generated, supplemental)
-	hasActiveBypass, _ := s.identityService.HasActiveBypassCode(c.Request.Context(), user.ID)
-	if hasActiveBypass {
-		availableMFAMethods = append(availableMFAMethods, "bypass")
-	}
-
-	mfaEnabled := hasPrimaryFactor
-
-	// Check for trusted browser — skip MFA if browser is trusted
-	var browserTrusted bool
-	if fingerprint != "" && s.identityService != nil {
-		tb, _ := s.identityService.IsTrustedBrowser(c.Request.Context(), user.ID, fingerprint)
-		browserTrusted = tb != nil
-	}
-
-	// Adaptive risk assessment via identity service (replaces hardcoded threshold)
-	var riskAssessment *identity.RiskAssessment
-	if s.identityService != nil {
-		var geo_lat, geo_lon float64
-		if s.riskService != nil {
-			geo, _ := s.riskService.GeoIPLookup(c.Request.Context(), clientIP)
-			if geo != nil {
-				geo_lat = geo.Lat
-				geo_lon = geo.Lon
-			}
+	if ev.Challenge {
+		// MFA required — store partial auth in Redis and return MFA challenge.
+		// createMFASession is shared with the server-rendered path so both
+		// flows pin the same allowed-method list into the session.
+		mfaSession, mfaErr := s.createMFASession(c.Request.Context(), user.ID, oauthParams, riskScore, fingerprint, location, availableMFAMethods)
+		if mfaErr != nil {
+			s.logger.Error("failed to create MFA session", zap.Error(mfaErr))
+			c.JSON(500, gin.H{"error": "server_error"})
+			return
 		}
-		lc := &identity.LoginContext{
-			UserID:         user.ID,
-			Username:       user.UserName,
-			IPAddress:      clientIP,
-			UserAgent:      userAgent,
-			Latitude:       geo_lat,
-			Longitude:      geo_lon,
-			DeviceID:       fingerprint,
-			BrowserHash:    fingerprint,
-			KnownDevice:    deviceTrusted,
-			TrustedBrowser: browserTrusted,
-		}
-		assessment, assessErr := s.identityService.AssessLoginRisk(c.Request.Context(), lc)
-		if assessErr == nil && assessment != nil {
-			riskAssessment = assessment
-			// Use assessment score/factors if available (more sophisticated than raw risk score)
-			riskScore = assessment.Score
-			riskFactors = assessment.Factors
-		}
-	}
-
-	// Determine MFA requirement from risk assessment (or fall back to legacy threshold)
-	requireMFA := false
-	denyAccess := false
-	if riskAssessment != nil {
-		requireMFA = riskAssessment.RequiresMFA && mfaEnabled && !browserTrusted
-		denyAccess = riskAssessment.DenyAccess
-		// Filter available MFA methods by risk-allowed methods
-		if requireMFA && len(riskAssessment.AllowedMethods) > 0 {
-			allowedSet := make(map[string]bool)
-			for _, m := range riskAssessment.AllowedMethods {
-				allowedSet[m] = true
-			}
-			filtered := []string{}
-			for _, m := range availableMFAMethods {
-				if allowedSet[m] {
-					filtered = append(filtered, m)
-				}
-			}
-			if len(filtered) > 0 {
-				availableMFAMethods = filtered
-			}
-		}
-	} else {
-		// Legacy fallback: hardcoded threshold
-		requireMFA = riskScore >= 70 && mfaEnabled && !browserTrusted
-		denyAccess = riskScore >= 70 && !mfaEnabled
-	}
-
-	// Skip MFA if browser is trusted and risk is not high
-	skipMFA := browserTrusted && riskScore < 70
-
-	if mfaEnabled && !skipMFA && (requireMFA || (totpStatus != nil && totpStatus.Enabled)) {
-		// MFA required — store partial auth in Redis and return MFA challenge
-		mfaSession := GenerateRandomToken(32)
-		mfaData := map[string]string{
-			"user_id":     user.ID,
-			"risk_score":  fmt.Sprintf("%d", riskScore),
-			"fingerprint": fingerprint,
-			"location":    location,
-		}
-		for k, v := range oauthParams {
-			mfaData[k] = v
-		}
-		mfaDataJSON, _ := json.Marshal(mfaData)
-		s.redis.Client.Set(c.Request.Context(), "mfa_session:"+mfaSession, string(mfaDataJSON), 5*time.Minute)
 
 		// Delete the login session from Redis (password step is done)
 		s.redis.Client.Del(c.Request.Context(), "login_session:"+req.LoginSession)
 
-		riskLevel := "medium"
-		if riskAssessment != nil {
-			riskLevel = riskAssessment.Level
-		}
+		riskLevel := ev.RiskLevel
 
 		c.JSON(200, gin.H{
 			"mfa_required":      true,
