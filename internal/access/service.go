@@ -24,7 +24,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
-	"github.com/openidx/openidx/internal/appaccess"
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/middleware"
@@ -139,6 +138,13 @@ type Service struct {
 	// groupCache memoizes per-user group membership for route authorization
 	// (allowed_groups), keyed by user id with a short TTL.
 	groupCache sync.Map
+	// routeAppCache memoizes the route→application resolution used by the
+	// assignment overlay in handleProxy, keyed by route id with a short TTL —
+	// see proxy_assignment_cache.go.
+	routeAppCache sync.Map
+	// assignCache memoizes the assignment predicate used by the same overlay,
+	// keyed by "userID|applicationID" with a short TTL.
+	assignCache sync.Map
 }
 
 // handleAgentDownload serves the per-OS agent installers + manifest + APK
@@ -2038,14 +2044,10 @@ func (s *Service) handleProxy(c *gin.Context) {
 		// Assignment overlay lookup. Resolve the application (if any) behind this
 		// route before the role/group checks run — under enforcement the
 		// assignment predicate must pre-empt those checks, not just override
-		// their outcome after a denial has already fired.
-		var appID, appOrgID string
-		if aerr := s.db.Pool.QueryRow(orgctx.WithBypassRLS(c.Request.Context()),
-			//orgscope:ignore proxy data-plane assignment check; the route→application link is looked up by route_id before any org context is resolved, same reasoning as findRouteByHost
-			"SELECT id, org_id FROM applications WHERE route_id = $1", route.ID).Scan(&appID, &appOrgID); aerr != nil && aerr != pgx.ErrNoRows {
-			s.logger.Error("proxy: application lookup for route failed", zap.String("route_id", route.ID), zap.Error(aerr))
-			appID, appOrgID = "", ""
-		}
+		// their outcome after a denial has already fired. Cached (see
+		// proxy_assignment_cache.go): forward-auth fires on every request the
+		// proxy forwards, not once per page load.
+		appID, appOrgID := s.appForRoute(c.Request.Context(), route.ID)
 
 		// Under enforcement, an app-backed route's verdict comes solely from
 		// assignment: the role/group check below is skipped entirely rather than
@@ -2090,22 +2092,39 @@ func (s *Service) handleProxy(c *gin.Context) {
 		// assignmentReplacesLegacy is true, proxyAssignmentDecision ignores the
 		// legacyAllowed argument entirely (see its doc comment), so the value
 		// passed is moot.
-		var assigned bool
+		var assigned, freshAssignment bool
 		if appID != "" {
-			var allowedErr error
-			assigned, allowedErr = appaccess.Allowed(c.Request.Context(), s.db, session.UserID, appOrgID, appID)
-			if allowedErr != nil {
-				s.logger.Error("proxy: assignment check failed", zap.String("application_id", appID), zap.Error(allowedErr))
-				assigned = false // fail closed, matching the policy-evaluation error handling below
-			}
+			assigned, freshAssignment = s.assignmentAllowed(c.Request.Context(), session.UserID, appOrgID, appID)
 		}
 		allow, wouldDeny := proxyAssignmentDecision(appID, assigned, s.config.AccessAssignmentEnforce, true)
 		if wouldDeny {
-			s.logAuditEvent(c, "access.assignment.would_deny", appID, "application", map[string]interface{}{
-				"enforcement_point": "proxy",
-				"user_id":           session.UserID,
-				"route":             route.Name,
-			})
+			if !allow {
+				// A real denial under enforcement: audit it as an actual proxy
+				// denial (action "proxy_access_denied" is the only action
+				// logAuditEvent stamps outcome:"failure" for) so an operator
+				// filtering the proxy audit stream for denials finds this
+				// request, instead of it landing as a success-outcome
+				// "would_deny" record indistinguishable from the report-mode
+				// case below.
+				s.logAuditEvent(c, "proxy_access_denied", route.ID, "proxy_route", map[string]interface{}{
+					"reason":         "not_assigned",
+					"user_id":        session.UserID,
+					"path":           c.Request.URL.Path,
+					"application_id": appID,
+				})
+			} else if freshAssignment {
+				// Report mode: record the gap. This fires on every allowed
+				// request from an unassigned caller to an app-backed route —
+				// every asset load, not just the page — so it is throttled to
+				// once per assignmentAllowed cache TTL per (user, application)
+				// via the freshAssignment flag, rather than one audit POST per
+				// request.
+				s.logAuditEvent(c, "access.assignment.would_deny", appID, "application", map[string]interface{}{
+					"enforcement_point": "proxy",
+					"user_id":           session.UserID,
+					"route":             route.Name,
+				})
+			}
 		}
 		if !allow {
 			c.JSON(http.StatusForbidden, gin.H{"error": "not assigned to this application"})
