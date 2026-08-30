@@ -344,9 +344,16 @@ func (rec *ZitiReconciler) runLocked(ctx context.Context) {
 func (rec *ZitiReconciler) loadDesiredRoutes(ctx context.Context) ([]DesiredRoute, error) {
 	ctx = orgctx.WithBypassRLS(ctx)
 	rows, err := rec.db.Pool.Query(ctx,
+		// One-app-per-route is a convention of the publish path (app_publish.go
+		// upserts a single tile per route under the deterministic client id
+		// proxy-app-<routeid>), not a schema constraint — applications.route_id
+		// has only a non-unique index (sql_v49.go), so nothing stops a second
+		// application from pointing at the same route. ORDER BY id makes the pick
+		// deterministic (lowest id wins) if that convention is ever violated,
+		// instead of an unspecified row winning under a bare LIMIT 1.
 		//orgscope:ignore install-wide Ziti reconcile; keyed by globally-unique ziti_service_name across all orgs
 		`SELECT ziti_service_name, to_url, COALESCE(hosting_mode,'identity'), COALESCE(browzer_enabled,false), COALESCE(org_id::text,''),
-		        COALESCE((SELECT id::text FROM applications WHERE route_id = proxy_routes.id AND enabled = true LIMIT 1), '')
+		        COALESCE((SELECT id::text FROM applications WHERE route_id = proxy_routes.id AND enabled = true ORDER BY id LIMIT 1), '')
 		 FROM proxy_routes
 		 WHERE ziti_enabled = true AND enabled = true
 		   AND ziti_service_name IS NOT NULL AND ziti_service_name != ''`)
@@ -528,11 +535,6 @@ func (rec *ZitiReconciler) ensurePolicies(ctx context.Context, zm *ZitiManager, 
 	}
 	return nil
 }
-
-// appDialPolicyName is the stable name of an app-backed service's per-app Dial
-// policy, so the reconciler upserts rather than duplicating — exactly like
-// openidx-orgdial-<service>.
-func appDialPolicyName(service string) string { return "openidx-appdial-" + service }
 
 // dialIdentityRoles decides who may dial a service.
 //

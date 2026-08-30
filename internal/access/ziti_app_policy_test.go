@@ -2,14 +2,6 @@ package access
 
 import "testing"
 
-// TestAppDialPolicyName pins the policy naming so the reconciler upserts rather
-// than duplicating, exactly like openidx-orgdial-*.
-func TestAppDialPolicyName(t *testing.T) {
-	if got := appDialPolicyName("es-dev"); got != "openidx-appdial-es-dev" {
-		t.Errorf("appDialPolicyName = %q, want openidx-appdial-es-dev", got)
-	}
-}
-
 // TestDialIdentityRolesForRoute is the heart of enforcement: while the flag is
 // off the blanket grant stays and the per-app grant is added beside it; once on,
 // an app-backed service is dialable ONLY by identities carrying its marker.

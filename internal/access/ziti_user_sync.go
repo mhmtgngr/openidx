@@ -280,8 +280,11 @@ func (zm *ZitiManager) buildUserAttributes(ctx context.Context, userID string) (
 	_, browzer := zm.browzerAuthPolicy(ctx)
 
 	// Per-app markers: one attribute per route-linked application the user is
-	// assigned, so the reconciler's openidx-appdial-* policy can grant exactly
-	// those identities. Applications with no route are gated at
+	// assigned, so the reconciler can fold #app-<uuid> into the service's Dial
+	// policy identity roles alongside the blanket #access-proxy-clients/
+	// #browzer-users grant (see dialIdentityRoles in ziti_reconciler.go) — added
+	// beside the blanket grant while ACCESS_ASSIGNMENT_ENFORCE is off, replacing
+	// it once enforcement is on. Applications with no route are gated at
 	// /oauth/authorize instead and get no attribute.
 	var appAttrs []string
 	if orgID := zm.userOrgID(ctx, userID); orgID != "" {
