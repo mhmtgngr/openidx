@@ -24,6 +24,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/appaccess"
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/middleware"
@@ -1973,6 +1974,25 @@ func (s *Service) handleSessionInfo(c *gin.Context) {
 
 // ---- Reverse Proxy ----
 
+// proxyAssignmentDecision returns (allow, recordWouldDeny) for one request.
+//
+// A route with no application behind it keeps the legacy role/group verdict
+// untouched. For an app-backed route the assignment predicate replaces that
+// verdict under enforcement; in report mode the request is allowed and the gap
+// is recorded so the report shows it before anyone loses access.
+func proxyAssignmentDecision(applicationID string, assigned, enforce, legacyAllowed bool) (allow, recordWouldDeny bool) {
+	if applicationID == "" {
+		return legacyAllowed, false
+	}
+	if assigned {
+		return true, false
+	}
+	if enforce {
+		return false, true
+	}
+	return true, true
+}
+
 func (s *Service) handleProxy(c *gin.Context) {
 	// Find matching route by host header
 	host := c.Request.Host
@@ -2015,27 +2035,80 @@ func (s *Service) handleProxy(c *gin.Context) {
 			return
 		}
 
-		// Check roles
-		if len(route.AllowedRoles) > 0 && !hasAnyRole(session.Roles, route.AllowedRoles) {
-			s.logAuditEvent(c, "proxy_access_denied", route.ID, "proxy_route", map[string]interface{}{
-				"reason":  "insufficient_roles",
-				"user_id": session.UserID,
-				"path":    c.Request.URL.Path,
-			})
-			c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions"})
-			return
+		// Assignment overlay lookup. Resolve the application (if any) behind this
+		// route before the role/group checks run — under enforcement the
+		// assignment predicate must pre-empt those checks, not just override
+		// their outcome after a denial has already fired.
+		var appID, appOrgID string
+		if aerr := s.db.Pool.QueryRow(orgctx.WithBypassRLS(c.Request.Context()),
+			//orgscope:ignore proxy data-plane assignment check; the route→application link is looked up by route_id before any org context is resolved, same reasoning as findRouteByHost
+			"SELECT id, org_id FROM applications WHERE route_id = $1", route.ID).Scan(&appID, &appOrgID); aerr != nil && aerr != pgx.ErrNoRows {
+			s.logger.Error("proxy: application lookup for route failed", zap.String("route_id", route.ID), zap.Error(aerr))
+			appID, appOrgID = "", ""
 		}
 
-		// Check groups. Stored in allowed_groups and settable in the admin UI,
-		// but historically never evaluated here.
-		if len(route.AllowedGroups) > 0 &&
-			!routeGroupsAllow(route.AllowedGroups, s.userGroupNames(c.Request.Context(), session.UserID)) {
-			s.logAuditEvent(c, "proxy_access_denied", route.ID, "proxy_route", map[string]interface{}{
-				"reason":  "insufficient_groups",
-				"user_id": session.UserID,
-				"path":    c.Request.URL.Path,
+		// Under enforcement, an app-backed route's verdict comes solely from
+		// assignment: the role/group check below is skipped entirely rather than
+		// intersected with the assignment predicate — checking both would be the
+		// intersect model this design rejected. Every other case — the route has
+		// no application, or the flag is off — runs the role/group check exactly
+		// as it always has, so both the verdict and its audit trail are
+		// byte-for-byte unchanged there.
+		assignmentReplacesLegacy := appID != "" && s.config.AccessAssignmentEnforce
+
+		if !assignmentReplacesLegacy {
+			// Check roles
+			if len(route.AllowedRoles) > 0 && !hasAnyRole(session.Roles, route.AllowedRoles) {
+				s.logAuditEvent(c, "proxy_access_denied", route.ID, "proxy_route", map[string]interface{}{
+					"reason":  "insufficient_roles",
+					"user_id": session.UserID,
+					"path":    c.Request.URL.Path,
+				})
+				c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions"})
+				return
+			}
+
+			// Check groups. Stored in allowed_groups and settable in the admin UI,
+			// but historically never evaluated here.
+			if len(route.AllowedGroups) > 0 &&
+				!routeGroupsAllow(route.AllowedGroups, s.userGroupNames(c.Request.Context(), session.UserID)) {
+				s.logAuditEvent(c, "proxy_access_denied", route.ID, "proxy_route", map[string]interface{}{
+					"reason":  "insufficient_groups",
+					"user_id": session.UserID,
+					"path":    c.Request.URL.Path,
+				})
+				c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions"})
+				return
+			}
+		}
+
+		// Assignment overlay. When assignmentReplacesLegacy is false, reaching
+		// this line means either the route has no application (appID == "", so
+		// proxyAssignmentDecision below is a pass-through no-op) or the role and
+		// group checks above just passed — either way the legacy verdict for
+		// this request is allow, so legacyAllowed is true here. When
+		// assignmentReplacesLegacy is true, proxyAssignmentDecision ignores the
+		// legacyAllowed argument entirely (see its doc comment), so the value
+		// passed is moot.
+		var assigned bool
+		if appID != "" {
+			var allowedErr error
+			assigned, allowedErr = appaccess.Allowed(c.Request.Context(), s.db, session.UserID, appOrgID, appID)
+			if allowedErr != nil {
+				s.logger.Error("proxy: assignment check failed", zap.String("application_id", appID), zap.Error(allowedErr))
+				assigned = false // fail closed, matching the policy-evaluation error handling below
+			}
+		}
+		allow, wouldDeny := proxyAssignmentDecision(appID, assigned, s.config.AccessAssignmentEnforce, true)
+		if wouldDeny {
+			s.logAuditEvent(c, "access.assignment.would_deny", appID, "application", map[string]interface{}{
+				"enforcement_point": "proxy",
+				"user_id":           session.UserID,
+				"route":             route.Name,
 			})
-			c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions"})
+		}
+		if !allow {
+			c.JSON(http.StatusForbidden, gin.H{"error": "not assigned to this application"})
 			return
 		}
 
