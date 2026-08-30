@@ -31,6 +31,7 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/oauth2"
 
+	"github.com/openidx/openidx/internal/appaccess"
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/middleware"
@@ -2240,8 +2241,98 @@ func (s *Service) handleLogin(c *gin.Context) {
 	s.issueAuthorizationCode(c, oauthParams, user.ID)
 }
 
+// authorizeAssignmentDecision returns (issueCode, recordWouldDeny) for a client
+// whose application row may require assignment. The gate is opt-in per client:
+// a client that does not require it is never affected, which is what keeps
+// first-party clients working on the first deploy.
+func authorizeAssignmentDecision(requiresAssignment, assigned, enforce bool) (issue, recordWouldDeny bool) {
+	if !requiresAssignment || assigned {
+		return true, false
+	}
+	if enforce {
+		return false, true
+	}
+	return true, true
+}
+
+// enforceAssignmentGate is the /oauth/authorize enforcement point for
+// applications that have no published route: those are reached only by
+// obtaining a token for their OAuth client, so the overlay and reverse-proxy
+// gates (the enforcement points for route-backed applications) never see
+// them. It returns true when the request has already been refused (the
+// caller must stop and return without issuing a code).
+//
+// The application row and the assignment check both run under c's ordinary
+// request context, scoped by the SAME org id (the resolved tenant's), so
+// they agree on RLS scope by construction — unlike the proxy's forward-auth
+// path, this handler already runs inside a resolved org context (the
+// tenant-resolution middleware ran before /oauth/authorize), so there is no
+// need for orgctx.WithBypassRLS here.
+func (s *Service) enforceAssignmentGate(c *gin.Context, oauthParams map[string]string, userID string) bool {
+	clientID := oauthParams["client_id"]
+	if clientID == "" {
+		return false
+	}
+	ctx := c.Request.Context()
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		// No tenant context: cannot resolve the application row. Preserve
+		// existing behavior (issue the code) but make it visible, matching
+		// consentRequired's fail-open handling of the same condition.
+		s.logger.Debug("assignment gate skipped: no org context", zap.String("client_id", clientID))
+		return false
+	}
+
+	var appID string
+	var requiresAssignment bool
+	err = s.db.Pool.QueryRow(ctx,
+		`SELECT id, require_assignment FROM applications WHERE client_id = $1 AND org_id = $2`,
+		clientID, org.ID).Scan(&appID, &requiresAssignment)
+	if err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			s.logger.Error("assignment gate: application lookup failed",
+				zap.String("client_id", clientID), zap.Error(err))
+		}
+		// No application row behind this client (or a lookup failure): there is
+		// nothing to gate on, same as a client that does not require assignment.
+		return false
+	}
+
+	assigned, aerr := appaccess.Allowed(ctx, s.db, userID, org.ID, appID)
+	if aerr != nil {
+		s.logger.Error("assignment gate: allowed check failed",
+			zap.String("application_id", appID), zap.Error(aerr))
+		return false
+	}
+
+	enforce := s.config != nil && s.config.AccessAssignmentEnforce
+	issue, recordWouldDeny := authorizeAssignmentDecision(requiresAssignment, assigned, enforce)
+	if recordWouldDeny {
+		status := "would_deny"
+		if !issue {
+			status = "denied"
+		}
+		s.logAuditEvent(ctx, "authentication", "oauth", "access.assignment.would_deny", status,
+			userID, c.ClientIP(), appID, "application",
+			map[string]interface{}{
+				"enforcement_point": "oidc",
+				"client_id":         clientID,
+				"issued":            issue,
+			})
+	}
+	if !issue {
+		c.JSON(403, gin.H{"error": "access_denied", "error_description": "You are not assigned to this application."})
+		return true
+	}
+	return false
+}
+
 // issueAuthorizationCode generates an auth code and returns the redirect URL
 func (s *Service) issueAuthorizationCode(c *gin.Context, oauthParams map[string]string, userID string) {
+	if s.enforceAssignmentGate(c, oauthParams, userID) {
+		return
+	}
+
 	// Enforce per-application consent unless it was just granted in this flow.
 	if oauthParams["consent_granted"] != "true" {
 		required, cerr := s.consentRequired(c.Request.Context(), oauthParams["client_id"], userID, oauthParams["scope"])
