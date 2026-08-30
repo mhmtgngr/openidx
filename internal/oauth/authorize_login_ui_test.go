@@ -24,9 +24,35 @@ func TestLoginRedirectURL(t *testing.T) {
 		t.Errorf("login_session missing from %q", got)
 	}
 
-	// server mode keeps today's behaviour: back to the client's own page.
-	got = loginRedirectURL(issuer, "https://openidx.tdv.org/login", "sess-1", "server")
-	if u, _ = url.Parse(got); u.Query().Get("login_session") != "sess-1" || u.Path != "/login" {
-		t.Errorf("server mode must preserve the client redirect, got %q", got)
+	// server mode keeps today's behaviour: back to the client's OWN redirect
+	// URI, not the issuer's /login. Deliberately use a custom scheme here
+	// (the native-client case) rather than an https://openidx.tdv.org/login
+	// URL — the latter is indistinguishable from the spa target for this
+	// issuer, so it can't actually catch a regression that wrongly routes
+	// server mode to the issuer's login page.
+	got = loginRedirectURL(issuer, "openidx://oauth-callback", "sess-1", "server")
+	u, err = url.Parse(got)
+	if err != nil {
+		t.Fatalf("not a URL: %v", err)
+	}
+	if u.Scheme != "openidx" || u.Host != "oauth-callback" {
+		t.Errorf("server mode must preserve the client's own redirect_uri (custom scheme), got %q", got)
+	}
+	if u.Query().Get("login_session") != "sess-1" {
+		t.Errorf("login_session missing from %q", got)
+	}
+
+	// server mode must not clobber query parameters the client already put on
+	// its redirect_uri.
+	got = loginRedirectURL(issuer, "https://client.example.com/cb?foo=1", "sess-1", "server")
+	u, err = url.Parse(got)
+	if err != nil {
+		t.Fatalf("not a URL: %v", err)
+	}
+	if u.Query().Get("foo") != "1" {
+		t.Errorf("server mode must preserve existing client query params, got %q", got)
+	}
+	if u.Query().Get("login_session") != "sess-1" {
+		t.Errorf("login_session missing from %q", got)
 	}
 }

@@ -1618,12 +1618,19 @@ func (s *Service) handleAuthorize(c *gin.Context) {
 	s.redis.Client.Set(c.Request.Context(), "login_session:"+loginSession, string(paramsJSON), 10*time.Minute)
 
 	// For public OIDC clients (like BrowZer), serve a server-rendered login page
-	// instead of redirecting back to the client with login_session. Only
-	// reachable while OAUTH_LOGIN_UI=server (the default) — a later task
-	// deletes this page once OAUTH_LOGIN_UI=spa has been verified live, at
-	// which point every client (public, confidential, or native) is sent to
-	// the IdP's own /login instead. See loginRedirectURL.
-	if s.config.OAuthLoginUI == "server" && client != nil && client.Type == "public" && c.GetHeader("Accept") != "application/json" {
+	// instead of redirecting back to the client with login_session. This is
+	// the DEFAULT path here — it stays on for OAUTH_LOGIN_UI unset, "server",
+	// or any unrecognised value, and only the explicit opt-in
+	// OAUTH_LOGIN_UI=spa turns it off. That direction matters: a typo'd or
+	// missing flag value must fail toward today's behaviour, not silently
+	// strand a public client (like BrowZer) with a login_session redirect to
+	// its own redirect_uri and no page to handle it.
+	//
+	// This is not the only path that reaches renderLoginPage: GET /oauth/login
+	// (handleLoginPage) and /oauth/authorize/v2 both render it unconditionally
+	// today, regardless of this flag — a later task deleting the page must
+	// account for those too.
+	if s.config.OAuthLoginUI != "spa" && client != nil && client.Type == "public" && c.GetHeader("Accept") != "application/json" {
 		s.renderLoginPage(c, loginSession, "")
 		return
 	}
@@ -1634,7 +1641,12 @@ func (s *Service) handleAuthorize(c *gin.Context) {
 		return
 	}
 
-	c.Redirect(302, loginRedirectURL(s.issuer, redirectURI, loginSession, s.config.OAuthLoginUI))
+	target := loginRedirectURL(s.issuer, redirectURI, loginSession, s.config.OAuthLoginUI)
+	if target == "" {
+		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "invalid redirect_uri"})
+		return
+	}
+	c.Redirect(302, target)
 }
 
 // loginRedirectURL decides where the browser goes to authenticate.
