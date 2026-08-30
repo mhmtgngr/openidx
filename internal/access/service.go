@@ -24,6 +24,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/appaccess"
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/middleware"
@@ -2014,6 +2015,55 @@ func proxyAssignmentDecision(applicationID string, assigned, enforce, legacyAllo
 	return true, true
 }
 
+// recordAssignmentDecision durably records one assignment-gate decision.
+//
+// It writes to unified_audit_events (via the UnifiedAuditService this package
+// already uses for its other 40k+ healthy rows) rather than relying on the
+// audit-service POST in logAuditEvent, which lands in audit_events — a table
+// the org-scoped RLS policy rejects these writes from, so on the live box it
+// has taken a single row since June while unified_audit_events takes writes
+// today. In report mode these records are the ONLY evidence that
+// ACCESS_ASSIGNMENT_ENFORCE is safe to flip, so they must land somewhere that
+// accepts them.
+//
+// This is a side-effect recorder only: it never influences the verdict, and
+// every failure path below returns without changing the caller's behaviour.
+//
+// auditService is set post-construction (SetAuditService) and may be nil. A
+// nil service is logged at WARN and never silently swallowed — a dropped
+// decision record is the exact defect this exists to fix.
+func (s *Service) recordAssignmentDecision(ctx context.Context, route *ProxyRoute, userID, appID, actorIP string, enforced bool) {
+	eventType := appaccess.DecisionEventType(enforced)
+
+	var routeID, routeName string
+	if route != nil {
+		routeID, routeName = route.ID, route.Name
+	}
+	details := appaccess.DecisionDetails(appaccess.EnforcementPointProxy, userID, appID, enforced,
+		map[string]interface{}{"route": routeName})
+
+	if s.auditService == nil {
+		s.logger.Warn("assignment decision not recorded: unified audit service unavailable",
+			zap.String("event_type", eventType),
+			zap.String("user_id", userID),
+			zap.String("application_id", appID),
+			zap.String("route_id", routeID),
+			zap.Bool("enforced", enforced))
+		return
+	}
+
+	if err := s.auditService.RecordEvent(ctx, appaccess.SourceProxy, eventType,
+		routeID, userID, actorIP, details); err != nil {
+		s.logger.Warn("assignment decision not recorded: unified audit write failed",
+			zap.String("event_type", eventType),
+			zap.String("user_id", userID),
+			zap.String("application_id", appID),
+			zap.String("route_id", routeID),
+			zap.Bool("enforced", enforced),
+			zap.Error(err))
+	}
+}
+
 func (s *Service) handleProxy(c *gin.Context) {
 	// Find matching route by host header
 	host := c.Request.Host
@@ -2113,6 +2163,14 @@ func (s *Service) handleProxy(c *gin.Context) {
 		}
 		allow, wouldDeny := proxyAssignmentDecision(appID, assigned, s.config.AccessAssignmentEnforce, true)
 		if wouldDeny {
+			// Durable decision record, on BOTH branches: enforcement must not
+			// be quieter than report mode. This is the write that has to
+			// survive — see recordAssignmentDecision. The logAuditEvent calls
+			// below are kept as-is (harmless duplication; audit_events may be
+			// repaired later) but nothing depends on them landing.
+			if !allow || freshAssignment {
+				s.recordAssignmentDecision(c.Request.Context(), route, session.UserID, appID, c.ClientIP(), !allow)
+			}
 			if !allow {
 				// A real denial under enforcement: audit it as an actual proxy
 				// denial (action "proxy_access_denied" is the only action
