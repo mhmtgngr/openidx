@@ -17,6 +17,9 @@ func TestValidateMFAConditions(t *testing.T) {
 		// an admin authors a policy, nothing reads the key, nothing happens.
 		{"unknown key rejected", `{"require_hardware_token":true}`, true},
 		{"wrong type rejected", `{"factor_enrolled":"yes"}`, true},
+		{"min_risk_score wrong type rejected", `{"min_risk_score":"high"}`, true},
+		{"client_ids not an array rejected", `{"client_ids":"admin-console"}`, true},
+		{"client_ids non-string element rejected", `{"client_ids":["admin-console", 42]}`, true},
 		{"not an object", `[1,2,3]`, true},
 	}
 	for _, tc := range cases {
