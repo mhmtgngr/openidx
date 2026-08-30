@@ -124,8 +124,9 @@ func NewService(db *database.PostgresDB, logger *zap.Logger, opts ...Option) *Se
 // If no assignments exist, it falls back to returning all enabled applications.
 //
 // The set of applications comes from appaccess.AppsForUser — the same
-// predicate GetAccessOverview's app count uses — so the catalogue and the
-// count cannot disagree about who has access to what (#874).
+// predicate GetAccessOverview's app count uses, with the same
+// showAllAppsWhenUnassigned fallback applied to both — so the catalogue and
+// the count cannot disagree about who has access to what (#874).
 func (s *Service) GetMyApplications(ctx context.Context, userID string) ([]UserApplication, error) {
 	org, err := orgctx.From(ctx)
 	if err != nil {
@@ -364,12 +365,21 @@ func (s *Service) GetAccessOverview(ctx context.Context, userID string) (*Access
 	// (appaccess.AppsForUser) so the count and the catalogue cannot drift again
 	// (#874): counting only user_application_assignments reported 0 apps to a
 	// user whose access comes from a group→app assignment, while My Apps listed
-	// them.
+	// them. Also applies the SAME showAllAppsWhenUnassigned fallback
+	// GetMyApplications does above, so the two agree when that flag is on too
+	// (default off, so this has no effect on the common path).
 	appRefs, err := appaccess.AppsForUser(ctx, s.db, userID, org.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to count apps: %w", err)
 	}
 	overview.AppsCount = len(appRefs)
+	if overview.AppsCount == 0 && s.showAllAppsWhenUnassigned {
+		allApps, err := s.allEnabledApplications(ctx, org.ID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to count apps: %w", err)
+		}
+		overview.AppsCount = len(allApps)
+	}
 
 	// Count pending requests
 	err = s.db.Pool.QueryRow(ctx,
