@@ -6,6 +6,12 @@ This document describes the seams that tie them together: how state in one
 pillar propagates to the others, and the correlation surfaces exposed to
 admins and end users.
 
+> Note the seams described here are the ones that exist, not the ones an admin
+> might assume. In particular, assigning an **application** to a user or group
+> does not propagate to Ziti or to proxy-route authorization — the only IAM →
+> Ziti input is group membership (below). `access-model-redesign.md` documents
+> that gap and proposes converging it.
+
 ## The correlation model
 
 ```
