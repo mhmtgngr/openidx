@@ -21,6 +21,7 @@ func appAccessSchema(t *testing.T, s *Service) {
 			base_url TEXT,
 			protocol VARCHAR(64),
 			enabled BOOLEAN DEFAULT true,
+			route_id UUID,
 			org_id UUID NOT NULL
 		)`,
 		`CREATE TABLE users (
