@@ -964,5 +964,12 @@ func allMigrations() []*Migration {
 			UpSQL:       groupAppAssignmentsUp,
 			DownSQL:     groupAppAssignmentsDown,
 		},
+		{
+			Version:     137,
+			Name:        "application_require_assignment",
+			Description: "Add applications.require_assignment (default false): opt-in gate making /oauth/authorize refuse a token for an application the caller is not assigned. Off by default so first-party clients with no assignments keep working; enforcement is staged separately behind ACCESS_ASSIGNMENT_ENFORCE.",
+			UpSQL:       applicationRequireAssignmentUp,
+			DownSQL:     applicationRequireAssignmentDown,
+		},
 	}
 }
