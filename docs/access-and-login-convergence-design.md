@@ -258,6 +258,20 @@ last.
 6. **Create the MFA policy** after confirming a push challenge can actually be
    approved on the device.
 
+### Deploy order within step 1: migration v137 before the admin-api binary
+
+Migration v137 adds `applications.require_assignment`, and `ListApplications`
+and `handleGetApplication` both `SELECT` that column. Rolling the admin-api
+binary out first therefore makes `GET /api/v1/applications` fail with a 500 for
+**every authenticated user**, not only admins — the end-user Access Requests
+page reads the same list — until the migration lands. Run the migration first,
+then restart admin-api. The reverse order is not a graceful degradation; it is
+an outage of the applications list for the whole deployment.
+
+This is the general rule for any additive column a running binary selects, but
+it is called out here because v137 exists only on this branch: a rollback of the
+binary is safe, a rollback of the migration is not.
+
 ## Verification
 
 **Automated.**
