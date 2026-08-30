@@ -536,6 +536,10 @@ func (s *Service) completeHostedMFA(c *gin.Context, mfaSession string, data map[
 // issueHostedAuthorizationCode persists a code through the same store the token
 // endpoint consumes and 302s the browser back to the client.
 func (s *Service) issueHostedAuthorizationCode(c *gin.Context, oauthParams map[string]string, userID string) {
+	if !s.assignmentGateAllows(c, oauthParams["client_id"], userID) {
+		return
+	}
+
 	code := GenerateRandomToken(32)
 	authCode := &AuthorizationCode{
 		Code:                code,

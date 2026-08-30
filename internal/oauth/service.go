@@ -2255,12 +2255,21 @@ func authorizeAssignmentDecision(requiresAssignment, assigned, enforce bool) (is
 	return true, true
 }
 
-// enforceAssignmentGate is the /oauth/authorize enforcement point for
+// assignmentGateAllows is the /oauth/authorize enforcement point for
 // applications that have no published route: those are reached only by
 // obtaining a token for their OAuth client, so the overlay and reverse-proxy
 // gates (the enforcement points for route-backed applications) never see
-// them. It returns true when the request has already been refused (the
-// caller must stop and return without issuing a code).
+// them. There are FIVE places in this service that mint an authorization
+// code — issueAuthorizationCode, handleAuthorizeConsent,
+// handleAuthorizeConsentV2, issueHostedAuthorizationCode (hosted_mfa.go) and
+// handleMagicLinkVerify (handlers_passwordless.go) — and every one of them
+// must call this before minting; TestEveryMintSiteCallsAssignmentGate in
+// authorize_assignment_test.go guards that invariant in source, because a
+// missed call site here fails silently (a code is issued, no error, no audit
+// record) rather than loudly.
+//
+// Returns true when the request may proceed to mint a code. false means a
+// 403 has already been written and the caller must return without minting.
 //
 // The application row and the assignment check both run under c's ordinary
 // request context, scoped by the SAME org id (the resolved tenant's), so
@@ -2268,10 +2277,9 @@ func authorizeAssignmentDecision(requiresAssignment, assigned, enforce bool) (is
 // path, this handler already runs inside a resolved org context (the
 // tenant-resolution middleware ran before /oauth/authorize), so there is no
 // need for orgctx.WithBypassRLS here.
-func (s *Service) enforceAssignmentGate(c *gin.Context, oauthParams map[string]string, userID string) bool {
-	clientID := oauthParams["client_id"]
+func (s *Service) assignmentGateAllows(c *gin.Context, clientID, userID string) bool {
 	if clientID == "" {
-		return false
+		return true
 	}
 	ctx := c.Request.Context()
 	org, err := orgctx.From(ctx)
@@ -2280,7 +2288,7 @@ func (s *Service) enforceAssignmentGate(c *gin.Context, oauthParams map[string]s
 		// existing behavior (issue the code) but make it visible, matching
 		// consentRequired's fail-open handling of the same condition.
 		s.logger.Debug("assignment gate skipped: no org context", zap.String("client_id", clientID))
-		return false
+		return true
 	}
 
 	var appID string
@@ -2295,41 +2303,62 @@ func (s *Service) enforceAssignmentGate(c *gin.Context, oauthParams map[string]s
 		}
 		// No application row behind this client (or a lookup failure): there is
 		// nothing to gate on, same as a client that does not require assignment.
-		return false
+		return true
+	}
+	if !requiresAssignment {
+		// Skip the Allowed() query entirely: authorizeAssignmentDecision would
+		// discard its result anyway (its first branch is
+		// `!requiresAssignment || assigned`), and every application defaults to
+		// require_assignment=false, so this keeps the common case to one query
+		// on the /oauth/authorize hot path instead of two, and a transient
+		// Allowed() failure never logs an Error for a client that isn't gated.
+		return true
 	}
 
 	assigned, aerr := appaccess.Allowed(ctx, s.db, userID, org.ID, appID)
 	if aerr != nil {
 		s.logger.Error("assignment gate: allowed check failed",
 			zap.String("application_id", appID), zap.Error(aerr))
-		return false
+		return true
 	}
 
 	enforce := s.config != nil && s.config.AccessAssignmentEnforce
 	issue, recordWouldDeny := authorizeAssignmentDecision(requiresAssignment, assigned, enforce)
 	if recordWouldDeny {
-		status := "would_deny"
 		if !issue {
-			status = "denied"
+			// A real denial under enforcement: a distinct action (mirroring the
+			// proxy's proxy_access_denied — see access/service.go) so an operator
+			// filtering the oauth audit stream for actual denials finds this
+			// request, rather than it landing indistinguishable-by-action from
+			// the report-mode case below.
+			s.logAuditEvent(ctx, "authentication", "oauth", "oauth_access_denied", "denied",
+				userID, c.ClientIP(), appID, "application",
+				map[string]interface{}{
+					"reason":            "not_assigned",
+					"enforcement_point": "oidc",
+					"client_id":         clientID,
+				})
+		} else {
+			// Report mode: the request is allowed, but record the gap so the
+			// assignment report can be reviewed before anyone loses reach.
+			s.logAuditEvent(ctx, "authentication", "oauth", "access.assignment.would_deny", "would_deny",
+				userID, c.ClientIP(), appID, "application",
+				map[string]interface{}{
+					"enforcement_point": "oidc",
+					"client_id":         clientID,
+				})
 		}
-		s.logAuditEvent(ctx, "authentication", "oauth", "access.assignment.would_deny", status,
-			userID, c.ClientIP(), appID, "application",
-			map[string]interface{}{
-				"enforcement_point": "oidc",
-				"client_id":         clientID,
-				"issued":            issue,
-			})
 	}
 	if !issue {
 		c.JSON(403, gin.H{"error": "access_denied", "error_description": "You are not assigned to this application."})
-		return true
+		return false
 	}
-	return false
+	return true
 }
 
 // issueAuthorizationCode generates an auth code and returns the redirect URL
 func (s *Service) issueAuthorizationCode(c *gin.Context, oauthParams map[string]string, userID string) {
-	if s.enforceAssignmentGate(c, oauthParams, userID) {
+	if !s.assignmentGateAllows(c, oauthParams["client_id"], userID) {
 		return
 	}
 
@@ -3040,6 +3069,10 @@ func (s *Service) handleAuthorizeConsent(c *gin.Context) {
 		return
 	}
 
+	if !s.assignmentGateAllows(c, req.ClientID, userID) {
+		return
+	}
+
 	// Enforce per-application consent before issuing a code. If required and not
 	// yet granted, return a consent challenge for the browser to render.
 	required, cerr := s.consentRequired(c.Request.Context(), req.ClientID, userID, req.Scope)
@@ -3121,6 +3154,18 @@ func (s *Service) handleAuthorizeConsentV2(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(400, gin.H{"error": "invalid_request", "error_description": err.Error()})
 		return
+	}
+
+	// This handler learns client_id only from the stored auth session, and
+	// IssueAuthorizationCode below consumes (deletes) that session as part of
+	// minting. So the gate needs its own, separate, non-destructive read of the
+	// same session up front — this pre-fetch failing is not itself an error:
+	// if the session is missing or expired, the mint call below will fail with
+	// its own, existing error path, unchanged from before this gate existed.
+	if preReq, perr := s.authorizeHandler.GetStoredAuthorizationRequest(c.Request.Context(), req.AuthSession); perr == nil {
+		if !s.assignmentGateAllows(c, preReq.ClientID, userID) {
+			return
+		}
 	}
 
 	// Issue authorization code using the handler
