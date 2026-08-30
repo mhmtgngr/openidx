@@ -39,13 +39,73 @@ describe('AssignmentReportPage', () => {
     get.mockResolvedValue({
       entries: [],
       reachability_source: 'controller',
-      summary: { users: 0, applications: 0, would_deny: 0, incomplete_users: 0 },
+      summary: {
+        users: 0, applications: 0, would_deny: 0, incomplete_users: 0,
+        users_evaluated: 4, users_total: 4,
+      },
     })
     renderPage()
     await waitFor(() =>
       expect(screen.getByText(/no one would lose access/i)).toBeInTheDocument()
     )
     expect(screen.queryByText(CONTROLLER_WARNING)).not.toBeInTheDocument()
+    // The denominator is on the page: "safe" is only meaningful next to how
+    // much of the org was actually looked at.
+    expect(screen.getByText(/evaluated 4 of 4 users/i)).toBeInTheDocument()
+  })
+
+  // An org whose Ziti sync has never run evaluates nobody. Without a
+  // denominator that is textually identical to an org that was evaluated in
+  // full and found clean — the false confidence this whole endpoint exists to
+  // prevent.
+  it('withholds the clean headline when some users could not be evaluated', async () => {
+    get.mockResolvedValue({
+      entries: [],
+      reachability_source: 'controller',
+      summary: {
+        users: 0, applications: 0, would_deny: 0, incomplete_users: 3,
+        users_evaluated: 5, users_total: 8,
+      },
+    })
+    renderPage()
+    await waitFor(() =>
+      expect(screen.getByText(/evaluated 5 of 8 users/i)).toBeInTheDocument()
+    )
+    expect(screen.queryByText(/no one would lose access/i)).not.toBeInTheDocument()
+    expect(screen.getByText(/report incomplete/i)).toBeInTheDocument()
+    expect(
+      screen.getByText(/3 of 8 users in this organization could not be evaluated because they have no synced ziti identity/i)
+    ).toBeInTheDocument()
+  })
+
+  it('does not read as clean when the organization has no users at all', async () => {
+    get.mockResolvedValue({
+      entries: [],
+      reachability_source: 'controller',
+      summary: {
+        users: 0, applications: 0, would_deny: 0, incomplete_users: 0,
+        users_evaluated: 0, users_total: 0,
+      },
+    })
+    renderPage()
+    await waitFor(() =>
+      expect(screen.getByText(/no users were found in this organization/i)).toBeInTheDocument()
+    )
+    expect(screen.queryByText(/no one would lose access/i)).not.toBeInTheDocument()
+    expect(screen.getByText(/report incomplete/i)).toBeInTheDocument()
+  })
+
+  // Fail closed: a response that does not say how much of the org it covered
+  // has not shown that it covered all of it.
+  it('withholds the clean headline when the response carries no denominator', async () => {
+    get.mockResolvedValue({
+      entries: [],
+      reachability_source: 'controller',
+      summary: { users: 0, applications: 0, would_deny: 0, incomplete_users: 0 },
+    })
+    renderPage()
+    await waitFor(() => expect(screen.getByText(/report incomplete/i)).toBeInTheDocument())
+    expect(screen.queryByText(/no one would lose access/i)).not.toBeInTheDocument()
   })
 
   // The reassuring headline is the operator's go/no-go for the one irreversible

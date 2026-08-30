@@ -45,6 +45,12 @@ interface Report {
     // operator could flip ACCESS_ASSIGNMENT_ENFORCE believing nothing breaks
     // when the truth is simply "we don't know" for some users.
     incomplete_users: number
+    // The denominator. users_evaluated is how many users the report actually
+    // scored; users_total is how many the organization has. They diverge when
+    // users have no synced Ziti identity, which is precisely the case where an
+    // unevaluated org would otherwise be indistinguishable from a clean one.
+    users_evaluated?: number
+    users_total?: number
   }
 }
 
@@ -65,13 +71,24 @@ export function AssignmentReportPage() {
   const fromController = data?.reachability_source === 'controller'
   const wouldLose = `${summary?.users ?? 0} user(s) would lose access to ${summary?.applications ?? 0} application(s)`
 
+  // The denominator. Missing fields count as zero evaluated, i.e. fail closed:
+  // a server that does not tell us how much of the org it covered has not
+  // earned the reassuring headline either.
+  const usersEvaluated = summary?.users_evaluated ?? 0
+  const usersTotal = summary?.users_total ?? 0
+  const notEvaluated = Math.max(usersTotal - usersEvaluated, 0)
+  // Evaluating nobody is not a clean result — an org whose Ziti sync has never
+  // run would otherwise render "safe to enforce" over an evaluation of no one.
+  const evaluatedEveryone = usersEvaluated > 0 && notEvaluated === 0
+
   // The reassuring headline is reserved for the one case that earns it: live
   // controller data, every user evaluated, nothing lost.
+  const complete = fromController && evaluatedEveryone && incompleteUsers === 0
   const headline = isLoading
     ? 'Checking…'
     : !fromController
       ? 'Reachability unavailable'
-      : incompleteUsers > 0
+      : !complete
         ? entries.length === 0
           ? 'Report incomplete — some users could not be evaluated'
           : wouldLose
@@ -113,8 +130,27 @@ export function AssignmentReportPage() {
               incomplete until that count is zero.
             </p>
           )}
+          {!isLoading && fromController && notEvaluated > 0 && (
+            <p className="text-sm font-medium text-amber-600">
+              {notEvaluated} of {usersTotal} user{usersTotal === 1 ? '' : 's'} in this organization
+              could not be evaluated because they have no synced Ziti identity. Their reach is
+              unknown, so this report does not cover them.
+            </p>
+          )}
+          {!isLoading && fromController && usersTotal === 0 && (
+            <p className="text-sm font-medium text-amber-600">
+              No users were found in this organization, so nothing was evaluated. An empty
+              evaluation is not evidence that enforcement is safe.
+            </p>
+          )}
         </CardHeader>
         <CardContent>
+          {!isLoading && (
+            <p className="text-sm text-muted-foreground">
+              Evaluated {usersEvaluated} of {usersTotal} user{usersTotal === 1 ? '' : 's'} in this
+              organization.
+            </p>
+          )}
           {!isLoading && !fromController && (
             <p className="text-sm text-muted-foreground">
               Assignment currently grants {assignments.length} user–application pair
