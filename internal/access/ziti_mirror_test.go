@@ -286,6 +286,21 @@ func mirrorRow(t *testing.T, db *database.PostgresDB, zitiID string) (name, ptyp
 	return name, ptype, org, identityRoles, true
 }
 
+// mirrorIsSystem reads the is_system guard off one mirror row. It is the column
+// handleUpdateServicePolicy / handleDeleteServicePolicy gate on, and the delete
+// path deletes from the Ziti CONTROLLER, so a false here is a live-reach
+// footgun handed to an org admin, not a cosmetic flag.
+func mirrorIsSystem(t *testing.T, db *database.PostgresDB, zitiID string) bool {
+	t.Helper()
+	var isSystem bool
+	if err := db.Pool.QueryRow(context.Background(),
+		`SELECT COALESCE(is_system, false) FROM ziti_service_policies WHERE ziti_id = $1`,
+		zitiID).Scan(&isSystem); err != nil {
+		t.Fatalf("is_system for %s: %v", zitiID, err)
+	}
+	return isSystem
+}
+
 func countPolicies(t *testing.T, db *database.PostgresDB) int {
 	t.Helper()
 	var n int
@@ -505,15 +520,27 @@ func TestRefreshDoesNotDeleteUnattributedRows(t *testing.T) {
 	defer cleanup()
 	ctx := context.Background()
 
+	// The fixture needs BOTH shapes. An ATTRIBUTABLE policy is what makes the
+	// prune path actually run: pruneMirrorPolicies refuses to act on an empty
+	// `present` set, so a listing containing only the unattributable policy would
+	// let the row survive for the wrong reason — the guard, not the rule — and a
+	// build that stopped counting skipped policies as present would still pass.
+	mustExec(t, db, `INSERT INTO proxy_routes (org_id, to_url, ziti_enabled, ziti_service_name)
+	                 VALUES ($1,'http://a.internal:80',true,'svc-a')`, mirrorOrgA)
+
 	// No route names openidx-console, so the policy is unattributable — but a row
 	// for it already exists (written when a route did exist, say).
 	mustExec(t, db, `INSERT INTO ziti_service_policies (ziti_id, name, policy_type, service_roles, identity_roles, org_id)
 	                 VALUES ('pol-platform','openidx-console-dial','Dial','["#openidx-console"]','["#enrolled-users"]',$1)`, mirrorOrgA)
 
 	f := &fakeController{
+		services: []ZitiServiceInfo{{ID: "s-a", Name: "svc-a"}},
 		policies: []ZitiServicePolicyInfo{
 			{ID: "pol-platform", Name: "openidx-console-dial", Type: "Dial",
 				ServiceRoles: []string{"#openidx-console"}, IdentityRoles: []string{"#enrolled-users"}},
+			// Attributable, so `present` is non-empty and the prune really runs.
+			{ID: "pol-a", Name: "openidx-dial-svc-a", Type: "Dial",
+				ServiceRoles: []string{"#svc-a"}, IdentityRoles: []string{"#browzer-users"}},
 		},
 	}
 	zm, closeFn := newFakeZiti(t, f, db)
@@ -526,11 +553,124 @@ func TestRefreshDoesNotDeleteUnattributedRows(t *testing.T) {
 	if stats.PoliciesSkipped != 1 {
 		t.Fatalf("want the policy skipped, got %+v", stats)
 	}
+	// Precondition for this test to mean anything: the prune had something to
+	// compare against. Without the attributable policy, `present` is empty and
+	// pruneMirrorPolicies short-circuits before it can delete anything.
+	if _, _, _, _, found := mirrorRow(t, db, "pol-a"); !found {
+		t.Fatal("fixture precondition: the attributable policy must be mirrored so the prune path runs")
+	}
 	if stats.PoliciesDeleted != 0 {
 		t.Fatalf("want no deletions, got %d", stats.PoliciesDeleted)
 	}
 	if _, _, _, _, found := mirrorRow(t, db, "pol-platform"); !found {
 		t.Fatal("an unattributable row that still exists on the controller must not be deleted")
+	}
+}
+
+// TestMirrorMarksPlatformPoliciesAsSystem covers the is_system guard, which is
+// what stops handleUpdateServicePolicy / handleDeleteServicePolicy from letting
+// an org admin edit — or DELETE FROM THE CONTROLLER — a policy the reconciler
+// owns. A mirror write that leaves the column at its `false` default silently
+// removes that guard.
+func TestMirrorMarksPlatformPoliciesAsSystem(t *testing.T) {
+	db, cleanup := newMirrorDB(t)
+	if db == nil {
+		return
+	}
+	defer cleanup()
+	ctx := context.Background()
+
+	mustExec(t, db, `INSERT INTO proxy_routes (org_id, to_url, ziti_enabled, ziti_service_name)
+	                 VALUES ($1,'http://a.internal:80',true,'svc-a')`, mirrorOrgA)
+
+	t.Run("write-through from the reconciler", func(t *testing.T) {
+		f := &fakeController{}
+		zm, closeFn := newFakeZiti(t, f, db)
+		defer closeFn()
+
+		id, err := zm.EnsureServicePolicyForOrg(ctx, mirrorOrgA, "openidx-dial-svc-a", "Dial",
+			[]string{"#svc-a"}, []string{"#browzer-users"})
+		if err != nil {
+			t.Fatalf("ensure: %v", err)
+		}
+		if !mirrorIsSystem(t, db, id) {
+			t.Fatal("a policy the reconciler converges must be mirrored with is_system = true, " +
+				"or an org admin can delete it from the Ziti controller through the fabric API")
+		}
+	})
+
+	t.Run("refresh of a reconciler-owned policy", func(t *testing.T) {
+		mustExec(t, db, `DELETE FROM ziti_service_policies`)
+		f := &fakeController{
+			services: []ZitiServiceInfo{{ID: "s-a", Name: "svc-a"}},
+			policies: []ZitiServicePolicyInfo{
+				{ID: "pol-managed", Name: "openidx-dial-svc-a", Type: "Dial",
+					ServiceRoles: []string{"#svc-a"}, IdentityRoles: []string{"#browzer-users"}},
+				// Same service, but a name the reconciler does not own: an admin
+				// created this through the fabric API and must keep editing it.
+				{ID: "pol-admin", Name: "marketing-team-dial", Type: "Dial",
+					ServiceRoles: []string{"#svc-a"}, IdentityRoles: []string{"#marketing"}},
+			},
+		}
+		zm, closeFn := newFakeZiti(t, f, db)
+		defer closeFn()
+
+		if _, err := refreshZitiMirror(ctx, zm, db, zap.NewNop()); err != nil {
+			t.Fatalf("refresh: %v", err)
+		}
+		if !mirrorIsSystem(t, db, "pol-managed") {
+			t.Fatal("a refreshed openidx-* policy for a live route is reconciler-owned; want is_system = true")
+		}
+		if mirrorIsSystem(t, db, "pol-admin") {
+			t.Fatal("an admin-created policy must stay editable; want is_system = false")
+		}
+	})
+}
+
+// TestRefreshCannotClearIsSystem pins the direction of the flag: a mirror write
+// may SET the guard, never clear it. `is_system = existing OR EXCLUDED` is what
+// makes a refresh that failed to recognise a policy (renamed route, route row
+// read mid-delete) unable to unlock what an earlier, better-informed write
+// locked. Plain `is_system = EXCLUDED.is_system` fails here.
+func TestRefreshCannotClearIsSystem(t *testing.T) {
+	db, cleanup := newMirrorDB(t)
+	if db == nil {
+		return
+	}
+	defer cleanup()
+	ctx := context.Background()
+
+	mustExec(t, db, `INSERT INTO proxy_routes (org_id, to_url, ziti_enabled, ziti_service_name)
+	                 VALUES ($1,'http://a.internal:80',true,'svc-a')`, mirrorOrgA)
+	// Locked earlier (by provisioning), under a name this refresh will NOT
+	// recognise as reconciler-owned — so the refresh's own opinion is "false".
+	mustExec(t, db, `INSERT INTO ziti_service_policies (ziti_id, name, policy_type, service_roles, identity_roles, org_id, is_system)
+	                 VALUES ('pol-locked','legacy-dial-svc-a','Dial','["#svc-a"]','["#access-proxy-clients"]',$1,true)`, mirrorOrgA)
+
+	f := &fakeController{
+		services: []ZitiServiceInfo{{ID: "s-a", Name: "svc-a"}},
+		policies: []ZitiServicePolicyInfo{
+			{ID: "pol-locked", Name: "legacy-dial-svc-a", Type: "Dial",
+				ServiceRoles: []string{"#svc-a"}, IdentityRoles: []string{"#browzer-users"}},
+		},
+	}
+	zm, closeFn := newFakeZiti(t, f, db)
+	defer closeFn()
+
+	stats, err := refreshZitiMirror(ctx, zm, db, zap.NewNop())
+	if err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if stats.PoliciesUpdated != 1 {
+		t.Fatalf("precondition: the locked row must actually be rewritten by the refresh, got %+v", stats)
+	}
+	// It really was rewritten (so the ON CONFLICT branch ran)...
+	if _, _, _, roles, _ := mirrorRow(t, db, "pol-locked"); len(roles) != 1 || roles[0] != "#browzer-users" {
+		t.Fatalf("precondition: the refresh must have updated the row, got roles %v", roles)
+	}
+	// ...and the guard survived it.
+	if !mirrorIsSystem(t, db, "pol-locked") {
+		t.Fatal("a refresh must never CLEAR is_system: the guard was set, the refresh unlocked it")
 	}
 }
 
