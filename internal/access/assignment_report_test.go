@@ -72,7 +72,8 @@ func TestReportSummaryExcludesIncompleteUsers(t *testing.T) {
 	names := map[string]string{"alice": "Alice", "carol": "Carol"}
 	appNames := map[string]string{"app-es": "ES"}
 
-	entries, summary := buildReport(reachable, assigned, names, appNames, 1)
+	// One of two users evaluated, one counted incomplete.
+	entries, summary := buildReport(reachable, assigned, names, appNames, 1, 1, 2)
 
 	if len(entries) != 0 {
 		t.Fatalf("expected no would-deny entries (alice is fully covered, carol is excluded), got %+v", entries)
@@ -90,5 +91,13 @@ func TestReportSummaryExcludesIncompleteUsers(t *testing.T) {
 	}
 	if got := summary["users"]; got != 0 {
 		t.Errorf("summary users = %v, want 0 (no affected users)", got)
+	}
+	// The denominator travels with the summary: "nothing to take away" is only
+	// meaningful next to how much of the org was actually looked at.
+	if got := summary["users_evaluated"]; got != 1 {
+		t.Errorf("summary users_evaluated = %v, want 1", got)
+	}
+	if got := summary["users_total"]; got != 2 {
+		t.Errorf("summary users_total = %v, want 2", got)
 	}
 }

@@ -582,14 +582,17 @@ type zitiDialPolicy struct {
 }
 
 // zitiServiceIndex is the service side of role resolution: service names by
-// Ziti id (for `@id` roles), every service name (for `#all`), and the names
-// carrying each role attribute (for `#tag`). byAttr is populated only from
-// live controller data; the local mirror does not record service role
-// attributes, so it leaves it nil and `#tag` roles stay unresolved.
+// Ziti id (for `@id` roles), every service name (for `#all`), the names
+// carrying each role attribute (for `#tag`), and the set of service names
+// (for a `#tag` that names a service outright). byAttr and byName are
+// populated only from live controller data; the local mirror does not record
+// service role attributes, so it leaves both nil and `#tag` roles stay
+// unresolved exactly as they always did.
 type zitiServiceIndex struct {
 	byZitiID map[string]string
 	all      []string
 	byAttr   map[string][]string
+	byName   map[string]bool
 }
 
 // reachabilityForIdentity resolves which Dial policies apply to one identity
@@ -657,10 +660,15 @@ func resolveServiceRoles(serviceRoles []string, svcByZitiID map[string]string, a
 
 // resolveServiceRolesIndexed is resolveServiceRoles with the optional
 // attribute index. When idx.byAttr knows which services carry a `#tag`, the
-// tag resolves to those service names; when it does not (the local mirror,
-// which has no service attributes), the raw role is surfaced as before so the
-// caller still sees the intent. With a nil byAttr this is byte-for-byte the
-// old behaviour.
+// tag resolves to those service names; failing that, a `#tag` that is itself a
+// service NAME resolves to that service (the reconciler's ensureServiceAttr
+// normally gives a service its own name as a role attribute, but a service
+// that predates it — or one created by hand — would otherwise degrade to the
+// literal "#name" string, match no application, and drop out of reach, i.e.
+// fail toward "safe to enforce"). When neither index knows the tag (the local
+// mirror, which records no service attributes at all), the raw role is
+// surfaced as before so the caller still sees the intent. With a nil byAttr
+// and a nil byName this is byte-for-byte the old behaviour.
 func resolveServiceRolesIndexed(serviceRoles []string, idx zitiServiceIndex) []string {
 	svcByZitiID, allServices := idx.byZitiID, idx.all
 	var resolved []string
@@ -682,8 +690,13 @@ func resolveServiceRolesIndexed(serviceRoles []string, idx zitiServiceIndex) []s
 				add(name)
 			}
 		case strings.HasPrefix(role, "#"):
-			names := idx.byAttr[strings.TrimPrefix(role, "#")]
+			tag := strings.TrimPrefix(role, "#")
+			names := idx.byAttr[tag]
 			if len(names) == 0 {
+				if idx.byName[tag] {
+					add(tag) // the tag names a service outright
+					continue
+				}
 				add(role) // unresolvable tag reference — keep the intent visible
 				continue
 			}

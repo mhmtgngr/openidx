@@ -166,6 +166,8 @@ type reportResponse struct {
 		Applications    int `json:"applications"`
 		WouldDeny       int `json:"would_deny"`
 		IncompleteUsers int `json:"incomplete_users"`
+		UsersEvaluated  int `json:"users_evaluated"`
+		UsersTotal      int `json:"users_total"`
 	} `json:"summary"`
 	Assignments        []AssignmentEntry `json:"assignments"`
 	ReachabilitySource string            `json:"reachability_source"`
@@ -259,10 +261,12 @@ func TestAssignmentReportReadsController(t *testing.T) {
 					{"id":"p1","name":"openidx-dial-openidx-es-dev","type":"Dial",
 					 "serviceRoles":["#openidx-es-dev"],"identityRoles":["#browzer-users"]},
 					{"id":"p2","name":"openidx-bind-openidx-es-dev","type":"Bind",
-					 "serviceRoles":["#openidx-es-dev"],"identityRoles":["#all"]}]}`))
+					 "serviceRoles":["#openidx-es-dev"],"identityRoles":["#all"]}],
+					"meta":{"pagination":{"limit":500,"offset":0,"totalCount":2}}}`))
 			case containsPath(r, "services"):
 				_, _ = w.Write([]byte(`{"data":[
-					{"id":"s-live","name":"openidx-es-dev","roleAttributes":["openidx-es-dev"]}]}`))
+					{"id":"s-live","name":"openidx-es-dev","roleAttributes":["openidx-es-dev"]}],
+					"meta":{"pagination":{"limit":500,"offset":0,"totalCount":1}}}`))
 			default:
 				w.WriteHeader(http.StatusNotFound)
 			}
@@ -298,6 +302,12 @@ func TestAssignmentReportReadsController(t *testing.T) {
 		}
 		if got.Summary.IncompleteUsers != 0 {
 			t.Fatalf("incomplete_users = %d, want 0", got.Summary.IncompleteUsers)
+		}
+		// The denominator: both users exist and both were evaluated, which is
+		// what entitles this report to a clean headline.
+		if got.Summary.UsersEvaluated != 2 || got.Summary.UsersTotal != 2 {
+			t.Fatalf("users_evaluated/users_total = %d/%d, want 2/2",
+				got.Summary.UsersEvaluated, got.Summary.UsersTotal)
 		}
 		if len(got.Entries) != 1 {
 			t.Fatalf("want exactly one would-deny entry (alice reaches Es-Dev unassigned), got %+v", got.Entries)
@@ -379,6 +389,181 @@ func TestAssignmentReportReadsController(t *testing.T) {
 			t.Fatalf("reachability_source = %q, want %q", got.ReachabilitySource, ReachabilityUnavailable)
 		}
 	})
+
+	// F2. The user set comes from ziti_identities, which the sync poller
+	// maintains. A user it has not reached yet is simply absent — so without a
+	// denominator the report evaluates fewer people than the org has and still
+	// renders "safe to enforce".
+	t.Run("a user with no synced Ziti identity counts against the denominator", func(t *testing.T) {
+		const carol = "11111111-0000-0000-0000-0000000000c1"
+		if _, err := db.Pool.Exec(ctx,
+			`INSERT INTO users (id, org_id, username, email) VALUES ($1,$2,'carol','carol@x.io')`,
+			carol, reportOrg); err != nil {
+			t.Fatalf("seed carol: %v", err)
+		}
+		defer func() { _, _ = db.Pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, carol) }()
+
+		srv := liveControllerServer(t)
+		defer srv.Close()
+		s := reportService(t, db, srv.URL)
+		c, w := newCtx()
+		s.handleAssignmentReport(c)
+		got := decode(t, w)
+
+		if got.ReachabilitySource != ReachabilityFromController {
+			t.Fatalf("reachability_source = %q, want %q", got.ReachabilitySource, ReachabilityFromController)
+		}
+		if got.Summary.UsersTotal != 3 || got.Summary.UsersEvaluated != 2 {
+			t.Fatalf("users_evaluated/users_total = %d/%d, want 2/3",
+				got.Summary.UsersEvaluated, got.Summary.UsersTotal)
+		}
+		if got.Summary.IncompleteUsers != 1 {
+			t.Fatalf("incomplete_users = %d, want 1: the shortfall between evaluated and total "+
+				"must be counted, or an unevaluated user reads as an evaluated-and-clean one",
+				got.Summary.IncompleteUsers)
+		}
+	})
+
+	// F2. Evaluating nobody is not the same answer as "nobody loses anything".
+	t.Run("an org with no users reports a zero denominator, not a clean sweep", func(t *testing.T) {
+		const emptyOrg = "00000000-0000-0000-0000-0000000000ee"
+		srv := liveControllerServer(t)
+		defer srv.Close()
+		s := reportService(t, db, srv.URL)
+
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		req := httptest.NewRequest(http.MethodGet, "/assignment-report", nil)
+		c.Request = req.WithContext(orgctx.With(req.Context(), orgctx.Org{ID: emptyOrg}))
+		s.handleAssignmentReport(c)
+		got := decode(t, w)
+
+		if got.Summary.UsersTotal != 0 || got.Summary.UsersEvaluated != 0 {
+			t.Fatalf("users_evaluated/users_total = %d/%d, want 0/0",
+				got.Summary.UsersEvaluated, got.Summary.UsersTotal)
+		}
+		if len(got.Entries) != 0 {
+			t.Fatalf("an empty org has nothing to report, got %+v", got.Entries)
+		}
+		// The counts are the whole point: the console withholds "safe to
+		// enforce" whenever users_evaluated is zero, which it cannot do unless
+		// the endpoint reports the denominator at all.
+	})
+
+	// F1. A malformed attributes value would leave the identity matching fewer
+	// policies than it really does — under-reported reach, i.e. a report that
+	// fails toward "safe". The user must be counted, not silently scored.
+	t.Run("a malformed attributes value counts the user as incomplete", func(t *testing.T) {
+		const dave = "11111111-0000-0000-0000-0000000000d1"
+		seedDave := []struct {
+			sql  string
+			args []any
+		}{
+			{`INSERT INTO users (id, org_id, username, email) VALUES ($1,$2,'dave','dave@x.io')`,
+				[]any{dave, reportOrg}},
+			{`INSERT INTO ziti_identities (id, org_id, ziti_id, name, user_id, enrolled, attributes)
+			  VALUES (gen_random_uuid(),$1,'z-dave','dave',$2,true,'"not-an-array"'::jsonb)`,
+				[]any{reportOrg, dave}},
+		}
+		for _, st := range seedDave {
+			if _, err := db.Pool.Exec(ctx, st.sql, st.args...); err != nil {
+				t.Fatalf("seed dave: %v", err)
+			}
+		}
+		defer func() {
+			_, _ = db.Pool.Exec(ctx, `DELETE FROM ziti_identities WHERE user_id = $1`, dave)
+			_, _ = db.Pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, dave)
+		}()
+
+		srv := liveControllerServer(t)
+		defer srv.Close()
+		s := reportService(t, db, srv.URL)
+		c, w := newCtx()
+		s.handleAssignmentReport(c)
+		got := decode(t, w)
+
+		if got.Summary.UsersEvaluated != 2 || got.Summary.UsersTotal != 3 {
+			t.Fatalf("users_evaluated/users_total = %d/%d, want 2/3",
+				got.Summary.UsersEvaluated, got.Summary.UsersTotal)
+		}
+		if got.Summary.IncompleteUsers != 1 {
+			t.Fatalf("incomplete_users = %d, want 1 (dave's attributes could not be read)",
+				got.Summary.IncompleteUsers)
+		}
+	})
+
+	// F1. A row failure in the service→application index is not a per-user
+	// problem: it removes an application from the reach side for EVERY user,
+	// which is exactly the under-report this endpoint exists to remove. The
+	// report must say "unavailable", not present a clean diff over what it
+	// managed to read.
+	t.Run("a failed application row makes the whole report unavailable", func(t *testing.T) {
+		const badRoute = "33333333-0000-0000-0000-0000000000b2"
+		const badApp = "22222222-0000-0000-0000-0000000000b2"
+		setup := []struct {
+			sql  string
+			args []any
+		}{
+			{`ALTER TABLE applications ALTER COLUMN name DROP NOT NULL`, nil},
+			{`INSERT INTO proxy_routes (id, name, ziti_enabled, ziti_service_name) VALUES ($1,'bad',true,'openidx-bad')`,
+				[]any{badRoute}},
+			{`INSERT INTO applications (id, org_id, name, route_id, enabled) VALUES ($1,$2,NULL,$3,true)`,
+				[]any{badApp, reportOrg, badRoute}},
+		}
+		for _, st := range setup {
+			if _, err := db.Pool.Exec(ctx, st.sql, st.args...); err != nil {
+				t.Fatalf("seed %q: %v", st.sql, err)
+			}
+		}
+		defer func() {
+			_, _ = db.Pool.Exec(ctx, `DELETE FROM applications WHERE id = $1`, badApp)
+			_, _ = db.Pool.Exec(ctx, `DELETE FROM proxy_routes WHERE id = $1`, badRoute)
+			_, _ = db.Pool.Exec(ctx, `ALTER TABLE applications ALTER COLUMN name SET NOT NULL`)
+		}()
+
+		srv := liveControllerServer(t)
+		defer srv.Close()
+		s := reportService(t, db, srv.URL)
+		c, w := newCtx()
+		s.handleAssignmentReport(c)
+		got := decode(t, w)
+
+		if got.ReachabilitySource != ReachabilityUnavailable {
+			t.Fatalf("reachability_source = %q, want %q: a row the report could not read "+
+				"drops an application for every user and must not yield a clean report",
+				got.ReachabilitySource, ReachabilityUnavailable)
+		}
+		if got.ReachabilityError == "" {
+			t.Error("reachability_error must name the input failure")
+		}
+		if len(got.Entries) != 0 {
+			t.Fatalf("a report built on partial inputs must not present a diff: %+v", got.Entries)
+		}
+	})
+}
+
+// liveControllerServer is the fake controller the passing subtests share: one
+// Dial policy for #browzer-users over the `#openidx-es-dev` tag the reconciler
+// actually emits, plus the meta.pagination block the paginating listers
+// require before they will call a listing complete.
+func liveControllerServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case containsPath(r, "service-policies"):
+			_, _ = w.Write([]byte(`{"data":[
+				{"id":"p1","name":"openidx-dial-openidx-es-dev","type":"Dial",
+				 "serviceRoles":["#openidx-es-dev"],"identityRoles":["#browzer-users"]}],
+				"meta":{"pagination":{"limit":500,"offset":0,"totalCount":1}}}`))
+		case containsPath(r, "services"):
+			_, _ = w.Write([]byte(`{"data":[
+				{"id":"s-live","name":"openidx-es-dev","roleAttributes":["openidx-es-dev"]}],
+				"meta":{"pagination":{"limit":500,"offset":0,"totalCount":1}}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
 }
 
 // containsPath reports whether the request path ends in the given management
