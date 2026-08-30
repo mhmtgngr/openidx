@@ -25,6 +25,13 @@ vi.mock('../hooks/use-toast', () => ({
   useToast: () => ({ toast: vi.fn() }),
 }))
 
+// Role gate for the org-wide tabs. Default admin so the existing tab tests keep
+// exercising Pending Approvals / All Requests; one test flips it off.
+const authState = vi.hoisted(() => ({ isAdmin: true }))
+vi.mock('../lib/auth', () => ({
+  useAuth: () => ({ hasRole: (r: string) => authState.isAdmin && (r === 'admin' || r === 'super_admin') }),
+}))
+
 import { AccessRequestsPage } from './access-requests'
 import { api } from '../lib/api'
 
@@ -141,8 +148,21 @@ function routeGetWithVault(url: string) {
 describe('AccessRequestsPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    authState.isAdmin = true
     document.body.innerHTML = ''
     vi.mocked(api.get).mockImplementation((url: string) => routeGet(url) as ReturnType<typeof api.get>)
+  })
+
+  it('hides the org-wide tabs from a non-admin (only My Requests)', async () => {
+    authState.isAdmin = false
+    render(<AccessRequestsPage />, { wrapper: createWrapper() })
+    expect(await screen.findByRole('tab', { name: /my requests/i })).toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: /all requests/i })).toBeNull()
+    // Pending Approvals is hidden too when the non-admin has none pending.
+    expect(screen.queryByRole('tab', { name: /pending approvals/i })).toBeNull()
+    // And the org-wide list is never fetched.
+    const urls = vi.mocked(api.get).mock.calls.map((c) => c[0] as string)
+    expect(urls.some((u) => u === '/api/v1/governance/requests' || u.startsWith('/api/v1/governance/requests?status'))).toBe(false)
   })
 
   it('renders the page heading and Request Access button', async () => {

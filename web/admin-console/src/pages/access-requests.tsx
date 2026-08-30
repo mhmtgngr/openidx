@@ -16,6 +16,7 @@ import {
 import { QueryError } from '../components/query-error'
 import { api, VaultSecretMeta } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
+import { useAuth } from '../lib/auth'
 
 interface AccessRequest {
   id: string
@@ -70,6 +71,11 @@ const DURATION_OPTIONS = [
 export function AccessRequestsPage() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const { hasRole } = useAuth()
+  // Only admins may see every user's requests (the "All Requests" org view).
+  // The backend enforces this too; this just hides the control from users who
+  // would otherwise get an empty/own-only list.
+  const isAdmin = hasRole('admin') || hasRole('super_admin')
   const [activeTab, setActiveTab] = useState('my-requests')
   const [createOpen, setCreateOpen] = useState(false)
   const [approvalOpen, setApprovalOpen] = useState(false)
@@ -99,6 +105,7 @@ export function AccessRequestsPage() {
 
   const { data: allData, isLoading: allLoading, isError: allError, error: allErrorObj } = useQuery({
     queryKey: ['all-requests', statusFilter],
+    enabled: isAdmin, // non-admins never fetch the org-wide list
     queryFn: () => {
       const params = statusFilter !== 'all' ? `?status=${statusFilter}` : ''
       return api.get<{ requests: AccessRequest[] }>(`/api/v1/governance/requests${params}`)
@@ -277,11 +284,16 @@ export function AccessRequestsPage() {
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList>
           <TabsTrigger value="my-requests"><GitPullRequest className="mr-2 h-4 w-4" />My Requests</TabsTrigger>
-          <TabsTrigger value="pending-approvals">
-            <Clock className="mr-2 h-4 w-4" />Pending Approvals
-            {pendingApprovals.length > 0 && <Badge variant="secondary" className="ml-1">{pendingApprovals.length}</Badge>}
-          </TabsTrigger>
-          <TabsTrigger value="all-requests">All Requests</TabsTrigger>
+          {/* Approver queue: caller-scoped (only requests awaiting THIS user).
+              Hidden for standard users who aren't approvers and have none. */}
+          {(isAdmin || pendingApprovals.length > 0) && (
+            <TabsTrigger value="pending-approvals">
+              <Clock className="mr-2 h-4 w-4" />Pending Approvals
+              {pendingApprovals.length > 0 && <Badge variant="secondary" className="ml-1">{pendingApprovals.length}</Badge>}
+            </TabsTrigger>
+          )}
+          {/* Org-wide view — admins only. */}
+          {isAdmin && <TabsTrigger value="all-requests">All Requests</TabsTrigger>}
         </TabsList>
 
         <TabsContent value="my-requests">

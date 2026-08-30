@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/auth"
 	"github.com/openidx/openidx/internal/common/orgctx"
 	"github.com/openidx/openidx/internal/vault"
 )
@@ -379,6 +380,19 @@ func (s *Service) handleListAccessRequests(c *gin.Context) {
 
 	// Handle "me" as requester_id
 	if requesterID == "me" {
+		requesterID = c.GetString("user_id")
+		if requesterID == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+			return
+		}
+	}
+
+	// Authorization: only an admin (or higher) may list across the whole org or
+	// filter by another user. A non-privileged caller is pinned to their OWN
+	// requests regardless of the query params — without this a standard user
+	// could omit requester_id (or pass someone else's id) and read every access
+	// request in the org (broken access control / info disclosure).
+	if isAdmin, _ := auth.IsAdminInContext(c); !isAdmin {
 		requesterID = c.GetString("user_id")
 		if requesterID == "" {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
