@@ -51,6 +51,17 @@ interface Report {
     // unevaluated org would otherwise be indistinguishable from a clean one.
     users_evaluated?: number
     users_total?: number
+    // How much of that gap is explained by users with no Ziti identity at all.
+    // Such a user has no Ziti reach and therefore no Ziti reach to lose, so
+    // they do not make the report incomplete — but the operator must be able to
+    // see the number and decide whether a given user SHOULD have had an
+    // identity. We surface it; we fold it into neither "safe" nor "incomplete".
+    users_without_identity?: number
+    // The go/no-go, computed server-side so every consumer reads one rule
+    // instead of re-deriving it from four fields. True only when reach came
+    // from the live controller, no user was skipped, and at least one user was
+    // actually evaluated. A missing field is not a true one: fail closed.
+    evaluation_complete?: boolean
   }
 }
 
@@ -71,19 +82,19 @@ export function AssignmentReportPage() {
   const fromController = data?.reachability_source === 'controller'
   const wouldLose = `${summary?.users ?? 0} user(s) would lose access to ${summary?.applications ?? 0} application(s)`
 
-  // The denominator. Missing fields count as zero evaluated, i.e. fail closed:
-  // a server that does not tell us how much of the org it covered has not
-  // earned the reassuring headline either.
+  // The denominator. A response that omits the counts is not a response
+  // reporting zeros: it simply did not say how much of the org it covered, and
+  // the page must say that rather than assert "0 of 0".
+  const countsReported =
+    summary?.users_evaluated !== undefined && summary?.users_total !== undefined
   const usersEvaluated = summary?.users_evaluated ?? 0
   const usersTotal = summary?.users_total ?? 0
-  const notEvaluated = Math.max(usersTotal - usersEvaluated, 0)
-  // Evaluating nobody is not a clean result — an org whose Ziti sync has never
-  // run would otherwise render "safe to enforce" over an evaluation of no one.
-  const evaluatedEveryone = usersEvaluated > 0 && notEvaluated === 0
+  const usersWithoutIdentity = summary?.users_without_identity ?? 0
 
-  // The reassuring headline is reserved for the one case that earns it: live
-  // controller data, every user evaluated, nothing lost.
-  const complete = fromController && evaluatedEveryone && incompleteUsers === 0
+  // The go/no-go comes from the server, which computes it once for every
+  // consumer. Re-deriving it here is what let a zero-user org read as clean.
+  // Anything but an explicit true — including a missing field — fails closed.
+  const complete = summary?.evaluation_complete === true
   const headline = isLoading
     ? 'Checking…'
     : !fromController
@@ -130,25 +141,38 @@ export function AssignmentReportPage() {
               incomplete until that count is zero.
             </p>
           )}
-          {!isLoading && fromController && notEvaluated > 0 && (
-            <p className="text-sm font-medium text-amber-600">
-              {notEvaluated} of {usersTotal} user{usersTotal === 1 ? '' : 's'} in this organization
-              could not be evaluated because they have no synced Ziti identity. Their reach is
-              unknown, so this report does not cover them.
+          {/* Informational, not alarming, and shown even beside a clean
+              headline: these users have no Ziti reach to lose, but an operator
+              must still be able to see how many there are and judge whether any
+              of them should have had an identity. */}
+          {!isLoading && fromController && usersWithoutIdentity > 0 && (
+            <p className="text-sm text-muted-foreground">
+              {usersWithoutIdentity} of {usersTotal} user{usersTotal === 1 ? '' : 's'} in this
+              organization {usersWithoutIdentity === 1 ? 'has' : 'have'} no Ziti identity, so{' '}
+              {usersWithoutIdentity === 1 ? 'that user has' : 'those users have'} no Ziti reach to
+              lose and {usersWithoutIdentity === 1 ? 'was' : 'were'} not evaluated. Check that none
+              of them should have been enrolled.
             </p>
           )}
-          {!isLoading && fromController && usersTotal === 0 && (
+          {!isLoading && fromController && countsReported && usersTotal === 0 && (
             <p className="text-sm font-medium text-amber-600">
               No users were found in this organization, so nothing was evaluated. An empty
               evaluation is not evidence that enforcement is safe.
+            </p>
+          )}
+          {!isLoading && fromController && !countsReported && (
+            <p className="text-sm font-medium text-amber-600">
+              This response did not carry the user counts, so how much of the organization was
+              evaluated is unknown. Do not read it as a clean result.
             </p>
           )}
         </CardHeader>
         <CardContent>
           {!isLoading && (
             <p className="text-sm text-muted-foreground">
-              Evaluated {usersEvaluated} of {usersTotal} user{usersTotal === 1 ? '' : 's'} in this
-              organization.
+              {countsReported
+                ? `Evaluated ${usersEvaluated} of ${usersTotal} user${usersTotal === 1 ? '' : 's'} in this organization.`
+                : 'User counts not reported by the server, so this report cannot say how much of the organization it covered.'}
             </p>
           )}
           {!isLoading && !fromController && (
