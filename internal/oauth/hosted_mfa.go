@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
+	"net/http"
 	"net/url"
 	"strings"
 	"time"
@@ -110,6 +111,58 @@ func (s *Service) loadMFASession(ctx context.Context, mfaSession string) (map[st
 	return data, true
 }
 
+// mfaSessionCookie carries the challenge's partial-auth token between the
+// server-rendered steps.
+//
+// It must NOT travel in a URL. The push wait page refreshes itself every few
+// seconds, and this service logs the query string of every request — so a token
+// in the URL would be written to the access log (and any proxy's) dozens of
+// times per login, land in browser history, and ride along in Referer on
+// anything the branded page loads. Whoever read it could call the wait endpoint
+// the moment the user approved the push and collect the authorization code
+// themselves. In a cookie it stays out of logs and history, and the browser
+// scopes it for us.
+const mfaSessionCookie = "oidx_mfa"
+
+// setMFASessionCookie stores the challenge token for the life of the challenge
+// (the Redis session's own 5 minutes bound it regardless).
+func (s *Service) setMFASessionCookie(c *gin.Context, mfaSession string) {
+	c.SetSameSite(http.SameSiteLaxMode)
+	c.SetCookie(mfaSessionCookie, mfaSession, int(5*time.Minute/time.Second),
+		"/oauth", "", s.requestIsSecure(c), true)
+}
+
+func (s *Service) clearMFASessionCookie(c *gin.Context) {
+	c.SetSameSite(http.SameSiteLaxMode)
+	c.SetCookie(mfaSessionCookie, "", -1, "/oauth", "", s.requestIsSecure(c), true)
+}
+
+// requestIsSecure reports whether the browser is talking HTTPS. TLS usually
+// terminates at the edge, so the request this process sees is plain HTTP; the
+// issuer is the reliable signal, with the forwarded header and a direct TLS
+// connection as fallbacks. Marking the cookie Secure on a plain-HTTP dev server
+// would stop the browser storing it at all, which would break the flow.
+func (s *Service) requestIsSecure(c *gin.Context) bool {
+	if strings.HasPrefix(s.issuer, "https://") {
+		return true
+	}
+	if c.Request != nil && c.Request.TLS != nil {
+		return true
+	}
+	return strings.EqualFold(c.GetHeader("X-Forwarded-Proto"), "https")
+}
+
+// mfaSessionFrom resolves the challenge token for a hosted step: the cookie is
+// authoritative, with the posted field as a fallback for a browser that refuses
+// cookies. A POST body is not logged, so that fallback does not reintroduce the
+// leak — but a query parameter would, and is never consulted.
+func mfaSessionFrom(c *gin.Context) string {
+	if v, err := c.Cookie(mfaSessionCookie); err == nil && v != "" {
+		return v
+	}
+	return c.PostForm("mfa_session")
+}
+
 // beginHostedMFA is the branch handleAuthorizeCallback takes when the shared
 // evaluation says this login needs a second factor.
 func (s *Service) beginHostedMFA(c *gin.Context, user *identity.User, oauthParams map[string]string, loginSession string, ev mfaEvaluation, fingerprint, location string) {
@@ -134,6 +187,7 @@ func (s *Service) beginHostedMFA(c *gin.Context, user *identity.User, oauthParam
 	// The password step is done — retire the login session.
 	s.redis.Client.Del(c.Request.Context(), "login_session:"+loginSession)
 
+	s.setMFASessionCookie(c, mfaSession)
 	s.renderMFAPage(c, mfaSession, methods, methods[0], "", "")
 }
 
@@ -223,7 +277,7 @@ func trustBrowserFieldHTML() string {
 
 // handleAuthorizeMFAMethod re-renders the challenge with a different factor.
 func (s *Service) handleAuthorizeMFAMethod(c *gin.Context) {
-	mfaSession := c.PostForm("mfa_session")
+	mfaSession := mfaSessionFrom(c)
 	data, ok := s.loadMFASession(c.Request.Context(), mfaSession)
 	if !ok {
 		s.renderExpiredMFA(c)
@@ -241,7 +295,7 @@ func (s *Service) handleAuthorizeMFAMethod(c *gin.Context) {
 
 // handleAuthorizeMFASend sends an SMS/email OTP for the hosted flow.
 func (s *Service) handleAuthorizeMFASend(c *gin.Context) {
-	mfaSession := c.PostForm("mfa_session")
+	mfaSession := mfaSessionFrom(c)
 	method := c.PostForm("method")
 	data, ok := s.loadMFASession(c.Request.Context(), mfaSession)
 	if !ok {
@@ -278,7 +332,7 @@ func (s *Service) handleAuthorizeMFASend(c *gin.Context) {
 
 // handleAuthorizeMFA verifies a typed second factor and finishes the login.
 func (s *Service) handleAuthorizeMFA(c *gin.Context) {
-	mfaSession := c.PostForm("mfa_session")
+	mfaSession := mfaSessionFrom(c)
 	method := c.PostForm("method")
 	code := c.PostForm("code")
 	trustBrowser := c.PostForm("trust_browser") != ""
@@ -323,7 +377,7 @@ func (s *Service) handleAuthorizeMFA(c *gin.Context) {
 
 // handleAuthorizeMFAPush starts a push challenge and shows the waiting screen.
 func (s *Service) handleAuthorizeMFAPush(c *gin.Context) {
-	mfaSession := c.PostForm("mfa_session")
+	mfaSession := mfaSessionFrom(c)
 	trustBrowser := c.PostForm("trust_browser") != ""
 
 	data, ok := s.loadMFASession(c.Request.Context(), mfaSession)
@@ -365,7 +419,9 @@ func (s *Service) handleAuthorizeMFAPush(c *gin.Context) {
 // challenge is outstanding: it completes the login as soon as the challenge is
 // approved, and never issues anything while it is pending, denied or expired.
 func (s *Service) handleAuthorizeMFAWait(c *gin.Context) {
-	mfaSession := c.Query("mfa_session")
+	// The session comes from the cookie, never the query string: this page
+	// re-requests itself every few seconds and query strings are logged.
+	mfaSession := mfaSessionFrom(c)
 	challengeID := c.Query("challenge_id")
 	trustBrowser := c.Query("trust_browser") == "1"
 
@@ -408,7 +464,6 @@ func (s *Service) renderPushWaitPage(c *gin.Context, mfaSession, challengeID, ch
 	b := s.loadLoginBranding(c.Request.Context())
 
 	q := url.Values{}
-	q.Set("mfa_session", mfaSession)
 	q.Set("challenge_id", challengeID)
 	if trustBrowser {
 		q.Set("trust_browser", "1")
@@ -429,6 +484,7 @@ func (s *Service) renderPushWaitPage(c *gin.Context, mfaSession, challengeID, ch
 }
 
 func (s *Service) renderExpiredMFA(c *gin.Context) {
+	s.clearMFASessionCookie(c)
 	b := s.loadLoginBranding(c.Request.Context())
 	s.renderBrandedPage(c, b, "Sign-in expired",
 		`<p class="sub">This sign-in attempt expired. Return to the application and start again.</p>`, "")
@@ -444,6 +500,7 @@ func (s *Service) completeHostedMFA(c *gin.Context, mfaSession string, data map[
 	userAgent := c.GetHeader("User-Agent")
 
 	s.redis.Client.Del(ctx, "mfa_session:"+mfaSession)
+	s.clearMFASessionCookie(c)
 	s.auditMFAResult(userID, clientIP, method, true, trustBrowser)
 
 	if trustBrowser {

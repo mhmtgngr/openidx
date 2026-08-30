@@ -116,7 +116,9 @@ func TestRenderPushWaitPagePolls(t *testing.T) {
 	if !strings.Contains(body, `http-equiv="refresh"`) {
 		t.Error("push wait page must refresh itself")
 	}
-	for _, want := range []string{"mfa_session=sess-9", "challenge_id=chal-7", "trust_browser=1"} {
+	// The session itself rides in a cookie, never the URL — see
+	// TestPushWaitPageKeepsSessionOutOfTheURL.
+	for _, want := range []string{"challenge_id=chal-7", "trust_browser=1"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("refresh URL missing %q; body: %s", want, body)
 		}
@@ -290,5 +292,87 @@ func TestHostedMFAStepsAreRateLimited(t *testing.T) {
 	}
 	if !strings.Contains(pollBlock, `"/oauth/authorize/mfa/wait"`) {
 		t.Error("the hosted push wait page must be exempt as a status poll")
+	}
+}
+
+// TestPushWaitPageKeepsSessionOutOfTheURL is the regression guard for a leak
+// found in review: the wait page carried the partial-auth mfa_session in its
+// meta-refresh URL. This service logs the query string of every request and the
+// page re-requests itself every few seconds, so the token would have been
+// written to the access log dozens of times per login (and into browser
+// history). Whoever read it could call the wait endpoint the moment the user
+// approved the push and take the authorization code. It travels in a cookie now.
+func TestPushWaitPageKeepsSessionOutOfTheURL(t *testing.T) {
+	s := &Service{logger: zap.NewNop()}
+	c, w := newRenderContext(t)
+
+	s.renderPushWaitPage(c, "super-secret-session", "chal-7", "42", true, "")
+	body := w.Body.String()
+
+	if strings.Contains(body, "super-secret-session") {
+		t.Error("the challenge token must not appear anywhere in the wait page")
+	}
+	if strings.Contains(body, "mfa_session=") {
+		t.Error("the refresh URL must not carry mfa_session")
+	}
+	// The non-sensitive parts still drive the poll.
+	for _, want := range []string{"challenge_id=chal-7", "trust_browser=1"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("refresh URL missing %q", want)
+		}
+	}
+}
+
+// TestMFASessionCookieIsProtected pins the cookie's attributes: HttpOnly so page
+// script can never read the partial-auth token, scoped to /oauth, and Secure
+// whenever the browser is on HTTPS (derived from the issuer, since TLS
+// terminates at the edge and this process only ever sees plain HTTP).
+func TestMFASessionCookieIsProtected(t *testing.T) {
+	s := &Service{logger: zap.NewNop(), issuer: "https://openidx.example.com"}
+	c, w := newRenderContext(t)
+
+	s.setMFASessionCookie(c, "sess-abc")
+
+	cookie := w.Header().Get("Set-Cookie")
+	for _, want := range []string{"oidx_mfa=sess-abc", "HttpOnly", "Secure", "Path=/oauth", "SameSite=Lax"} {
+		if !strings.Contains(cookie, want) {
+			t.Errorf("cookie missing %q; got %q", want, cookie)
+		}
+	}
+}
+
+// TestMFASessionCookieNotSecureOnPlainHTTP: marking it Secure on a plain-HTTP
+// dev server would stop the browser storing it and break the whole flow.
+func TestMFASessionCookieNotSecureOnPlainHTTP(t *testing.T) {
+	s := &Service{logger: zap.NewNop(), issuer: "http://localhost:8006"}
+	c, w := newRenderContext(t)
+
+	s.setMFASessionCookie(c, "sess-abc")
+
+	if strings.Contains(w.Header().Get("Set-Cookie"), "Secure") {
+		t.Error("must not mark the cookie Secure when the browser is on plain HTTP")
+	}
+}
+
+// TestMFASessionFromPrefersCookie: the cookie is authoritative; a posted field
+// is a fallback for a cookie-less browser (a POST body is not logged, so it does
+// not reintroduce the leak), and a query parameter is never consulted.
+func TestMFASessionFromPrefersCookie(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	req := httptest.NewRequest(http.MethodPost, "/oauth/authorize/mfa?mfa_session=from-query", nil)
+	req.AddCookie(&http.Cookie{Name: mfaSessionCookie, Value: "from-cookie"})
+	c.Request = req
+	if got := mfaSessionFrom(c); got != "from-cookie" {
+		t.Errorf("got %q, want the cookie value", got)
+	}
+
+	c2, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c2.Request = httptest.NewRequest(http.MethodPost, "/oauth/authorize/mfa?mfa_session=from-query",
+		strings.NewReader("mfa_session=from-form"))
+	c2.Request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if got := mfaSessionFrom(c2); got != "from-form" {
+		t.Errorf("got %q, want the posted value (never the query string)", got)
 	}
 }
