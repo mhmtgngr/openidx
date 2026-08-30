@@ -18,9 +18,9 @@ func TestAssembleAttributesCarriesAppMarkers(t *testing.T) {
 		[]string{appMarkerAttr("11111111-2222-3333-4444-555555555555")})
 
 	want := map[string]bool{
-		"Engineering":                              true,
-		"enrolled-users":                           true,
-		"device-trusted":                           true,
+		"Engineering":    true,
+		"enrolled-users": true,
+		"device-trusted": true,
 		"app-11111111-2222-3333-4444-555555555555": true,
 	}
 	if len(got) != len(want) {
