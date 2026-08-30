@@ -7,6 +7,7 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/subtle"
+	"database/sql"
 	"encoding/base32"
 	"encoding/base64"
 	"encoding/csv"
@@ -2550,14 +2551,16 @@ func (s *Service) IsMFARequired(ctx context.Context, userID string, clientIP str
 	var policies []MFAPolicy
 	for rows.Next() {
 		var policy MFAPolicy
+		var description sql.NullString
 		err := rows.Scan(
-			&policy.ID, &policy.Name, &policy.Description, &policy.Enabled, &policy.Priority,
+			&policy.ID, &policy.Name, &description, &policy.Enabled, &policy.Priority,
 			&policy.Conditions, &policy.RequiredMethods, &policy.GracePeriodHours,
 			&policy.CreatedAt, &policy.UpdatedAt,
 		)
 		if err != nil {
 			return false, nil, fmt.Errorf("failed to scan policy: %w", err)
 		}
+		policy.Description = description.String
 		policies = append(policies, policy)
 	}
 
