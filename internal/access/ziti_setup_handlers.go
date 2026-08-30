@@ -154,7 +154,15 @@ func (s *Service) handleZitiReconcilerStatus(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"enabled": false, "services": map[string]string{}})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"enabled": true, "services": s.zitiReconciler.StatusSnapshot()})
+	// "mirror" carries the local policy/service mirror's last refresh counts,
+	// including how many controller policies could NOT be attributed to an org
+	// and were therefore skipped. That count is the honest signal that the
+	// mirror is deliberately partial rather than complete.
+	c.JSON(http.StatusOK, gin.H{
+		"enabled":  true,
+		"services": s.zitiReconciler.StatusSnapshot(),
+		"mirror":   s.zitiReconciler.MirrorStats(),
+	})
 }
 
 // setupRouteRow is one org-scoped ziti-enabled proxy_route.

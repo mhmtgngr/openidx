@@ -608,9 +608,14 @@ func policyAppliesToIdentity(identityRoles []string, zitiID string, attrs []stri
 }
 
 // resolveServiceRoles maps a policy's service_roles onto service names using
-// the local mirror. `#all` expands to every enabled service, `@id` resolves
-// via ziti_services.ziti_id, and `#tag` references (service attributes are not
-// mirrored locally) are surfaced as-is so the caller still sees the intent.
+// the local mirror. `#all` expands to every enabled service, `@id` resolves via
+// ziti_services.ziti_id, and a `#tag` resolves to the service of the SAME NAME
+// when the mirror has one — every service OpenIDX provisions is tagged with its
+// own name as a role attribute (CreateService / ensureServiceAttr), and the real
+// dial policies are keyed that way (`#openidx-<app>`), so without this a user's
+// reachable app came back as the literal string "#openidx-<app>" and matched no
+// mirror row for host/port. A tag with no same-named service is still surfaced
+// as-is, so an unresolvable reference stays visible instead of vanishing.
 func resolveServiceRoles(serviceRoles []string, svcByZitiID map[string]string, allServices []string) []string {
 	var resolved []string
 	seen := map[string]bool{}
@@ -631,13 +636,28 @@ func resolveServiceRoles(serviceRoles []string, svcByZitiID map[string]string, a
 				add(name)
 			}
 		case strings.HasPrefix(role, "#"):
-			add(role) // unresolvable tag reference — keep the intent visible
+			tag := strings.TrimPrefix(role, "#")
+			if knownService(tag, allServices) {
+				add(tag)
+			} else {
+				add(role) // unresolvable tag reference — keep the intent visible
+			}
 		}
 	}
 	if resolved == nil {
 		resolved = []string{}
 	}
 	return resolved
+}
+
+// knownService reports whether name is one of the org's mirrored services.
+func knownService(name string, allServices []string) bool {
+	for _, s := range allServices {
+		if s == name {
+			return true
+		}
+	}
+	return false
 }
 
 // verifyOrgUser confirms a user id belongs to the given org (used by the
