@@ -1618,30 +1618,44 @@ func (s *Service) handleAuthorize(c *gin.Context) {
 	s.redis.Client.Set(c.Request.Context(), "login_session:"+loginSession, string(paramsJSON), 10*time.Minute)
 
 	// For public OIDC clients (like BrowZer), serve a server-rendered login page
-	// instead of redirecting back to the client with login_session
-	if client != nil && client.Type == "public" && c.GetHeader("Accept") != "application/json" {
+	// instead of redirecting back to the client with login_session. Only
+	// reachable while OAUTH_LOGIN_UI=server (the default) — a later task
+	// deletes this page once OAUTH_LOGIN_UI=spa has been verified live, at
+	// which point every client (public, confidential, or native) is sent to
+	// the IdP's own /login instead. See loginRedirectURL.
+	if s.config.OAuthLoginUI == "server" && client != nil && client.Type == "public" && c.GetHeader("Accept") != "application/json" {
 		s.renderLoginPage(c, loginSession, "")
 		return
 	}
 
-	// SPA flow: redirect back to the client's login page with the login_session parameter
 	redirectURI := oauthParams["redirect_uri"]
 	if redirectURI == "" {
 		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "redirect_uri is required"})
 		return
 	}
 
-	// Parse redirect URI to add login_session parameter
-	loginURL, err := url.Parse(redirectURI)
-	if err != nil {
-		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "invalid redirect_uri"})
-		return
-	}
-	query := loginURL.Query()
-	query.Set("login_session", loginSession)
-	loginURL.RawQuery = query.Encode()
+	c.Redirect(302, loginRedirectURL(s.issuer, redirectURI, loginSession, s.config.OAuthLoginUI))
+}
 
-	c.Redirect(302, loginURL.String())
+// loginRedirectURL decides where the browser goes to authenticate.
+//
+// In "spa" mode every client is sent to the IdP's own login page, which is the
+// ordinary hosted-IdP pattern and the thing that makes a single login UI
+// possible: a native client (redirect_uri openidx://oauth-callback) cannot host
+// one, which is why a second, server-rendered login existed at all.
+func loginRedirectURL(issuer, clientRedirectURI, loginSession, ui string) string {
+	target := clientRedirectURI
+	if ui == "spa" {
+		target = strings.TrimRight(issuer, "/") + "/login"
+	}
+	u, err := url.Parse(target)
+	if err != nil {
+		return ""
+	}
+	q := u.Query()
+	q.Set("login_session", loginSession)
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 // handleAuthorizeV2 handles authorization using the new AuthorizeHandler with full PKCE support

@@ -281,6 +281,17 @@ type Config struct {
 	// docs/access-and-login-convergence-design.md.
 	AccessAssignmentEnforce bool `mapstructure:"access_assignment_enforce"`
 
+	// OAuthLoginUI selects which login UI /oauth/authorize sends the browser to.
+	// "server" (the default) preserves today's behaviour exactly: a public
+	// client whose Accept header isn't application/json gets the
+	// server-rendered login page, everyone else is redirected back to their
+	// own redirect_uri with ?login_session=. "spa" sends every client —
+	// public, confidential, native — to the IdP's own /login page instead,
+	// which is what lets a single login UI (and eventually the deletion of the
+	// server-rendered page) work for a native client whose redirect_uri is a
+	// custom scheme it cannot host a page at.
+	OAuthLoginUI string `mapstructure:"oauth_login_ui"`
+
 	// OpenZiti configuration
 	ZitiEnabled           bool   `mapstructure:"ziti_enabled"`
 	ZitiReconcilerEnabled bool   `mapstructure:"ziti_reconciler"`
@@ -757,6 +768,7 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("admin_api_require_auth", false)
 	v.SetDefault("show_all_apps_when_unassigned", false)
 	v.SetDefault("access_assignment_enforce", false)
+	v.SetDefault("oauth_login_ui", "server")
 
 	// Database defaults
 	v.SetDefault("database_url", "postgres://openidx:openidx_secret@localhost:5432/openidx?sslmode=disable")
@@ -994,6 +1006,7 @@ func bindEnvVars(v *viper.Viper) {
 		"admin_api_require_auth":              "ADMIN_API_REQUIRE_AUTH",
 		"show_all_apps_when_unassigned":       "SHOW_ALL_APPS_WHEN_UNASSIGNED",
 		"access_assignment_enforce":           "ACCESS_ASSIGNMENT_ENFORCE",
+		"oauth_login_ui":                      "OAUTH_LOGIN_UI",
 		"shutdown_timeout_seconds":            "SHUTDOWN_TIMEOUT_SECONDS",
 		"public_base_url":                     "PUBLIC_BASE_URL",
 		"oauth_issuer":                        "OAUTH_ISSUER",
