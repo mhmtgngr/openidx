@@ -35,13 +35,15 @@
               "pathPrefix": "/oauth-callback"
             }
           ],
-          "category": ["BROWSABLE", "DEFAULT"]
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
         }
       ],
       "permissions": [
         "android.permission.CAMERA"
-      ],
-      "package": "com.anonymous.openidxmobile"
+      ]
     },
     "web": {
       "output": "static",
@@ -65,7 +67,19 @@
           "recordAudioAndroid": false
         }
       ],
-      "./plugins/withCertPinning.js"
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "OpenIDX uses Face ID to securely authenticate you."
+        }
+      ],
+      "expo-notifications",
+      "./plugins/withCertPinning.js",
+      "./plugins/withCertPinningIOS.js",
+      "expo-image",
+      "expo-status-bar",
+      "expo-web-browser",
+      "expo-font"
     ],
     "experiments": {
       "typedRoutes": true,
@@ -84,7 +98,7 @@
         ]
       },
       "eas": {
-        "projectId": "00000000-0000-0000-0000-000000000000"
+        "projectId": "85309726-2127-4a01-bc4f-2836ffd62687"
       }
     }
   }
