@@ -106,7 +106,7 @@ merge-blocking tenant linter (`tools/orgscope`).
 
 | Symptom | Examples |
 |---|---|
-| Controls that display but don't enforce | Admin "revoke session" was inert — fixed on this branch (§3.1-A1); assignment isn't a grant until rollout (§1.1); IP threat list ignored by login risk scoring; voice MFA UI over a no-op backend |
+| Controls that display but don't enforce | All fixed on this branch except the flag flip: admin "revoke session" was inert (§3.1-A1), the IP threat list was ignored by login risk scoring (A2), voice MFA displayed over a no-op backend (A3), SAML SLO never notified SPs (A4). Remaining: assignment isn't a grant until the rollout flips (§1.1) |
 | First contact fails | Fixed on this branch: the getting-started doc left a new user unable to log in, and the README quick start referenced files that don't exist. Still open: `helm install` cannot bootstrap its own schema (P3) |
 | The trust story contradicts itself | `SECURITY.md` still says "multi-tenant SaaS isolation is not implemented" while README and SECURITY-TENANCY.md (correctly) say the opposite; the published docs site describes a Keycloak-based product with **no PAM or ZTNA sections at all** |
 | Shipped but unreleased | Last release v1.27.0 (2026-07-13); ~7 weeks of major work — including security fixes — sits in `[Unreleased]` |
@@ -154,16 +154,26 @@ product; either wire them or remove them from the UI.
   access tokens live up to their TTL (default 1 h) because request-path
   middleware checks signature+expiry only; the kill switch remains the
   incident-response path.
-- **A2 — IP threat list doesn't feed login risk.**
-  `internal/risk/scorer.go:476` `isIPBlocked` is a placeholder returning
-  `false`. Admins populate the list, IBDR auto-writes it, and the access
-  proxy honors it — but it contributes zero to the login risk score that
-  drives step-up MFA.
-- **A3 — Voice-call MFA is a dead feature** (enrollable, never verifiable;
-  provider never instantiated). Hide the four routes or wire Twilio.
-- **A4 — SAML Single Logout never sends the LogoutRequest**
-  (`internal/oauth/saml_slo.go:480` builds and logs it). SP sessions
-  survive logout.
+- **A2 — IP threat list didn't feed login risk.** *Shipped on this branch:*
+  the placeholder `isIPBlocked` is gone. The login score
+  (`risk.Service.CalculateRiskScore`) gains an `ip_threat_list` factor at
+  **+70 — exactly the step-up threshold**, so a listed source alone forces
+  MFA (and denies an MFA-less account); the weighted `Scorer`'s
+  `ip_reputation` signal gets the real lookup via an injected checker.
+- **A3 — Voice-call MFA was a dead feature** (enrollable, never verifiable;
+  provider never instantiated; the stub returned fake call SIDs). *Shipped
+  on this branch:* the flow now fails closed and loudly —
+  `CreatePhoneCallChallenge` refuses with a 501 "not configured on this
+  installation" when no provider is wired, and the stub Twilio provider
+  errors instead of fabricating success. Wiring a real call provider stays
+  optional follow-up work.
+- **A4 — SAML Single Logout never sent the LogoutRequest**
+  (`internal/oauth/saml_slo.go` built the URL and logged it). *Shipped on
+  this branch:* the back-channel dispatch is real — the LogoutRequest is
+  delivered to each SP's SLO endpoint over the HTTP-Redirect binding,
+  signed per SAML Bindings 3.4.4.1 (SigAlg + Signature), through the
+  service's circuit-breakered outbound client, with delivery failures
+  logged as such instead of pretending.
 - **A5 — Assignment isn't a grant until the rollout flips** (§1.1) — the
   systemic instance of this class.
 - Minor same-class: DB-backed feature flags silently fall back to memory
@@ -302,8 +312,10 @@ exactly — it is already written:
 6. Create the first MFA policy (`{"factor_enrolled": true}`) and chase
    enrollment via MFA Management stats.
 
-Then finish the story: fold A2 (threat list → risk score) and decide
-A3/A4 (wire or remove voice MFA and SAML SLO).
+The P1 tail items are **already shipped on this branch**: A2 (threat list
+→ risk score), A3 (voice MFA fails closed instead of pretending), A4
+(SAML SLO actually notifies SPs, signed). What remains of P1 is the
+rollout itself — steps 1–6 above, run against the live deployment.
 
 *Exit test:* for any user, **My Apps & Network, the assignment report, the
 proxy, `/oauth/authorize` and the Ziti controller all give the same
@@ -438,7 +450,7 @@ defect: either wire it or remove it.
 | Tenet | Mechanism | Status |
 |---|---|---|
 | All resources dark; access per-session | Ziti overlay, no inbound ports, per-session circuits | ✅ (per-app scoping post-P1) |
-| Dynamic policy: identity + device + context | Posture checks, risk engine, step-up, MFA policy | ⚠️ threat list not in login score (A2); MFA policy live post-P1 |
+| Dynamic policy: identity + device + context | Posture checks, risk engine, step-up, MFA policy | ⚠️ A2 closed on this branch (threat list feeds the login score); MFA policy live post-rollout |
 | Monitor & measure integrity | Posture, EDR integration, audit hash-chain | ✅ |
 | Authenticate/authorize strictly before access | OIDC/SAML + MFA + fail-closed RLS/OPA | ✅ (revocation latency caveat, A1/TTL) |
 | Least privilege per request | Assignment-as-grant, JIT, SoD, vault checkout | ⚠️ becomes true when `ACCESS_ASSIGNMENT_ENFORCE=true` |
