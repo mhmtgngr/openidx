@@ -148,13 +148,18 @@ jobs:
       - name: Install govulncheck
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
 
+      # Blocking on purpose: govulncheck reports only reachable vulnerabilities
+      # (symbol-level), so a failure here is a real call path into a known CVE,
+      # not dependency noise. Verified clean at the time this gate was armed.
+      # tee keeps the report for the artifact upload below even on failure.
       - name: Run govulncheck
         id: vulncheck
         run: |
-          govulncheck ./... | tee govulncheck-report.txt || true
-        continue-on-error: true
+          set -o pipefail
+          govulncheck ./... | tee govulncheck-report.txt
 
       - name: Upload govulncheck results
+        if: always()
         uses: actions/upload-artifact@v6
         with:
           name: govulncheck-report
@@ -437,9 +442,12 @@ jobs:
             echo "- $(basename $file)" >> $GITHUB_STEP_SUMMARY
           done
 
+      # This is the gate docker.yml defers to ("gating happens in the nightly
+      # Security Scanning workflow") — it must actually fail the run. It used
+      # to carry continue-on-error, which meant no scan result could ever red
+      # this workflow.
       - name: Fail on critical findings (schedule only)
         if: contains(needs.*.result, 'failure')
         run: |
-          echo "One or more security scans failed. Please review the results."
+          echo "One or more security scan jobs failed. Review the job logs and reports above."
           exit 1
-        continue-on-error: true
