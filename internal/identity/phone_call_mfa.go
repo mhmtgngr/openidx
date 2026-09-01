@@ -83,8 +83,20 @@ func (s *Service) EnrollPhoneCall(ctx context.Context, userID, phoneNumber, coun
 	return s.CreatePhoneCallChallenge(ctx, userID, fullNumber, "outbound")
 }
 
+// ErrPhoneCallMFANotConfigured is returned when the phone-call factor is
+// exercised on an installation with no call provider wired.
+var ErrPhoneCallMFANotConfigured = fmt.Errorf("phone-call MFA is not configured on this installation")
+
 // CreatePhoneCallChallenge creates a phone call challenge and initiates the call
 func (s *Service) CreatePhoneCallChallenge(ctx context.Context, userID, phoneNumber, callType string) (*PhoneCallChallenge, error) {
+	// Refuse up front when no call provider is wired (SetPhoneCallProvider).
+	// This path used to store the challenge, skip the call, and report
+	// success — the user waits for a call that never comes and the factor
+	// can never verify. A control that displays must be true.
+	if s.phoneCallProvider == nil {
+		return nil, ErrPhoneCallMFANotConfigured
+	}
+
 	// Generate 6-digit code
 	code, err := generateSecureCode(6)
 	if err != nil {
@@ -111,25 +123,23 @@ func (s *Service) CreatePhoneCallChallenge(ctx context.Context, userID, phoneNum
 		return nil, err
 	}
 
-	// Initiate the call (if provider is configured)
-	var callSID string
-	if s.phoneCallProvider != nil {
-		callSID, err = s.phoneCallProvider.InitiateCall(phoneNumber, code, "en-US")
-		if err != nil {
-			// Update status to failed
-			s.db.Pool.Exec(ctx,
-				"UPDATE phone_call_challenges SET status = 'failed' WHERE id = $1",
-				challengeID,
-			)
-			return nil, fmt.Errorf("failed to initiate call: %w", err)
-		}
-
-		// Update with call SID
+	// Initiate the call. The provider was verified non-nil above, so a
+	// stored challenge always corresponds to a call that was attempted.
+	callSID, err := s.phoneCallProvider.InitiateCall(phoneNumber, code, "en-US")
+	if err != nil {
+		// Update status to failed
 		s.db.Pool.Exec(ctx,
-			"UPDATE phone_call_challenges SET call_sid = $1, status = 'calling' WHERE id = $2",
-			callSID, challengeID,
+			"UPDATE phone_call_challenges SET status = 'failed' WHERE id = $1",
+			challengeID,
 		)
+		return nil, fmt.Errorf("failed to initiate call: %w", err)
 	}
+
+	// Update with call SID
+	s.db.Pool.Exec(ctx,
+		"UPDATE phone_call_challenges SET call_sid = $1, status = 'calling' WHERE id = $2",
+		callSID, challengeID,
+	)
 
 	return &PhoneCallChallenge{
 		ID:          challengeID,
@@ -274,26 +284,18 @@ type TwilioPhoneCallProvider struct {
 	FromNumber string
 }
 
-// InitiateCall makes a phone call via Twilio
+// InitiateCall makes a phone call via Twilio.
+//
+// NOT IMPLEMENTED: the Twilio API integration was never written (the TwiML
+// draft lived in a comment here). It used to return a fabricated call SID
+// and GetCallStatus always said "completed", so anyone wiring this provider
+// would ship a factor that looks healthy and never rings a phone. It now
+// fails loudly until a real integration exists.
 func (t *TwilioPhoneCallProvider) InitiateCall(phoneNumber, code, language string) (string, error) {
-	// In production, this would use Twilio's API to make a call
-	// The TwiML would speak the verification code
-	/*
-		twiml := fmt.Sprintf(`
-			<Response>
-				<Say voice="alice" language="%s">
-					Your verification code is: %s. I repeat: %s.
-				</Say>
-			</Response>
-		`, language, formatCodeForSpeech(code), formatCodeForSpeech(code))
-	*/
-
-	// For now, return a mock call SID
-	return "CALL_" + uuid.New().String()[:8], nil
+	return "", fmt.Errorf("TwilioPhoneCallProvider is not implemented: no call is placed; wire a real PhoneCallProvider")
 }
 
-// GetCallStatus gets the status of a Twilio call
+// GetCallStatus gets the status of a Twilio call.
 func (t *TwilioPhoneCallProvider) GetCallStatus(callSID string) (string, error) {
-	// In production, query Twilio API for call status
-	return "completed", nil
+	return "", fmt.Errorf("TwilioPhoneCallProvider is not implemented")
 }
