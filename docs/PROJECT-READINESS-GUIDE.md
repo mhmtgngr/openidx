@@ -126,7 +126,7 @@ caveats · ❌ broken/missing.
 | # | Journey (persona) | Status | The caveat that matters |
 |---|---|---|---|
 | J1 | **First run** — deploy → log in → rotate admin → create org (operator) | ✅⚠️ | *Fixed on this branch:* README quick start is now the working compose path with the first-login credential and a hardware floor; `GETTING-STARTED.md` carries the authoritative First Login section; production refuses to start on the unrotated default admin. Remaining ⚠️: `helm install` still runs no migrations and references an OPA service the chart never creates (P3). |
-| J2 | **Joiner** — create/sync user → enroll MFA → first login → sees their apps (end user) | ✅⚠️ | Real: user CRUD/SCIM/directory sync, MFA wizard (TOTP/WebAuthn/push/recovery), portal. Caveats: WebAuthn challenges are in-memory (`internal/identity/service.go:206`) → passkeys break with >1 replica; a typo'd `SMS_PROVIDER` silently falls back to a mock that delivers nothing (`internal/sms/service.go:115`); phone-call MFA is enrollable but can never verify (dead provider, fails closed — `internal/identity/phone_call_mfa.go:278`). |
+| J2 | **Joiner** — create/sync user → enroll MFA → first login → sees their apps (end user) | ✅⚠️ | Real: user CRUD/SCIM/directory sync, MFA wizard (TOTP/WebAuthn/push/recovery), portal. *Fixed on this branch:* WebAuthn ceremonies now live in Redis with a TTL (passkeys survive >1 replica; the in-memory map is a single-replica fallback with lazy expiry), and phone-call MFA fails closed with a 501 instead of pretending (A3). Remaining ⚠️: a typo'd `SMS_PROVIDER` silently falls back to a mock that delivers nothing (`internal/sms/service.go:115`). |
 | J3 | **App access** — publish app → assign → user launches with SSO → reach matches (admin + user) | ⚠️ | SSO itself is solid (OIDC/PKCE, SAML, consent). But assignment drives real reach **only after the convergence rollout** (§1.1). Today the report-only machinery observes the gap; `#874` already made "My Apps & Network" show enforced truth. Execute rollout Task 16. |
 | J4 | **Network access** — enroll agent/BrowZer → posture check → reach a dark service (end user) | ✅ | Real: Windows/Android agents, BrowZer clientless, posture checks, reconciler, `tools/darkprobe` proves dark services are reachable only by authorized identities, and a "going dark" runbook exists. Per-app scoping of dial policies arrives with the same rollout as J3. |
 | J5 | **Privileged access** — request → approve → checkout/brokered session → recording → review (engineer + auditor) | ✅❌ | Functionally the strongest pillar: vault with rotation, Guacamole + in-browser wasm-SSH, recordings with encryption/retention/legal hold, break-glass. But **zero user-facing PAM documentation and zero OpenAPI coverage** of `/pam/*` — a headline pillar that is invisible to evaluators and undocumented for users. |
@@ -352,7 +352,9 @@ all four pillars, deploy, log in, and find PAM.
 2. **Finish the Helm chart**: migration Job/hook, real or removed
    OPA/APISIX toggles, `securityContext`, ServiceMonitor, backup CronJob,
    chart publishing (or delete the README's Helm section until true).
-3. **Move WebAuthn challenges to Redis with TTL** (unblocks >1 replica).
+3. ✅ **WebAuthn challenges moved to Redis with TTL** — shipped on this
+   branch (`internal/identity/webauthn.go`); the in-memory map remains
+   only as a single-replica fallback with lazy expiry.
 4. **Sign release artifacts** (SHA256SUMS + cosign; images already get
    provenance/SBOM — extend to binaries).
 5. Deduplicate Dependabot/Renovate; prune dead surfaces (D).

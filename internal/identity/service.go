@@ -203,7 +203,7 @@ type Service struct {
 	redis             *database.RedisClient
 	cfg               *config.Config
 	logger            *zap.Logger
-	webauthnSessions  sync.Map // In-memory storage for WebAuthn sessions (use Redis in production)
+	webauthnSessions  sync.Map // fallback store for WebAuthn ceremonies; Redis (with TTL) is primary — see webauthn.go
 	directoryService  DirectoryAuthenticator
 	emailService      EmailSender
 	webhookService    WebhookPublisher
