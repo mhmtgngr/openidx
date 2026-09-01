@@ -1,0 +1,51 @@
+# Operational tools image: cmd/migrate + cmd/backup in one small image.
+# Consumed by the Helm chart's migration Job (post-install/pre-upgrade hook)
+# and backup CronJob — the compose stack runs migrations via the services'
+# AUTO_MIGRATE path instead, so this image is Kubernetes-facing.
+
+# ============================================
+# Stage 1: Build
+# ============================================
+FROM golang:1.26-alpine AS builder
+
+RUN apk add --no-cache git ca-certificates gcc musl-dev && \
+    echo 'precedence ::ffff:0:0/96 100' >> /etc/gai.conf
+
+WORKDIR /app
+
+COPY go.mod go.sum ./
+RUN go mod download && go mod verify
+
+COPY . .
+
+ARG VERSION=dev
+
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -a -ldflags="-w -s -X main.Version=${VERSION}" -trimpath \
+    -o /app/migrate ./cmd/migrate && \
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -a -ldflags="-w -s -X main.Version=${VERSION}" -trimpath \
+    -o /app/backup ./cmd/backup
+
+# ============================================
+# Stage 2: Runtime
+# ============================================
+FROM alpine:3.24
+
+RUN apk add --no-cache ca-certificates tzdata && \
+    rm -rf /var/cache/apk/*
+
+RUN addgroup -S openidx && \
+    adduser -S openidx -G openidx
+
+WORKDIR /app
+
+COPY --from=builder /app/migrate /app/migrate
+COPY --from=builder /app/backup /app/backup
+
+USER openidx
+
+# No ENTRYPOINT: callers pick the tool —
+#   /app/migrate up            (Helm migration Job)
+#   /app/backup create|verify  (Helm backup CronJob)
+CMD ["/app/migrate", "status"]

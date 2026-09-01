@@ -6,10 +6,12 @@ P1 A-defect tail done (A2/A3/A4), P2 done in full** (docs site, quickstart
 fold + banners, PAM guide **and the full `/pam/*` OpenAPI spec**, auditor
 artifacts: [threat model](./THREAT-MODEL.md) and
 [control mapping](./COMPLIANCE-CONTROL-MAPPING.md), doc-tree separation
-via [docs/README.md](./README.md)), **P3.3–3.5a done** (WebAuthn→Redis,
-signed releases, Dependabot/Renovate dedupe). Open: P1 rollout Task 16
-(operator action), P3.1 cut v1.28.0 (post-merge), P3.2 Helm completion,
-P3.5b dead-surface pruning, P4.)
+via [docs/README.md](./README.md)), **P3.2–3.5a done** (Helm chart
+finished — migration hook Job, real OPA, ServiceMonitor, backup CronJob,
+Keycloak/APISIX ghosts removed; WebAuthn→Redis; signed releases;
+Dependabot/Renovate dedupe). Open: P1 rollout Task 16 (operator action),
+P3.1 cut v1.28.0 (post-merge), chart-repo publishing, P3.5b dead-surface
+pruning, P4.)
 **Question this document answers:** *Is OpenIDX fully functional and well defined end to end, as experienced by the people who use it — and what are the next steps and controls to get it there?*
 
 This is the product-and-user-side companion to
@@ -115,7 +117,7 @@ merge-blocking tenant linter (`tools/orgscope`).
 | Symptom | Examples |
 |---|---|
 | Controls that display but don't enforce | All fixed on this branch except the flag flip: admin "revoke session" was inert (§3.1-A1), the IP threat list was ignored by login risk scoring (A2), voice MFA displayed over a no-op backend (A3), SAML SLO never notified SPs (A4). Remaining: assignment isn't a grant until the rollout flips (§1.1) |
-| First contact fails | Fixed on this branch: the getting-started doc left a new user unable to log in, and the README quick start referenced files that don't exist. Still open: `helm install` cannot bootstrap its own schema (P3) |
+| First contact fails | Fixed on this branch: the getting-started doc left a new user unable to log in, and the README quick start referenced files that don't exist. Also fixed: `helm install` now bootstraps its own schema (migration hook Job) |
 | The trust story contradicts itself | `SECURITY.md` still says "multi-tenant SaaS isolation is not implemented" while README and SECURITY-TENANCY.md (correctly) say the opposite; the published docs site describes a Keycloak-based product with **no PAM or ZTNA sections at all** |
 | Shipped but unreleased | Last release v1.27.0 (2026-07-13); ~7 weeks of major work — including security fixes — sits in `[Unreleased]` |
 
@@ -133,7 +135,7 @@ caveats · ❌ broken/missing.
 
 | # | Journey (persona) | Status | The caveat that matters |
 |---|---|---|---|
-| J1 | **First run** — deploy → log in → rotate admin → create org (operator) | ✅⚠️ | *Fixed on this branch:* README quick start is now the working compose path with the first-login credential and a hardware floor; `GETTING-STARTED.md` carries the authoritative First Login section; production refuses to start on the unrotated default admin. Remaining ⚠️: `helm install` still runs no migrations and references an OPA service the chart never creates (P3). |
+| J1 | **First run** — deploy → log in → rotate admin → create org (operator) | ✅⚠️ | *Fixed on this branch:* README quick start is now the working compose path with the first-login credential and a hardware floor; `GETTING-STARTED.md` carries the authoritative First Login section; production refuses to start on the unrotated default admin. *Also fixed:* the Helm chart now runs migrations itself (post-install/pre-upgrade hook Job) and actually deploys the OPA its `opaUrl` points at — `helm install` bootstraps a working deployment. |
 | J2 | **Joiner** — create/sync user → enroll MFA → first login → sees their apps (end user) | ✅⚠️ | Real: user CRUD/SCIM/directory sync, MFA wizard (TOTP/WebAuthn/push/recovery), portal. *Fixed on this branch:* WebAuthn ceremonies now live in Redis with a TTL (passkeys survive >1 replica; the in-memory map is a single-replica fallback with lazy expiry), and phone-call MFA fails closed with a 501 instead of pretending (A3). Remaining ⚠️: a typo'd `SMS_PROVIDER` silently falls back to a mock that delivers nothing (`internal/sms/service.go:115`). |
 | J3 | **App access** — publish app → assign → user launches with SSO → reach matches (admin + user) | ⚠️ | SSO itself is solid (OIDC/PKCE, SAML, consent). But assignment drives real reach **only after the convergence rollout** (§1.1). Today the report-only machinery observes the gap; `#874` already made "My Apps & Network" show enforced truth. Execute rollout Task 16. |
 | J4 | **Network access** — enroll agent/BrowZer → posture check → reach a dark service (end user) | ✅ | Real: Windows/Android agents, BrowZer clientless, posture checks, reconciler, `tools/darkprobe` proves dark services are reachable only by authorized identities, and a "going dark" runbook exists. Per-app scoping of dial policies arrives with the same rollout as J3. |
@@ -211,11 +213,17 @@ product; either wire them or remove them from the UI.
   first-login credential, a hardware floor, an honest local-chart Helm
   section, real documentation links, no Keycloak in `make dev` output,
   and `install.cmd` (an unrelated CLI bootstrap script) deleted.
-- **B4 — `helm install` yields a non-working deployment**: no migration
-  Job/hook (docs claim `AUTO_MIGRATE=true`, which exists nowhere), inert
-  `apisix.enabled`/`opa.enabled` values with `opaUrl` pointing at a Service
-  the chart never creates (governance is fail-closed → breaks), no
-  `securityContext`, `Chart.yaml` still declaring a Keycloak dependency.
+- **B4 — `helm install` yields a non-working deployment** — ✅ *fixed on
+  this branch*: as audited there was no migration Job/hook (docs claimed
+  `AUTO_MIGRATE=true`, which exists nowhere), `opa.enabled` was inert with
+  `opaUrl` pointing at a Service the chart never created (governance is
+  fail-closed → breaks), `apisix.enabled` deployed nothing, and
+  `Chart.yaml` still declared a Keycloak dependency. Now: a
+  post-install/pre-upgrade migration Job (new `tools` image), a real OPA
+  Deployment/Service behind `opaUrl`, the fake `apisix`/`keycloak` values
+  gone, plus a ServiceMonitor and backup CronJob (both opt-in) — with the
+  hardened `networkPolicy` profile taught to admit the new migrate/backup/
+  OPA traffic.
   Open — tracked as P3; the README no longer advertises it as hosted.
 - **B5 — Grafana shipped admin/admin; dev-kube applied changeme secrets.**
   *Shipped on this branch:* `GRAFANA_ADMIN_PASSWORD` is now required with
@@ -384,9 +392,19 @@ all four pillars, deploy, log in, and find PAM.
 
 1. **Cut v1.28.0 now** — 7 weeks of work including security fixes is
    sitting unreleased; `docs/RELEASING.md` already defines the process.
-2. **Finish the Helm chart**: migration Job/hook, real or removed
-   OPA/APISIX toggles, `securityContext`, ServiceMonitor, backup CronJob,
-   chart publishing (or delete the README's Helm section until true).
+2. ✅ **Helm chart finished** — *on this branch* (chart `0.2.0`):
+   migration Job as a post-install/pre-upgrade hook (new `tools` image
+   built in CI: `cmd/migrate` + `cmd/backup`); a **real** OPA
+   Deployment/Service behind `config.opaUrl` (policies via
+   `opa.policyConfigMap`); the fake `apisix` toggle and the entire
+   Keycloak dependency/values/env removed; opt-in ServiceMonitor
+   (scrapes `/metrics` on all 8 services) and backup CronJob
+   (PVC or S3, retention, encrypted via the chart key); the
+   `networkPolicy` profile now admits migrate/backup→Postgres and
+   services→OPA. Validated: `helm lint` clean, `helm template` parsed
+   across default/all-on/external-secrets/networkPolicy combinations.
+   *Still open:* publishing the chart to a hosted repo (README documents
+   the in-repo install honestly).
 3. ✅ **WebAuthn challenges moved to Redis with TTL** — shipped on this
    branch (`internal/identity/webauthn.go`); the in-memory map remains
    only as a single-replica fallback with lazy expiry.

@@ -409,6 +409,53 @@ spec:
       ports:
         - protocol: TCP
           port: 5432
+    # migration Job (post-install/pre-upgrade hook) — without this the
+    # hardened profile breaks its own schema bootstrap
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "openidx.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: migrate
+      ports:
+        - protocol: TCP
+          port: 5432
+    # backup CronJob
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "openidx.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: backup
+      ports:
+        - protocol: TCP
+          port: 5432
+{{- end }}
+---
+###############################################################################
+# OPA (port 8281)
+# Receives policy queries from every OpenIDX service
+###############################################################################
+{{- if .Values.opa.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "openidx.fullname" . }}-opa-allow
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "openidx.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: opa
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "openidx.selectorLabels" . | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 8281
 {{- end }}
 ---
 ###############################################################################

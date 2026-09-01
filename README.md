@@ -145,9 +145,11 @@ make dev         # or: full stack via the base compose file
 ### Kubernetes
 
 The Helm chart lives in-repo at `deployments/kubernetes/helm/openidx`
-(no hosted chart repository yet) and currently expects you to run
-migrations and provide OPA yourself — read
-[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) before using it:
+(no hosted chart repository yet). It runs database migrations itself (a
+post-install/pre-upgrade hook Job) and deploys OPA for the policy engine;
+run `helm dependency update` first for the bundled PostgreSQL/Redis/
+Elasticsearch, and read [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) before
+using it:
 
 ```bash
 helm install openidx ./deployments/kubernetes/helm/openidx \

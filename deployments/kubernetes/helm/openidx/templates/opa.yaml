@@ -1,0 +1,103 @@
+{{- if .Values.opa.enabled }}
+# Open Policy Agent — the engine behind config.opaUrl. The Service is named
+# literally `opa` (not fullname-prefixed) so the default
+# OPA_URL=http://opa:8281 resolves without configuration, matching the
+# compose stack. Policies come from an operator-created ConfigMap
+# (values: opa.policyConfigMap); without one OPA runs empty and every
+# governance query evaluates to undefined.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "openidx.fullname" . }}-opa
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: opa
+spec:
+  replicas: {{ .Values.opa.replicas | default 2 }}
+  selector:
+    matchLabels:
+      {{- include "openidx.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: opa
+  template:
+    metadata:
+      labels:
+        {{- include "openidx.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: opa
+    spec:
+      serviceAccountName: {{ .Values.serviceAccount.name | default "openidx" }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if .Values.podAntiAffinity.enabled }}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: {{ .Values.podAntiAffinity.weight | default 100 }}
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/component: opa
+                topologyKey: kubernetes.io/hostname
+      {{- end }}
+      containers:
+        - name: opa
+          image: {{ .Values.opa.image | quote }}
+          args:
+            - "run"
+            - "--server"
+            - "--addr=0.0.0.0:8281"
+            - "--log-level=info"
+            {{- if .Values.opa.policyConfigMap }}
+            - "/policies"
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: 8281
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.opa.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          {{- if .Values.opa.policyConfigMap }}
+          volumeMounts:
+            - name: policies
+              mountPath: /policies
+              readOnly: true
+          {{- end }}
+      {{- if .Values.opa.policyConfigMap }}
+      volumes:
+        - name: policies
+          configMap:
+            name: {{ .Values.opa.policyConfigMap }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  # Deliberately unprefixed: config.opaUrl defaults to http://opa:8281.
+  name: opa
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: opa
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8281
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "openidx.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: opa
+{{- end }}

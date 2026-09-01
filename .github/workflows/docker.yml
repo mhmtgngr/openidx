@@ -48,6 +48,10 @@ jobs:
           - service: admin-console
             dockerfile: deployments/docker/Dockerfile.admin-console
             target: production
+          # Operational tools (cmd/migrate + cmd/backup) for the Helm chart's
+          # migration Job and backup CronJob.
+          - service: tools
+            dockerfile: deployments/docker/Dockerfile.tools
 
     steps:
       - uses: actions/checkout@v7
@@ -163,7 +167,7 @@ jobs:
         run: |
           for service in identity-service governance-service provisioning-service \
                          audit-service admin-api oauth-service gateway-service \
-                         access-service admin-console; do
+                         access-service admin-console tools; do
             echo "Tagging $service ${{ steps.version.outputs.version }}..."
             docker buildx imagetools create \
               --tag "${{ env.IMAGE_PREFIX }}/$service:${{ steps.version.outputs.version }}" \

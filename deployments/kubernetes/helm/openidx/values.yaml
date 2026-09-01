@@ -11,7 +11,6 @@ secrets:
   redisPassword: ""          # REQUIRED
   jwtSecret: ""              # REQUIRED - min 32 chars
   encryptionKey: ""          # REQUIRED - exactly 32 bytes
-  keycloakAdminPassword: ""
   smtpPassword: ""
   # PAM dedicated brokers (pamBroker.enabled). REST admin credentials for the
   # direct + ziti Guacamole brokers, and the brokers' Postgres password.
@@ -44,7 +43,6 @@ global:
 
 # ----- Service URLs (ConfigMap) -----
 config:
-  keycloakUrl: "http://keycloak:8180"
   opaUrl: "http://opa:8281"
   elasticsearchUrl: "http://elasticsearch:9200"
   oauthIssuer: "https://auth.openidx.io"
@@ -437,37 +435,79 @@ adminConsole:
     targetCPUUtilizationPercentage: 80
     targetMemoryUtilizationPercentage: 80
 
-# Keycloak (legacy/optional). OpenIDX ships its own oauthService as the
-# default OIDC provider, so this subchart is disabled by default. Enable it
-# only if you want to front OpenIDX with an external Keycloak.
-keycloak:
-  enabled: false
-  auth:
-    adminUser: admin
-    adminPassword: ""  # Set via secret
-  postgresql:
-    enabled: false  # Use external PostgreSQL
-  externalDatabase:
-    host: ""
-    port: 5432
-    user: keycloak
-    password: ""
-    database: keycloak
-
-# APISIX
-apisix:
-  enabled: true
-  gateway:
-    type: LoadBalancer
-  ingress-controller:
-    enabled: true
-  dashboard:
-    enabled: true
-
-# OPA
+# OPA — the policy engine the governance service consults (config.opaUrl).
+# This renders a real Deployment + Service (templates/opa.yaml); the Service
+# is named literally `opa` so the default opaUrl resolves. Policies load from
+# a ConfigMap you create from the repo's policy bundle, e.g.:
+#   kubectl create configmap opa-policies --from-file=deployments/docker/opa/policies/
+# With policyConfigMap empty, OPA starts with no policies (every query returns
+# undefined) — fine for evaluation, not for enforcing governance rules.
 opa:
   enabled: true
   replicas: 2
+  image: openpolicyagent/opa:0.61.0   # pinned with the compose stack
+  policyConfigMap: ""
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
+# ----- Database migrations (in-chart) -----
+# A Helm hook Job (templates/migrate-job.yaml) runs `migrate up` from the
+# tools image: post-install (after the bundled PostgreSQL exists) and
+# pre-upgrade (schema-first, before new pods roll). Services may crash-loop
+# for a few seconds on a fresh install until the schema lands — that is the
+# Job racing the Deployments, and it converges. Disable only if you run
+# migrations out-of-band.
+migrations:
+  enabled: true
+  image:
+    repository: tools
+    tag: latest
+    pullPolicy: IfNotPresent
+  backoffLimit: 6
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+# ----- Scheduled database backups -----
+# CronJob running `backup create` from the tools image (cmd/backup: encrypted,
+# retention-pruned, optional S3 offload). Disabled by default because a backup
+# needs a destination decision: either a PVC (pvc.create) or S3 (s3.*).
+# BACKUP_ENCRYPTION_KEY reuses secrets.encryptionKey via the chart secret.
+backup:
+  enabled: false
+  schedule: "0 3 * * *"
+  retentionCount: 7
+  image:
+    repository: tools
+    tag: latest
+    pullPolicy: IfNotPresent
+  pvc:
+    create: true
+    size: 20Gi
+    storageClass: ""
+    accessMode: ReadWriteOnce
+  s3:
+    bucket: ""
+    region: ""
+    endpoint: ""
+    # Secret with BACKUP_S3_ACCESS_KEY / BACKUP_S3_SECRET_KEY keys.
+    credentialsSecret: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
 
 # Database connection options (applied to the generated DATABASE_URL secret)
 database:
@@ -484,7 +524,8 @@ database:
   #                    off). WARNING: applies to ALL services sharing this config —
   #                    keep generous enough for audit/governance reports, and do
   #                    NOT set it so low that legitimate bulk work is aborted.
-  #                    Run migrations out-of-band (they are not part of this chart).
+  #                    The chart's migration Job (migrations.enabled) runs with
+  #                    its own connection and is not subject to this cap.
   connectTimeout: ""
   statementTimeout: ""
 
@@ -522,14 +563,19 @@ elasticsearch:
       requests:
         storage: 30Gi
 
-# Monitoring
+# Monitoring — assumes a prometheus-operator (kube-prometheus-stack) or
+# compatible CRDs in the cluster; the chart does not deploy Prometheus itself.
+# monitoring.enabled gates the PrometheusRule alert bundle; serviceMonitor
+# gates a ServiceMonitor scraping /metrics on every enabled OpenIDX service
+# (all eight expose it on their HTTP port).
 monitoring:
   enabled: true
-  prometheus:
-    enabled: true
-  grafana:
-    enabled: true
-    adminPassword: ""  # Set via secret
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    scrapeTimeout: 10s
+    # Extra labels for Prometheus instance selection (e.g. release: kube-prometheus-stack)
+    labels: {}
 
   # Alert delivery.
   #

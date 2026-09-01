@@ -1,0 +1,68 @@
+{{- if .Values.migrations.enabled }}
+# Database migration Job — the reason `helm install` yields a working
+# deployment without out-of-band steps.
+#
+# Hook timing, deliberately asymmetric:
+#   post-install — on a fresh install the bundled PostgreSQL is itself a
+#     chart resource, so a pre-install hook would run before any database
+#     exists and deadlock. Post-install, the wait-for-db init container
+#     holds until PostgreSQL answers, then migrates; services crash-loop
+#     briefly until the schema lands and then converge (helm --wait blocks
+#     on this Job succeeding).
+#   pre-upgrade — schema first, before any new pod rolls, so a new binary
+#     never meets an old schema.
+#
+# hook-delete-policy keeps the most recent Job around for `kubectl logs`
+# until the next run replaces it.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "openidx.fullname" . }}-migrate
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    "helm.sh/hook": post-install,pre-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: {{ .Values.migrations.backoffLimit | default 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "openidx.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: migrate
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: {{ .Values.serviceAccount.name | default "openidx" }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if .Values.postgresql.enabled }}
+      # Only meaningful with the bundled PostgreSQL; an external database
+      # (postgresql.enabled=false) is assumed reachable already.
+      initContainers:
+        - name: wait-for-postgres
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z {{ include "openidx.fullname" . }}-postgresql 5432; do
+                echo "waiting for postgresql..."; sleep 2;
+              done
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+      {{- end }}
+      containers:
+        - name: migrate
+          image: "{{ .Values.global.imageRegistry }}/{{ .Values.migrations.image.repository }}:{{ .Values.migrations.image.tag }}"
+          imagePullPolicy: {{ .Values.migrations.image.pullPolicy | default "IfNotPresent" }}
+          command: ["/app/migrate", "up"]
+          envFrom:
+            - secretRef:
+                name: {{ include "openidx.fullname" . }}-db-url
+          resources:
+            {{- toYaml .Values.migrations.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+{{- end }}
