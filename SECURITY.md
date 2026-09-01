@@ -205,6 +205,17 @@ database) is documented in
 before deploying OpenIDX in a setting where two unrelated
 organizations share one installation.
 
+For security reviewers and auditors:
+
+- **[docs/THREAT-MODEL.md](./docs/THREAT-MODEL.md)** — the full platform
+  threat model: trust boundaries, per-component STRIDE analysis (overlay,
+  PAM broker, recordings, credential vault, audit chain), and the honest
+  residual-risk / operator-obligation list.
+- **[docs/COMPLIANCE-CONTROL-MAPPING.md](./docs/COMPLIANCE-CONTROL-MAPPING.md)**
+  — SOC 2 and ISO/IEC 27001:2022 criteria mapped to OpenIDX capabilities
+  with evidence pointers, plus the project's own SDLC controls for
+  vendor-risk reviews.
+
 ---
 
 Thank you for helping keep OpenIDX secure!
