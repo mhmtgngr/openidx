@@ -81,6 +81,19 @@ func TestPublishSessionRevocationsReportsFailures(t *testing.T) {
 	}
 }
 
+// TestScrubLogValueCutsCRLF: session and user ids in the revoke handlers come
+// from the URL path, so they are attacker-typeable; a CR/LF smuggled into one
+// must not forge extra log lines.
+func TestScrubLogValueCutsCRLF(t *testing.T) {
+	in := "abc\r\nFAKE level=info msg=owned\rdef\n"
+	if got := scrubLogValue(in); got != "abcFAKE level=info msg=owneddef" {
+		t.Errorf("scrubLogValue(%q) = %q; CR/LF must be removed entirely", in, got)
+	}
+	if got := scrubLogValue("plain-uuid"); got != "plain-uuid" {
+		t.Errorf("clean values must pass through unchanged, got %q", got)
+	}
+}
+
 // TestPublishSessionRevocationsNilRedis: a Service constructed without Redis
 // (tests, degraded boot) must warn rather than panic or stay silent.
 func TestPublishSessionRevocationsNilRedis(t *testing.T) {
