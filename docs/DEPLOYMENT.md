@@ -319,7 +319,7 @@ backends:
 | UI | URL (local compose) |
 |----|---------------------|
 | Prometheus | http://localhost:9090 |
-| Grafana | http://localhost:3001 (admin / admin) |
+| Grafana | http://localhost:3001 (admin / `$GRAFANA_ADMIN_PASSWORD` from your `.env` — the old admin/admin fallback is gone; compose refuses to start without the variable) |
 | Jaeger | http://localhost:16686 |
 
 Traces are emitted when `TRACING_ENABLED=true` (services export OTLP to
