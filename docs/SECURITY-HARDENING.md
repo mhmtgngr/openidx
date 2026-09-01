@@ -10,7 +10,9 @@ the logs.
 
 You can use this file in two ways:
 
-1. As a deployment checklist for a single-tenant production install.
+1. As a deployment checklist for a production install (single- or
+   multi-tenant; the tenant boundary itself is covered by
+   [SECURITY-TENANCY.md](./SECURITY-TENANCY.md)).
 2. As a reference for what the validator already enforces, so you don't
    have to re-derive it from the source.
 

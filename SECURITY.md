@@ -118,21 +118,39 @@ OpenIDX includes the following security features:
 - **Security Headers**: CSP, HSTS, and other security headers
 - **Regular Updates**: Automated dependency updates and security patches
 
-### Trust Model (single-tenant)
+### Trust Model (multi-tenant, enforced at the database)
 
-OpenIDX is currently a **single-tenant** platform: one deployment serves one
-organization. The security boundary is the deployment itself.
+> Earlier revisions of this section said OpenIDX was single-tenant and that
+> multi-tenant isolation was not implemented. **That is no longer true** —
+> the tenant boundary landed in v1.6–v1.8 and this section previously
+> contradicted [docs/SECURITY-TENANCY.md](./docs/SECURITY-TENANCY.md), which
+> is the authoritative trust-boundary document.
 
-- Within a deployment, users holding an **`admin`** (or `super_admin`) role can
-  read and manage **all** users, roles, groups, and configuration. This is by
-  design — there is no intra-deployment tenant isolation. Treat the `admin`
-  role as fully privileged and grant it sparingly.
+OpenIDX is **multi-tenant**: one deployment can serve many organizations,
+and the isolation boundary is enforced in PostgreSQL, not in application
+code alone.
+
+- Every tenant-owned table carries an `org_id` and is protected by
+  **FORCE row-level security**. The tenant is stamped onto each pooled
+  connection at checkout (`internal/common/database/rls.go`) and resolved
+  per request from the subdomain, JWT, or `X-Org-ID` header. Access is
+  **fail-closed**: no tenant context yields zero rows.
+- A merge-blocking CI linter (`tools/orgscope`) fails the build on any
+  tenant-table query missing an `org_id` predicate; legitimate install-wide
+  paths carry an audited `//orgscope:ignore` annotation.
+- Within an organization, users holding an **`admin`** role can read and
+  manage that organization's users, roles, groups, and configuration; RLS
+  confines them to their own org. `super_admin` is platform-scoped. Treat
+  both as fully privileged within their scope and grant them sparingly.
 - The administrative API (everything under `/api/v1/identity` except the
   caller's own `/users/me/*` and MFA self-service paths) requires an admin
   role; ordinary authenticated users can only manage their own account.
-- **Multi-tenant SaaS isolation is not implemented.** Do not rely on roles to
-  separate distinct organizations within one deployment; run a separate
-  deployment per organization instead.
+- Single-org deployments remain fully supported — they are simply a
+  one-tenant instance of the same model.
+
+See [docs/SECURITY-TENANCY.md](./docs/SECURITY-TENANCY.md) for the policy
+SQL shape, known limitations (a small set of documented non-org-scoped
+tables), and deployment topologies.
 
 ### Receiving Security Updates
 
@@ -181,11 +199,11 @@ file is grounded in the code — every required item maps to a check in
 startup gate. Keeping the checklist and the validator in sync is part
 of the PR checklist for any new gate.
 
-The trust-boundary assumption (one OpenIDX install = one organization)
-is documented separately in
+The trust boundary (multi-tenant, FORCE row-level security at the
+database) is documented in
 **[docs/SECURITY-TENANCY.md](./docs/SECURITY-TENANCY.md)**. Read it
 before deploying OpenIDX in a setting where two unrelated
-organizations might share infrastructure.
+organizations share one installation.
 
 ---
 

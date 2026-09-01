@@ -100,8 +100,9 @@ it does not cross one.
 ## Known follow-ups
 
 Tenant data isolation is enforced as described above. Some cross-cutting
-concerns are still being tightened tenant-by-tenant and are tracked in the gap
-register ([`docs/MARKET_GAP_ANALYSIS_2026.md`](./MARKET_GAP_ANALYSIS_2026.md)):
+concerns are still being tightened tenant-by-tenant and are tracked in the
+readiness guide ([`docs/PROJECT-READINESS-GUIDE.md`](./PROJECT-READINESS-GUIDE.md);
+an earlier revision pointed at a gap register that was never committed):
 
 - **Per-org signing keys.** OAuth/OIDC token signing currently uses one key set
   per install; per-tenant signing keys are a future enhancement.
