@@ -1,6 +1,7 @@
 # OpenIDX Project Readiness — the User-Perspective Guide
 
-**Date:** 2026-09-01 (commit `c98082a`, branch `main`)
+**Date:** 2026-09-01 (audited at commit `c98082a` on `main`; updated the
+same day after the P0 program shipped on this branch — §4 P0 is done)
 **Question this document answers:** *Is OpenIDX fully functional and well defined end to end, as experienced by the people who use it — and what are the next steps and controls to get it there?*
 
 This is the product-and-user-side companion to
@@ -105,8 +106,8 @@ merge-blocking tenant linter (`tools/orgscope`).
 
 | Symptom | Examples |
 |---|---|
-| Controls that display but don't enforce | Admin "revoke session" is inert (§3.1-A1); assignment isn't a grant until rollout (§1.1); IP threat list ignored by login risk scoring; voice MFA UI over a no-op backend |
-| First contact fails | The canonical getting-started doc leaves a new user unable to log in; README quick start references files that don't exist; `helm install` cannot bootstrap its own schema |
+| Controls that display but don't enforce | Admin "revoke session" was inert — fixed on this branch (§3.1-A1); assignment isn't a grant until rollout (§1.1); IP threat list ignored by login risk scoring; voice MFA UI over a no-op backend |
+| First contact fails | Fixed on this branch: the getting-started doc left a new user unable to log in, and the README quick start referenced files that don't exist. Still open: `helm install` cannot bootstrap its own schema (P3) |
 | The trust story contradicts itself | `SECURITY.md` still says "multi-tenant SaaS isolation is not implemented" while README and SECURITY-TENANCY.md (correctly) say the opposite; the published docs site describes a Keycloak-based product with **no PAM or ZTNA sections at all** |
 | Shipped but unreleased | Last release v1.27.0 (2026-07-13); ~7 weeks of major work — including security fixes — sits in `[Unreleased]` |
 
@@ -124,14 +125,14 @@ caveats · ❌ broken/missing.
 
 | # | Journey (persona) | Status | The caveat that matters |
 |---|---|---|---|
-| J1 | **First run** — deploy → log in → rotate admin → create org (operator) | ⚠️ | Works via `scripts/generate-secrets.sh` + `deployments/docker/docker-compose.yml` (+ `.prod.yml`). Broken as documented: README quick start cites a root compose file and a Helm repo that don't exist; `docs/GETTING-STARTED.md` never states a working credential (three docs give three different admin credentials); `helm install` runs no migrations and references an OPA service the chart never creates. No minimum hardware stated for a ~39-container stack. |
+| J1 | **First run** — deploy → log in → rotate admin → create org (operator) | ✅⚠️ | *Fixed on this branch:* README quick start is now the working compose path with the first-login credential and a hardware floor; `GETTING-STARTED.md` carries the authoritative First Login section; production refuses to start on the unrotated default admin. Remaining ⚠️: `helm install` still runs no migrations and references an OPA service the chart never creates (P3). |
 | J2 | **Joiner** — create/sync user → enroll MFA → first login → sees their apps (end user) | ✅⚠️ | Real: user CRUD/SCIM/directory sync, MFA wizard (TOTP/WebAuthn/push/recovery), portal. Caveats: WebAuthn challenges are in-memory (`internal/identity/service.go:206`) → passkeys break with >1 replica; a typo'd `SMS_PROVIDER` silently falls back to a mock that delivers nothing (`internal/sms/service.go:115`); phone-call MFA is enrollable but can never verify (dead provider, fails closed — `internal/identity/phone_call_mfa.go:278`). |
 | J3 | **App access** — publish app → assign → user launches with SSO → reach matches (admin + user) | ⚠️ | SSO itself is solid (OIDC/PKCE, SAML, consent). But assignment drives real reach **only after the convergence rollout** (§1.1). Today the report-only machinery observes the gap; `#874` already made "My Apps & Network" show enforced truth. Execute rollout Task 16. |
 | J4 | **Network access** — enroll agent/BrowZer → posture check → reach a dark service (end user) | ✅ | Real: Windows/Android agents, BrowZer clientless, posture checks, reconciler, `tools/darkprobe` proves dark services are reachable only by authorized identities, and a "going dark" runbook exists. Per-app scoping of dial policies arrives with the same rollout as J3. |
 | J5 | **Privileged access** — request → approve → checkout/brokered session → recording → review (engineer + auditor) | ✅❌ | Functionally the strongest pillar: vault with rotation, Guacamole + in-browser wasm-SSH, recordings with encryption/retention/legal hold, break-glass. But **zero user-facing PAM documentation and zero OpenAPI coverage** of `/pam/*` — a headline pillar that is invisible to evaluators and undocumented for users. |
 | J6 | **Governance loop** — access request → approval → certification campaign → revoke propagates (manager/auditor) | ✅ | Requests, multi-step approvals, campaigns, SoD (fail-closed), JIT expiry all wired; application fulfillment gap was closed (`internal/governance/workflows.go`). |
 | J7 | **Leaver / incident** — disable or kill-switch a user → everything severed (admin) | ✅⚠️ | The strong path: deprovision + lifecycle sweep + Ziti sweep sever IAM/PAM/network in ≤30 s; kill switch is synchronous and honest about partial failures. The broken path: **the admin console's per-session "Revoke" is cosmetic** — see A1 below. |
-| J8 | **Operate** — monitor → audit → back up → restore → upgrade (operator) | ⚠️ | Compose-prod path, backup CLI with *automated restore verification*, DR/HA drills (`make dr-game-day`, `ha-drill`) are genuinely good. Caveats: Helm chart can't stand alone; security CI scans gate nothing (every step `continue-on-error`, including the final gate — `.github/workflows/security-scan.yml:440`); release binaries unsigned; release cadence stalled. |
+| J8 | **Operate** — monitor → audit → back up → restore → upgrade (operator) | ⚠️ | Compose-prod path, backup CLI with *automated restore verification*, DR/HA drills (`make dr-game-day`, `ha-drill`) are genuinely good. *Fixed on this branch:* the security workflow's nightly gate and govulncheck now actually fail on findings. Remaining caveats: Helm chart can't stand alone; release binaries unsigned; release cadence stalled (cut v1.28.0 — P3). |
 
 ### 3.1 The specific defects behind the ⚠️s (verified, with fixes)
 
@@ -173,37 +174,48 @@ product; either wire them or remove them from the UI.
 
 - **B1 — Default admin `admin@openidx.local` / `Admin@123` seeds every
   install including production** (`internal/migrations/sql.go:517`,
-  migration v10), is *not* checked by `ValidateProduction()` (which does
-  guard the Ziti and Guacamole defaults), is absent from the deployment
-  checklist, and there is no forced first-login rotation. For an IAM/PAM
-  product this is the headline install-time risk.
-- **B2 — You cannot log in by following the docs.** `GETTING-STARTED.md`
-  gives no credential; `USER_GUIDE.md` says `Admin123!`;
-  `PRODUCTION-READINESS.md` says `Admin@123`. One authoritative first-login
-  section, plus forced rotation, fixes B1+B2 together.
-- **B3 — README quick start is wrong three ways** (no root
-  `docker-compose.yml`; `make dev-infra`+`make dev` overlap and still
-  reference Keycloak — `Makefile:231`; `charts.openidx.io` is unpublished),
-  and all 7 links in README's Documentation section are dead. `install.cmd`
-  at the repo root is an unrelated file committed by accident.
+  migration v10). *Shipped on this branch:* a DB-backed startup gate
+  (`identity.EnsureDefaultAdminRotated`,
+  `internal/identity/default_admin_gate.go`) makes the identity and oauth
+  services **refuse production startup** while an enabled account still
+  authenticates with the seeded password (verified with the login path's
+  own `pwhash.Verify`, so a re-hash of the same password is caught).
+  Still open as a follow-up: forcing a password change on first login in
+  non-production environments.
+- **B2 — You cannot log in by following the docs.** *Shipped on this
+  branch:* `GETTING-STARTED.md` now carries the one authoritative
+  **First Login** section with the verified credential (`Admin@123`,
+  bcrypt-checked against the seed hash); `USER_GUIDE.md` and the seed
+  CLI's printed credentials are corrected to match.
+- **B3 — README quick start was wrong three ways.** *Shipped on this
+  branch:* the quick start is now the working path
+  (`generate-secrets.sh` → compose from `deployments/docker/`), with the
+  first-login credential, a hardware floor, an honest local-chart Helm
+  section, real documentation links, no Keycloak in `make dev` output,
+  and `install.cmd` (an unrelated CLI bootstrap script) deleted.
 - **B4 — `helm install` yields a non-working deployment**: no migration
   Job/hook (docs claim `AUTO_MIGRATE=true`, which exists nowhere), inert
   `apisix.enabled`/`opa.enabled` values with `opaUrl` pointing at a Service
   the chart never creates (governance is fail-closed → breaks), no
   `securityContext`, `Chart.yaml` still declaring a Keycloak dependency.
-- **B5 — Grafana ships admin/admin** (compose fallback
-  `GF_SECURITY_ADMIN_PASSWORD:-admin`, port 3001 published, prod overlay
-  doesn't override); dev-kube applies its `changeme-*` secrets template
-  directly (`dev-kube/kustomization.yaml:18`).
+  Open — tracked as P3; the README no longer advertises it as hosted.
+- **B5 — Grafana shipped admin/admin; dev-kube applied changeme secrets.**
+  *Shipped on this branch:* `GRAFANA_ADMIN_PASSWORD` is now required with
+  the same fail-fast syntax as the other compose secrets (generated by
+  `scripts/generate-secrets.sh`, listed in `.env.production`), and
+  `scripts/dev-kube.sh` generates random cluster secrets on first deploy
+  instead of applying the committed `changeme-*` template.
 
 **C. Trust-story contradictions** — what a client's security reviewer reads.
 
-- **C1 — `SECURITY.md` §Trust Model still says single-tenant / "multi-tenant
+- **C1 — `SECURITY.md` §Trust Model said single-tenant / "multi-tenant
   SaaS isolation is not implemented"**, contradicting README and
-  `SECURITY-TENANCY.md` (which documents the FORCE-RLS boundary correctly
-  and marks the single-tenant claim as historical). Same stale claim in
-  `GETTING-STARTED.md:10`. A reviewer reading the file literally named
-  SECURITY.md concludes your flagship isolation feature doesn't exist.
+  `SECURITY-TENANCY.md`. *Shipped on this branch:* the trust model now
+  states the enforced FORCE-RLS multi-tenant reality (with an explicit
+  note that earlier revisions said otherwise); the stale single-tenant
+  claims in `GETTING-STARTED.md` and `SECURITY-HARDENING.md` are
+  corrected, and `SECURITY-TENANCY.md`'s dangling gap-register link now
+  points at this guide.
 - **C2 — The published docs site (mkdocs) is a different, older product**:
   only 31 of 122 docs published, no PAM or ZTNA sections in the nav,
   `docs/docs/guide/architecture.md` names "Keycloak 23" as the IdP. The
@@ -244,31 +256,33 @@ checksums, WebAuthn single-replica limit (J2).
 Each phase has an exit test. Don't start the next phase's *announcements*
 before the previous phase's exit test passes — code can proceed in parallel.
 
-### P0 — Make displayed controls true, and first contact survivable (~1–2 weeks)
+### P0 — Make displayed controls true, and first contact survivable — **SHIPPED on this branch**
 
-1. **Wire admin session revocation to Redis markers** (A1). *This branch
-   ships the fix — see the commit accompanying this guide.*
-2. **Close the default-admin hole** (B1/B2): add a `ValidateProduction()`
-   critical check for an unrotated `admin@openidx.local` password, force
-   password change on first login, write the one authoritative first-login
-   doc section, and rotate the two docs that state credentials.
-3. **Fix the trust contradiction** (C1): correct `SECURITY.md`'s trust
-   model to the FORCE-RLS multi-tenant reality (link SECURITY-TENANCY.md),
-   fix `GETTING-STARTED.md:10`.
-4. **Fix README first-run** (B3): correct compose paths, remove Keycloak
-   remnants from Makefile output, delete `install.cmd`, fix or remove the
-   7 dead doc links, state a hardware floor (≥8–10 GB RAM for the full
-   compose stack).
-5. **Make security CI gate** (J8): remove `continue-on-error` from the
-   final "fail on critical findings" step (keep individual scanners
-   non-blocking if needed, but the gate must gate).
-6. **Kill the admin/admin Grafana fallback and dev-kube secrets template
-   in `resources:`** (B5).
+All six items landed with this guide (commits on
+`claude/project-readiness-security-controls-c797kg`):
 
-*Exit test:* a new operator with only the README reaches a logged-in,
-rotated-admin console; `security-scan.yml` goes red on a seeded critical;
-revoking a session in the console kills the refresh token (integration
-test).
+1. ✅ **Admin session revocation publishes Redis markers** (A1) — with
+   tests pinning the key format enforcement reads.
+2. ✅ **Default-admin hole closed** (B1/B2) — production startup gate in
+   identity + oauth services, one authoritative First Login section, all
+   credential mentions aligned to the verified `Admin@123`. *Follow-up
+   still open:* forced password change on first login in dev.
+3. ✅ **Trust contradiction fixed** (C1) — `SECURITY.md`,
+   `GETTING-STARTED.md`, `SECURITY-HARDENING.md` now tell the FORCE-RLS
+   story the code enforces.
+4. ✅ **README first-run fixed** (B3) — working quick start, hardware
+   floor, honest Helm section, real doc links, `install.cmd` deleted.
+5. ✅ **Security CI gates** (J8) — the nightly aggregate gate lost its
+   `continue-on-error`, and govulncheck is blocking (verified clean at
+   arming time). gitleaks/npm-audit/semgrep stay non-blocking by
+   documented choice.
+6. ✅ **Grafana admin/admin fallback removed; dev-kube generates real
+   secrets** (B5).
+
+*Exit test (run it):* a new operator with only the README reaches a
+logged-in, rotated-admin console; `security-scan.yml` goes red on a
+seeded critical; revoking a session in the console kills the refresh
+token.
 
 ### P1 — One access model: execute the convergence rollout (~2–4 weeks, the anti-confusion fix)
 
