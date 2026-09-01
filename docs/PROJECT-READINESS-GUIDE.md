@@ -324,23 +324,31 @@ policy. This is the moment the IAM/PAM/ZTNA confusion structurally ends.
 
 ### P2 — Tell one product story (parallel with P1)
 
-1. **Publish the real docs site**: restructure `mkdocs.yml` around the
-   four pillars + the §1 mental model; publish the strong tier
-   (IAM_PAM_ZITI_INTERRELATION, zero-trust-architecture,
-   how-network-access-works, SECURITY-TENANCY, SECURITY-HARDENING,
-   remote-access-lifecycle-scenarios); purge Keycloak from
-   `docs/docs/guide/architecture.md`.
-2. **One quickstart** (deploy → login → org → user → app → dark service →
-   PAM session), replacing the three divergent ones; retire or banner the
-   stale entry docs (PROJECT-STATUS, FEATURE_PRIORITY_PLAN, TESTING.md).
-3. **Write the missing PAM docs** (admin setup + end-user checkout/session
-   walkthrough) and spec `/pam/*` in OpenAPI; regenerate specs against
-   live routers (the `contractcheck`/route-enumeration tooling exists).
-4. **Add the auditor artifacts**: a real threat model (overlay, broker,
-   recordings, vault included) and a control-mapping table
+1. ✅ **The docs site tells the truth** — *shipped on this branch*:
+   `docs/docs/index.md` and `guide/architecture.md` rewritten around the
+   four pillars (Keycloak purged; 8 services; the security spine), a new
+   published **Concepts** page carries the §1 mental model and glossary,
+   and the nav gains **Privileged Access (PAM)** and **Zero Trust Network
+   (ZTNA)** sections. The strong repo-level deep dives are linked from the
+   published pages rather than duplicated; repo URLs in `mkdocs.yml`
+   corrected. Site builds clean under `mkdocs --strict`.
+2. ✅ **Quickstart fixed and stale entry docs bannered** — *shipped on
+   this branch*: the published quickstart drops Keycloak, states the
+   authoritative first login and hardware floor; PROJECT-STATUS.md,
+   FEATURE_PRIORITY_PLAN.md (whose old banner pointed at documents that
+   never existed) and TESTING.md carry stale-history banners pointing at
+   current docs. *Still open:* folding the three repo-level quickstarts
+   into one.
+3. **PAM docs**: ✅ the published admin + end-user PAM guide shipped
+   (`guide/privileged-access.md`). *Still open:* spec `/pam/*` in OpenAPI
+   and regenerate specs against live routers (the
+   `contractcheck`/route-enumeration tooling exists).
+4. **Add the auditor artifacts** (open): a real threat model (overlay,
+   broker, recordings, vault included) and a control-mapping table
    (SOC 2 / ISO 27001 → OpenIDX capability → evidence).
 5. Separate engineering artifacts (`docs/plans`, `docs/ux-audit`,
-   audits/reviews) from product docs; label the Turkish-language docs.
+   audits/reviews) from product docs; label the Turkish-language docs
+   (open).
 
 *Exit test:* an evaluator who reads only the published site can describe
 all four pillars, deploy, log in, and find PAM.

@@ -1,8 +1,8 @@
 site_name: OpenIDX Documentation
 site_description: Open Source Zero Trust Access Platform
-site_url: https://openidx.github.io/openidx
-repo_url: https://github.com/openidx/openidx
-repo_name: openidx/openidx
+site_url: https://mhmtgngr.github.io/openidx
+repo_url: https://github.com/mhmtgngr/openidx
+repo_name: mhmtgngr/openidx
 edit_uri: edit/main/docs/docs/
 
 theme:
@@ -79,10 +79,15 @@ nav:
   - Home: index.md
 
   - Getting Started:
+      - Concepts — the four pillars: guide/concepts.md
       - Installation: guide/installation.md
       - Quick Start: guide/quickstart.md
       - Architecture: guide/architecture.md
       - Configuration: guide/configuration.md
+
+  - Privileged Access (PAM): guide/privileged-access.md
+
+  - Zero Trust Network (ZTNA): guide/network-access.md
 
   - Deployment:
       - Docker Compose: deployment/docker.md
@@ -122,7 +127,7 @@ nav:
 extra:
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/openidx/openidx
+      link: https://github.com/mhmtgngr/openidx
     - icon: fontawesome/brands/discord
       link: https://discord.gg/openidx
   version:
