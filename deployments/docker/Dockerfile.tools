@@ -32,7 +32,9 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
 # ============================================
 FROM alpine:3.24
 
-RUN apk add --no-cache ca-certificates tzdata && \
+# postgresql16-client: cmd/backup shells out to pg_dump/pg_restore/psql;
+# the major is pinned to the stack's postgres:16 server.
+RUN apk add --no-cache ca-certificates tzdata postgresql16-client && \
     rm -rf /var/cache/apk/*
 
 RUN addgroup -S openidx && \
