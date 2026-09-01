@@ -66,6 +66,19 @@ refuses them.
 |---|---|---|
 | `DEBUG_OTP_IN_RESPONSE` | `false` | Setting this to `true` returns OTP codes in API responses; **never** acceptable in production. |
 
+### Seeded default admin (DB-backed startup gate, not a config knob)
+
+The v10 seed migration creates `admin@openidx.local` with the published
+default password `Admin@123`. `ValidateProduction()` cannot see database
+state, so this one is enforced by a separate startup gate:
+`identity.EnsureDefaultAdminRotated`
+(`internal/identity/default_admin_gate.go`), called from the
+identity-service and oauth-service mains after migrations. In production
+both services **refuse to start** while an enabled account still
+authenticates with that password (a *disabled* seeded admin only warns).
+Rotate it via the console (**Users → admin → Set password**) or
+`POST /api/v1/identity/users/:id/set-password`.
+
 ---
 
 ## Soft requirements (validator warns but allows startup)

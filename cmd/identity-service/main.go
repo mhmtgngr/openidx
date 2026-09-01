@@ -99,6 +99,15 @@ func main() {
 		migrations.MustAutoMigrate(context.Background(), db.Pool, log)
 	}
 
+	// The seed migration ships admin@openidx.local with a published default
+	// password. ValidateProductionConfig cannot see database state, so this
+	// runs after migrations: production refuses to serve while it still works.
+	if cfg.IsProduction() {
+		if err := identity.EnsureDefaultAdminRotated(context.Background(), db, log); err != nil {
+			log.Fatal("Default-credential validation failed", zap.Error(err))
+		}
+	}
+
 	// Initialize Redis connection
 	// Export DB pool saturation gauges (openidx_db_connections{state=...}).
 	metrics.NewTracedPool(db.Pool, "identity-service").StartPoolStatsCollector(context.Background())

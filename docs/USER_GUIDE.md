@@ -46,8 +46,13 @@ docker compose up -d
 
 ```
 Email: admin@openidx.local
-Password: Admin123!
+Password: Admin@123
 ```
+
+Rotate this immediately after first login (see
+[GETTING-STARTED.md — First Login](./GETTING-STARTED.md#1-first-login),
+the authoritative credential reference). In production the identity and
+oauth services refuse to start while this default still authenticates.
 
 ---
 

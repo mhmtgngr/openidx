@@ -7,14 +7,15 @@
 > the knobs the in-process `ValidateProduction()` gate refuses to
 > start without. Also read
 > [docs/SECURITY-TENANCY.md](./SECURITY-TENANCY.md) — OpenIDX is
-> single-tenant by design.
+> multi-tenant, enforced at the database with FORCE row-level
+> security; that document defines the trust boundary.
 
 ## 🚀 Quick Start (5 Minutes)
 
 ### Prerequisites
 
-- Go 1.22+
-- Node.js 18+
+- Go 1.25+
+- Node.js 20+
 - Docker & Docker Compose
 - PostgreSQL 16 (or use Docker)
 - Make (optional, for convenience)
@@ -36,8 +37,8 @@ cd web/admin-console && npm install
 
 ```bash
 # Option A: Using Docker Compose (Recommended)
-cd deployments/docker
-docker-compose up -d postgres redis elasticsearch keycloak
+./scripts/generate-secrets.sh          # writes .env with random secrets
+docker compose -f deployments/docker/docker-compose.yml up -d postgres redis elasticsearch
 
 # Option B: Local PostgreSQL
 # Make sure PostgreSQL is running on localhost:5432
@@ -145,9 +146,8 @@ docker-compose ps
 
 | Service | URL | Credentials |
 |---------|-----|-------------|
-| Admin Console | http://localhost:3000 | - |
+| Admin Console | http://localhost:3000 | see [First Login](#1-first-login) |
 | API Gateway | http://localhost:8088 | - |
-| Keycloak | http://localhost:8180 | admin/admin |
 | PostgreSQL | localhost:5432 | openidx/openidx_secret |
 | Redis | localhost:6379 | redis_secret |
 | Elasticsearch | http://localhost:9200 | - |
@@ -167,20 +167,26 @@ docker-compose down -v
 
 ## 📝 First-Time Setup Tasks
 
-### 1. Create First Admin User
+### 1. First Login
 
-```bash
-curl -X POST http://localhost:8001/api/v1/identity/users \
-  -H "Content-Type: application/json" \
-  -d '{
-    "username": "admin",
-    "email": "admin@openidx.local",
-    "first_name": "Admin",
-    "last_name": "User",
-    "enabled": true,
-    "email_verified": true
-  }'
-```
+You do not create the first admin — the seed migration (v10) already did.
+This is the **authoritative** first-login credential; if another document
+disagrees, this one is right:
+
+| Field | Value |
+|---|---|
+| Username | `admin` (email `admin@openidx.local`) |
+| Password | `Admin@123` |
+
+Sign in at http://localhost:3000 and **rotate this password immediately**
+(Console: **Users → admin → Set password**, or
+`POST /api/v1/identity/users/00000000-0000-0000-0000-000000000001/set-password`).
+
+This is not optional for production: the identity and oauth services
+**refuse to start** with `APP_ENV=production` while the seeded default
+password still authenticates
+(`identity.EnsureDefaultAdminRotated`, called from both service mains).
+Rotate it while still in development and the gate never bothers you.
 
 ### 2. Register OAuth Client for Admin Console
 
