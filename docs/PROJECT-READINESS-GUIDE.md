@@ -1,13 +1,15 @@
 # OpenIDX Project Readiness — the User-Perspective Guide
 
 **Date:** 2026-09-01 (audited at commit `c98082a` on `main`; updated the
-same day as the program ships on this branch — §4 status: **P0 done**, the
-P1 A-defect tail done (A2/A3/A4), P2 items 1–4 done (docs site, quickstart
-+ banners, PAM guide **and the full `/pam/*` OpenAPI spec**, auditor
+same day as the program ships on this branch — §4 status: **P0 done, the
+P1 A-defect tail done (A2/A3/A4), P2 done in full** (docs site, quickstart
+fold + banners, PAM guide **and the full `/pam/*` OpenAPI spec**, auditor
 artifacts: [threat model](./THREAT-MODEL.md) and
-[control mapping](./COMPLIANCE-CONTROL-MAPPING.md)), P3.3 done
-(WebAuthn→Redis). Open: P1 rollout Task 16 (operator action), P2.2's
-quickstart fold, P2.5 doc-tree separation, the rest of P3/P4.)
+[control mapping](./COMPLIANCE-CONTROL-MAPPING.md), doc-tree separation
+via [docs/README.md](./README.md)), **P3.3–3.5a done** (WebAuthn→Redis,
+signed releases, Dependabot/Renovate dedupe). Open: P1 rollout Task 16
+(operator action), P3.1 cut v1.28.0 (post-merge), P3.2 Helm completion,
+P3.5b dead-surface pruning, P4.)
 **Question this document answers:** *Is OpenIDX fully functional and well defined end to end, as experienced by the people who use it — and what are the next steps and controls to get it there?*
 
 This is the product-and-user-side companion to
@@ -343,8 +345,12 @@ policy. This is the moment the IAM/PAM/ZTNA confusion structurally ends.
    authoritative first login and hardware floor; PROJECT-STATUS.md,
    FEATURE_PRIORITY_PLAN.md (whose old banner pointed at documents that
    never existed) and TESTING.md carry stale-history banners pointing at
-   current docs. *Still open:* folding the three repo-level quickstarts
-   into one.
+   current docs. ✅ *Quickstart fold shipped:* the README Quick Start is
+   the single supported first run; GETTING-STARTED.md is now explicitly
+   the from-source developer guide and its diverging compose section
+   (which skipped `generate-secrets.sh` and printed credentials that no
+   longer exist) defers to the README; the production guide's section is
+   scoped as "Production Quick Start" with a pointer back.
 3. ✅ **PAM docs and API spec** — the published admin + end-user PAM guide
    shipped (`guide/privileged-access.md`), and `/pam/*` is now fully
    specced in `api/openapi/access-service.yaml`: all 66 registered
@@ -362,9 +368,14 @@ policy. This is the moment the IAM/PAM/ZTNA confusion structurally ends.
    (SOC 2 CC-series + ISO 27001:2022 Annex A → capability → evidence,
    with honest Provided/Configurable/Shared/Operator statuses and the
    §5-checklists-as-evidence-generator workflow). Linked from SECURITY.md.
-5. Separate engineering artifacts (`docs/plans`, `docs/ux-audit`,
-   audits/reviews) from product docs; label the Turkish-language docs
-   (open).
+5. ✅ **Doc-tree separation shipped** — [docs/README.md](./README.md) is
+   the documentation map: product docs (start-here, security/compliance,
+   concepts, feature guides, runbooks) cleanly separated from
+   engineering artifacts (plans, designs, audits, contributor
+   references) with the rule stated ("read artifacts for the *why*;
+   verify the *what* against code"), historical docs and the two
+   Turkish-language docs labeled. Implemented as an index rather than
+   mass file moves so no inbound link breaks.
 
 *Exit test:* an evaluator who reads only the published site can describe
 all four pillars, deploy, log in, and find PAM.
@@ -379,9 +390,17 @@ all four pillars, deploy, log in, and find PAM.
 3. ✅ **WebAuthn challenges moved to Redis with TTL** — shipped on this
    branch (`internal/identity/webauthn.go`); the in-memory map remains
    only as a single-replica fallback with lazy expiry.
-4. **Sign release artifacts** (SHA256SUMS + cosign; images already get
-   provenance/SBOM — extend to binaries).
-5. Deduplicate Dependabot/Renovate; prune dead surfaces (D).
+4. ✅ **Release artifacts signed** — `release.yml` now generates
+   `SHA256SUMS` over all eight binaries and signs it with keyless cosign
+   (GitHub OIDC → Sigstore; `id-token: write`, no stored key); the
+   release body and [RELEASING.md](./RELEASING.md) carry the
+   `cosign verify-blob` + `sha256sum -c` verification recipe with the
+   workflow-identity pin.
+5. Dependabot/Renovate: ✅ **deduplicated** — `.github/dependabot.yml`
+   (which duplicated all four ecosystems and used invalid options)
+   deleted in favor of the richer Renovate config; phantom `openidx/*`
+   team assignees/reviewers stripped from `renovate.json`. *Still open:*
+   prune dead surfaces (D).
 
 ### P4 — Enterprise reach (sequence by sales pressure)
 

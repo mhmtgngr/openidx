@@ -15,6 +15,9 @@ on:
 permissions:
   contents: write
   packages: write
+  # Keyless cosign signing: the job's GitHub OIDC token is exchanged for a
+  # short-lived Sigstore certificate, so there is no signing key to store.
+  id-token: write
 
 env:
   # Tag being released: the pushed tag, or the dispatch input.
@@ -52,10 +55,41 @@ jobs:
               -o dist/${service}-linux-amd64 ./cmd/$service
           done
 
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      # One keyless signature over SHA256SUMS covers every binary: verify the
+      # signature, then verify each binary against the checksum file. The
+      # certificate pins this workflow's identity, so a signature minted
+      # anywhere else fails verification.
+      - name: Sign checksums (keyless)
+        run: |
+          cosign sign-blob --yes \
+            --output-signature dist/SHA256SUMS.sig \
+            --output-certificate dist/SHA256SUMS.pem \
+            dist/SHA256SUMS
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ env.RELEASE_VERSION }}
           target_commitish: ${{ github.event_name == 'workflow_dispatch' && github.sha || '' }}
           generate_release_notes: true
+          append_body: true
+          body: |
+            ### Verify the binaries
+
+            ```sh
+            cosign verify-blob \
+              --certificate SHA256SUMS.pem --signature SHA256SUMS.sig \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              --certificate-identity-regexp '^https://github.com/${{ github.repository }}/\.github/workflows/release\.yml@' \
+              SHA256SUMS
+            sha256sum --ignore-missing -c SHA256SUMS
+            ```
           files: dist/*

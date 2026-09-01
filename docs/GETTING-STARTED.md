@@ -1,8 +1,15 @@
 # Getting Started with OpenIDX
 
-> **Planning a production deploy?** The 5-minute Quick Start below
-> brings up a development stack with insecure defaults. Before going
-> to production, walk through
+> **Just want to run OpenIDX?** Use the **[Quick Start in the repository
+> README](../README.md#quick-start)** — the Docker Compose path with
+> generated secrets is the one supported first run, and it is maintained
+> in exactly one place. This document is for **developers building from
+> source** (and for the first-time setup tasks below, which apply to
+> both paths).
+>
+> **Planning a production deploy?** The developer setup below brings up
+> a development stack with insecure defaults. Before going to
+> production, walk through
 > [docs/SECURITY-HARDENING.md](./SECURITY-HARDENING.md), which lists
 > the knobs the in-process `ValidateProduction()` gate refuses to
 > start without. Also read
@@ -10,7 +17,7 @@
 > multi-tenant, enforced at the database with FORCE row-level
 > security; that document defines the trust boundary.
 
-## 🚀 Quick Start (5 Minutes)
+## 🛠 Developer Setup (from source)
 
 ### Prerequisites
 
@@ -127,41 +134,29 @@ Open your browser:
 
 ## 🐳 Docker Compose (Full Stack)
 
-### Start Everything
+The full-stack compose path is the **[README Quick
+Start](../README.md#quick-start)** — clone, run
+`./scripts/generate-secrets.sh` (compose refuses to start without the
+generated `.env`), then `docker compose -f
+deployments/docker/docker-compose.yml up -d`. It is not duplicated here
+so the instructions can never diverge. Infrastructure credentials
+(PostgreSQL, Redis, Grafana, …) are the random values in your generated
+`.env`, not fixed defaults.
+
+Day-to-day commands once it's up:
 
 ```bash
-cd deployments/docker
+# View logs / status
+docker compose -f deployments/docker/docker-compose.yml logs -f
+docker compose -f deployments/docker/docker-compose.yml ps
 
-# Start all services
-docker-compose up -d
-
-# View logs
-docker-compose logs -f
-
-# Check status
-docker-compose ps
+# Stop (keep data) / stop and remove all data
+docker compose -f deployments/docker/docker-compose.yml down
+docker compose -f deployments/docker/docker-compose.yml down -v
 ```
 
-### Access Services
-
-| Service | URL | Credentials |
-|---------|-----|-------------|
-| Admin Console | http://localhost:3000 | see [First Login](#1-first-login) |
-| API Gateway | http://localhost:8088 | - |
-| PostgreSQL | localhost:5432 | openidx/openidx_secret |
-| Redis | localhost:6379 | redis_secret |
-| Elasticsearch | http://localhost:9200 | - |
-| OPA | http://localhost:8281 | - |
-
-### Stop Everything
-
-```bash
-# Stop services (keep data)
-docker-compose down
-
-# Stop and remove all data
-docker-compose down -v
-```
+The admin console is at http://localhost:3000 (sign-in:
+[First Login](#1-first-login)); the API gateway at http://localhost:8088.
 
 ---
 

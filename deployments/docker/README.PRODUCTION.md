@@ -5,7 +5,7 @@ Deploying OpenIDX Zero Trust Access Platform on openidx.tdv.org
 ## Table of Contents
 
 - [Prerequisites](#prerequisites)
-- [Quick Start](#quick-start)
+- [Production Quick Start](#production-quick-start)
 - [Configuration](#configuration)
 - [Deployment Steps](#deployment-steps)
 - [SSL Certificate Management](#ssl-certificate-management)
@@ -60,7 +60,11 @@ dig +short www.openidx.tdv.org
 
 ---
 
-## Quick Start
+## Production Quick Start
+
+> For a first **local** run of OpenIDX, use the [Quick Start in the
+> repository README](../../README.md#quick-start) instead — this section
+> is the production path (real domains, TLS, hardened env).
 
 ```bash
 # 1. Clone repository (or copy deployment files)

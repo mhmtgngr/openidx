@@ -29,10 +29,28 @@ git push origin vX.Y.Z
 
 ## Verify
 
-- The GitHub Release exists with notes + binaries.
+- The GitHub Release exists with notes, the binaries, and the signed
+  checksums (`SHA256SUMS`, `SHA256SUMS.sig`, `SHA256SUMS.pem`).
 - `ghcr.io/mhmtgngr/openidx/identity-service:X.Y.Z` (and the other services)
   are present.
 - A deployed service reports the version: `GET /health` → `"version":"vX.Y.Z"`.
+
+### Verifying downloaded binaries (consumers)
+
+The release job signs `SHA256SUMS` with keyless cosign (Sigstore): the
+signing certificate is minted from the workflow's GitHub OIDC identity, so
+verification proves the checksums were produced by *this repository's
+`release.yml`* — no key to distribute or leak. Then the checksum file
+vouches for each binary:
+
+```sh
+cosign verify-blob \
+  --certificate SHA256SUMS.pem --signature SHA256SUMS.sig \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp '^https://github.com/mhmtgngr/openidx/\.github/workflows/release\.yml@' \
+  SHA256SUMS
+sha256sum --ignore-missing -c SHA256SUMS
+```
 
 ## Versioning policy
 
