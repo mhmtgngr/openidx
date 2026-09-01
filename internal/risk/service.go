@@ -339,6 +339,19 @@ func (s *Service) CalculateRiskScore(ctx context.Context, userID, ip, userAgent,
 		return 0, factors
 	}
 
+	// Factor 0: IP on the threat list (+70). The install-wide deny-list that
+	// admins curate and IBDR auto-populates was honored by the access proxy
+	// but contributed nothing here, so a login from a listed source scored
+	// like any other. 70 is exactly the step-up threshold
+	// (internal/oauth/mfa_policy.go): a listed IP alone forces MFA, and
+	// denies an account that has none enrolled.
+	if ip != "" {
+		if blocked, _ := s.CheckIPThreatList(ctx, ip); blocked {
+			score += 70
+			factors = append(factors, "ip_threat_list")
+		}
+	}
+
 	// Factor 1: New device (+30)
 	var deviceCount int
 	s.db.Pool.QueryRow(ctx,

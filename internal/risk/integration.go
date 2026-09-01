@@ -43,8 +43,10 @@ func NewRiskScorer(db interface{}, redis interface{}, logger *zap.Logger) *Score
 // ScoreLoginRequest wraps the Scorer.CalculateRiskScore method with device registration
 // This is a convenience method that integrates with the existing risk service
 func (s *Service) ScoreLoginRequest(ctx context.Context, userID, ip, userAgent, location string, lat, lon float64) (*ScoreResult, error) {
-	// Create the scorer
+	// Create the scorer, wired to the real threat list so the ip_reputation
+	// signal actually scores (the standalone Scorer has no DB of its own).
 	scorer := NewRiskScorer(s.db, s.redis, s.logger)
+	scorer.SetIPThreatCheck(s.CheckIPThreatList)
 
 	// Generate device fingerprint
 	fingerprint := s.ComputeDeviceFingerprint(ip, userAgent)
