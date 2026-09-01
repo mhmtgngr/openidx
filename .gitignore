@@ -129,3 +129,6 @@ __pycache__/
 *-firebase-adminsdk-*.json
 GoogleService-Info.plist
 google-services.json
+
+# stray root-level build outputs (e.g. `go build ./cmd/openidx/`)
+/openidx

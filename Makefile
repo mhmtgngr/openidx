@@ -227,8 +227,8 @@ dev:
 	$(DOCKER_COMPOSE) -f deployments/docker/docker-compose.yml up -d
 	@echo "✅ Services running at:"
 	@echo "   - Admin Console: http://localhost:3000"
-	@echo "   - API Gateway:   http://localhost:8080"
-	@echo "   - Keycloak:      http://localhost:8180"
+	@echo "   - API Gateway:   http://localhost:8088"
+	@echo "First login: admin / Admin@123 — rotate immediately (docs/GETTING-STARTED.md)"
 
 dev-stop:
 	@echo "🛑 Stopping development environment..."
