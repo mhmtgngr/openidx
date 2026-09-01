@@ -16,14 +16,10 @@ Each service has its own OpenAPI specification file:
 | `audit-service.yaml` | Audit Service | 8004 | Audit event logging, compliance reporting, and export |
 | `admin-api.yaml` | Admin API | 8005 | Dashboard, system settings, application management, directory integrations |
 | `oauth-service.yaml` | OAuth/OIDC Service | 8006 | OAuth 2.0 authorization server with OpenID Connect and SAML 2.0 support |
-| `access-service.yaml` | Access Service | 8007 | Zero Trust access proxy with route management, session control, OpenZiti network overlay |
+| `access-service.yaml` | Access Service | 8007 | Zero Trust access proxy with route management, session control, OpenZiti network overlay, and the full PAM surface (`/pam/*`: entries/vault, brokered launch, checkout controls, moderation, SSH CA, cloud JIT, Windows apps) |
 | `portal-service.yaml` | Self-Service Portal | 8001 | Self-service portal for application access and group membership requests |
 | `notifications-service.yaml` | Notifications Service | 8001 | User notification management and preferences |
 | `organization-service.yaml` | Organization Service | 8005 | Organization and member management |
-
-### Consolidated Specification
-
-`openidx.yaml` provides a unified view of all services with cross-references to individual service specifications.
 
 ## Using the Specifications
 
@@ -160,4 +156,4 @@ All timestamps use ISO 8601 format in UTC:
 
 ## Support
 
-For questions or issues with the API documentation, please open an issue on [GitHub](https://github.com/openidx/openidx/issues).
+For questions or issues with the API documentation, please open an issue on [GitHub](https://github.com/mhmtgngr/openidx/issues).

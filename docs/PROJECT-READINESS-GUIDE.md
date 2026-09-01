@@ -3,10 +3,11 @@
 **Date:** 2026-09-01 (audited at commit `c98082a` on `main`; updated the
 same day as the program ships on this branch — §4 status: **P0 done**, the
 P1 A-defect tail done (A2/A3/A4), P2 items 1–4 done (docs site, quickstart
-+ banners, PAM guide, auditor artifacts: [threat model](./THREAT-MODEL.md)
-and [control mapping](./COMPLIANCE-CONTROL-MAPPING.md)), P3.3 done
-(WebAuthn→Redis). Open: P1 rollout Task 16 (operator action), P2.3 OpenAPI
-`/pam/*`, P2.5 doc-tree separation, the rest of P3/P4.)
++ banners, PAM guide **and the full `/pam/*` OpenAPI spec**, auditor
+artifacts: [threat model](./THREAT-MODEL.md) and
+[control mapping](./COMPLIANCE-CONTROL-MAPPING.md)), P3.3 done
+(WebAuthn→Redis). Open: P1 rollout Task 16 (operator action), P2.2's
+quickstart fold, P2.5 doc-tree separation, the rest of P3/P4.)
 **Question this document answers:** *Is OpenIDX fully functional and well defined end to end, as experienced by the people who use it — and what are the next steps and controls to get it there?*
 
 This is the product-and-user-side companion to
@@ -344,10 +345,15 @@ policy. This is the moment the IAM/PAM/ZTNA confusion structurally ends.
    never existed) and TESTING.md carry stale-history banners pointing at
    current docs. *Still open:* folding the three repo-level quickstarts
    into one.
-3. **PAM docs**: ✅ the published admin + end-user PAM guide shipped
-   (`guide/privileged-access.md`). *Still open:* spec `/pam/*` in OpenAPI
-   and regenerate specs against live routers (the
-   `contractcheck`/route-enumeration tooling exists).
+3. ✅ **PAM docs and API spec** — the published admin + end-user PAM guide
+   shipped (`guide/privileged-access.md`), and `/pam/*` is now fully
+   specced in `api/openapi/access-service.yaml`: all 66 registered
+   operations (entries/vault, brokered launch, checkout controls,
+   moderation, SSH CA + cloud JIT, privilege graph, Ziti reach, Windows
+   apps), request/response schemas verified against the handlers, spec
+   verified 1:1 against the `service.go` route table. *Still open
+   (operator-side):* the `contractcheck -probe` live diff against a
+   running deployment.
 4. ✅ **Auditor artifacts shipped** — *on this branch*:
    [THREAT-MODEL.md](./THREAT-MODEL.md) (trust boundaries, per-component
    STRIDE with code evidence — overlay, broker, recordings, vault, audit

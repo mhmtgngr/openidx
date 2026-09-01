@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: OpenIDX Access Service
-  description: Zero Trust access proxy with route management, session control, OpenZiti network overlay, posture checks, BrowZer, and Guacamole integration.
+  description: Zero Trust access proxy with route management, session control, OpenZiti network overlay, posture checks, BrowZer, Guacamole integration, and Privileged Access Management (vault-backed entries, brokered launch with credential injection, checkout controls, session moderation, SSH CA, cloud JIT, Windows app delivery).
   version: 0.1.0
   license:
     name: Apache 2.0
@@ -28,6 +28,14 @@ tags:
   - name: BrowZer
   - name: Auth Decision
   - name: Policy
+  - name: PAM Entries
+  - name: PAM Launch
+  - name: PAM Checkout Controls
+  - name: PAM Moderation
+  - name: PAM SSH & Brokering
+  - name: PAM Privilege Graph
+  - name: PAM Ziti Reach
+  - name: Windows Apps
   - name: Guacamole
 
 paths:
@@ -1125,6 +1133,1470 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  # --- PAM: connection manager (folders, typed entries, ACL) ---
+  /api/v1/access/pam/entry-types:
+    get:
+      tags: [PAM Entries]
+      summary: List supported entry types
+      description: The catalog of entry types (sessions, credentials, secure info records). Any authenticated user.
+      operationId: pamListEntryTypes
+      responses:
+        '200':
+          description: Entry-type catalog
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  types:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PamEntryType'
+
+  /api/v1/access/pam/folders:
+    get:
+      tags: [PAM Entries]
+      summary: List folders
+      description: The org's folder tree with per-folder entry counts. Any authenticated user.
+      operationId: pamListFolders
+      responses:
+        '200':
+          description: Folder list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  folders:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PamFolder'
+    post:
+      tags: [PAM Entries]
+      summary: Create folder
+      description: Admin only.
+      operationId: pamCreateFolder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PamFolderRequest'
+      responses:
+        '201':
+          description: Folder created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IdResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/v1/access/pam/folders/{id}:
+    put:
+      tags: [PAM Entries]
+      summary: Update folder
+      description: Admin only. A folder cannot be its own parent.
+      operationId: pamUpdateFolder
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PamFolderRequest'
+      responses:
+        '200':
+          description: Folder updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IdResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [PAM Entries]
+      summary: Delete folder
+      description: Admin only. Child folders are re-parented, entries keep their rows.
+      operationId: pamDeleteFolder
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '204':
+          description: Folder deleted
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/access/pam/entries:
+    get:
+      tags: [PAM Entries]
+      summary: List entries
+      description: Admins see every entry in the org; other callers see only entries they hold a grant on (any action). Secret material is never included.
+      operationId: pamListEntries
+      parameters:
+        - name: folder_id
+          in: query
+          schema: {type: string, format: uuid}
+        - name: type
+          in: query
+          schema: {type: string}
+        - name: q
+          in: query
+          description: Substring search
+          schema: {type: string}
+        - name: favorites
+          in: query
+          description: When truthy, only the caller's favorites
+          schema: {type: string}
+      responses:
+        '200':
+          description: Entry list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  entries:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PamEntry'
+    post:
+      tags: [PAM Entries]
+      summary: Create entry
+      description: Admin only. A supplied `secret` seeds vault version 1 (envelope-encrypted); it is never returned.
+      operationId: pamCreateEntry
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PamEntryUpsertRequest'
+      responses:
+        '201':
+          description: Entry created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IdResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/v1/access/pam/entries/{id}:
+    get:
+      tags: [PAM Entries]
+      summary: Get entry
+      description: Requires a `view` grant (or admin). Never returns secret material.
+      operationId: pamGetEntry
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: The entry
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PamEntry'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [PAM Entries]
+      summary: Update entry
+      description: Requires an `edit` grant (or admin). A supplied `secret` appends a new vault version.
+      operationId: pamUpdateEntry
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PamEntryUpsertRequest'
+      responses:
+        '200':
+          description: Entry updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IdResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [PAM Entries]
+      summary: Delete entry
+      description: Admin only. Deletes the vault secret (cryptographic erasure) and the per-entry broker connection; tears down any Ziti reach service.
+      operationId: pamDeleteEntry
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '204':
+          description: Entry deleted
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/access/pam/entries/{id}/favorite:
+    post:
+      tags: [PAM Entries]
+      summary: Mark entry as favorite
+      operationId: pamFavoriteEntry
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Favorite set
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PamFavoriteResponse'
+    delete:
+      tags: [PAM Entries]
+      summary: Remove favorite
+      operationId: pamUnfavoriteEntry
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Favorite cleared
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PamFavoriteResponse'
+
+  /api/v1/access/pam/entries/{id}/grants:
+    get:
+      tags: [PAM Entries]
+      summary: List entry grants
+      description: Admin only. The per-entry ACL (view/connect/edit/reveal per principal).
+      operationId: pamListEntryGrants
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Grant list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  grants:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PamEntryGrant'
+    post:
+      tags: [PAM Entries]
+      summary: Add entry grant
+      description: Admin only.
+      operationId: pamAddEntryGrant
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PamEntryGrantRequest'
+      responses:
+        '201':
+          description: Grant created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IdResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/v1/access/pam/entries/{id}/grants/{grantId}:
+    delete:
+      tags: [PAM Entries]
+      summary: Remove entry grant
+      description: Admin only.
+      operationId: pamRemoveEntryGrant
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+        - name: grantId
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '204':
+          description: Grant removed
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/access/pam/entries/{id}/reveal:
+    post:
+      tags: [PAM Entries]
+      summary: Reveal entry secret
+      description: >
+        Returns the secret plaintext once. Double-gated: the entry must have
+        `allow_reveal=true` (enforced for admins too) and non-admin callers need
+        a `reveal` grant. Subject to the checkout controls (dual control,
+        exclusivity) and, for step-up-flagged secrets, a recent step-up MFA
+        (403 with `X-Step-Up-Required`). Every reveal is reason-stamped,
+        ledgered in vault_checkouts, and audited.
+      operationId: pamRevealEntry
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PamReasonRequest'
+      responses:
+        '200':
+          description: Secret plaintext (returned once)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PamRevealResponse'
+        '202':
+          description: Dual control — awaiting a second-person authorization
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PamDualControlPending'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Entry exclusively checked out by another user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PamExclusivityConflict'
+
+  # --- PAM: launch, approval workflow, session ledger ---
+  /api/v1/access/pam/entries/{id}/connect:
+    post:
+      tags: [PAM Launch]
+      summary: Launch entry session
+      description: >
+        Brokered launch with server-side credential injection — the caller never
+        sees the secret. Requires a `connect` grant (or admin); entries with
+        `require_approval` need an approved access request; checkout controls
+        (dual control, exclusivity) apply. Website entries return a URL launch
+        instead of a brokered connection.
+      operationId: pamConnectEntry
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Launch details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PamLaunchResponse'
+        '202':
+          description: Dual control — awaiting a second-person authorization
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PamDualControlPending'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Exclusive checkout held by another user, or broker conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PamExclusivityConflict'
+
+  /api/v1/access/pam/entries/{id}/ws:
+    get:
+      tags: [PAM Launch]
+      summary: Clientless SSH relay (WebSocket)
+      description: >
+        WebSocket upgrade for the in-browser wasm-ssh terminal
+        (`?proto=ssh`). Same grant and approval gates as connect.
+      operationId: pamEntryWebSocket
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+        - name: proto
+          in: query
+          schema:
+            type: string
+            enum: [ssh]
+      responses:
+        '101':
+          description: Switching protocols (WebSocket session established)
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/access/pam/entries/{id}/request:
+    post:
+      tags: [PAM Launch]
+      summary: Request access to an entry
+      description: Opens a single-use access request for a `require_approval` entry. The requester must hold the `connect` grant.
+      operationId: pamRequestEntryAccess
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: {type: string}
+      responses:
+        '201':
+          description: Request opened
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  request_id: {type: string, format: uuid}
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/access/pam/entry-requests:
+    get:
+      tags: [PAM Launch]
+      summary: List pending access requests
+      description: Admin only. The approval queue.
+      operationId: pamListEntryRequests
+      responses:
+        '200':
+          description: Pending requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PamAccessRequestList'
+
+  /api/v1/access/pam/entry-requests/{id}/approve:
+    post:
+      tags: [PAM Launch]
+      summary: Approve access request
+      description: Admin only.
+      operationId: pamApproveEntryRequest
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Decision recorded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PamRequestDecisionResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/access/pam/entry-requests/{id}/deny:
+    post:
+      tags: [PAM Launch]
+      summary: Deny access request
+      description: Admin only.
+      operationId: pamDenyEntryRequest
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Decision recorded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PamRequestDecisionResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/access/pam/my-entry-requests:
+    get:
+      tags: [PAM Launch]
+      summary: List my access requests
+      description: The caller's own requests and their outcomes.
+      operationId: pamListMyEntryRequests
+      responses:
+        '200':
+          description: The caller's requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PamAccessRequestList'
+
+  /api/v1/access/pam/sessions:
+    get:
+      tags: [PAM Launch]
+      summary: List entry sessions
+      description: Admin only. The recent-launch ledger with recording availability.
+      operationId: pamListSessions
+      responses:
+        '200':
+          description: Session ledger
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sessions:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PamEntrySession'
+
+  /api/v1/access/pam/sessions/{id}/end:
+    post:
+      tags: [PAM Launch]
+      summary: End entry session
+      description: The launcher, or an admin, force-ends a live session.
+      operationId: pamEndSession
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Session ended
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PamEndedResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/access/pam/import/rdm:
+    post:
+      tags: [PAM Launch]
+      summary: Import a Devolutions RDM export
+      description: Admin only. Imports folders and entries; plaintext passwords in the export are sealed into the vault. Everything imported is tagged `rdm-import`.
+      operationId: pamImportRDM
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data]
+              properties:
+                data:
+                  type: string
+                  description: The RDM export JSON, as a string
+                folder_id:
+                  type: string
+                  format: uuid
+                  description: Optional root folder to import under
+      responses:
+        '200':
+          description: Import summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PamImportResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  # --- PAM: checkout controls (dual control, exclusivity, break-glass) ---
+  /api/v1/access/pam/entries/{id}/break-glass:
+    post:
+      tags: [PAM Checkout Controls]
+      summary: Break-glass emergency reveal
+      description: >
+        Emergency bypass of the dual-control wait and exclusivity hold, allowed
+        only on entries with `break_glass_enabled` for callers who could
+        normally reveal. Requires a justification of at least 10 characters and
+        raises a high-severity `pam.break_glass` audit event.
+      operationId: pamBreakGlass
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PamReasonRequest'
+      responses:
+        '200':
+          description: Secret plaintext (break-glass)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PamBreakGlassResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/access/pam/entries/{id}/checkin:
+    post:
+      tags: [PAM Checkout Controls]
+      summary: Release checkout lease
+      description: Releases the caller's live checkout lease; an admin may release any principal's lease on the entry.
+      operationId: pamCheckin
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Lease(s) released
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  released:
+                    type: integer
+                    description: Number of leases released
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/access/pam/checkout-authorizations:
+    get:
+      tags: [PAM Checkout Controls]
+      summary: List pending dual-control authorizations
+      description: Admin only. Second-person requests awaiting an approver.
+      operationId: pamListCheckoutAuthorizations
+      responses:
+        '200':
+          description: Pending authorizations
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  authorizations:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PamCheckoutAuthorization'
+
+  /api/v1/access/pam/checkout-authorizations/{id}/{decision}:
+    post:
+      tags: [PAM Checkout Controls]
+      summary: Decide dual-control authorization
+      description: Admin only. The approver may not be the requester.
+      operationId: pamDecideCheckoutAuthorization
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+        - name: decision
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [approve, deny]
+      responses:
+        '200':
+          description: Decision recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: {type: string, format: uuid}
+                  status: {type: string, enum: [approved, denied]}
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Authorization already decided
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/access/pam/checkouts/active:
+    get:
+      tags: [PAM Checkout Controls]
+      summary: List active checkouts
+      description: Admin only. The live "who holds what right now" ledger (expired leases are retired first).
+      operationId: pamListActiveCheckouts
+      responses:
+        '200':
+          description: Active checkouts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  checkouts:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PamActiveCheckout'
+
+  # --- PAM: moderated sessions (four-eyes) ---
+  /api/v1/access/pam/moderation/request:
+    post:
+      tags: [PAM Moderation]
+      summary: Request session moderation
+      description: >
+        Opens (or idempotently reuses) a pending moderation request for a
+        `require_moderator` connection. The client polls the status endpoint
+        and retries the connect once active.
+      operationId: pamRequestModeration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [route_id]
+              properties:
+                route_id: {type: string}
+                reason: {type: string}
+      responses:
+        '200':
+          description: Existing pending request reused
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PamModerationOpened'
+        '201':
+          description: Moderation request opened
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PamModerationOpened'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/v1/access/pam/moderation/pending:
+    get:
+      tags: [PAM Moderation]
+      summary: List pending moderation requests
+      description: Admin/moderator queue of pending, unexpired requests.
+      operationId: pamListPendingModeration
+      responses:
+        '200':
+          description: Pending queue
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pending:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PamModerationPendingItem'
+
+  /api/v1/access/pam/moderation/{id}:
+    get:
+      tags: [PAM Moderation]
+      summary: Get moderation status
+      description: Requester or moderator polls until `active` (or a terminal state).
+      operationId: pamGetModerationStatus
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Current state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PamModerationStatus'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/access/pam/moderation/{id}/join:
+    post:
+      tags: [PAM Moderation]
+      summary: Join as moderator
+      description: Admin/moderator claims the pending request (unblocking the requester's connect). The requester cannot moderate their own session.
+      operationId: pamJoinModeration
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Moderation active
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: {type: string, format: uuid}
+                  status: {type: string, enum: [active]}
+                  moderator_id: {type: string, format: uuid}
+        '409':
+          description: Not pending, already claimed, expired, or caller is the requester
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/access/pam/moderation/{id}/end:
+    post:
+      tags: [PAM Moderation]
+      summary: End moderated session
+      description: Requester or moderator ends the session (moderator end acts as a kill switch).
+      operationId: pamEndModeration
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Ended
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PamEndedResponse'
+        '409':
+          description: Session is not active
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # --- PAM: SSH CA + brokered sessions + cloud JIT ---
+  /api/v1/access/pam/ssh-ca/init:
+    post:
+      tags: [PAM SSH & Brokering]
+      summary: Initialize org SSH CA
+      description: Admin only. Generates the org CA keypair; the private key is sealed into the vault and never returned.
+      operationId: pamInitSSHCA
+      responses:
+        '200':
+          description: CA already initialized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SSHCAPublicKey'
+        '201':
+          description: CA created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SSHCAPublicKey'
+
+  /api/v1/access/pam/ssh-ca:
+    get:
+      tags: [PAM SSH & Brokering]
+      summary: Get org SSH CA public key
+      description: The value to install as `TrustedUserCAKeys` on target hosts. No secret material.
+      operationId: pamGetSSHCA
+      responses:
+        '200':
+          description: CA public key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SSHCAPublicKey'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/access/pam/connect/ssh:
+    post:
+      tags: [PAM SSH & Brokering]
+      summary: Issue short-lived SSH certificate
+      description: >
+        Signs a short-lived SSH user certificate (10 min default, 60 min cap)
+        for the caller and records the brokered session. Without a supplied
+        public key an ephemeral keypair is generated and the private key
+        returned once (never stored).
+      operationId: pamSSHConnect
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SSHConnectRequest'
+      responses:
+        '200':
+          description: Certificate issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SSHConnectResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '428':
+          description: SSH CA not initialized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/access/pam/connect/cloud:
+    post:
+      tags: [PAM SSH & Brokering]
+      summary: Broker short-lived cloud credentials (JIT)
+      description: >
+        STS AssumeRole via a vault-held broker credential; returns short-lived
+        keys (TTL clamped to 15–720 minutes) and optionally a federated console
+        URL. Recorded in the brokered-session ledger; auto-expires, nothing to
+        revoke.
+      operationId: pamCloudConnect
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CloudConnectRequest'
+      responses:
+        '200':
+          description: Credentials issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CloudConnectResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/access/pam/brokered-sessions:
+    post:
+      tags: [PAM SSH & Brokering]
+      summary: Record brokered DB/K8s session
+      description: Registers a brokered `db` or `k8s` session (SSH goes through `/pam/connect/ssh`).
+      operationId: pamBrokerSession
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BrokerSessionRequest'
+      responses:
+        '201':
+          description: Session recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  session_id: {type: string, format: uuid}
+                  expires_at: {type: string, format: date-time}
+        '400':
+          $ref: '#/components/responses/BadRequest'
+    get:
+      tags: [PAM SSH & Brokering]
+      summary: List brokered sessions
+      description: Admin only. Expired sessions are retired first so the list is live-accurate.
+      operationId: pamListBrokeredSessions
+      responses:
+        '200':
+          description: Brokered-session ledger
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sessions:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/BrokeredSession'
+
+  /api/v1/access/pam/brokered-sessions/{id}/end:
+    post:
+      tags: [PAM SSH & Brokering]
+      summary: End brokered session
+      operationId: pamEndBrokeredSession
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Session marked ended
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PamEndedResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # --- PAM: privilege graph ---
+  /api/v1/access/pam/privilege-graph/secret/{id}:
+    get:
+      tags: [PAM Privilege Graph]
+      summary: Who can reach this vault secret
+      description: Admin only. Effective-access blast radius across IAM+IGA+PAM.
+      operationId: pamSecretPrivilegeGraph
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Reachers of the secret
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourcePrivilegeGraph'
+
+  /api/v1/access/pam/privilege-graph/entry/{id}:
+    get:
+      tags: [PAM Privilege Graph]
+      summary: Who can reach this PAM entry
+      description: Admin only.
+      operationId: pamEntryPrivilegeGraph
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Reachers of the entry
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourcePrivilegeGraph'
+
+  /api/v1/access/pam/privilege-graph/user/{id}:
+    get:
+      tags: [PAM Privilege Graph]
+      summary: What this user can reach
+      description: Admin only. Secrets and PAM entries reachable by the user, with the path that grants each.
+      operationId: pamUserPrivilegeGraph
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Reachable resources
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserPrivilegeGraph'
+
+  # --- PAM: broker status + Ziti reach mode ---
+  /api/v1/access/pam/broker/status:
+    get:
+      tags: [PAM Ziti Reach]
+      summary: Broker capability probe
+      operationId: pamBrokerStatus
+      responses:
+        '200':
+          description: Available launch paths
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  available: {type: boolean}
+                  reach_modes:
+                    type: array
+                    items: {type: string, enum: [direct, ziti]}
+                  direct_broker: {type: boolean}
+                  ziti_broker: {type: boolean}
+
+  /api/v1/access/pam/broker/ziti-bindings:
+    get:
+      tags: [PAM Ziti Reach]
+      summary: List broker Ziti bindings
+      description: Admin only. The tunneler binding list plus the dialer role.
+      operationId: pamZitiBindings
+      responses:
+        '200':
+          description: Bindings
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  bindings:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PamZitiBinding'
+                  dialer_role: {type: string}
+
+  /api/v1/access/pam/entries/{id}/ziti/enable:
+    post:
+      tags: [PAM Ziti Reach]
+      summary: Enable Ziti reach for entry
+      description: Admin only. Provisions an overlay service for the target hop and flips the entry to `reach_mode=ziti`.
+      operationId: pamEnableZiti
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Ziti reach enabled (idempotent)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: {type: string, format: uuid}
+                  reach_mode: {type: string, enum: [ziti]}
+                  ziti_service_name: {type: string}
+                  ziti_intercept_port: {type: integer}
+        '409':
+          description: No free broker loopback port available
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/access/pam/entries/{id}/ziti/disable:
+    post:
+      tags: [PAM Ziti Reach]
+      summary: Disable Ziti reach for entry
+      description: Admin only. Tears down the overlay service and reverts to direct reach.
+      operationId: pamDisableZiti
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Reverted to direct reach
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: {type: string, format: uuid}
+                  reach_mode: {type: string, enum: [direct]}
+
+  # --- PAM: Windows application delivery (RemoteApp) ---
+  /api/v1/access/pam/apps:
+    get:
+      tags: [Windows Apps]
+      summary: List Windows apps (operator view)
+      description: Apps, pools, host state, and host-agent links in one payload.
+      operationId: pamListWindowsApps
+      responses:
+        '200':
+          description: App catalog
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  apps:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/WindowsApp'
+                  pools:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/WindowsAppPool'
+                  host_state: {type: object, additionalProperties: true}
+                  host_agents: {type: object, additionalProperties: true}
+    post:
+      tags: [Windows Apps]
+      summary: Create Windows app
+      description: Admin only. Targets a host entry or a pool.
+      operationId: pamCreateWindowsApp
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WindowsAppInput'
+      responses:
+        '201':
+          description: App created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IdResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          description: Duplicate alias on host
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/access/pam/my-apps:
+    get:
+      tags: [Windows Apps]
+      summary: List my launchable apps
+      description: Active apps whose host (or any pool member) the caller may connect to — the same `connect` grant the launch endpoint gates on. Powers the end-user portal tiles.
+      operationId: pamMyWindowsApps
+      responses:
+        '200':
+          description: Launchable apps
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  apps:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/MyWindowsApp'
+
+  /api/v1/access/pam/apps/{id}:
+    put:
+      tags: [Windows Apps]
+      summary: Update Windows app
+      description: Admin only.
+      operationId: pamUpdateWindowsApp
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WindowsAppInput'
+      responses:
+        '200':
+          description: App updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IdResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Windows Apps]
+      summary: Delete Windows app
+      description: Admin only.
+      operationId: pamDeleteWindowsApp
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '204':
+          description: App deleted
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/access/pam/apps/{id}/launch:
+    post:
+      tags: [Windows Apps]
+      summary: Launch Windows app
+      description: >
+        RemoteApp launch through the same brokered path as entry connect (ACL +
+        approval gates + placement across pool hosts). `?replace=<session_id>`
+        replaces the caller's existing session on the chosen host.
+      operationId: pamLaunchWindowsApp
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+        - name: replace
+          in: query
+          description: Session id to replace on the chosen host
+          schema: {type: string, format: uuid}
+      responses:
+        '200':
+          description: Launch details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WindowsAppLaunchResponse'
+        '202':
+          description: Dual control — awaiting a second-person authorization
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PamDualControlPending'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: No placeable host (capacity, or caller session conflict)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/access/pam/apps/{id}/icon:
+    get:
+      tags: [Windows Apps]
+      summary: Get app icon
+      operationId: pamWindowsAppIcon
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: PNG icon
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/access/pam/app-import:
+    post:
+      tags: [Windows Apps]
+      summary: Import discovered apps
+      description: Admin only. Imports a discovery report of installed apps for a host; apps present in the host's TSAppAllowList are marked verified.
+      operationId: pamImportWindowsApps
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [host_entry_id, data]
+              properties:
+                host_entry_id: {type: string, format: uuid}
+                data:
+                  type: string
+                  description: The discovery report JSON, as a string
+      responses:
+        '200':
+          description: Import summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  apps_created: {type: integer}
+                  apps_updated: {type: integer}
+                  host_updated: {type: boolean}
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/v1/access/pam/app-pools:
+    get:
+      tags: [Windows Apps]
+      summary: List app host pools
+      operationId: pamListAppPools
+      responses:
+        '200':
+          description: Pools with members
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pools:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/WindowsAppPool'
+    post:
+      tags: [Windows Apps]
+      summary: Create app host pool
+      description: Admin only. Placement defaults to `least_loaded` (or `round_robin`).
+      operationId: pamCreateAppPool
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WindowsAppPoolInput'
+      responses:
+        '201':
+          description: Pool created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IdResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/v1/access/pam/app-pools/{id}:
+    put:
+      tags: [Windows Apps]
+      summary: Update app host pool
+      description: Admin only.
+      operationId: pamUpdateAppPool
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WindowsAppPoolInput'
+      responses:
+        '200':
+          description: Pool updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IdResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Windows Apps]
+      summary: Delete app host pool
+      description: Admin only.
+      operationId: pamDeleteAppPool
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '204':
+          description: Pool deleted
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/access/pam/app-pools/{id}/members:
+    post:
+      tags: [Windows Apps]
+      summary: Add pool member
+      description: Admin only. Adds a host entry to the pool with a session cap.
+      operationId: pamAddAppPoolMember
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [host_entry_id]
+              properties:
+                host_entry_id: {type: string, format: uuid}
+                max_sessions: {type: integer, minimum: 1, default: 1}
+      responses:
+        '201':
+          description: Member added
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IdResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          description: Host already in pool
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/access/pam/app-pools/{id}/members/{memberId}:
+    delete:
+      tags: [Windows Apps]
+      summary: Remove pool member
+      description: Admin only.
+      operationId: pamRemoveAppPoolMember
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+        - name: memberId
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '204':
+          description: Member removed
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/access/pam/app-hosts/{entryId}/agent:
+    post:
+      tags: [Windows Apps]
+      summary: Link agent to app host
+      description: Admin only. Binds an enrolled agent to a `windows_app_host` entry so its discovery reports route to that host.
+      operationId: pamLinkAppHostAgent
+      parameters:
+        - name: entryId
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200':
+          description: Agent linked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  host_entry_id: {type: string, format: uuid}
+                  agent_id: {type: string}
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Windows Apps]
+      summary: Unlink agent from app host
+      description: Admin only.
+      operationId: pamUnlinkAppHostAgent
+      parameters:
+        - name: entryId
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '204':
+          description: Agent unlinked
+        '404':
+          $ref: '#/components/responses/NotFound'
+
 components:
   securitySchemes:
     bearerAuth:
@@ -1904,3 +3376,591 @@ components:
           type: string
         token:
           type: string
+
+    # --- PAM ---
+    IdResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+
+    PamEntryType:
+      type: object
+      properties:
+        type:
+          type: string
+        kind:
+          type: string
+          enum: [session, credential, info]
+        label:
+          type: string
+        protocol:
+          type: string
+          description: Broker protocol for launchable session types (rdp, ssh, vnc, telnet)
+        secret_label:
+          type: string
+
+    PamFolder:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        parent_id: {type: string, format: uuid}
+        name: {type: string}
+        icon: {type: string}
+        description: {type: string}
+        entry_count: {type: integer}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+
+    PamFolderRequest:
+      type: object
+      required: [name]
+      properties:
+        parent_id: {type: string, format: uuid}
+        name: {type: string}
+        icon: {type: string}
+        description: {type: string}
+
+    PamEntry:
+      type: object
+      description: An entry row. Carries no secret material — `has_secret` / `credential_entry_id` say where the secret lives, never what it is.
+      properties:
+        id: {type: string, format: uuid}
+        folder_id: {type: string, format: uuid}
+        name: {type: string}
+        entry_type: {type: string}
+        kind: {type: string, enum: [session, credential, info]}
+        description: {type: string}
+        tags:
+          type: array
+          items: {type: string}
+        hostname: {type: string}
+        port: {type: integer}
+        username: {type: string}
+        domain: {type: string}
+        url: {type: string}
+        settings:
+          type: object
+          additionalProperties: true
+        has_secret: {type: boolean}
+        credential_entry_id: {type: string, format: uuid}
+        credential_entry_name: {type: string}
+        allow_reveal: {type: boolean}
+        require_approval: {type: boolean}
+        dual_control_required: {type: boolean}
+        exclusive_checkout: {type: boolean}
+        break_glass_enabled: {type: boolean}
+        record_session: {type: boolean}
+        reach_mode: {type: string, enum: [direct, ziti]}
+        renderer: {type: string, enum: [guacamole, wasm-ssh, novnc, support]}
+        ziti_enabled: {type: boolean}
+        favorite: {type: boolean}
+        last_connected_at: {type: string, format: date-time}
+        connect_count: {type: integer}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+
+    PamEntryUpsertRequest:
+      type: object
+      required: [name, entry_type]
+      properties:
+        folder_id: {type: string, format: uuid}
+        name: {type: string}
+        entry_type: {type: string}
+        description: {type: string}
+        tags:
+          type: array
+          items: {type: string}
+        hostname:
+          type: string
+          description: Required for broker-protocol session types
+        port:
+          type: integer
+          description: 0 selects the protocol default (rdp 3389, ssh 22, vnc 5900, telnet 23)
+        username: {type: string}
+        domain: {type: string}
+        url:
+          type: string
+          description: Required for website entries
+        settings:
+          type: object
+          additionalProperties: true
+        secret:
+          type: string
+          description: Write-only. Seeds vault version 1 on create; appends a new version on update. Never returned.
+        credential_entry_id:
+          type: string
+          format: uuid
+          description: Linked shared-credential entry
+        allow_reveal: {type: boolean}
+        require_approval: {type: boolean}
+        dual_control_required: {type: boolean}
+        exclusive_checkout: {type: boolean}
+        break_glass_enabled: {type: boolean}
+        record_session: {type: boolean}
+        renderer:
+          type: string
+          description: wasm-ssh only for ssh entries; unrecognized values fall back to guacamole
+
+    PamFavoriteResponse:
+      type: object
+      properties:
+        favorite: {type: boolean}
+
+    PamEntryGrant:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        principal_type: {type: string, enum: [user, role, group]}
+        principal_id: {type: string}
+        actions:
+          type: array
+          items: {type: string, enum: [view, connect, edit, reveal]}
+        expires_at: {type: string, format: date-time}
+        granted_by: {type: string, format: uuid}
+        created_at: {type: string, format: date-time}
+
+    PamEntryGrantRequest:
+      type: object
+      required: [principal_type, principal_id, actions]
+      properties:
+        principal_type: {type: string, enum: [user, role, group]}
+        principal_id: {type: string}
+        actions:
+          type: array
+          minItems: 1
+          items: {type: string, enum: [view, connect, edit, reveal]}
+        expires_at: {type: string, format: date-time}
+
+    PamReasonRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          description: Audited justification (break-glass requires at least 10 characters)
+
+    PamRevealResponse:
+      type: object
+      properties:
+        value:
+          type: string
+          description: The secret plaintext
+
+    PamBreakGlassResponse:
+      type: object
+      properties:
+        value:
+          type: string
+          description: The secret plaintext
+        break_glass:
+          type: boolean
+          enum: [true]
+
+    PamDualControlPending:
+      type: object
+      properties:
+        status: {type: string, enum: [awaiting_authorization]}
+        message: {type: string}
+        authorization_id: {type: string, format: uuid}
+
+    PamExclusivityConflict:
+      type: object
+      properties:
+        error: {type: string}
+        held_by:
+          type: string
+          format: uuid
+          description: Principal currently holding the exclusive checkout
+        break_glass:
+          type: boolean
+          description: Whether break-glass is enabled on the entry
+
+    PamLaunchResponse:
+      type: object
+      description: Brokered launch (`launch_type=guacamole`) or URL launch for website entries (`launch_type=url`, with `url` instead of the broker fields).
+      properties:
+        launch_type: {type: string, enum: [guacamole, url]}
+        connect_url: {type: string}
+        url: {type: string}
+        entry_id: {type: string, format: uuid}
+        session_id: {type: string, format: uuid}
+        credential_injected: {type: boolean}
+        recorded: {type: boolean}
+        reach_mode: {type: string, enum: [direct, ziti]}
+
+    PamAccessRequest:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        entry_id: {type: string, format: uuid}
+        entry_name: {type: string}
+        entry_type: {type: string}
+        requester_id: {type: string, format: uuid}
+        reason: {type: string}
+        status: {type: string, enum: [pending, approved, denied]}
+        approver_id: {type: string, format: uuid}
+        decided_at: {type: string, format: date-time}
+        expires_at: {type: string, format: date-time}
+        created_at: {type: string, format: date-time}
+
+    PamAccessRequestList:
+      type: object
+      properties:
+        requests:
+          type: array
+          items:
+            $ref: '#/components/schemas/PamAccessRequest'
+
+    PamRequestDecisionResponse:
+      type: object
+      properties:
+        request_id: {type: string, format: uuid}
+        status: {type: string, enum: [approved, denied]}
+
+    PamEntrySession:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        entry_id: {type: string, format: uuid}
+        entry_name: {type: string}
+        user_id: {type: string, format: uuid}
+        protocol: {type: string}
+        credential_injected: {type: boolean}
+        recording_available: {type: boolean}
+        started_at: {type: string, format: date-time}
+        ended_at: {type: string, format: date-time}
+        status: {type: string}
+
+    PamEndedResponse:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        status: {type: string, enum: [ended]}
+
+    PamImportResult:
+      type: object
+      properties:
+        folders_created: {type: integer}
+        entries_created: {type: integer}
+        secrets_stored: {type: integer}
+        by_type:
+          type: object
+          additionalProperties: {type: integer}
+        skipped:
+          type: array
+          items:
+            type: object
+            properties:
+              name: {type: string}
+              reason: {type: string}
+
+    PamCheckoutAuthorization:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        entry_id: {type: string, format: uuid}
+        entry_name: {type: string}
+        requester_id: {type: string, format: uuid}
+        action: {type: string}
+        reason: {type: string}
+        status: {type: string, enum: [pending, approved, denied, consumed]}
+        created_at: {type: string, format: date-time}
+        expires_at: {type: string, format: date-time}
+        decided_at: {type: string, format: date-time}
+
+    PamActiveCheckout:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        entry_id: {type: string, format: uuid}
+        entry_name: {type: string}
+        principal_id: {type: string, format: uuid}
+        action: {type: string}
+        reason: {type: string}
+        break_glass: {type: boolean}
+        leased_at: {type: string, format: date-time}
+        expires_at: {type: string, format: date-time}
+
+    PamModerationOpened:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        status: {type: string, enum: [pending]}
+        expires_at: {type: string, format: date-time}
+        reused:
+          type: boolean
+          description: Present (true) when an existing pending request was returned
+
+    PamModerationPendingItem:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        connection_id: {type: string}
+        requester_id: {type: string, format: uuid}
+        reason: {type: string}
+        created_at: {type: string, format: date-time}
+        expires_at: {type: string, format: date-time}
+        connection:
+          type: string
+          description: Target hostname of the connection
+
+    PamModerationStatus:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        status: {type: string, enum: [pending, active, ended, expired]}
+        moderator_id: {type: string, format: uuid}
+        active_conn_id: {type: string}
+        joined_at: {type: string, format: date-time}
+        expires_at: {type: string, format: date-time}
+
+    SSHCAPublicKey:
+      type: object
+      properties:
+        public_key:
+          type: string
+          description: authorized_keys-format CA public key
+        key_type: {type: string, example: ssh-ed25519}
+        trusted_ca_line:
+          type: string
+          description: Ready-to-install `@cert-authority` line (GET only)
+        already_initialized:
+          type: boolean
+          description: Present (true) when init found an existing CA
+
+    SSHConnectRequest:
+      type: object
+      required: [host, principal]
+      properties:
+        host: {type: string}
+        principal:
+          type: string
+          description: The login name on the target host
+        public_key:
+          type: string
+          description: Optional BYO public key (authorized_keys line); omitted → an ephemeral keypair is generated
+        reason: {type: string}
+        ttl_minutes:
+          type: integer
+          description: Certificate lifetime (default 10, hard cap 60)
+
+    SSHConnectResponse:
+      type: object
+      properties:
+        session_id: {type: string, format: uuid}
+        certificate:
+          type: string
+          description: The signed SSH user certificate (authorized_keys format)
+        principal: {type: string}
+        expires_at: {type: string, format: date-time}
+        private_key:
+          type: string
+          description: Ephemeral private key PEM — returned once, only when no public key was supplied; never stored
+
+    BrokerSessionRequest:
+      type: object
+      required: [target_type, target, principal]
+      properties:
+        target_type: {type: string, enum: [db, k8s]}
+        target: {type: string}
+        principal: {type: string}
+        reason: {type: string}
+        ttl_minutes: {type: integer}
+
+    BrokeredSession:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        user_id: {type: string, format: uuid}
+        target_type: {type: string, enum: [ssh, db, k8s, cloud]}
+        target: {type: string}
+        principal: {type: string}
+        reason: {type: string}
+        status: {type: string}
+        started_at: {type: string, format: date-time}
+        expires_at: {type: string, format: date-time}
+
+    CloudConnectRequest:
+      type: object
+      required: [role_arn, secret_id]
+      properties:
+        provider:
+          type: string
+          description: '"aws" (default); GCP/Azure reserved'
+        role_arn: {type: string}
+        region: {type: string, default: us-east-1}
+        secret_id:
+          type: string
+          format: uuid
+          description: Vault secret holding the broker credentials (JSON access_key_id/secret_access_key)
+        reason: {type: string}
+        ttl_minutes:
+          type: integer
+          description: Clamped to 15–720
+        console:
+          type: boolean
+          description: Also return a federated console URL
+
+    CloudConnectResponse:
+      type: object
+      properties:
+        session_id: {type: string, format: uuid}
+        provider: {type: string, enum: [aws]}
+        role_arn: {type: string}
+        region: {type: string}
+        access_key_id: {type: string}
+        secret_access_key: {type: string}
+        session_token: {type: string}
+        expires_at: {type: string, format: date-time}
+        console_url: {type: string}
+        console_error: {type: string}
+
+    PrivilegeReacher:
+      type: object
+      properties:
+        user_id: {type: string, format: uuid}
+        username: {type: string}
+        via:
+          type: string
+          description: Grant mechanism (direct grant, role, group…)
+        path:
+          type: string
+          description: Human-readable grant path
+        actions:
+          type: array
+          items: {type: string}
+
+    ResourcePrivilegeGraph:
+      type: object
+      properties:
+        kind: {type: string, enum: [secret, pam_entry]}
+        resource_id: {type: string, format: uuid}
+        reacher_count: {type: integer}
+        reachers:
+          type: array
+          items:
+            $ref: '#/components/schemas/PrivilegeReacher'
+
+    UserPrivilegeGraph:
+      type: object
+      properties:
+        user_id: {type: string, format: uuid}
+        resource_count: {type: integer}
+        resources:
+          type: array
+          items:
+            type: object
+            properties:
+              kind: {type: string, enum: [secret, pam_entry]}
+              resource_id: {type: string, format: uuid}
+              name: {type: string}
+              via: {type: string}
+              path: {type: string}
+              actions:
+                type: array
+                items: {type: string}
+
+    PamZitiBinding:
+      type: object
+      properties:
+        service_name: {type: string}
+        entry_id: {type: string, format: uuid}
+        intercept_port: {type: integer}
+
+    WindowsApp:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        host_entry_id: {type: string, format: uuid}
+        host_name: {type: string}
+        pool_id: {type: string, format: uuid}
+        pool_name: {type: string}
+        alias: {type: string}
+        display_name: {type: string}
+        exec_path: {type: string}
+        args: {type: string}
+        working_dir: {type: string}
+        has_icon: {type: boolean}
+        source: {type: string, enum: [manual, tsapp, app_paths, start_menu, appx]}
+        verified: {type: boolean}
+        status: {type: string}
+        require_approval: {type: boolean}
+        record_session: {type: boolean}
+        created_at: {type: string}
+        updated_at: {type: string}
+
+    WindowsAppInput:
+      type: object
+      required: [alias, display_name]
+      properties:
+        host_entry_id:
+          type: string
+          format: uuid
+          description: Single-host target (mutually exclusive with pool_id)
+        pool_id: {type: string, format: uuid}
+        alias:
+          type: string
+          description: RemoteApp alias (without the `||` prefix)
+        display_name: {type: string}
+        exec_path: {type: string}
+        args:
+          type: string
+          description: Must not contain secret material (visible in the target's process list)
+        working_dir: {type: string}
+        require_approval: {type: boolean}
+        record_session: {type: boolean}
+
+    MyWindowsApp:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        display_name: {type: string}
+        alias: {type: string}
+        host_name: {type: string}
+        pool_name: {type: string}
+        has_icon: {type: boolean}
+        require_approval: {type: boolean}
+
+    WindowsAppLaunchResponse:
+      type: object
+      properties:
+        launch_type: {type: string, enum: [guacamole]}
+        connect_url: {type: string}
+        app_id: {type: string, format: uuid}
+        host_entry_id: {type: string, format: uuid}
+        host_name: {type: string}
+        session_id: {type: string, format: uuid}
+        recorded: {type: boolean}
+
+    WindowsAppPool:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        name: {type: string}
+        description: {type: string}
+        placement: {type: string, enum: [least_loaded, round_robin]}
+        members:
+          type: array
+          items:
+            type: object
+            properties:
+              id: {type: string, format: uuid}
+              host_entry_id: {type: string, format: uuid}
+              host_name: {type: string}
+              max_sessions: {type: integer}
+              active_sessions: {type: integer}
+        created_at: {type: string}
+        updated_at: {type: string}
+
+    WindowsAppPoolInput:
+      type: object
+      required: [name]
+      properties:
+        name: {type: string}
+        description: {type: string}
+        placement:
+          type: string
+          enum: [least_loaded, round_robin]
+          default: least_loaded
