@@ -664,6 +664,30 @@ jobs:
             ${{ runner.os }}-go-build-${{ env.GO_VERSION }}-
             ${{ runner.os }}-go-build-
 
+      # Formatting is gated here, with the toolchain go.mod pins, rather than by
+      # golangci-lint's gofmt formatter. golangci-lint's gofmt is whatever the
+      # linter BINARY was built with (v2.13.2 = go1.27), which is not the Go
+      # that builds this module -- and gofmt's alignment heuristics changed
+      # between the two, so the linter demanded a layout `gofmt -w` never
+      # produces here. This step can only ever ask for what a contributor's own
+      # gofmt gives them.
+      - name: gofmt
+        run: |
+          # Scope: the packages of THIS module, which is what golangci-lint's
+          # formatter covered -- a like-for-like swap, not a wider gate. `./...`
+          # deliberately stops at agent/ (its own module, its own Go version,
+          # and it vendors third_party/ sources that must not be reformatted).
+          mapfile -t dirs < <(go list -f '{{.Dir}}' ./...)
+          unformatted="$(gofmt -l "${dirs[@]}")"
+          if [ -n "$unformatted" ]; then
+            echo "Not gofmt-clean under $(go version):"
+            echo "$unformatted"
+            echo
+            echo "Fix with: gofmt -w <file>..."
+            exit 1
+          fi
+          echo "gofmt clean under $(go version) across ${#dirs[@]} packages"
+
       - name: Run golangci-lint
         # v7+ of the action runs golangci-lint v2, which is built with a recent
         # enough Go to analyze this go1.26 module (v1 cannot). The pin must stay

@@ -356,6 +356,35 @@ All six items landed with this guide (commits on
    build floor to Go 1.26, now pinned in `go.mod` and matched across CI
    and the docs. Verified with `govulncheck ./...` reporting 0 called
    vulnerabilities.
+
+   Moving the floor had two consequences worth recording, because both are
+   the same class of bug — *a toolchain version leaking somewhere it was
+   never meant to be authoritative*:
+
+   - **Formatting is now gated by the module's own toolchain.** `gofmt`'s
+     alignment heuristics differ between Go releases, and golangci-lint's
+     `gofmt` formatter is the one baked into the *linter binary* (v2.13.2
+     ships built with go1.27), not the one `go.mod` pins. So CI began
+     demanding a layout that no contributor's `gofmt -w` would produce.
+     The formatter is dropped from `.golangci.yml` and replaced by an
+     explicit `gofmt` step in `ci.yml` that runs the pinned toolchain over
+     `go list ./...` — the gate now asks for exactly what you get locally,
+     and cannot drift the next time the linter is bumped.
+   - **The mobile engine deliberately does *not* track the root module.**
+     `agent/` is a separate module (`go 1.25.0`) and never needed 1.26;
+     bumping the mobile workflows to it broke `flutter build ios` with
+     undefined `_res_9_ninit`/`_nsearch`/`_nclose` — Go 1.26's darwin
+     resolver pulls in libresolv, and the gomobile static framework never
+     declares that link requirement. Those two workflows are back on
+     1.25.x with the reason in a comment. Two follow-ups are tracked and
+     **not** folded into this branch: adding `-lresolv` to the
+     `openidx_engine` podspec, and then pinning a patched toolchain in
+     `agent/go.mod` — which today resolves to the go1.25.0 stdlib and so
+     carries 29 known stdlib advisories (`crypto/tls` GO-2025-4008 via the
+     Ziti dialer and the SSO listener, `crypto/x509` GO-2025-4007 via Ziti
+     enrolment). That is a pre-existing condition on `main`, not a
+     regression here, but it is a real gap in the agent's supply chain and
+     should be closed next.
 6. ✅ **Grafana admin/admin fallback removed; dev-kube generates real
    secrets** (B5).
 
