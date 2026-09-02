@@ -2,7 +2,9 @@
 
 **Date:** 2026-09-01 (audited at commit `c98082a` on `main`; updated the
 same day as the program ships on this branch — §4 status: **P0 done, the
-P1 A-defect tail done (A2/A3/A4), P2 done in full** (docs site, quickstart
+P1 A-defect tail done (A2/A3/A4, plus the post-audit A5: SMS/email OTP
+fail closed, OTP and OAuth authorization codes out of the logs, the
+`SMS_PROVIDER`-typo mock fallback removed), P2 done in full** (docs site, quickstart
 fold + banners, PAM guide **and the full `/pam/*` OpenAPI spec**, auditor
 artifacts: [threat model](./THREAT-MODEL.md) and
 [control mapping](./COMPLIANCE-CONTROL-MAPPING.md), doc-tree separation
@@ -12,9 +14,10 @@ ServiceMonitor, backup CronJob, Keycloak/APISIX ghosts removed, chart
 pushed to GHCR as a signed OCI artifact on every tag; WebAuthn→Redis;
 signed releases; Dependabot/Renovate dedupe; dead surfaces pruned; a
 second site truth-sweep fixed the remaining phantom install/config
-surfaces). Open: P1 rollout
-Task 16 (operator action), P3.1 cut v1.28.0 (post-merge), the P4 items
-incl. the Expo-vs-Flutter mobile pick.)
+surfaces), **and P4 has begun** (console i18n framework, EN + TR, with a
+truthful landing page as the reference extraction). Open: P1 rollout
+Task 16 (operator action), P3.1 cut v1.28.0 (post-merge), the remaining
+P4 items incl. the Expo-vs-Flutter mobile pick.)
 **Question this document answers:** *Is OpenIDX fully functional and well defined end to end, as experienced by the people who use it — and what are the next steps and controls to get it there?*
 
 This is the product-and-user-side companion to
@@ -119,7 +122,7 @@ merge-blocking tenant linter (`tools/orgscope`).
 
 | Symptom | Examples |
 |---|---|
-| Controls that display but don't enforce | All fixed on this branch except the flag flip: admin "revoke session" was inert (§3.1-A1), the IP threat list was ignored by login risk scoring (A2), voice MFA displayed over a no-op backend (A3), SAML SLO never notified SPs (A4). Remaining: assignment isn't a grant until the rollout flips (§1.1) |
+| Controls that display but don't enforce | All fixed on this branch except the flag flip: admin "revoke session" was inert (§3.1-A1), the IP threat list was ignored by login risk scoring (A2), voice MFA displayed over a no-op backend (A3), SAML SLO never notified SPs (A4), SMS/email OTP reported "sent" while logging the plaintext codes (A5). Remaining: assignment isn't a grant until the rollout flips (§1.1) |
 | First contact fails | Fixed on this branch: the getting-started doc left a new user unable to log in, and the README quick start referenced files that don't exist. Also fixed: `helm install` now bootstraps its own schema (migration hook Job) |
 | The trust story contradicts itself | `SECURITY.md` still says "multi-tenant SaaS isolation is not implemented" while README and SECURITY-TENANCY.md (correctly) say the opposite; the published docs site describes a Keycloak-based product with **no PAM or ZTNA sections at all** |
 | Shipped but unreleased | Last release v1.27.0 (2026-07-13); ~7 weeks of major work — including security fixes — sits in `[Unreleased]` |
@@ -139,7 +142,7 @@ caveats · ❌ broken/missing.
 | # | Journey (persona) | Status | The caveat that matters |
 |---|---|---|---|
 | J1 | **First run** — deploy → log in → rotate admin → create org (operator) | ✅⚠️ | *Fixed on this branch:* README quick start is now the working compose path with the first-login credential and a hardware floor; `GETTING-STARTED.md` carries the authoritative First Login section; production refuses to start on the unrotated default admin. *Also fixed:* the Helm chart now runs migrations itself (post-install/pre-upgrade hook Job) and actually deploys the OPA its `opaUrl` points at — `helm install` bootstraps a working deployment. |
-| J2 | **Joiner** — create/sync user → enroll MFA → first login → sees their apps (end user) | ✅⚠️ | Real: user CRUD/SCIM/directory sync, MFA wizard (TOTP/WebAuthn/push/recovery), portal. *Fixed on this branch:* WebAuthn ceremonies now live in Redis with a TTL (passkeys survive >1 replica; the in-memory map is a single-replica fallback with lazy expiry), and phone-call MFA fails closed with a 501 instead of pretending (A3). Remaining ⚠️: a typo'd `SMS_PROVIDER` silently falls back to a mock that delivers nothing (`internal/sms/service.go:115`). |
+| J2 | **Joiner** — create/sync user → enroll MFA → first login → sees their apps (end user) | ✅ | Real: user CRUD/SCIM/directory sync, MFA wizard (TOTP/WebAuthn/push/recovery), portal. *Fixed on this branch:* WebAuthn ceremonies now live in Redis with a TTL (passkeys survive >1 replica; the in-memory map is a single-replica fallback with lazy expiry); phone-call MFA fails closed with a 501 instead of pretending (A3); SMS/email OTP fail closed too, and the typo'd-`SMS_PROVIDER`-silently-becomes-a-mock fallback is gone (A5) — an unconfigured or misconfigured factor now answers 501, never "code sent". |
 | J3 | **App access** — publish app → assign → user launches with SSO → reach matches (admin + user) | ⚠️ | SSO itself is solid (OIDC/PKCE, SAML, consent). But assignment drives real reach **only after the convergence rollout** (§1.1). Today the report-only machinery observes the gap; `#874` already made "My Apps & Network" show enforced truth. Execute rollout Task 16. |
 | J4 | **Network access** — enroll agent/BrowZer → posture check → reach a dark service (end user) | ✅ | Real: Windows/Android agents, BrowZer clientless, posture checks, reconciler, `tools/darkprobe` proves dark services are reachable only by authorized identities, and a "going dark" runbook exists. Per-app scoping of dial policies arrives with the same rollout as J3. |
 | J5 | **Privileged access** — request → approve → checkout/brokered session → recording → review (engineer + auditor) | ✅❌ | Functionally the strongest pillar: vault with rotation, Guacamole + in-browser wasm-SSH, recordings with encryption/retention/legal hold, break-glass. But **zero user-facing PAM documentation and zero OpenAPI coverage** of `/pam/*` — a headline pillar that is invisible to evaluators and undocumented for users. |
@@ -180,6 +183,26 @@ product; either wire them or remove them from the UI.
   installation" when no provider is wired, and the stub Twilio provider
   errors instead of fabricating success. Wiring a real call provider stays
   optional follow-up work.
+- **A5 — SMS/email OTP pretended too, and logged the codes** *(found and
+  fixed after the original audit, while extracting the landing page's MFA
+  claims)*: with no SMS provider or email service wired,
+  `sendSMSOTP`/`sendEmailOTP` wrote the **plaintext OTP code into the
+  logs** (a comment claimed "dev mode only" — there was no gate) and
+  returned success; all four enroll/challenge paths swallowed send
+  failures, so the API answered "verification code sent" for codes that
+  went nowhere. Deeper still: `sms.Service.SendOTP` returned success when
+  sending was *disabled* in config, and a **typo'd `SMS_PROVIDER` fell
+  back to a mock** that "delivers" nothing (the J2 caveat). *Shipped on
+  this branch:* both factors gate up front like A3 (typed errors → 501
+  "not configured"), send failures fail the call, codes never reach logs,
+  disabled sending refuses (`sms.ErrSMSSendingDisabled`), unknown
+  provider names are a startup/config error instead of a mock, and the
+  identity main no longer substitutes a fallback mock (the nil-interface
+  trap is guarded). The explicitly configured `mock` provider remains for
+  development. Same sweep: `internal/oauth/store.go` logged **raw OAuth
+  authorization codes** (bearer credentials until exchanged) at
+  error/debug level — replaced with a non-reversible `code_ref`
+  (SHA-256 prefix) that still correlates store→consume→delete events.
 - **A4 — SAML Single Logout never sent the LogoutRequest**
   (`internal/oauth/saml_slo.go` built the URL and logged it). *Shipped on
   this branch:* the back-channel dispatch is real — the LogoutRequest is
@@ -277,13 +300,24 @@ except the mobile decision:*
 - ✅ `landing.tsx` no longer hardcodes unsubstantiated claims (99.99%
   SLA, <50 ms, 70% savings): the stats row states verifiable facts (four
   pillars, eight services, open source, dark services) and the
-  performance card describes the real HA posture.
+  performance card describes the real HA posture. *Correction, second
+  pass:* that first fix missed the rest of the page — the hero badge
+  still said "70% Less Cost", and the page offered a free trial, a
+  credit-card promise, "thousands of organizations", a `#pricing` anchor
+  with no pricing section, dead `href="#"` footer links, and the wrong
+  GitHub org. All rewritten to checkable facts (Apache-2.0, self-hosted,
+  real docs/GitHub/SECURITY/threat-model links); a regression test now
+  pins that the page "makes no claims a self-hosted OSS project cannot
+  keep" (no *trial*, *credit card*, *70%*, *pricing*, or `href="#"`).
 
 **E. Enterprise gates** (not blockers today, but the next "no" from a buyer):
 no i18n at all (~107 pages of hardcoded English), accessibility far below
 VPAT/WCAG expectations (~40 aria attributes console-wide), end users share
 the admin bundle behind role gates only, release binaries unsigned/no
-checksums, WebAuthn single-replica limit (J2).
+checksums, WebAuthn single-replica limit (J2). *Since fixed on this
+branch:* signed releases (P3.4), WebAuthn→Redis (P3.3), and the i18n
+framework with EN/TR catalogs (P4.1 — extraction of the remaining pages
+is the open part).
 
 ---
 
@@ -340,8 +374,10 @@ exactly — it is already written:
 
 The P1 tail items are **already shipped on this branch**: A2 (threat list
 → risk score), A3 (voice MFA fails closed instead of pretending), A4
-(SAML SLO actually notifies SPs, signed). What remains of P1 is the
-rollout itself — steps 1–6 above, run against the live deployment.
+(SAML SLO actually notifies SPs, signed), and the post-audit A5 (SMS and
+email OTP fail closed, OTP codes and OAuth authorization codes out of the
+logs, the `SMS_PROVIDER`-typo mock fallback removed). What remains of P1
+is the rollout itself — steps 1–6 above, run against the live deployment.
 
 *Exit test:* for any user, **My Apps & Network, the assignment report, the
 proxy, `/oauth/authorize` and the Ziti controller all give the same
@@ -453,11 +489,20 @@ all four pillars, deploy, log in, and find PAM.
 
 ### P4 — Enterprise reach (sequence by sales pressure)
 
-i18n framework then string extraction; accessibility pass to a VPAT;
-separate/hardened end-user portal bundle; mobile app decision (Expo vs
-Flutter) executed; then the existing roadmap epics (outbound SCIM,
-HR-driven JML, per-org overlay scoping, SSF/CAEP, agent-identity
-substrate).
+1. ✅ **i18n framework landed** — *on this branch*: i18next/react-i18next
+   in the admin console with English + Turkish catalogs, browser
+   detection + persisted choice (`openidx.lang`), a `LanguageSwitcher`,
+   and the landing page as the reference extraction. Locales are typed
+   against the English catalog, so a missing translation fails
+   `npm run type-check`; conventions in `web/admin-console/README.md`.
+   *Remaining:* extracting the rest of the console's pages — now
+   mechanical, page by page, against the landing pattern.
+2. Accessibility pass to a VPAT (needs real assistive-technology testing,
+   not just an automated axe sweep).
+3. Separate/hardened end-user portal bundle.
+4. Mobile app decision (Expo vs Flutter) executed — maintainer's call.
+5. The existing roadmap epics (outbound SCIM, HR-driven JML, per-org
+   overlay scoping, SSF/CAEP, agent-identity substrate).
 
 ---
 

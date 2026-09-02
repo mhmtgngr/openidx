@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { useAuth } from '../lib/auth'
 import {
   Shield,
@@ -17,70 +18,51 @@ import {
 } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Card, CardContent } from '../components/ui/card'
+import { LanguageSwitcher } from '../components/language-switcher'
 
-interface Feature {
-  icon: React.ReactNode
-  title: string
-  description: string
+// Every claim on this page must be checkable against the repository: no
+// invented SLAs, trials, pricing, adoption numbers, or dead links. Copy
+// lives in the i18n catalogs (src/i18n/locales) — this page is the
+// reference extraction for the console's i18n convention.
+
+const repoUrl = 'https://github.com/mhmtgngr/openidx'
+const docsUrl = 'https://mhmtgngr.github.io/openidx'
+
+const links = {
+  repo: repoUrl,
+  docs: docsUrl,
+  apiReference: `${repoUrl}/tree/main/api/openapi`,
+  issues: `${repoUrl}/issues`,
+  contributing: `${repoUrl}/blob/main/CONTRIBUTING.md`,
+  changelog: `${repoUrl}/blob/main/CHANGELOG.md`,
+  license: `${repoUrl}/blob/main/LICENSE`,
+  securityPolicy: `${repoUrl}/blob/main/SECURITY.md`,
+  threatModel: `${repoUrl}/blob/main/docs/THREAT-MODEL.md`,
+  complianceMapping: `${repoUrl}/blob/main/docs/COMPLIANCE-CONTROL-MAPPING.md`,
 }
 
-interface Stat {
-  value: string
-  label: string
-}
-
-const features: Feature[] = [
-  {
-    icon: <Shield className="h-6 w-6" />,
-    title: 'Zero Trust Architecture',
-    description: 'Never trust, always verify. Every access request is fully authenticated, authorized, and encrypted before granting access.',
-  },
-  {
-    icon: <Users className="h-6 w-6" />,
-    title: 'Identity & Access Management',
-    description: 'Centralized user provisioning, role-based access control, and lifecycle management for all your applications.',
-  },
-  {
-    icon: <Lock className="h-6 w-6" />,
-    title: 'Multi-Factor Authentication',
-    description: 'Support for TOTP, WebAuthn, push notifications, SMS, email, and hardware tokens for enhanced security.',
-  },
-  {
-    icon: <Globe className="h-6 w-6" />,
-    title: 'Single Sign-On (SSO)',
-    description: 'One login to access all your applications with support for SAML, OIDC, and social identity providers.',
-  },
-  {
-    icon: <Eye className="h-6 w-6" />,
-    title: 'Real-time Monitoring',
-    description: 'Comprehensive audit logging, session monitoring, and security analytics with instant alerts.',
-  },
-  {
-    icon: <FileCheck className="h-6 w-6" />,
-    title: 'Compliance & Governance',
-    description: 'Automated access reviews, certification campaigns, and compliance reporting for SOC 2, HIPAA, and more.',
-  },
-  {
-    icon: <Network className="h-6 w-6" />,
-    title: 'API Gateway & Security',
-    description: 'Powerful API gateway with rate limiting, IP whitelisting, and OAuth 2.0 token validation.',
-  },
-  {
-    icon: <Zap className="h-6 w-6" />,
-    title: 'High Performance',
-    description: 'Stateless Go services built to scale horizontally, with health probes, graceful drains, and HA-ready deployment profiles.',
-  },
-]
+// Feature card copy comes from the catalog; icons stay here.
+const featureDefs = [
+  { key: 'zeroTrust', icon: <Shield className="h-6 w-6" /> },
+  { key: 'iam', icon: <Users className="h-6 w-6" /> },
+  { key: 'mfa', icon: <Lock className="h-6 w-6" /> },
+  { key: 'sso', icon: <Globe className="h-6 w-6" /> },
+  { key: 'monitoring', icon: <Eye className="h-6 w-6" /> },
+  { key: 'governance', icon: <FileCheck className="h-6 w-6" /> },
+  { key: 'gateway', icon: <Network className="h-6 w-6" /> },
+  { key: 'performance', icon: <Zap className="h-6 w-6" /> },
+] as const
 
 // Verifiable facts only: a self-hosted OSS project cannot promise an SLA,
 // a latency figure, or anyone's cost savings.
-const stats: Stat[] = [
-  { value: '4', label: 'Pillars: IAM · IGA · PAM · ZTNA' },
-  { value: '8', label: 'Go Services' },
-  { value: '100%', label: 'Open Source' },
-  { value: '0', label: 'Inbound Ports for Dark Services' },
-]
+const statDefs = [
+  { value: '4', key: 'pillars' },
+  { value: '8', key: 'services' },
+  { value: '100%', key: 'openSource' },
+  { value: '0', key: 'darkPorts' },
+] as const
 
+// Product names are not translated.
 const integrations = [
   'Active Directory',
   'LDAP',
@@ -95,6 +77,7 @@ const integrations = [
 export function LandingPage() {
   const { isAuthenticated, login } = useAuth()
   const navigate = useNavigate()
+  const { t } = useTranslation()
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [scrolled, setScrolled] = useState(false)
 
@@ -138,29 +121,32 @@ export function LandingPage() {
             {/* Desktop Navigation */}
             <div className="hidden md:flex items-center gap-8">
               <a href="#features" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
-                Features
+                {t('landing.nav.features')}
               </a>
               <a href="#integration" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
-                Integrations
+                {t('landing.nav.integrations')}
               </a>
-              <a href="#pricing" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
-                Pricing
-              </a>
-              <a href="#docs" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
-                Documentation
+              <a
+                href={links.docs}
+                target="_blank"
+                rel="noreferrer"
+                className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+              >
+                {t('landing.nav.documentation')}
               </a>
             </div>
 
             <div className="hidden md:flex items-center gap-4">
+              <LanguageSwitcher />
               <Button variant="ghost" size="sm" onClick={() => navigate('/login')}>
-                Sign In
+                {t('landing.nav.signIn')}
               </Button>
               <Button
                 size="sm"
                 className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700"
                 onClick={handleLogin}
               >
-                Get Started Free
+                {t('landing.nav.getStarted')}
               </Button>
             </div>
 
@@ -179,27 +165,30 @@ export function LandingPage() {
           <div className="md:hidden bg-background border-b">
             <div className="px-4 py-4 space-y-3">
               <a href="#features" className="block text-sm text-muted-foreground hover:text-foreground">
-                Features
+                {t('landing.nav.features')}
               </a>
               <a href="#integration" className="block text-sm text-muted-foreground hover:text-foreground">
-                Integrations
+                {t('landing.nav.integrations')}
               </a>
-              <a href="#pricing" className="block text-sm text-muted-foreground hover:text-foreground">
-                Pricing
-              </a>
-              <a href="#docs" className="block text-sm text-muted-foreground hover:text-foreground">
-                Documentation
+              <a
+                href={links.docs}
+                target="_blank"
+                rel="noreferrer"
+                className="block text-sm text-muted-foreground hover:text-foreground"
+              >
+                {t('landing.nav.documentation')}
               </a>
               <div className="pt-3 space-y-2">
+                <LanguageSwitcher />
                 <Button variant="ghost" size="sm" className="w-full" onClick={() => navigate('/login')}>
-                  Sign In
+                  {t('landing.nav.signIn')}
                 </Button>
                 <Button
                   size="sm"
                   className="w-full bg-gradient-to-r from-blue-600 to-indigo-600"
                   onClick={handleLogin}
                 >
-                  Get Started Free
+                  {t('landing.nav.getStarted')}
                 </Button>
               </div>
             </div>
@@ -212,59 +201,62 @@ export function LandingPage() {
         <div className="max-w-7xl mx-auto">
           <div className="text-center max-w-4xl mx-auto">
             <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-blue-50 text-blue-700 text-sm font-medium mb-6">
-              <Zap className="h-4 w-4" />
-              <span>Enterprise-Grade Security at 70% Less Cost</span>
+              <Shield className="h-4 w-4" />
+              <span>{t('landing.hero.badge')}</span>
             </div>
 
             <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold text-foreground leading-tight mb-6">
-              Zero Trust Access Platform for{' '}
+              {t('landing.hero.titleLead')}{' '}
               <span className="bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
-                Modern Enterprises
+                {t('landing.hero.titleHighlight')}
               </span>
             </h1>
 
             <p className="text-lg sm:text-xl text-muted-foreground mb-8 max-w-2xl mx-auto">
-              OpenIDX provides complete Identity and Access Management with SSO, MFA, access governance,
-              and compliance reporting. Open source, self-hosted, enterprise-ready.
+              {t('landing.hero.subtitle')}
             </p>
 
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-12">
               <Button
                 size="lg"
                 className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-base px-8"
-                onClick={handleLogin}
+                onClick={() => navigate('/login')}
               >
-                Start Free Trial
+                {t('landing.nav.signIn')}
                 <ArrowRight className="ml-2 h-5 w-5" />
               </Button>
-              <Button size="lg" variant="outline" className="text-base px-8" onClick={() => navigate('/login')}>
-                Live Demo
+              <Button size="lg" variant="outline" className="text-base px-8" asChild>
+                <a href={links.docs} target="_blank" rel="noreferrer">
+                  {t('landing.hero.viewDocs')}
+                </a>
               </Button>
             </div>
 
             <div className="flex flex-wrap items-center justify-center gap-6 text-sm text-muted-foreground">
               <div className="flex items-center gap-1">
                 <CheckCircle className="h-4 w-4 text-green-600" />
-                <span>No credit card required</span>
+                <span>{t('landing.hero.point1')}</span>
               </div>
               <div className="flex items-center gap-1">
                 <CheckCircle className="h-4 w-4 text-green-600" />
-                <span>14-day free trial</span>
+                <span>{t('landing.hero.point2')}</span>
               </div>
               <div className="flex items-center gap-1">
                 <CheckCircle className="h-4 w-4 text-green-600" />
-                <span>Setup in minutes</span>
+                <span>{t('landing.hero.point3')}</span>
               </div>
             </div>
           </div>
 
           {/* Stats */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-16">
-            {stats.map((stat, index) => (
-              <Card key={index} className="text-center">
+            {statDefs.map((stat) => (
+              <Card key={stat.key} className="text-center">
                 <CardContent className="pt-6">
                   <div className="text-2xl sm:text-3xl font-bold text-primary">{stat.value}</div>
-                  <div className="text-sm text-muted-foreground mt-1">{stat.label}</div>
+                  <div className="text-sm text-muted-foreground mt-1">
+                    {t(`landing.stats.${stat.key}`)}
+                  </div>
                 </CardContent>
               </Card>
             ))}
@@ -277,22 +269,26 @@ export function LandingPage() {
         <div className="max-w-7xl mx-auto">
           <div className="text-center mb-16">
             <h2 className="text-3xl sm:text-4xl font-bold text-foreground mb-4">
-              Complete Security Platform
+              {t('landing.features.title')}
             </h2>
             <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-              Everything you need to secure access to your applications, data, and infrastructure
+              {t('landing.features.subtitle')}
             </p>
           </div>
 
           <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
-            {features.map((feature, index) => (
-              <Card key={index} className="border-none shadow-sm hover:shadow-md transition-shadow">
+            {featureDefs.map((feature) => (
+              <Card key={feature.key} className="border-none shadow-sm hover:shadow-md transition-shadow">
                 <CardContent className="p-6">
                   <div className="h-12 w-12 rounded-lg bg-blue-100 text-primary flex items-center justify-center mb-4">
                     {feature.icon}
                   </div>
-                  <h3 className="font-semibold text-lg mb-2">{feature.title}</h3>
-                  <p className="text-sm text-muted-foreground leading-relaxed">{feature.description}</p>
+                  <h3 className="font-semibold text-lg mb-2">
+                    {t(`landing.features.${feature.key}.title`)}
+                  </h3>
+                  <p className="text-sm text-muted-foreground leading-relaxed">
+                    {t(`landing.features.${feature.key}.description`)}
+                  </p>
                 </CardContent>
               </Card>
             ))}
@@ -305,10 +301,10 @@ export function LandingPage() {
         <div className="max-w-7xl mx-auto">
           <div className="text-center mb-12">
             <h2 className="text-3xl sm:text-4xl font-bold text-foreground mb-4">
-              Integrates with Your Stack
+              {t('landing.integrations.title')}
             </h2>
             <p className="text-lg text-muted-foreground">
-              Connect with 100+ enterprise applications and identity providers
+              {t('landing.integrations.subtitle')}
             </p>
           </div>
 
@@ -330,27 +326,29 @@ export function LandingPage() {
         <div className="max-w-4xl mx-auto">
           <Card className="bg-gradient-to-r from-blue-600 to-indigo-700 border-0 text-white">
             <CardContent className="p-12 text-center">
-              <h2 className="text-3xl font-bold mb-4">Ready to Secure Your Access?</h2>
+              <h2 className="text-3xl font-bold mb-4">{t('landing.cta.title')}</h2>
               <p className="text-blue-100 mb-8 text-lg">
-                Join thousands of organizations trusting OpenIDX for their identity and access management needs
+                {t('landing.cta.subtitle')}
               </p>
               <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
                 <Button
                   size="lg"
                   variant="secondary"
                   className="bg-background text-primary hover:bg-muted px-8"
-                  onClick={handleLogin}
+                  onClick={() => navigate('/login')}
                 >
-                  Start Free Trial
+                  {t('landing.nav.signIn')}
                   <ArrowRight className="ml-2 h-5 w-5" />
                 </Button>
                 <Button
                   size="lg"
                   variant="outline"
                   className="border-white text-white hover:bg-background/10 px-8"
-                  onClick={() => navigate('/login')}
+                  asChild
                 >
-                  Schedule Demo
+                  <a href={links.repo} target="_blank" rel="noreferrer">
+                    {t('landing.cta.viewOnGitHub')}
+                  </a>
                 </Button>
               </div>
             </CardContent>
@@ -369,50 +367,47 @@ export function LandingPage() {
                 </div>
                 <span className="text-xl font-bold text-white">OpenIDX</span>
               </div>
-              <p className="text-sm">
-                Open source Zero Trust Access Platform for modern enterprises.
-              </p>
+              <p className="text-sm">{t('landing.footer.tagline')}</p>
             </div>
 
             <div>
-              <h4 className="font-semibold text-white mb-4">Product</h4>
+              <h4 className="font-semibold text-white mb-4">{t('landing.footer.product')}</h4>
               <ul className="space-y-2 text-sm">
-                <li><a href="#features" className="hover:text-white transition-colors">Features</a></li>
-                <li><a href="#pricing" className="hover:text-white transition-colors">Pricing</a></li>
-                <li><a href="#docs" className="hover:text-white transition-colors">Documentation</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">API Reference</a></li>
+                <li><a href="#features" className="hover:text-white transition-colors">{t('landing.nav.features')}</a></li>
+                <li><a href="#integration" className="hover:text-white transition-colors">{t('landing.nav.integrations')}</a></li>
+                <li><a href={links.docs} target="_blank" rel="noreferrer" className="hover:text-white transition-colors">{t('landing.nav.documentation')}</a></li>
+                <li><a href={links.apiReference} target="_blank" rel="noreferrer" className="hover:text-white transition-colors">{t('landing.footer.apiReference')}</a></li>
               </ul>
             </div>
 
             <div>
-              <h4 className="font-semibold text-white mb-4">Company</h4>
+              <h4 className="font-semibold text-white mb-4">{t('landing.footer.project')}</h4>
               <ul className="space-y-2 text-sm">
-                <li><a href="#" className="hover:text-white transition-colors">About</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">Blog</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">Careers</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">Contact</a></li>
+                <li><a href={links.repo} target="_blank" rel="noreferrer" className="hover:text-white transition-colors">GitHub</a></li>
+                <li><a href={links.issues} target="_blank" rel="noreferrer" className="hover:text-white transition-colors">{t('landing.footer.issues')}</a></li>
+                <li><a href={links.contributing} target="_blank" rel="noreferrer" className="hover:text-white transition-colors">{t('landing.footer.contributing')}</a></li>
+                <li><a href={links.changelog} target="_blank" rel="noreferrer" className="hover:text-white transition-colors">{t('landing.footer.changelog')}</a></li>
               </ul>
             </div>
 
             <div>
-              <h4 className="font-semibold text-white mb-4">Legal</h4>
+              <h4 className="font-semibold text-white mb-4">{t('landing.footer.securityLegal')}</h4>
               <ul className="space-y-2 text-sm">
-                <li><a href="#" className="hover:text-white transition-colors">Privacy Policy</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">Terms of Service</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">Security</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">Compliance</a></li>
+                <li><a href={links.license} target="_blank" rel="noreferrer" className="hover:text-white transition-colors">{t('landing.footer.license')}</a></li>
+                <li><a href={links.securityPolicy} target="_blank" rel="noreferrer" className="hover:text-white transition-colors">{t('landing.footer.securityPolicy')}</a></li>
+                <li><a href={links.threatModel} target="_blank" rel="noreferrer" className="hover:text-white transition-colors">{t('landing.footer.threatModel')}</a></li>
+                <li><a href={links.complianceMapping} target="_blank" rel="noreferrer" className="hover:text-white transition-colors">{t('landing.footer.complianceMapping')}</a></li>
               </ul>
             </div>
           </div>
 
           <div className="border-t border-gray-800 pt-8 flex flex-col sm:flex-row items-center justify-between gap-4">
             <p className="text-sm">
-              &copy; 2025 OpenIDX. All rights reserved.
+              {t('landing.footer.copyright', { year: new Date().getFullYear() })}
             </p>
             <div className="flex items-center gap-4 text-sm">
-              <span>Powered by</span>
-              <a href="https://github.com/openidx" className="text-blue-400 hover:text-blue-300">
-                OpenIDX
+              <a href={links.repo} target="_blank" rel="noreferrer" className="text-blue-400 hover:text-blue-300">
+                {t('landing.footer.sourceOnGitHub')}
               </a>
             </div>
           </div>

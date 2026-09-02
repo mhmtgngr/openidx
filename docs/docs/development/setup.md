@@ -262,6 +262,15 @@ npm run build
 npm run preview
 ```
 
+### Adding UI strings (i18n)
+
+The console is internationalized with i18next (English and Turkish).
+English (`src/i18n/locales/en.ts`) is the source of truth; other locales
+are typed against it, so a missing translation fails `npm run type-check`.
+Components use `useTranslation()` with dotted keys — the landing page is
+the reference extraction. Conventions and the how-to live in
+`web/admin-console/README.md`.
+
 ### 4. Frontend Tools
 
 ```bash
