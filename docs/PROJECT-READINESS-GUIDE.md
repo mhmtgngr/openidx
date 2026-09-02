@@ -589,8 +589,17 @@ all four pillars, deploy, log in, and find PAM.
    Connections manager (the RDM-style entry tree, launch/reveal/request
    flows, the RDM import, and the "how does this connect" explainer whose
    whole launch chain — approval gate, credential source, broker, Ziti or
-   direct reach, target — now reads in either language). *Remaining:* the
-   ~55 other admin page bodies — mechanical, batch by batch, against this
+   direct reach, target — now reads in either language). *And the PAM
+   session-brokering pages:* Privileged Sessions (pending requests, live
+   Guacamole sessions with terminate and live-monitor, session history
+   with the transcript download and the legal-hold place/release dialogs),
+   Remote Support (the session table, the recording-retention editor, the
+   start-session dialog with its transport choice, and both legal-hold
+   confirmations) and Kiosk Policies (lockdown modes, the editor and the
+   agent/tag assignment dialog) — so the screens where an operator
+   watches, records, terminates and legally holds a privileged session
+   read in either language. *Remaining:* the
+   ~52 other admin page bodies — mechanical, batch by batch, against this
    pattern.
 2. Accessibility pass to a VPAT (needs real assistive-technology testing,
    not just an automated axe sweep).

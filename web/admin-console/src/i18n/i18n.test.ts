@@ -203,6 +203,8 @@ describe('i18n', () => {
       ...['upper', 'lower', 'digits', 'symbols'].map(
         (k) => `pages.rotationPolicies.dialog.charsets.${k}`,
       ),
+      // remote-support: the viewer badge keys off the session's own mode value
+      ...['interactive', 'view'].map((k) => `pages.remoteSupport.modes.${k}`),
       // lib/connection-path + lib/remote-app resolve through the i18n singleton
       'pam.remoteAppSecretHint',
       ...[
