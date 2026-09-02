@@ -26,7 +26,7 @@ import {
 } from '../lib/api'
 import { ConfirmAction } from '../components/confirm-action'
 import { useToast } from '../hooks/use-toast'
-import { remoteAppArgsLookSecret, REMOTE_APP_SECRET_HINT } from '../lib/remote-app'
+import { remoteAppArgsLookSecret, remoteAppSecretHint } from '../lib/remote-app'
 import { isAxiosError } from 'axios'
 
 const emptyApp: WindowsAppInput = {
@@ -400,7 +400,7 @@ export function WindowsAppsPage() {
               {remoteAppArgsLookSecret(form.args) && (
                 <p className="mt-1 flex items-start gap-1.5 text-xs text-destructive">
                   <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px" />
-                  <span>{REMOTE_APP_SECRET_HINT}</span>
+                  <span>{remoteAppSecretHint()}</span>
                 </p>
               )}
             </div>

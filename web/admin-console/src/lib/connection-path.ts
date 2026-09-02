@@ -3,6 +3,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 
+import i18n from '../i18n'
 import type { PamEntry } from './api'
 
 export interface ConnectionPathStep {
@@ -10,6 +11,10 @@ export interface ConnectionPathStep {
   title: string
   desc: string
 }
+
+// Resolved through the i18n singleton rather than a hook: this is a pure
+// function called from render, not a component.
+const t = (key: string, vars?: Record<string, unknown>) => i18n.t(`pam.path.${key}`, vars ?? {})
 
 /**
  * The launch chain for a session entry, as displayable steps. This is the
@@ -21,29 +26,52 @@ export function connectionPathSteps(entry: PamEntry): ConnectionPathStep[] {
   const remoteApp = typeof entry.settings['remote-app'] === 'string'
     ? String(entry.settings['remote-app']).replace(/^\|\|/, '')
     : ''
+  const proto = entry.entry_type.toUpperCase()
   const steps: ConnectionPathStep[] = [
     entry.require_approval
-      ? { icon: Lock, title: 'Approval gate', desc: 'Connect requires an approved access request (JIT). The grant is time-bounded and auto-revoked.' }
-      : { icon: User, title: 'You click Connect', desc: 'Access is allowed by your role (RBAC) — no approval step configured for this entry.' },
+      ? { icon: Lock, title: t('approvalGate.title'), desc: t('approvalGate.desc') }
+      : { icon: User, title: t('youConnect.title'), desc: t('youConnect.desc') },
     entry.credential_entry_name
-      ? { icon: KeyRound, title: `Linked credential: ${entry.credential_entry_name}`, desc: 'This entry borrows another entry’s vaulted secret. It is decrypted server-side at connect time and never shown to you.' }
+      ? {
+          icon: KeyRound,
+          title: t('linkedCredential.title', { name: entry.credential_entry_name }),
+          desc: t('linkedCredential.desc'),
+        }
       : entry.has_secret
-        ? { icon: KeyRound, title: 'Vaulted secret', desc: 'The entry’s own secret is decrypted server-side at connect time and injected — never shown to you.' }
-        : { icon: KeyRound, title: 'No stored credential', desc: 'The target will prompt for credentials inside the session.' },
+        ? { icon: KeyRound, title: t('vaultedSecret.title'), desc: t('vaultedSecret.desc') }
+        : { icon: KeyRound, title: t('noCredential.title'), desc: t('noCredential.desc') },
     entry.renderer === 'wasm-ssh'
-      ? { icon: Terminal, title: 'Browser terminal', desc: 'Clientless SSH terminal in this console tab (no Guacamole session).' }
+      ? { icon: Terminal, title: t('browserTerminal.title'), desc: t('browserTerminal.desc') }
       : remoteApp
-        ? { icon: Monitor, title: `RemoteApp: ${remoteApp}`, desc: `Guacamole opens only the published "${remoteApp}" application instead of a full ${entry.entry_type.toUpperCase()} desktop.` }
-        : { icon: Monitor, title: `Guacamole ${entry.entry_type.toUpperCase()} session`, desc: 'The session runs in the browser through the Guacamole gateway.' },
+        ? {
+            icon: Monitor,
+            title: t('remoteApp.title', { app: remoteApp }),
+            desc: t('remoteApp.desc', { app: remoteApp, proto }),
+          }
+        : {
+            icon: Monitor,
+            title: t('guacSession.title', { proto }),
+            desc: t('guacSession.desc'),
+          },
   ]
   if (entry.record_session) {
-    steps.push({ icon: Video, title: 'Session recording', desc: 'The full session is recorded (including keys) and sealed for audit.' })
+    steps.push({ icon: Video, title: t('recording.title'), desc: t('recording.desc') })
   }
   steps.push(
     entry.ziti_enabled
-      ? { icon: Shield, title: 'Ziti overlay (zero-trust)', desc: 'Traffic reaches the target over the OpenZiti overlay — the target exposes no IP/port to the network.' }
-      : { icon: Route, title: 'Direct reach', desc: 'The gateway connects straight to the target address.' },
-    { icon: Server, title: entry.hostname ? `${entry.hostname}${entry.port ? `:${entry.port}` : ''}` : 'Target', desc: entry.username ? `Signed in as ${entry.username}${entry.domain ? ` (${entry.domain})` : ''}.` : 'Target system.' },
+      ? { icon: Shield, title: t('ziti.title'), desc: t('ziti.desc') }
+      : { icon: Route, title: t('direct.title'), desc: t('direct.desc') },
+    {
+      icon: Server,
+      title: entry.hostname
+        ? `${entry.hostname}${entry.port ? `:${entry.port}` : ''}`
+        : t('target.title'),
+      desc: entry.username
+        ? entry.domain
+          ? t('target.signedInAsDomain', { user: entry.username, domain: entry.domain })
+          : t('target.signedInAs', { user: entry.username })
+        : t('target.desc'),
+    },
   )
   return steps
 }

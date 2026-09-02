@@ -575,9 +575,17 @@ all four pillars, deploy, log in, and find PAM.
    list and the test-evaluation dialog), the Risk Dashboard, Login
    Anomalies (including the per-user baseline profile), Authentication
    Analytics and Login Analytics — with the shared period selector
-   ("Last 7 Days" and friends) promoted to the common catalog. *Remaining:*
-   the ~58 other admin page bodies — mechanical, batch by batch, against
-   this pattern.
+   ("Last 7 Days" and friends) promoted to the common catalog. *And the
+   first PAM cluster:* the credential Vault (secret list, versions, grants,
+   checkouts and rotation runs, the reason-stamped reveal dialog and the
+   crypto-erase confirmation), Rotation Policies (the eight connector
+   vocabularies and every schema-driven connector field) and the
+   Connections manager (the RDM-style entry tree, launch/reveal/request
+   flows, the RDM import, and the "how does this connect" explainer whose
+   whole launch chain — approval gate, credential source, broker, Ziti or
+   direct reach, target — now reads in either language). *Remaining:* the
+   ~55 other admin page bodies — mechanical, batch by batch, against this
+   pattern.
 2. Accessibility pass to a VPAT (needs real assistive-technology testing,
    not just an automated axe sweep).
 3. Separate/hardened end-user portal bundle.
