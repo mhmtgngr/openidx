@@ -9,9 +9,9 @@ artifacts: [threat model](./THREAT-MODEL.md) and
 via [docs/README.md](./README.md)), **P3.2–3.5a done** (Helm chart
 finished — migration hook Job, real OPA, ServiceMonitor, backup CronJob,
 Keycloak/APISIX ghosts removed; WebAuthn→Redis; signed releases;
-Dependabot/Renovate dedupe). Open: P1 rollout Task 16 (operator action),
-P3.1 cut v1.28.0 (post-merge), chart-repo publishing, P3.5b dead-surface
-pruning, P4.)
+Dependabot/Renovate dedupe; dead surfaces pruned). Open: P1 rollout
+Task 16 (operator action), P3.1 cut v1.28.0 (post-merge), chart-repo
+publishing, the P4 items incl. the Expo-vs-Flutter mobile pick.)
 **Question this document answers:** *Is OpenIDX fully functional and well defined end to end, as experienced by the people who use it — and what are the next steps and controls to get it there?*
 
 This is the product-and-user-side companion to
@@ -256,18 +256,25 @@ product; either wire them or remove them from the UI.
   incomplete; `FEATURE_PRIORITY_PLAN.md` lists long-shipped features as
   "must implement"; `TESTING.md` instructs authenticating against Keycloak.
 
-**D. Surface sprawl** — decide, then delete.
+**D. Surface sprawl** — decide, then delete. ✅ *Pruned on this branch,
+except the mobile decision:*
 
 - Two overlapping mobile apps: `mobile/` (Expo — real, active) vs
   `client/` (Flutter — never compiled in-repo by its own README; FCM stub
   throws; iOS deep links unconfigured). Pick the shipping one; say so.
-- Dead/vestigial: `frontend/` (committed pre-built JS bundle + duplicate
-  Playwright suite), `web/admin-console/keycloak-theme/` (250-line
-  skeleton, no Go references), orphaned `pages/branding.tsx`, 13 legacy
-  `.sql` files no runner loads — two containing credentials
-  (`migrations/011_add_admin_users.sql:106`).
-- `landing.tsx` hardcodes unsubstantiated marketing claims (99.99% SLA,
-  <50 ms, 70% savings) into the product UI.
+  *(Still open — the pick is the maintainer's call, tracked in P4.)*
+- ✅ Dead/vestigial surfaces deleted: `frontend/` (committed pre-built JS
+  bundle + duplicate Playwright suite), `web/admin-console/keycloak-theme/`
+  (skeleton with no references), orphaned `pages/branding.tsx` (+ its
+  test; the `/branding` route already redirected to tenant-management),
+  and the 13 legacy `.sql` files no runner loaded — including the one
+  seeding an admin credential (`011_add_admin_users.sql`). The
+  `.up/.down` migration pairs, which the seed command and migrate
+  scaffolding really use, stay.
+- ✅ `landing.tsx` no longer hardcodes unsubstantiated claims (99.99%
+  SLA, <50 ms, 70% savings): the stats row states verifiable facts (four
+  pillars, eight services, open source, dark services) and the
+  performance card describes the real HA posture.
 
 **E. Enterprise gates** (not blockers today, but the next "no" from a buyer):
 no i18n at all (~107 pages of hardcoded English), accessibility far below
@@ -417,8 +424,11 @@ all four pillars, deploy, log in, and find PAM.
 5. Dependabot/Renovate: ✅ **deduplicated** — `.github/dependabot.yml`
    (which duplicated all four ecosystems and used invalid options)
    deleted in favor of the richer Renovate config; phantom `openidx/*`
-   team assignees/reviewers stripped from `renovate.json`. *Still open:*
-   prune dead surfaces (D).
+   team assignees/reviewers stripped from `renovate.json`. ✅ **Dead
+   surfaces pruned** — `frontend/`, the Keycloak theme, orphaned
+   `branding.tsx`, the 13 legacy SQL files (credential-seeding one
+   included), and `landing.tsx`'s unsubstantiated claims (see §3.1-D).
+   *Still open:* the Expo-vs-Flutter mobile pick (P4, maintainer's call).
 
 ### P4 — Enterprise reach (sequence by sales pressure)
 

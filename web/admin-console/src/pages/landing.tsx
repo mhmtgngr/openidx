@@ -68,15 +68,17 @@ const features: Feature[] = [
   {
     icon: <Zap className="h-6 w-6" />,
     title: 'High Performance',
-    description: 'Built for scale with sub-millisecond latency and 99.99% uptime SLA guarantee.',
+    description: 'Stateless Go services built to scale horizontally, with health probes, graceful drains, and HA-ready deployment profiles.',
   },
 ]
 
+// Verifiable facts only: a self-hosted OSS project cannot promise an SLA,
+// a latency figure, or anyone's cost savings.
 const stats: Stat[] = [
-  { value: '99.99%', label: 'Uptime SLA' },
-  { value: '<50ms', label: 'Response Time' },
-  { value: '50+', label: 'Security Features' },
-  { value: '70%', label: 'Cost Savings' },
+  { value: '4', label: 'Pillars: IAM · IGA · PAM · ZTNA' },
+  { value: '8', label: 'Go Services' },
+  { value: '100%', label: 'Open Source' },
+  { value: '0', label: 'Inbound Ports for Dark Services' },
 ]
 
 const integrations = [
