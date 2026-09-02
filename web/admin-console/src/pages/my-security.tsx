@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import {
   CheckCircle2,
   Laptop,
@@ -52,13 +53,14 @@ const levelStyles: Record<string, { badge: string; ring: string }> = {
   critical: { badge: 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200', ring: 'text-red-600' },
 }
 
-const frictionLabel: Record<string, string> = {
-  low: 'Fewer verification prompts on trusted devices',
-  normal: 'Standard verification prompts',
-  strict: 'Extra verification on sensitive actions',
+const frictionKey: Record<string, string> = {
+  low: 'pages.mySecurity.friction.low',
+  normal: 'pages.mySecurity.friction.normal',
+  strict: 'pages.mySecurity.friction.strict',
 }
 
 export function MySecurityPage() {
+  const { t } = useTranslation()
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['my-security-insights'],
     queryFn: async () => api.get<SecurityInsights>('/api/v1/identity/portal/security-insights'),
@@ -73,7 +75,7 @@ export function MySecurityPage() {
   }
 
   if (isError) {
-    return <QueryError error={error} resource="your security overview" />
+    return <QueryError error={error} resource={t('pages.mySecurity.resourceName')} />
   }
 
   const style = levelStyles[data?.level || 'low'] || levelStyles.low
@@ -84,13 +86,13 @@ export function MySecurityPage() {
         <div>
           <h1 className="text-3xl font-bold flex items-center gap-2">
             <Shield className="h-8 w-8 text-blue-500" />
-            My Security
+            {t('nav.items.mySecurity')}
           </h1>
-          <p className="text-muted-foreground mt-1">How safe is my account, and what should I do next?</p>
+          <p className="text-muted-foreground mt-1">{t('pages.mySecurity.subtitle')}</p>
         </div>
         <Button variant="outline" onClick={() => refetch()}>
           <RefreshCw className="h-4 w-4 mr-2" />
-          Refresh
+          {t('common.refresh')}
         </Button>
       </div>
 
@@ -100,22 +102,22 @@ export function MySecurityPage() {
           <div className="flex flex-wrap items-center gap-6">
             <div className="text-center">
               <div className={`text-5xl font-bold ${style.ring}`}>{data?.score ?? 0}</div>
-              <div className="text-xs text-muted-foreground mt-1">risk score / 100</div>
+              <div className="text-xs text-muted-foreground mt-1">{t('pages.mySecurity.riskScoreOutOf')}</div>
               <Badge className={`mt-2 ${style.badge}`}>{data?.level || 'low'}</Badge>
             </div>
             <div className="flex-1 min-w-[260px] space-y-2">
               <p className="text-sm">{data?.summary}</p>
               <div className="flex flex-wrap gap-2">
-                <Badge variant="secondary">{frictionLabel[data?.friction || 'normal']}</Badge>
+                <Badge variant="secondary">{t(frictionKey[data?.friction || 'normal'] ?? frictionKey.normal)}</Badge>
                 {data?.mfa_enrolled ? (
                   <Badge className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
                     <ShieldCheck className="h-3 w-3 mr-1" />
-                    MFA enrolled
+                    {t('pages.mySecurity.mfaEnrolled')}
                   </Badge>
                 ) : (
                   <Badge className="bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200">
                     <ShieldQuestion className="h-3 w-3 mr-1" />
-                    No MFA yet
+                    {t('pages.mySecurity.noMfaYet')}
                   </Badge>
                 )}
               </div>
@@ -129,7 +131,7 @@ export function MySecurityPage() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
             <Lightbulb className="h-4 w-4 text-yellow-500" />
-            Recommendations
+            {t('pages.mySecurity.recommendations')}
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-2">
@@ -148,9 +150,9 @@ export function MySecurityPage() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               <Laptop className="h-4 w-4" />
-              My Devices
+              {t('pages.mySecurity.devicesTitle')}
             </CardTitle>
-            <CardDescription>Trusted devices see fewer verification prompts</CardDescription>
+            <CardDescription>{t('pages.mySecurity.devicesHint')}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-2">
             {(data?.devices || []).map((d, i) => (
@@ -159,19 +161,19 @@ export function MySecurityPage() {
                   <div className="font-medium">{d.name}</div>
                   {d.last_seen && (
                     <div className="text-xs text-muted-foreground">
-                      Last seen {new Date(d.last_seen).toLocaleDateString()}
+                      {t('pages.mySecurity.lastSeen', { date: new Date(d.last_seen).toLocaleDateString() })}
                     </div>
                   )}
                 </div>
                 {d.trusted ? (
-                  <Badge className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">trusted</Badge>
+                  <Badge className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">{t('pages.mySecurity.trusted')}</Badge>
                 ) : (
-                  <Badge variant="secondary">not trusted</Badge>
+                  <Badge variant="secondary">{t('pages.mySecurity.notTrusted')}</Badge>
                 )}
               </div>
             ))}
             {(data?.devices || []).length === 0 && (
-              <p className="text-sm text-muted-foreground py-4 text-center">No devices registered yet</p>
+              <p className="text-sm text-muted-foreground py-4 text-center">{t('pages.mySecurity.noDevices')}</p>
             )}
           </CardContent>
         </Card>
@@ -181,9 +183,9 @@ export function MySecurityPage() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               <LogIn className="h-4 w-4" />
-              Recent Sign-ins
+              {t('pages.mySecurity.signInsTitle')}
             </CardTitle>
-            <CardDescription>Report anything you don't recognize</CardDescription>
+            <CardDescription>{t('pages.mySecurity.signInsHint')}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-2">
             {(data?.recent_logins || []).map((l, i) => (
@@ -196,14 +198,14 @@ export function MySecurityPage() {
                   </div>
                 </div>
                 {l.success ? (
-                  <Badge className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">ok</Badge>
+                  <Badge className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">{t('pages.mySecurity.ok')}</Badge>
                 ) : (
-                  <Badge className="bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">failed</Badge>
+                  <Badge className="bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">{t('pages.mySecurity.failed')}</Badge>
                 )}
               </div>
             ))}
             {(data?.recent_logins || []).length === 0 && (
-              <p className="text-sm text-muted-foreground py-4 text-center">No recent sign-ins</p>
+              <p className="text-sm text-muted-foreground py-4 text-center">{t('pages.mySecurity.noSignIns')}</p>
             )}
           </CardContent>
         </Card>

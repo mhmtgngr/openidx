@@ -14,10 +14,13 @@ ServiceMonitor, backup CronJob, Keycloak/APISIX ghosts removed, chart
 pushed to GHCR as a signed OCI artifact on every tag; WebAuthn→Redis;
 signed releases; Dependabot/Renovate dedupe; dead surfaces pruned; a
 second site truth-sweep fixed the remaining phantom install/config
-surfaces), **and P4 has begun** (console i18n framework, EN + TR, with a
-truthful landing page as the reference extraction). Open: P1 rollout
-Task 16 (operator action), P3.1 cut v1.28.0 (post-merge), the remaining
-P4 items incl. the Expo-vs-Flutter mobile pick.)
+surfaces), **and P4 is well under way** (console i18n framework, EN + TR: the
+landing page, the entire login surface, the app chrome, the whole
+navigation layer with bilingual search, and the five most-seen end-user
+pages — dashboard, portal, security, access, sessions — are fully
+bilingual). Open: P1 rollout Task 16 (operator action), P3.1 cut
+v1.28.0 (post-merge), the remaining P4 items incl. the remaining page
+bodies and the Expo-vs-Flutter mobile pick.)
 **Question this document answers:** *Is OpenIDX fully functional and well defined end to end, as experienced by the people who use it — and what are the next steps and controls to get it there?*
 
 This is the product-and-user-side companion to
@@ -510,8 +513,21 @@ all four pillars, deploy, log in, and find PAM.
    search synonym), the sidebar quick-search and ⌘K command palette
    match **both** languages, breadcrumbs translate, and a
    completeness test pins that every key the nav config references
-   exists in every declared language. *Remaining:* the ~100 admin page
-   bodies — mechanical, page by page, against this pattern.
+   exists in every declared language. *And the five most-seen end-user
+   page bodies:* Dashboard (both personas — the admin overview with stat
+   cards, alerts, activity feed incl. relative times, Ziti/PAM cards and
+   analytics titles, and the personal landing), My Apps & Network, My
+   Security, My Access, and Sessions (admin + "My Sessions" personas) are
+   fully bilingual — headings, empty states, toasts, confirm dialogs,
+   table headers, badges and placeholders — as is the shared `QueryError`
+   component (401/403/load-failure sentences localize; pages pass a
+   localized resource name). Server-sourced text (names, statuses, tips,
+   API error messages) stays untranslated by convention, and keys wired
+   through runtime maps are pinned by test since the `typeof en` check
+   can't see them. *Remaining:* the other five end-user pages (devices,
+   trusted browsers, notifications, access requests, profile) and the
+   ~90 admin page bodies — mechanical, page by page, against this
+   pattern.
 2. Accessibility pass to a VPAT (needs real assistive-technology testing,
    not just an automated axe sweep).
 3. Separate/hardened end-user portal bundle.

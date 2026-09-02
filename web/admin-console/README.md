@@ -32,6 +32,18 @@ Conventions:
   changes it live.
 - **Proper nouns stay untranslated**: product names (Okta, Slack),
   protocol names (SAML, OIDC, SCIM), and the OpenIDX name itself.
+- **Server-sourced text stays untranslated**: names, descriptions, status
+  values, tips/summaries, and error messages that come out of an API
+  response render as-is. Only strings authored in the frontend go into the
+  catalogs.
+- **Page bodies** live under the `pages.*` section, one subsection per
+  page. Where a page's `<h1>` is exactly its navigation name, the page
+  reuses the `nav.items.*` key instead of duplicating it. Keys referenced
+  through runtime maps (e.g. a `Record<status, labelKey>`) are invisible
+  to the `typeof en` check — pin them in `src/i18n/i18n.test.ts`.
+- **`QueryError`** localizes its own sentences; the `resource` prop is
+  interpolated as-is, so pass it already translated
+  (`resource={t('pages.sessions.resourceName')}`).
 - **Tests** render with the same i18n singleton (initialized from
   `src/test/setup.ts`), in English — assert English strings, and restore
   `en` if a test changes the language.

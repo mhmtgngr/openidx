@@ -1,4 +1,5 @@
 import { AlertTriangle, ShieldAlert } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { cn } from '../lib/utils'
 
 /** Extract the HTTP status from a rejected api/axios error, if present. */
@@ -9,7 +10,11 @@ export function getErrorStatus(error: unknown): number | undefined {
 interface QueryErrorProps {
   /** The error object from a react-query `useQuery`/`useMutation`. */
   error: unknown
-  /** Human-readable name of what failed to load, e.g. "audit logs". */
+  /**
+   * Human-readable name of what failed to load, e.g. "audit logs". Pass it
+   * already localized (a t() result) — it is interpolated into the sentence
+   * as-is.
+   */
   resource?: string
   className?: string
 }
@@ -20,15 +25,17 @@ interface QueryErrorProps {
  * permission denial is never silently rendered as a normal "no data" empty
  * state — the pattern that hid the My Profile → Sessions 403.
  */
-export function QueryError({ error, resource = 'data', className }: QueryErrorProps) {
+export function QueryError({ error, resource, className }: QueryErrorProps) {
+  const { t } = useTranslation()
   const status = getErrorStatus(error)
   const isAuth = status === 401 || status === 403
 
+  const what = resource ?? t('queryError.defaultResource')
   const message = isAuth
     ? status === 401
-      ? 'Your session has expired. Please sign in again.'
-      : `You don't have permission to view ${resource}.`
-    : `Failed to load ${resource}. Please try again.`
+      ? t('queryError.sessionExpired')
+      : t('queryError.noPermission', { resource: what })
+    : t('queryError.loadFailed', { resource: what })
 
   const Icon = isAuth ? ShieldAlert : AlertTriangle
 
