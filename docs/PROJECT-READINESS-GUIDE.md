@@ -547,7 +547,13 @@ all four pillars, deploy, log in, and find PAM.
    dialog incl. its inline validation messages and the
    diagnose-and-auto-fix flow), Service Accounts (API-key lifecycle),
    and the Operations Cockpit (health tiles, posture/threat cards, PAM
-   broker health). *Remaining:* the ~81 other admin page bodies —
+   broker health). *And the whole federation/SSO section:* Identity
+   Providers (quick-setup templates, OIDC/SAML registration), Social
+   Login Providers, SAML Service Providers (registration + IdP-metadata
+   download), Federation Configuration (all three tabs — federation
+   rules, identity links, custom claims mapping) and Provisioning Rules
+   (the trigger/operator/action vocabularies that drive automated
+   provisioning). *Remaining:* the ~76 other admin page bodies —
    mechanical, batch by batch, against this pattern.
 2. Accessibility pass to a VPAT (needs real assistive-technology testing,
    not just an automated axe sweep).

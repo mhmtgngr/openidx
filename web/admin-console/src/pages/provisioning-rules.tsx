@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import { Plus, Search, MoreHorizontal, Edit, Trash2, ChevronLeft, ChevronRight } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -50,38 +51,40 @@ import { useToast } from '../hooks/use-toast'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { QueryError } from '../components/query-error'
 
+// The option labels resolve through i18n at render time; their keys are pinned
+// in i18n.test.ts since the `typeof en` check cannot see runtime-map keys.
 const TRIGGER_OPTIONS = [
-  { value: 'user_created', label: 'User Created' },
-  { value: 'user_updated', label: 'User Updated' },
-  { value: 'user_deleted', label: 'User Deleted' },
-  { value: 'group_membership', label: 'Group Membership' },
-  { value: 'attribute_change', label: 'Attribute Change' },
-  { value: 'scheduled', label: 'Scheduled' },
-]
+  'user_created',
+  'user_updated',
+  'user_deleted',
+  'group_membership',
+  'attribute_change',
+  'scheduled',
+] as const
 
 const OPERATOR_OPTIONS = [
-  { value: 'equals', label: 'Equals' },
-  { value: 'not_equals', label: 'Not Equals' },
-  { value: 'contains', label: 'Contains' },
-  { value: 'not_contains', label: 'Not Contains' },
-  { value: 'starts_with', label: 'Starts With' },
-  { value: 'ends_with', label: 'Ends With' },
-  { value: 'regex', label: 'Regex' },
-  { value: 'greater_than', label: 'Greater Than' },
-  { value: 'less_than', label: 'Less Than' },
-]
+  'equals',
+  'not_equals',
+  'contains',
+  'not_contains',
+  'starts_with',
+  'ends_with',
+  'regex',
+  'greater_than',
+  'less_than',
+] as const
 
 const ACTION_TYPE_OPTIONS = [
-  { value: 'add_to_group', label: 'Add to Group' },
-  { value: 'remove_from_group', label: 'Remove from Group' },
-  { value: 'assign_role', label: 'Assign Role' },
-  { value: 'remove_role', label: 'Remove Role' },
-  { value: 'set_attribute', label: 'Set Attribute' },
-  { value: 'send_email', label: 'Send Email' },
-  { value: 'notify_admin', label: 'Notify Admin' },
-  { value: 'disable_account', label: 'Disable Account' },
-  { value: 'enable_account', label: 'Enable Account' },
-]
+  'add_to_group',
+  'remove_from_group',
+  'assign_role',
+  'remove_role',
+  'set_attribute',
+  'send_email',
+  'notify_admin',
+  'disable_account',
+  'enable_account',
+] as const
 
 interface RuleFormData {
   name: string
@@ -106,6 +109,7 @@ const emptyForm: RuleFormData = {
 export function ProvisioningRulesPage() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const { t } = useTranslation()
   const [search, setSearch] = useState('')
   const [addModal, setAddModal] = useState(false)
   const [editModal, setEditModal] = useState(false)
@@ -136,10 +140,10 @@ export function ProvisioningRulesPage() {
       queryClient.invalidateQueries({ queryKey: ['provisioning-rules'] })
       setAddModal(false)
       setFormData(emptyForm)
-      toast({ title: 'Rule created successfully' })
+      toast({ title: t('pages.provisioningRules.toasts.created') })
     },
     onError: () => {
-      toast({ title: 'Error', description: 'Failed to create rule.', variant: 'destructive' })
+      toast({ title: t('common.error'), description: t('pages.provisioningRules.toasts.createFailed'), variant: 'destructive' })
     },
   })
 
@@ -149,10 +153,10 @@ export function ProvisioningRulesPage() {
       queryClient.invalidateQueries({ queryKey: ['provisioning-rules'] })
       setEditModal(false)
       setSelectedRule(null)
-      toast({ title: 'Rule updated successfully' })
+      toast({ title: t('pages.provisioningRules.toasts.updated') })
     },
     onError: () => {
-      toast({ title: 'Error', description: 'Failed to update rule.', variant: 'destructive' })
+      toast({ title: t('common.error'), description: t('pages.provisioningRules.toasts.updateFailed'), variant: 'destructive' })
     },
   })
 
@@ -160,10 +164,10 @@ export function ProvisioningRulesPage() {
     mutationFn: (id: string) => api.deleteProvisioningRule(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['provisioning-rules'] })
-      toast({ title: 'Rule deleted successfully' })
+      toast({ title: t('pages.provisioningRules.toasts.deleted') })
     },
     onError: () => {
-      toast({ title: 'Error', description: 'Failed to delete rule.', variant: 'destructive' })
+      toast({ title: t('common.error'), description: t('pages.provisioningRules.toasts.deleteFailed'), variant: 'destructive' })
     },
   })
 
@@ -242,7 +246,9 @@ export function ProvisioningRulesPage() {
   const filteredRules = rules || []
 
   const triggerLabel = (trigger: string) =>
-    TRIGGER_OPTIONS.find((t) => t.value === trigger)?.label || trigger
+    (TRIGGER_OPTIONS as readonly string[]).includes(trigger)
+      ? t(`pages.provisioningRules.triggers.${trigger}`)
+      : trigger
 
   if (isLoading) {
     return (
@@ -253,44 +259,44 @@ export function ProvisioningRulesPage() {
   }
 
   if (isError) {
-    return <QueryError error={error} resource="provisioning rules" />
+    return <QueryError error={error} resource={t('pages.provisioningRules.resourceName')} />
   }
 
   const formContent = (
     <div className="space-y-4">
       <div>
-        <Label htmlFor="name">Name</Label>
+        <Label htmlFor="name">{t('pages.provisioningRules.form.name')}</Label>
         <Input
           id="name"
           value={formData.name}
           onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-          placeholder="Rule name"
+          placeholder={t('pages.provisioningRules.form.namePlaceholder')}
         />
       </div>
       <div>
-        <Label htmlFor="description">Description</Label>
+        <Label htmlFor="description">{t('pages.provisioningRules.form.description')}</Label>
         <Textarea
           id="description"
           value={formData.description}
           onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-          placeholder="Rule description"
+          placeholder={t('pages.provisioningRules.form.descriptionPlaceholder')}
         />
       </div>
       <div>
-        <Label>Trigger</Label>
+        <Label>{t('pages.provisioningRules.form.trigger')}</Label>
         <Select value={formData.trigger} onValueChange={(v) => setFormData({ ...formData, trigger: v })}>
           <SelectTrigger>
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
             {TRIGGER_OPTIONS.map((opt) => (
-              <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+              <SelectItem key={opt} value={opt}>{t(`pages.provisioningRules.triggers.${opt}`)}</SelectItem>
             ))}
           </SelectContent>
         </Select>
       </div>
       <div>
-        <Label htmlFor="priority">Priority</Label>
+        <Label htmlFor="priority">{t('pages.provisioningRules.form.priority')}</Label>
         <Input
           id="priority"
           type="number"
@@ -303,35 +309,35 @@ export function ProvisioningRulesPage() {
           checked={formData.enabled}
           onCheckedChange={(checked) => setFormData({ ...formData, enabled: checked })}
         />
-        <Label>Enabled</Label>
+        <Label>{t('pages.provisioningRules.form.enabled')}</Label>
       </div>
 
       {/* Conditions */}
       <div>
         <div className="flex items-center justify-between mb-2">
-          <Label>Conditions</Label>
-          <Button type="button" variant="outline" size="sm" onClick={addCondition}>Add</Button>
+          <Label>{t('pages.provisioningRules.form.conditions')}</Label>
+          <Button type="button" variant="outline" size="sm" onClick={addCondition}>{t('common.add')}</Button>
         </div>
         {formData.conditions.map((cond, i) => (
           <div key={i} className="flex gap-2 mb-2">
             <Input
-              placeholder="Field"
+              placeholder={t('pages.provisioningRules.form.fieldPlaceholder')}
               value={cond.field}
               onChange={(e) => updateCondition(i, 'field', e.target.value)}
               className="flex-1"
             />
             <Select value={cond.operator} onValueChange={(v) => updateCondition(i, 'operator', v)}>
               <SelectTrigger className="w-36">
-                <SelectValue placeholder="Operator" />
+                <SelectValue placeholder={t('pages.provisioningRules.form.operatorPlaceholder')} />
               </SelectTrigger>
               <SelectContent>
                 {OPERATOR_OPTIONS.map((opt) => (
-                  <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                  <SelectItem key={opt} value={opt}>{t(`pages.provisioningRules.operators.${opt}`)}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
             <Input
-              placeholder="Value"
+              placeholder={t('pages.provisioningRules.form.valuePlaceholder')}
               value={cond.value}
               onChange={(e) => updateCondition(i, 'value', e.target.value)}
               className="flex-1"
@@ -346,23 +352,23 @@ export function ProvisioningRulesPage() {
       {/* Actions */}
       <div>
         <div className="flex items-center justify-between mb-2">
-          <Label>Actions</Label>
-          <Button type="button" variant="outline" size="sm" onClick={addAction}>Add</Button>
+          <Label>{t('pages.provisioningRules.form.actions')}</Label>
+          <Button type="button" variant="outline" size="sm" onClick={addAction}>{t('common.add')}</Button>
         </div>
         {formData.actions.map((action, i) => (
           <div key={i} className="flex gap-2 mb-2">
             <Select value={action.type} onValueChange={(v) => updateAction(i, 'type', v)}>
               <SelectTrigger className="flex-1">
-                <SelectValue placeholder="Action type" />
+                <SelectValue placeholder={t('pages.provisioningRules.form.actionTypePlaceholder')} />
               </SelectTrigger>
               <SelectContent>
                 {ACTION_TYPE_OPTIONS.map((opt) => (
-                  <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                  <SelectItem key={opt} value={opt}>{t(`pages.provisioningRules.actionTypes.${opt}`)}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
             <Input
-              placeholder="Target"
+              placeholder={t('pages.provisioningRules.form.targetPlaceholder')}
               value={action.target}
               onChange={(e) => updateAction(i, 'target', e.target.value)}
               className="flex-1"
@@ -376,10 +382,10 @@ export function ProvisioningRulesPage() {
 
       <div className="flex justify-end gap-2 pt-4">
         <Button variant="outline" onClick={() => { setAddModal(false); setEditModal(false) }}>
-          Cancel
+          {t('common.cancel')}
         </Button>
         <Button onClick={handleFormSubmit} disabled={createMutation.isPending || updateMutation.isPending}>
-          {editModal ? 'Update' : 'Create'}
+          {editModal ? t('pages.provisioningRules.form.update') : t('pages.provisioningRules.form.create')}
         </Button>
       </div>
     </div>
@@ -388,18 +394,18 @@ export function ProvisioningRulesPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Provisioning Rules</h1>
+        <h1 className="text-2xl font-bold">{t('nav.items.provisioningRules')}</h1>
         <Button onClick={handleAdd}>
           <Plus className="h-4 w-4 mr-2" />
-          Add Rule
+          {t('pages.provisioningRules.addRule')}
         </Button>
       </div>
 
       <Card>
         <CardHeader>
-          <CardTitle>Automated Provisioning Rules</CardTitle>
+          <CardTitle>{t('pages.provisioningRules.cardTitle')}</CardTitle>
           <CardDescription>
-            Define rules to automate user provisioning based on triggers and conditions.
+            {t('pages.provisioningRules.cardDescription')}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -407,7 +413,7 @@ export function ProvisioningRulesPage() {
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="Search rules..."
+                placeholder={t('pages.provisioningRules.searchPlaceholder')}
                 value={search}
                 onChange={(e) => { setSearch(e.target.value); setPage(0) }}
                 className="pl-10"
@@ -418,18 +424,18 @@ export function ProvisioningRulesPage() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Trigger</TableHead>
-                <TableHead>Priority</TableHead>
-                <TableHead>Enabled</TableHead>
-                <TableHead>Actions</TableHead>
+                <TableHead>{t('pages.provisioningRules.table.name')}</TableHead>
+                <TableHead>{t('pages.provisioningRules.table.trigger')}</TableHead>
+                <TableHead>{t('pages.provisioningRules.table.priority')}</TableHead>
+                <TableHead>{t('pages.provisioningRules.table.enabled')}</TableHead>
+                <TableHead>{t('pages.provisioningRules.table.actions')}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filteredRules.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={5} className="text-center">
-                    No provisioning rules found.
+                    {t('pages.provisioningRules.empty')}
                   </TableCell>
                 </TableRow>
               ) : (
@@ -442,7 +448,7 @@ export function ProvisioningRulesPage() {
                     <TableCell>{rule.priority}</TableCell>
                     <TableCell>
                       <Badge variant={rule.enabled ? 'default' : 'secondary'}>
-                        {rule.enabled ? 'Enabled' : 'Disabled'}
+                        {rule.enabled ? t('pages.provisioningRules.enabled') : t('pages.provisioningRules.disabled')}
                       </Badge>
                     </TableCell>
                     <TableCell>
@@ -455,11 +461,11 @@ export function ProvisioningRulesPage() {
                         <DropdownMenuContent align="end">
                           <DropdownMenuItem onClick={() => handleEdit(rule)}>
                             <Edit className="mr-2 h-4 w-4" />
-                            Edit
+                            {t('pages.directories.menu.edit')}
                           </DropdownMenuItem>
                           <DropdownMenuItem onClick={() => handleDelete(rule)} className="text-red-600">
                             <Trash2 className="mr-2 h-4 w-4" />
-                            Delete
+                            {t('common.delete')}
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
@@ -472,14 +478,14 @@ export function ProvisioningRulesPage() {
           {totalCount > PAGE_SIZE && (
             <div className="flex items-center justify-between pt-4">
               <span className="text-sm text-muted-foreground">
-                Page {page + 1} of {Math.ceil(totalCount / PAGE_SIZE)}
+                {t('common.pagination.pageOf', { page: page + 1, pages: Math.ceil(totalCount / PAGE_SIZE) })}
               </span>
               <div className="flex gap-2">
                 <Button variant="outline" size="sm" onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0}>
-                  <ChevronLeft className="h-4 w-4 mr-1" /> Previous
+                  <ChevronLeft className="h-4 w-4 mr-1" /> {t('common.pagination.previous')}
                 </Button>
                 <Button variant="outline" size="sm" onClick={() => setPage(p => p + 1)} disabled={(page + 1) * PAGE_SIZE >= totalCount}>
-                  Next <ChevronRight className="h-4 w-4 ml-1" />
+                  {t('common.pagination.next')} <ChevronRight className="h-4 w-4 ml-1" />
                 </Button>
               </div>
             </div>
@@ -491,7 +497,7 @@ export function ProvisioningRulesPage() {
       <Dialog open={addModal} onOpenChange={setAddModal}>
         <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Add Provisioning Rule</DialogTitle>
+            <DialogTitle>{t('pages.provisioningRules.addDialog.title')}</DialogTitle>
           </DialogHeader>
           {formContent}
         </DialogContent>
@@ -501,7 +507,7 @@ export function ProvisioningRulesPage() {
       <Dialog open={editModal} onOpenChange={setEditModal}>
         <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Edit Provisioning Rule</DialogTitle>
+            <DialogTitle>{t('pages.provisioningRules.editDialog.title')}</DialogTitle>
           </DialogHeader>
           {formContent}
         </DialogContent>
@@ -511,15 +517,15 @@ export function ProvisioningRulesPage() {
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+            <AlertDialogTitle>{t('common.areYouSure')}</AlertDialogTitle>
             <AlertDialogDescription>
-              {deleteTarget ? `Are you sure you want to delete rule "${deleteTarget.name}"? This action cannot be undone.` : ''}
+              {deleteTarget ? t('pages.provisioningRules.deleteDialog.description', { name: deleteTarget.name }) : ''}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction onClick={() => { if (deleteTarget) { deleteMutation.mutate(deleteTarget.id); setDeleteTarget(null) } }}>
-              Delete
+              {t('common.delete')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

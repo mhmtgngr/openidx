@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import {
   Search, Plus, Pencil, Trash2, Download, ShieldCheck, ToggleLeft, ToggleRight,
 } from 'lucide-react'
@@ -39,11 +40,13 @@ interface SAMLServiceProvider {
   updated_at: string
 }
 
+// Labels resolve through i18n; the keys are pinned in i18n.test.ts because the
+// `typeof en` check cannot see keys held in a runtime map.
 const NAME_ID_FORMATS = [
-  { value: 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress', label: 'Email Address' },
-  { value: 'urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified', label: 'Unspecified' },
-  { value: 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent', label: 'Persistent' },
-  { value: 'urn:oasis:names:tc:SAML:2.0:nameid-format:transient', label: 'Transient' },
+  { value: 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress', labelKey: 'pages.samlProviders.formats.email' },
+  { value: 'urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified', labelKey: 'pages.samlProviders.formats.unspecified' },
+  { value: 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent', labelKey: 'pages.samlProviders.formats.persistent' },
+  { value: 'urn:oasis:names:tc:SAML:2.0:nameid-format:transient', labelKey: 'pages.samlProviders.formats.transient' },
 ]
 
 interface SPFormState {
@@ -67,6 +70,7 @@ const emptyForm: SPFormState = {
 export function SAMLServiceProvidersPage() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const { t } = useTranslation()
   const [search, setSearch] = useState('')
 
   const [createOpen, setCreateOpen] = useState(false)
@@ -101,10 +105,10 @@ export function SAMLServiceProvidersPage() {
       queryClient.invalidateQueries({ queryKey: ['saml-service-providers'] })
       setCreateOpen(false)
       setForm(emptyForm)
-      toast({ title: 'SAML service provider created' })
+      toast({ title: t('pages.samlProviders.toasts.created') })
     },
     onError: () => {
-      toast({ title: 'Failed to create service provider', variant: 'destructive' })
+      toast({ title: t('pages.samlProviders.toasts.createFailed'), variant: 'destructive' })
     },
   })
 
@@ -115,10 +119,10 @@ export function SAMLServiceProvidersPage() {
       queryClient.invalidateQueries({ queryKey: ['saml-service-providers'] })
       setEditTarget(null)
       setForm(emptyForm)
-      toast({ title: 'Service provider updated' })
+      toast({ title: t('pages.samlProviders.toasts.updated') })
     },
     onError: () => {
-      toast({ title: 'Failed to update service provider', variant: 'destructive' })
+      toast({ title: t('pages.samlProviders.toasts.updateFailed'), variant: 'destructive' })
     },
   })
 
@@ -128,10 +132,10 @@ export function SAMLServiceProvidersPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['saml-service-providers'] })
       setDeleteTarget(null)
-      toast({ title: 'Service provider deleted' })
+      toast({ title: t('pages.samlProviders.toasts.deleted') })
     },
     onError: () => {
-      toast({ title: 'Failed to delete service provider', variant: 'destructive' })
+      toast({ title: t('pages.samlProviders.toasts.deleteFailed'), variant: 'destructive' })
     },
   })
 
@@ -140,10 +144,10 @@ export function SAMLServiceProvidersPage() {
       api.put(`/api/v1/saml/service-providers/${id}`, { enabled }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['saml-service-providers'] })
-      toast({ title: 'Service provider status updated' })
+      toast({ title: t('pages.samlProviders.toasts.statusUpdated') })
     },
     onError: () => {
-      toast({ title: 'Failed to update status', variant: 'destructive' })
+      toast({ title: t('pages.samlProviders.toasts.statusFailed'), variant: 'destructive' })
     },
   })
 
@@ -179,15 +183,15 @@ export function SAMLServiceProvidersPage() {
       a.click()
       document.body.removeChild(a)
       URL.revokeObjectURL(url)
-      toast({ title: 'IdP metadata downloaded' })
+      toast({ title: t('pages.samlProviders.toasts.metadataDownloaded') })
     } catch {
-      toast({ title: 'Failed to download IdP metadata', variant: 'destructive' })
+      toast({ title: t('pages.samlProviders.toasts.metadataFailed'), variant: 'destructive' })
     }
   }
 
   function formatNameIdLabel(format: string): string {
     const found = NAME_ID_FORMATS.find((f) => f.value === format)
-    return found ? found.label : format.split(':').pop() || format
+    return found ? t(found.labelKey) : format.split(':').pop() || format
   }
 
   const isFormValid = form.name.trim() && form.entity_id.trim() && form.acs_url.trim()
@@ -196,19 +200,19 @@ export function SAMLServiceProvidersPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">SAML Service Providers</h1>
+          <h1 className="text-3xl font-bold tracking-tight">{t('pages.samlProviders.title')}</h1>
           <p className="text-muted-foreground">
-            Manage SAML 2.0 service provider registrations for SSO
+            {t('pages.samlProviders.subtitle')}
           </p>
         </div>
         <div className="flex items-center gap-2">
           <Button variant="outline" onClick={downloadIdPMetadata}>
             <Download className="mr-2 h-4 w-4" />
-            Download IdP Metadata
+            {t('pages.samlProviders.downloadMetadata')}
           </Button>
           <Button onClick={openCreate}>
             <Plus className="mr-2 h-4 w-4" />
-            Add Service Provider
+            {t('pages.samlProviders.addProvider')}
           </Button>
         </div>
       </div>
@@ -217,7 +221,7 @@ export function SAMLServiceProvidersPage() {
         <div className="relative flex-1 max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
-            placeholder="Search by name, entity ID, or ACS URL..."
+            placeholder={t('pages.samlProviders.searchPlaceholder')}
             className="pl-9"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -228,34 +232,34 @@ export function SAMLServiceProvidersPage() {
       {isLoading ? (
         <div className="flex flex-col items-center justify-center py-12">
           <LoadingSpinner size="lg" />
-          <p className="mt-4 text-sm text-muted-foreground">Loading service providers...</p>
+          <p className="mt-4 text-sm text-muted-foreground">{t('pages.samlProviders.loading')}</p>
         </div>
       ) : isError ? (
-        <QueryError error={error} resource="SAML service providers" />
+        <QueryError error={error} resource={t('pages.samlProviders.resourceName')} />
       ) : filteredProviders.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
           <ShieldCheck className="h-12 w-12 text-muted-foreground/40 mb-3" />
-          <p className="font-medium">No SAML service providers found</p>
-          <p className="text-sm">Register a service provider to enable SAML SSO</p>
+          <p className="font-medium">{t('pages.samlProviders.empty')}</p>
+          <p className="text-sm">{t('pages.samlProviders.emptyHint')}</p>
         </div>
       ) : (
         <Card>
           <CardHeader>
             <CardTitle className="text-base">
-              Registered Service Providers ({filteredProviders.length})
+              {t('pages.samlProviders.registered', { n: filteredProviders.length })}
             </CardTitle>
           </CardHeader>
           <CardContent>
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Entity ID</TableHead>
-                  <TableHead>ACS URL</TableHead>
-                  <TableHead>Name ID Format</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Created</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
+                  <TableHead>{t('pages.samlProviders.table.name')}</TableHead>
+                  <TableHead>{t('pages.samlProviders.table.entityId')}</TableHead>
+                  <TableHead>{t('pages.samlProviders.table.acsUrl')}</TableHead>
+                  <TableHead>{t('pages.samlProviders.table.nameIdFormat')}</TableHead>
+                  <TableHead>{t('pages.samlProviders.table.status')}</TableHead>
+                  <TableHead>{t('pages.samlProviders.table.created')}</TableHead>
+                  <TableHead className="text-right">{t('pages.samlProviders.table.actions')}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -285,7 +289,7 @@ export function SAMLServiceProvidersPage() {
                             : 'bg-muted text-foreground hover:bg-muted'
                         }
                       >
-                        {sp.enabled ? 'Enabled' : 'Disabled'}
+                        {sp.enabled ? t('pages.samlProviders.enabled') : t('pages.samlProviders.disabled')}
                       </Badge>
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">
@@ -299,7 +303,7 @@ export function SAMLServiceProvidersPage() {
                           onClick={() =>
                             toggleMutation.mutate({ id: sp.id, enabled: !sp.enabled })
                           }
-                          title={sp.enabled ? 'Disable' : 'Enable'}
+                          title={sp.enabled ? t('pages.samlProviders.disable') : t('pages.samlProviders.enable')}
                         >
                           {sp.enabled ? (
                             <ToggleRight className="h-4 w-4 text-green-600" />
@@ -335,21 +339,21 @@ export function SAMLServiceProvidersPage() {
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>Add SAML Service Provider</DialogTitle>
+            <DialogTitle>{t('pages.samlProviders.createDialog.title')}</DialogTitle>
             <DialogDescription>
-              Register a new SAML 2.0 service provider for single sign-on.
+              {t('pages.samlProviders.createDialog.description')}
             </DialogDescription>
           </DialogHeader>
           <SPForm form={form} setForm={setForm} />
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreateOpen(false)}>
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button
               disabled={!isFormValid || createMutation.isPending}
               onClick={() => createMutation.mutate(form)}
             >
-              {createMutation.isPending ? 'Creating...' : 'Create'}
+              {createMutation.isPending ? t('pages.samlProviders.createDialog.creating') : t('pages.samlProviders.createDialog.create')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -359,15 +363,15 @@ export function SAMLServiceProvidersPage() {
       <Dialog open={!!editTarget} onOpenChange={(open) => !open && setEditTarget(null)}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>Edit Service Provider</DialogTitle>
+            <DialogTitle>{t('pages.samlProviders.editDialog.title')}</DialogTitle>
             <DialogDescription>
-              Update the SAML service provider configuration.
+              {t('pages.samlProviders.editDialog.description')}
             </DialogDescription>
           </DialogHeader>
           <SPForm form={form} setForm={setForm} />
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditTarget(null)}>
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button
               disabled={!isFormValid || updateMutation.isPending}
@@ -375,7 +379,7 @@ export function SAMLServiceProvidersPage() {
                 editTarget && updateMutation.mutate({ id: editTarget.id, body: form })
               }
             >
-              {updateMutation.isPending ? 'Saving...' : 'Save Changes'}
+              {updateMutation.isPending ? t('pages.samlProviders.editDialog.saving') : t('pages.samlProviders.editDialog.save')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -385,19 +389,17 @@ export function SAMLServiceProvidersPage() {
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete Service Provider</AlertDialogTitle>
+            <AlertDialogTitle>{t('pages.samlProviders.deleteDialog.title')}</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete &quot;{deleteTarget?.name}&quot;? Users will no
-              longer be able to use SAML SSO with this service provider. This action cannot be
-              undone.
+              {t('pages.samlProviders.deleteDialog.description', { name: deleteTarget?.name ?? '' })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
             >
-              Delete
+              {t('common.delete')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -413,18 +415,19 @@ function SPForm({
   form: SPFormState
   setForm: React.Dispatch<React.SetStateAction<SPFormState>>
 }) {
+  const { t } = useTranslation()
   return (
     <div className="space-y-4">
       <div>
-        <label className="text-sm font-medium">Name *</label>
+        <label className="text-sm font-medium">{t('pages.samlProviders.form.name')}</label>
         <Input
-          placeholder="My Application"
+          placeholder={t('pages.samlProviders.form.namePlaceholder')}
           value={form.name}
           onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
         />
       </div>
       <div>
-        <label className="text-sm font-medium">Entity ID *</label>
+        <label className="text-sm font-medium">{t('pages.samlProviders.form.entityId')}</label>
         <Input
           placeholder="https://app.example.com/saml/metadata"
           value={form.entity_id}
@@ -432,7 +435,7 @@ function SPForm({
         />
       </div>
       <div>
-        <label className="text-sm font-medium">ACS URL (Assertion Consumer Service) *</label>
+        <label className="text-sm font-medium">{t('pages.samlProviders.form.acsUrl')}</label>
         <Input
           placeholder="https://app.example.com/saml/acs"
           value={form.acs_url}
@@ -440,7 +443,7 @@ function SPForm({
         />
       </div>
       <div>
-        <label className="text-sm font-medium">SLO URL (Single Logout, optional)</label>
+        <label className="text-sm font-medium">{t('pages.samlProviders.form.sloUrl')}</label>
         <Input
           placeholder="https://app.example.com/saml/slo"
           value={form.slo_url}
@@ -448,7 +451,7 @@ function SPForm({
         />
       </div>
       <div>
-        <label className="text-sm font-medium">Name ID Format</label>
+        <label className="text-sm font-medium">{t('pages.samlProviders.form.nameIdFormat')}</label>
         <Select
           value={form.name_id_format}
           onValueChange={(value) => setForm((f) => ({ ...f, name_id_format: value }))}
@@ -459,14 +462,14 @@ function SPForm({
           <SelectContent>
             {NAME_ID_FORMATS.map((fmt) => (
               <SelectItem key={fmt.value} value={fmt.value}>
-                {fmt.label}
+                {t(fmt.labelKey)}
               </SelectItem>
             ))}
           </SelectContent>
         </Select>
       </div>
       <div>
-        <label className="text-sm font-medium">SP Certificate (PEM, optional)</label>
+        <label className="text-sm font-medium">{t('pages.samlProviders.form.certificate')}</label>
         <Textarea
           placeholder="-----BEGIN CERTIFICATE-----&#10;...&#10;-----END CERTIFICATE-----"
           className="font-mono text-xs"
@@ -475,7 +478,7 @@ function SPForm({
           onChange={(e) => setForm((f) => ({ ...f, certificate: e.target.value }))}
         />
         <p className="text-xs text-muted-foreground mt-1">
-          The SP&apos;s X.509 certificate for validating signed requests.
+          {t('pages.samlProviders.form.certificateHint')}
         </p>
       </div>
     </div>

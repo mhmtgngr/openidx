@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import {
   Plus, Pencil, Trash2, Search, Link2, FileCode, ShieldCheck,
 } from 'lucide-react'
@@ -121,20 +122,21 @@ interface SimpleApplication {
 type TabKey = 'rules' | 'links' | 'claims'
 
 export function FederationConfigPage() {
+  const { t } = useTranslation()
   const [activeTab, setActiveTab] = useState<TabKey>('rules')
 
   const tabs: { key: TabKey; label: string; icon: React.ReactNode }[] = [
-    { key: 'rules', label: 'Federation Rules', icon: <ShieldCheck className="h-4 w-4" /> },
-    { key: 'links', label: 'Identity Links', icon: <Link2 className="h-4 w-4" /> },
-    { key: 'claims', label: 'Claims Mapping', icon: <FileCode className="h-4 w-4" /> },
+    { key: 'rules', label: t('pages.federation.tabs.rules'), icon: <ShieldCheck className="h-4 w-4" /> },
+    { key: 'links', label: t('pages.federation.tabs.links'), icon: <Link2 className="h-4 w-4" /> },
+    { key: 'claims', label: t('pages.federation.tabs.claims'), icon: <FileCode className="h-4 w-4" /> },
   ]
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold tracking-tight">Federation Configuration</h1>
+        <h1 className="text-3xl font-bold tracking-tight">{t('pages.federation.title')}</h1>
         <p className="text-muted-foreground">
-          Manage federation rules, identity links, and custom claims mapping
+          {t('pages.federation.subtitle')}
         </p>
       </div>
 
@@ -169,6 +171,7 @@ export function FederationConfigPage() {
 function FederationRulesTab() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const { t } = useTranslation()
   const [formOpen, setFormOpen] = useState(false)
   const [editTarget, setEditTarget] = useState<FederationRule | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<FederationRule | null>(null)
@@ -197,10 +200,10 @@ function FederationRulesTab() {
       queryClient.invalidateQueries({ queryKey: ['federation-rules'] })
       setFormOpen(false)
       setForm(emptyRuleForm)
-      toast({ title: 'Federation rule created' })
+      toast({ title: t('pages.federation.rules.toasts.created') })
     },
     onError: () => {
-      toast({ title: 'Failed to create federation rule', variant: 'destructive' })
+      toast({ title: t('pages.federation.rules.toasts.createFailed'), variant: 'destructive' })
     },
   })
 
@@ -212,10 +215,10 @@ function FederationRulesTab() {
       setEditTarget(null)
       setFormOpen(false)
       setForm(emptyRuleForm)
-      toast({ title: 'Federation rule updated' })
+      toast({ title: t('pages.federation.rules.toasts.updated') })
     },
     onError: () => {
-      toast({ title: 'Failed to update federation rule', variant: 'destructive' })
+      toast({ title: t('pages.federation.rules.toasts.updateFailed'), variant: 'destructive' })
     },
   })
 
@@ -225,10 +228,10 @@ function FederationRulesTab() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['federation-rules'] })
       setDeleteTarget(null)
-      toast({ title: 'Federation rule deleted' })
+      toast({ title: t('pages.federation.rules.toasts.deleted') })
     },
     onError: () => {
-      toast({ title: 'Failed to delete federation rule', variant: 'destructive' })
+      toast({ title: t('pages.federation.rules.toasts.deleteFailed'), variant: 'destructive' })
     },
   })
 
@@ -263,51 +266,51 @@ function FederationRulesTab() {
     return (
       <div className="flex flex-col items-center justify-center py-12">
         <LoadingSpinner size="lg" />
-        <p className="mt-4 text-sm text-muted-foreground">Loading federation rules...</p>
+        <p className="mt-4 text-sm text-muted-foreground">{t('pages.federation.rules.loading')}</p>
       </div>
     )
   }
 
   if (isError) {
-    return <QueryError error={error} resource="federation rules" />
+    return <QueryError error={error} resource={t('pages.federation.rules.resourceName')} />
   }
 
   return (
     <>
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">
-          Map email domains to identity providers for automatic federation.
+          {t('pages.federation.rules.intro')}
         </p>
         <Button onClick={openCreate}>
           <Plus className="mr-2 h-4 w-4" />
-          Add Rule
+          {t('pages.federation.rules.addRule')}
         </Button>
       </div>
 
       <Card>
         <CardHeader>
           <CardTitle className="text-base">
-            Federation Rules ({rules.length})
+            {t('pages.federation.rules.cardTitle', { n: rules.length })}
           </CardTitle>
         </CardHeader>
         <CardContent>
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Email Domain</TableHead>
-                <TableHead>Provider</TableHead>
-                <TableHead>Priority</TableHead>
-                <TableHead>Auto-Redirect</TableHead>
-                <TableHead>Enabled</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
+                <TableHead>{t('pages.federation.rules.table.name')}</TableHead>
+                <TableHead>{t('pages.federation.rules.table.emailDomain')}</TableHead>
+                <TableHead>{t('pages.federation.rules.table.provider')}</TableHead>
+                <TableHead>{t('pages.federation.rules.table.priority')}</TableHead>
+                <TableHead>{t('pages.federation.rules.table.autoRedirect')}</TableHead>
+                <TableHead>{t('pages.federation.rules.table.enabled')}</TableHead>
+                <TableHead className="text-right">{t('pages.federation.rules.table.actions')}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {rules.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={7} className="text-center text-muted-foreground">
-                    No federation rules configured.
+                    {t('pages.federation.rules.empty')}
                   </TableCell>
                 </TableRow>
               ) : (
@@ -323,7 +326,7 @@ function FederationRulesTab() {
                     <TableCell>{rule.priority}</TableCell>
                     <TableCell>
                       <Badge variant={rule.auto_redirect ? 'default' : 'secondary'}>
-                        {rule.auto_redirect ? 'Yes' : 'No'}
+                        {rule.auto_redirect ? t('pages.federation.rules.yes') : t('pages.federation.rules.no')}
                       </Badge>
                     </TableCell>
                     <TableCell>
@@ -334,7 +337,7 @@ function FederationRulesTab() {
                             : 'bg-muted text-foreground hover:bg-muted'
                         }
                       >
-                        {rule.enabled ? 'Enabled' : 'Disabled'}
+                        {rule.enabled ? t('pages.federation.rules.enabled') : t('pages.federation.rules.disabled')}
                       </Badge>
                     </TableCell>
                     <TableCell className="text-right">
@@ -360,36 +363,36 @@ function FederationRulesTab() {
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>
-              {editTarget ? 'Edit Federation Rule' : 'Add Federation Rule'}
+              {editTarget ? t('pages.federation.rules.dialog.editTitle') : t('pages.federation.rules.dialog.addTitle')}
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div>
-              <Label htmlFor="rule_name">Name</Label>
+              <Label htmlFor="rule_name">{t('pages.federation.rules.dialog.name')}</Label>
               <Input
                 id="rule_name"
                 value={form.name}
                 onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-                placeholder="e.g. Corporate Google SSO"
+                placeholder={t('pages.federation.rules.dialog.namePlaceholder')}
               />
             </div>
             <div>
-              <Label htmlFor="email_domain">Email Domain</Label>
+              <Label htmlFor="email_domain">{t('pages.federation.rules.dialog.emailDomain')}</Label>
               <Input
                 id="email_domain"
                 value={form.email_domain}
                 onChange={(e) => setForm((f) => ({ ...f, email_domain: e.target.value }))}
-                placeholder="e.g. company.com"
+                placeholder={t('pages.federation.rules.dialog.emailDomainPlaceholder')}
               />
             </div>
             <div>
-              <Label>Identity Provider</Label>
+              <Label>{t('pages.federation.rules.dialog.provider')}</Label>
               <Select
                 value={form.provider_id}
                 onValueChange={(v) => setForm((f) => ({ ...f, provider_id: v }))}
               >
                 <SelectTrigger className="mt-1">
-                  <SelectValue placeholder="Select a provider" />
+                  <SelectValue placeholder={t('pages.federation.rules.dialog.providerPlaceholder')} />
                 </SelectTrigger>
                 <SelectContent>
                   {providers.map((p) => (
@@ -401,7 +404,7 @@ function FederationRulesTab() {
               </Select>
             </div>
             <div>
-              <Label htmlFor="priority">Priority</Label>
+              <Label htmlFor="priority">{t('pages.federation.rules.dialog.priority')}</Label>
               <Input
                 id="priority"
                 type="number"
@@ -410,18 +413,18 @@ function FederationRulesTab() {
                 placeholder="0"
               />
               <p className="text-xs text-muted-foreground mt-1">
-                Lower values have higher priority.
+                {t('pages.federation.rules.dialog.priorityHint')}
               </p>
             </div>
             <div className="flex items-center justify-between">
-              <Label>Auto-Redirect</Label>
+              <Label>{t('pages.federation.rules.dialog.autoRedirect')}</Label>
               <Switch
                 checked={form.auto_redirect}
                 onCheckedChange={(checked) => setForm((f) => ({ ...f, auto_redirect: checked }))}
               />
             </div>
             <div className="flex items-center justify-between">
-              <Label>Enabled</Label>
+              <Label>{t('pages.federation.rules.dialog.enabled')}</Label>
               <Switch
                 checked={form.enabled}
                 onCheckedChange={(checked) => setForm((f) => ({ ...f, enabled: checked }))}
@@ -430,7 +433,7 @@ function FederationRulesTab() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => { setFormOpen(false); setEditTarget(null) }}>
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button
               onClick={handleSubmit}
@@ -443,10 +446,10 @@ function FederationRulesTab() {
               }
             >
               {createMutation.isPending || updateMutation.isPending
-                ? 'Saving...'
+                ? t('pages.federation.rules.dialog.saving')
                 : editTarget
-                  ? 'Update Rule'
-                  : 'Create Rule'}
+                  ? t('pages.federation.rules.dialog.update')
+                  : t('pages.federation.rules.dialog.create')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -456,19 +459,17 @@ function FederationRulesTab() {
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete Federation Rule</AlertDialogTitle>
+            <AlertDialogTitle>{t('pages.federation.rules.deleteDialog.title')}</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete &quot;{deleteTarget?.name}&quot;?
-              Users matching this domain will no longer be automatically redirected.
-              This action cannot be undone.
+              {t('pages.federation.rules.deleteDialog.description', { name: deleteTarget?.name ?? '' })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
             >
-              Delete
+              {t('common.delete')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -484,6 +485,7 @@ function FederationRulesTab() {
 function IdentityLinksTab() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const { t } = useTranslation()
   const [userId, setUserId] = useState('')
   const [searchUserId, setSearchUserId] = useState('')
   const [unlinkTarget, setUnlinkTarget] = useState<IdentityLink | null>(null)
@@ -505,10 +507,10 @@ function IdentityLinksTab() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['identity-links', searchUserId] })
       setUnlinkTarget(null)
-      toast({ title: 'Identity link removed' })
+      toast({ title: t('pages.federation.links.toasts.unlinked') })
     },
     onError: () => {
-      toast({ title: 'Failed to unlink identity', variant: 'destructive' })
+      toast({ title: t('pages.federation.links.toasts.unlinkFailed'), variant: 'destructive' })
     },
   })
 
@@ -522,13 +524,13 @@ function IdentityLinksTab() {
     <>
       <div className="space-y-4">
         <p className="text-sm text-muted-foreground">
-          View and manage external identity links for a specific user.
+          {t('pages.federation.links.intro')}
         </p>
         <div className="flex items-center gap-2">
           <div className="relative flex-1 max-w-md">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
-              placeholder="Enter user ID..."
+              placeholder={t('pages.federation.links.searchPlaceholder')}
               className="pl-9"
               value={userId}
               onChange={(e) => setUserId(e.target.value)}
@@ -537,48 +539,48 @@ function IdentityLinksTab() {
           </div>
           <Button onClick={handleSearch} disabled={!userId.trim()}>
             <Search className="mr-2 h-4 w-4" />
-            Search
+            {t('pages.federation.links.search')}
           </Button>
         </div>
 
         {!searchUserId ? (
           <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
             <Link2 className="h-12 w-12 text-muted-foreground/40 mb-3" />
-            <p className="font-medium">Enter a user ID to view identity links</p>
-            <p className="text-sm">Search by user UUID to see linked external identities</p>
+            <p className="font-medium">{t('pages.federation.links.prompt')}</p>
+            <p className="text-sm">{t('pages.federation.links.promptHint')}</p>
           </div>
         ) : isLoading || isFetching ? (
           <div className="flex flex-col items-center justify-center py-12">
             <LoadingSpinner size="lg" />
-            <p className="mt-4 text-sm text-muted-foreground">Loading identity links...</p>
+            <p className="mt-4 text-sm text-muted-foreground">{t('pages.federation.links.loading')}</p>
           </div>
         ) : isError ? (
-          <QueryError error={error} resource="identity links" />
+          <QueryError error={error} resource={t('pages.federation.links.resourceName')} />
         ) : (
           <Card>
             <CardHeader>
               <CardTitle className="text-base">
-                Identity Links for {searchUserId} ({links.length})
+                {t('pages.federation.links.cardTitle', { user: searchUserId, n: links.length })}
               </CardTitle>
             </CardHeader>
             <CardContent>
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Provider</TableHead>
-                    <TableHead>External ID</TableHead>
-                    <TableHead>External Email</TableHead>
-                    <TableHead>Display Name</TableHead>
-                    <TableHead>Primary</TableHead>
-                    <TableHead>Linked At</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
+                    <TableHead>{t('pages.federation.links.table.provider')}</TableHead>
+                    <TableHead>{t('pages.federation.links.table.externalId')}</TableHead>
+                    <TableHead>{t('pages.federation.links.table.externalEmail')}</TableHead>
+                    <TableHead>{t('pages.federation.links.table.displayName')}</TableHead>
+                    <TableHead>{t('pages.federation.links.table.primary')}</TableHead>
+                    <TableHead>{t('pages.federation.links.table.linkedAt')}</TableHead>
+                    <TableHead className="text-right">{t('pages.federation.links.table.actions')}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {links.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={7} className="text-center text-muted-foreground">
-                        No identity links found for this user.
+                        {t('pages.federation.links.empty')}
                       </TableCell>
                     </TableRow>
                   ) : (
@@ -594,7 +596,7 @@ function IdentityLinksTab() {
                         <TableCell>{link.display_name}</TableCell>
                         <TableCell>
                           <Badge variant={link.is_primary ? 'default' : 'secondary'}>
-                            {link.is_primary ? 'Primary' : 'Secondary'}
+                            {link.is_primary ? t('pages.federation.links.isPrimary') : t('pages.federation.links.isSecondary')}
                           </Badge>
                         </TableCell>
                         <TableCell className="text-sm text-muted-foreground">
@@ -623,19 +625,20 @@ function IdentityLinksTab() {
       <AlertDialog open={!!unlinkTarget} onOpenChange={(open) => !open && setUnlinkTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Unlink Identity</AlertDialogTitle>
+            <AlertDialogTitle>{t('pages.federation.links.unlinkDialog.title')}</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to unlink the {unlinkTarget?.provider_name} identity
-              ({unlinkTarget?.external_email}) from this user? The user will no longer
-              be able to sign in with this external identity.
+              {t('pages.federation.links.unlinkDialog.description', {
+                provider: unlinkTarget?.provider_name ?? '',
+                email: unlinkTarget?.external_email ?? '',
+              })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => unlinkTarget && unlinkMutation.mutate(unlinkTarget.id)}
             >
-              Unlink
+              {t('pages.federation.links.unlinkDialog.unlink')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -651,6 +654,7 @@ function IdentityLinksTab() {
 function ClaimsMappingTab() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const { t } = useTranslation()
   const [selectedAppId, setSelectedAppId] = useState('')
   const [formOpen, setFormOpen] = useState(false)
   const [editTarget, setEditTarget] = useState<CustomClaim | null>(null)
@@ -683,10 +687,10 @@ function ClaimsMappingTab() {
       queryClient.invalidateQueries({ queryKey: ['custom-claims', selectedAppId] })
       setFormOpen(false)
       setForm(emptyClaimForm)
-      toast({ title: 'Custom claim created' })
+      toast({ title: t('pages.federation.claims.toasts.created') })
     },
     onError: () => {
-      toast({ title: 'Failed to create custom claim', variant: 'destructive' })
+      toast({ title: t('pages.federation.claims.toasts.createFailed'), variant: 'destructive' })
     },
   })
 
@@ -698,10 +702,10 @@ function ClaimsMappingTab() {
       setEditTarget(null)
       setFormOpen(false)
       setForm(emptyClaimForm)
-      toast({ title: 'Custom claim updated' })
+      toast({ title: t('pages.federation.claims.toasts.updated') })
     },
     onError: () => {
-      toast({ title: 'Failed to update custom claim', variant: 'destructive' })
+      toast({ title: t('pages.federation.claims.toasts.updateFailed'), variant: 'destructive' })
     },
   })
 
@@ -711,10 +715,10 @@ function ClaimsMappingTab() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['custom-claims', selectedAppId] })
       setDeleteTarget(null)
-      toast({ title: 'Custom claim deleted' })
+      toast({ title: t('pages.federation.claims.toasts.deleted') })
     },
     onError: () => {
-      toast({ title: 'Failed to delete custom claim', variant: 'destructive' })
+      toast({ title: t('pages.federation.claims.toasts.deleteFailed'), variant: 'destructive' })
     },
   })
 
@@ -751,14 +755,14 @@ function ClaimsMappingTab() {
     <>
       <div className="space-y-4">
         <p className="text-sm text-muted-foreground">
-          Configure custom claims to include in tokens for each application.
+          {t('pages.federation.claims.intro')}
         </p>
         <div className="flex items-center gap-4">
           <div className="w-80">
-            <Label>Application</Label>
+            <Label>{t('pages.federation.claims.application')}</Label>
             <Select value={selectedAppId} onValueChange={setSelectedAppId}>
               <SelectTrigger className="mt-1">
-                <SelectValue placeholder="Select an application" />
+                <SelectValue placeholder={t('pages.federation.claims.applicationPlaceholder')} />
               </SelectTrigger>
               <SelectContent>
                 {applications.map((app) => (
@@ -773,7 +777,7 @@ function ClaimsMappingTab() {
             <div className="pt-5">
               <Button onClick={openCreate}>
                 <Plus className="mr-2 h-4 w-4" />
-                Add Claim
+                {t('pages.federation.claims.addClaim')}
               </Button>
             </div>
           )}
@@ -782,42 +786,42 @@ function ClaimsMappingTab() {
         {!selectedAppId ? (
           <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
             <FileCode className="h-12 w-12 text-muted-foreground/40 mb-3" />
-            <p className="font-medium">Select an application to manage claims</p>
-            <p className="text-sm">Custom claims are configured per application</p>
+            <p className="font-medium">{t('pages.federation.claims.prompt')}</p>
+            <p className="text-sm">{t('pages.federation.claims.promptHint')}</p>
           </div>
         ) : claimsLoading ? (
           <div className="flex flex-col items-center justify-center py-12">
             <LoadingSpinner size="lg" />
-            <p className="mt-4 text-sm text-muted-foreground">Loading claims...</p>
+            <p className="mt-4 text-sm text-muted-foreground">{t('pages.federation.claims.loading')}</p>
           </div>
         ) : claimsError ? (
-          <QueryError error={claimsErrorObj} resource="custom claims" />
+          <QueryError error={claimsErrorObj} resource={t('pages.federation.claims.resourceName')} />
         ) : (
           <Card>
             <CardHeader>
               <CardTitle className="text-base">
-                Custom Claims ({claims.length})
+                {t('pages.federation.claims.cardTitle', { n: claims.length })}
               </CardTitle>
             </CardHeader>
             <CardContent>
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Claim Name</TableHead>
-                    <TableHead>Source Type</TableHead>
-                    <TableHead>Source Value</TableHead>
-                    <TableHead>Type</TableHead>
-                    <TableHead>ID Token</TableHead>
-                    <TableHead>Access Token</TableHead>
-                    <TableHead>UserInfo</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
+                    <TableHead>{t('pages.federation.claims.table.claimName')}</TableHead>
+                    <TableHead>{t('pages.federation.claims.table.sourceType')}</TableHead>
+                    <TableHead>{t('pages.federation.claims.table.sourceValue')}</TableHead>
+                    <TableHead>{t('pages.federation.claims.table.type')}</TableHead>
+                    <TableHead>{t('pages.federation.claims.table.idToken')}</TableHead>
+                    <TableHead>{t('pages.federation.claims.table.accessToken')}</TableHead>
+                    <TableHead>{t('pages.federation.claims.table.userInfo')}</TableHead>
+                    <TableHead className="text-right">{t('pages.federation.claims.table.actions')}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {claims.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={8} className="text-center text-muted-foreground">
-                        No custom claims configured for this application.
+                        {t('pages.federation.claims.empty')}
                       </TableCell>
                     </TableRow>
                   ) : (
@@ -841,17 +845,17 @@ function ClaimsMappingTab() {
                         </TableCell>
                         <TableCell>
                           <Badge variant={claim.include_in_id_token ? 'default' : 'secondary'} className="text-xs">
-                            {claim.include_in_id_token ? 'Yes' : 'No'}
+                            {claim.include_in_id_token ? t('pages.federation.claims.yes') : t('pages.federation.claims.no')}
                           </Badge>
                         </TableCell>
                         <TableCell>
                           <Badge variant={claim.include_in_access_token ? 'default' : 'secondary'} className="text-xs">
-                            {claim.include_in_access_token ? 'Yes' : 'No'}
+                            {claim.include_in_access_token ? t('pages.federation.claims.yes') : t('pages.federation.claims.no')}
                           </Badge>
                         </TableCell>
                         <TableCell>
                           <Badge variant={claim.include_in_userinfo ? 'default' : 'secondary'} className="text-xs">
-                            {claim.include_in_userinfo ? 'Yes' : 'No'}
+                            {claim.include_in_userinfo ? t('pages.federation.claims.yes') : t('pages.federation.claims.no')}
                           </Badge>
                         </TableCell>
                         <TableCell className="text-right">
@@ -879,21 +883,21 @@ function ClaimsMappingTab() {
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>
-              {editTarget ? 'Edit Custom Claim' : 'Add Custom Claim'}
+              {editTarget ? t('pages.federation.claims.dialog.editTitle') : t('pages.federation.claims.dialog.addTitle')}
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div>
-              <Label htmlFor="claim_name">Claim Name</Label>
+              <Label htmlFor="claim_name">{t('pages.federation.claims.dialog.claimName')}</Label>
               <Input
                 id="claim_name"
                 value={form.claim_name}
                 onChange={(e) => setForm((f) => ({ ...f, claim_name: e.target.value }))}
-                placeholder="e.g. department"
+                placeholder={t('pages.federation.claims.dialog.claimNamePlaceholder')}
               />
             </div>
             <div>
-              <Label>Source Type</Label>
+              <Label>{t('pages.federation.claims.dialog.sourceType')}</Label>
               <Select
                 value={form.source_type}
                 onValueChange={(v) => setForm((f) => ({ ...f, source_type: v }))}
@@ -902,38 +906,38 @@ function ClaimsMappingTab() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="user_attribute">User Attribute</SelectItem>
-                  <SelectItem value="group_membership">Group Membership</SelectItem>
-                  <SelectItem value="static_value">Static Value</SelectItem>
-                  <SelectItem value="expression">Expression</SelectItem>
+                  <SelectItem value="user_attribute">{t('pages.federation.claims.dialog.sourceTypes.userAttribute')}</SelectItem>
+                  <SelectItem value="group_membership">{t('pages.federation.claims.dialog.sourceTypes.groupMembership')}</SelectItem>
+                  <SelectItem value="static_value">{t('pages.federation.claims.dialog.sourceTypes.staticValue')}</SelectItem>
+                  <SelectItem value="expression">{t('pages.federation.claims.dialog.sourceTypes.expression')}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <div>
-              <Label htmlFor="source_value">Source Value</Label>
+              <Label htmlFor="source_value">{t('pages.federation.claims.dialog.sourceValue')}</Label>
               <Input
                 id="source_value"
                 value={form.source_value}
                 onChange={(e) => setForm((f) => ({ ...f, source_value: e.target.value }))}
                 placeholder={
                   form.source_type === 'user_attribute'
-                    ? 'e.g. profile.department'
+                    ? t('pages.federation.claims.dialog.sourceValuePlaceholders.userAttribute')
                     : form.source_type === 'group_membership'
-                      ? 'e.g. group_names'
+                      ? t('pages.federation.claims.dialog.sourceValuePlaceholders.groupMembership')
                       : form.source_type === 'static_value'
-                        ? 'e.g. my-static-value'
-                        : 'e.g. user.email.split("@")[1]'
+                        ? t('pages.federation.claims.dialog.sourceValuePlaceholders.staticValue')
+                        : t('pages.federation.claims.dialog.sourceValuePlaceholders.expression')
                 }
               />
               <p className="text-xs text-muted-foreground mt-1">
-                {form.source_type === 'user_attribute' && 'Path to the user attribute to include.'}
-                {form.source_type === 'group_membership' && 'Group membership field to include.'}
-                {form.source_type === 'static_value' && 'A fixed value to include in the claim.'}
-                {form.source_type === 'expression' && 'A dynamic expression evaluated at token issuance.'}
+                {form.source_type === 'user_attribute' && t('pages.federation.claims.dialog.sourceHints.userAttribute')}
+                {form.source_type === 'group_membership' && t('pages.federation.claims.dialog.sourceHints.groupMembership')}
+                {form.source_type === 'static_value' && t('pages.federation.claims.dialog.sourceHints.staticValue')}
+                {form.source_type === 'expression' && t('pages.federation.claims.dialog.sourceHints.expression')}
               </p>
             </div>
             <div>
-              <Label>Claim Type</Label>
+              <Label>{t('pages.federation.claims.dialog.claimType')}</Label>
               <Select
                 value={form.claim_type}
                 onValueChange={(v) => setForm((f) => ({ ...f, claim_type: v }))}
@@ -942,15 +946,15 @@ function ClaimsMappingTab() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="string">String</SelectItem>
-                  <SelectItem value="number">Number</SelectItem>
-                  <SelectItem value="boolean">Boolean</SelectItem>
-                  <SelectItem value="array">Array</SelectItem>
+                  <SelectItem value="string">{t('pages.federation.claims.dialog.claimTypes.string')}</SelectItem>
+                  <SelectItem value="number">{t('pages.federation.claims.dialog.claimTypes.number')}</SelectItem>
+                  <SelectItem value="boolean">{t('pages.federation.claims.dialog.claimTypes.boolean')}</SelectItem>
+                  <SelectItem value="array">{t('pages.federation.claims.dialog.claimTypes.array')}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <div className="space-y-3 pt-2">
-              <Label className="text-sm font-medium">Include In</Label>
+              <Label className="text-sm font-medium">{t('pages.federation.claims.dialog.includeIn')}</Label>
               <div className="flex items-center gap-2">
                 <Checkbox
                   id="include_id_token"
@@ -959,7 +963,7 @@ function ClaimsMappingTab() {
                     setForm((f) => ({ ...f, include_in_id_token: checked === true }))
                   }
                 />
-                <Label htmlFor="include_id_token" className="font-normal">ID Token</Label>
+                <Label htmlFor="include_id_token" className="font-normal">{t('pages.federation.claims.dialog.idToken')}</Label>
               </div>
               <div className="flex items-center gap-2">
                 <Checkbox
@@ -969,7 +973,7 @@ function ClaimsMappingTab() {
                     setForm((f) => ({ ...f, include_in_access_token: checked === true }))
                   }
                 />
-                <Label htmlFor="include_access_token" className="font-normal">Access Token</Label>
+                <Label htmlFor="include_access_token" className="font-normal">{t('pages.federation.claims.dialog.accessToken')}</Label>
               </div>
               <div className="flex items-center gap-2">
                 <Checkbox
@@ -979,11 +983,11 @@ function ClaimsMappingTab() {
                     setForm((f) => ({ ...f, include_in_userinfo: checked === true }))
                   }
                 />
-                <Label htmlFor="include_userinfo" className="font-normal">UserInfo Endpoint</Label>
+                <Label htmlFor="include_userinfo" className="font-normal">{t('pages.federation.claims.dialog.userInfo')}</Label>
               </div>
             </div>
             <div className="flex items-center justify-between pt-2">
-              <Label>Enabled</Label>
+              <Label>{t('pages.federation.claims.dialog.enabled')}</Label>
               <Switch
                 checked={form.enabled}
                 onCheckedChange={(checked) => setForm((f) => ({ ...f, enabled: checked }))}
@@ -992,7 +996,7 @@ function ClaimsMappingTab() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => { setFormOpen(false); setEditTarget(null) }}>
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button
               onClick={handleSubmit}
@@ -1004,10 +1008,10 @@ function ClaimsMappingTab() {
               }
             >
               {createMutation.isPending || updateMutation.isPending
-                ? 'Saving...'
+                ? t('pages.federation.claims.dialog.saving')
                 : editTarget
-                  ? 'Update Claim'
-                  : 'Create Claim'}
+                  ? t('pages.federation.claims.dialog.update')
+                  : t('pages.federation.claims.dialog.create')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1017,19 +1021,17 @@ function ClaimsMappingTab() {
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete Custom Claim</AlertDialogTitle>
+            <AlertDialogTitle>{t('pages.federation.claims.deleteDialog.title')}</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete the &quot;{deleteTarget?.claim_name}&quot; claim?
-              This claim will no longer be included in tokens for this application.
-              This action cannot be undone.
+              {t('pages.federation.claims.deleteDialog.description', { name: deleteTarget?.claim_name ?? '' })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
             >
-              Delete
+              {t('common.delete')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

@@ -97,6 +97,46 @@ describe('i18n', () => {
       ...['username', 'email', 'first_name', 'last_name', 'display_name', 'group_name'].map(
         (k) => `pages.directories.mapping.${k}`,
       ),
+      // identity-providers: PROVIDER_TEMPLATES descriptionKeys
+      'pages.identityProviders.templates.google',
+      'pages.identityProviders.templates.github',
+      'pages.identityProviders.templates.microsoft',
+      // saml-service-providers: NAME_ID_FORMATS labelKeys
+      ...['email', 'unspecified', 'persistent', 'transient'].map(
+        (k) => `pages.samlProviders.formats.${k}`,
+      ),
+      // provisioning-rules: the trigger/operator/action option lists render
+      // their labels through template-literal keys built from the option value.
+      ...[
+        'user_created',
+        'user_updated',
+        'user_deleted',
+        'group_membership',
+        'attribute_change',
+        'scheduled',
+      ].map((k) => `pages.provisioningRules.triggers.${k}`),
+      ...[
+        'equals',
+        'not_equals',
+        'contains',
+        'not_contains',
+        'starts_with',
+        'ends_with',
+        'regex',
+        'greater_than',
+        'less_than',
+      ].map((k) => `pages.provisioningRules.operators.${k}`),
+      ...[
+        'add_to_group',
+        'remove_from_group',
+        'assign_role',
+        'remove_role',
+        'set_attribute',
+        'send_email',
+        'notify_admin',
+        'disable_account',
+        'enable_account',
+      ].map((k) => `pages.provisioningRules.actionTypes.${k}`),
       // directories: validateForm messages resolved through the i18n singleton
       ...[
         'nameRequired',
