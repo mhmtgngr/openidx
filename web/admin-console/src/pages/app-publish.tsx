@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Upload,
@@ -123,6 +124,7 @@ const statusColors: Record<string, string> = {
 // ---- Component ----
 
 export function AppPublishPage() {
+  const { t } = useTranslation()
   const queryClient = useQueryClient()
   const { toast } = useToast()
   const [activeTab, setActiveTab] = useState('apps')
@@ -186,12 +188,19 @@ export function AppPublishPage() {
       api.post<PublishedApp>('/api/v1/access/apps', data),
     onSuccess: (app) => {
       queryClient.invalidateQueries({ queryKey: ['published-apps'] })
-      toast({ title: 'App Registered', description: `${app.name} has been registered.` })
+      toast({
+        title: t('pages.appPublish.toasts.registered'),
+        description: t('pages.appPublish.toasts.registeredDesc', { name: app.name }),
+      })
       setRegisterOpen(false)
       setRegisterForm({ name: '', target_url: '', description: '', spec_url: '' })
     },
     onError: (error: Error) => {
-      toast({ title: 'Registration Failed', description: error.message, variant: 'destructive' })
+      toast({
+        title: t('pages.appPublish.toasts.registerFailed'),
+        description: error.message,
+        variant: 'destructive',
+      })
     },
   })
 
@@ -199,14 +208,18 @@ export function AppPublishPage() {
     mutationFn: (id: string) => api.delete(`/api/v1/access/apps/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['published-apps'] })
-      toast({ title: 'App Deleted' })
+      toast({ title: t('pages.appPublish.toasts.deleted') })
       if (selectedApp) {
         setSelectedApp(null)
         setActiveTab('apps')
       }
     },
     onError: (error: Error) => {
-      toast({ title: 'Delete Failed', description: error.message, variant: 'destructive' })
+      toast({
+        title: t('pages.appPublish.toasts.deleteFailed'),
+        description: error.message,
+        variant: 'destructive',
+      })
     },
   })
 
@@ -216,10 +229,17 @@ export function AppPublishPage() {
     onSuccess: (app) => {
       setSelectedApp(app)
       queryClient.invalidateQueries({ queryKey: ['published-apps'] })
-      toast({ title: 'Discovery Started', description: 'Scanning for paths and endpoints...' })
+      toast({
+        title: t('pages.appPublish.toasts.discoveryStarted'),
+        description: t('pages.appPublish.toasts.discoveryStartedDesc'),
+      })
     },
     onError: (error: Error) => {
-      toast({ title: 'Discovery Failed', description: error.message, variant: 'destructive' })
+      toast({
+        title: t('pages.appPublish.toasts.discoveryFailed'),
+        description: error.message,
+        variant: 'destructive',
+      })
     },
   })
 
@@ -233,7 +253,11 @@ export function AppPublishPage() {
       queryClient.invalidateQueries({ queryKey: ['discovered-paths', selectedApp?.id] })
     },
     onError: (error: Error) => {
-      toast({ title: 'Update Failed', description: error.message, variant: 'destructive' })
+      toast({
+        title: t('pages.appPublish.toasts.updateFailed'),
+        description: error.message,
+        variant: 'destructive',
+      })
     },
   })
 
@@ -244,12 +268,19 @@ export function AppPublishPage() {
       queryClient.invalidateQueries({ queryKey: ['discovered-paths', selectedApp?.id] })
       queryClient.invalidateQueries({ queryKey: ['published-apps'] })
       queryClient.invalidateQueries({ queryKey: ['proxy-routes'] })
-      toast({ title: 'Paths Published', description: `${selected.size} paths published as proxy routes.` })
+      toast({
+        title: t('pages.appPublish.toasts.pathsPublished'),
+        description: t('pages.appPublish.toasts.pathsPublishedDesc', { count: selected.size }),
+      })
       setPublishOpen(false)
       setSelected(new Set())
     },
     onError: (error: Error) => {
-      toast({ title: 'Publish Failed', description: error.message, variant: 'destructive' })
+      toast({
+        title: t('pages.appPublish.toasts.publishFailed'),
+        description: error.message,
+        variant: 'destructive',
+      })
     },
   })
 
@@ -265,14 +296,18 @@ export function AppPublishPage() {
       queryClient.invalidateQueries({ queryKey: ['proxy-routes'] })
       queryClient.invalidateQueries({ queryKey: ['my-applications'] })
       toast({
-        title: 'App Published',
-        description: `${res.public_url} — now available in My Apps.`,
+        title: t('pages.appPublish.toasts.appPublished'),
+        description: t('pages.appPublish.toasts.appPublishedDesc', { url: res.public_url }),
       })
       setPublishAppOpen(false)
       setPublicHost('')
     },
     onError: (error: Error) => {
-      toast({ title: 'Publish Failed', description: error.message, variant: 'destructive' })
+      toast({
+        title: t('pages.appPublish.toasts.publishFailed'),
+        description: error.message,
+        variant: 'destructive',
+      })
     },
   })
 
@@ -322,22 +357,26 @@ export function AppPublishPage() {
         <div>
           <h1 className="text-3xl font-bold flex items-center gap-2">
             <Upload className="h-8 w-8 text-indigo-500" />
-            App Publish
+            {t('nav.items.appPublish')}
           </h1>
-          <p className="text-muted-foreground mt-1">
-            Register internal apps, discover endpoints, classify security levels, and publish as proxy routes
-          </p>
+          <p className="text-muted-foreground mt-1">{t('pages.appPublish.subtitle')}</p>
         </div>
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList>
-          <TabsTrigger value="apps">Apps ({apps.length})</TabsTrigger>
+          <TabsTrigger value="apps">{t('pages.appPublish.tabs.apps', { count: apps.length })}</TabsTrigger>
           <TabsTrigger value="paths" disabled={!selectedApp}>
-            Discovered Paths {selectedApp ? `(${paths.length})` : ''}
+            {selectedApp
+              ? t('pages.appPublish.tabs.pathsCount', { count: paths.length })
+              : t('pages.appPublish.tabs.paths')}
           </TabsTrigger>
           <TabsTrigger value="published" disabled={!selectedApp}>
-            Published {selectedApp ? `(${paths.filter((p) => p.published).length})` : ''}
+            {selectedApp
+              ? t('pages.appPublish.tabs.publishedCount', {
+                  count: paths.filter((p) => p.published).length,
+                })
+              : t('pages.appPublish.tabs.published')}
           </TabsTrigger>
         </TabsList>
 
@@ -346,7 +385,7 @@ export function AppPublishPage() {
           <div className="flex justify-end">
             <Button onClick={() => setRegisterOpen(true)}>
               <Plus className="h-4 w-4 mr-2" />
-              Register App
+              {t('pages.appPublish.registerApp')}
             </Button>
           </div>
 
@@ -355,11 +394,11 @@ export function AppPublishPage() {
               <LoadingSpinner />
             </div>
           ) : appsQuery.isError ? (
-            <QueryError error={appsQuery.error} resource="published apps" />
+            <QueryError error={appsQuery.error} resource={t('pages.appPublish.resourceName')} />
           ) : apps.length === 0 ? (
             <Card>
               <CardContent className="py-12 text-center text-muted-foreground">
-                No apps registered yet. Click "Register App" to get started.
+                {t('pages.appPublish.empty')}
               </CardContent>
             </Card>
           ) : (
@@ -389,8 +428,8 @@ export function AppPublishPage() {
                       </p>
                     )}
                     <div className="flex gap-4 text-sm text-muted-foreground">
-                      <span>{app.total_paths_discovered} discovered</span>
-                      <span>{app.total_paths_published} published</span>
+                      <span>{t('pages.appPublish.discoveredCount', { count: app.total_paths_discovered })}</span>
+                      <span>{t('pages.appPublish.publishedCount', { count: app.total_paths_published })}</span>
                     </div>
                     {app.discovery_strategies.length > 0 && (
                       <div className="flex gap-1 flex-wrap">
@@ -417,7 +456,9 @@ export function AppPublishPage() {
                         disabled={app.status === 'discovering'}
                       >
                         <Radar className="h-4 w-4 mr-1" />
-                        {app.status === 'discovering' ? 'Scanning...' : 'Discover'}
+                        {app.status === 'discovering'
+                          ? t('pages.appPublish.scanning')
+                          : t('pages.appPublish.discover')}
                       </Button>
                       <Button
                         size="sm"
@@ -429,7 +470,7 @@ export function AppPublishPage() {
                         disabled={app.total_paths_discovered === 0}
                       >
                         <ArrowRight className="h-4 w-4 mr-1" />
-                        Paths
+                        {t('pages.appPublish.paths')}
                       </Button>
                       <Button
                         size="sm"
@@ -447,13 +488,17 @@ export function AppPublishPage() {
                         }}
                       >
                         <ExternalLink className="h-4 w-4 mr-1" />
-                        {app.public_host ? 'Published' : 'Publish App'}
+                        {app.public_host
+                          ? t('pages.appPublish.published')
+                          : t('pages.appPublish.publishApp')}
                       </Button>
                       <ConfirmAction
-                        title="Delete this app?"
-                        description={`This permanently removes ${app.name} and its published access configuration. This cannot be undone.`}
+                        title={t('pages.appPublish.confirmDelete.title')}
+                        description={t('pages.appPublish.confirmDelete.description', {
+                          name: app.name,
+                        })}
                         destructive
-                        confirmLabel="Delete"
+                        confirmLabel={t('common.delete')}
                         onConfirm={() => deleteApp.mutateAsync(app.id)}
                       >
                         {(open) => (
@@ -483,7 +528,7 @@ export function AppPublishPage() {
               <div className="grid gap-4 md:grid-cols-5">
                 <Card>
                   <CardHeader className="pb-2">
-                    <CardDescription>Total</CardDescription>
+                    <CardDescription>{t('pages.appPublish.summary.total')}</CardDescription>
                     <CardTitle className="text-2xl">{paths.length}</CardTitle>
                   </CardHeader>
                 </Card>
@@ -492,9 +537,9 @@ export function AppPublishPage() {
                   return (
                     <Card key={cls}>
                       <CardHeader className="pb-2">
-                        <CardDescription className="flex items-center gap-1 capitalize">
+                        <CardDescription className="flex items-center gap-1">
                           <Icon className="h-3 w-3" />
-                          {cls}
+                          {t(`pages.appPublish.classes.${cls}`)}
                         </CardDescription>
                         <CardTitle className="text-2xl">{classificationCounts[cls] || 0}</CardTitle>
                       </CardHeader>
@@ -511,7 +556,7 @@ export function AppPublishPage() {
                       <div className="relative">
                         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                         <Input
-                          placeholder="Search paths..."
+                          placeholder={t('pages.appPublish.filters.search')}
                           value={search}
                           onChange={(e) => setSearch(e.target.value)}
                           className="pl-9"
@@ -520,14 +565,14 @@ export function AppPublishPage() {
                     </div>
                     <Select value={classFilter} onValueChange={setClassFilter}>
                       <SelectTrigger className="w-[160px]">
-                        <SelectValue placeholder="Classification" />
+                        <SelectValue placeholder={t('pages.appPublish.filters.classification')} />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="all">All Classes</SelectItem>
-                        <SelectItem value="critical">Critical</SelectItem>
-                        <SelectItem value="sensitive">Sensitive</SelectItem>
-                        <SelectItem value="protected">Protected</SelectItem>
-                        <SelectItem value="public">Public</SelectItem>
+                        <SelectItem value="all">{t('pages.appPublish.filters.allClasses')}</SelectItem>
+                        <SelectItem value="critical">{t('pages.appPublish.classes.critical')}</SelectItem>
+                        <SelectItem value="sensitive">{t('pages.appPublish.classes.sensitive')}</SelectItem>
+                        <SelectItem value="protected">{t('pages.appPublish.classes.protected')}</SelectItem>
+                        <SelectItem value="public">{t('pages.appPublish.classes.public')}</SelectItem>
                       </SelectContent>
                     </Select>
                     <Button
@@ -538,14 +583,14 @@ export function AppPublishPage() {
                       disabled={selectedApp.status === 'discovering'}
                     >
                       <RefreshCw className={`h-4 w-4 mr-2 ${selectedApp.status === 'discovering' ? 'animate-spin' : ''}`} />
-                      Re-Discover
+                      {t('pages.appPublish.rediscover')}
                     </Button>
                     <Button
                       onClick={() => setPublishOpen(true)}
                       disabled={selected.size === 0}
                     >
                       <Upload className="h-4 w-4 mr-2" />
-                      Publish Selected ({selected.size})
+                      {t('pages.appPublish.publishSelected', { count: selected.size })}
                     </Button>
                   </div>
                 </CardContent>
@@ -571,12 +616,12 @@ export function AppPublishPage() {
                                 onCheckedChange={selectAllUnpublished}
                               />
                             </TableHead>
-                            <TableHead className="text-left p-4 font-medium">Path</TableHead>
-                            <TableHead className="text-left p-4 font-medium">Methods</TableHead>
-                            <TableHead className="text-left p-4 font-medium">Classification</TableHead>
-                            <TableHead className="text-left p-4 font-medium">Auth</TableHead>
-                            <TableHead className="text-left p-4 font-medium">Source</TableHead>
-                            <TableHead className="text-left p-4 font-medium">Status</TableHead>
+                            <TableHead className="text-left p-4 font-medium">{t('pages.appPublish.table.path')}</TableHead>
+                            <TableHead className="text-left p-4 font-medium">{t('pages.appPublish.table.methods')}</TableHead>
+                            <TableHead className="text-left p-4 font-medium">{t('pages.appPublish.table.classification')}</TableHead>
+                            <TableHead className="text-left p-4 font-medium">{t('pages.appPublish.table.auth')}</TableHead>
+                            <TableHead className="text-left p-4 font-medium">{t('pages.appPublish.table.source')}</TableHead>
+                            <TableHead className="text-left p-4 font-medium">{t('pages.appPublish.table.status')}</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody className="divide-y">
@@ -619,7 +664,7 @@ export function AppPublishPage() {
                                       <SelectValue>
                                         <span className="flex items-center gap-1">
                                           <ClsIcon className="h-3 w-3" />
-                                          <span className="capitalize">{path.classification}</span>
+                                          <span>{t(`pages.appPublish.classes.${path.classification}`)}</span>
                                         </span>
                                       </SelectValue>
                                     </SelectTrigger>
@@ -631,7 +676,7 @@ export function AppPublishPage() {
                                             <SelectItem key={cls} value={cls}>
                                               <span className="flex items-center gap-1">
                                                 <Icon className="h-3 w-3" />
-                                                <span className="capitalize">{cls}</span>
+                                                <span>{t(`pages.appPublish.classes.${cls}`)}</span>
                                               </span>
                                             </SelectItem>
                                           )
@@ -643,7 +688,7 @@ export function AppPublishPage() {
                                 <TableCell className="p-4 text-sm">
                                   {path.require_auth ? (
                                     <span className="flex items-center gap-1 text-amber-600">
-                                      <Lock className="h-3 w-3" /> Required
+                                      <Lock className="h-3 w-3" /> {t('pages.appPublish.authRequired')}
                                       {path.allowed_roles.length > 0 && (
                                         <span className="text-xs text-muted-foreground ml-1">
                                           ({path.allowed_roles.join(', ')})
@@ -651,7 +696,7 @@ export function AppPublishPage() {
                                       )}
                                     </span>
                                   ) : (
-                                    <span className="text-green-600">Public</span>
+                                    <span className="text-green-600">{t('pages.appPublish.authPublic')}</span>
                                   )}
                                 </TableCell>
                                 <TableCell className="p-4">
@@ -663,10 +708,10 @@ export function AppPublishPage() {
                                   {path.published ? (
                                     <Badge className="bg-green-100 text-green-800">
                                       <CheckCircle2 className="h-3 w-3 mr-1" />
-                                      Published
+                                      {t('pages.appPublish.statusPublished')}
                                     </Badge>
                                   ) : (
-                                    <Badge variant="secondary">Pending</Badge>
+                                    <Badge variant="secondary">{t('pages.appPublish.statusPending')}</Badge>
                                   )}
                                 </TableCell>
                               </TableRow>
@@ -676,8 +721,8 @@ export function AppPublishPage() {
                             <TableRow>
                               <TableCell colSpan={7} className="p-8 text-center text-muted-foreground">
                                 {paths.length === 0
-                                  ? 'No paths discovered yet. Run discovery first.'
-                                  : 'No paths match your filter.'}
+                                  ? t('pages.appPublish.noPaths')
+                                  : t('pages.appPublish.noMatches')}
                               </TableCell>
                             </TableRow>
                           )}
@@ -698,11 +743,11 @@ export function AppPublishPage() {
                   <Table>
                     <TableHeader className="bg-muted">
                       <TableRow>
-                        <TableHead className="text-left p-4 font-medium">Path</TableHead>
-                        <TableHead className="text-left p-4 font-medium">Methods</TableHead>
-                        <TableHead className="text-left p-4 font-medium">Classification</TableHead>
-                        <TableHead className="text-left p-4 font-medium">Auth Policy</TableHead>
-                        <TableHead className="text-left p-4 font-medium">Route</TableHead>
+                        <TableHead className="text-left p-4 font-medium">{t('pages.appPublish.table.path')}</TableHead>
+                        <TableHead className="text-left p-4 font-medium">{t('pages.appPublish.table.methods')}</TableHead>
+                        <TableHead className="text-left p-4 font-medium">{t('pages.appPublish.table.classification')}</TableHead>
+                        <TableHead className="text-left p-4 font-medium">{t('pages.appPublish.table.authPolicy')}</TableHead>
+                        <TableHead className="text-left p-4 font-medium">{t('pages.appPublish.table.route')}</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody className="divide-y">
@@ -729,14 +774,18 @@ export function AppPublishPage() {
                               <TableCell className="p-4">
                                 <Badge className={classificationColors[path.classification]}>
                                   <ClsIcon className="h-3 w-3 mr-1" />
-                                  {path.classification}
+                                  {t(`pages.appPublish.classes.${path.classification}`)}
                                 </Badge>
                               </TableCell>
                               <TableCell className="p-4 text-sm">
                                 {path.require_auth
-                                  ? `Auth: ${path.allowed_roles.length > 0 ? path.allowed_roles.join(', ') : 'any user'}`
-                                  : 'Public'}
-                                {path.require_device_trust && ' + Device Trust'}
+                                  ? t('pages.appPublish.authPolicy', {
+                                      roles: path.allowed_roles.length > 0
+                                        ? path.allowed_roles.join(', ')
+                                        : t('pages.appPublish.anyUser'),
+                                    })
+                                  : t('pages.appPublish.authPublic')}
+                                {path.require_device_trust && t('pages.appPublish.plusDeviceTrust')}
                               </TableCell>
                               <TableCell className="p-4">
                                 {path.route_id && (
@@ -744,7 +793,7 @@ export function AppPublishPage() {
                                     href="/proxy-routes"
                                     className="text-primary hover:underline flex items-center gap-1 text-sm"
                                   >
-                                    View Route
+                                    {t('pages.appPublish.viewRoute')}
                                     <ExternalLink className="h-3 w-3" />
                                   </a>
                                 )}
@@ -755,7 +804,7 @@ export function AppPublishPage() {
                       {paths.filter((p) => p.published).length === 0 && (
                         <TableRow>
                           <TableCell colSpan={5} className="p-8 text-center text-muted-foreground">
-                            No paths published yet. Go to Discovered Paths and publish some.
+                            {t('pages.appPublish.noPublished')}
                           </TableCell>
                         </TableRow>
                       )}
@@ -771,17 +820,17 @@ export function AppPublishPage() {
       <Dialog open={registerOpen} onOpenChange={setRegisterOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Register Application</DialogTitle>
+            <DialogTitle>{t('pages.appPublish.registerDialog.title')}</DialogTitle>
             <DialogDescription>
-              Add an internal web application for endpoint discovery and publishing.
+              {t('pages.appPublish.registerDialog.description')}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <Label htmlFor="app-name">Name</Label>
+              <Label htmlFor="app-name">{t('pages.appPublish.registerDialog.name')}</Label>
               <Input
                 id="app-name"
-                placeholder="My Internal App"
+                placeholder={t('pages.appPublish.registerDialog.namePlaceholder')}
                 value={registerForm.name}
                 onChange={(e) =>
                   setRegisterForm((f) => ({ ...f, name: e.target.value }))
@@ -789,7 +838,7 @@ export function AppPublishPage() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="target-url">Target URL</Label>
+              <Label htmlFor="target-url">{t('pages.appPublish.registerDialog.targetUrl')}</Label>
               <Input
                 id="target-url"
                 placeholder="http://internal-app:8080"
@@ -800,7 +849,7 @@ export function AppPublishPage() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="spec-url">OpenAPI Spec URL (optional)</Label>
+              <Label htmlFor="spec-url">{t('pages.appPublish.registerDialog.specUrl')}</Label>
               <Input
                 id="spec-url"
                 placeholder="http://internal-app:8080/openapi.json"
@@ -811,10 +860,10 @@ export function AppPublishPage() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="app-desc">Description (optional)</Label>
+              <Label htmlFor="app-desc">{t('pages.appPublish.registerDialog.description2')}</Label>
               <Input
                 id="app-desc"
-                placeholder="HR portal for employee management"
+                placeholder={t('pages.appPublish.registerDialog.descriptionPlaceholder')}
                 value={registerForm.description}
                 onChange={(e) =>
                   setRegisterForm((f) => ({ ...f, description: e.target.value }))
@@ -824,14 +873,14 @@ export function AppPublishPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setRegisterOpen(false)}>
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button
               onClick={() => registerApp.mutate(registerForm)}
               disabled={!registerForm.name || !registerForm.target_url || registerApp.isPending}
             >
               {registerApp.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-              Register
+              {t('pages.appPublish.registerDialog.submit')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -841,16 +890,18 @@ export function AppPublishPage() {
       <Dialog open={publishOpen} onOpenChange={setPublishOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Publish Selected Paths</DialogTitle>
+            <DialogTitle>{t('pages.appPublish.publishDialog.title')}</DialogTitle>
             <DialogDescription>
-              Create proxy routes for {selected.size} selected path{selected.size !== 1 ? 's' : ''}.
-              Each path will become a separate proxy route with its classification-based auth policy.
+              {t('pages.appPublish.publishDialog.description', { count: selected.size })}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="text-sm text-muted-foreground">
-              Selected paths will be published as proxy routes for <strong>{selectedApp?.name}</strong> targeting{' '}
-              <code className="bg-muted px-1 rounded">{selectedApp?.target_url}</code>.
+              {t('pages.appPublish.publishDialog.targetBefore')}
+              <strong>{selectedApp?.name}</strong>
+              {t('pages.appPublish.publishDialog.targetMiddle')}
+              <code className="bg-muted px-1 rounded">{selectedApp?.target_url}</code>
+              {t('pages.appPublish.publishDialog.targetAfter')}
             </div>
             <div className="space-y-3">
               <div className="flex items-center gap-2">
@@ -861,7 +912,7 @@ export function AppPublishPage() {
                     setPublishConfig((c) => ({ ...c, enable_ziti: !!checked }))
                   }
                 />
-                <Label htmlFor="enable-ziti">Enable OpenZiti zero-trust overlay</Label>
+                <Label htmlFor="enable-ziti">{t('pages.appPublish.publishDialog.enableZiti')}</Label>
               </div>
               <div className="flex items-center gap-2">
                 <Checkbox
@@ -871,13 +922,13 @@ export function AppPublishPage() {
                     setPublishConfig((c) => ({ ...c, enable_browzer: !!checked }))
                   }
                 />
-                <Label htmlFor="enable-browzer">Enable BrowZer clientless access</Label>
+                <Label htmlFor="enable-browzer">{t('pages.appPublish.publishDialog.enableBrowzer')}</Label>
               </div>
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setPublishOpen(false)}>
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button
               onClick={() =>
@@ -890,7 +941,7 @@ export function AppPublishPage() {
               disabled={publishPaths.isPending}
             >
               {publishPaths.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-              Publish {selected.size} Path{selected.size !== 1 ? 's' : ''}
+              {t('pages.appPublish.publishDialog.submit', { count: selected.size })}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -900,15 +951,16 @@ export function AppPublishPage() {
       <Dialog open={publishAppOpen} onOpenChange={setPublishAppOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Publish as one-click app</DialogTitle>
+            <DialogTitle>{t('pages.appPublish.publishAppDialog.title')}</DialogTitle>
             <DialogDescription>
-              Expose <span className="font-medium">{publishAppTarget?.name}</span> at its own
-              HTTPS host behind OpenIDX SSO and add it to every user's My Apps launcher.
+              {t('pages.appPublish.publishAppDialog.descriptionBefore')}
+              <span className="font-medium">{publishAppTarget?.name}</span>
+              {t('pages.appPublish.publishAppDialog.descriptionAfter')}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
             <div className="space-y-2">
-              <Label htmlFor="public-host">Public host</Label>
+              <Label htmlFor="public-host">{t('pages.appPublish.publishAppDialog.publicHost')}</Label>
               <Input
                 id="public-host"
                 placeholder="netgraph.apps.tdv.org"
@@ -916,13 +968,13 @@ export function AppPublishPage() {
                 onChange={(e) => setPublicHost(e.target.value)}
               />
               <p className="text-xs text-muted-foreground">
-                The hostname users will open. If you enter just a label (e.g. <code>netgraph</code>)
-                the server appends the configured apps domain. Point a DNS/hosts entry at this
-                gateway; the wildcard TLS cert covers it.
+                {t('pages.appPublish.publishAppDialog.publicHostHintBefore')}
+                <code>netgraph</code>
+                {t('pages.appPublish.publishAppDialog.publicHostHintAfter')}
               </p>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="landing-path">Landing path</Label>
+              <Label htmlFor="landing-path">{t('pages.appPublish.publishAppDialog.landingPath')}</Label>
               <Input
                 id="landing-path"
                 placeholder="/"
@@ -930,18 +982,21 @@ export function AppPublishPage() {
                 onChange={(e) => setLandingPath(e.target.value)}
               />
               <p className="text-xs text-muted-foreground">
-                Where the launcher tile opens. Use <code>/</code> unless the app's UI lives
-                elsewhere (e.g. <code>/ui/</code>).
+                {t('pages.appPublish.publishAppDialog.landingHintBefore')}
+                <code>/</code>
+                {t('pages.appPublish.publishAppDialog.landingHintMiddle')}
+                <code>/ui/</code>
+                {t('pages.appPublish.publishAppDialog.landingHintAfter')}
               </p>
             </div>
             <div className="rounded-md bg-muted p-3 text-sm text-muted-foreground">
-              Internal target:{' '}
+              {t('pages.appPublish.publishAppDialog.internalTarget')}
               <span className="font-mono">{publishAppTarget?.target_url}</span>
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setPublishAppOpen(false)}>
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button
               onClick={() =>
@@ -957,7 +1012,7 @@ export function AppPublishPage() {
               ) : (
                 <ExternalLink className="h-4 w-4 mr-1" />
               )}
-              Publish
+              {t('pages.appPublish.publishAppDialog.submit')}
             </Button>
           </DialogFooter>
         </DialogContent>

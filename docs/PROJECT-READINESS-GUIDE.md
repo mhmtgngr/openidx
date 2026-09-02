@@ -21,7 +21,7 @@ security, access, sessions, devices, trusted browsers, notifications,
 access requests, profile — are fully bilingual; the end-user experience
 is complete in both languages). Open: P1 rollout Task 16 (operator
 action), P3.1 cut v1.28.0 (post-merge), the remaining P4 items incl.
-the ~90 admin page bodies and the Expo-vs-Flutter mobile pick.)
+the ~50 remaining admin page bodies and the Expo-vs-Flutter mobile pick.)
 **Question this document answers:** *Is OpenIDX fully functional and well defined end to end, as experienced by the people who use it — and what are the next steps and controls to get it there?*
 
 This is the product-and-user-side companion to
@@ -598,8 +598,13 @@ all four pillars, deploy, log in, and find PAM.
    confirmations) and Kiosk Policies (lockdown modes, the editor and the
    agent/tag assignment dialog) — so the screens where an operator
    watches, records, terminates and legally holds a privileged session
-   read in either language. *Remaining:* the
-   ~52 other admin page bodies — mechanical, batch by batch, against this
+   read in either language. *And the publishing pair:* App Publish (the
+   register/discover/classify/publish flow, the path table with its
+   security-classification vocabulary, and the one-click publish dialog)
+   and Windows Apps (the app catalog, host pools, agent-bound discovery,
+   the launch-conflict resolver and the prominent warning about hosts that
+   allow unlisted programs). *Remaining:* the
+   ~50 other admin page bodies — mechanical, batch by batch, against this
    pattern.
 2. Accessibility pass to a VPAT (needs real assistive-technology testing,
    not just an automated axe sweep).

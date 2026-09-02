@@ -203,6 +203,12 @@ describe('i18n', () => {
       ...['upper', 'lower', 'digits', 'symbols'].map(
         (k) => `pages.rotationPolicies.dialog.charsets.${k}`,
       ),
+      // app-publish: the classification vocabulary is keyed by the path's own value
+      ...['critical', 'sensitive', 'protected', 'public'].map(
+        (k) => `pages.appPublish.classes.${k}`,
+      ),
+      // windows-apps: the pool placement label is keyed by the pool's strategy
+      ...['least_loaded', 'round_robin'].map((k) => `pages.windowsApps.placements.${k}`),
       // remote-support: the viewer badge keys off the session's own mode value
       ...['interactive', 'view'].map((k) => `pages.remoteSupport.modes.${k}`),
       // lib/connection-path + lib/remote-app resolve through the i18n singleton
