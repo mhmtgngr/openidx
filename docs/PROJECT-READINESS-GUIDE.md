@@ -559,8 +559,19 @@ all four pillars, deploy, log in, and find PAM.
    confirmations that state what a run will actually do), Attestation
    Campaigns, the Entitlement Catalog and Approval Policies — so the
    pages an auditor and an approver work in are bilingual, including the
-   consequential confirm dialogs. *Remaining:* the ~70 other admin page
-   bodies — mechanical, batch by batch, against this pattern.
+   consequential confirm dialogs. *And the MFA/authentication-security
+   cluster:* MFA Management (enrollment overview, policies, per-user
+   factor status), MFA Bypass Codes (the security notice, the generate
+   and audit-log dialogs, the revoke confirmation), Passwordless
+   Authentication (magic links, QR login, biometric-only, and the
+   "how it works" explainers), Hardware Tokens (inventory, assignment,
+   and the revoke/report-lost confirmations that name the serial),
+   Security Keys and Push Devices (both factor counts pluralised
+   natively) and Security Alerts (alert triage plus the IP blocklist and
+   its unblock confirmation) — so the screens an operator uses to hand
+   out, withdraw and audit login factors read correctly in either
+   language. *Remaining:* the ~63 other admin page bodies — mechanical,
+   batch by batch, against this pattern.
 2. Accessibility pass to a VPAT (needs real assistive-technology testing,
    not just an automated axe sweep).
 3. Separate/hardened end-user portal bundle.

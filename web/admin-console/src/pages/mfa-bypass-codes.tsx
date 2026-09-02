@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import { Key, Plus, Ban, Copy, Clock, CheckCircle2, XCircle, AlertTriangle, FileText } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -59,6 +60,7 @@ interface AuditEntry {
 }
 
 export function MFABypassCodesPage() {
+  const { t } = useTranslation()
   const { toast } = useToast()
   const queryClient = useQueryClient()
   const [statusFilter, setStatusFilter] = useState('')
@@ -112,7 +114,7 @@ export function MFABypassCodesPage() {
       setNewCode({ user_id: '', reason: '', valid_hours: 24, max_uses: 1 })
     },
     onError: (error: Error) => {
-      toast({ title: 'Error', description: error.message, variant: 'destructive' })
+      toast({ title: t('common.error'), description: error.message, variant: 'destructive' })
     }
   })
 
@@ -121,20 +123,23 @@ export function MFABypassCodesPage() {
       api.delete(`/api/v1/identity/mfa/bypass-codes/${codeId}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['bypass-codes'] })
-      toast({ title: 'Code Revoked', description: 'Bypass code has been revoked.' })
+      toast({
+        title: t('pages.mfaBypassCodes.toasts.revokedTitle'),
+        description: t('pages.mfaBypassCodes.toasts.revoked'),
+      })
     }
   })
 
   const getStatusBadge = (status: string) => {
     switch (status) {
       case 'active':
-        return <Badge className="bg-green-100 text-green-800"><CheckCircle2 className="h-3 w-3 mr-1" />Active</Badge>
+        return <Badge className="bg-green-100 text-green-800"><CheckCircle2 className="h-3 w-3 mr-1" />{t('pages.mfaBypassCodes.statuses.active')}</Badge>
       case 'used':
-        return <Badge className="bg-blue-100 text-blue-800"><CheckCircle2 className="h-3 w-3 mr-1" />Used</Badge>
+        return <Badge className="bg-blue-100 text-blue-800"><CheckCircle2 className="h-3 w-3 mr-1" />{t('pages.mfaBypassCodes.statuses.used')}</Badge>
       case 'expired':
-        return <Badge className="bg-muted text-foreground"><Clock className="h-3 w-3 mr-1" />Expired</Badge>
+        return <Badge className="bg-muted text-foreground"><Clock className="h-3 w-3 mr-1" />{t('pages.mfaBypassCodes.statuses.expired')}</Badge>
       case 'revoked':
-        return <Badge className="bg-red-100 text-red-800"><XCircle className="h-3 w-3 mr-1" />Revoked</Badge>
+        return <Badge className="bg-red-100 text-red-800"><XCircle className="h-3 w-3 mr-1" />{t('pages.mfaBypassCodes.statuses.revoked')}</Badge>
       default:
         return <Badge>{status}</Badge>
     }
@@ -142,7 +147,7 @@ export function MFABypassCodesPage() {
 
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text)
-    toast({ title: 'Copied', description: 'Code copied to clipboard.' })
+    toast({ title: t('common.copied'), description: t('pages.mfaBypassCodes.toasts.copied') })
   }
 
   // Stats
@@ -154,17 +159,17 @@ export function MFABypassCodesPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">MFA Bypass Codes</h1>
-          <p className="text-muted-foreground">Generate temporary bypass codes for users</p>
+          <h1 className="text-2xl font-bold tracking-tight">{t('nav.items.mfaBypassCodes')}</h1>
+          <p className="text-muted-foreground">{t('pages.mfaBypassCodes.subtitle')}</p>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" onClick={() => setAuditDialog(true)}>
             <FileText className="h-4 w-4 mr-2" />
-            Audit Log
+            {t('pages.mfaBypassCodes.auditLog')}
           </Button>
           <Button onClick={() => setCreateDialog(true)}>
             <Plus className="h-4 w-4 mr-2" />
-            Generate Code
+            {t('pages.mfaBypassCodes.generate')}
           </Button>
         </div>
       </div>
@@ -175,11 +180,8 @@ export function MFABypassCodesPage() {
           <div className="flex items-start gap-3">
             <AlertTriangle className="h-5 w-5 text-amber-600 mt-0.5" />
             <div>
-              <p className="font-medium text-amber-900">Security Notice</p>
-              <p className="text-sm text-amber-800">
-                Bypass codes allow users to skip MFA verification. Use sparingly and always document the reason.
-                All bypass code usage is logged for audit purposes.
-              </p>
+              <p className="font-medium text-amber-900">{t('pages.mfaBypassCodes.notice.title')}</p>
+              <p className="text-sm text-amber-800">{t('pages.mfaBypassCodes.notice.body')}</p>
             </div>
           </div>
         </CardContent>
@@ -189,7 +191,7 @@ export function MFABypassCodesPage() {
       <div className="grid gap-4 md:grid-cols-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Codes</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('pages.mfaBypassCodes.stats.total')}</CardTitle>
             <Key className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -198,7 +200,7 @@ export function MFABypassCodesPage() {
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Active</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('pages.mfaBypassCodes.stats.active')}</CardTitle>
             <Key className="h-4 w-4 text-green-600" />
           </CardHeader>
           <CardContent>
@@ -207,7 +209,7 @@ export function MFABypassCodesPage() {
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Used</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('pages.mfaBypassCodes.stats.used')}</CardTitle>
             <Key className="h-4 w-4 text-primary" />
           </CardHeader>
           <CardContent>
@@ -216,7 +218,7 @@ export function MFABypassCodesPage() {
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Expired/Revoked</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('pages.mfaBypassCodes.stats.expiredRevoked')}</CardTitle>
             <Key className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -228,21 +230,21 @@ export function MFABypassCodesPage() {
       {/* Filters */}
       <div className="flex gap-4">
         <Input
-          placeholder="Filter by user ID..."
+          placeholder={t('pages.mfaBypassCodes.userFilter')}
           value={userFilter}
           onChange={(e) => setUserFilter(e.target.value)}
           className="max-w-sm"
         />
         <Select value={statusFilter || 'all'} onValueChange={(v) => setStatusFilter(v === 'all' ? '' : v)}>
           <SelectTrigger className="w-[180px]">
-            <SelectValue placeholder="All statuses" />
+            <SelectValue placeholder={t('pages.mfaBypassCodes.statusFilter.all')} />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All statuses</SelectItem>
-            <SelectItem value="active">Active</SelectItem>
-            <SelectItem value="used">Used</SelectItem>
-            <SelectItem value="expired">Expired</SelectItem>
-            <SelectItem value="revoked">Revoked</SelectItem>
+            <SelectItem value="all">{t('pages.mfaBypassCodes.statusFilter.all')}</SelectItem>
+            <SelectItem value="active">{t('pages.mfaBypassCodes.statusFilter.active')}</SelectItem>
+            <SelectItem value="used">{t('pages.mfaBypassCodes.statusFilter.used')}</SelectItem>
+            <SelectItem value="expired">{t('pages.mfaBypassCodes.statusFilter.expired')}</SelectItem>
+            <SelectItem value="revoked">{t('pages.mfaBypassCodes.statusFilter.revoked')}</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -250,8 +252,8 @@ export function MFABypassCodesPage() {
       {/* Codes List */}
       <Card>
         <CardHeader>
-          <CardTitle>Bypass Codes</CardTitle>
-          <CardDescription>All generated MFA bypass codes</CardDescription>
+          <CardTitle>{t('pages.mfaBypassCodes.cardTitle')}</CardTitle>
+          <CardDescription>{t('pages.mfaBypassCodes.cardDescription')}</CardDescription>
         </CardHeader>
         <CardContent>
           {isLoading ? (
@@ -259,23 +261,23 @@ export function MFABypassCodesPage() {
               <LoadingSpinner size="lg" />
             </div>
           ) : isError ? (
-            <QueryError error={error} resource="MFA bypass codes" />
+            <QueryError error={error} resource={t('pages.mfaBypassCodes.resourceName')} />
           ) : codes.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
               <Key className="h-12 w-12 mx-auto mb-3 opacity-40" />
-              <p>No bypass codes found</p>
+              <p>{t('pages.mfaBypassCodes.empty')}</p>
             </div>
           ) : (
             <Table className="text-sm">
                 <TableHeader>
                   <TableRow className="border-b">
-                    <TableHead className="text-left py-3 px-2 font-medium">User</TableHead>
-                    <TableHead className="text-left py-3 px-2 font-medium">Reason</TableHead>
-                    <TableHead className="text-left py-3 px-2 font-medium">Generated By</TableHead>
-                    <TableHead className="text-left py-3 px-2 font-medium">Status</TableHead>
-                    <TableHead className="text-left py-3 px-2 font-medium">Uses</TableHead>
-                    <TableHead className="text-left py-3 px-2 font-medium">Valid Until</TableHead>
-                    <TableHead className="text-left py-3 px-2 font-medium">Actions</TableHead>
+                    <TableHead className="text-left py-3 px-2 font-medium">{t('pages.mfaBypassCodes.table.user')}</TableHead>
+                    <TableHead className="text-left py-3 px-2 font-medium">{t('pages.mfaBypassCodes.table.reason')}</TableHead>
+                    <TableHead className="text-left py-3 px-2 font-medium">{t('pages.mfaBypassCodes.table.generatedBy')}</TableHead>
+                    <TableHead className="text-left py-3 px-2 font-medium">{t('pages.mfaBypassCodes.table.status')}</TableHead>
+                    <TableHead className="text-left py-3 px-2 font-medium">{t('pages.mfaBypassCodes.table.uses')}</TableHead>
+                    <TableHead className="text-left py-3 px-2 font-medium">{t('pages.mfaBypassCodes.table.validUntil')}</TableHead>
+                    <TableHead className="text-left py-3 px-2 font-medium">{t('pages.mfaBypassCodes.table.actions')}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -294,10 +296,12 @@ export function MFABypassCodesPage() {
                       <TableCell className="py-3 px-2">
                         {code.status === 'active' && (
                           <ConfirmAction
-                            title="Revoke this MFA bypass code?"
-                            description={`This immediately revokes the active MFA bypass code for ${code.user_email}. The code can no longer be used to skip MFA. This cannot be undone.`}
+                            title={t('pages.mfaBypassCodes.confirmRevoke.title')}
+                            description={t('pages.mfaBypassCodes.confirmRevoke.description', {
+                              email: code.user_email,
+                            })}
                             destructive
-                            confirmLabel="Revoke"
+                            confirmLabel={t('pages.mfaBypassCodes.confirmRevoke.confirm')}
                             onConfirm={() => revokeMutation.mutateAsync(code.id)}
                           >
                             {(open) => (
@@ -325,32 +329,30 @@ export function MFABypassCodesPage() {
       <Dialog open={createDialog} onOpenChange={setCreateDialog}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Generate Bypass Code</DialogTitle>
-            <DialogDescription>
-              Create a temporary code to allow a user to bypass MFA verification.
-            </DialogDescription>
+            <DialogTitle>{t('pages.mfaBypassCodes.createDialog.title')}</DialogTitle>
+            <DialogDescription>{t('pages.mfaBypassCodes.createDialog.description')}</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label>User ID *</Label>
+              <Label>{t('pages.mfaBypassCodes.createDialog.userId')}</Label>
               <Input
                 value={newCode.user_id}
                 onChange={(e) => setNewCode({ ...newCode, user_id: e.target.value })}
-                placeholder="Enter user ID"
+                placeholder={t('pages.mfaBypassCodes.createDialog.userIdPlaceholder')}
               />
             </div>
             <div className="space-y-2">
-              <Label>Reason *</Label>
+              <Label>{t('pages.mfaBypassCodes.createDialog.reason')}</Label>
               <Textarea
                 value={newCode.reason}
                 onChange={(e) => setNewCode({ ...newCode, reason: e.target.value })}
-                placeholder="Why is this bypass code needed?"
+                placeholder={t('pages.mfaBypassCodes.createDialog.reasonPlaceholder')}
                 rows={2}
               />
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>Valid Hours</Label>
+                <Label>{t('pages.mfaBypassCodes.createDialog.validHours')}</Label>
                 <Input
                   type="number"
                   value={newCode.valid_hours}
@@ -360,7 +362,7 @@ export function MFABypassCodesPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label>Max Uses</Label>
+                <Label>{t('pages.mfaBypassCodes.createDialog.maxUses')}</Label>
                 <Input
                   type="number"
                   value={newCode.max_uses}
@@ -372,12 +374,14 @@ export function MFABypassCodesPage() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setCreateDialog(false)}>Cancel</Button>
+            <Button variant="outline" onClick={() => setCreateDialog(false)}>
+              {t('common.cancel')}
+            </Button>
             <Button
               onClick={() => generateMutation.mutate(newCode)}
               disabled={!newCode.user_id || !newCode.reason}
             >
-              Generate Code
+              {t('pages.mfaBypassCodes.generate')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -387,10 +391,8 @@ export function MFABypassCodesPage() {
       <Dialog open={codeDialog} onOpenChange={setCodeDialog}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Bypass Code Generated</DialogTitle>
-            <DialogDescription>
-              Share this code securely with the user. It will not be shown again.
-            </DialogDescription>
+            <DialogTitle>{t('pages.mfaBypassCodes.codeDialog.title')}</DialogTitle>
+            <DialogDescription>{t('pages.mfaBypassCodes.codeDialog.description')}</DialogDescription>
           </DialogHeader>
           {generatedCode && (
             <div className="space-y-4">
@@ -403,17 +405,17 @@ export function MFABypassCodesPage() {
                 onClick={() => copyToClipboard(generatedCode.code || '')}
               >
                 <Copy className="h-4 w-4 mr-2" />
-                Copy to Clipboard
+                {t('pages.mfaBypassCodes.codeDialog.copy')}
               </Button>
               <div className="text-sm text-muted-foreground space-y-1">
-                <p><strong>User:</strong> {generatedCode.user_email}</p>
-                <p><strong>Valid until:</strong> {new Date(generatedCode.valid_until).toLocaleString()}</p>
-                <p><strong>Max uses:</strong> {generatedCode.max_uses}</p>
+                <p><strong>{t('pages.mfaBypassCodes.codeDialog.user')}</strong> {generatedCode.user_email}</p>
+                <p><strong>{t('pages.mfaBypassCodes.codeDialog.validUntil')}</strong> {new Date(generatedCode.valid_until).toLocaleString()}</p>
+                <p><strong>{t('pages.mfaBypassCodes.codeDialog.maxUses')}</strong> {generatedCode.max_uses}</p>
               </div>
             </div>
           )}
           <DialogFooter>
-            <Button onClick={() => setCodeDialog(false)}>Close</Button>
+            <Button onClick={() => setCodeDialog(false)}>{t('common.close')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -422,7 +424,7 @@ export function MFABypassCodesPage() {
       <Dialog open={auditDialog} onOpenChange={setAuditDialog}>
         <DialogContent className="max-w-3xl max-h-[80vh] overflow-auto">
           <DialogHeader>
-            <DialogTitle>Bypass Code Audit Log</DialogTitle>
+            <DialogTitle>{t('pages.mfaBypassCodes.auditDialog.title')}</DialogTitle>
           </DialogHeader>
           <div className="space-y-2">
             {auditEntries.map((entry) => (
@@ -446,7 +448,7 @@ export function MFABypassCodesPage() {
               </div>
             ))}
             {auditEntries.length === 0 && (
-              <p className="text-center text-muted-foreground py-4">No audit entries found</p>
+              <p className="text-center text-muted-foreground py-4">{t('pages.mfaBypassCodes.auditDialog.empty')}</p>
             )}
           </div>
         </DialogContent>

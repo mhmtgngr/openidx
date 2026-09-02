@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import { Key, Plus, UserPlus, UserMinus, Ban, AlertTriangle, MoreHorizontal, Search } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -52,6 +53,7 @@ interface HardwareToken {
 }
 
 export function HardwareTokensPage() {
+  const { t } = useTranslation()
   const { toast } = useToast()
   const queryClient = useQueryClient()
   const [statusFilter, setStatusFilter] = useState('')
@@ -86,12 +88,19 @@ export function HardwareTokensPage() {
     mutationFn: (data: typeof newToken) => api.post('/api/v1/identity/hardware-tokens', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['hardware-tokens'] })
-      toast({ title: 'Token Created', description: 'Hardware token has been registered.' })
+      toast({
+        title: t('pages.hardwareTokens.toasts.createdTitle'),
+        description: t('pages.hardwareTokens.toasts.createdDesc'),
+      })
       setCreateDialog(false)
       setNewToken({ serial_number: '', name: '', token_type: 'yubikey', manufacturer: '', model: '', notes: '' })
     },
     onError: () => {
-      toast({ title: 'Error', description: 'Failed to create token.', variant: 'destructive' })
+      toast({
+        title: t('common.error'),
+        description: t('pages.hardwareTokens.toasts.createFailed'),
+        variant: 'destructive',
+      })
     }
   })
 
@@ -100,12 +109,19 @@ export function HardwareTokensPage() {
       api.post(`/api/v1/identity/hardware-tokens/${tokenId}/assign`, { user_id: userId }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['hardware-tokens'] })
-      toast({ title: 'Token Assigned', description: 'Token has been assigned to user.' })
+      toast({
+        title: t('pages.hardwareTokens.toasts.assignedTitle'),
+        description: t('pages.hardwareTokens.toasts.assignedDesc'),
+      })
       setAssignDialog(false)
       setAssignUserId('')
     },
     onError: () => {
-      toast({ title: 'Error', description: 'Failed to assign token.', variant: 'destructive' })
+      toast({
+        title: t('common.error'),
+        description: t('pages.hardwareTokens.toasts.assignFailed'),
+        variant: 'destructive',
+      })
     }
   })
 
@@ -114,7 +130,10 @@ export function HardwareTokensPage() {
       api.post(`/api/v1/identity/hardware-tokens/${tokenId}/unassign`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['hardware-tokens'] })
-      toast({ title: 'Token Unassigned', description: 'Token has been unassigned.' })
+      toast({
+        title: t('pages.hardwareTokens.toasts.unassignedTitle'),
+        description: t('pages.hardwareTokens.toasts.unassignedDesc'),
+      })
     }
   })
 
@@ -123,7 +142,10 @@ export function HardwareTokensPage() {
       api.post(`/api/v1/identity/hardware-tokens/${tokenId}/revoke`, { reason }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['hardware-tokens'] })
-      toast({ title: 'Token Revoked', description: 'Token has been revoked.' })
+      toast({
+        title: t('pages.hardwareTokens.toasts.revokedTitle'),
+        description: t('pages.hardwareTokens.toasts.revokedDesc'),
+      })
     }
   })
 
@@ -132,7 +154,10 @@ export function HardwareTokensPage() {
       api.post(`/api/v1/identity/hardware-tokens/${tokenId}/report-lost`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['hardware-tokens'] })
-      toast({ title: 'Token Reported Lost', description: 'Token has been marked as lost.' })
+      toast({
+        title: t('pages.hardwareTokens.toasts.lostTitle'),
+        description: t('pages.hardwareTokens.toasts.lostDesc'),
+      })
     }
   })
 
@@ -160,12 +185,12 @@ export function HardwareTokensPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Hardware Tokens</h1>
-          <p className="text-muted-foreground">Manage YubiKey and OATH hardware tokens</p>
+          <h1 className="text-2xl font-bold tracking-tight">{t('nav.items.hardwareTokens')}</h1>
+          <p className="text-muted-foreground">{t('pages.hardwareTokens.subtitle')}</p>
         </div>
         <Button onClick={() => setCreateDialog(true)}>
           <Plus className="h-4 w-4 mr-2" />
-          Add Token
+          {t('pages.hardwareTokens.addToken')}
         </Button>
       </div>
 
@@ -173,7 +198,7 @@ export function HardwareTokensPage() {
       <div className="grid gap-4 md:grid-cols-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Tokens</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('pages.hardwareTokens.stats.total')}</CardTitle>
             <Key className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -182,7 +207,7 @@ export function HardwareTokensPage() {
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Available</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('pages.hardwareTokens.stats.available')}</CardTitle>
             <Key className="h-4 w-4 text-green-600" />
           </CardHeader>
           <CardContent>
@@ -191,7 +216,7 @@ export function HardwareTokensPage() {
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Assigned</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('pages.hardwareTokens.stats.assigned')}</CardTitle>
             <Key className="h-4 w-4 text-primary" />
           </CardHeader>
           <CardContent>
@@ -200,7 +225,7 @@ export function HardwareTokensPage() {
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Revoked/Lost</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('pages.hardwareTokens.stats.revokedLost')}</CardTitle>
             <Key className="h-4 w-4 text-red-600" />
           </CardHeader>
           <CardContent>
@@ -214,7 +239,7 @@ export function HardwareTokensPage() {
         <div className="relative flex-1 max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
-            placeholder="Search tokens..."
+            placeholder={t('pages.hardwareTokens.searchPlaceholder')}
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="pl-10"
@@ -222,14 +247,14 @@ export function HardwareTokensPage() {
         </div>
         <Select value={statusFilter || 'all'} onValueChange={(v) => setStatusFilter(v === 'all' ? '' : v)}>
           <SelectTrigger className="w-[180px]">
-            <SelectValue placeholder="All statuses" />
+            <SelectValue placeholder={t('pages.hardwareTokens.statusFilter.all')} />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All statuses</SelectItem>
-            <SelectItem value="available">Available</SelectItem>
-            <SelectItem value="assigned">Assigned</SelectItem>
-            <SelectItem value="revoked">Revoked</SelectItem>
-            <SelectItem value="lost">Lost</SelectItem>
+            <SelectItem value="all">{t('pages.hardwareTokens.statusFilter.all')}</SelectItem>
+            <SelectItem value="available">{t('pages.hardwareTokens.statusFilter.available')}</SelectItem>
+            <SelectItem value="assigned">{t('pages.hardwareTokens.statusFilter.assigned')}</SelectItem>
+            <SelectItem value="revoked">{t('pages.hardwareTokens.statusFilter.revoked')}</SelectItem>
+            <SelectItem value="lost">{t('pages.hardwareTokens.statusFilter.lost')}</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -237,8 +262,8 @@ export function HardwareTokensPage() {
       {/* Tokens List */}
       <Card>
         <CardHeader>
-          <CardTitle>Token Inventory</CardTitle>
-          <CardDescription>All registered hardware security tokens</CardDescription>
+          <CardTitle>{t('pages.hardwareTokens.cardTitle')}</CardTitle>
+          <CardDescription>{t('pages.hardwareTokens.cardDescription')}</CardDescription>
         </CardHeader>
         <CardContent>
           {isLoading ? (
@@ -246,23 +271,23 @@ export function HardwareTokensPage() {
               <LoadingSpinner size="lg" />
             </div>
           ) : isError ? (
-            <QueryError error={error} resource="hardware tokens" />
+            <QueryError error={error} resource={t('pages.hardwareTokens.resourceName')} />
           ) : filteredTokens.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
               <Key className="h-12 w-12 mx-auto mb-3 opacity-40" />
-              <p>No hardware tokens found</p>
+              <p>{t('pages.hardwareTokens.empty')}</p>
             </div>
           ) : (
             <Table className="text-sm">
                 <TableHeader>
                   <TableRow className="border-b">
-                    <TableHead className="text-left py-3 px-2 font-medium">Serial Number</TableHead>
-                    <TableHead className="text-left py-3 px-2 font-medium">Name</TableHead>
-                    <TableHead className="text-left py-3 px-2 font-medium">Type</TableHead>
-                    <TableHead className="text-left py-3 px-2 font-medium">Status</TableHead>
-                    <TableHead className="text-left py-3 px-2 font-medium">Use Count</TableHead>
-                    <TableHead className="text-left py-3 px-2 font-medium">Last Used</TableHead>
-                    <TableHead className="text-left py-3 px-2 font-medium">Actions</TableHead>
+                    <TableHead className="text-left py-3 px-2 font-medium">{t('pages.hardwareTokens.table.serial')}</TableHead>
+                    <TableHead className="text-left py-3 px-2 font-medium">{t('pages.hardwareTokens.table.name')}</TableHead>
+                    <TableHead className="text-left py-3 px-2 font-medium">{t('pages.hardwareTokens.table.type')}</TableHead>
+                    <TableHead className="text-left py-3 px-2 font-medium">{t('pages.hardwareTokens.table.status')}</TableHead>
+                    <TableHead className="text-left py-3 px-2 font-medium">{t('pages.hardwareTokens.table.useCount')}</TableHead>
+                    <TableHead className="text-left py-3 px-2 font-medium">{t('pages.hardwareTokens.table.lastUsed')}</TableHead>
+                    <TableHead className="text-left py-3 px-2 font-medium">{t('pages.hardwareTokens.table.actions')}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -274,7 +299,9 @@ export function HardwareTokensPage() {
                       <TableCell className="py-3 px-2">{getStatusBadge(token.status)}</TableCell>
                       <TableCell className="py-3 px-2">{token.use_count}</TableCell>
                       <TableCell className="py-3 px-2">
-                        {token.last_used_at ? new Date(token.last_used_at).toLocaleDateString() : 'Never'}
+                        {token.last_used_at
+                          ? new Date(token.last_used_at).toLocaleDateString(undefined)
+                          : t('pages.hardwareTokens.never')}
                       </TableCell>
                       <TableCell className="py-3 px-2">
                         <DropdownMenu>
@@ -290,23 +317,25 @@ export function HardwareTokensPage() {
                                 setAssignDialog(true)
                               }}>
                                 <UserPlus className="h-4 w-4 mr-2" />
-                                Assign to User
+                                {t('pages.hardwareTokens.menu.assign')}
                               </DropdownMenuItem>
                             )}
                             {token.status === 'assigned' && (
                               <DropdownMenuItem onClick={() => unassignMutation.mutate(token.id)}>
                                 <UserMinus className="h-4 w-4 mr-2" />
-                                Unassign
+                                {t('pages.hardwareTokens.menu.unassign')}
                               </DropdownMenuItem>
                             )}
                             <DropdownMenuSeparator />
                             {token.status !== 'revoked' && (
                               <ConfirmAction
-                                title="Revoke this hardware token?"
-                                description={`This permanently revokes token ${token.serial_number}. It can no longer be used for authentication, and any user it is assigned to loses this factor. This cannot be undone. Provide the reason; it is recorded in the audit log.`}
+                                title={t('pages.hardwareTokens.confirmRevoke.title')}
+                                description={t('pages.hardwareTokens.confirmRevoke.description', {
+                                  serial: token.serial_number,
+                                })}
                                 destructive
                                 requireReason
-                                confirmLabel="Revoke"
+                                confirmLabel={t('pages.hardwareTokens.menu.revoke')}
                                 onConfirm={(reason) => revokeMutation.mutateAsync({ tokenId: token.id, reason: reason! })}
                               >
                                 {(open) => (
@@ -315,18 +344,20 @@ export function HardwareTokensPage() {
                                     className="text-red-600"
                                   >
                                     <Ban className="h-4 w-4 mr-2" />
-                                    Revoke
+                                    {t('pages.hardwareTokens.menu.revoke')}
                                   </DropdownMenuItem>
                                 )}
                               </ConfirmAction>
                             )}
                             {token.status !== 'lost' && (
                               <ConfirmAction
-                                title="Report this token as lost?"
-                                description={`This marks token ${token.serial_number} as lost. It is disabled for authentication and the assigned user loses this factor until a replacement is issued. Provide the reason; it is recorded in the audit log.`}
+                                title={t('pages.hardwareTokens.confirmLost.title')}
+                                description={t('pages.hardwareTokens.confirmLost.description', {
+                                  serial: token.serial_number,
+                                })}
                                 destructive
                                 requireReason
-                                confirmLabel="Report Lost"
+                                confirmLabel={t('pages.hardwareTokens.menu.reportLost')}
                                 onConfirm={() => reportLostMutation.mutateAsync(token.id)}
                               >
                                 {(open) => (
@@ -335,7 +366,7 @@ export function HardwareTokensPage() {
                                     className="text-amber-600"
                                   >
                                     <AlertTriangle className="h-4 w-4 mr-2" />
-                                    Report Lost
+                                    {t('pages.hardwareTokens.menu.reportLost')}
                                   </DropdownMenuItem>
                                 )}
                               </ConfirmAction>
@@ -355,27 +386,27 @@ export function HardwareTokensPage() {
       <Dialog open={createDialog} onOpenChange={setCreateDialog}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Add Hardware Token</DialogTitle>
+            <DialogTitle>{t('pages.hardwareTokens.createDialog.title')}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label>Serial Number *</Label>
+              <Label>{t('pages.hardwareTokens.createDialog.serial')}</Label>
               <Input
                 value={newToken.serial_number}
                 onChange={(e) => setNewToken({ ...newToken, serial_number: e.target.value })}
-                placeholder="e.g., 12345678"
+                placeholder={t('pages.hardwareTokens.createDialog.serialPlaceholder')}
               />
             </div>
             <div className="space-y-2">
-              <Label>Name</Label>
+              <Label>{t('pages.hardwareTokens.createDialog.name')}</Label>
               <Input
                 value={newToken.name}
                 onChange={(e) => setNewToken({ ...newToken, name: e.target.value })}
-                placeholder="e.g., YubiKey 5 NFC #1"
+                placeholder={t('pages.hardwareTokens.createDialog.namePlaceholder')}
               />
             </div>
             <div className="space-y-2">
-              <Label>Token Type</Label>
+              <Label>{t('pages.hardwareTokens.createDialog.type')}</Label>
               <Select
                 value={newToken.token_type}
                 onValueChange={(v) => setNewToken({ ...newToken, token_type: v })}
@@ -384,15 +415,15 @@ export function HardwareTokensPage() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="yubikey">YubiKey</SelectItem>
-                  <SelectItem value="oath-hotp">OATH HOTP</SelectItem>
-                  <SelectItem value="oath-totp">OATH TOTP</SelectItem>
+                  <SelectItem value="yubikey">{t('pages.hardwareTokens.createDialog.typeYubikey')}</SelectItem>
+                  <SelectItem value="oath-hotp">{t('pages.hardwareTokens.createDialog.typeHotp')}</SelectItem>
+                  <SelectItem value="oath-totp">{t('pages.hardwareTokens.createDialog.typeTotp')}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>Manufacturer</Label>
+                <Label>{t('pages.hardwareTokens.createDialog.manufacturer')}</Label>
                 <Input
                   value={newToken.manufacturer}
                   onChange={(e) => setNewToken({ ...newToken, manufacturer: e.target.value })}
@@ -400,7 +431,7 @@ export function HardwareTokensPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label>Model</Label>
+                <Label>{t('pages.hardwareTokens.createDialog.model')}</Label>
                 <Input
                   value={newToken.model}
                   onChange={(e) => setNewToken({ ...newToken, model: e.target.value })}
@@ -409,19 +440,21 @@ export function HardwareTokensPage() {
               </div>
             </div>
             <div className="space-y-2">
-              <Label>Notes</Label>
+              <Label>{t('pages.hardwareTokens.createDialog.notes')}</Label>
               <Textarea
                 value={newToken.notes}
                 onChange={(e) => setNewToken({ ...newToken, notes: e.target.value })}
-                placeholder="Optional notes..."
+                placeholder={t('pages.hardwareTokens.createDialog.notesPlaceholder')}
                 rows={2}
               />
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setCreateDialog(false)}>Cancel</Button>
+            <Button variant="outline" onClick={() => setCreateDialog(false)}>
+              {t('common.cancel')}
+            </Button>
             <Button onClick={() => createMutation.mutate(newToken)} disabled={!newToken.serial_number}>
-              Add Token
+              {t('pages.hardwareTokens.addToken')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -431,28 +464,30 @@ export function HardwareTokensPage() {
       <Dialog open={assignDialog} onOpenChange={setAssignDialog}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Assign Token to User</DialogTitle>
+            <DialogTitle>{t('pages.hardwareTokens.assignDialog.title')}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <p className="text-sm text-muted-foreground">
-              Assigning token: <strong>{selectedToken?.serial_number}</strong>
+              {t('pages.hardwareTokens.assignDialog.assigning')} <strong>{selectedToken?.serial_number}</strong>
             </p>
             <div className="space-y-2">
-              <Label>User ID</Label>
+              <Label>{t('pages.hardwareTokens.assignDialog.userId')}</Label>
               <Input
                 value={assignUserId}
                 onChange={(e) => setAssignUserId(e.target.value)}
-                placeholder="Enter user ID"
+                placeholder={t('pages.hardwareTokens.assignDialog.userIdPlaceholder')}
               />
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setAssignDialog(false)}>Cancel</Button>
+            <Button variant="outline" onClick={() => setAssignDialog(false)}>
+              {t('common.cancel')}
+            </Button>
             <Button
               onClick={() => selectedToken && assignMutation.mutate({ tokenId: selectedToken.id, userId: assignUserId })}
               disabled={!assignUserId}
             >
-              Assign Token
+              {t('pages.hardwareTokens.assignDialog.assign')}
             </Button>
           </DialogFooter>
         </DialogContent>

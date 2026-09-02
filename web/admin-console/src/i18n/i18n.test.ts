@@ -205,6 +205,18 @@ describe('i18n', () => {
     expect(i18n.t('pages.trustedBrowsers.active.expiresIn', { count: 30 })).toBe('30 gün içinde doluyor')
   })
 
+  it('pluralizes the MFA factor counts in both languages', async () => {
+    await i18n.changeLanguage('en')
+    expect(i18n.t('pages.securityKeys.count', { count: 1 })).toBe('1 security key registered')
+    expect(i18n.t('pages.securityKeys.count', { count: 3 })).toBe('3 security keys registered')
+    expect(i18n.t('pages.pushDevices.count', { count: 1 })).toBe('1 device enrolled')
+    expect(i18n.t('pages.pushDevices.count', { count: 2 })).toBe('2 devices enrolled')
+
+    await i18n.changeLanguage('tr')
+    expect(i18n.t('pages.securityKeys.count', { count: 3 })).toBe('3 güvenlik anahtarı kayıtlı')
+    expect(i18n.t('pages.pushDevices.count', { count: 2 })).toBe('2 cihaz kayıtlı')
+  })
+
   it('interpolates the page strings that carry values', async () => {
     await i18n.changeLanguage('en')
     expect(
