@@ -553,8 +553,14 @@ all four pillars, deploy, log in, and find PAM.
    download), Federation Configuration (all three tabs — federation
    rules, identity links, custom claims mapping) and Provisioning Rules
    (the trigger/operator/action vocabularies that drive automated
-   provisioning). *Remaining:* the ~76 other admin page bodies —
-   mechanical, batch by batch, against this pattern.
+   provisioning). *And the IGA governance loop:* Access Reviews and the
+   review-detail workbench (per-item and batch approve/revoke/flag),
+   Certification Campaigns (schedules, runs, the auto-revoke
+   confirmations that state what a run will actually do), Attestation
+   Campaigns, the Entitlement Catalog and Approval Policies — so the
+   pages an auditor and an approver work in are bilingual, including the
+   consequential confirm dialogs. *Remaining:* the ~70 other admin page
+   bodies — mechanical, batch by batch, against this pattern.
 2. Accessibility pass to a VPAT (needs real assistive-technology testing,
    not just an automated axe sweep).
 3. Separate/hardened end-user portal bundle.

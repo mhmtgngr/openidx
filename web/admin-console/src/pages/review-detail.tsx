@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import {
   ArrowLeft,
   CheckCircle,
@@ -83,6 +84,7 @@ export function ReviewDetailPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const { t } = useTranslation()
   const [selectedItems, setSelectedItems] = useState<string[]>([])
   const [decisionModal, setDecisionModal] = useState(false)
   const [batchDecision, setBatchDecision] = useState<'approved' | 'revoked' | 'flagged'>('approved')
@@ -106,15 +108,15 @@ export function ReviewDetailPage() {
       queryClient.invalidateQueries({ queryKey: ['review', id] })
       queryClient.invalidateQueries({ queryKey: ['review-items', id] })
       toast({
-        title: 'Review Started',
-        description: 'Access review has been started and items populated.',
+        title: t('pages.reviewDetail.toasts.startedTitle'),
+        description: t('pages.reviewDetail.toasts.startedDesc'),
         variant: 'success',
       })
     },
     onError: (error: Error) => {
       toast({
-        title: 'Error',
-        description: `Failed to start review: ${error.message}`,
+        title: t('common.error'),
+        description: t('pages.reviewDetail.toasts.startFailed', { message: error.message }),
         variant: 'destructive',
       })
     },
@@ -125,15 +127,15 @@ export function ReviewDetailPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['review', id] })
       toast({
-        title: 'Review Completed',
-        description: 'Access review has been completed.',
+        title: t('pages.reviewDetail.toasts.completedTitle'),
+        description: t('pages.reviewDetail.toasts.completedDesc'),
         variant: 'success',
       })
     },
     onError: (error: Error) => {
       toast({
-        title: 'Error',
-        description: `Failed to complete review: ${error.message}`,
+        title: t('common.error'),
+        description: t('pages.reviewDetail.toasts.completeFailed', { message: error.message }),
         variant: 'destructive',
       })
     },
@@ -146,15 +148,15 @@ export function ReviewDetailPage() {
       queryClient.invalidateQueries({ queryKey: ['review-items', id] })
       queryClient.invalidateQueries({ queryKey: ['review', id] })
       toast({
-        title: 'Decision Recorded',
-        description: 'Your decision has been recorded.',
+        title: t('pages.reviewDetail.toasts.decisionTitle'),
+        description: t('pages.reviewDetail.toasts.decisionDesc'),
         variant: 'success',
       })
     },
     onError: (error: Error) => {
       toast({
-        title: 'Error',
-        description: `Failed to record decision: ${error.message}`,
+        title: t('common.error'),
+        description: t('pages.reviewDetail.toasts.decisionFailed', { message: error.message }),
         variant: 'destructive',
       })
     },
@@ -174,15 +176,15 @@ export function ReviewDetailPage() {
       setDecisionModal(false)
       setComments('')
       toast({
-        title: 'Decisions Recorded',
-        description: `Successfully recorded decisions for ${selectedItems.length} items.`,
+        title: t('pages.reviewDetail.toasts.batchTitle'),
+        description: t('pages.reviewDetail.toasts.batchDesc', { count: selectedItems.length }),
         variant: 'success',
       })
     },
     onError: (error: Error) => {
       toast({
-        title: 'Error',
-        description: `Failed to record decisions: ${error.message}`,
+        title: t('common.error'),
+        description: t('pages.reviewDetail.toasts.batchFailed', { message: error.message }),
         variant: 'destructive',
       })
     },
@@ -217,7 +219,7 @@ export function ReviewDetailPage() {
   }
 
   const formatDate = (dateStr: string) => {
-    return new Date(dateStr).toLocaleDateString('en-US', {
+    return new Date(dateStr).toLocaleDateString(undefined, {
       year: 'numeric',
       month: 'short',
       day: 'numeric',
@@ -230,15 +232,15 @@ export function ReviewDetailPage() {
   const progress = totalItems > 0 ? Math.round((reviewedCount / totalItems) * 100) : 0
 
   if (reviewLoading) {
-    return <div className="p-8 text-center">Loading...</div>
+    return <div className="p-8 text-center">{t('pages.reviewDetail.loading')}</div>
   }
 
   if (reviewError) {
-    return <QueryError error={reviewErrorObj} resource="this access review" />
+    return <QueryError error={reviewErrorObj} resource={t('pages.reviewDetail.resourceName')} />
   }
 
   if (!review) {
-    return <div className="p-8 text-center">Review not found</div>
+    return <div className="p-8 text-center">{t('pages.reviewDetail.notFound')}</div>
   }
 
   return (
@@ -250,19 +252,19 @@ export function ReviewDetailPage() {
         </Button>
         <div className="flex-1">
           <h1 className="text-3xl font-bold tracking-tight">{review.name}</h1>
-          <p className="text-muted-foreground">{review.description || 'No description'}</p>
+          <p className="text-muted-foreground">{review.description || t('pages.reviewDetail.noDescription')}</p>
         </div>
         <div className="flex items-center gap-2">
           {review.status === 'pending' && (
             <Button onClick={() => startReviewMutation.mutate()} disabled={startReviewMutation.isPending}>
               <Play className="mr-2 h-4 w-4" />
-              {startReviewMutation.isPending ? 'Starting...' : 'Start Review'}
+              {startReviewMutation.isPending ? t('pages.reviewDetail.starting') : t('pages.reviewDetail.start')}
             </Button>
           )}
           {review.status === 'in_progress' && pendingItems.length === 0 && totalItems > 0 && (
             <Button onClick={() => completeReviewMutation.mutate()} disabled={completeReviewMutation.isPending}>
               <CheckCheck className="mr-2 h-4 w-4" />
-              {completeReviewMutation.isPending ? 'Completing...' : 'Complete Review'}
+              {completeReviewMutation.isPending ? t('pages.reviewDetail.completing') : t('pages.reviewDetail.complete')}
             </Button>
           )}
         </div>
@@ -274,7 +276,7 @@ export function ReviewDetailPage() {
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-muted-foreground">Status</p>
+                <p className="text-sm text-muted-foreground">{t('pages.reviewDetail.cards.status')}</p>
                 <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium mt-1 ${statusColors[review.status]}`}>
                   {review.status.replace('_', ' ')}
                 </span>
@@ -285,16 +287,16 @@ export function ReviewDetailPage() {
         <Card>
           <CardContent className="pt-6">
             <div>
-              <p className="text-sm text-muted-foreground">Review Period</p>
+              <p className="text-sm text-muted-foreground">{t('pages.reviewDetail.cards.period')}</p>
               <p className="font-medium mt-1">{formatDate(review.start_date)}</p>
-              <p className="text-sm text-muted-foreground">to {formatDate(review.end_date)}</p>
+              <p className="text-sm text-muted-foreground">{t('pages.reviewDetail.cards.periodTo', { date: formatDate(review.end_date) })}</p>
             </div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-6">
             <div>
-              <p className="text-sm text-muted-foreground">Progress</p>
+              <p className="text-sm text-muted-foreground">{t('pages.reviewDetail.cards.progress')}</p>
               <p className="text-2xl font-bold mt-1">{reviewedCount}/{totalItems}</p>
               <div className="h-2 bg-muted rounded-full overflow-hidden mt-2">
                 <div
@@ -308,7 +310,7 @@ export function ReviewDetailPage() {
         <Card>
           <CardContent className="pt-6">
             <div>
-              <p className="text-sm text-muted-foreground">Pending Items</p>
+              <p className="text-sm text-muted-foreground">{t('pages.reviewDetail.cards.pendingItems')}</p>
               <p className="text-2xl font-bold mt-1 text-yellow-600">{pendingItems.length}</p>
             </div>
           </CardContent>
@@ -319,7 +321,7 @@ export function ReviewDetailPage() {
       {selectedItems.length > 0 && (
         <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4 flex items-center justify-between">
           <p className="text-indigo-700 font-medium">
-            {selectedItems.length} item{selectedItems.length > 1 ? 's' : ''} selected
+            {t('pages.reviewDetail.selected', { count: selectedItems.length })}
           </p>
           <div className="flex items-center gap-2">
             <Button
@@ -332,7 +334,7 @@ export function ReviewDetailPage() {
               className="border-green-300 text-green-700 hover:bg-green-50"
             >
               <CheckCircle className="mr-2 h-4 w-4" />
-              Approve Selected
+              {t('pages.reviewDetail.approveSelected')}
             </Button>
             <Button
               variant="outline"
@@ -344,14 +346,14 @@ export function ReviewDetailPage() {
               className="border-red-300 text-red-700 hover:bg-red-50"
             >
               <XCircle className="mr-2 h-4 w-4" />
-              Revoke Selected
+              {t('pages.reviewDetail.revokeSelected')}
             </Button>
             <Button
               variant="ghost"
               size="sm"
               onClick={() => setSelectedItems([])}
             >
-              Clear Selection
+              {t('pages.reviewDetail.clearSelection')}
             </Button>
           </div>
         </div>
@@ -361,18 +363,18 @@ export function ReviewDetailPage() {
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
-            <CardTitle>Review Items</CardTitle>
+            <CardTitle>{t('pages.reviewDetail.itemsTitle')}</CardTitle>
             <div className="flex items-center gap-2">
               <select
                 value={filter}
                 onChange={(e) => setFilter(e.target.value)}
                 className="border rounded-md px-3 py-2 text-sm"
               >
-                <option value="">All Items</option>
-                <option value="pending">Pending</option>
-                <option value="approved">Approved</option>
-                <option value="revoked">Revoked</option>
-                <option value="flagged">Flagged</option>
+                <option value="">{t('pages.reviewDetail.filter.all')}</option>
+                <option value="pending">{t('pages.reviewDetail.filter.pending')}</option>
+                <option value="approved">{t('pages.reviewDetail.filter.approved')}</option>
+                <option value="revoked">{t('pages.reviewDetail.filter.revoked')}</option>
+                <option value="flagged">{t('pages.reviewDetail.filter.flagged')}</option>
               </select>
             </div>
           </div>
@@ -381,16 +383,16 @@ export function ReviewDetailPage() {
           {review.status === 'pending' ? (
             <div className="text-center py-12 text-muted-foreground">
               <Clock className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
-              <p>Start the review to populate items</p>
+              <p>{t('pages.reviewDetail.startPrompt')}</p>
               <Button onClick={() => startReviewMutation.mutate()} className="mt-4" disabled={startReviewMutation.isPending}>
                 <Play className="mr-2 h-4 w-4" />
-                Start Review
+                {t('pages.reviewDetail.start')}
               </Button>
             </div>
           ) : itemsLoading ? (
-            <div className="text-center py-8">Loading items...</div>
+            <div className="text-center py-8">{t('pages.reviewDetail.loadingItems')}</div>
           ) : items?.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">No items to review</div>
+            <div className="text-center py-8 text-muted-foreground">{t('pages.reviewDetail.noItems')}</div>
           ) : (
             <div className="rounded-md border">
               <Table>
@@ -405,11 +407,11 @@ export function ReviewDetailPage() {
                         className="h-4 w-4"
                       />
                     </TableHead>
-                    <TableHead className="p-3 text-left text-sm font-medium">User</TableHead>
-                    <TableHead className="p-3 text-left text-sm font-medium">Resource</TableHead>
-                    <TableHead className="p-3 text-left text-sm font-medium">Type</TableHead>
-                    <TableHead className="p-3 text-left text-sm font-medium">Decision</TableHead>
-                    <TableHead className="p-3 text-right text-sm font-medium">Actions</TableHead>
+                    <TableHead className="p-3 text-left text-sm font-medium">{t('pages.reviewDetail.table.user')}</TableHead>
+                    <TableHead className="p-3 text-left text-sm font-medium">{t('pages.reviewDetail.table.resource')}</TableHead>
+                    <TableHead className="p-3 text-left text-sm font-medium">{t('pages.reviewDetail.table.type')}</TableHead>
+                    <TableHead className="p-3 text-left text-sm font-medium">{t('pages.reviewDetail.table.decision')}</TableHead>
+                    <TableHead className="p-3 text-right text-sm font-medium">{t('pages.reviewDetail.table.actions')}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -497,19 +499,22 @@ export function ReviewDetailPage() {
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>
-              {batchDecision === 'approved' ? 'Approve' : batchDecision === 'revoked' ? 'Revoke' : 'Flag'} {selectedItems.length} Items
+              {t('pages.reviewDetail.batch.title', {
+                action: t(`pages.reviewDetail.batch.actions.${batchDecision}`),
+                count: selectedItems.length,
+              })}
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="comments">Comments (optional)</Label>
+              <Label htmlFor="comments">{t('pages.reviewDetail.batch.comments')}</Label>
               <div className="flex items-start gap-2">
                 <MessageSquare className="h-5 w-5 text-muted-foreground mt-2" />
                 <Textarea
                   id="comments"
                   value={comments}
                   onChange={(e) => setComments(e.target.value)}
-                  placeholder="Add a comment for this batch decision..."
+                  placeholder={t('pages.reviewDetail.batch.commentsPlaceholder')}
                   rows={3}
                   className="flex-1"
                 />
@@ -524,7 +529,7 @@ export function ReviewDetailPage() {
                 }}
                 disabled={batchDecisionMutation.isPending}
               >
-                Cancel
+                {t('common.cancel')}
               </Button>
               <Button
                 onClick={handleBatchDecision}
@@ -538,8 +543,11 @@ export function ReviewDetailPage() {
                 }
               >
                 {batchDecisionMutation.isPending
-                  ? 'Processing...'
-                  : `${batchDecision === 'approved' ? 'Approve' : batchDecision === 'revoked' ? 'Revoke' : 'Flag'} ${selectedItems.length} Items`}
+                  ? t('pages.reviewDetail.batch.processing')
+                  : t('pages.reviewDetail.batch.title', {
+                      action: t(`pages.reviewDetail.batch.actions.${batchDecision}`),
+                      count: selectedItems.length,
+                    })}
               </Button>
             </div>
           </div>

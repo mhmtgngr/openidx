@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import {
   Plus,
   Search,
@@ -86,23 +87,19 @@ const statusIcons: Record<string, React.ReactNode> = {
   completed: <CheckCircle className="h-3 w-3" />,
 }
 
-const scheduleLabels: Record<string, string> = {
-  once: 'One-time',
-  quarterly: 'Quarterly',
-  semi_annual: 'Semi-annual',
-  annual: 'Annual',
-}
-
-const typeLabels: Record<string, string> = {
-  user_access: 'User Access',
-  role_assignment: 'Role Assignment',
-  application_access: 'Application Access',
-  privileged_access: 'Privileged Access',
-}
+// Schedule and type labels resolve through i18n at render time; the keys are
+// pinned in i18n.test.ts because `typeof en` cannot see runtime-map keys.
+const SCHEDULES = ['once', 'quarterly', 'semi_annual', 'annual'] as const
+const CAMPAIGN_TYPES = [
+  'user_access',
+  'role_assignment',
+  'application_access',
+  'privileged_access',
+] as const
 
 const formatDate = (dateStr: string | undefined) => {
   if (!dateStr) return '-'
-  return new Date(dateStr).toLocaleDateString('en-US', {
+  return new Date(dateStr).toLocaleDateString(undefined, {
     year: 'numeric', month: 'short', day: 'numeric',
   })
 }
@@ -110,6 +107,7 @@ const formatDate = (dateStr: string | undefined) => {
 export function CertificationCampaignsPage() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const { t } = useTranslation()
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
   const [createModal, setCreateModal] = useState(false)
@@ -153,29 +151,29 @@ export function CertificationCampaignsPage() {
     mutationFn: (data: typeof newCampaign) => api.post('/api/v1/governance/campaigns', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['campaigns'] })
-      toast({ title: 'Success', description: 'Campaign created', variant: 'success' })
+      toast({ title: t('common.success'), description: t('pages.certCampaigns.toasts.created'), variant: 'success' })
       setCreateModal(false)
       setNewCampaign({ name: '', description: '', type: 'user_access', schedule: 'quarterly', reviewer_strategy: 'manager', auto_revoke: false, grace_period_days: 7, duration_days: 30 })
     },
-    onError: (error: Error) => toast({ title: 'Error', description: error.message, variant: 'destructive' }),
+    onError: (error: Error) => toast({ title: t('common.error'), description: error.message, variant: 'destructive' }),
   })
 
   const runMutation = useMutation({
     mutationFn: (id: string) => api.post(`/api/v1/governance/campaigns/${id}/run`, {}),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['campaigns'] })
-      toast({ title: 'Success', description: 'Campaign run started', variant: 'success' })
+      toast({ title: t('common.success'), description: t('pages.certCampaigns.toasts.runStarted'), variant: 'success' })
     },
-    onError: (error: Error) => toast({ title: 'Error', description: error.message, variant: 'destructive' }),
+    onError: (error: Error) => toast({ title: t('common.error'), description: error.message, variant: 'destructive' }),
   })
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => api.delete(`/api/v1/governance/campaigns/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['campaigns'] })
-      toast({ title: 'Success', description: 'Campaign deleted', variant: 'success' })
+      toast({ title: t('common.success'), description: t('pages.certCampaigns.toasts.deleted'), variant: 'success' })
     },
-    onError: (error: Error) => toast({ title: 'Error', description: error.message, variant: 'destructive' }),
+    onError: (error: Error) => toast({ title: t('common.error'), description: error.message, variant: 'destructive' }),
   })
 
   const filteredCampaigns = campaigns?.filter(c =>
@@ -196,18 +194,18 @@ export function CertificationCampaignsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Certification Campaigns</h1>
-          <p className="text-muted-foreground">Scheduled access review campaigns with auto-enforcement</p>
+          <h1 className="text-3xl font-bold tracking-tight">{t('pages.certCampaigns.title')}</h1>
+          <p className="text-muted-foreground">{t('pages.certCampaigns.subtitle')}</p>
         </div>
         <Button onClick={() => setCreateModal(true)}>
-          <Plus className="mr-2 h-4 w-4" /> Create Campaign
+          <Plus className="mr-2 h-4 w-4" /> {t('pages.certCampaigns.createCampaign')}
         </Button>
       </div>
 
       <RelatedLinks
         links={[
-          { to: '/access-reviews', label: 'Access Reviews' },
-          { to: '/attestation-campaigns', label: 'Attestation' },
+          { to: '/access-reviews', label: t('nav.items.accessReviews') },
+          { to: '/attestation-campaigns', label: t('nav.items.attestation') },
         ]}
       />
 
@@ -221,7 +219,7 @@ export function CertificationCampaignsPage() {
               </div>
               <div>
                 <p className="text-2xl font-bold">{campaigns?.filter(c => c.status === 'active').length || 0}</p>
-                <p className="text-sm text-muted-foreground">Active Campaigns</p>
+                <p className="text-sm text-muted-foreground">{t('pages.certCampaigns.stats.active')}</p>
               </div>
             </div>
           </CardContent>
@@ -234,7 +232,7 @@ export function CertificationCampaignsPage() {
               </div>
               <div>
                 <p className="text-2xl font-bold">{campaigns?.filter(c => c.status === 'paused').length || 0}</p>
-                <p className="text-sm text-muted-foreground">Paused</p>
+                <p className="text-sm text-muted-foreground">{t('pages.certCampaigns.stats.paused')}</p>
               </div>
             </div>
           </CardContent>
@@ -247,7 +245,7 @@ export function CertificationCampaignsPage() {
               </div>
               <div>
                 <p className="text-2xl font-bold">{campaigns?.filter(c => c.next_run_at).length || 0}</p>
-                <p className="text-sm text-muted-foreground">Scheduled</p>
+                <p className="text-sm text-muted-foreground">{t('pages.certCampaigns.stats.scheduled')}</p>
               </div>
             </div>
           </CardContent>
@@ -261,7 +259,7 @@ export function CertificationCampaignsPage() {
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
-                placeholder="Search campaigns..."
+                placeholder={t('pages.certCampaigns.searchPlaceholder')}
                 value={search}
                 onChange={(e) => { setSearch(e.target.value); setPage(0) }}
                 className="pl-9"
@@ -269,30 +267,30 @@ export function CertificationCampaignsPage() {
             </div>
             <Select value={statusFilter || 'all'} onValueChange={(val) => { setStatusFilter(val === 'all' ? '' : val); setPage(0) }}>
               <SelectTrigger className="w-[160px]">
-                <SelectValue placeholder="All Statuses" />
+                <SelectValue placeholder={t('pages.certCampaigns.filter.all')} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Statuses</SelectItem>
-                <SelectItem value="active">Active</SelectItem>
-                <SelectItem value="paused">Paused</SelectItem>
-                <SelectItem value="completed">Completed</SelectItem>
+                <SelectItem value="all">{t('pages.certCampaigns.filter.all')}</SelectItem>
+                <SelectItem value="active">{t('pages.certCampaigns.filter.active')}</SelectItem>
+                <SelectItem value="paused">{t('pages.certCampaigns.filter.paused')}</SelectItem>
+                <SelectItem value="completed">{t('pages.certCampaigns.filter.completed')}</SelectItem>
               </SelectContent>
             </Select>
           </div>
         </CardHeader>
         <CardContent>
           {isError ? (
-            <QueryError error={error} resource="certification campaigns" />
+            <QueryError error={error} resource={t('pages.certCampaigns.resourceName')} />
           ) : isLoading ? (
             <div className="flex flex-col items-center justify-center py-12">
               <LoadingSpinner size="lg" />
-              <p className="mt-4 text-sm text-muted-foreground">Loading campaigns...</p>
+              <p className="mt-4 text-sm text-muted-foreground">{t('pages.certCampaigns.loading')}</p>
             </div>
           ) : !filteredCampaigns || filteredCampaigns.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
               <Target className="h-12 w-12 text-muted-foreground/40 mb-3" />
-              <p className="font-medium">No campaigns found</p>
-              <p className="text-sm">Create a certification campaign to get started</p>
+              <p className="font-medium">{t('pages.certCampaigns.empty')}</p>
+              <p className="text-sm">{t('pages.certCampaigns.emptyHint')}</p>
             </div>
           ) : (
             <>
@@ -300,13 +298,13 @@ export function CertificationCampaignsPage() {
                 <Table>
                   <TableHeader>
                     <TableRow className="border-b bg-muted">
-                      <TableHead className="p-3 text-left text-sm font-medium">Campaign</TableHead>
-                      <TableHead className="p-3 text-left text-sm font-medium">Type</TableHead>
-                      <TableHead className="p-3 text-left text-sm font-medium">Schedule</TableHead>
-                      <TableHead className="p-3 text-left text-sm font-medium">Status</TableHead>
-                      <TableHead className="p-3 text-left text-sm font-medium">Last Run</TableHead>
-                      <TableHead className="p-3 text-left text-sm font-medium">Next Run</TableHead>
-                      <TableHead className="p-3 text-right text-sm font-medium">Actions</TableHead>
+                      <TableHead className="p-3 text-left text-sm font-medium">{t('pages.certCampaigns.table.campaign')}</TableHead>
+                      <TableHead className="p-3 text-left text-sm font-medium">{t('pages.certCampaigns.table.type')}</TableHead>
+                      <TableHead className="p-3 text-left text-sm font-medium">{t('pages.certCampaigns.table.schedule')}</TableHead>
+                      <TableHead className="p-3 text-left text-sm font-medium">{t('pages.certCampaigns.table.status')}</TableHead>
+                      <TableHead className="p-3 text-left text-sm font-medium">{t('pages.certCampaigns.table.lastRun')}</TableHead>
+                      <TableHead className="p-3 text-left text-sm font-medium">{t('pages.certCampaigns.table.nextRun')}</TableHead>
+                      <TableHead className="p-3 text-right text-sm font-medium">{t('pages.certCampaigns.table.actions')}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -324,12 +322,12 @@ export function CertificationCampaignsPage() {
                           </div>
                         </TableCell>
                         <TableCell className="p-3">
-                          <Badge variant="outline">{typeLabels[campaign.type] || campaign.type}</Badge>
+                          <Badge variant="outline">{(CAMPAIGN_TYPES as readonly string[]).includes(campaign.type) ? t(`pages.certCampaigns.types.${campaign.type}`) : campaign.type}</Badge>
                         </TableCell>
                         <TableCell className="p-3">
                           <div className="text-sm">
-                            <p>{scheduleLabels[campaign.schedule] || campaign.schedule}</p>
-                            <p className="text-muted-foreground">{campaign.duration_days}d duration</p>
+                            <p>{(SCHEDULES as readonly string[]).includes(campaign.schedule) ? t(`pages.certCampaigns.schedules.${campaign.schedule}`) : campaign.schedule}</p>
+                            <p className="text-muted-foreground">{t('pages.certCampaigns.duration', { n: campaign.duration_days })}</p>
                           </div>
                         </TableCell>
                         <TableCell className="p-3">
@@ -349,34 +347,39 @@ export function CertificationCampaignsPage() {
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
                               <DropdownMenuItem onClick={() => handleViewRuns(campaign)}>
-                                <Eye className="h-4 w-4 mr-2" /> View Runs
+                                <Eye className="h-4 w-4 mr-2" /> {t('pages.certCampaigns.menu.viewRuns')}
                               </DropdownMenuItem>
                               {campaign.status === 'active' && (
                                 <ConfirmAction
-                                  title="Start a campaign run now?"
-                                  description={`This starts a certification run for "${campaign.name}".${campaign.auto_revoke ? ' Auto-revoke is enabled: unreviewed access items will be automatically revoked from users when the grace period ends.' : ' Reviewers will be asked to certify access.'} This affects real access decisions.`}
+                                  title={t('pages.certCampaigns.confirmRun.title')}
+                                  description={t(
+                                    campaign.auto_revoke
+                                      ? 'pages.certCampaigns.confirmRun.descAutoRevoke'
+                                      : 'pages.certCampaigns.confirmRun.descPlain',
+                                    { name: campaign.name },
+                                  )}
                                   destructive
                                   requireReason
-                                  confirmLabel="Run Now"
+                                  confirmLabel={t('pages.certCampaigns.menu.runNow')}
                                   onConfirm={() => runMutation.mutateAsync(campaign.id)}
                                 >
                                   {(open) => (
                                     <DropdownMenuItem onSelect={(e) => { e.preventDefault(); open() }}>
-                                      <Play className="h-4 w-4 mr-2" /> Run Now
+                                      <Play className="h-4 w-4 mr-2" /> {t('pages.certCampaigns.menu.runNow')}
                                     </DropdownMenuItem>
                                   )}
                                 </ConfirmAction>
                               )}
                               <ConfirmAction
-                                title="Delete this campaign?"
-                                description={`This permanently deletes the "${campaign.name}" certification campaign and its schedule. Run history is retained, but the campaign will no longer run. This cannot be undone.`}
+                                title={t('pages.certCampaigns.confirmDelete.title')}
+                                description={t('pages.certCampaigns.confirmDelete.description', { name: campaign.name })}
                                 destructive
-                                confirmLabel="Delete"
+                                confirmLabel={t('common.delete')}
                                 onConfirm={() => deleteMutation.mutateAsync(campaign.id)}
                               >
                                 {(open) => (
                                   <DropdownMenuItem onSelect={(e) => { e.preventDefault(); open() }} className="text-red-600">
-                                    <Trash2 className="h-4 w-4 mr-2" /> Delete
+                                    <Trash2 className="h-4 w-4 mr-2" /> {t('common.delete')}
                                   </DropdownMenuItem>
                                 )}
                               </ConfirmAction>
@@ -392,15 +395,15 @@ export function CertificationCampaignsPage() {
               {totalCount > PAGE_SIZE && (
                 <div className="flex items-center justify-between pt-4 px-1">
                   <p className="text-sm text-muted-foreground">
-                    Showing {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, totalCount)} of {totalCount}
+                    {t('pages.certCampaigns.showing', { from: page * PAGE_SIZE + 1, to: Math.min((page + 1) * PAGE_SIZE, totalCount), total: totalCount })}
                   </p>
                   <div className="flex items-center gap-2">
                     <Button variant="outline" size="sm" onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0}>
-                      <ChevronLeft className="h-4 w-4 mr-1" /> Previous
+                      <ChevronLeft className="h-4 w-4 mr-1" /> {t('common.pagination.previous')}
                     </Button>
-                    <span className="text-sm text-muted-foreground">Page {page + 1} of {Math.ceil(totalCount / PAGE_SIZE)}</span>
+                    <span className="text-sm text-muted-foreground">{t('common.pagination.pageOf', { page: page + 1, pages: Math.ceil(totalCount / PAGE_SIZE) })}</span>
                     <Button variant="outline" size="sm" onClick={() => setPage(p => p + 1)} disabled={(page + 1) * PAGE_SIZE >= totalCount}>
-                      Next <ChevronRight className="h-4 w-4 ml-1" />
+                      {t('common.pagination.next')} <ChevronRight className="h-4 w-4 ml-1" />
                     </Button>
                   </div>
                 </div>
@@ -414,78 +417,78 @@ export function CertificationCampaignsPage() {
       <Dialog open={createModal} onOpenChange={setCreateModal}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>Create Certification Campaign</DialogTitle>
+            <DialogTitle>{t('pages.certCampaigns.createDialog.title')}</DialogTitle>
           </DialogHeader>
           <form onSubmit={(e) => { e.preventDefault(); createMutation.mutate(newCampaign) }} className="space-y-4">
             <div className="space-y-2">
-              <Label>Campaign Name *</Label>
-              <Input value={newCampaign.name} onChange={(e) => setNewCampaign(prev => ({ ...prev, name: e.target.value }))} placeholder="Q1 2026 Access Certification" required />
+              <Label>{t('pages.certCampaigns.createDialog.name')}</Label>
+              <Input value={newCampaign.name} onChange={(e) => setNewCampaign(prev => ({ ...prev, name: e.target.value }))} placeholder={t('pages.certCampaigns.createDialog.namePlaceholder')} required />
             </div>
             <div className="space-y-2">
-              <Label>Description</Label>
+              <Label>{t('pages.certCampaigns.createDialog.description')}</Label>
               <Textarea value={newCampaign.description} onChange={(e) => setNewCampaign(prev => ({ ...prev, description: e.target.value }))} rows={2} />
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>Review Type</Label>
+                <Label>{t('pages.certCampaigns.createDialog.reviewType')}</Label>
                 <Select value={newCampaign.type} onValueChange={(val) => setNewCampaign(prev => ({ ...prev, type: val }))}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="user_access">User Access</SelectItem>
-                    <SelectItem value="role_assignment">Role Assignment</SelectItem>
-                    <SelectItem value="application_access">App Access</SelectItem>
-                    <SelectItem value="privileged_access">Privileged Access</SelectItem>
+                    <SelectItem value="user_access">{t('pages.certCampaigns.createDialog.typeUserAccess')}</SelectItem>
+                    <SelectItem value="role_assignment">{t('pages.certCampaigns.createDialog.typeRoleAssignment')}</SelectItem>
+                    <SelectItem value="application_access">{t('pages.certCampaigns.createDialog.typeAppAccess')}</SelectItem>
+                    <SelectItem value="privileged_access">{t('pages.certCampaigns.createDialog.typePrivilegedAccess')}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label>Schedule</Label>
+                <Label>{t('pages.certCampaigns.createDialog.schedule')}</Label>
                 <Select value={newCampaign.schedule} onValueChange={(val) => setNewCampaign(prev => ({ ...prev, schedule: val }))}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="once">One-time</SelectItem>
-                    <SelectItem value="quarterly">Quarterly</SelectItem>
-                    <SelectItem value="semi_annual">Semi-annual</SelectItem>
-                    <SelectItem value="annual">Annual</SelectItem>
+                    <SelectItem value="once">{t('pages.certCampaigns.schedules.once')}</SelectItem>
+                    <SelectItem value="quarterly">{t('pages.certCampaigns.schedules.quarterly')}</SelectItem>
+                    <SelectItem value="semi_annual">{t('pages.certCampaigns.schedules.semi_annual')}</SelectItem>
+                    <SelectItem value="annual">{t('pages.certCampaigns.schedules.annual')}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>Reviewer Strategy</Label>
+                <Label>{t('pages.certCampaigns.createDialog.reviewerStrategy')}</Label>
                 <Select value={newCampaign.reviewer_strategy} onValueChange={(val) => setNewCampaign(prev => ({ ...prev, reviewer_strategy: val }))}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="manager">Manager</SelectItem>
-                    <SelectItem value="app_owner">App Owner</SelectItem>
-                    <SelectItem value="specific_user">Specific User</SelectItem>
-                    <SelectItem value="role_based">Role-based</SelectItem>
+                    <SelectItem value="manager">{t('pages.certCampaigns.createDialog.strategyManager')}</SelectItem>
+                    <SelectItem value="app_owner">{t('pages.certCampaigns.createDialog.strategyAppOwner')}</SelectItem>
+                    <SelectItem value="specific_user">{t('pages.certCampaigns.createDialog.strategySpecificUser')}</SelectItem>
+                    <SelectItem value="role_based">{t('pages.certCampaigns.createDialog.strategyRoleBased')}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label>Duration (days)</Label>
+                <Label>{t('pages.certCampaigns.createDialog.duration')}</Label>
                 <Input type="number" value={newCampaign.duration_days} onChange={(e) => setNewCampaign(prev => ({ ...prev, duration_days: parseInt(e.target.value) || 30 }))} min={1} />
               </div>
             </div>
             <div className="flex items-center gap-4">
               <div className="flex items-center gap-2">
                 <input type="checkbox" id="auto_revoke" checked={newCampaign.auto_revoke} onChange={(e) => setNewCampaign(prev => ({ ...prev, auto_revoke: e.target.checked }))} className="rounded border-border" />
-                <Label htmlFor="auto_revoke">Auto-revoke unreviewed items</Label>
+                <Label htmlFor="auto_revoke">{t('pages.certCampaigns.createDialog.autoRevoke')}</Label>
               </div>
               {newCampaign.auto_revoke && (
                 <div className="flex items-center gap-2">
-                  <Label>Grace period:</Label>
+                  <Label>{t('pages.certCampaigns.createDialog.gracePeriod')}</Label>
                   <Input type="number" value={newCampaign.grace_period_days} onChange={(e) => setNewCampaign(prev => ({ ...prev, grace_period_days: parseInt(e.target.value) || 7 }))} className="w-20" min={0} />
-                  <span className="text-sm text-muted-foreground">days</span>
+                  <span className="text-sm text-muted-foreground">{t('pages.certCampaigns.createDialog.days')}</span>
                 </div>
               )}
             </div>
             <div className="flex justify-end gap-2 pt-4">
-              <Button type="button" variant="outline" onClick={() => setCreateModal(false)}>Cancel</Button>
+              <Button type="button" variant="outline" onClick={() => setCreateModal(false)}>{t('common.cancel')}</Button>
               <Button type="submit" disabled={createMutation.isPending}>
-                {createMutation.isPending ? 'Creating...' : 'Create Campaign'}
+                {createMutation.isPending ? t('pages.certCampaigns.createDialog.creating') : t('pages.certCampaigns.createCampaign')}
               </Button>
             </div>
           </form>
@@ -496,24 +499,24 @@ export function CertificationCampaignsPage() {
       <Dialog open={runsModal} onOpenChange={setRunsModal}>
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Campaign Runs — {selectedCampaign?.name}</DialogTitle>
+            <DialogTitle>{t('pages.certCampaigns.runsDialog.title', { name: selectedCampaign?.name ?? '' })}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             {!runs || runs.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground">
                 <Clock className="h-10 w-10 mx-auto mb-2 opacity-40" />
-                <p>No runs yet. Click "Run Now" to start the first campaign run.</p>
+                <p>{t('pages.certCampaigns.runsDialog.empty')}</p>
               </div>
             ) : (
               <div className="rounded-md border">
                 <Table>
                   <TableHeader>
                     <TableRow className="border-b bg-muted">
-                      <TableHead className="p-3 text-left text-sm font-medium">Started</TableHead>
-                      <TableHead className="p-3 text-left text-sm font-medium">Deadline</TableHead>
-                      <TableHead className="p-3 text-left text-sm font-medium">Status</TableHead>
-                      <TableHead className="p-3 text-left text-sm font-medium">Progress</TableHead>
-                      <TableHead className="p-3 text-left text-sm font-medium">Auto-Revoked</TableHead>
+                      <TableHead className="p-3 text-left text-sm font-medium">{t('pages.certCampaigns.runsDialog.started')}</TableHead>
+                      <TableHead className="p-3 text-left text-sm font-medium">{t('pages.certCampaigns.runsDialog.deadline')}</TableHead>
+                      <TableHead className="p-3 text-left text-sm font-medium">{t('pages.certCampaigns.runsDialog.status')}</TableHead>
+                      <TableHead className="p-3 text-left text-sm font-medium">{t('pages.certCampaigns.runsDialog.progress')}</TableHead>
+                      <TableHead className="p-3 text-left text-sm font-medium">{t('pages.certCampaigns.runsDialog.autoRevoked')}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>

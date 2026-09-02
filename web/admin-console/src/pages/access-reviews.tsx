@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import { Plus, Search, ClipboardCheck, ClipboardList, Clock, CheckCircle, XCircle, AlertTriangle, Edit, Play, Eye, MoreHorizontal, ChevronLeft, ChevronRight } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -60,17 +61,19 @@ const statusColors: Record<string, string> = {
   canceled: 'bg-muted text-foreground',
 }
 
-const typeLabels: Record<string, string> = {
-  user_access: 'User Access',
-  role_assignment: 'Role Assignment',
-  application_access: 'Application Access',
-  privileged_access: 'Privileged Access',
-}
+// Review-type labels resolve through i18n; keys pinned in i18n.test.ts.
+const REVIEW_TYPES = [
+  'user_access',
+  'role_assignment',
+  'application_access',
+  'privileged_access',
+] as const
 
 export function AccessReviewsPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const { t } = useTranslation()
   const { user } = useAuth()
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
@@ -116,8 +119,8 @@ export function AccessReviewsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['access-reviews'] })
       toast({
-        title: 'Success',
-        description: 'Access review created successfully!',
+        title: t('common.success'),
+        description: t('pages.accessReviews.toasts.created'),
         variant: 'success',
       })
       setCreateModal(false)
@@ -131,8 +134,8 @@ export function AccessReviewsPage() {
     },
     onError: (error: Error) => {
       toast({
-        title: 'Error',
-        description: `Failed to create access review: ${error.message}`,
+        title: t('common.error'),
+        description: t('pages.accessReviews.toasts.createFailed', { message: error.message }),
         variant: 'destructive',
       })
     },
@@ -147,7 +150,7 @@ export function AccessReviewsPage() {
   }
 
   const formatDate = (dateStr: string) => {
-    return new Date(dateStr).toLocaleDateString('en-US', {
+    return new Date(dateStr).toLocaleDateString(undefined, {
       year: 'numeric',
       month: 'short',
       day: 'numeric',
@@ -162,7 +165,7 @@ export function AccessReviewsPage() {
   const handleCreateSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (newReview.end_date && newReview.start_date && new Date(newReview.end_date) <= new Date(newReview.start_date)) {
-      toast({ title: 'Validation Error', description: 'End date must be after start date', variant: 'destructive' })
+      toast({ title: t('pages.accessReviews.toasts.validationTitle'), description: t('pages.accessReviews.toasts.validationDates'), variant: 'destructive' })
       return
     }
     createReviewMutation.mutate({
@@ -198,8 +201,8 @@ export function AccessReviewsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['access-reviews'] })
       toast({
-        title: 'Success',
-        description: 'Access review updated successfully!',
+        title: t('common.success'),
+        description: t('pages.accessReviews.toasts.updated'),
         variant: 'success',
       })
       setEditModal(false)
@@ -207,8 +210,8 @@ export function AccessReviewsPage() {
     },
     onError: (error: Error) => {
       toast({
-        title: 'Error',
-        description: `Failed to update review: ${error.message}`,
+        title: t('common.error'),
+        description: t('pages.accessReviews.toasts.updateFailed', { message: error.message }),
         variant: 'destructive',
       })
     },
@@ -219,15 +222,15 @@ export function AccessReviewsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['access-reviews'] })
       toast({
-        title: 'Review Started',
-        description: 'Access review has been started and items populated.',
+        title: t('pages.accessReviews.toasts.startedTitle'),
+        description: t('pages.accessReviews.toasts.startedDesc'),
         variant: 'success',
       })
     },
     onError: (error: Error) => {
       toast({
-        title: 'Error',
-        description: `Failed to start review: ${error.message}`,
+        title: t('common.error'),
+        description: t('pages.accessReviews.toasts.startFailed', { message: error.message }),
         variant: 'destructive',
       })
     },
@@ -260,18 +263,18 @@ export function AccessReviewsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Access Reviews</h1>
-          <p className="text-muted-foreground">Manage access certifications and reviews</p>
+          <h1 className="text-3xl font-bold tracking-tight">{t('nav.items.accessReviews')}</h1>
+          <p className="text-muted-foreground">{t('pages.accessReviews.subtitle')}</p>
         </div>
         <Button onClick={() => setCreateModal(true)}>
-          <Plus className="mr-2 h-4 w-4" /> Create Review
+          <Plus className="mr-2 h-4 w-4" /> {t('pages.accessReviews.createReview')}
         </Button>
       </div>
 
       <RelatedLinks
         links={[
-          { to: '/certification-campaigns', label: 'Cert Campaigns' },
-          { to: '/attestation-campaigns', label: 'Attestation' },
+          { to: '/certification-campaigns', label: t('nav.items.certCampaigns') },
+          { to: '/attestation-campaigns', label: t('nav.items.attestation') },
         ]}
       />
 
@@ -286,7 +289,7 @@ export function AccessReviewsPage() {
                 <p className="text-2xl font-bold">
                   {reviews?.filter(r => r.status === 'pending').length || 0}
                 </p>
-                <p className="text-sm text-muted-foreground">Pending (this page)</p>
+                <p className="text-sm text-muted-foreground">{t('pages.accessReviews.stats.pending')}</p>
               </div>
             </div>
           </CardContent>
@@ -301,7 +304,7 @@ export function AccessReviewsPage() {
                 <p className="text-2xl font-bold">
                   {reviews?.filter(r => r.status === 'in_progress').length || 0}
                 </p>
-                <p className="text-sm text-muted-foreground">In Progress (this page)</p>
+                <p className="text-sm text-muted-foreground">{t('pages.accessReviews.stats.inProgress')}</p>
               </div>
             </div>
           </CardContent>
@@ -316,7 +319,7 @@ export function AccessReviewsPage() {
                 <p className="text-2xl font-bold">
                   {reviews?.filter(r => r.status === 'completed').length || 0}
                 </p>
-                <p className="text-sm text-muted-foreground">Completed (this page)</p>
+                <p className="text-sm text-muted-foreground">{t('pages.accessReviews.stats.completed')}</p>
               </div>
             </div>
           </CardContent>
@@ -331,7 +334,7 @@ export function AccessReviewsPage() {
                 <p className="text-2xl font-bold">
                   {reviews?.filter(r => r.status === 'expired' || r.status === 'canceled').length || 0}
                 </p>
-                <p className="text-sm text-muted-foreground">Expired/Canceled (this page)</p>
+                <p className="text-sm text-muted-foreground">{t('pages.accessReviews.stats.expiredCanceled')}</p>
               </div>
             </div>
           </CardContent>
@@ -344,7 +347,7 @@ export function AccessReviewsPage() {
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
-                placeholder="Search reviews..."
+                placeholder={t('pages.accessReviews.searchPlaceholder')}
                 value={search}
                 onChange={(e) => { setSearch(e.target.value); setPage(0) }}
                 className="pl-9"
@@ -352,14 +355,14 @@ export function AccessReviewsPage() {
             </div>
             <Select value={statusFilter} onValueChange={(val) => { setStatusFilter(val === 'all' ? '' : val); setPage(0) }}>
               <SelectTrigger className="w-[180px]">
-                <SelectValue placeholder="All Statuses" />
+                <SelectValue placeholder={t('pages.accessReviews.filter.all')} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Statuses</SelectItem>
-                <SelectItem value="pending">Pending</SelectItem>
-                <SelectItem value="in_progress">In Progress</SelectItem>
-                <SelectItem value="completed">Completed</SelectItem>
-                <SelectItem value="expired">Expired</SelectItem>
+                <SelectItem value="all">{t('pages.accessReviews.filter.all')}</SelectItem>
+                <SelectItem value="pending">{t('pages.accessReviews.filter.pending')}</SelectItem>
+                <SelectItem value="in_progress">{t('pages.accessReviews.filter.inProgress')}</SelectItem>
+                <SelectItem value="completed">{t('pages.accessReviews.filter.completed')}</SelectItem>
+                <SelectItem value="expired">{t('pages.accessReviews.filter.expired')}</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -368,15 +371,15 @@ export function AccessReviewsPage() {
           {isLoading ? (
             <div className="flex flex-col items-center justify-center py-12">
               <LoadingSpinner size="lg" />
-              <p className="mt-4 text-sm text-muted-foreground">Loading access reviews...</p>
+              <p className="mt-4 text-sm text-muted-foreground">{t('pages.accessReviews.loading')}</p>
             </div>
           ) : isError ? (
-            <QueryError error={error} resource="access reviews" />
+            <QueryError error={error} resource={t('pages.accessReviews.resourceName')} />
           ) : !filteredReviews || filteredReviews.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
               <ClipboardList className="h-12 w-12 text-muted-foreground/40 mb-3" />
-              <p className="font-medium">No access reviews found</p>
-              <p className="text-sm">Access reviews will appear here when created</p>
+              <p className="font-medium">{t('pages.accessReviews.empty')}</p>
+              <p className="text-sm">{t('pages.accessReviews.emptyHint')}</p>
             </div>
           ) : (
           <>
@@ -384,12 +387,12 @@ export function AccessReviewsPage() {
             <Table>
               <TableHeader>
                 <TableRow className="border-b bg-muted">
-                  <TableHead className="p-3 text-left text-sm font-medium">Review</TableHead>
-                  <TableHead className="p-3 text-left text-sm font-medium">Type</TableHead>
-                  <TableHead className="p-3 text-left text-sm font-medium">Status</TableHead>
-                  <TableHead className="p-3 text-left text-sm font-medium">Period</TableHead>
-                  <TableHead className="p-3 text-left text-sm font-medium">Progress</TableHead>
-                  <TableHead className="p-3 text-right text-sm font-medium">Actions</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">{t('pages.accessReviews.table.review')}</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">{t('pages.accessReviews.table.type')}</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">{t('pages.accessReviews.table.status')}</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">{t('pages.accessReviews.table.period')}</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">{t('pages.accessReviews.table.progress')}</TableHead>
+                  <TableHead className="p-3 text-right text-sm font-medium">{t('pages.accessReviews.table.actions')}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -409,7 +412,7 @@ export function AccessReviewsPage() {
                       </TableCell>
                       <TableCell className="p-3">
                         <Badge variant="outline">
-                          {typeLabels[review.type] || review.type}
+                          {(REVIEW_TYPES as readonly string[]).includes(review.type) ? t(`pages.accessReviews.types.${review.type}`) : review.type}
                         </Badge>
                       </TableCell>
                       <TableCell className="p-3">
@@ -421,7 +424,7 @@ export function AccessReviewsPage() {
                       <TableCell className="p-3">
                         <div className="text-sm">
                           <p>{formatDate(review.start_date)}</p>
-                          <p className="text-muted-foreground">to {formatDate(review.end_date)}</p>
+                          <p className="text-muted-foreground">{t('pages.accessReviews.periodTo', { date: formatDate(review.end_date) })}</p>
                         </div>
                       </TableCell>
                       <TableCell className="p-3">
@@ -448,24 +451,24 @@ export function AccessReviewsPage() {
                             <DropdownMenuContent align="end">
                               <DropdownMenuItem onClick={() => handleViewReview(review)}>
                                 <Eye className="h-4 w-4 mr-2" />
-                                View Details
+                                {t('pages.accessReviews.menu.view')}
                               </DropdownMenuItem>
                               {review.status === 'pending' && (
                                 <>
                                   <DropdownMenuItem onClick={() => handleStartReview(review)}>
                                     <Play className="h-4 w-4 mr-2" />
-                                    Start Review
+                                    {t('pages.accessReviews.menu.start')}
                                   </DropdownMenuItem>
                                   <DropdownMenuItem onClick={() => handleEditReview(review)}>
                                     <Edit className="h-4 w-4 mr-2" />
-                                    Edit
+                                    {t('pages.accessReviews.menu.edit')}
                                   </DropdownMenuItem>
                                 </>
                               )}
                               {review.status === 'in_progress' && (
                                 <DropdownMenuItem onClick={() => handleViewReview(review)}>
                                   <ClipboardCheck className="h-4 w-4 mr-2" />
-                                  Continue Review
+                                  {t('pages.accessReviews.menu.continue')}
                                 </DropdownMenuItem>
                               )}
                             </DropdownMenuContent>
@@ -481,7 +484,7 @@ export function AccessReviewsPage() {
           {totalCount > PAGE_SIZE && (
             <div className="flex items-center justify-between pt-4 px-1">
               <p className="text-sm text-muted-foreground">
-                Showing {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, totalCount)} of {totalCount} reviews
+                {t('pages.accessReviews.showing', { from: page * PAGE_SIZE + 1, to: Math.min((page + 1) * PAGE_SIZE, totalCount), total: totalCount })}
               </p>
               <div className="flex items-center gap-2">
                 <Button
@@ -491,10 +494,10 @@ export function AccessReviewsPage() {
                   disabled={page === 0}
                 >
                   <ChevronLeft className="h-4 w-4 mr-1" />
-                  Previous
+                  {t('common.pagination.previous')}
                 </Button>
                 <span className="text-sm text-muted-foreground">
-                  Page {page + 1} of {Math.ceil(totalCount / PAGE_SIZE)}
+                  {t('common.pagination.pageOf', { page: page + 1, pages: Math.ceil(totalCount / PAGE_SIZE) })}
                 </span>
                 <Button
                   variant="outline"
@@ -502,7 +505,7 @@ export function AccessReviewsPage() {
                   onClick={() => setPage(p => p + 1)}
                   disabled={(page + 1) * PAGE_SIZE >= totalCount}
                 >
-                  Next
+                  {t('common.pagination.next')}
                   <ChevronRight className="h-4 w-4 ml-1" />
                 </Button>
               </div>
@@ -517,48 +520,48 @@ export function AccessReviewsPage() {
       <Dialog open={createModal} onOpenChange={setCreateModal}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Create Access Review</DialogTitle>
+            <DialogTitle>{t('pages.accessReviews.createDialog.title')}</DialogTitle>
           </DialogHeader>
           <form onSubmit={handleCreateSubmit} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="name">Review Name *</Label>
+              <Label htmlFor="name">{t('pages.accessReviews.form.name')}</Label>
               <Input
                 id="name"
                 name="name"
                 value={newReview.name}
                 onChange={handleNewReviewChange}
-                placeholder="Q1 2026 Access Review"
+                placeholder={t('pages.accessReviews.form.namePlaceholder')}
                 required
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="description">Description</Label>
+              <Label htmlFor="description">{t('pages.accessReviews.form.description')}</Label>
               <Textarea
                 id="description"
                 name="description"
                 value={newReview.description}
                 onChange={handleNewReviewChange}
-                placeholder="Quarterly access review for all users"
+                placeholder={t('pages.accessReviews.form.descriptionPlaceholder')}
                 rows={3}
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="type">Review Type *</Label>
+              <Label htmlFor="type">{t('pages.accessReviews.form.type')}</Label>
               <Select value={newReview.type} onValueChange={(val) => setNewReview(prev => ({ ...prev, type: val }))}>
                 <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Select review type" />
+                  <SelectValue placeholder={t('pages.accessReviews.form.typePlaceholder')} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="user_access">User Access Review</SelectItem>
-                  <SelectItem value="role_assignment">Role Assignment Review</SelectItem>
-                  <SelectItem value="application_access">Application Access Review</SelectItem>
-                  <SelectItem value="privileged_access">Privileged Access Review</SelectItem>
+                  <SelectItem value="user_access">{t('pages.accessReviews.form.typeUserAccess')}</SelectItem>
+                  <SelectItem value="role_assignment">{t('pages.accessReviews.form.typeRoleAssignment')}</SelectItem>
+                  <SelectItem value="application_access">{t('pages.accessReviews.form.typeApplicationAccess')}</SelectItem>
+                  <SelectItem value="privileged_access">{t('pages.accessReviews.form.typePrivilegedAccess')}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="start_date">Start Date *</Label>
+                <Label htmlFor="start_date">{t('pages.accessReviews.form.startDate')}</Label>
                 <Input
                   id="start_date"
                   name="start_date"
@@ -569,7 +572,7 @@ export function AccessReviewsPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="end_date">End Date *</Label>
+                <Label htmlFor="end_date">{t('pages.accessReviews.form.endDate')}</Label>
                 <Input
                   id="end_date"
                   name="end_date"
@@ -587,10 +590,10 @@ export function AccessReviewsPage() {
                 onClick={() => setCreateModal(false)}
                 disabled={createReviewMutation.isPending}
               >
-                Cancel
+                {t('common.cancel')}
               </Button>
               <Button type="submit" disabled={createReviewMutation.isPending}>
-                {createReviewMutation.isPending ? 'Creating...' : 'Create Review'}
+                {createReviewMutation.isPending ? t('pages.accessReviews.createDialog.creating') : t('pages.accessReviews.createReview')}
               </Button>
             </div>
           </form>
@@ -601,48 +604,48 @@ export function AccessReviewsPage() {
       <Dialog open={editModal} onOpenChange={setEditModal}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Edit Access Review</DialogTitle>
+            <DialogTitle>{t('pages.accessReviews.editDialog.title')}</DialogTitle>
           </DialogHeader>
           <form onSubmit={handleEditSubmit} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="edit-name">Review Name *</Label>
+              <Label htmlFor="edit-name">{t('pages.accessReviews.form.name')}</Label>
               <Input
                 id="edit-name"
                 name="name"
                 value={editReview.name}
                 onChange={handleEditReviewChange}
-                placeholder="Q1 2026 Access Review"
+                placeholder={t('pages.accessReviews.form.namePlaceholder')}
                 required
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="edit-description">Description</Label>
+              <Label htmlFor="edit-description">{t('pages.accessReviews.form.description')}</Label>
               <Textarea
                 id="edit-description"
                 name="description"
                 value={editReview.description}
                 onChange={handleEditReviewChange}
-                placeholder="Quarterly access review for all users"
+                placeholder={t('pages.accessReviews.form.descriptionPlaceholder')}
                 rows={3}
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="edit-type">Review Type *</Label>
+              <Label htmlFor="edit-type">{t('pages.accessReviews.form.type')}</Label>
               <Select value={editReview.type} onValueChange={(val) => setEditReview(prev => ({ ...prev, type: val }))}>
                 <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Select review type" />
+                  <SelectValue placeholder={t('pages.accessReviews.form.typePlaceholder')} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="user_access">User Access Review</SelectItem>
-                  <SelectItem value="role_assignment">Role Assignment Review</SelectItem>
-                  <SelectItem value="application_access">Application Access Review</SelectItem>
-                  <SelectItem value="privileged_access">Privileged Access Review</SelectItem>
+                  <SelectItem value="user_access">{t('pages.accessReviews.form.typeUserAccess')}</SelectItem>
+                  <SelectItem value="role_assignment">{t('pages.accessReviews.form.typeRoleAssignment')}</SelectItem>
+                  <SelectItem value="application_access">{t('pages.accessReviews.form.typeApplicationAccess')}</SelectItem>
+                  <SelectItem value="privileged_access">{t('pages.accessReviews.form.typePrivilegedAccess')}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="edit-start_date">Start Date *</Label>
+                <Label htmlFor="edit-start_date">{t('pages.accessReviews.form.startDate')}</Label>
                 <Input
                   id="edit-start_date"
                   name="start_date"
@@ -653,7 +656,7 @@ export function AccessReviewsPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="edit-end_date">End Date *</Label>
+                <Label htmlFor="edit-end_date">{t('pages.accessReviews.form.endDate')}</Label>
                 <Input
                   id="edit-end_date"
                   name="end_date"
@@ -670,10 +673,10 @@ export function AccessReviewsPage() {
                 variant="outline"
                 onClick={() => setEditModal(false)}
               >
-                Cancel
+                {t('common.cancel')}
               </Button>
               <Button type="submit">
-                Save Changes
+                {t('pages.accessReviews.editDialog.save')}
               </Button>
             </div>
           </form>

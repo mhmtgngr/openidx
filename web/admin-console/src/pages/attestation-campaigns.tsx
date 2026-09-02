@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import { useState } from 'react'
 import { api } from '../lib/api'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
@@ -46,12 +47,13 @@ interface AttestationItem {
   created_at: string
 }
 
-const typeLabels: Record<string, string> = {
-  manager_review: 'Manager Review',
-  application_access: 'Application Access',
-  role_certification: 'Role Certification',
-  entitlement_review: 'Entitlement Review',
-}
+// Campaign-type labels resolve through i18n; keys pinned in i18n.test.ts.
+const CAMPAIGN_TYPES = [
+  'manager_review',
+  'application_access',
+  'role_certification',
+  'entitlement_review',
+] as const
 
 const statusColors: Record<string, string> = {
   draft: 'bg-muted text-foreground',
@@ -68,6 +70,7 @@ const decisionColors: Record<string, string> = {
 }
 
 export function AttestationCampaignsPage() {
+  const { t } = useTranslation()
   const queryClient = useQueryClient()
   const [showCreate, setShowCreate] = useState(false)
   const [selectedCampaign, setSelectedCampaign] = useState<string | null>(null)
@@ -173,7 +176,7 @@ export function AttestationCampaignsPage() {
   }
 
   if (isLoading) return <div className="flex justify-center py-12"><LoadingSpinner size="lg" /></div>
-  if (isError) return <QueryError error={error} resource="attestation campaigns" />
+  if (isError) return <QueryError error={error} resource={t('pages.attestation.resourceName')} />
 
   const campaigns = campaignsData?.data || []
   const items = itemsData?.data || []
@@ -183,60 +186,60 @@ export function AttestationCampaignsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Attestation Campaigns</h1>
-          <p className="text-muted-foreground">Certify user access through periodic review campaigns</p>
+          <h1 className="text-2xl font-bold">{t('pages.attestation.title')}</h1>
+          <p className="text-muted-foreground">{t('pages.attestation.subtitle')}</p>
         </div>
         <Button onClick={() => setShowCreate(!showCreate)}>
-          <Plus className="h-4 w-4 mr-2" />{showCreate ? 'Cancel' : 'New Campaign'}
+          <Plus className="h-4 w-4 mr-2" />{showCreate ? t('common.cancel') : t('pages.attestation.newCampaign')}
         </Button>
       </div>
 
       <RelatedLinks
         links={[
-          { to: '/access-reviews', label: 'Access Reviews' },
-          { to: '/certification-campaigns', label: 'Cert Campaigns' },
+          { to: '/access-reviews', label: t('nav.items.accessReviews') },
+          { to: '/certification-campaigns', label: t('nav.items.certCampaigns') },
         ]}
       />
 
       {/* Create Form */}
       {showCreate && (
         <Card>
-          <CardHeader><CardTitle>New Attestation Campaign</CardTitle></CardHeader>
+          <CardHeader><CardTitle>{t('pages.attestation.createForm.title')}</CardTitle></CardHeader>
           <CardContent className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="text-sm font-medium">Campaign Name</label>
+                <label className="text-sm font-medium">{t('pages.attestation.createForm.name')}</label>
                 <input className="w-full border rounded px-3 py-2 mt-1 text-sm" value={formName} onChange={e => setFormName(e.target.value)} />
               </div>
               <div>
-                <label className="text-sm font-medium">Campaign Type</label>
+                <label className="text-sm font-medium">{t('pages.attestation.createForm.type')}</label>
                 <select className="w-full border rounded px-3 py-2 mt-1 text-sm" value={formType} onChange={e => setFormType(e.target.value)}>
-                  {Object.entries(typeLabels).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                  {CAMPAIGN_TYPES.map((k) => <option key={k} value={k}>{t(`pages.attestation.types.${k}`)}</option>)}
                 </select>
               </div>
               <div>
-                <label className="text-sm font-medium">Reviewer Strategy</label>
+                <label className="text-sm font-medium">{t('pages.attestation.createForm.strategy')}</label>
                 <select className="w-full border rounded px-3 py-2 mt-1 text-sm" value={formStrategy} onChange={e => setFormStrategy(e.target.value)}>
-                  <option value="manager">Manager</option>
-                  <option value="owner">Resource Owner</option>
-                  <option value="specific_user">Specific User</option>
+                  <option value="manager">{t('pages.attestation.createForm.strategyManager')}</option>
+                  <option value="owner">{t('pages.attestation.createForm.strategyOwner')}</option>
+                  <option value="specific_user">{t('pages.attestation.createForm.strategySpecificUser')}</option>
                 </select>
               </div>
               <div>
-                <label className="text-sm font-medium">Escalation After (days)</label>
+                <label className="text-sm font-medium">{t('pages.attestation.createForm.escalation')}</label>
                 <input type="number" className="w-full border rounded px-3 py-2 mt-1 text-sm" value={formEscalation} onChange={e => setFormEscalation(Number(e.target.value))} />
               </div>
             </div>
             <div>
-              <label className="text-sm font-medium">Description</label>
+              <label className="text-sm font-medium">{t('pages.attestation.createForm.description')}</label>
               <textarea className="w-full border rounded px-3 py-2 mt-1 text-sm h-16" value={formDesc} onChange={e => setFormDesc(e.target.value)} />
             </div>
             <div className="flex items-center gap-2">
               <input type="checkbox" id="autoRevoke" checked={formAutoRevoke} onChange={e => setFormAutoRevoke(e.target.checked)} />
-              <label htmlFor="autoRevoke" className="text-sm">Auto-revoke uncertified access when campaign expires</label>
+              <label htmlFor="autoRevoke" className="text-sm">{t('pages.attestation.createForm.autoRevoke')}</label>
             </div>
             <Button onClick={handleCreate} disabled={!formName || createMutation.isPending}>
-              {createMutation.isPending ? 'Creating...' : 'Create Campaign'}
+              {createMutation.isPending ? t('pages.attestation.createForm.creating') : t('pages.attestation.createForm.create')}
             </Button>
           </CardContent>
         </Card>
@@ -244,7 +247,7 @@ export function AttestationCampaignsPage() {
 
       {/* Campaign List */}
       <Card>
-        <CardHeader><CardTitle className="flex items-center gap-2"><ClipboardCheck className="h-5 w-5" />Campaigns ({campaigns.length})</CardTitle></CardHeader>
+        <CardHeader><CardTitle className="flex items-center gap-2"><ClipboardCheck className="h-5 w-5" />{t('pages.attestation.listTitle', { n: campaigns.length })}</CardTitle></CardHeader>
         <CardContent>
           <div className="divide-y">
             {campaigns.map(c => {
@@ -255,7 +258,7 @@ export function AttestationCampaignsPage() {
                     <div className="flex-1 cursor-pointer" onClick={() => setSelectedCampaign(selectedCampaign === c.id ? null : c.id)}>
                       <div className="flex items-center gap-2">
                         <p className="font-medium text-sm">{c.name}</p>
-                        <Badge variant="outline">{typeLabels[c.campaign_type] || c.campaign_type}</Badge>
+                        <Badge variant="outline">{(CAMPAIGN_TYPES as readonly string[]).includes(c.campaign_type) ? t(`pages.attestation.types.${c.campaign_type}`) : c.campaign_type}</Badge>
                         <Badge className={statusColors[c.status] || ''}>{c.status}</Badge>
                       </div>
                       <p className="text-xs text-muted-foreground mt-0.5">{c.description}</p>
@@ -264,17 +267,17 @@ export function AttestationCampaignsPage() {
                           <div className="flex-1 h-2 bg-muted rounded-full max-w-xs">
                             <div className="h-2 bg-green-500 rounded-full" style={{ width: `${pct}%` }} />
                           </div>
-                          <span className="text-xs text-muted-foreground">{pct.toFixed(0)}% complete</span>
-                          <span className="text-xs text-green-600">{c.certified_count} certified</span>
-                          <span className="text-xs text-red-600">{c.revoked_count} revoked</span>
-                          <span className="text-xs text-yellow-600">{c.pending_count} pending</span>
+                          <span className="text-xs text-muted-foreground">{t('pages.attestation.percentComplete', { n: pct.toFixed(0) })}</span>
+                          <span className="text-xs text-green-600">{t('pages.attestation.certifiedCount', { n: c.certified_count })}</span>
+                          <span className="text-xs text-red-600">{t('pages.attestation.revokedCount', { n: c.revoked_count })}</span>
+                          <span className="text-xs text-yellow-600">{t('pages.attestation.pendingCount', { n: c.pending_count })}</span>
                         </div>
                       )}
                     </div>
                     <div className="flex gap-2 ml-4">
                       {c.status === 'draft' && (
                         <Button size="sm" onClick={() => launchMutation.mutate(c.id)} disabled={launchMutation.isPending}>
-                          <Rocket className="h-3 w-3 mr-1" />Launch
+                          <Rocket className="h-3 w-3 mr-1" />{t('pages.attestation.launch')}
                         </Button>
                       )}
                     </div>
@@ -282,7 +285,7 @@ export function AttestationCampaignsPage() {
                 </div>
               )
             })}
-            {campaigns.length === 0 && <p className="py-8 text-center text-muted-foreground">No attestation campaigns yet</p>}
+            {campaigns.length === 0 && <p className="py-8 text-center text-muted-foreground">{t('pages.attestation.empty')}</p>}
           </div>
         </CardContent>
       </Card>
@@ -292,7 +295,7 @@ export function AttestationCampaignsPage() {
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center justify-between">
-              <span className="flex items-center gap-2"><BarChart3 className="h-5 w-5" />Campaign Progress</span>
+              <span className="flex items-center gap-2"><BarChart3 className="h-5 w-5" />{t('pages.attestation.progress.title')}</span>
               <Button variant="ghost" size="sm" onClick={() => setSelectedCampaign(null)}><X className="h-4 w-4" /></Button>
             </CardTitle>
           </CardHeader>
@@ -300,23 +303,23 @@ export function AttestationCampaignsPage() {
             <div className="grid grid-cols-5 gap-4 mb-6">
               <div className="text-center">
                 <p className="text-2xl font-bold">{progress.total}</p>
-                <p className="text-xs text-muted-foreground">Total</p>
+                <p className="text-xs text-muted-foreground">{t('pages.attestation.progress.total')}</p>
               </div>
               <div className="text-center">
                 <p className="text-2xl font-bold text-green-600">{progress.certified}</p>
-                <p className="text-xs text-muted-foreground">Certified</p>
+                <p className="text-xs text-muted-foreground">{t('pages.attestation.progress.certified')}</p>
               </div>
               <div className="text-center">
                 <p className="text-2xl font-bold text-red-600">{progress.revoked}</p>
-                <p className="text-xs text-muted-foreground">Revoked</p>
+                <p className="text-xs text-muted-foreground">{t('pages.attestation.progress.revoked')}</p>
               </div>
               <div className="text-center">
                 <p className="text-2xl font-bold text-yellow-600">{progress.pending}</p>
-                <p className="text-xs text-muted-foreground">Pending</p>
+                <p className="text-xs text-muted-foreground">{t('pages.attestation.progress.pending')}</p>
               </div>
               <div className="text-center">
                 <p className="text-2xl font-bold text-purple-600">{progress.delegated}</p>
-                <p className="text-xs text-muted-foreground">Delegated</p>
+                <p className="text-xs text-muted-foreground">{t('pages.attestation.progress.delegated')}</p>
               </div>
             </div>
 
@@ -331,26 +334,26 @@ export function AttestationCampaignsPage() {
                       <span className="text-sm">{item.resource_name}</span>
                       <Badge variant="outline" className="text-xs">{item.resource_type}</Badge>
                     </div>
-                    {item.reviewer_name && <p className="text-xs text-muted-foreground">Reviewer: {item.reviewer_name}</p>}
+                    {item.reviewer_name && <p className="text-xs text-muted-foreground">{t('pages.attestation.reviewer', { name: item.reviewer_name })}</p>}
                   </div>
                   <div className="flex items-center gap-2">
                     {item.decision === 'pending' ? (
                       <>
                         <Button size="sm" variant="outline"
                           onClick={() => decideMutation.mutate({ campaignId: selectedCampaign, itemId: item.id, decision: 'certified', comments: '' })}>
-                          <CheckCircle className="h-3 w-3 mr-1" />Certify
+                          <CheckCircle className="h-3 w-3 mr-1" />{t('pages.attestation.certify')}
                         </Button>
                         <ConfirmAction
-                          title="Revoke this access?"
-                          description={`This revokes ${item.user_name}'s access to "${item.resource_name}". The access will be removed as part of this attestation campaign. Provide the reason; it is recorded with the decision and in the audit log.`}
+                          title={t('pages.attestation.confirmRevoke.title')}
+                          description={t('pages.attestation.confirmRevoke.description', { user: item.user_name, resource: item.resource_name })}
                           destructive
                           requireReason
-                          confirmLabel="Revoke"
+                          confirmLabel={t('pages.attestation.revoke')}
                           onConfirm={(reason) => decideMutation.mutateAsync({ campaignId: selectedCampaign, itemId: item.id, decision: 'revoked', comments: reason! })}
                         >
                           {(open) => (
                             <Button size="sm" variant="outline" onClick={open}>
-                              <X className="h-3 w-3 mr-1" />Revoke
+                              <X className="h-3 w-3 mr-1" />{t('pages.attestation.revoke')}
                             </Button>
                           )}
                         </ConfirmAction>

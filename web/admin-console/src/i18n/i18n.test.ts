@@ -137,6 +137,25 @@ describe('i18n', () => {
         'disable_account',
         'enable_account',
       ].map((k) => `pages.provisioningRules.actionTypes.${k}`),
+      // governance: review/campaign type, schedule and entitlement-type labels
+      // all resolve from runtime maps or template-literal keys.
+      ...['user_access', 'role_assignment', 'application_access', 'privileged_access'].flatMap(
+        (k) => [`pages.accessReviews.types.${k}`, `pages.certCampaigns.types.${k}`],
+      ),
+      ...['once', 'quarterly', 'semi_annual', 'annual'].map(
+        (k) => `pages.certCampaigns.schedules.${k}`,
+      ),
+      ...[
+        'manager_review',
+        'application_access',
+        'role_certification',
+        'entitlement_review',
+      ].map((k) => `pages.attestation.types.${k}`),
+      ...['role', 'group', 'application'].map((k) => `pages.entitlements.types.${k}`),
+      // review-detail: the batch-decision verb, keyed by the decision value
+      ...['approved', 'revoked', 'flagged'].map(
+        (k) => `pages.reviewDetail.batch.actions.${k}`,
+      ),
       // directories: validateForm messages resolved through the i18n singleton
       ...[
         'nameRequired',
