@@ -495,8 +495,18 @@ all four pillars, deploy, log in, and find PAM.
    and the landing page as the reference extraction. Locales are typed
    against the English catalog, so a missing translation fails
    `npm run type-check`; conventions in `web/admin-console/README.md`.
-   *Remaining:* extracting the rest of the console's pages — now
-   mechanical, page by page, against the landing pattern.
+   *Extraction so far:* the landing page, the **entire login surface**
+   (all four screens — credentials, MFA method selection, MFA verify
+   incl. WebAuthn/push/OTP states, SSO options — plus every client-side
+   error string; server `error_description` strings pass through
+   untranslated by convention), and the **app chrome** (sidebar, view
+   switcher, menu search, account menu, aria labels), with the switcher
+   on the login screens and in the authenticated header. The login
+   footer's Privacy/Terms/Help trio — link-styled text with no
+   destinations — was replaced with real Documentation/Security links,
+   pinned by test. *Remaining:* the ~100 admin pages and the
+   `config/navigation` item labels — mechanical, page by page, against
+   this pattern.
 2. Accessibility pass to a VPAT (needs real assistive-technology testing,
    not just an automated axe sweep).
 3. Separate/hardened end-user portal bundle.

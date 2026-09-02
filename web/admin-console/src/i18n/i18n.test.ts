@@ -17,6 +17,8 @@ describe('i18n', () => {
     await i18n.changeLanguage('tr')
     expect(i18n.t('landing.nav.signIn')).toBe('Oturum Aç')
     expect(i18n.t('landing.hero.point1')).toBe('%100 açık kaynak (Apache-2.0)')
+    expect(i18n.t('login.form.signIn')).toBe('Oturum Aç')
+    expect(i18n.t('chrome.account.logout')).toBe('Oturumu Kapat')
 
     await i18n.changeLanguage('en')
     expect(i18n.t('landing.nav.signIn')).toBe('Sign In')

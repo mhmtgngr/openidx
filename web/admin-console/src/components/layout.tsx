@@ -12,12 +12,14 @@ import {
 } from 'lucide-react'
 import { useState, Suspense } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import { useAuth } from '../lib/auth'
 import { api } from '../lib/api'
 import { useAppStore } from '../lib/store'
 import { roleLevel, ROLE_LEVELS } from '../lib/roles'
 import { filterNavigation, type ViewMode } from '../config/navigation'
 import { CommandPalette } from './command-palette'
+import { LanguageSwitcher } from './language-switcher'
 import { NotificationBell } from './notification-bell'
 import { TenantSelector } from './tenant-selector'
 import { ThemeToggle } from './theme-toggle'
@@ -38,6 +40,7 @@ import {
 } from './ui/dropdown-menu'
 
 function ZitiStatusIndicator() {
+  const { t } = useTranslation()
   const navigate = useNavigate()
   const { data: zitiStatus } = useQuery({
     queryKey: ['ziti-status-header'],
@@ -57,7 +60,7 @@ function ZitiStatusIndicator() {
     <button
       onClick={() => navigate('/ziti-network')}
       className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-muted transition-colors text-sm"
-      title="Ziti Network Status"
+      title={t('chrome.zitiStatus')}
     >
       <Network className="h-4 w-4 text-blue-600" />
       {zitiStatus.controller_reachable ? (
@@ -77,13 +80,14 @@ function ZitiStatusIndicator() {
 // Console lenses: Administration is the full console, Management the operator
 // slice, Reporting the auditor slice. Options above the user's level are
 // hidden; users below operator get no switcher at all.
-const VIEW_OPTIONS: { mode: ViewMode; label: string; minLevel: number }[] = [
-  { mode: 'admin', label: 'Admin', minLevel: ROLE_LEVELS.admin },
-  { mode: 'management', label: 'Manage', minLevel: ROLE_LEVELS.operator },
-  { mode: 'reporting', label: 'Report', minLevel: ROLE_LEVELS.auditor },
+const VIEW_OPTIONS: { mode: ViewMode; labelKey: string; minLevel: number }[] = [
+  { mode: 'admin', labelKey: 'chrome.views.admin', minLevel: ROLE_LEVELS.admin },
+  { mode: 'management', labelKey: 'chrome.views.manage', minLevel: ROLE_LEVELS.operator },
+  { mode: 'reporting', labelKey: 'chrome.views.report', minLevel: ROLE_LEVELS.auditor },
 ]
 
 function ViewModeSwitcher({ level }: { level: number }) {
+  const { t } = useTranslation()
   const { viewMode, setViewMode } = useAppStore()
   const options = VIEW_OPTIONS.filter((o) => level >= o.minLevel)
   if (level < ROLE_LEVELS.operator) return null
@@ -92,7 +96,7 @@ function ViewModeSwitcher({ level }: { level: number }) {
     <div
       className="flex rounded-lg border bg-muted p-0.5"
       role="group"
-      aria-label="Console view"
+      aria-label={t('chrome.views.groupLabel')}
     >
       {options.map((option) => (
         <button
@@ -105,7 +109,7 @@ function ViewModeSwitcher({ level }: { level: number }) {
           }`}
           aria-pressed={viewMode === option.mode}
         >
-          {option.label}
+          {t(option.labelKey)}
         </button>
       ))}
     </div>
@@ -113,6 +117,7 @@ function ViewModeSwitcher({ level }: { level: number }) {
 }
 
 export function Layout() {
+  const { t } = useTranslation()
   const { user, logout, hasRole } = useAuth()
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [mobileOpen, setMobileOpen] = useState(false)
@@ -168,7 +173,7 @@ export function Layout() {
             variant="ghost"
             size="icon"
             onClick={() => setSidebarOpen(!sidebarOpen)}
-            aria-label="Toggle sidebar"
+            aria-label={t('chrome.toggleSidebar')}
           >
             <Menu className="h-5 w-5" />
           </Button>
@@ -184,15 +189,15 @@ export function Layout() {
                 type="search"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search menu..."
-                aria-label="Search menu"
+                placeholder={t('chrome.searchMenuPlaceholder')}
+                aria-label={t('chrome.searchMenu')}
                 className="h-9 pl-8 pr-8 [&::-webkit-search-cancel-button]:hidden"
               />
               {searching ? (
                 <button
                   onClick={() => setQuery('')}
                   className="absolute right-2 top-2.5 text-muted-foreground hover:text-foreground"
-                  aria-label="Clear menu search"
+                  aria-label={t('chrome.clearSearch')}
                 >
                   <X className="h-4 w-4" />
                 </button>
@@ -208,7 +213,7 @@ export function Layout() {
         {/* Navigation */}
         <nav className="flex-1 overflow-y-auto p-4 space-y-1">
           {groups.length === 0 && sidebarOpen && (
-            <p className="px-3 py-2 text-sm text-muted-foreground">No menu items match.</p>
+            <p className="px-3 py-2 text-sm text-muted-foreground">{t('chrome.noMenuMatches')}</p>
           )}
           {groups.map((group, gIdx) => {
             // While searching, everything relevant stays visible.
@@ -283,7 +288,7 @@ export function Layout() {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56">
               <DropdownMenuLabel>
-                <div>My Account</div>
+                <div>{t('chrome.account.myAccount')}</div>
                 {user?.roles && user.roles.length > 0 && (
                   <div className="text-xs font-normal text-muted-foreground mt-0.5">
                     {user.roles.join(', ')}
@@ -293,18 +298,18 @@ export function Layout() {
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={() => navigate('/profile')}>
                 <User className="mr-2 h-4 w-4" />
-                My Profile
+                {t('chrome.account.myProfile')}
               </DropdownMenuItem>
               {isAdmin && (
                 <DropdownMenuItem onClick={() => navigate('/settings')}>
                   <Settings className="mr-2 h-4 w-4" />
-                  Settings
+                  {t('chrome.account.settings')}
                 </DropdownMenuItem>
               )}
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={logout} className="text-red-600">
                 <LogOut className="mr-2 h-4 w-4" />
-                Logout
+                {t('chrome.account.logout')}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -320,13 +325,14 @@ export function Layout() {
             size="icon"
             className="md:hidden"
             onClick={() => setMobileOpen(true)}
-            aria-label="Open navigation"
+            aria-label={t('chrome.openNavigation')}
           >
             <Menu className="h-5 w-5" />
           </Button>
           <div className="flex-1" />
           {isPlatformAdmin && <TenantSelector />}
           {isAdmin && <ZitiStatusIndicator />}
+          <LanguageSwitcher />
           <ThemeToggle />
           <NotificationBell />
         </header>
