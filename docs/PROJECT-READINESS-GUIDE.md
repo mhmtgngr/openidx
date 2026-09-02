@@ -14,13 +14,14 @@ ServiceMonitor, backup CronJob, Keycloak/APISIX ghosts removed, chart
 pushed to GHCR as a signed OCI artifact on every tag; WebAuthn→Redis;
 signed releases; Dependabot/Renovate dedupe; dead surfaces pruned; a
 second site truth-sweep fixed the remaining phantom install/config
-surfaces), **and P4 is well under way** (console i18n framework, EN + TR: the
-landing page, the entire login surface, the app chrome, the whole
-navigation layer with bilingual search, and the five most-seen end-user
-pages — dashboard, portal, security, access, sessions — are fully
-bilingual). Open: P1 rollout Task 16 (operator action), P3.1 cut
-v1.28.0 (post-merge), the remaining P4 items incl. the remaining page
-bodies and the Expo-vs-Flutter mobile pick.)
+surfaces), **and P4 is well under way** (console i18n, EN + TR: the landing page,
+the entire login surface, the app chrome, the whole navigation layer
+with bilingual search, and **every end-user page** — dashboard, portal,
+security, access, sessions, devices, trusted browsers, notifications,
+access requests, profile — are fully bilingual; the end-user experience
+is complete in both languages). Open: P1 rollout Task 16 (operator
+action), P3.1 cut v1.28.0 (post-merge), the remaining P4 items incl.
+the ~90 admin page bodies and the Expo-vs-Flutter mobile pick.)
 **Question this document answers:** *Is OpenIDX fully functional and well defined end to end, as experienced by the people who use it — and what are the next steps and controls to get it there?*
 
 This is the product-and-user-side companion to
@@ -524,9 +525,18 @@ all four pillars, deploy, log in, and find PAM.
    localized resource name). Server-sourced text (names, statuses, tips,
    API error messages) stays untranslated by convention, and keys wired
    through runtime maps are pinned by test since the `typeof en` check
-   can't see them. *Remaining:* the other five end-user pages (devices,
-   trusted browsers, notifications, access requests, profile) and the
-   ~90 admin page bodies — mechanical, page by page, against this
+   can't see them. *And the rest of the end-user surface:* My Devices
+   (incl. the network-access setup flow and posture badges), Trusted
+   Browsers, the Notification Center (tabs, digest settings, localized
+   relative times), Access Requests (all three personas — requester,
+   approver, admin — with the create/approve/deny/retrieve/return
+   dialogs), and the full My Profile account page (personal info, TOTP/
+   SMS/email-OTP enrollment flows, trusted browsers, password change
+   incl. the AD/Azure-AD managed variants, sessions, personal access
+   tokens, authorized apps) are fully bilingual, as are the shared
+   compliance-score tooltips. **Every page a non-admin user can reach
+   now renders in English and Türkçe end to end.** *Remaining:* the ~90
+   admin-only page bodies — mechanical, page by page, against this
    pattern.
 2. Accessibility pass to a VPAT (needs real assistive-technology testing,
    not just an automated axe sweep).

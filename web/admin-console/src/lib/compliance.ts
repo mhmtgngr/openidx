@@ -19,6 +19,8 @@
  *    the same day called this out as a suspicious "0%".
  */
 
+import i18n from '../i18n'
+
 /** Statuses that mean "we have no measurement", not "the measurement is zero". */
 const UNMEASURED = new Set(['unknown', '', 'pending'])
 
@@ -51,6 +53,6 @@ export function complianceTooltip(
 ): string | undefined {
   if (hasComplianceMeasurement(status)) return undefined
   return lastReportAt
-    ? `No compliance report since ${lastReportAt}; the score is unknown, not zero.`
-    : 'This agent has never reported posture, so the score is unknown, not zero.'
+    ? i18n.t('compliance.noReportSince', { date: lastReportAt })
+    : i18n.t('compliance.neverReported')
 }

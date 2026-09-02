@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { complianceTooltip, formatCompliancePercent } from '../lib/compliance'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import { Smartphone, Monitor, Tablet, Shield, ShieldCheck, ShieldX, Trash2, Edit, Plus, MoreHorizontal, Network, Download, Wifi, WifiOff } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -82,6 +83,7 @@ interface CorrelatedDevice {
 }
 
 export function MyDevicesPage() {
+  const { t } = useTranslation()
   const { toast } = useToast()
   const queryClient = useQueryClient()
   const [editDialog, setEditDialog] = useState(false)
@@ -118,12 +120,12 @@ export function MyDevicesPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['my-devices'] })
-      toast({ title: 'Device registered', description: 'Your device has been registered successfully.' })
+      toast({ title: t('pages.myDevices.toasts.registered'), description: t('pages.myDevices.toasts.registeredDesc') })
       setRegisterDialog(false)
       setNewDeviceName('')
     },
     onError: () => {
-      toast({ title: 'Error', description: 'Failed to register device.', variant: 'destructive' })
+      toast({ title: t('common.error'), description: t('pages.myDevices.toasts.registerFailed'), variant: 'destructive' })
     }
   })
 
@@ -134,11 +136,11 @@ export function MyDevicesPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['my-devices'] })
-      toast({ title: 'Device updated', description: 'Device name has been updated.' })
+      toast({ title: t('pages.myDevices.toasts.updated'), description: t('pages.myDevices.toasts.updatedDesc') })
       setEditDialog(false)
     },
     onError: () => {
-      toast({ title: 'Error', description: 'Failed to update device.', variant: 'destructive' })
+      toast({ title: t('common.error'), description: t('pages.myDevices.toasts.updateFailed'), variant: 'destructive' })
     }
   })
 
@@ -149,11 +151,11 @@ export function MyDevicesPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['my-devices'] })
-      toast({ title: 'Device removed', description: 'The device has been removed from your account.' })
+      toast({ title: t('pages.myDevices.toasts.removed'), description: t('pages.myDevices.toasts.removedDesc') })
       setDeleteDialog(false)
     },
     onError: () => {
-      toast({ title: 'Error', description: 'Failed to remove device.', variant: 'destructive' })
+      toast({ title: t('common.error'), description: t('pages.myDevices.toasts.removeFailed'), variant: 'destructive' })
     }
   })
 
@@ -164,12 +166,12 @@ export function MyDevicesPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['my-devices'] })
-      toast({ title: 'Trust requested', description: 'Your trust request has been submitted for review.' })
+      toast({ title: t('pages.myDevices.toasts.trustRequested'), description: t('pages.myDevices.toasts.trustRequestedDesc') })
       setTrustDialog(false)
       setTrustJustification('')
     },
     onError: () => {
-      toast({ title: 'Error', description: 'Failed to submit trust request.', variant: 'destructive' })
+      toast({ title: t('common.error'), description: t('pages.myDevices.toasts.trustFailed'), variant: 'destructive' })
     }
   })
 
@@ -202,8 +204,8 @@ export function MyDevicesPage() {
   }
 
   const formatDate = (dateString?: string) => {
-    if (!dateString) return 'Never'
-    return new Date(dateString).toLocaleDateString('en-US', {
+    if (!dateString) return t('pages.myDevices.list.never')
+    return new Date(dateString).toLocaleDateString(undefined, {
       month: 'short',
       day: 'numeric',
       year: 'numeric',
@@ -228,9 +230,9 @@ export function MyDevicesPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">My Devices</h1>
+          <h1 className="text-2xl font-bold tracking-tight">{t('nav.items.myDevices')}</h1>
           <p className="text-muted-foreground">
-            Manage your devices and how they connect
+            {t('pages.myDevices.subtitle')}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -240,11 +242,11 @@ export function MyDevicesPage() {
               way to enroll a mobile device from the console. */}
           <Button variant="outline" onClick={() => navigate('/add-device')}>
             <Smartphone className="h-4 w-4 mr-2" />
-            Add a Device
+            {t('pages.myDevices.addDevice')}
           </Button>
           <Button onClick={() => setRegisterDialog(true)}>
             <Plus className="h-4 w-4 mr-2" />
-            Register This Device
+            {t('pages.myDevices.registerThis')}
           </Button>
         </div>
       </div>
@@ -257,21 +259,21 @@ export function MyDevicesPage() {
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-2 text-base">
               <Network className="h-5 w-5 text-primary" />
-              Direct network access
+              {t('pages.myDevices.network.title')}
             </CardTitle>
             <CardDescription>
               {!zitiIdentity.linked
-                ? 'This account is not set up for direct network access yet. Most resources still open in your browser from My Network.'
+                ? t('pages.myDevices.network.notLinked')
                 : zitiIdentity.enrolled
-                  ? 'This device can reach internal systems directly.'
-                  : 'Optional. Most resources already open in your browser from My Network — you only need this for a few tools that connect outside the browser.'}
+                  ? t('pages.myDevices.network.enrolledDesc')
+                  : t('pages.myDevices.network.optional')}
             </CardDescription>
           </CardHeader>
           {zitiIdentity.linked && (
             <CardContent>
               <div className="flex flex-wrap items-center gap-4 text-sm">
                 <Badge variant={zitiIdentity.enrolled ? 'default' : 'secondary'}>
-                  {zitiIdentity.enrolled ? 'Active on this device' : 'Not set up on this device'}
+                  {zitiIdentity.enrolled ? t('pages.myDevices.network.activeBadge') : t('pages.myDevices.network.notSetUpBadge')}
                 </Badge>
               </div>
 
@@ -281,10 +283,10 @@ export function MyDevicesPage() {
               {!zitiIdentity.enrolled && (
                 <div className="mt-4">
                   <Button size="sm" onClick={() => navigate('/add-device')}>
-                    <Download className="h-3.5 w-3.5 mr-1.5" /> Set up network access
+                    <Download className="h-3.5 w-3.5 mr-1.5" /> {t('pages.myDevices.network.setup')}
                   </Button>
                   <p className="text-xs text-muted-foreground mt-1">
-                    A short guided setup — install the OpenIDX app and scan a code. You only do this once.
+                    {t('pages.myDevices.network.setupHint')}
                   </p>
                 </div>
               )}
@@ -298,10 +300,10 @@ export function MyDevicesPage() {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-2 text-base">
-              <Network className="h-4 w-4 text-green-600" />Devices with direct access
+              <Network className="h-4 w-4 text-green-600" />{t('pages.myDevices.agents.title')}
             </CardTitle>
             <CardDescription>
-              Devices set up for direct network access, and whether they meet your security policy.
+              {t('pages.myDevices.agents.hint')}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-2">
@@ -325,7 +327,7 @@ export function MyDevicesPage() {
                       </Badge>
                       {d.source === 'linked' && (
                         <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200">
-                          linked to trusted device
+                          {t('pages.myDevices.agents.linkedBadge')}
                         </Badge>
                       )}
                     </div>
@@ -351,7 +353,7 @@ export function MyDevicesPage() {
       <div className="grid gap-4 md:grid-cols-3">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Devices</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('pages.myDevices.stats.total')}</CardTitle>
             <Monitor className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -360,7 +362,7 @@ export function MyDevicesPage() {
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Trusted</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('pages.myDevices.stats.trusted')}</CardTitle>
             <ShieldCheck className="h-4 w-4 text-green-600" />
           </CardHeader>
           <CardContent>
@@ -369,7 +371,7 @@ export function MyDevicesPage() {
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Untrusted</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('pages.myDevices.stats.untrusted')}</CardTitle>
             <ShieldX className="h-4 w-4 text-amber-600" />
           </CardHeader>
           <CardContent>
@@ -381,24 +383,24 @@ export function MyDevicesPage() {
       {/* Devices List */}
       <Card>
         <CardHeader>
-          <CardTitle>Registered Devices</CardTitle>
+          <CardTitle>{t('pages.myDevices.list.title')}</CardTitle>
           <CardDescription>
-            Devices that have been used to access your account
+            {t('pages.myDevices.list.hint')}
           </CardDescription>
         </CardHeader>
         <CardContent>
           {isLoading ? (
             <div className="flex flex-col items-center justify-center py-12">
               <LoadingSpinner size="lg" />
-              <p className="mt-4 text-sm text-muted-foreground">Loading devices...</p>
+              <p className="mt-4 text-sm text-muted-foreground">{t('pages.myDevices.list.loading')}</p>
             </div>
           ) : isError ? (
-            <QueryError error={error} resource="your devices" />
+            <QueryError error={error} resource={t('pages.myDevices.resourceName')} />
           ) : devices.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
               <Monitor className="h-12 w-12 text-muted-foreground/40 mb-3" />
-              <p className="font-medium">No devices registered</p>
-              <p className="text-sm">Register this device to get started</p>
+              <p className="font-medium">{t('pages.myDevices.list.empty')}</p>
+              <p className="text-sm">{t('pages.myDevices.list.emptyHint')}</p>
             </div>
           ) : (
             <div className="space-y-4">
@@ -417,27 +419,27 @@ export function MyDevicesPage() {
                         {device.trusted ? (
                           <Badge className="bg-green-100 text-green-800">
                             <ShieldCheck className="h-3 w-3 mr-1" />
-                            Trusted
+                            {t('pages.myDevices.badges.trusted')}
                           </Badge>
                         ) : (
                           <Badge variant="secondary">
                             <Shield className="h-3 w-3 mr-1" />
-                            Untrusted
+                            {t('pages.myDevices.badges.untrusted')}
                           </Badge>
                         )}
                         {device.trusted && zitiIdentity?.linked && zitiIdentity?.enrolled ? (
                           <Badge className="bg-emerald-100 text-emerald-800">
                             <Wifi className="h-3 w-3 mr-1" />
-                            Network Active
+                            {t('pages.myDevices.badges.networkActive')}
                           </Badge>
                         ) : device.trusted && zitiIdentity?.linked && !zitiIdentity?.enrolled ? (
                           <Badge className="bg-yellow-100 text-yellow-800">
-                            Setup not finished
+                            {t('pages.myDevices.badges.setupUnfinished')}
                           </Badge>
                         ) : !device.trusted ? (
                           <Badge variant="outline" className="text-muted-foreground">
                             <WifiOff className="h-3 w-3 mr-1" />
-                            No Network Access
+                            {t('pages.myDevices.badges.noNetwork')}
                           </Badge>
                         ) : null}
                       </div>
@@ -446,7 +448,7 @@ export function MyDevicesPage() {
                         {device.location && ` - ${device.location}`}
                       </div>
                       <div className="text-xs text-muted-foreground mt-1">
-                        Last seen: {formatDate(device.last_seen_at)} | Registered: {formatDate(device.created_at)}
+                        {t('pages.myDevices.list.lastSeenRegistered', { lastSeen: formatDate(device.last_seen_at), registered: formatDate(device.created_at) })}
                       </div>
                     </div>
                   </div>
@@ -459,12 +461,12 @@ export function MyDevicesPage() {
                     <DropdownMenuContent align="end">
                       <DropdownMenuItem onClick={() => handleEdit(device)}>
                         <Edit className="h-4 w-4 mr-2" />
-                        Rename
+                        {t('pages.myDevices.menu.rename')}
                       </DropdownMenuItem>
                       {!device.trusted && (
                         <DropdownMenuItem onClick={() => handleTrust(device)}>
                           <ShieldCheck className="h-4 w-4 mr-2" />
-                          Request Trust
+                          {t('pages.myDevices.menu.requestTrust')}
                         </DropdownMenuItem>
                       )}
                       <DropdownMenuSeparator />
@@ -473,7 +475,7 @@ export function MyDevicesPage() {
                         className="text-red-600 focus:text-red-600"
                       >
                         <Trash2 className="h-4 w-4 mr-2" />
-                        Remove
+                        {t('pages.myDevices.menu.remove')}
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
@@ -488,28 +490,28 @@ export function MyDevicesPage() {
       <Dialog open={registerDialog} onOpenChange={setRegisterDialog}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Register This Device</DialogTitle>
+            <DialogTitle>{t('pages.myDevices.registerThis')}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="device-name">Device Name</Label>
+              <Label htmlFor="device-name">{t('pages.myDevices.registerDialog.nameLabel')}</Label>
               <Input
                 id="device-name"
-                placeholder="e.g., Work Laptop, Personal Phone"
+                placeholder={t('pages.myDevices.registerDialog.placeholder')}
                 value={newDeviceName}
                 onChange={(e) => setNewDeviceName(e.target.value)}
               />
               <p className="text-xs text-muted-foreground">
-                Give this device a friendly name to identify it later
+                {t('pages.myDevices.registerDialog.hint')}
               </p>
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setRegisterDialog(false)}>
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button onClick={() => registerMutation.mutate({ name: newDeviceName })}>
-              Register Device
+              {t('pages.myDevices.registerDialog.submit')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -519,11 +521,11 @@ export function MyDevicesPage() {
       <Dialog open={editDialog} onOpenChange={setEditDialog}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Rename Device</DialogTitle>
+            <DialogTitle>{t('pages.myDevices.editDialog.title')}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="edit-name">Device Name</Label>
+              <Label htmlFor="edit-name">{t('pages.myDevices.registerDialog.nameLabel')}</Label>
               <Input
                 id="edit-name"
                 value={editName}
@@ -533,10 +535,10 @@ export function MyDevicesPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditDialog(false)}>
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button onClick={() => selectedDevice && updateMutation.mutate({ id: selectedDevice.id, name: editName })}>
-              Save Changes
+              {t('pages.myDevices.editDialog.save')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -546,17 +548,17 @@ export function MyDevicesPage() {
       <Dialog open={trustDialog} onOpenChange={setTrustDialog}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Request Device Trust</DialogTitle>
+            <DialogTitle>{t('pages.myDevices.trustDialog.title')}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <p className="text-sm text-muted-foreground">
-              Trusted devices get fewer MFA prompts and zero-trust network access. Once approved, this device will enable secure network connectivity.
+              {t('pages.myDevices.trustDialog.description')}
             </p>
             <div className="space-y-2">
-              <Label htmlFor="justification">Justification</Label>
+              <Label htmlFor="justification">{t('pages.myDevices.trustDialog.justification')}</Label>
               <Textarea
                 id="justification"
-                placeholder="This is my work laptop used for daily tasks..."
+                placeholder={t('pages.myDevices.trustDialog.placeholder')}
                 value={trustJustification}
                 onChange={(e) => setTrustJustification(e.target.value)}
                 rows={3}
@@ -565,10 +567,10 @@ export function MyDevicesPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setTrustDialog(false)}>
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button onClick={() => selectedDevice && trustMutation.mutate({ id: selectedDevice.id, justification: trustJustification })}>
-              Submit Request
+              {t('pages.myDevices.trustDialog.submit')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -578,19 +580,18 @@ export function MyDevicesPage() {
       <AlertDialog open={deleteDialog} onOpenChange={setDeleteDialog}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Remove Device?</AlertDialogTitle>
+            <AlertDialogTitle>{t('pages.myDevices.deleteDialog.title')}</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to remove "{selectedDevice?.name}" from your account?
-              You may need to re-authenticate if you use this device again.
+              {t('pages.myDevices.deleteDialog.description', { name: selectedDevice?.name ?? '' })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => selectedDevice && deleteMutation.mutate(selectedDevice.id)}
               className="bg-red-600 hover:bg-red-700"
             >
-              Remove Device
+              {t('pages.myDevices.deleteDialog.confirm')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

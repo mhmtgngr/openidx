@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import { Monitor, Trash2, AlertTriangle, CheckCircle2, XCircle, Clock, Shield, Globe } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card'
@@ -46,6 +47,7 @@ interface CheckResult {
 }
 
 export function TrustedBrowsersPage() {
+  const { t } = useTranslation()
   const { toast } = useToast()
   const queryClient = useQueryClient()
   const [revokeDialog, setRevokeDialog] = useState(false)
@@ -76,11 +78,11 @@ export function TrustedBrowsersPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['trusted-browsers'] })
       queryClient.invalidateQueries({ queryKey: ['trusted-browser-check'] })
-      toast({ title: 'Browser Trusted', description: 'This browser has been added to your trusted list.' })
+      toast({ title: t('pages.trustedBrowsers.toasts.trusted'), description: t('pages.trustedBrowsers.toasts.trustedDesc') })
       setTrustDialog(false)
     },
     onError: (error: Error) => {
-      toast({ title: 'Error', description: error.message, variant: 'destructive' })
+      toast({ title: t('common.error'), description: error.message, variant: 'destructive' })
     }
   })
 
@@ -90,7 +92,7 @@ export function TrustedBrowsersPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['trusted-browsers'] })
       queryClient.invalidateQueries({ queryKey: ['trusted-browser-check'] })
-      toast({ title: 'Trust Revoked', description: 'Browser trust has been revoked.' })
+      toast({ title: t('pages.trustedBrowsers.toasts.revoked'), description: t('pages.trustedBrowsers.toasts.revokedDesc') })
       setRevokeDialog(false)
     }
   })
@@ -100,7 +102,7 @@ export function TrustedBrowsersPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['trusted-browsers'] })
       queryClient.invalidateQueries({ queryKey: ['trusted-browser-check'] })
-      toast({ title: 'All Trust Revoked', description: 'All trusted browsers have been revoked.' })
+      toast({ title: t('pages.trustedBrowsers.toasts.allRevoked'), description: t('pages.trustedBrowsers.toasts.allRevokedDesc') })
       setRevokeAllDialog(false)
     }
   })
@@ -137,27 +139,27 @@ export function TrustedBrowsersPage() {
   }
 
   if (isError) {
-    return <QueryError error={error} resource="trusted browsers" />
+    return <QueryError error={error} resource={t('pages.trustedBrowsers.resourceName')} />
   }
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Trusted Browsers</h1>
-          <p className="text-muted-foreground">Manage browsers that can skip MFA verification</p>
+          <h1 className="text-2xl font-bold tracking-tight">{t('nav.items.trustedBrowsers')}</h1>
+          <p className="text-muted-foreground">{t('pages.trustedBrowsers.subtitle')}</p>
         </div>
         <div className="flex gap-2">
           {browsers.length > 0 && (
             <Button variant="outline" onClick={() => setRevokeAllDialog(true)}>
               <Trash2 className="h-4 w-4 mr-2" />
-              Revoke All
+              {t('pages.trustedBrowsers.revokeAll')}
             </Button>
           )}
           {!checkResult?.trusted && (
             <Button onClick={() => setTrustDialog(true)}>
               <Shield className="h-4 w-4 mr-2" />
-              Trust This Browser
+              {t('pages.trustedBrowsers.trustThis')}
             </Button>
           )}
         </div>
@@ -171,9 +173,9 @@ export function TrustedBrowsersPage() {
               <>
                 <CheckCircle2 className="h-5 w-5 text-green-600" />
                 <div>
-                  <p className="font-medium text-green-900">This browser is trusted</p>
+                  <p className="font-medium text-green-900">{t('pages.trustedBrowsers.current.trusted')}</p>
                   <p className="text-sm text-green-800">
-                    You won't be asked for MFA on this browser until {checkResult.expires_at && formatDate(checkResult.expires_at)}
+                    {t('pages.trustedBrowsers.current.trustedUntil', { date: checkResult.expires_at ? formatDate(checkResult.expires_at) : '' })}
                   </p>
                 </div>
               </>
@@ -181,9 +183,9 @@ export function TrustedBrowsersPage() {
               <>
                 <AlertTriangle className="h-5 w-5 text-amber-600" />
                 <div>
-                  <p className="font-medium text-amber-900">This browser is not trusted</p>
+                  <p className="font-medium text-amber-900">{t('pages.trustedBrowsers.current.notTrusted')}</p>
                   <p className="text-sm text-amber-800">
-                    You will be prompted for MFA verification on each login
+                    {t('pages.trustedBrowsers.current.notTrustedHint')}
                   </p>
                 </div>
               </>
@@ -198,12 +200,12 @@ export function TrustedBrowsersPage() {
           <div className="flex items-start gap-3">
             <Shield className="h-5 w-5 text-primary mt-0.5" />
             <div>
-              <p className="font-medium">How Trusted Browsers Work</p>
+              <p className="font-medium">{t('pages.trustedBrowsers.how.title')}</p>
               <ul className="text-sm text-muted-foreground mt-1 space-y-1">
-                <li>When you trust a browser, you won't need to verify MFA for 30 days</li>
-                <li>Trust is based on your browser fingerprint and IP address range</li>
-                <li>If you sign in from a new location, you may still be asked for MFA</li>
-                <li>Revoke trust if you lose access to a device or suspect compromise</li>
+                <li>{t('pages.trustedBrowsers.how.p1')}</li>
+                <li>{t('pages.trustedBrowsers.how.p2')}</li>
+                <li>{t('pages.trustedBrowsers.how.p3')}</li>
+                <li>{t('pages.trustedBrowsers.how.p4')}</li>
               </ul>
             </div>
           </div>
@@ -215,15 +217,15 @@ export function TrustedBrowsersPage() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <CheckCircle2 className="h-5 w-5 text-green-600" />
-            Active Trusted Browsers
+            {t('pages.trustedBrowsers.active.title')}
           </CardTitle>
-          <CardDescription>Browsers that can skip MFA verification</CardDescription>
+          <CardDescription>{t('pages.trustedBrowsers.active.hint')}</CardDescription>
         </CardHeader>
         <CardContent>
           {activeBrowsers.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
               <Monitor className="h-12 w-12 mx-auto mb-3 opacity-40" />
-              <p>No active trusted browsers</p>
+              <p>{t('pages.trustedBrowsers.active.empty')}</p>
             </div>
           ) : (
             <div className="space-y-3">
@@ -237,7 +239,7 @@ export function TrustedBrowsersPage() {
                     <div>
                       <div className="flex items-center gap-2">
                         <p className="font-medium">{browser.name}</p>
-                        <Badge className="bg-green-100 text-green-800">Active</Badge>
+                        <Badge className="bg-green-100 text-green-800">{t('pages.trustedBrowsers.badges.active')}</Badge>
                       </div>
                       <div className="flex items-center gap-4 text-sm text-muted-foreground mt-1">
                         <span className="flex items-center gap-1">
@@ -246,12 +248,12 @@ export function TrustedBrowsersPage() {
                         </span>
                         <span className="flex items-center gap-1">
                           <Clock className="h-3 w-3" />
-                          Expires in {daysUntilExpiry(browser.expires_at)} days
+                          {t('pages.trustedBrowsers.active.expiresIn', { count: daysUntilExpiry(browser.expires_at) })}
                         </span>
                       </div>
                       {browser.last_used_at && (
                         <p className="text-xs text-muted-foreground mt-1">
-                          Last used: {formatDate(browser.last_used_at)}
+                          {t('pages.trustedBrowsers.active.lastUsed', { date: formatDate(browser.last_used_at) })}
                         </p>
                       )}
                     </div>
@@ -277,9 +279,9 @@ export function TrustedBrowsersPage() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <XCircle className="h-5 w-5 text-muted-foreground" />
-              Expired or Revoked
+              {t('pages.trustedBrowsers.inactive.title')}
             </CardTitle>
-            <CardDescription>These browsers are no longer trusted</CardDescription>
+            <CardDescription>{t('pages.trustedBrowsers.inactive.hint')}</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
@@ -294,13 +296,15 @@ export function TrustedBrowsersPage() {
                       <div className="flex items-center gap-2">
                         <p className="font-medium">{browser.name}</p>
                         {browser.revoked ? (
-                          <Badge variant="secondary">Revoked</Badge>
+                          <Badge variant="secondary">{t('pages.trustedBrowsers.badges.revoked')}</Badge>
                         ) : (
-                          <Badge variant="secondary">Expired</Badge>
+                          <Badge variant="secondary">{t('pages.trustedBrowsers.badges.expired')}</Badge>
                         )}
                       </div>
                       <p className="text-sm text-muted-foreground">
-                        {browser.revoked ? 'Revoked' : 'Expired'}: {formatDate(browser.expires_at)}
+                        {browser.revoked
+                          ? t('pages.trustedBrowsers.inactive.revokedAt', { date: formatDate(browser.expires_at) })
+                          : t('pages.trustedBrowsers.inactive.expiredAt', { date: formatDate(browser.expires_at) })}
                       </p>
                     </div>
                   </div>
@@ -315,9 +319,9 @@ export function TrustedBrowsersPage() {
       <Dialog open={trustDialog} onOpenChange={setTrustDialog}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Trust This Browser?</DialogTitle>
+            <DialogTitle>{t('pages.trustedBrowsers.trustDialog.title')}</DialogTitle>
             <DialogDescription>
-              By trusting this browser, you won't need to complete MFA verification for the next 30 days.
+              {t('pages.trustedBrowsers.trustDialog.description')}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
@@ -325,17 +329,17 @@ export function TrustedBrowsersPage() {
               <div className="flex items-start gap-3">
                 <AlertTriangle className="h-5 w-5 text-amber-600 mt-0.5" />
                 <div className="text-sm text-amber-800">
-                  <p className="font-medium">Security Notice</p>
-                  <p>Only trust browsers on devices you own and control. Do not trust shared or public computers.</p>
+                  <p className="font-medium">{t('pages.trustedBrowsers.trustDialog.noticeTitle')}</p>
+                  <p>{t('pages.trustedBrowsers.trustDialog.notice')}</p>
                 </div>
               </div>
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setTrustDialog(false)}>Cancel</Button>
+            <Button variant="outline" onClick={() => setTrustDialog(false)}>{t('common.cancel')}</Button>
             <Button onClick={() => trustMutation.mutate()}>
               <Shield className="h-4 w-4 mr-2" />
-              Trust This Browser
+              {t('pages.trustedBrowsers.trustThis')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -345,18 +349,18 @@ export function TrustedBrowsersPage() {
       <AlertDialog open={revokeDialog} onOpenChange={setRevokeDialog}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Revoke Browser Trust?</AlertDialogTitle>
+            <AlertDialogTitle>{t('pages.trustedBrowsers.revokeDialog.title')}</AlertDialogTitle>
             <AlertDialogDescription>
-              This will require MFA verification the next time you sign in from "{selectedBrowser?.name}".
+              {t('pages.trustedBrowsers.revokeDialog.description', { name: selectedBrowser?.name ?? '' })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => selectedBrowser && revokeMutation.mutate(selectedBrowser.id)}
               className="bg-red-600 hover:bg-red-700"
             >
-              Revoke Trust
+              {t('pages.trustedBrowsers.revokeDialog.confirm')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -366,18 +370,18 @@ export function TrustedBrowsersPage() {
       <AlertDialog open={revokeAllDialog} onOpenChange={setRevokeAllDialog}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Revoke All Trusted Browsers?</AlertDialogTitle>
+            <AlertDialogTitle>{t('pages.trustedBrowsers.revokeAllDialog.title')}</AlertDialogTitle>
             <AlertDialogDescription>
-              This will require MFA verification on all your devices. You'll need to trust browsers again after signing in.
+              {t('pages.trustedBrowsers.revokeAllDialog.description')}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => revokeAllMutation.mutate()}
               className="bg-red-600 hover:bg-red-700"
             >
-              Revoke All
+              {t('pages.trustedBrowsers.revokeAll')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

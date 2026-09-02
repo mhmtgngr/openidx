@@ -52,6 +52,31 @@ describe('i18n', () => {
       'pages.myNetwork.statuses.needsSetup',
       'pages.dashboard.activity.eventFallback',
       'queryError.defaultResource',
+      // notification-center: FILTER_TABS labelKeys + the template-literal list titles
+      'pages.notifications.tabs.all',
+      'pages.notifications.tabs.unread',
+      'pages.notifications.tabs.security',
+      'pages.notifications.tabs.access',
+      'pages.notifications.tabs.system',
+      'pages.notifications.listTitles.all',
+      'pages.notifications.listTitles.unread',
+      'pages.notifications.listTitles.security',
+      'pages.notifications.listTitles.access',
+      'pages.notifications.listTitles.system',
+      // access-requests: DURATION_OPTIONS labelKeys + the per-type picker placeholders
+      'pages.accessRequests.durations.permanent',
+      'pages.accessRequests.durations.h4',
+      'pages.accessRequests.durations.h8',
+      'pages.accessRequests.durations.d1',
+      'pages.accessRequests.durations.d3',
+      'pages.accessRequests.durations.d7',
+      'pages.accessRequests.durations.d30',
+      'pages.accessRequests.durations.d90',
+      'pages.accessRequests.create.pickerPlaceholder.role',
+      'pages.accessRequests.create.pickerPlaceholder.group',
+      'pages.accessRequests.create.pickerPlaceholder.application',
+      // lib/compliance tooltip sentences
+      'compliance.neverReported',
     ]
     for (const lang of supportedLanguages) {
       for (const key of mapKeys) {
@@ -71,6 +96,18 @@ describe('i18n', () => {
     await i18n.changeLanguage('tr')
     expect(i18n.t('pages.dashboard.time.hourAgo', { count: 1 })).toBe('1 saat önce')
     expect(i18n.t('pages.dashboard.time.hourAgo', { count: 3 })).toBe('3 saat önce')
+  })
+
+  it('pluralizes the notification-center times and browser expiry in both languages', async () => {
+    await i18n.changeLanguage('en')
+    expect(i18n.t('pages.notifications.time.minuteAgo', { count: 1 })).toBe('1 minute ago')
+    expect(i18n.t('pages.notifications.time.minuteAgo', { count: 5 })).toBe('5 minutes ago')
+    expect(i18n.t('pages.trustedBrowsers.active.expiresIn', { count: 1 })).toBe('Expires in 1 day')
+    expect(i18n.t('pages.trustedBrowsers.active.expiresIn', { count: 30 })).toBe('Expires in 30 days')
+
+    await i18n.changeLanguage('tr')
+    expect(i18n.t('pages.notifications.time.minuteAgo', { count: 5 })).toBe('5 dakika önce')
+    expect(i18n.t('pages.trustedBrowsers.active.expiresIn', { count: 30 })).toBe('30 gün içinde doluyor')
   })
 
   it('interpolates the page strings that carry values', async () => {
