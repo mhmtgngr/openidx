@@ -211,6 +211,51 @@ describe('i18n', () => {
       ...['least_loaded', 'round_robin'].map((k) => `pages.windowsApps.placements.${k}`),
       // remote-support: the viewer badge keys off the session's own mode value
       ...['interactive', 'view'].map((k) => `pages.remoteSupport.modes.${k}`),
+      // audit-logs: filter list, stats chart and detail dialog all resolve the
+      // event type and outcome by the backend's own enum value
+      ...[
+        'authentication',
+        'authorization',
+        'user_management',
+        'group_management',
+        'role_management',
+        'configuration',
+        'data_access',
+        'system',
+      ].map((k) => `pages.auditLogs.eventTypes.${k}`),
+      ...['success', 'failure', 'pending'].map((k) => `pages.auditLogs.outcomes.${k}`),
+      // admin-audit-log: ACTION_TYPES / TARGET_TYPES carry labelKey, not a label
+      ...[
+        'all',
+        'create',
+        'update',
+        'delete',
+        'enable',
+        'disable',
+        'assign',
+        'revoke',
+        'login',
+        'logout',
+      ].map((k) => `pages.adminAuditLog.actions.${k}`),
+      ...[
+        'all',
+        'user',
+        'group',
+        'application',
+        'policy',
+        'role',
+        'settings',
+        'apiKey',
+        'webhook',
+      ].map((k) => `pages.adminAuditLog.targets.${k}`),
+      // compliance-reports: the framework label is keyed by the report's type
+      ...['soc2', 'iso27001', 'gdpr', 'hipaa', 'pci_dss', 'custom'].map(
+        (k) => `pages.complianceReports.frameworks.${k}`,
+      ),
+      // reports: both dialogs render the report-type list from the enum
+      ...['user_access', 'compliance', 'entitlement', 'activity'].map(
+        (k) => `pages.reports.reportTypes.${k}`,
+      ),
       // lib/connection-path + lib/remote-app resolve through the i18n singleton
       'pam.remoteAppSecretHint',
       ...[
@@ -286,6 +331,43 @@ describe('i18n', () => {
     await i18n.changeLanguage('tr')
     expect(i18n.t('pages.securityKeys.count', { count: 3 })).toBe('3 güvenlik anahtarı kayıtlı')
     expect(i18n.t('pages.pushDevices.count', { count: 2 })).toBe('2 cihaz kayıtlı')
+  })
+
+  it('pluralizes the audit counts in both languages', async () => {
+    await i18n.changeLanguage('en')
+    expect(i18n.t('pages.auditLogs.dayEvents', { date: '2026-01-01', count: 1 })).toBe(
+      '2026-01-01: 1 event',
+    )
+    expect(i18n.t('pages.auditLogs.dayEvents', { date: '2026-01-01', count: 7 })).toBe(
+      '2026-01-01: 7 events',
+    )
+    expect(i18n.t('pages.adminAuditLog.toast.exportedDesc', { count: 1 })).toBe(
+      'Exported 1 record to CSV.',
+    )
+    expect(i18n.t('pages.adminAuditLog.toast.exportedDesc', { count: 4 })).toBe(
+      'Exported 4 records to CSV.',
+    )
+
+    // Turkish does not inflect the noun after a numeral, so both plural forms
+    // carry the same wording -- but both must still resolve, not fall back.
+    await i18n.changeLanguage('tr')
+    expect(i18n.t('pages.auditLogs.dayEvents', { date: '2026-01-01', count: 7 })).toBe(
+      '2026-01-01: 7 olay',
+    )
+    expect(i18n.t('pages.adminAuditLog.toast.exportedDesc', { count: 4 })).toBe(
+      '4 kayıt CSV olarak dışa aktarıldı.',
+    )
+  })
+
+  it('resolves an unknown audit event type to its prettified raw value', async () => {
+    // The page falls back rather than rendering a bare key, so a type the
+    // backend adds later is still readable.
+    await i18n.changeLanguage('en')
+    expect(
+      i18n.t('pages.auditLogs.eventTypes.secret_rotation', {
+        defaultValue: 'secret_rotation'.replace('_', ' '),
+      }),
+    ).toBe('secret rotation')
   })
 
   it('interpolates the page strings that carry values', async () => {

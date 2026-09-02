@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { Search, Download, Shield, User, Settings, Database, AlertTriangle, CheckCircle, XCircle, Filter, Calendar, TrendingUp, BarChart3, ChevronLeft, ChevronRight, FileText } from 'lucide-react'
 import { Button } from '../components/ui/button'
@@ -72,7 +73,21 @@ const outcomeIcons: Record<string, React.ReactNode> = {
 
 const PAGE_SIZE = 50
 
+const EVENT_TYPES = [
+  'authentication',
+  'authorization',
+  'user_management',
+  'group_management',
+  'role_management',
+  'configuration',
+  'data_access',
+  'system',
+] as const
+
+const OUTCOMES = ['success', 'failure', 'pending'] as const
+
 export function AuditLogsPage() {
+  const { t } = useTranslation()
   const { toast } = useToast()
   const [search, setSearch] = useState('')
   const [eventTypeFilter, setEventTypeFilter] = useState<string>('')
@@ -162,15 +177,15 @@ export function AuditLogsPage() {
     },
     onSuccess: () => {
       toast({
-        title: 'Export Complete',
-        description: 'Audit events have been exported to CSV.',
+        title: t('pages.auditLogs.toast.exportComplete'),
+        description: t('pages.auditLogs.toast.exportCompleteDesc'),
         variant: 'success',
       })
     },
     onError: () => {
       toast({
-        title: 'Export Failed',
-        description: 'Failed to export audit events.',
+        title: t('pages.auditLogs.toast.exportFailed'),
+        description: t('pages.auditLogs.toast.exportFailedDesc'),
         variant: 'destructive',
       })
     },
@@ -184,9 +199,14 @@ export function AuditLogsPage() {
   // Calculate max for chart scaling
   const maxDailyEvents = Math.max(...(statistics?.events_per_day?.map(d => d.count) || [1]))
 
+  // Falls back to the raw value prettified, so an event_type the backend
+  // adds later reads as "new thing" rather than a raw catalog key.
+  const eventTypeLabel = (type: string) =>
+    t(`pages.auditLogs.eventTypes.${type}`, { defaultValue: type.replace('_', ' ') })
+
   const formatTimestamp = (timestamp: string) => {
     const date = new Date(timestamp)
-    return date.toLocaleString('en-US', {
+    return date.toLocaleString(undefined, {
       year: 'numeric',
       month: 'short',
       day: 'numeric',
@@ -196,23 +216,13 @@ export function AuditLogsPage() {
     })
   }
 
-  const eventTypes = [
-    'authentication',
-    'authorization',
-    'user_management',
-    'group_management',
-    'role_management',
-    'configuration',
-    'data_access',
-    'system',
-  ]
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Audit Logs</h1>
-          <p className="text-muted-foreground">View and search audit events</p>
+          <h1 className="text-3xl font-bold tracking-tight">{t('nav.items.auditLogs')}</h1>
+          <p className="text-muted-foreground">{t('pages.auditLogs.subtitle')}</p>
         </div>
         <div className="flex items-center gap-2">
           <Button
@@ -220,7 +230,7 @@ export function AuditLogsPage() {
             onClick={() => setShowStats(!showStats)}
           >
             <BarChart3 className="mr-2 h-4 w-4" />
-            {showStats ? 'Hide' : 'Show'} Stats
+            {t(showStats ? 'pages.auditLogs.hideStats' : 'pages.auditLogs.showStats')}
           </Button>
           <Button
             variant="outline"
@@ -228,15 +238,15 @@ export function AuditLogsPage() {
             disabled={exportMutation.isPending}
           >
             <Download className="mr-2 h-4 w-4" />
-            {exportMutation.isPending ? 'Exporting...' : 'Export CSV'}
+            {t(exportMutation.isPending ? 'pages.auditLogs.exporting' : 'pages.auditLogs.exportCsv')}
           </Button>
         </div>
       </div>
 
       <RelatedLinks
         links={[
-          { to: '/unified-audit', label: 'Unified Audit' },
-          { to: '/admin-audit-log', label: 'Admin Audit Log' },
+          { to: '/unified-audit', label: t('nav.items.unifiedAudit') },
+          { to: '/admin-audit-log', label: t('nav.items.adminAuditLog') },
         ]}
       />
 
@@ -246,7 +256,7 @@ export function AuditLogsPage() {
           <div className="flex items-center gap-4 flex-wrap">
             <div className="flex items-center gap-2">
               <Calendar className="h-4 w-4 text-muted-foreground" />
-              <span className="text-sm font-medium">Date Range:</span>
+              <span className="text-sm font-medium">{t('pages.auditLogs.dateRange')}</span>
             </div>
             <div className="flex items-center gap-2">
               <Input
@@ -255,7 +265,7 @@ export function AuditLogsPage() {
                 onChange={(e) => { setStartDate(e.target.value); setPage(0) }}
                 className="w-40"
               />
-              <span className="text-muted-foreground">to</span>
+              <span className="text-muted-foreground">{t('pages.auditLogs.to')}</span>
               <Input
                 type="date"
                 value={endDate}
@@ -273,7 +283,7 @@ export function AuditLogsPage() {
                   setPage(0)
                 }}
               >
-                Last 7 Days
+                {t('common.periods.d7')}
               </Button>
               <Button
                 variant="outline"
@@ -284,7 +294,7 @@ export function AuditLogsPage() {
                   setPage(0)
                 }}
               >
-                Last 30 Days
+                {t('common.periods.d30')}
               </Button>
               <Button
                 variant="outline"
@@ -295,7 +305,7 @@ export function AuditLogsPage() {
                   setPage(0)
                 }}
               >
-                Last 90 Days
+                {t('common.periods.d90')}
               </Button>
             </div>
           </div>
@@ -314,7 +324,7 @@ export function AuditLogsPage() {
                   </div>
                   <div>
                     <p className="text-2xl font-bold">{statistics.total_events}</p>
-                    <p className="text-sm text-muted-foreground">Total Events</p>
+                    <p className="text-sm text-muted-foreground">{t('pages.auditLogs.totalEvents')}</p>
                   </div>
                 </div>
               </CardContent>
@@ -327,7 +337,7 @@ export function AuditLogsPage() {
                   </div>
                   <div>
                     <p className="text-2xl font-bold">{statistics.success_rate.toFixed(1)}%</p>
-                    <p className="text-sm text-muted-foreground">Success Rate</p>
+                    <p className="text-sm text-muted-foreground">{t('pages.auditLogs.successRate')}</p>
                   </div>
                 </div>
               </CardContent>
@@ -340,7 +350,7 @@ export function AuditLogsPage() {
                   </div>
                   <div>
                     <p className="text-2xl font-bold">{statistics.failed_auth_count}</p>
-                    <p className="text-sm text-muted-foreground">Failed Auth</p>
+                    <p className="text-sm text-muted-foreground">{t('pages.auditLogs.failedAuth')}</p>
                   </div>
                 </div>
               </CardContent>
@@ -353,7 +363,7 @@ export function AuditLogsPage() {
                   </div>
                   <div>
                     <p className="text-2xl font-bold">{statistics.by_type?.authentication || 0}</p>
-                    <p className="text-sm text-muted-foreground">Auth Events</p>
+                    <p className="text-sm text-muted-foreground">{t('pages.auditLogs.authEvents')}</p>
                   </div>
                 </div>
               </CardContent>
@@ -365,7 +375,7 @@ export function AuditLogsPage() {
             {/* Events Over Time Chart */}
             <Card>
               <CardHeader>
-                <CardTitle className="text-sm font-medium">Events Over Time</CardTitle>
+                <CardTitle className="text-sm font-medium">{t('pages.auditLogs.eventsOverTime')}</CardTitle>
               </CardHeader>
               <CardContent>
                 {statistics.events_per_day && statistics.events_per_day.length > 0 ? (
@@ -378,7 +388,7 @@ export function AuditLogsPage() {
                             height: `${(day.count / maxDailyEvents) * 100}%`,
                             minHeight: day.count > 0 ? '4px' : '0',
                           }}
-                          title={`${day.date}: ${day.count} events`}
+                          title={t('pages.auditLogs.dayEvents', { date: day.date, count: day.count })}
                         />
                         <span className="text-[10px] text-muted-foreground mt-1 rotate-45 origin-left">
                           {new Date(day.date).getDate()}
@@ -388,7 +398,7 @@ export function AuditLogsPage() {
                   </div>
                 ) : (
                   <div className="h-40 flex items-center justify-center text-muted-foreground">
-                    No data for selected period
+                    {t('pages.auditLogs.noDataForPeriod')}
                   </div>
                 )}
               </CardContent>
@@ -397,7 +407,7 @@ export function AuditLogsPage() {
             {/* Events by Type */}
             <Card>
               <CardHeader>
-                <CardTitle className="text-sm font-medium">Events by Type</CardTitle>
+                <CardTitle className="text-sm font-medium">{t('pages.auditLogs.eventsByType')}</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="space-y-3">
@@ -407,7 +417,7 @@ export function AuditLogsPage() {
                     return (
                       <div key={type}>
                         <div className="flex items-center justify-between text-sm mb-1">
-                          <span className="capitalize">{type.replace('_', ' ')}</span>
+                          <span className="capitalize">{eventTypeLabel(type)}</span>
                           <span className="text-muted-foreground">{count}</span>
                         </div>
                         <div className="h-2 bg-muted rounded-full overflow-hidden">
@@ -433,7 +443,7 @@ export function AuditLogsPage() {
           {/* Outcome Distribution */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-sm font-medium">Outcome Distribution</CardTitle>
+              <CardTitle className="text-sm font-medium">{t('pages.auditLogs.outcomeDistribution')}</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="flex items-center gap-8">
@@ -466,7 +476,7 @@ export function AuditLogsPage() {
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
-                placeholder="Search by action, actor, IP address..."
+                placeholder={t('pages.auditLogs.searchPlaceholder')}
                 value={search}
                 onChange={(e) => { setSearch(e.target.value); setPage(0) }}
                 className="pl-9"
@@ -476,24 +486,24 @@ export function AuditLogsPage() {
               <Filter className="h-4 w-4 text-muted-foreground" />
               <Select value={eventTypeFilter || 'all'} onValueChange={(val) => { setEventTypeFilter(val === 'all' ? '' : val); setPage(0) }}>
                 <SelectTrigger className="w-[180px]">
-                  <SelectValue placeholder="All Event Types" />
+                  <SelectValue placeholder={t('pages.auditLogs.allEventTypes')} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All Event Types</SelectItem>
-                  {eventTypes.map(type => (
-                    <SelectItem key={type} value={type}>{type.replace('_', ' ')}</SelectItem>
+                  <SelectItem value="all">{t('pages.auditLogs.allEventTypes')}</SelectItem>
+                  {EVENT_TYPES.map(type => (
+                    <SelectItem key={type} value={type}>{eventTypeLabel(type)}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
               <Select value={outcomeFilter || 'all'} onValueChange={(val) => { setOutcomeFilter(val === 'all' ? '' : val); setPage(0) }}>
                 <SelectTrigger className="w-[180px]">
-                  <SelectValue placeholder="All Outcomes" />
+                  <SelectValue placeholder={t('pages.auditLogs.allOutcomes')} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All Outcomes</SelectItem>
-                  <SelectItem value="success">Success</SelectItem>
-                  <SelectItem value="failure">Failure</SelectItem>
-                  <SelectItem value="pending">Pending</SelectItem>
+                  <SelectItem value="all">{t('pages.auditLogs.allOutcomes')}</SelectItem>
+                  {OUTCOMES.map(o => (
+                    <SelectItem key={o} value={o}>{t(`pages.auditLogs.outcomes.${o}`)}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -503,24 +513,24 @@ export function AuditLogsPage() {
           {isLoading ? (
             <TableSkeleton rows={8} cols={6} />
           ) : isError ? (
-            <QueryError error={error} resource="audit logs" />
+            <QueryError error={error} resource={t('pages.auditLogs.resourceName')} />
           ) : !filteredEvents || filteredEvents.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
               <FileText className="h-12 w-12 text-muted-foreground/40 mb-3" />
-              <p className="font-medium">No audit logs found</p>
-              <p className="text-sm">Audit events will appear here as activity occurs</p>
+              <p className="font-medium">{t('pages.auditLogs.emptyTitle')}</p>
+              <p className="text-sm">{t('pages.auditLogs.emptyDesc')}</p>
             </div>
           ) : (
           <div className="rounded-md border">
             <Table>
               <TableHeader>
                 <TableRow className="border-b bg-muted">
-                  <TableHead className="p-3 text-left text-sm font-medium">Timestamp</TableHead>
-                  <TableHead className="p-3 text-left text-sm font-medium">Event Type</TableHead>
-                  <TableHead className="p-3 text-left text-sm font-medium">Action</TableHead>
-                  <TableHead className="p-3 text-left text-sm font-medium">Actor</TableHead>
-                  <TableHead className="p-3 text-left text-sm font-medium">Target</TableHead>
-                  <TableHead className="p-3 text-left text-sm font-medium">Outcome</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">{t('pages.auditLogs.columns.timestamp')}</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">{t('pages.auditLogs.columns.eventType')}</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">{t('pages.auditLogs.columns.action')}</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">{t('pages.auditLogs.columns.actor')}</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">{t('pages.auditLogs.columns.target')}</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">{t('pages.auditLogs.columns.outcome')}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -534,7 +544,7 @@ export function AuditLogsPage() {
                       <TableCell className="p-3">
                         <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${eventTypeColors[event.event_type] || 'bg-muted text-foreground'}`}>
                           {eventTypeIcons[event.event_type]}
-                          {event.event_type.replace('_', ' ')}
+                          {eventTypeLabel(event.event_type)}
                         </span>
                       </TableCell>
                       <TableCell className="p-3">
@@ -576,8 +586,12 @@ export function AuditLogsPage() {
           <div className="flex items-center justify-between pt-4">
             <p className="text-sm text-muted-foreground">
               {totalCount > 0
-                ? `Showing ${page * PAGE_SIZE + 1}–${Math.min((page + 1) * PAGE_SIZE, totalCount)} of ${totalCount} events`
-                : 'No events'}
+                ? t('pages.auditLogs.showingEvents', {
+                    from: page * PAGE_SIZE + 1,
+                    to: Math.min((page + 1) * PAGE_SIZE, totalCount),
+                    total: totalCount,
+                  })
+                : t('pages.auditLogs.noEvents')}
             </p>
             <div className="flex items-center gap-2">
               <Button
@@ -587,10 +601,12 @@ export function AuditLogsPage() {
                 disabled={page === 0}
               >
                 <ChevronLeft className="h-4 w-4 mr-1" />
-                Previous
+                {t('common.pagination.previous')}
               </Button>
               <span className="text-sm text-muted-foreground">
-                Page {page + 1}{totalPages > 0 ? ` of ${totalPages}` : ''}
+                {totalPages > 0
+                  ? t('common.pagination.pageOf', { page: page + 1, pages: totalPages })
+                  : t('common.pagination.page', { page: page + 1 })}
               </span>
               <Button
                 variant="outline"
@@ -598,7 +614,7 @@ export function AuditLogsPage() {
                 onClick={() => setPage(p => p + 1)}
                 disabled={(page + 1) >= totalPages}
               >
-                Next
+                {t('common.pagination.next')}
                 <ChevronRight className="h-4 w-4 ml-1" />
               </Button>
             </div>
@@ -610,33 +626,33 @@ export function AuditLogsPage() {
       <Dialog open={!!selectedEvent} onOpenChange={(open) => !open && setSelectedEvent(null)}>
         <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Audit Event Details</DialogTitle>
+            <DialogTitle>{t('pages.auditLogs.detail.title')}</DialogTitle>
           </DialogHeader>
           {selectedEvent && (
             <div className="space-y-6">
               {/* Basic Info */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <p className="text-sm font-medium text-muted-foreground">Timestamp</p>
+                  <p className="text-sm font-medium text-muted-foreground">{t('pages.auditLogs.columns.timestamp')}</p>
                   <p className="text-sm">{formatTimestamp(selectedEvent.timestamp)}</p>
                 </div>
                 <div>
-                  <p className="text-sm font-medium text-muted-foreground">Event Type</p>
+                  <p className="text-sm font-medium text-muted-foreground">{t('pages.auditLogs.columns.eventType')}</p>
                   <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${eventTypeColors[selectedEvent.event_type] || 'bg-muted text-foreground'}`}>
                     {eventTypeIcons[selectedEvent.event_type]}
-                    {selectedEvent.event_type.replace('_', ' ')}
+                    {eventTypeLabel(selectedEvent.event_type)}
                   </span>
                 </div>
                 <div>
-                  <p className="text-sm font-medium text-muted-foreground">Category</p>
+                  <p className="text-sm font-medium text-muted-foreground">{t('pages.auditLogs.detail.category')}</p>
                   <p className="text-sm capitalize">{selectedEvent.category}</p>
                 </div>
                 <div>
-                  <p className="text-sm font-medium text-muted-foreground">Action</p>
+                  <p className="text-sm font-medium text-muted-foreground">{t('pages.auditLogs.columns.action')}</p>
                   <p className="text-sm">{selectedEvent.action}</p>
                 </div>
                 <div>
-                  <p className="text-sm font-medium text-muted-foreground">Outcome</p>
+                  <p className="text-sm font-medium text-muted-foreground">{t('pages.auditLogs.columns.outcome')}</p>
                   <div className="flex items-center gap-1">
                     {outcomeIcons[selectedEvent.outcome]}
                     <Badge variant={selectedEvent.outcome === 'success' ? 'default' : selectedEvent.outcome === 'failure' ? 'destructive' : 'secondary'}>
@@ -648,18 +664,18 @@ export function AuditLogsPage() {
 
               {/* Actor Section */}
               <div>
-                <h3 className="text-sm font-semibold mb-2">Actor</h3>
+                <h3 className="text-sm font-semibold mb-2">{t('pages.auditLogs.detail.actor')}</h3>
                 <div className="grid grid-cols-2 gap-4 bg-muted p-3 rounded">
                   <div>
-                    <p className="text-sm font-medium text-muted-foreground">ID</p>
+                    <p className="text-sm font-medium text-muted-foreground">{t('pages.auditLogs.detail.id')}</p>
                     <p className="text-sm break-all">{selectedEvent.actor_id || '-'}</p>
                   </div>
                   <div>
-                    <p className="text-sm font-medium text-muted-foreground">Type</p>
+                    <p className="text-sm font-medium text-muted-foreground">{t('pages.auditLogs.detail.type')}</p>
                     <p className="text-sm">{selectedEvent.actor_type || '-'}</p>
                   </div>
                   <div>
-                    <p className="text-sm font-medium text-muted-foreground">IP Address</p>
+                    <p className="text-sm font-medium text-muted-foreground">{t('pages.auditLogs.detail.ipAddress')}</p>
                     <p className="text-sm">{selectedEvent.actor_ip || '-'}</p>
                   </div>
                 </div>
@@ -667,14 +683,14 @@ export function AuditLogsPage() {
 
               {/* Target Section */}
               <div>
-                <h3 className="text-sm font-semibold mb-2">Target</h3>
+                <h3 className="text-sm font-semibold mb-2">{t('pages.auditLogs.detail.target')}</h3>
                 <div className="grid grid-cols-2 gap-4 bg-muted p-3 rounded">
                   <div>
-                    <p className="text-sm font-medium text-muted-foreground">ID</p>
+                    <p className="text-sm font-medium text-muted-foreground">{t('pages.auditLogs.detail.id')}</p>
                     <p className="text-sm break-all">{selectedEvent.target_id || '-'}</p>
                   </div>
                   <div>
-                    <p className="text-sm font-medium text-muted-foreground">Type</p>
+                    <p className="text-sm font-medium text-muted-foreground">{t('pages.auditLogs.detail.type')}</p>
                     <p className="text-sm">{selectedEvent.target_type || '-'}</p>
                   </div>
                 </div>
@@ -682,18 +698,18 @@ export function AuditLogsPage() {
 
               {/* IDs Section */}
               <div>
-                <h3 className="text-sm font-semibold mb-2">IDs</h3>
+                <h3 className="text-sm font-semibold mb-2">{t('pages.auditLogs.detail.ids')}</h3>
                 <div className="grid grid-cols-2 gap-4 bg-muted p-3 rounded">
                   <div>
-                    <p className="text-sm font-medium text-muted-foreground">Resource ID</p>
+                    <p className="text-sm font-medium text-muted-foreground">{t('pages.auditLogs.detail.resourceId')}</p>
                     <p className="text-sm break-all">{selectedEvent.resource_id || '-'}</p>
                   </div>
                   <div>
-                    <p className="text-sm font-medium text-muted-foreground">Session ID</p>
+                    <p className="text-sm font-medium text-muted-foreground">{t('pages.auditLogs.detail.sessionId')}</p>
                     <p className="text-sm break-all">{selectedEvent.session_id || '-'}</p>
                   </div>
                   <div>
-                    <p className="text-sm font-medium text-muted-foreground">Request ID</p>
+                    <p className="text-sm font-medium text-muted-foreground">{t('pages.auditLogs.detail.requestId')}</p>
                     <p className="text-sm break-all">{selectedEvent.request_id || '-'}</p>
                   </div>
                 </div>
@@ -702,7 +718,7 @@ export function AuditLogsPage() {
               {/* Details Section */}
               {selectedEvent.details && Object.keys(selectedEvent.details).length > 0 && (
                 <div>
-                  <h3 className="text-sm font-semibold mb-2">Details</h3>
+                  <h3 className="text-sm font-semibold mb-2">{t('pages.auditLogs.detail.details')}</h3>
                   <pre className="bg-muted p-3 rounded text-xs overflow-auto max-h-60">
                     {JSON.stringify(selectedEvent.details, null, 2)}
                   </pre>

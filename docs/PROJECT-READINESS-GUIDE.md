@@ -21,7 +21,7 @@ security, access, sessions, devices, trusted browsers, notifications,
 access requests, profile — are fully bilingual; the end-user experience
 is complete in both languages). Open: P1 rollout Task 16 (operator
 action), P3.1 cut v1.28.0 (post-merge), the remaining P4 items incl.
-the ~50 remaining admin page bodies and the Expo-vs-Flutter mobile pick.)
+the ~46 remaining admin page bodies and the Expo-vs-Flutter mobile pick.)
 **Question this document answers:** *Is OpenIDX fully functional and well defined end to end, as experienced by the people who use it — and what are the next steps and controls to get it there?*
 
 This is the product-and-user-side companion to
@@ -632,9 +632,22 @@ all four pillars, deploy, log in, and find PAM.
    security-classification vocabulary, and the one-click publish dialog)
    and Windows Apps (the app catalog, host pools, agent-bound discovery,
    the launch-conflict resolver and the prominent warning about hosts that
-   allow unlisted programs). *Remaining:* the
-   ~50 other admin page bodies — mechanical, batch by batch, against this
-   pattern.
+   allow unlisted programs). *And the evidence pages an auditor actually
+   reads:* Audit Logs (the date-range and event-type filters, the
+   statistics strip and its two charts, the paginated event table and the
+   full event-detail dialog), Admin Audit Log (the five-way filter bar,
+   the expandable before/after state diff and the export-all-pages CSV
+   flow), Compliance Reports (the framework picker, the scorecard, the
+   control-findings list with its remediation notes) and Reports & Exports
+   (report history, cron-scheduled reports and both dialogs). Two rules
+   held here that are worth stating: the backend's `event_type` and
+   framework vocabularies resolve *through* the catalog with a prettified
+   raw fallback, so a value the server adds later still reads as itself
+   rather than as a bare key; and the exported CSV's column names stay
+   English on purpose — that file is a machine-readable schema, and
+   localizing its header would break every consumer that parses it.
+   *Remaining:* the ~46 other admin page bodies — mechanical, batch by
+   batch, against this pattern.
 2. Accessibility pass to a VPAT (needs real assistive-technology testing,
    not just an automated axe sweep).
 3. Separate/hardened end-user portal bundle.

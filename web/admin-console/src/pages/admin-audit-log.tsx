@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useQuery } from '@tanstack/react-query'
 import {
   Search,
@@ -57,28 +58,28 @@ interface AuditResponse {
 // ---------------------------------------------------------------------------
 
 const ACTION_TYPES = [
-  { value: '', label: 'All Actions' },
-  { value: 'create', label: 'Create' },
-  { value: 'update', label: 'Update' },
-  { value: 'delete', label: 'Delete' },
-  { value: 'enable', label: 'Enable' },
-  { value: 'disable', label: 'Disable' },
-  { value: 'assign', label: 'Assign' },
-  { value: 'revoke', label: 'Revoke' },
-  { value: 'login', label: 'Login' },
-  { value: 'logout', label: 'Logout' },
+  { value: '', labelKey: 'all' },
+  { value: 'create', labelKey: 'create' },
+  { value: 'update', labelKey: 'update' },
+  { value: 'delete', labelKey: 'delete' },
+  { value: 'enable', labelKey: 'enable' },
+  { value: 'disable', labelKey: 'disable' },
+  { value: 'assign', labelKey: 'assign' },
+  { value: 'revoke', labelKey: 'revoke' },
+  { value: 'login', labelKey: 'login' },
+  { value: 'logout', labelKey: 'logout' },
 ] as const
 
 const TARGET_TYPES = [
-  { value: '', label: 'All Targets' },
-  { value: 'user', label: 'User' },
-  { value: 'group', label: 'Group' },
-  { value: 'application', label: 'Application' },
-  { value: 'policy', label: 'Policy' },
-  { value: 'role', label: 'Role' },
-  { value: 'settings', label: 'Settings' },
-  { value: 'api_key', label: 'API Key' },
-  { value: 'webhook', label: 'Webhook' },
+  { value: '', labelKey: 'all' },
+  { value: 'user', labelKey: 'user' },
+  { value: 'group', labelKey: 'group' },
+  { value: 'application', labelKey: 'application' },
+  { value: 'policy', labelKey: 'policy' },
+  { value: 'role', labelKey: 'role' },
+  { value: 'settings', labelKey: 'settings' },
+  { value: 'api_key', labelKey: 'apiKey' },
+  { value: 'webhook', labelKey: 'webhook' },
 ] as const
 
 const ACTION_BADGE_COLORS: Record<string, string> = {
@@ -110,6 +111,9 @@ function formatDate(iso: string): string {
 // Build a CSV document from a full set of audit entries. Extracted so the
 // "export all pages" flow is unit-testable without touching the DOM.
 export function buildAuditCsv(entries: AuditEntry[]): string {
+  // Deliberately not translated: these are the export's column names, a stable
+  // machine-readable schema. Localizing them would break every consumer that
+  // parses the CSV by header.
   const headers = ['Timestamp', 'Actor', 'Action', 'Target Type', 'Target', 'ID']
   const rows = entries.map((e) => [
     e.timestamp,
@@ -148,10 +152,11 @@ export async function fetchAllAuditEntries(
 
 function renderJsonDiff(
   before: Record<string, unknown> | undefined,
-  after: Record<string, unknown> | undefined
+  after: Record<string, unknown> | undefined,
+  t: (key: string) => string
 ) {
   if (!before && !after) {
-    return <p className="text-sm text-muted-foreground">No state data available.</p>
+    return <p className="text-sm text-muted-foreground">{t('pages.adminAuditLog.noStateData')}</p>
   }
 
   const allKeys = new Set([
@@ -162,7 +167,7 @@ function renderJsonDiff(
   return (
     <div className="grid grid-cols-2 gap-4">
       <div>
-        <h4 className="text-xs font-semibold text-muted-foreground mb-1">Before</h4>
+        <h4 className="text-xs font-semibold text-muted-foreground mb-1">{t('pages.adminAuditLog.before')}</h4>
         <div className="bg-red-50 border border-red-200 rounded p-3 text-xs font-mono overflow-x-auto max-h-64 overflow-y-auto">
           {before ? (
             Array.from(allKeys).map((key) => {
@@ -178,12 +183,12 @@ function renderJsonDiff(
               )
             })
           ) : (
-            <span className="text-muted-foreground">(empty)</span>
+            <span className="text-muted-foreground">{t('pages.adminAuditLog.emptyValue')}</span>
           )}
         </div>
       </div>
       <div>
-        <h4 className="text-xs font-semibold text-muted-foreground mb-1">After</h4>
+        <h4 className="text-xs font-semibold text-muted-foreground mb-1">{t('pages.adminAuditLog.after')}</h4>
         <div className="bg-green-50 border border-green-200 rounded p-3 text-xs font-mono overflow-x-auto max-h-64 overflow-y-auto">
           {after ? (
             Array.from(allKeys).map((key) => {
@@ -199,7 +204,7 @@ function renderJsonDiff(
               )
             })
           ) : (
-            <span className="text-muted-foreground">(empty)</span>
+            <span className="text-muted-foreground">{t('pages.adminAuditLog.emptyValue')}</span>
           )}
         </div>
       </div>
@@ -212,6 +217,7 @@ function renderJsonDiff(
 // ---------------------------------------------------------------------------
 
 export function AdminAuditLogPage() {
+  const { t } = useTranslation()
   const { toast } = useToast()
 
   // Filters
@@ -293,11 +299,14 @@ export function AdminAuditLogPage() {
       link.click()
       URL.revokeObjectURL(url)
 
-      toast({ title: 'Exported', description: `Exported ${all.length} records to CSV.` })
+      toast({
+        title: t('pages.adminAuditLog.toast.exported'),
+        description: t('pages.adminAuditLog.toast.exportedDesc', { count: all.length }),
+      })
     } catch {
       toast({
-        title: 'Export failed',
-        description: 'Could not export the audit log. Please try again.',
+        title: t('pages.adminAuditLog.toast.exportFailed'),
+        description: t('pages.adminAuditLog.toast.exportFailedDesc'),
         variant: 'destructive',
       })
     } finally {
@@ -322,9 +331,9 @@ export function AdminAuditLogPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Admin Audit Log</h1>
+          <h1 className="text-3xl font-bold tracking-tight">{t('nav.items.adminAuditLog')}</h1>
           <p className="text-muted-foreground">
-            Track administrative operations and configuration changes
+            {t('pages.adminAuditLog.subtitle')}
           </p>
         </div>
         <Button
@@ -333,14 +342,14 @@ export function AdminAuditLogPage() {
           disabled={entries.length === 0 || isExporting}
         >
           <Download className="mr-2 h-4 w-4" />
-          {isExporting ? 'Exporting...' : 'Export CSV'}
+          {t(isExporting ? 'pages.adminAuditLog.exporting' : 'pages.adminAuditLog.exportCsv')}
         </Button>
       </div>
 
       <RelatedLinks
         links={[
-          { to: '/audit-logs', label: 'Audit Logs' },
-          { to: '/unified-audit', label: 'Unified Audit' },
+          { to: '/audit-logs', label: t('nav.items.auditLogs') },
+          { to: '/unified-audit', label: t('nav.items.unifiedAudit') },
         ]}
       />
 
@@ -349,17 +358,17 @@ export function AdminAuditLogPage() {
         <CardHeader className="pb-3">
           <div className="flex items-center gap-2">
             <Filter className="h-4 w-4 text-muted-foreground" />
-            <CardTitle className="text-base">Filters</CardTitle>
+            <CardTitle className="text-base">{t('pages.adminAuditLog.filters')}</CardTitle>
           </div>
         </CardHeader>
         <CardContent>
           <div className="grid gap-3 md:grid-cols-5">
             <div className="space-y-1">
-              <label className="text-xs font-medium text-muted-foreground">Actor</label>
+              <label className="text-xs font-medium text-muted-foreground">{t('pages.adminAuditLog.columns.actor')}</label>
               <div className="relative">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
                 <Input
-                  placeholder="Email or ID..."
+                  placeholder={t('pages.adminAuditLog.actorPlaceholder')}
                   value={actorFilter}
                   onChange={(e) => {
                     setActorFilter(e.target.value)
@@ -370,7 +379,7 @@ export function AdminAuditLogPage() {
               </div>
             </div>
             <div className="space-y-1">
-              <label className="text-xs font-medium text-muted-foreground">Action</label>
+              <label className="text-xs font-medium text-muted-foreground">{t('pages.adminAuditLog.columns.action')}</label>
               <select
                 value={actionFilter}
                 onChange={(e) => {
@@ -381,13 +390,13 @@ export function AdminAuditLogPage() {
               >
                 {ACTION_TYPES.map((at) => (
                   <option key={at.value} value={at.value}>
-                    {at.label}
+                    {t(`pages.adminAuditLog.actions.${at.labelKey}`)}
                   </option>
                 ))}
               </select>
             </div>
             <div className="space-y-1">
-              <label className="text-xs font-medium text-muted-foreground">Target Type</label>
+              <label className="text-xs font-medium text-muted-foreground">{t('pages.adminAuditLog.columns.targetType')}</label>
               <select
                 value={targetTypeFilter}
                 onChange={(e) => {
@@ -398,13 +407,13 @@ export function AdminAuditLogPage() {
               >
                 {TARGET_TYPES.map((tt) => (
                   <option key={tt.value} value={tt.value}>
-                    {tt.label}
+                    {t(`pages.adminAuditLog.targets.${tt.labelKey}`)}
                   </option>
                 ))}
               </select>
             </div>
             <div className="space-y-1">
-              <label className="text-xs font-medium text-muted-foreground">Start Date</label>
+              <label className="text-xs font-medium text-muted-foreground">{t('pages.adminAuditLog.startDate')}</label>
               <Input
                 type="date"
                 value={startDate}
@@ -416,7 +425,7 @@ export function AdminAuditLogPage() {
               />
             </div>
             <div className="space-y-1">
-              <label className="text-xs font-medium text-muted-foreground">End Date</label>
+              <label className="text-xs font-medium text-muted-foreground">{t('pages.adminAuditLog.endDate')}</label>
               <Input
                 type="date"
                 value={endDate}
@@ -435,7 +444,7 @@ export function AdminAuditLogPage() {
               className="mt-2 text-xs"
               onClick={resetFilters}
             >
-              Clear Filters
+              {t('pages.adminAuditLog.clearFilters')}
             </Button>
           )}
         </CardContent>
@@ -445,23 +454,23 @@ export function AdminAuditLogPage() {
       <Card>
         <CardContent className="p-0">
           {isLoading ? (
-            <p className="text-center py-8 text-muted-foreground">Loading audit log...</p>
+            <p className="text-center py-8 text-muted-foreground">{t('pages.adminAuditLog.loading')}</p>
           ) : isError ? (
-            <div className="p-4"><QueryError error={error} resource="audit log" /></div>
+            <div className="p-4"><QueryError error={error} resource={t('pages.adminAuditLog.resourceName')} /></div>
           ) : entries.length === 0 ? (
             <p className="text-center py-8 text-muted-foreground">
-              No audit entries found matching your filters.
+              {t('pages.adminAuditLog.empty')}
             </p>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-8" />
-                  <TableHead>Actor</TableHead>
-                  <TableHead>Action</TableHead>
-                  <TableHead>Target Type</TableHead>
-                  <TableHead>Target</TableHead>
-                  <TableHead>Date</TableHead>
+                  <TableHead>{t('pages.adminAuditLog.columns.actor')}</TableHead>
+                  <TableHead>{t('pages.adminAuditLog.columns.action')}</TableHead>
+                  <TableHead>{t('pages.adminAuditLog.columns.targetType')}</TableHead>
+                  <TableHead>{t('pages.adminAuditLog.columns.target')}</TableHead>
+                  <TableHead>{t('pages.adminAuditLog.columns.date')}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -513,26 +522,26 @@ export function AdminAuditLogPage() {
                               <div className="grid grid-cols-2 gap-4 text-sm">
                                 <div>
                                   <span className="text-xs font-medium text-muted-foreground">
-                                    Entry ID
+                                    {t('pages.adminAuditLog.entryId')}
                                   </span>
                                   <p className="font-mono text-xs">{entry.id}</p>
                                 </div>
                                 <div>
                                   <span className="text-xs font-medium text-muted-foreground">
-                                    Target ID
+                                    {t('pages.adminAuditLog.targetId')}
                                   </span>
                                   <p className="font-mono text-xs">{entry.target_id}</p>
                                 </div>
                               </div>
                               {(entry.before_state || entry.after_state) && (
                                 <div>
-                                  <h4 className="text-sm font-semibold mb-2">State Changes</h4>
-                                  {renderJsonDiff(entry.before_state, entry.after_state)}
+                                  <h4 className="text-sm font-semibold mb-2">{t('pages.adminAuditLog.stateChanges')}</h4>
+                                  {renderJsonDiff(entry.before_state, entry.after_state, t)}
                                 </div>
                               )}
                               {entry.metadata && Object.keys(entry.metadata).length > 0 && (
                                 <div>
-                                  <h4 className="text-sm font-semibold mb-1">Metadata</h4>
+                                  <h4 className="text-sm font-semibold mb-1">{t('pages.adminAuditLog.metadata')}</h4>
                                   <pre className="text-xs bg-muted rounded p-2 overflow-x-auto">
                                     {JSON.stringify(entry.metadata, null, 2)}
                                   </pre>
@@ -555,7 +564,11 @@ export function AdminAuditLogPage() {
       {totalPages > 1 && (
         <div className="flex items-center justify-between">
           <p className="text-sm text-muted-foreground">
-            Showing {offset + 1}-{Math.min(offset + PAGE_SIZE, total)} of {total} entries
+            {t('pages.adminAuditLog.showingEntries', {
+              from: offset + 1,
+              to: Math.min(offset + PAGE_SIZE, total),
+              total,
+            })}
           </p>
           <div className="flex items-center gap-2">
             <Button
@@ -564,10 +577,10 @@ export function AdminAuditLogPage() {
               disabled={offset === 0}
               onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
             >
-              Previous
+              {t('common.pagination.previous')}
             </Button>
             <span className="text-sm text-muted-foreground">
-              Page {currentPage} of {totalPages}
+              {t('common.pagination.pageOf', { page: currentPage, pages: totalPages })}
             </span>
             <Button
               variant="outline"
@@ -575,7 +588,7 @@ export function AdminAuditLogPage() {
               disabled={offset + PAGE_SIZE >= total}
               onClick={() => setOffset(offset + PAGE_SIZE)}
             >
-              Next
+              {t('common.pagination.next')}
             </Button>
           </div>
         </div>
