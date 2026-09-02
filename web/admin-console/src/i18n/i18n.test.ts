@@ -77,6 +77,17 @@ describe('i18n', () => {
       'pages.accessRequests.create.pickerPlaceholder.application',
       // lib/compliance tooltip sentences
       'compliance.neverReported',
+      // bulk-operations: operationTypes labelKey/descKey pairs
+      ...[
+        'enableUsers',
+        'disableUsers',
+        'deleteUsers',
+        'assignRole',
+        'removeRole',
+        'addToGroup',
+        'removeFromGroup',
+        'resetPasswords',
+      ].flatMap((k) => [`pages.bulkOps.types.${k}.label`, `pages.bulkOps.types.${k}.desc`]),
     ]
     for (const lang of supportedLanguages) {
       for (const key of mapKeys) {

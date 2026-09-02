@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import { isAxiosError } from 'axios'
 import { Plus, Search, Users, MoreHorizontal, FolderTree, Edit, Trash2, UserPlus, Settings, X, ChevronRight, ChevronLeft, Network } from 'lucide-react'
 import { Button } from '../components/ui/button'
@@ -119,6 +120,7 @@ function searchUserToFlat(u: RawGroup): User {
 }
 
 export function GroupsPage() {
+  const { t } = useTranslation()
   const queryClient = useQueryClient()
   const { toast } = useToast()
   const [search, setSearch] = useState('')
@@ -192,8 +194,8 @@ export function GroupsPage() {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['groups'] })
       toast({
-        title: 'Success',
-        description: `Group ${toFlatGroup(data).name} created successfully!`,
+        title: t('common.success'),
+        description: t('pages.groups.toasts.created', { name: toFlatGroup(data).name }),
         variant: 'success',
       })
       setCreateGroupModal(false)
@@ -201,8 +203,8 @@ export function GroupsPage() {
     },
     onError: (error: Error) => {
       toast({
-        title: 'Error',
-        description: `Failed to create group: ${error.message}`,
+        title: t('common.error'),
+        description: t('pages.groups.toasts.createFailed', { message: error.message }),
         variant: 'destructive',
       })
     },
@@ -215,8 +217,8 @@ export function GroupsPage() {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['groups'] })
       toast({
-        title: 'Success',
-        description: `Group ${toFlatGroup(data).name} updated successfully!`,
+        title: t('common.success'),
+        description: t('pages.groups.toasts.updated', { name: toFlatGroup(data).name }),
         variant: 'success',
       })
       setEditGroupModal(false)
@@ -225,8 +227,8 @@ export function GroupsPage() {
     },
     onError: (error: Error) => {
       toast({
-        title: 'Error',
-        description: `Failed to update group: ${error.message}`,
+        title: t('common.error'),
+        description: t('pages.groups.toasts.updateFailed', { message: error.message }),
         variant: 'destructive',
       })
     },
@@ -239,15 +241,15 @@ export function GroupsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['groups'] })
       toast({
-        title: 'Success',
-        description: 'Group deleted successfully!',
+        title: t('common.success'),
+        description: t('pages.groups.toasts.deleted'),
         variant: 'success',
       })
     },
     onError: (error: Error) => {
       toast({
-        title: 'Error',
-        description: `Failed to delete group: ${error.message}`,
+        title: t('common.error'),
+        description: t('pages.groups.toasts.deleteFailed', { message: error.message }),
         variant: 'destructive',
       })
     },
@@ -261,8 +263,8 @@ export function GroupsPage() {
       queryClient.invalidateQueries({ queryKey: ['groupMembers', selectedGroup?.id] })
       queryClient.invalidateQueries({ queryKey: ['groups'] })
       toast({
-        title: 'Success',
-        description: 'Member added successfully!',
+        title: t('common.success'),
+        description: t('pages.groups.toasts.memberAdded'),
         variant: 'success',
       })
       setUserSearchQuery('')
@@ -272,14 +274,14 @@ export function GroupsPage() {
         const violations = error.response.data.violations as Array<{ policy_name: string; reason: string }>
         const details = violations.map((v: { policy_name: string; reason: string }) => `${v.policy_name}: ${v.reason}`).join('\n')
         toast({
-          title: 'Policy Violation',
+          title: t('common.policyViolation'),
           description: details,
           variant: 'destructive',
         })
       } else {
         toast({
-          title: 'Error',
-          description: `Failed to add member: ${error.message}`,
+          title: t('common.error'),
+          description: t('pages.groups.toasts.memberAddFailed', { message: error.message }),
           variant: 'destructive',
         })
       }
@@ -294,8 +296,8 @@ export function GroupsPage() {
       queryClient.invalidateQueries({ queryKey: ['groupMembers', selectedGroup?.id] })
       queryClient.invalidateQueries({ queryKey: ['groups'] })
       toast({
-        title: 'Success',
-        description: 'Member removed successfully!',
+        title: t('common.success'),
+        description: t('pages.groups.toasts.memberRemoved'),
         variant: 'success',
       })
     },
@@ -304,14 +306,14 @@ export function GroupsPage() {
         const violations = error.response.data.violations as Array<{ policy_name: string; reason: string }>
         const details = violations.map((v: { policy_name: string; reason: string }) => `${v.policy_name}: ${v.reason}`).join('\n')
         toast({
-          title: 'Policy Violation',
+          title: t('common.policyViolation'),
           description: details,
           variant: 'destructive',
         })
       } else {
         toast({
-          title: 'Error',
-          description: `Failed to remove member: ${error.message}`,
+          title: t('common.error'),
+          description: t('pages.groups.toasts.memberRemoveFailed', { message: error.message }),
           variant: 'destructive',
         })
       }
@@ -450,11 +452,11 @@ export function GroupsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Groups</h1>
-          <p className="text-muted-foreground">Manage user groups and memberships</p>
+          <h1 className="text-3xl font-bold tracking-tight">{t('nav.items.groups')}</h1>
+          <p className="text-muted-foreground">{t('pages.groups.subtitle')}</p>
         </div>
         <Button onClick={handleCreateGroup}>
-          <Plus className="mr-2 h-4 w-4" /> Create Group
+          <Plus className="mr-2 h-4 w-4" /> {t('pages.groups.createGroup')}
         </Button>
       </div>
 
@@ -464,7 +466,7 @@ export function GroupsPage() {
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
-                placeholder="Search groups..."
+                placeholder={t('pages.groups.searchPlaceholder')}
                 value={search}
                 onChange={(e) => { setSearch(e.target.value); setPage(0) }}
                 className="pl-9"
@@ -476,25 +478,25 @@ export function GroupsPage() {
           {isLoading ? (
             <TableSkeleton rows={8} cols={7} />
           ) : isError ? (
-            <QueryError error={error} resource="groups" />
+            <QueryError error={error} resource={t('pages.groups.resourceName')} />
           ) : !filteredGroups || filteredGroups.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
               <FolderTree className="h-12 w-12 text-muted-foreground/40 mb-3" />
-              <p className="font-medium">No groups found</p>
-              <p className="text-sm">Create a group to organize your users</p>
+              <p className="font-medium">{t('pages.groups.empty')}</p>
+              <p className="text-sm">{t('pages.groups.emptyHint')}</p>
             </div>
           ) : (
           <div className="rounded-md border">
             <Table>
               <TableHeader>
                 <TableRow className="border-b bg-muted">
-                  <TableHead className="p-3 text-left text-sm font-medium">Group</TableHead>
-                  <TableHead className="p-3 text-left text-sm font-medium">Description</TableHead>
-                  <TableHead className="p-3 text-left text-sm font-medium">Members</TableHead>
-                  <TableHead className="p-3 text-left text-sm font-medium">Type</TableHead>
-                  <TableHead className="p-3 text-left text-sm font-medium">Ziti Role</TableHead>
-                  <TableHead className="p-3 text-left text-sm font-medium">Created</TableHead>
-                  <TableHead className="p-3 text-right text-sm font-medium">Actions</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">{t('pages.groups.table.group')}</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">{t('pages.groups.table.description')}</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">{t('pages.groups.table.members')}</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">{t('pages.groups.table.type')}</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">{t('pages.groups.table.zitiRole')}</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">{t('pages.groups.table.created')}</TableHead>
+                  <TableHead className="p-3 text-right text-sm font-medium">{t('pages.groups.table.actions')}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -535,15 +537,15 @@ export function GroupsPage() {
                       <TableCell className="p-3">
                         <div className="flex flex-col gap-1">
                           <Badge variant={group.parent_id ? 'secondary' : 'default'}>
-                            {group.parent_id ? 'Subgroup' : 'Root'}
+                            {group.parent_id ? t('pages.groups.badges.subgroup') : t('pages.groups.badges.root')}
                           </Badge>
                           {group.allow_self_join && (
-                            <Badge variant="outline" className="text-xs">Self-join</Badge>
+                            <Badge variant="outline" className="text-xs">{t('pages.groups.badges.selfJoin')}</Badge>
                           )}
                         </div>
                       </TableCell>
                       <TableCell className="p-3">
-                        <div className="flex items-center gap-1.5" title={`Members of "${group.name}" get Ziti role attribute "#${group.name}" on their identity`}>
+                        <div className="flex items-center gap-1.5" title={t('pages.groups.zitiTitle', { name: group.name })}>
                           <Network className="h-3.5 w-3.5 text-purple-500" />
                           <Badge variant="outline" className="text-xs bg-purple-50 text-purple-700 border-purple-200">
                             #{group.name}
@@ -563,15 +565,15 @@ export function GroupsPage() {
                           <DropdownMenuContent align="end">
                             <DropdownMenuItem onClick={() => handleEditGroup(group)}>
                               <Edit className="mr-2 h-4 w-4" />
-                              Edit Group
+                              {t('pages.groups.menu.edit')}
                             </DropdownMenuItem>
                             <DropdownMenuItem onClick={() => handleManageMembers(group.id)}>
                               <UserPlus className="mr-2 h-4 w-4" />
-                              Manage Members
+                              {t('pages.groups.menu.members')}
                             </DropdownMenuItem>
                             <DropdownMenuItem onClick={() => handleGroupSettings(group.id)}>
                               <Settings className="mr-2 h-4 w-4" />
-                              Group Settings
+                              {t('pages.groups.menu.settings')}
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
                             <DropdownMenuItem
@@ -580,7 +582,7 @@ export function GroupsPage() {
                               disabled={deleteGroupMutation.isPending}
                             >
                               <Trash2 className="mr-2 h-4 w-4" />
-                              {deleteGroupMutation.isPending ? 'Deleting...' : 'Delete Group'}
+                              {deleteGroupMutation.isPending ? t('pages.groups.menu.deleting') : t('pages.groups.menu.delete')}
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
@@ -596,7 +598,7 @@ export function GroupsPage() {
           {totalCount > PAGE_SIZE && (
             <div className="flex items-center justify-between pt-4 px-1">
               <p className="text-sm text-muted-foreground">
-                Showing {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, totalCount)} of {totalCount} groups
+                {t('pages.groups.showing', { from: page * PAGE_SIZE + 1, to: Math.min((page + 1) * PAGE_SIZE, totalCount), total: totalCount })}
               </p>
               <div className="flex items-center gap-2">
                 <Button
@@ -606,10 +608,10 @@ export function GroupsPage() {
                   disabled={page === 0}
                 >
                   <ChevronLeft className="h-4 w-4 mr-1" />
-                  Previous
+                  {t('common.pagination.previous')}
                 </Button>
                 <span className="text-sm text-muted-foreground">
-                  Page {page + 1} of {Math.ceil(totalCount / PAGE_SIZE)}
+                  {t('common.pagination.pageOf', { page: page + 1, pages: Math.ceil(totalCount / PAGE_SIZE) })}
                 </span>
                 <Button
                   variant="outline"
@@ -617,7 +619,7 @@ export function GroupsPage() {
                   onClick={() => setPage(p => p + 1)}
                   disabled={(page + 1) * PAGE_SIZE >= totalCount}
                 >
-                  Next
+                  {t('common.pagination.next')}
                   <ChevronRight className="h-4 w-4 ml-1" />
                 </Button>
               </div>
@@ -630,41 +632,41 @@ export function GroupsPage() {
       <Dialog open={createGroupModal} onOpenChange={setCreateGroupModal}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Create New Group</DialogTitle>
+            <DialogTitle>{t('pages.groups.createDialog.title')}</DialogTitle>
           </DialogHeader>
           <form onSubmit={handleFormSubmit} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="name">Group Name</Label>
+              <Label htmlFor="name">{t('pages.groups.createDialog.nameLabel')}</Label>
               <Input
                 id="name"
                 name="name"
                 value={formData.name}
                 onChange={handleInputChange}
                 required
-                placeholder="Enter group name"
+                placeholder={t('pages.groups.createDialog.namePlaceholder')}
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="description">Description</Label>
+              <Label htmlFor="description">{t('pages.groups.createDialog.descLabel')}</Label>
               <Input
                 id="description"
                 name="description"
                 value={formData.description}
                 onChange={handleInputChange}
-                placeholder="Enter group description (optional)"
+                placeholder={t('pages.groups.createDialog.descPlaceholder')}
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="parent_id">Parent Group (optional)</Label>
+              <Label htmlFor="parent_id">{t('pages.groups.createDialog.parentLabel')}</Label>
               <Select
                 value={formData.parent_id}
                 onValueChange={(value) => setFormData(prev => ({ ...prev, parent_id: value === 'none' ? '' : value }))}
               >
                 <SelectTrigger>
-                  <SelectValue placeholder="Select parent group (creates subgroup)" />
+                  <SelectValue placeholder={t('pages.groups.createDialog.parentPlaceholder')} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="none">No parent (root group)</SelectItem>
+                  <SelectItem value="none">{t('pages.groups.createDialog.noParent')}</SelectItem>
                   {rootGroups.map((group) => (
                     <SelectItem key={group.id} value={group.id}>
                       {group.name}
@@ -680,10 +682,10 @@ export function GroupsPage() {
                 onClick={() => setCreateGroupModal(false)}
                 disabled={createGroupMutation.isPending}
               >
-                Cancel
+                {t('common.cancel')}
               </Button>
               <Button type="submit" disabled={createGroupMutation.isPending}>
-                {createGroupMutation.isPending ? 'Creating...' : 'Create Group'}
+                {createGroupMutation.isPending ? t('pages.groups.createDialog.creating') : t('pages.groups.createGroup')}
               </Button>
             </div>
           </form>
@@ -694,11 +696,11 @@ export function GroupsPage() {
       <Dialog open={editGroupModal} onOpenChange={setEditGroupModal}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Edit Group</DialogTitle>
+            <DialogTitle>{t('pages.groups.editDialog.title')}</DialogTitle>
           </DialogHeader>
           <form onSubmit={handleFormSubmit} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="edit-name">Group Name</Label>
+              <Label htmlFor="edit-name">{t('pages.groups.createDialog.nameLabel')}</Label>
               <Input
                 id="edit-name"
                 name="name"
@@ -708,26 +710,26 @@ export function GroupsPage() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="edit-description">Description</Label>
+              <Label htmlFor="edit-description">{t('pages.groups.createDialog.descLabel')}</Label>
               <Input
                 id="edit-description"
                 name="description"
                 value={formData.description}
                 onChange={handleInputChange}
-                placeholder="Enter group description (optional)"
+                placeholder={t('pages.groups.createDialog.descPlaceholder')}
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="edit-parent">Parent Group</Label>
+              <Label htmlFor="edit-parent">{t('pages.groups.editDialog.parentLabel')}</Label>
               <Select
                 value={formData.parent_id}
                 onValueChange={(value) => setFormData(prev => ({ ...prev, parent_id: value === 'none' ? '' : value }))}
               >
                 <SelectTrigger>
-                  <SelectValue placeholder="Select parent group" />
+                  <SelectValue placeholder={t('pages.groups.editDialog.parentPlaceholder')} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="none">No parent (root group)</SelectItem>
+                  <SelectItem value="none">{t('pages.groups.createDialog.noParent')}</SelectItem>
                   {rootGroups
                     .filter(g => g.id !== selectedGroup?.id)
                     .map((group) => (
@@ -745,10 +747,10 @@ export function GroupsPage() {
                 onClick={() => setEditGroupModal(false)}
                 disabled={updateGroupMutation.isPending}
               >
-                Cancel
+                {t('common.cancel')}
               </Button>
               <Button type="submit" disabled={updateGroupMutation.isPending}>
-                {updateGroupMutation.isPending ? 'Updating...' : 'Update Group'}
+                {updateGroupMutation.isPending ? t('pages.groups.editDialog.updating') : t('pages.groups.editDialog.update')}
               </Button>
             </div>
           </form>
@@ -759,22 +761,22 @@ export function GroupsPage() {
       <Dialog open={manageMembersModal} onOpenChange={setManageMembersModal}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>Manage Members - {selectedGroup?.name}</DialogTitle>
+            <DialogTitle>{t('pages.groups.membersDialog.title', { name: selectedGroup?.name ?? '' })}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             {/* Add Member Section */}
             <div className="space-y-2">
-              <Label>Add Member</Label>
+              <Label>{t('pages.groups.membersDialog.addLabel')}</Label>
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
-                  placeholder="Search users by name or email..."
+                  placeholder={t('pages.groups.membersDialog.searchPlaceholder')}
                   value={userSearchQuery}
                   onChange={(e) => setUserSearchQuery(e.target.value)}
                   className="pl-9"
                 />
               </div>
-              {searchingUsers && <p className="text-sm text-muted-foreground">Searching...</p>}
+              {searchingUsers && <p className="text-sm text-muted-foreground">{t('pages.groups.membersDialog.searching')}</p>}
               {availableUsers && availableUsers.length > 0 && (
                 <div className="border rounded-md max-h-40 overflow-y-auto">
                   {availableUsers.map((user) => (
@@ -793,26 +795,26 @@ export function GroupsPage() {
                         onClick={() => handleAddMember(user.id)}
                         disabled={addMemberMutation.isPending}
                       >
-                        Add
+                        {t('common.add')}
                       </Button>
                     </div>
                   ))}
                 </div>
               )}
               {debouncedUserSearch.length >= 2 && availableUsers?.length === 0 && !searchingUsers && (
-                <p className="text-sm text-muted-foreground">No users found</p>
+                <p className="text-sm text-muted-foreground">{t('pages.groups.membersDialog.noUsers')}</p>
               )}
             </div>
 
             {/* Current Members Section */}
             <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <Label>Current Members ({groupMembers?.length || 0})</Label>
+                <Label>{t('pages.groups.membersDialog.currentLabel', { n: groupMembers?.length || 0 })}</Label>
                 {(groupMembers?.length || 0) > 5 && (
                   <div className="relative w-48">
                     <Search className="absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
                     <Input
-                      placeholder="Filter members..."
+                      placeholder={t('pages.groups.membersDialog.filterPlaceholder')}
                       value={memberSearch}
                       onChange={(e) => setMemberSearch(e.target.value)}
                       className="pl-7 h-8 text-sm"
@@ -822,10 +824,10 @@ export function GroupsPage() {
               </div>
               <div className="border rounded-md max-h-60 overflow-y-auto">
                 {membersLoading ? (
-                  <p className="p-4 text-center text-sm text-muted-foreground">Loading members...</p>
+                  <p className="p-4 text-center text-sm text-muted-foreground">{t('pages.groups.membersDialog.loading')}</p>
                 ) : filteredMembers?.length === 0 ? (
                   <p className="p-4 text-center text-sm text-muted-foreground">
-                    {memberSearch ? 'No members match your search' : 'No members in this group'}
+                    {memberSearch ? t('pages.groups.membersDialog.noMatch') : t('pages.groups.membersDialog.empty')}
                   </p>
                 ) : (
                   filteredMembers?.map((member) => (
@@ -863,7 +865,7 @@ export function GroupsPage() {
 
             <div className="flex justify-end pt-2">
               <Button variant="outline" onClick={() => setManageMembersModal(false)}>
-                Close
+                {t('common.close')}
               </Button>
             </div>
           </div>
@@ -874,7 +876,7 @@ export function GroupsPage() {
       <Dialog open={groupSettingsModal} onOpenChange={setGroupSettingsModal}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Group Settings - {selectedGroup?.name}</DialogTitle>
+            <DialogTitle>{t('pages.groups.settingsDialog.title', { name: selectedGroup?.name ?? '' })}</DialogTitle>
           </DialogHeader>
           <form onSubmit={handleSettingsSubmit} className="space-y-4">
             <div className="space-y-3">
@@ -887,7 +889,7 @@ export function GroupsPage() {
                   onChange={handleSettingsChange}
                   className="rounded"
                 />
-                <Label htmlFor="allowSelfJoin">Allow users to join without approval</Label>
+                <Label htmlFor="allowSelfJoin">{t('pages.groups.settingsDialog.allowSelfJoin')}</Label>
               </div>
               <div className="flex items-center space-x-2">
                 <input
@@ -898,11 +900,11 @@ export function GroupsPage() {
                   onChange={handleSettingsChange}
                   className="rounded"
                 />
-                <Label htmlFor="requireApproval">Require admin approval for new members</Label>
+                <Label htmlFor="requireApproval">{t('pages.groups.settingsDialog.requireApproval')}</Label>
               </div>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="maxMembers">Maximum Members (optional)</Label>
+              <Label htmlFor="maxMembers">{t('pages.groups.settingsDialog.maxLabel')}</Label>
               <Input
                 id="maxMembers"
                 name="maxMembers"
@@ -910,7 +912,7 @@ export function GroupsPage() {
                 min="1"
                 value={groupSettings.maxMembers}
                 onChange={handleSettingsChange}
-                placeholder="Leave empty for unlimited"
+                placeholder={t('pages.groups.settingsDialog.maxPlaceholder')}
               />
             </div>
             <div className="flex justify-end gap-2 pt-4">
@@ -920,10 +922,10 @@ export function GroupsPage() {
                 onClick={() => setGroupSettingsModal(false)}
                 disabled={updateGroupMutation.isPending}
               >
-                Cancel
+                {t('common.cancel')}
               </Button>
               <Button type="submit" disabled={updateGroupMutation.isPending}>
-                {updateGroupMutation.isPending ? 'Saving...' : 'Save Settings'}
+                {updateGroupMutation.isPending ? t('pages.groups.settingsDialog.saving') : t('pages.groups.settingsDialog.save')}
               </Button>
             </div>
           </form>
@@ -934,15 +936,15 @@ export function GroupsPage() {
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+            <AlertDialogTitle>{t('common.areYouSure')}</AlertDialogTitle>
             <AlertDialogDescription>
-              {deleteTarget ? `Are you sure you want to delete group "${deleteTarget.name}"? This action cannot be undone.` : ''}
+              {deleteTarget ? t('pages.groups.deleteDialog.description', { name: deleteTarget.name }) : ''}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction onClick={() => { if (deleteTarget) { deleteGroupMutation.mutate(deleteTarget.id); setDeleteTarget(null) } }}>
-              Delete
+              {t('common.delete')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -952,15 +954,15 @@ export function GroupsPage() {
       <AlertDialog open={!!removeMemberTarget} onOpenChange={(open) => !open && setRemoveMemberTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+            <AlertDialogTitle>{t('common.areYouSure')}</AlertDialogTitle>
             <AlertDialogDescription>
-              {removeMemberTarget && selectedGroup ? `Remove ${removeMemberTarget.username} from ${selectedGroup.name}?` : ''}
+              {removeMemberTarget && selectedGroup ? t('pages.groups.removeMemberDialog.description', { user: removeMemberTarget.username, group: selectedGroup.name }) : ''}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction onClick={() => { if (removeMemberTarget && selectedGroup) { removeMemberMutation.mutate({ groupId: selectedGroup.id, userId: removeMemberTarget.userId }); setRemoveMemberTarget(null) } }}>
-              Remove
+              {t('common.remove')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { api } from '../lib/api'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
@@ -33,15 +34,15 @@ interface BulkOperationItem {
   processed_at: string | null
 }
 
-const operationTypes: Record<string, { label: string; description: string; needsParam: string }> = {
-  enable_users: { label: 'Enable Users', description: 'Enable multiple disabled user accounts', needsParam: '' },
-  disable_users: { label: 'Disable Users', description: 'Disable multiple user accounts', needsParam: '' },
-  delete_users: { label: 'Delete Users', description: 'Permanently delete multiple user accounts', needsParam: '' },
-  assign_role: { label: 'Assign Role', description: 'Assign a role to multiple users', needsParam: 'role_id' },
-  remove_role: { label: 'Remove Role', description: 'Remove a role from multiple users', needsParam: 'role_id' },
-  add_to_group: { label: 'Add to Group', description: 'Add multiple users to a group', needsParam: 'group_id' },
-  remove_from_group: { label: 'Remove from Group', description: 'Remove multiple users from a group', needsParam: 'group_id' },
-  reset_passwords: { label: 'Force Password Reset', description: 'Force password reset for multiple users', needsParam: '' },
+const operationTypes: Record<string, { labelKey: string; descKey: string; needsParam: string }> = {
+  enable_users: { labelKey: 'pages.bulkOps.types.enableUsers.label', descKey: 'pages.bulkOps.types.enableUsers.desc', needsParam: '' },
+  disable_users: { labelKey: 'pages.bulkOps.types.disableUsers.label', descKey: 'pages.bulkOps.types.disableUsers.desc', needsParam: '' },
+  delete_users: { labelKey: 'pages.bulkOps.types.deleteUsers.label', descKey: 'pages.bulkOps.types.deleteUsers.desc', needsParam: '' },
+  assign_role: { labelKey: 'pages.bulkOps.types.assignRole.label', descKey: 'pages.bulkOps.types.assignRole.desc', needsParam: 'role_id' },
+  remove_role: { labelKey: 'pages.bulkOps.types.removeRole.label', descKey: 'pages.bulkOps.types.removeRole.desc', needsParam: 'role_id' },
+  add_to_group: { labelKey: 'pages.bulkOps.types.addToGroup.label', descKey: 'pages.bulkOps.types.addToGroup.desc', needsParam: 'group_id' },
+  remove_from_group: { labelKey: 'pages.bulkOps.types.removeFromGroup.label', descKey: 'pages.bulkOps.types.removeFromGroup.desc', needsParam: 'group_id' },
+  reset_passwords: { labelKey: 'pages.bulkOps.types.resetPasswords.label', descKey: 'pages.bulkOps.types.resetPasswords.desc', needsParam: '' },
 }
 
 const statusIcons: Record<string, React.ReactNode> = {
@@ -61,6 +62,7 @@ const statusColors: Record<string, string> = {
 }
 
 export function BulkOperationsPage() {
+  const { t } = useTranslation()
   const queryClient = useQueryClient()
   const [selectedType, setSelectedType] = useState('')
   const [userIdsText, setUserIdsText] = useState('')
@@ -129,7 +131,7 @@ export function BulkOperationsPage() {
   }
 
   if (isLoading) return <div className="flex justify-center py-12"><LoadingSpinner size="lg" /></div>
-  if (isError) return <QueryError error={error} resource="bulk operations" />
+  if (isError) return <QueryError error={error} resource={t('pages.bulkOps.resourceName')} />
 
   const ops = opsData?.data || []
   const detail = detailData?.operation
@@ -141,44 +143,44 @@ export function BulkOperationsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Bulk Operations</h1>
-          <p className="text-muted-foreground">Perform operations on multiple users at once</p>
+          <h1 className="text-2xl font-bold">{t('nav.items.bulkOperations')}</h1>
+          <p className="text-muted-foreground">{t('pages.bulkOps.subtitle')}</p>
         </div>
         <Button variant="outline" onClick={handleExportCSV}>
-          <Download className="h-4 w-4 mr-2" />Export Users CSV
+          <Download className="h-4 w-4 mr-2" />{t('pages.bulkOps.exportUsers')}
         </Button>
       </div>
 
       {/* New Operation */}
       <Card>
-        <CardHeader><CardTitle className="flex items-center gap-2"><Layers className="h-5 w-5" />New Bulk Operation</CardTitle></CardHeader>
+        <CardHeader><CardTitle className="flex items-center gap-2"><Layers className="h-5 w-5" />{t('pages.bulkOps.newOp')}</CardTitle></CardHeader>
         <CardContent className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="text-sm font-medium">Operation Type</label>
+              <label className="text-sm font-medium">{t('pages.bulkOps.typeLabel')}</label>
               <select className="w-full border rounded px-3 py-2 mt-1 text-sm" value={selectedType} onChange={e => setSelectedType(e.target.value)}>
-                <option value="">Select an operation...</option>
+                <option value="">{t('pages.bulkOps.typePlaceholder')}</option>
                 {Object.entries(operationTypes).map(([key, val]) => (
-                  <option key={key} value={key}>{val.label}</option>
+                  <option key={key} value={key}>{t(val.labelKey)}</option>
                 ))}
               </select>
-              {selectedType && <p className="text-xs text-muted-foreground mt-1">{operationTypes[selectedType]?.description}</p>}
+              {selectedType && operationTypes[selectedType] && <p className="text-xs text-muted-foreground mt-1">{t(operationTypes[selectedType].descKey)}</p>}
             </div>
             <div>
               {selectedType && operationTypes[selectedType]?.needsParam === 'role_id' && (
                 <>
-                  <label className="text-sm font-medium">Role</label>
+                  <label className="text-sm font-medium">{t('pages.bulkOps.roleLabel')}</label>
                   <select className="w-full border rounded px-3 py-2 mt-1 text-sm" value={paramValue} onChange={e => setParamValue(e.target.value)}>
-                    <option value="">Select role...</option>
+                    <option value="">{t('pages.bulkOps.rolePlaceholder')}</option>
                     {roles.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
                   </select>
                 </>
               )}
               {selectedType && operationTypes[selectedType]?.needsParam === 'group_id' && (
                 <>
-                  <label className="text-sm font-medium">Group</label>
+                  <label className="text-sm font-medium">{t('pages.bulkOps.groupLabel')}</label>
                   <select className="w-full border rounded px-3 py-2 mt-1 text-sm" value={paramValue} onChange={e => setParamValue(e.target.value)}>
-                    <option value="">Select group...</option>
+                    <option value="">{t('pages.bulkOps.groupPlaceholder')}</option>
                     {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
                   </select>
                 </>
@@ -186,20 +188,20 @@ export function BulkOperationsPage() {
             </div>
           </div>
           <div>
-            <label className="text-sm font-medium">User IDs (one per line or comma-separated)</label>
+            <label className="text-sm font-medium">{t('pages.bulkOps.idsLabel')}</label>
             <textarea className="w-full border rounded px-3 py-2 mt-1 text-sm font-mono h-24"
-              placeholder="Paste user IDs here..."
+              placeholder={t('pages.bulkOps.idsPlaceholder')}
               value={userIdsText} onChange={e => setUserIdsText(e.target.value)} />
           </div>
           <Button onClick={handleSubmit} disabled={!selectedType || !userIdsText.trim() || createMutation.isPending}>
-            <Play className="h-4 w-4 mr-2" />{createMutation.isPending ? 'Running...' : 'Execute Operation'}
+            <Play className="h-4 w-4 mr-2" />{createMutation.isPending ? t('pages.bulkOps.running') : t('pages.bulkOps.execute')}
           </Button>
         </CardContent>
       </Card>
 
       {/* Operation History */}
       <Card>
-        <CardHeader><CardTitle>Operation History</CardTitle></CardHeader>
+        <CardHeader><CardTitle>{t('pages.bulkOps.history')}</CardTitle></CardHeader>
         <CardContent>
           <div className="divide-y">
             {ops.map(op => (
@@ -208,17 +210,17 @@ export function BulkOperationsPage() {
                 <div className="flex items-center gap-3">
                   {statusIcons[op.status]}
                   <div>
-                    <p className="font-medium text-sm">{operationTypes[op.type]?.label || op.type}</p>
+                    <p className="font-medium text-sm">{operationTypes[op.type] ? t(operationTypes[op.type].labelKey) : op.type}</p>
                     <p className="text-xs text-muted-foreground">{new Date(op.created_at).toLocaleString()}</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
                   <Badge className={statusColors[op.status] || ''}>{op.status}</Badge>
                   <div className="text-right text-sm">
-                    <p>{op.processed_items}/{op.total_items} processed</p>
+                    <p>{t('pages.bulkOps.processed', { processed: op.processed_items, total: op.total_items })}</p>
                     <div className="flex gap-2 text-xs">
-                      <span className="text-green-600">{op.success_count} ok</span>
-                      {op.error_count > 0 && <span className="text-red-600">{op.error_count} errors</span>}
+                      <span className="text-green-600">{t('pages.bulkOps.ok', { n: op.success_count })}</span>
+                      {op.error_count > 0 && <span className="text-red-600">{t('pages.bulkOps.errors', { n: op.error_count })}</span>}
                     </div>
                   </div>
                   {op.total_items > 0 && (
@@ -230,7 +232,7 @@ export function BulkOperationsPage() {
               </div>
             ))}
             {ops.length === 0 && (
-              <p className="py-8 text-center text-muted-foreground">No bulk operations yet</p>
+              <p className="py-8 text-center text-muted-foreground">{t('pages.bulkOps.empty')}</p>
             )}
           </div>
         </CardContent>
@@ -241,7 +243,7 @@ export function BulkOperationsPage() {
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center justify-between">
-              <span>Operation Detail: {operationTypes[detail.type]?.label || detail.type}</span>
+              <span>{t('pages.bulkOps.detailTitle', { name: operationTypes[detail.type] ? t(operationTypes[detail.type].labelKey) : detail.type })}</span>
               <Button variant="ghost" size="sm" onClick={() => setSelectedOpId(null)}><X className="h-4 w-4" /></Button>
             </CardTitle>
           </CardHeader>

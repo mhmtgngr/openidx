@@ -535,9 +535,14 @@ all four pillars, deploy, log in, and find PAM.
    incl. the AD/Azure-AD managed variants, sessions, personal access
    tokens, authorized apps) are fully bilingual, as are the shared
    compliance-score tooltips. **Every page a non-admin user can reach
-   now renders in English and Türkçe end to end.** *Remaining:* the ~90
-   admin-only page bodies — mechanical, page by page, against this
-   pattern.
+   now renders in English and Türkçe end to end.** *And the admin
+   surface has begun:* the IAM identity core — Users, Groups, Roles
+   and Bulk Operations, the pages an admin drives daily (CRUD dialogs,
+   role/permission and membership management, CSV import/export,
+   policy-violation surfacing, pagination) — is bilingual, with shared
+   pagination/confirm strings promoted to the common catalog.
+   *Remaining:* the ~85 other admin page bodies — mechanical, batch by
+   batch, against this pattern.
 2. Accessibility pass to a VPAT (needs real assistive-technology testing,
    not just an automated axe sweep).
 3. Separate/hardened end-user portal bundle.
