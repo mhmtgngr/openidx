@@ -5,7 +5,7 @@ Get OpenIDX running locally in a few steps.
 ## Prerequisites
 
 - [Docker](https://docs.docker.com/get-docker/) and Docker Compose
-- [Go 1.25+](https://go.dev/dl/) and [Node.js 20+](https://nodejs.org/) — only for building from source
+- [Go 1.26+](https://go.dev/dl/) and [Node.js 20+](https://nodejs.org/) — only for building from source
 - [Make](https://www.gnu.org/software/make/)
 - **Hardware floor**: the full stack is ~39 containers — plan on ≥ 8–10 GB RAM
 

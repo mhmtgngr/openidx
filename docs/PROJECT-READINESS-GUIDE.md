@@ -349,7 +349,13 @@ All six items landed with this guide (commits on
 5. ✅ **Security CI gates** (J8) — the nightly aggregate gate lost its
    `continue-on-error`, and govulncheck is blocking (verified clean at
    arming time). gitleaks/npm-audit/semgrep stay non-blocking by
-   documented choice.
+   documented choice. *The gate has since done its job:* it caught
+   GO-2026-6354/6355 (SSH channel-deadlock DoS in `golang.org/x/crypto`,
+   reachable from the PAM broker's `ssh.Dial` / `ssh.NewClientConn`) on
+   this branch, fixed by moving to `x/crypto` v0.56.0 — which raises the
+   build floor to Go 1.26, now pinned in `go.mod` and matched across CI
+   and the docs. Verified with `govulncheck ./...` reporting 0 called
+   vulnerabilities.
 6. ✅ **Grafana admin/admin fallback removed; dev-kube generates real
    secrets** (B5).
 

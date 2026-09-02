@@ -1,11 +1,12 @@
 module github.com/openidx/openidx
 
-go 1.25.8
+go 1.26.0
 
-// Build with go1.25.10+, which patches the net/mail, html/template and
-// net/http/httputil stdlib advisories (GO-2026-4976/4977/4980/4982/4986)
-// that govulncheck flags on earlier 1.25.x.
-toolchain go1.25.13
+// golang.org/x/crypto v0.56.0 — which fixes the SSH channel-deadlock DoS
+// advisories GO-2026-6354/6355 that our broker's ssh.Dial / ssh.NewClientConn
+// calls reach — requires Go 1.26. Pin the toolchain so every build uses a
+// patched one rather than whatever the runner happens to ship.
+toolchain go1.26.8
 
 require (
 	github.com/alicebob/miniredis/v2 v2.38.0
@@ -47,7 +48,7 @@ require (
 	go.opentelemetry.io/otel/sdk v1.45.0
 	go.opentelemetry.io/otel/trace v1.45.0
 	go.uber.org/zap v1.28.0
-	golang.org/x/crypto v0.54.0
+	golang.org/x/crypto v0.56.0
 	golang.org/x/oauth2 v0.36.0
 	google.golang.org/api v0.291.0
 )
@@ -239,7 +240,7 @@ require (
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/term v0.45.0 // indirect
-	golang.org/x/text v0.40.0 // indirect
+	golang.org/x/text v0.41.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260803160001-6ac0973c030d // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260803160001-6ac0973c030d // indirect
 	google.golang.org/grpc v1.83.0 // indirect

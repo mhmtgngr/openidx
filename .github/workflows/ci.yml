@@ -13,7 +13,7 @@ permissions:
   checks: write
 
 env:
-  GO_VERSION: '1.25'
+  GO_VERSION: '1.26'
   CACHE_VERSION: v1
 
 jobs:
@@ -246,7 +246,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        go-version: ['1.25']
+        go-version: ['1.26']
 
     steps:
       - uses: actions/checkout@v7
@@ -666,7 +666,7 @@ jobs:
 
       - name: Run golangci-lint
         # v7 of the action runs golangci-lint v2, which is built with a recent
-        # enough Go to analyze this go1.25 module (v1 cannot).
+        # enough Go to analyze this go1.26 module (v1 cannot).
         uses: golangci/golangci-lint-action@v9
         with:
           version: v2.12.2

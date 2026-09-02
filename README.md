@@ -103,7 +103,7 @@ not as a multi-connector integration project.
 
 ### Prerequisites
 - Docker & Docker Compose
-- Go 1.25+ and Node.js 20+ (only for building from source)
+- Go 1.26+ and Node.js 20+ (only for building from source)
 - kubectl + Helm (for Kubernetes deployment)
 - **Hardware floor**: the full stack is ~39 containers (Postgres,
   Elasticsearch, OpenZiti, Guacamole, observability, 8 Go services…) —

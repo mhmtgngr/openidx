@@ -127,7 +127,7 @@ source alone forces MFA and denies MFA-less accounts).
 
 | Layer | Technology |
 |-------|-----------|
-| Language | Go 1.25 |
+| Language | Go 1.26 |
 | HTTP framework | Gin |
 | Database | PostgreSQL 16 (pgx), FORCE row-level security |
 | Cache / coordination | Redis 7 (go-redis) |
