@@ -573,8 +573,12 @@ func (zm *ZitiManager) forwardHTTPConnection(zitiConn edge.Conn, targetAddr, ser
 	// Create reverse proxy to upstream
 	target, _ := url.Parse("http://" + targetAddr)
 	proxy := httputil.NewSingleHostReverseProxy(target)
-	origDirector := proxy.Director
-	proxy.Director = func(req *http.Request) {
+	// nolint:staticcheck // SA1019: Director is deprecated as of Go 1.26 in favour
+	// of Rewrite. See the matching note in service.go — the migration changes
+	// X-Forwarded-For semantics on a zero-trust proxy path, so it is tracked as
+	// its own change.
+	origDirector := proxy.Director             //nolint:staticcheck
+	proxy.Director = func(req *http.Request) { //nolint:staticcheck
 		origDirector(req)
 		if callerID != "" {
 			req.Header.Set("X-Forwarded-User", callerID)

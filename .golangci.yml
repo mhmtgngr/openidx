@@ -1,7 +1,7 @@
 version: "2"
 
 # Pragmatic baseline (golangci-lint v2). golangci-lint v1 can't analyze a
-# go1.25 module, so lint was silently broken and a backlog of findings
+# go1.26 module, so lint was silently broken and a backlog of findings
 # accumulated. Deferred to a dedicated cleanup:
 #   - errcheck (1000+ findings, mostly intentional fire-and-forget / optional
 #     request-body binds; not worth blanket enforcement for v1)

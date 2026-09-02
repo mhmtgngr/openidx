@@ -2268,7 +2268,13 @@ func (s *Service) handleProxy(c *gin.Context) {
 			zap.String("route", route.Name))
 	}
 
-	proxy.Director = func(req *http.Request) {
+	// nolint:staticcheck // SA1019: Director is deprecated as of Go 1.26 in favour
+	// of Rewrite. Migrating is not mechanical here: Rewrite does not append
+	// X-Forwarded-For the way Director does — the caller must decide between
+	// SetXForwarded() (which REPLACES the inbound chain) and preserving it, and
+	// this is the ZTNA proxy path where that choice is a security decision.
+	// Tracked as its own change rather than folded into an unrelated one.
+	proxy.Director = func(req *http.Request) { //nolint:staticcheck
 		req.URL.Scheme = target.Scheme
 		req.URL.Host = target.Host
 		req.URL.Path = singleJoiningSlash(target.Path, c.Request.URL.Path)

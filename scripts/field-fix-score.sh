@@ -90,8 +90,20 @@ chk DOCS_STALE_COUNTS "$d" 0 "$([ "$d" = 0 ] && echo 1 || echo 0)"
 
 # 10. Toolchain must carry the CVE fix.
 # Read the toolchain DIRECTIVE; a comment mentioning a version is not a build.
+# The floor is go1.25.13 (the stdlib advisories GO-2026-4976/4977/4980/4982/4986),
+# but any later minor line carries those fixes too — so compare (minor, patch)
+# numerically rather than assuming the 1.25 series.
 t="$(awk '$1=="toolchain"{print $2}' go.mod)"
-tp="${t#go1.25.}"
-chk GO_TOOLCHAIN "${t:-UNKNOWN}" ">=go1.25.13" "$([ -n "$t" ] && [ "${tp:-0}" -ge 13 ] 2>/dev/null && echo 1 || echo 0)"
+tv="${t#go}"
+tmin="$(printf '%s' "$tv" | cut -d. -f2)"
+tpat="$(printf '%s' "$tv" | cut -d. -f3)"
+if [ -n "$t" ] && [ "${tmin:-0}" -gt 25 ] 2>/dev/null; then
+  tok=1
+elif [ -n "$t" ] && [ "${tmin:-0}" -eq 25 ] && [ "${tpat:-0}" -ge 13 ] 2>/dev/null; then
+  tok=1
+else
+  tok=0
+fi
+chk GO_TOOLCHAIN "${t:-UNKNOWN}" ">=go1.25.13" "$tok"
 
 echo "SCORE=$ok/$tot"

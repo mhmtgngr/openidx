@@ -665,11 +665,14 @@ jobs:
             ${{ runner.os }}-go-build-
 
       - name: Run golangci-lint
-        # v7 of the action runs golangci-lint v2, which is built with a recent
-        # enough Go to analyze this go1.26 module (v1 cannot).
+        # v7+ of the action runs golangci-lint v2, which is built with a recent
+        # enough Go to analyze this go1.26 module (v1 cannot). The pin must stay
+        # ahead of the module's go directive: a linter built with an older Go
+        # refuses the module outright ('language version ... is lower than the
+        # targeted Go version'). v2.13.2 ships built with go1.27.
         uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.12.2
+          version: v2.13.2
 
   # orgscope is the v2.0-multi-tenancy static helper: it walks
   # internal/ looking for SQL statements that target a scoped table
