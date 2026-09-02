@@ -4,7 +4,9 @@ package oauth
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +17,14 @@ import (
 
 	"github.com/openidx/openidx/internal/common/database"
 )
+
+// codeRef returns a short, non-reversible reference for an authorization
+// code, so log lines can be correlated without ever writing the code itself:
+// until exchanged (or expired), an authorization code is a bearer credential.
+func codeRef(code string) string {
+	sum := sha256.Sum256([]byte(code))
+	return hex.EncodeToString(sum[:6])
+}
 
 var (
 	// ErrCodeNotFound is returned when an authorization code is not found
@@ -133,13 +143,13 @@ func (s *Store) StoreAuthorizationCode(ctx context.Context, code *StoredAuthoriz
 	err = s.redis.Client.Set(ctx, key, data, ttl).Err()
 	if err != nil {
 		s.logger.Error("Failed to store authorization code",
-			zap.String("code", code.Code),
+			zap.String("code_ref", codeRef(code.Code)),
 			zap.Error(err))
 		return fmt.Errorf("failed to store auth code: %w", err)
 	}
 
 	s.logger.Debug("Stored authorization code",
-		zap.String("code", code.Code),
+		zap.String("code_ref", codeRef(code.Code)),
 		zap.String("client_id", code.ClientID),
 		zap.Duration("ttl", ttl))
 
@@ -207,7 +217,7 @@ func (s *Store) ConsumeAuthorizationCode(ctx context.Context, code string) error
 	s.DeleteAuthorizationCode(ctx, code)
 
 	s.logger.Debug("Consumed authorization code",
-		zap.String("code", code),
+		zap.String("code_ref", codeRef(code)),
 		zap.String("client_id", storedCode.ClientID),
 		zap.String("user_id", storedCode.UserID))
 
@@ -220,7 +230,7 @@ func (s *Store) DeleteAuthorizationCode(ctx context.Context, code string) error 
 	err := s.redis.Client.Del(ctx, key).Err()
 	if err != nil {
 		s.logger.Warn("Failed to delete authorization code",
-			zap.String("code", code),
+			zap.String("code_ref", codeRef(code)),
 			zap.Error(err))
 	}
 	return err

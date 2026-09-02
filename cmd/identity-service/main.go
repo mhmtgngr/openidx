@@ -239,10 +239,13 @@ func main() {
 		MutlucellAPIKey:    cfg.SMS.MutlucellAPIKey,
 		MutlucellSender:    cfg.SMS.MutlucellSender,
 	}
+	// A broken SMS config (e.g. a typo'd provider name) leaves the factor
+	// unwired: the identity service then answers SMS MFA requests with 501
+	// "not configured" instead of pretending via a fallback mock.
 	smsService, err := sms.NewService(smsConfig, log)
 	if err != nil {
-		log.Error("Failed to initialize SMS service, falling back to mock", zap.Error(err))
-		smsService, _ = sms.NewService(sms.DefaultConfig(), log)
+		log.Error("Failed to initialize SMS service; SMS MFA will refuse until fixed", zap.Error(err))
+		smsService = nil
 	}
 
 	// Start background workers
@@ -258,7 +261,12 @@ func main() {
 	identityService.SetWebhookService(webhookService)
 	identityService.SetAnomalyDetector(&anomalyDetectorAdapter{riskService: riskService})
 	identityService.SetRiskService(riskService)
-	identityService.SetSMSProvider(smsService)
+	// Guarded: assigning a nil *sms.Service through the interface would make
+	// the provider non-nil (a nil-wrapping interface) and defeat the
+	// not-configured gate.
+	if smsService != nil {
+		identityService.SetSMSProvider(smsService)
+	}
 
 	// Start SMS config watcher (polls DB every 30s for admin console changes)
 	go identityService.StartSMSConfigWatcher(bgCtx, 30*time.Second)

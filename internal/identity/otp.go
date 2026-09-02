@@ -6,12 +6,15 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"math/big"
 	"time"
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/sms"
 )
 
 // SMSEnrollment represents SMS MFA enrollment data
@@ -76,8 +79,23 @@ func DefaultOTPConfig() OTPConfig {
 
 // --- SMS MFA Methods ---
 
+// ErrSMSMFANotConfigured is returned when the SMS OTP factor is exercised on
+// an installation with no SMS provider wired (SetSMSProvider / the config
+// watcher). Mirrors ErrPhoneCallMFANotConfigured: refuse instead of pretend.
+var ErrSMSMFANotConfigured = fmt.Errorf("SMS MFA is not configured on this installation")
+
+// ErrEmailOTPMFANotConfigured is the same gate for the email OTP factor when
+// no email service is wired.
+var ErrEmailOTPMFANotConfigured = fmt.Errorf("email OTP MFA is not configured on this installation")
+
 // EnrollSMS starts SMS MFA enrollment for a user
 func (s *Service) EnrollSMS(ctx context.Context, userID, phoneNumber, countryCode string) (*SMSEnrollment, string, error) {
+	// Refuse up front, before any DB use: enrolling into a factor whose
+	// delivery channel doesn't exist would strand the user at verification.
+	if s.getSMSProvider() == nil {
+		return nil, "", ErrSMSMFANotConfigured
+	}
+
 	// Validate phone number format (basic validation)
 	if len(phoneNumber) < 7 || len(phoneNumber) > 15 {
 		return nil, "", fmt.Errorf("invalid phone number length")
@@ -119,10 +137,12 @@ func (s *Service) EnrollSMS(ctx context.Context, userID, phoneNumber, countryCod
 		return nil, "", fmt.Errorf("failed to create verification challenge: %w", err)
 	}
 
-	// Send SMS (in production, integrate with SMS provider)
+	// A send failure fails the call: reporting success while nothing was
+	// sent tells the user "code sent" when it wasn't. The unverified
+	// enrollment row remains, so a later attempt can still complete.
 	if err := s.sendSMSOTP(ctx, countryCode+phoneNumber, code); err != nil {
 		s.logger.Error("Failed to send SMS OTP", zap.Error(err))
-		// Don't fail enrollment, code can be resent
+		return nil, "", fmt.Errorf("failed to send verification code: %w", err)
 	}
 
 	s.logger.Info("SMS MFA enrollment started",
@@ -211,6 +231,11 @@ func (s *Service) DeleteSMSEnrollment(ctx context.Context, userID string) error 
 
 // CreateSMSChallenge creates a new SMS OTP challenge for authentication
 func (s *Service) CreateSMSChallenge(ctx context.Context, userID, ipAddress, userAgent string) (*OTPChallenge, error) {
+	// Refuse up front, before any DB use (see EnrollSMS).
+	if s.getSMSProvider() == nil {
+		return nil, ErrSMSMFANotConfigured
+	}
+
 	enrollment, err := s.GetSMSEnrollment(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("SMS MFA not enrolled: %w", err)
@@ -235,9 +260,10 @@ func (s *Service) CreateSMSChallenge(ctx context.Context, userID, ipAddress, use
 	challenge.IPAddress = ipAddress
 	challenge.UserAgent = userAgent
 
-	// Send SMS
+	// Send SMS — a failure fails the challenge; the user can retry.
 	if err := s.sendSMSOTP(ctx, enrollment.CountryCode+enrollment.PhoneNumber, code); err != nil {
 		s.logger.Error("Failed to send SMS OTP", zap.Error(err))
+		return nil, fmt.Errorf("failed to send SMS code: %w", err)
 	}
 
 	s.logger.Info("SMS OTP challenge created",
@@ -251,6 +277,11 @@ func (s *Service) CreateSMSChallenge(ctx context.Context, userID, ipAddress, use
 
 // EnrollEmailOTP starts Email OTP MFA enrollment for a user
 func (s *Service) EnrollEmailOTP(ctx context.Context, userID, emailAddress string) (*EmailOTPEnrollment, string, error) {
+	// Refuse up front, before any DB use (see EnrollSMS).
+	if s.emailService == nil {
+		return nil, "", ErrEmailOTPMFANotConfigured
+	}
+
 	// Check if already enrolled
 	existing, _ := s.GetEmailOTPEnrollment(ctx, userID)
 	if existing != nil {
@@ -275,9 +306,10 @@ func (s *Service) EnrollEmailOTP(ctx context.Context, userID, emailAddress strin
 		return nil, "", fmt.Errorf("failed to create verification challenge: %w", err)
 	}
 
-	// Send email
+	// A send failure fails the call (see EnrollSMS).
 	if err := s.sendEmailOTP(ctx, emailAddress, code); err != nil {
 		s.logger.Error("Failed to send Email OTP", zap.Error(err))
+		return nil, "", fmt.Errorf("failed to send verification code: %w", err)
 	}
 
 	s.logger.Info("Email OTP MFA enrollment started",
@@ -329,6 +361,11 @@ func (s *Service) DeleteEmailOTPEnrollment(ctx context.Context, userID string) e
 
 // CreateEmailOTPChallenge creates a new Email OTP challenge for authentication
 func (s *Service) CreateEmailOTPChallenge(ctx context.Context, userID, ipAddress, userAgent string) (*OTPChallenge, error) {
+	// Refuse up front, before any DB use (see EnrollSMS).
+	if s.emailService == nil {
+		return nil, ErrEmailOTPMFANotConfigured
+	}
+
 	enrollment, err := s.GetEmailOTPEnrollment(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("Email OTP MFA not enrolled: %w", err)
@@ -353,9 +390,10 @@ func (s *Service) CreateEmailOTPChallenge(ctx context.Context, userID, ipAddress
 	challenge.IPAddress = ipAddress
 	challenge.UserAgent = userAgent
 
-	// Send email
+	// Send email — a failure fails the challenge; the user can retry.
 	if err := s.sendEmailOTP(ctx, enrollment.EmailAddress, code); err != nil {
 		s.logger.Error("Failed to send Email OTP", zap.Error(err))
+		return nil, fmt.Errorf("failed to send email code: %w", err)
 	}
 
 	s.logger.Info("Email OTP challenge created",
@@ -642,24 +680,29 @@ func (s *Service) countRecentOTPChallenges(ctx context.Context, userID, method s
 }
 
 func (s *Service) sendSMSOTP(ctx context.Context, phoneNumber, code string) error {
-	// Check if SMS provider is configured (thread-safe)
+	// Fail closed with no provider: returning nil here used to make callers
+	// report "code sent" for a code that went nowhere — while writing the
+	// plaintext OTP into the logs. Codes are credentials; never log them.
 	provider := s.getSMSProvider()
 	if provider == nil {
-		s.logger.Warn("SMS provider not configured, OTP code not sent",
-			zap.String("phone", maskPhone(phoneNumber)),
-			zap.String("code", code)) // Only log in dev mode
-		return nil
+		return ErrSMSMFANotConfigured
 	}
 
-	return provider.SendOTP(ctx, phoneNumber, code)
+	if err := provider.SendOTP(ctx, phoneNumber, code); err != nil {
+		// A provider that exists but refuses (sending disabled in config)
+		// is the same "factor unavailable" state as no provider at all.
+		if errors.Is(err, sms.ErrSMSSendingDisabled) {
+			return ErrSMSMFANotConfigured
+		}
+		return err
+	}
+	return nil
 }
 
 func (s *Service) sendEmailOTP(ctx context.Context, email, code string) error {
+	// Fail closed with no email service (see sendSMSOTP).
 	if s.emailService == nil {
-		s.logger.Warn("Email service not configured, OTP code not sent",
-			zap.String("email", maskEmail(email)),
-			zap.String("code", code)) // Only log in dev mode
-		return nil
+		return ErrEmailOTPMFANotConfigured
 	}
 
 	return s.emailService.SendAsync(ctx, email, "Your verification code", "otp", map[string]interface{}{

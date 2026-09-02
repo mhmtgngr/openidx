@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,6 +15,12 @@ import (
 
 	"go.uber.org/zap"
 )
+
+// ErrSMSSendingDisabled is returned by SendOTP/SendMessage when the service
+// is configured but disabled. Callers must treat it as a failed delivery —
+// this used to return nil, which let MFA flows report "code sent" for a
+// code that went nowhere.
+var ErrSMSSendingDisabled = errors.New("sms sending is disabled")
 
 // Provider defines the interface for SMS providers
 type Provider interface {
@@ -115,8 +122,9 @@ func NewService(cfg Config, logger *zap.Logger) (*Service, error) {
 	case "mock":
 		provider = NewMockProvider(logger)
 	default:
-		logger.Warn("Unknown SMS provider, falling back to mock", zap.String("provider", cfg.Provider))
-		provider = NewMockProvider(logger)
+		// A typo'd provider name must not silently become a mock that
+		// "delivers" nothing — fail so the operator sees it immediately.
+		return nil, fmt.Errorf("unknown SMS provider %q (valid: twilio, aws_sns, webhook, netgsm, ileti_merkezi, verimor, turkcell, vodafone, turk_telekom, mutlucell, mock)", cfg.Provider)
 	}
 
 	if err != nil {
@@ -133,10 +141,10 @@ func NewService(cfg Config, logger *zap.Logger) (*Service, error) {
 // SendOTP sends a one-time password to the specified phone number
 func (s *Service) SendOTP(ctx context.Context, phoneNumber, code string) error {
 	if !s.config.Enabled {
-		s.logger.Info("SMS sending disabled, skipping OTP",
+		s.logger.Info("SMS sending disabled, refusing OTP send",
 			zap.String("phone", maskPhone(phoneNumber)),
 			zap.String("provider", s.provider.Name()))
-		return nil
+		return ErrSMSSendingDisabled
 	}
 
 	message := fmt.Sprintf("%s: Your verification code is %s. It expires in 5 minutes.", s.config.MessagePrefix, code)
@@ -146,10 +154,10 @@ func (s *Service) SendOTP(ctx context.Context, phoneNumber, code string) error {
 // SendMessage sends a custom message to the specified phone number
 func (s *Service) SendMessage(ctx context.Context, phoneNumber, message string) error {
 	if !s.config.Enabled {
-		s.logger.Info("SMS sending disabled, skipping message",
+		s.logger.Info("SMS sending disabled, refusing message send",
 			zap.String("phone", maskPhone(phoneNumber)),
 			zap.String("provider", s.provider.Name()))
-		return nil
+		return ErrSMSSendingDisabled
 	}
 
 	return s.provider.SendMessage(ctx, phoneNumber, message)
