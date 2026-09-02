@@ -570,8 +570,14 @@ all four pillars, deploy, log in, and find PAM.
    natively) and Security Alerts (alert triage plus the IP blocklist and
    its unblock confirmation) — so the screens an operator uses to hand
    out, withdraw and audit login factors read correctly in either
-   language. *Remaining:* the ~63 other admin page bodies — mechanical,
-   batch by batch, against this pattern.
+   language. *And the risk/analytics cluster:* Risk-Based MFA Policies
+   (the condition and action vocabularies, the priority-ordered policy
+   list and the test-evaluation dialog), the Risk Dashboard, Login
+   Anomalies (including the per-user baseline profile), Authentication
+   Analytics and Login Analytics — with the shared period selector
+   ("Last 7 Days" and friends) promoted to the common catalog. *Remaining:*
+   the ~58 other admin page bodies — mechanical, batch by batch, against
+   this pattern.
 2. Accessibility pass to a VPAT (needs real assistive-technology testing,
    not just an automated axe sweep).
 3. Separate/hardened end-user portal bundle.

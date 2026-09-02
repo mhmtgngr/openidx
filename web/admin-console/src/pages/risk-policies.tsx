@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import { Shield, Plus, Edit2, Trash2, AlertTriangle, Activity, Info } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -86,6 +87,7 @@ const emptyPolicy: Partial<RiskPolicy> = {
 }
 
 export function RiskPoliciesPage() {
+  const { t } = useTranslation()
   const { toast } = useToast()
   const queryClient = useQueryClient()
   const [editDialog, setEditDialog] = useState(false)
@@ -133,12 +135,15 @@ export function RiskPoliciesPage() {
       api.post('/api/v1/identity/risk/policies', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['risk-policies'] })
-      toast({ title: 'Policy Created', description: 'Risk policy has been created.' })
+      toast({
+        title: t('pages.riskPolicies.toasts.createdTitle'),
+        description: t('pages.riskPolicies.toasts.createdDesc'),
+      })
       setEditDialog(false)
       setFormData(emptyPolicy)
     },
     onError: (error: Error) => {
-      toast({ title: 'Error', description: error.message, variant: 'destructive' })
+      toast({ title: t('common.error'), description: error.message, variant: 'destructive' })
     }
   })
 
@@ -147,11 +152,14 @@ export function RiskPoliciesPage() {
       api.put(`/api/v1/identity/risk/policies/${id}`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['risk-policies'] })
-      toast({ title: 'Policy Updated', description: 'Risk policy has been updated.' })
+      toast({
+        title: t('pages.riskPolicies.toasts.updatedTitle'),
+        description: t('pages.riskPolicies.toasts.updatedDesc'),
+      })
       setEditDialog(false)
     },
     onError: (error: Error) => {
-      toast({ title: 'Error', description: error.message, variant: 'destructive' })
+      toast({ title: t('common.error'), description: error.message, variant: 'destructive' })
     }
   })
 
@@ -159,7 +167,10 @@ export function RiskPoliciesPage() {
     mutationFn: (id: string) => api.delete(`/api/v1/identity/risk/policies/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['risk-policies'] })
-      toast({ title: 'Policy Deleted', description: 'Risk policy has been deleted.' })
+      toast({
+        title: t('pages.riskPolicies.toasts.deletedTitle'),
+        description: t('pages.riskPolicies.toasts.deletedDesc'),
+      })
     }
   })
 
@@ -180,7 +191,7 @@ export function RiskPoliciesPage() {
       setTestResult(response)
     },
     onError: (error: Error) => {
-      toast({ title: 'Error', description: error.message, variant: 'destructive' })
+      toast({ title: t('common.error'), description: error.message, variant: 'destructive' })
     }
   })
 
@@ -207,29 +218,33 @@ export function RiskPoliciesPage() {
 
   const getDecisionBadge = (action: PolicyAction) => {
     if (action.deny) {
-      return <Badge className="bg-red-100 text-red-800">Deny Access</Badge>
+      return <Badge className="bg-red-100 text-red-800">{t('pages.riskPolicies.decisions.deny')}</Badge>
     }
     if (action.step_up) {
-      return <Badge className="bg-amber-100 text-amber-800">Step-Up MFA</Badge>
+      return <Badge className="bg-amber-100 text-amber-800">{t('pages.riskPolicies.decisions.stepUp')}</Badge>
     }
     if (action.require_mfa) {
-      return <Badge className="bg-blue-100 text-blue-800">Require MFA</Badge>
+      return <Badge className="bg-blue-100 text-blue-800">{t('pages.riskPolicies.decisions.requireMfa')}</Badge>
     }
-    return <Badge className="bg-green-100 text-green-800">Allow</Badge>
+    return <Badge className="bg-green-100 text-green-800">{t('pages.riskPolicies.decisions.allow')}</Badge>
   }
 
   const formatConditions = (cond: PolicyCondition): string[] => {
     const parts: string[] = []
-    if (cond.risk_score_min !== undefined) parts.push(`Risk >= ${cond.risk_score_min}`)
-    if (cond.risk_score_max !== undefined) parts.push(`Risk <= ${cond.risk_score_max}`)
-    if (cond.new_device) parts.push('New Device')
-    if (cond.new_location) parts.push('New Location')
-    if (cond.impossible_travel) parts.push('Impossible Travel')
-    if (cond.off_hours) parts.push('Off Hours')
-    if (cond.untrusted_device) parts.push('Untrusted Device')
-    if (cond.failed_attempts) parts.push(`${cond.failed_attempts}+ Failed Attempts`)
-    if (cond.countries?.length) parts.push(`Countries: ${cond.countries.join(', ')}`)
-    return parts.length ? parts : ['Any']
+    if (cond.risk_score_min !== undefined)
+      parts.push(t('pages.riskPolicies.conditions.riskMin', { n: cond.risk_score_min }))
+    if (cond.risk_score_max !== undefined)
+      parts.push(t('pages.riskPolicies.conditions.riskMax', { n: cond.risk_score_max }))
+    if (cond.new_device) parts.push(t('pages.riskPolicies.conditions.newDevice'))
+    if (cond.new_location) parts.push(t('pages.riskPolicies.conditions.newLocation'))
+    if (cond.impossible_travel) parts.push(t('pages.riskPolicies.conditions.impossibleTravel'))
+    if (cond.off_hours) parts.push(t('pages.riskPolicies.conditions.offHours'))
+    if (cond.untrusted_device) parts.push(t('pages.riskPolicies.conditions.untrustedDevice'))
+    if (cond.failed_attempts)
+      parts.push(t('pages.riskPolicies.conditions.failedAttempts', { n: cond.failed_attempts }))
+    if (cond.countries?.length)
+      parts.push(t('pages.riskPolicies.conditions.countries', { list: cond.countries.join(', ') }))
+    return parts.length ? parts : [t('pages.riskPolicies.conditions.any')]
   }
 
   if (isLoading) {
@@ -241,24 +256,24 @@ export function RiskPoliciesPage() {
   }
 
   if (isError) {
-    return <QueryError error={error} resource="risk policies" />
+    return <QueryError error={error} resource={t('pages.riskPolicies.resourceName')} />
   }
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Risk-Based MFA Policies</h1>
-          <p className="text-muted-foreground">Configure adaptive authentication based on risk factors</p>
+          <h1 className="text-2xl font-bold tracking-tight">{t('pages.riskPolicies.title')}</h1>
+          <p className="text-muted-foreground">{t('pages.riskPolicies.subtitle')}</p>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" onClick={() => setTestDialog(true)}>
             <Activity className="h-4 w-4 mr-2" />
-            Test Evaluation
+            {t('pages.riskPolicies.testEvaluation')}
           </Button>
           <Button onClick={openCreate}>
             <Plus className="h-4 w-4 mr-2" />
-            Create Policy
+            {t('pages.riskPolicies.create')}
           </Button>
         </div>
       </div>
@@ -267,7 +282,7 @@ export function RiskPoliciesPage() {
       <div className="grid gap-4 md:grid-cols-6">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">High Risk Today</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('pages.riskPolicies.stats.highRiskToday')}</CardTitle>
             <AlertTriangle className="h-4 w-4 text-red-500" />
           </CardHeader>
           <CardContent>
@@ -276,7 +291,7 @@ export function RiskPoliciesPage() {
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Avg Risk Score</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('pages.riskPolicies.stats.avgRiskScore')}</CardTitle>
             <Activity className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -285,7 +300,7 @@ export function RiskPoliciesPage() {
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">New Devices</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('pages.riskPolicies.stats.newDevices')}</CardTitle>
             <Shield className="h-4 w-4 text-blue-500" />
           </CardHeader>
           <CardContent>
@@ -294,7 +309,7 @@ export function RiskPoliciesPage() {
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Failed Logins</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('pages.riskPolicies.stats.failedLogins')}</CardTitle>
             <AlertTriangle className="h-4 w-4 text-amber-500" />
           </CardHeader>
           <CardContent>
@@ -303,7 +318,7 @@ export function RiskPoliciesPage() {
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Devices</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('pages.riskPolicies.stats.totalDevices')}</CardTitle>
             <Shield className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -312,7 +327,7 @@ export function RiskPoliciesPage() {
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Trusted</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('pages.riskPolicies.stats.trusted')}</CardTitle>
             <Shield className="h-4 w-4 text-green-500" />
           </CardHeader>
           <CardContent>
@@ -327,11 +342,8 @@ export function RiskPoliciesPage() {
           <div className="flex items-start gap-3">
             <Info className="h-5 w-5 text-primary mt-0.5" />
             <div>
-              <p className="font-medium text-blue-900">How Risk-Based MFA Works</p>
-              <p className="text-sm text-blue-800">
-                Policies are evaluated in priority order (lowest first). When conditions match, the most restrictive action is applied.
-                Risk factors include: new device (+30), unusual location (+25), impossible travel (+50), failed attempts (+10 each), and off-hours login (+10).
-              </p>
+              <p className="font-medium text-blue-900">{t('pages.riskPolicies.info.title')}</p>
+              <p className="text-sm text-blue-800">{t('pages.riskPolicies.info.body')}</p>
             </div>
           </div>
         </CardContent>
@@ -340,15 +352,17 @@ export function RiskPoliciesPage() {
       {/* Policies List */}
       <Card>
         <CardHeader>
-          <CardTitle>Active Policies</CardTitle>
-          <CardDescription>Policies are evaluated in priority order</CardDescription>
+          <CardTitle>{t('pages.riskPolicies.list.title')}</CardTitle>
+          <CardDescription>{t('pages.riskPolicies.list.description')}</CardDescription>
         </CardHeader>
         <CardContent>
           {policies.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
               <Shield className="h-12 w-12 mx-auto mb-3 opacity-40" />
-              <p>No risk policies configured</p>
-              <Button variant="link" onClick={openCreate}>Create your first policy</Button>
+              <p>{t('pages.riskPolicies.list.empty')}</p>
+              <Button variant="link" onClick={openCreate}>
+                {t('pages.riskPolicies.list.createFirst')}
+              </Button>
             </div>
           ) : (
             <div className="space-y-4">
@@ -367,7 +381,7 @@ export function RiskPoliciesPage() {
                       <h3 className="font-medium">{policy.name}</h3>
                       {getDecisionBadge(policy.actions)}
                       {!policy.enabled && (
-                        <Badge variant="secondary">Disabled</Badge>
+                        <Badge variant="secondary">{t('pages.riskPolicies.disabled')}</Badge>
                       )}
                     </div>
                     {policy.description && (
@@ -390,10 +404,12 @@ export function RiskPoliciesPage() {
                       <Edit2 className="h-4 w-4" />
                     </Button>
                     <ConfirmAction
-                      title="Delete Policy"
-                      description={`Are you sure you want to delete the risk policy ${policy.name}? This action cannot be undone.`}
+                      title={t('pages.riskPolicies.confirmDelete.title')}
+                      description={t('pages.riskPolicies.confirmDelete.description', {
+                        name: policy.name,
+                      })}
                       destructive
-                      confirmLabel="Delete"
+                      confirmLabel={t('common.delete')}
                       onConfirm={() => deleteMutation.mutateAsync(policy.id)}
                     >
                       {(open) => (
@@ -414,8 +430,12 @@ export function RiskPoliciesPage() {
       <Dialog open={editDialog} onOpenChange={setEditDialog}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>{selectedPolicy ? 'Edit Policy' : 'Create Policy'}</DialogTitle>
-            <DialogDescription>Configure conditions and actions for this risk policy</DialogDescription>
+            <DialogTitle>
+              {selectedPolicy
+                ? t('pages.riskPolicies.dialog.editTitle')
+                : t('pages.riskPolicies.dialog.createTitle')}
+            </DialogTitle>
+            <DialogDescription>{t('pages.riskPolicies.dialog.description')}</DialogDescription>
           </DialogHeader>
 
           <div className="space-y-6">
@@ -423,15 +443,15 @@ export function RiskPoliciesPage() {
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label>Policy Name *</Label>
+                  <Label>{t('pages.riskPolicies.dialog.name')}</Label>
                   <Input
                     value={formData.name || ''}
                     onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                    placeholder="e.g., High Risk Block"
+                    placeholder={t('pages.riskPolicies.dialog.namePlaceholder')}
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label>Priority (lower = first)</Label>
+                  <Label>{t('pages.riskPolicies.dialog.priority')}</Label>
                   <Input
                     type="number"
                     value={formData.priority || 100}
@@ -440,11 +460,11 @@ export function RiskPoliciesPage() {
                 </div>
               </div>
               <div className="space-y-2">
-                <Label>Description</Label>
+                <Label>{t('pages.riskPolicies.dialog.descriptionLabel')}</Label>
                 <Textarea
                   value={formData.description || ''}
                   onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                  placeholder="What does this policy do?"
+                  placeholder={t('pages.riskPolicies.dialog.descriptionPlaceholder')}
                   rows={2}
                 />
               </div>
@@ -452,10 +472,10 @@ export function RiskPoliciesPage() {
 
             {/* Conditions */}
             <div className="space-y-4">
-              <h4 className="font-medium">Conditions (when to trigger)</h4>
+              <h4 className="font-medium">{t('pages.riskPolicies.dialog.conditionsHeading')}</h4>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label>Min Risk Score</Label>
+                  <Label>{t('pages.riskPolicies.dialog.minRisk')}</Label>
                   <Input
                     type="number"
                     value={formData.conditions?.risk_score_min ?? ''}
@@ -470,7 +490,7 @@ export function RiskPoliciesPage() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label>Max Risk Score</Label>
+                  <Label>{t('pages.riskPolicies.dialog.maxRisk')}</Label>
                   <Input
                     type="number"
                     value={formData.conditions?.risk_score_max ?? ''}
@@ -496,7 +516,9 @@ export function RiskPoliciesPage() {
                       conditions: { ...formData.conditions, new_device: checked === true }
                     })}
                   />
-                  <label htmlFor="new_device" className="text-sm">New Device</label>
+                  <label htmlFor="new_device" className="text-sm">
+                    {t('pages.riskPolicies.conditions.newDevice')}
+                  </label>
                 </div>
                 <div className="flex items-center space-x-2">
                   <Checkbox
@@ -507,7 +529,9 @@ export function RiskPoliciesPage() {
                       conditions: { ...formData.conditions, new_location: checked === true }
                     })}
                   />
-                  <label htmlFor="new_location" className="text-sm">New Location</label>
+                  <label htmlFor="new_location" className="text-sm">
+                    {t('pages.riskPolicies.conditions.newLocation')}
+                  </label>
                 </div>
                 <div className="flex items-center space-x-2">
                   <Checkbox
@@ -518,7 +542,9 @@ export function RiskPoliciesPage() {
                       conditions: { ...formData.conditions, impossible_travel: checked === true }
                     })}
                   />
-                  <label htmlFor="impossible_travel" className="text-sm">Impossible Travel</label>
+                  <label htmlFor="impossible_travel" className="text-sm">
+                    {t('pages.riskPolicies.conditions.impossibleTravel')}
+                  </label>
                 </div>
                 <div className="flex items-center space-x-2">
                   <Checkbox
@@ -529,7 +555,9 @@ export function RiskPoliciesPage() {
                       conditions: { ...formData.conditions, off_hours: checked === true }
                     })}
                   />
-                  <label htmlFor="off_hours" className="text-sm">Off Hours</label>
+                  <label htmlFor="off_hours" className="text-sm">
+                    {t('pages.riskPolicies.conditions.offHours')}
+                  </label>
                 </div>
                 <div className="flex items-center space-x-2">
                   <Checkbox
@@ -540,12 +568,14 @@ export function RiskPoliciesPage() {
                       conditions: { ...formData.conditions, untrusted_device: checked === true }
                     })}
                   />
-                  <label htmlFor="untrusted_device" className="text-sm">Untrusted Device</label>
+                  <label htmlFor="untrusted_device" className="text-sm">
+                    {t('pages.riskPolicies.conditions.untrustedDevice')}
+                  </label>
                 </div>
               </div>
 
               <div className="space-y-2">
-                <Label>Failed Attempts Threshold</Label>
+                <Label>{t('pages.riskPolicies.dialog.failedThreshold')}</Label>
                 <Input
                   type="number"
                   value={formData.conditions?.failed_attempts ?? ''}
@@ -556,14 +586,14 @@ export function RiskPoliciesPage() {
                       failed_attempts: e.target.value ? parseInt(e.target.value) : undefined
                     }
                   })}
-                  placeholder="e.g., 3"
+                  placeholder={t('pages.riskPolicies.dialog.failedThresholdPlaceholder')}
                 />
               </div>
             </div>
 
             {/* Actions */}
             <div className="space-y-4">
-              <h4 className="font-medium">Actions (what to do)</h4>
+              <h4 className="font-medium">{t('pages.riskPolicies.dialog.actionsHeading')}</h4>
               <div className="grid grid-cols-2 gap-4">
                 <div className="flex items-center space-x-2">
                   <Checkbox
@@ -574,7 +604,9 @@ export function RiskPoliciesPage() {
                       actions: { ...formData.actions!, require_mfa: checked === true }
                     })}
                   />
-                  <label htmlFor="require_mfa" className="text-sm">Require MFA</label>
+                  <label htmlFor="require_mfa" className="text-sm">
+                    {t('pages.riskPolicies.dialog.requireMfa')}
+                  </label>
                 </div>
                 <div className="flex items-center space-x-2">
                   <Checkbox
@@ -585,7 +617,9 @@ export function RiskPoliciesPage() {
                       actions: { ...formData.actions!, step_up: checked === true }
                     })}
                   />
-                  <label htmlFor="step_up" className="text-sm">Step-Up Auth</label>
+                  <label htmlFor="step_up" className="text-sm">
+                    {t('pages.riskPolicies.dialog.stepUp')}
+                  </label>
                 </div>
                 <div className="flex items-center space-x-2">
                   <Checkbox
@@ -596,7 +630,9 @@ export function RiskPoliciesPage() {
                       actions: { ...formData.actions!, deny: checked === true }
                     })}
                   />
-                  <label htmlFor="deny" className="text-sm font-medium text-red-600">Deny Access</label>
+                  <label htmlFor="deny" className="text-sm font-medium text-red-600">
+                    {t('pages.riskPolicies.dialog.deny')}
+                  </label>
                 </div>
                 <div className="flex items-center space-x-2">
                   <Checkbox
@@ -607,7 +643,9 @@ export function RiskPoliciesPage() {
                       actions: { ...formData.actions!, notify_admin: checked === true }
                     })}
                   />
-                  <label htmlFor="notify_admin" className="text-sm">Notify Admin</label>
+                  <label htmlFor="notify_admin" className="text-sm">
+                    {t('pages.riskPolicies.dialog.notifyAdmin')}
+                  </label>
                 </div>
                 <div className="flex items-center space-x-2">
                   <Checkbox
@@ -618,12 +656,14 @@ export function RiskPoliciesPage() {
                       actions: { ...formData.actions!, notify_user: checked === true }
                     })}
                   />
-                  <label htmlFor="notify_user" className="text-sm">Notify User</label>
+                  <label htmlFor="notify_user" className="text-sm">
+                    {t('pages.riskPolicies.dialog.notifyUser')}
+                  </label>
                 </div>
               </div>
 
               <div className="space-y-2">
-                <Label>Log Level</Label>
+                <Label>{t('pages.riskPolicies.dialog.logLevel')}</Label>
                 <Select
                   value={formData.actions?.log_level || 'info'}
                   onValueChange={(value) => setFormData({
@@ -635,9 +675,9 @@ export function RiskPoliciesPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="info">Info</SelectItem>
-                    <SelectItem value="warning">Warning</SelectItem>
-                    <SelectItem value="critical">Critical</SelectItem>
+                    <SelectItem value="info">{t('pages.riskPolicies.dialog.logInfo')}</SelectItem>
+                    <SelectItem value="warning">{t('pages.riskPolicies.dialog.logWarning')}</SelectItem>
+                    <SelectItem value="critical">{t('pages.riskPolicies.dialog.logCritical')}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -645,9 +685,13 @@ export function RiskPoliciesPage() {
           </div>
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setEditDialog(false)}>Cancel</Button>
+            <Button variant="outline" onClick={() => setEditDialog(false)}>
+              {t('common.cancel')}
+            </Button>
             <Button onClick={handleSave} disabled={!formData.name}>
-              {selectedPolicy ? 'Update Policy' : 'Create Policy'}
+              {selectedPolicy
+                ? t('pages.riskPolicies.dialog.update')
+                : t('pages.riskPolicies.dialog.create')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -657,30 +701,30 @@ export function RiskPoliciesPage() {
       <Dialog open={testDialog} onOpenChange={setTestDialog}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Test Risk Evaluation</DialogTitle>
-            <DialogDescription>Test how policies would evaluate for a specific login context</DialogDescription>
+            <DialogTitle>{t('pages.riskPolicies.testDialog.title')}</DialogTitle>
+            <DialogDescription>{t('pages.riskPolicies.testDialog.description')}</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>User ID *</Label>
+                <Label>{t('pages.riskPolicies.testDialog.userId')}</Label>
                 <Input
                   value={testForm.user_id}
                   onChange={(e) => setTestForm({ ...testForm, user_id: e.target.value })}
-                  placeholder="Enter user UUID"
+                  placeholder={t('pages.riskPolicies.testDialog.userIdPlaceholder')}
                 />
               </div>
               <div className="space-y-2">
-                <Label>IP Address *</Label>
+                <Label>{t('pages.riskPolicies.testDialog.ip')}</Label>
                 <Input
                   value={testForm.ip_address}
                   onChange={(e) => setTestForm({ ...testForm, ip_address: e.target.value })}
-                  placeholder="e.g., 8.8.8.8"
+                  placeholder={t('pages.riskPolicies.testDialog.ipPlaceholder')}
                 />
               </div>
             </div>
             <div className="space-y-2">
-              <Label>User Agent</Label>
+              <Label>{t('pages.riskPolicies.testDialog.userAgent')}</Label>
               <Input
                 value={testForm.user_agent}
                 onChange={(e) => setTestForm({ ...testForm, user_agent: e.target.value })}
@@ -691,12 +735,12 @@ export function RiskPoliciesPage() {
               disabled={!testForm.user_id || !testForm.ip_address}
             >
               <Activity className="h-4 w-4 mr-2" />
-              Evaluate
+              {t('pages.riskPolicies.testDialog.evaluate')}
             </Button>
 
             {testResult && (
               <div className="mt-4 p-4 bg-muted rounded-lg">
-                <h4 className="font-medium mb-2">Evaluation Result</h4>
+                <h4 className="font-medium mb-2">{t('pages.riskPolicies.testDialog.result')}</h4>
                 <pre className="text-xs overflow-auto max-h-60">
                   {JSON.stringify(testResult, null, 2)}
                 </pre>
@@ -705,7 +749,7 @@ export function RiskPoliciesPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => { setTestDialog(false); setTestResult(null); }}>
-              Close
+              {t('common.close')}
             </Button>
           </DialogFooter>
         </DialogContent>

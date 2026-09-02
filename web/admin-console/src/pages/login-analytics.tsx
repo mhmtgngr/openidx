@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import {
   Activity,
   Shield,
@@ -82,14 +83,16 @@ interface LoginAnalytics {
   }>
 }
 
-const periodLabels: Record<string, string> = {
-  '24h': 'Last 24 Hours',
-  '7d': 'Last 7 Days',
-  '30d': 'Last 30 Days',
-  '90d': 'Last 90 Days',
+const PERIODS = ['24h', '7d', '30d', '90d'] as const
+const periodKeys: Record<string, string> = {
+  '24h': 'h24',
+  '7d': 'd7',
+  '30d': 'd30',
+  '90d': 'd90',
 }
 
 export function LoginAnalyticsPage() {
+  const { t } = useTranslation()
   const [period, setPeriod] = useState('7d')
 
   const { data, isLoading, isError, error } = useQuery<{ analytics?: LoginAnalytics }>({
@@ -174,13 +177,13 @@ export function LoginAnalyticsPage() {
   }
 
   if (isError) {
-    return <QueryError error={error} resource="login analytics" />
+    return <QueryError error={error} resource={t('pages.loginAnalytics.resourceName')} />
   }
 
   if (!analytics) {
     return (
       <div className="text-center py-12 text-muted-foreground">
-        No analytics data available
+        {t('pages.loginAnalytics.noData')}
       </div>
     )
   }
@@ -197,28 +200,30 @@ export function LoginAnalyticsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Login Analytics</h1>
-          <p className="text-muted-foreground">Authentication patterns and security insights</p>
+          <h1 className="text-2xl font-bold tracking-tight">{t('nav.items.loginAnalytics')}</h1>
+          <p className="text-muted-foreground">{t('pages.loginAnalytics.subtitle')}</p>
         </div>
         <Select value={period} onValueChange={setPeriod}>
           <SelectTrigger className="w-[180px]">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {Object.entries(periodLabels).map(([value, label]) => (
-              <SelectItem key={value} value={value}>{label}</SelectItem>
+            {PERIODS.map((value) => (
+              <SelectItem key={value} value={value}>
+                {t(`common.periods.${periodKeys[value]}`)}
+              </SelectItem>
             ))}
           </SelectContent>
         </Select>
       </div>
 
-      <RelatedLinks links={[{ to: '/auth-analytics', label: 'Auth Analytics' }]} />
+      <RelatedLinks links={[{ to: '/auth-analytics', label: t('nav.items.authAnalytics') }]} />
 
       {/* Summary Stats */}
       <div className="grid gap-4 md:grid-cols-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Logins</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('pages.loginAnalytics.stats.totalLogins')}</CardTitle>
             <Activity className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -238,7 +243,7 @@ export function LoginAnalyticsPage() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Success Rate</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('pages.loginAnalytics.stats.successRate')}</CardTitle>
             {parseFloat(successRate) >= 95 ? (
               <TrendingUp className="h-4 w-4 text-green-600" />
             ) : (
@@ -248,33 +253,35 @@ export function LoginAnalyticsPage() {
           <CardContent>
             <div className="text-2xl font-bold">{successRate}%</div>
             <p className="text-xs text-muted-foreground mt-1">
-              {analytics.summary.unique_users} unique users
+              {t('pages.loginAnalytics.stats.uniqueUsers', { n: analytics.summary.unique_users })}
             </p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">High Risk Logins</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('pages.loginAnalytics.stats.highRisk')}</CardTitle>
             <AlertTriangle className="h-4 w-4 text-amber-500" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-amber-600">{analytics.summary.high_risk_logins}</div>
             <p className="text-xs text-muted-foreground mt-1">
-              Avg risk score: {analytics.summary.average_risk_score.toFixed(1)}
+              {t('pages.loginAnalytics.stats.avgRisk', {
+                score: analytics.summary.average_risk_score.toFixed(1),
+              })}
             </p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">MFA Challenges</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('pages.loginAnalytics.stats.mfaChallenges')}</CardTitle>
             <Shield className="h-4 w-4 text-blue-500" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{analytics.summary.mfa_challenges}</div>
             <p className="text-xs text-muted-foreground mt-1">
-              {analytics.summary.new_devices} new devices
+              {t('pages.loginAnalytics.stats.newDevices', { n: analytics.summary.new_devices })}
             </p>
           </CardContent>
         </Card>
@@ -285,8 +292,8 @@ export function LoginAnalyticsPage() {
         {/* Daily Trend */}
         <Card>
           <CardHeader>
-            <CardTitle>Daily Login Trend</CardTitle>
-            <CardDescription>Successful vs failed logins over time</CardDescription>
+            <CardTitle>{t('pages.loginAnalytics.daily.title')}</CardTitle>
+            <CardDescription>{t('pages.loginAnalytics.daily.description')}</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
@@ -297,12 +304,12 @@ export function LoginAnalyticsPage() {
                     <div
                       className="bg-green-500 h-full rounded-l"
                       style={{ width: `${(day.successful / maxDaily) * 100}%` }}
-                      title={`${day.successful} successful`}
+                      title={t('pages.loginAnalytics.daily.successTooltip', { n: day.successful })}
                     />
                     <div
                       className="bg-red-500 h-full rounded-r"
                       style={{ width: `${(day.failed / maxDaily) * 100}%` }}
-                      title={`${day.failed} failed`}
+                      title={t('pages.loginAnalytics.daily.failedTooltip', { n: day.failed })}
                     />
                   </div>
                   <span className="text-xs text-muted-foreground w-16 text-right">
@@ -314,11 +321,11 @@ export function LoginAnalyticsPage() {
             <div className="flex items-center gap-4 mt-4 text-xs text-muted-foreground">
               <div className="flex items-center gap-1">
                 <div className="w-3 h-3 bg-green-500 rounded" />
-                Successful
+                {t('pages.loginAnalytics.daily.successful')}
               </div>
               <div className="flex items-center gap-1">
                 <div className="w-3 h-3 bg-red-500 rounded" />
-                Failed
+                {t('pages.loginAnalytics.daily.failed')}
               </div>
             </div>
           </CardContent>
@@ -327,8 +334,8 @@ export function LoginAnalyticsPage() {
         {/* Hourly Pattern */}
         <Card>
           <CardHeader>
-            <CardTitle>Hourly Pattern</CardTitle>
-            <CardDescription>Login activity by hour of day (UTC)</CardDescription>
+            <CardTitle>{t('pages.loginAnalytics.hourly.title')}</CardTitle>
+            <CardDescription>{t('pages.loginAnalytics.hourly.description')}</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="flex items-end gap-1 h-32">
@@ -339,7 +346,10 @@ export function LoginAnalyticsPage() {
                   <div
                     key={hour.hour}
                     className="flex-1 flex flex-col items-center"
-                    title={`${hour.hour}:00 - ${total} logins`}
+                    title={t('pages.loginAnalytics.hourly.tooltip', {
+                      hour: hour.hour,
+                      count: total,
+                    })}
                   >
                     <div
                       className="w-full bg-blue-500 rounded-t transition-all"
@@ -361,8 +371,8 @@ export function LoginAnalyticsPage() {
         {/* Risk Distribution */}
         <Card>
           <CardHeader>
-            <CardTitle>Risk Distribution</CardTitle>
-            <CardDescription>Login risk score breakdown</CardDescription>
+            <CardTitle>{t('pages.loginAnalytics.risk.title')}</CardTitle>
+            <CardDescription>{t('pages.loginAnalytics.risk.description')}</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
@@ -397,9 +407,9 @@ export function LoginAnalyticsPage() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Globe className="h-5 w-5" />
-              Top Locations
+              {t('pages.loginAnalytics.geo.title')}
             </CardTitle>
-            <CardDescription>Geographic distribution of logins</CardDescription>
+            <CardDescription>{t('pages.loginAnalytics.geo.description')}</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
@@ -408,19 +418,21 @@ export function LoginAnalyticsPage() {
                   <div>
                     <p className="font-medium">{geo.city || geo.country}</p>
                     <p className="text-xs text-muted-foreground">
-                      Avg risk: {geo.avg_risk.toFixed(1)}
+                      {t('pages.loginAnalytics.geo.avgRisk', { score: geo.avg_risk.toFixed(1) })}
                     </p>
                   </div>
                   <div className="text-right">
                     <p className="font-medium">{geo.count}</p>
                     {geo.failed > 0 && (
-                      <p className="text-xs text-red-600">{geo.failed} failed</p>
+                      <p className="text-xs text-red-600">
+                        {t('pages.loginAnalytics.geo.failedCount', { n: geo.failed })}
+                      </p>
                     )}
                   </div>
                 </div>
               ))}
               {(!analytics.geo_distribution || analytics.geo_distribution.length === 0) && (
-                <p className="text-center text-muted-foreground py-4">No location data available</p>
+                <p className="text-center text-muted-foreground py-4">{t('pages.loginAnalytics.geo.empty')}</p>
               )}
             </div>
           </CardContent>
@@ -432,7 +444,7 @@ export function LoginAnalyticsPage() {
         {/* Auth Methods */}
         <Card>
           <CardHeader>
-            <CardTitle>Authentication Methods</CardTitle>
+            <CardTitle>{t('pages.loginAnalytics.authMethods')}</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
@@ -449,7 +461,7 @@ export function LoginAnalyticsPage() {
         {/* Device Types */}
         <Card>
           <CardHeader>
-            <CardTitle>Device Types</CardTitle>
+            <CardTitle>{t('pages.loginAnalytics.deviceTypes')}</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
@@ -475,7 +487,7 @@ export function LoginAnalyticsPage() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <AlertTriangle className="h-5 w-5 text-amber-500" />
-              Failed Logins
+              {t('pages.loginAnalytics.failedLogins')}
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -489,7 +501,7 @@ export function LoginAnalyticsPage() {
                 </div>
               ))}
               {(!analytics.top_failed_users || analytics.top_failed_users.length === 0) && (
-                <p className="text-center text-muted-foreground py-4">No failed logins</p>
+                <p className="text-center text-muted-foreground py-4">{t('pages.loginAnalytics.noFailed')}</p>
               )}
             </div>
           </CardContent>

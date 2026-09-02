@@ -156,6 +156,14 @@ describe('i18n', () => {
       ...['approved', 'revoked', 'flagged'].map(
         (k) => `pages.reviewDetail.batch.actions.${k}`,
       ),
+      // risk-dashboard: bucketLabelKey() picks the distribution label
+      ...['critical', 'high', 'medium', 'mediumLow', 'low'].map(
+        (k) => `pages.riskDashboard.buckets.${k}`,
+      ),
+      // login-anomalies: riskScoreBadge() picks the severity word
+      ...['critical', 'high', 'medium', 'low'].map((k) => `pages.loginAnomalies.levels.${k}`),
+      // auth/login analytics: the period selector maps its value to a common key
+      ...['h24', 'd7', 'd30', 'd90'].map((k) => `common.periods.${k}`),
       // directories: validateForm messages resolved through the i18n singleton
       ...[
         'nameRequired',
