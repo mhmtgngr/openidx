@@ -21,7 +21,7 @@ security, access, sessions, devices, trusted browsers, notifications,
 access requests, profile — are fully bilingual; the end-user experience
 is complete in both languages). Open: P1 rollout Task 16 (operator
 action), P3.1 cut v1.28.0 (post-merge), the remaining P4 items incl.
-the ~43 remaining admin page bodies and the Expo-vs-Flutter mobile pick.)
+the 47 remaining admin page bodies and the Expo-vs-Flutter mobile pick.)
 **Question this document answers:** *Is OpenIDX fully functional and well defined end to end, as experienced by the people who use it — and what are the next steps and controls to get it there?*
 
 This is the product-and-user-side companion to
@@ -658,8 +658,21 @@ all four pillars, deploy, log in, and find PAM.
    resource spine with its access-method and control chips, the live
    sessions and recent-events tabs, and the coverage-gaps view that names
    exactly which of auth, device trust, posture and risk cap each resource
-   is missing). *Remaining:* the ~43 other admin page bodies — mechanical,
-   batch by batch, against this pattern.
+   is missing). *And the overlay setup pair:* Network Setup (the topology
+   strip, the ordered setup checklist, the install advisor and the
+   per-route data-path table) and BrowZer Bootstrapper Management (status
+   and certificate cards, the certificate tab, and the domain-change flow
+   with its cascading-updates warning). Network Setup is the clearest case
+   of the convention that keeps this honest: almost all of its prose —
+   every checklist step's title, description, remediation and action
+   label, every component's role and install lines, every route's data
+   path, requirements and warnings — is *composed by the backend* in
+   `internal/access/ziti_setup_handlers.go`, so it stays untranslated;
+   only the page's own chrome localizes. Translating server prose in the
+   client would have produced a page that looks bilingual and silently
+   disagrees with the API. *Remaining:* 47 other admin page bodies (a
+   measured count, not an estimate: pages under `src/pages` with no
+   `useTranslation`) — mechanical, batch by batch, against this pattern.
 2. Accessibility pass to a VPAT (needs real assistive-technology testing,
    not just an automated axe sweep).
 3. Separate/hardened end-user portal bundle.

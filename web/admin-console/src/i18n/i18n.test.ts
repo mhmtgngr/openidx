@@ -319,6 +319,16 @@ describe('i18n', () => {
       ...['notConfigured', 'reachable', 'unreachable'].map(
         (k) => `pages.zeroTrust.zitiStatus.${k}`,
       ),
+      // ziti-setup: STATUS_META carries the key; the status icon's aria-label
+      // and the checklist badge both resolve through it
+      ...[
+        'complete',
+        'warning',
+        'action_needed',
+        'error',
+        'blocked',
+        'optional',
+      ].map((k) => `pages.zitiSetup.statuses.${k}`),
       // lib/connection-path + lib/remote-app resolve through the i18n singleton
       'pam.remoteAppSecretHint',
       ...[
