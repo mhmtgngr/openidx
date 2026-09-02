@@ -220,14 +220,14 @@ export function Layout() {
             const collapsed = !searching && collapsedDomains.includes(group.id)
             return (
               <div key={group.id}>
-                {group.label && sidebarOpen && (
+                {group.labelKey && sidebarOpen && (
                   <button
                     onClick={() => toggleDomain(group.id)}
                     className="mt-4 flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground hover:bg-muted hover:text-foreground"
                     aria-expanded={!collapsed}
                   >
                     <group.icon className="h-3.5 w-3.5" />
-                    <span className="flex-1 text-left">{group.label}</span>
+                    <span className="flex-1 text-left">{t(group.labelKey)}</span>
                     <ChevronDown
                       className={`h-3.5 w-3.5 transition-transform ${collapsed ? '-rotate-90' : ''}`}
                     />
@@ -237,16 +237,16 @@ export function Layout() {
                 {(!collapsed || !sidebarOpen) &&
                   group.sections.map((section, sIdx) => (
                     <div key={`${group.id}-${sIdx}`}>
-                      {section.label && sidebarOpen && (
+                      {section.labelKey && sidebarOpen && (
                         <div className="px-3 pt-2 pb-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-                          {section.label}
+                          {t(section.labelKey)}
                         </div>
                       )}
                       {section.items.map((item) => (
                         <NavLink
                           key={item.href}
                           to={item.href}
-                          title={sidebarOpen ? undefined : item.name}
+                          title={sidebarOpen ? undefined : t(item.nameKey)}
                           onClick={() => setMobileOpen(false)}
                           className={({ isActive }) =>
                             `flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
@@ -257,7 +257,7 @@ export function Layout() {
                           }
                         >
                           <item.icon className="h-5 w-5 flex-shrink-0" />
-                          {sidebarOpen && <span className="text-sm">{item.name}</span>}
+                          {sidebarOpen && <span className="text-sm">{t(item.nameKey)}</span>}
                         </NavLink>
                       ))}
                     </div>

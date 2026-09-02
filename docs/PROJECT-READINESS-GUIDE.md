@@ -504,9 +504,14 @@ all four pillars, deploy, log in, and find PAM.
    on the login screens and in the authenticated header. The login
    footer's Privacy/Terms/Help trio — link-styled text with no
    destinations — was replaced with real Documentation/Security links,
-   pinned by test. *Remaining:* the ~100 admin pages and the
-   `config/navigation` item labels — mechanical, page by page, against
-   this pattern.
+   pinned by test. *And the navigation layer:* all 97 menu items, 11
+   section headings and 7 domain headings resolve through the catalogs
+   (English stays canonical in `config/navigation.ts` and remains a
+   search synonym), the sidebar quick-search and ⌘K command palette
+   match **both** languages, breadcrumbs translate, and a
+   completeness test pins that every key the nav config references
+   exists in every declared language. *Remaining:* the ~100 admin page
+   bodies — mechanical, page by page, against this pattern.
 2. Accessibility pass to a VPAT (needs real assistive-technology testing,
    not just an automated axe sweep).
 3. Separate/hardened end-user portal bundle.

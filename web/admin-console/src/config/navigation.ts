@@ -74,6 +74,7 @@ import {
   Server,
   Home,
 } from 'lucide-react'
+import i18n from '@/i18n'
 import { hasMinRole, type MinRole } from '@/lib/roles'
 
 export type NavIcon = React.ComponentType<{ className?: string }>
@@ -87,7 +88,10 @@ export type NavDomain = 'home' | 'iam' | 'ziti' | 'pam' | 'audit' | 'ai' | 'plat
 export type ViewMode = 'admin' | 'management' | 'reporting'
 
 export interface NavItem {
+  /** Canonical English name — also a search synonym in any UI language. */
   name: string
+  /** Catalog key for the displayed (translated) name. */
+  nameKey: string
   href: string
   icon: NavIcon
   /** Minimum role that should see this entry (hierarchical). */
@@ -97,18 +101,29 @@ export interface NavItem {
 }
 
 export interface NavSection {
-  /** Sub-heading inside a domain. Empty label = no heading rendered. */
+  /** Sub-heading inside a domain (canonical English). Empty label = no heading rendered. */
   label: string
+  /** Catalog key for the displayed heading; absent when label is empty. */
+  labelKey?: string
   items: NavItem[]
 }
 
 export interface NavDomainGroup {
   id: NavDomain
-  /** Domain heading. Empty for the personal (home) group. */
+  /** Domain heading (canonical English). Empty for the personal (home) group. */
   label: string
+  /** Catalog key for the displayed heading; absent when label is empty. */
+  labelKey?: string
   icon: NavIcon
   sections: NavSection[]
 }
+
+// Display resolvers: components render these (they re-render on language
+// change via useTranslation); the raw name/label stay canonical English and
+// keep working as search synonyms.
+export const navItemName = (item: NavItem): string => i18n.t(item.nameKey)
+export const navSectionLabel = (s: NavSection): string => (s.labelKey ? i18n.t(s.labelKey) : '')
+export const navDomainLabel = (g: NavDomainGroup): string => (g.labelKey ? i18n.t(g.labelKey) : '')
 
 export const navigation: NavDomainGroup[] = [
   {
@@ -119,22 +134,23 @@ export const navigation: NavDomainGroup[] = [
       {
         label: '',
         items: [
-          { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, minRole: 'user', keywords: ['overview', 'home'] },
-          { name: 'My Profile', href: '/profile', icon: User, minRole: 'user', keywords: ['account', 'password'] },
-          { name: 'My Apps & Network', href: '/my-network', icon: Globe, minRole: 'user', keywords: ['what can i reach', 'connect', 'remote', 'servers', 'access', 'resources', 'apps', 'launcher', 'portal', 'sso', 'sign in', 'windows', 'remoteapp', 'ssms', 'rds', 'quick links', 'shortcuts', 'teams', 'zoom', 'support', 'privileged', 'pam', 'secrets', 'checkout', 'sessions'] },
-          { name: 'My Access', href: '/my-access', icon: Eye, minRole: 'user', keywords: ['entitlements', 'permissions'] },
-          { name: 'My Devices', href: '/my-devices', icon: Smartphone, minRole: 'user', keywords: ['phone', 'enrollment'] },
-          { name: 'My Sessions', href: '/sessions', icon: Monitor, minRole: 'user', keywords: ['active sessions', 'sign out', 'devices', 'logged in'] },
-          { name: 'My Security', href: '/my-security', icon: ShieldCheck, minRole: 'user', keywords: ['security score', 'risk', 'insights', 'mfa'] },
-          { name: 'Trusted Browsers', href: '/trusted-browsers', icon: Monitor, minRole: 'user', keywords: ['remembered'] },
-          { name: 'Access Requests', href: '/access-requests', icon: GitPullRequest, minRole: 'user', keywords: ['request access', 'approvals'] },
-          { name: 'Notifications', href: '/notification-center', icon: Bell, minRole: 'user', keywords: ['inbox', 'alerts'] },
+          { name: 'Dashboard', nameKey: 'nav.items.dashboard', href: '/dashboard', icon: LayoutDashboard, minRole: 'user', keywords: ['overview', 'home'] },
+          { name: 'My Profile', nameKey: 'nav.items.myProfile', href: '/profile', icon: User, minRole: 'user', keywords: ['account', 'password'] },
+          { name: 'My Apps & Network', nameKey: 'nav.items.myAppsNetwork', href: '/my-network', icon: Globe, minRole: 'user', keywords: ['what can i reach', 'connect', 'remote', 'servers', 'access', 'resources', 'apps', 'launcher', 'portal', 'sso', 'sign in', 'windows', 'remoteapp', 'ssms', 'rds', 'quick links', 'shortcuts', 'teams', 'zoom', 'support', 'privileged', 'pam', 'secrets', 'checkout', 'sessions'] },
+          { name: 'My Access', nameKey: 'nav.items.myAccess', href: '/my-access', icon: Eye, minRole: 'user', keywords: ['entitlements', 'permissions'] },
+          { name: 'My Devices', nameKey: 'nav.items.myDevices', href: '/my-devices', icon: Smartphone, minRole: 'user', keywords: ['phone', 'enrollment'] },
+          { name: 'My Sessions', nameKey: 'nav.items.mySessions', href: '/sessions', icon: Monitor, minRole: 'user', keywords: ['active sessions', 'sign out', 'devices', 'logged in'] },
+          { name: 'My Security', nameKey: 'nav.items.mySecurity', href: '/my-security', icon: ShieldCheck, minRole: 'user', keywords: ['security score', 'risk', 'insights', 'mfa'] },
+          { name: 'Trusted Browsers', nameKey: 'nav.items.trustedBrowsers', href: '/trusted-browsers', icon: Monitor, minRole: 'user', keywords: ['remembered'] },
+          { name: 'Access Requests', nameKey: 'nav.items.accessRequests', href: '/access-requests', icon: GitPullRequest, minRole: 'user', keywords: ['request access', 'approvals'] },
+          { name: 'Notifications', nameKey: 'nav.items.notifications', href: '/notification-center', icon: Bell, minRole: 'user', keywords: ['inbox', 'alerts'] },
         ],
       },
       {
         label: 'Operations',
+        labelKey: 'nav.sections.operations',
         items: [
-          { name: 'Ops Cockpit', href: '/ops-cockpit', icon: Gauge, minRole: 'operator', keywords: ['operations', 'situational', 'overview', 'command center', 'noc'] },
+          { name: 'Ops Cockpit', nameKey: 'nav.items.opsCockpit', href: '/ops-cockpit', icon: Gauge, minRole: 'operator', keywords: ['operations', 'situational', 'overview', 'command center', 'noc'] },
         ],
       },
     ],
@@ -142,62 +158,67 @@ export const navigation: NavDomainGroup[] = [
   {
     id: 'iam',
     label: 'Identity & Access (IAM)',
+    labelKey: 'nav.domains.iam',
     icon: Fingerprint,
     sections: [
       {
         label: 'Identity',
+        labelKey: 'nav.sections.identity',
         items: [
-          { name: 'Users', href: '/users', icon: Users, minRole: 'operator', keywords: ['people', 'accounts', 'iam'] },
-          { name: 'Groups', href: '/groups', icon: Users2, minRole: 'operator', keywords: ['teams', 'membership'] },
-          { name: 'Roles', href: '/roles', icon: ShieldCheck, minRole: 'admin', keywords: ['rbac', 'permissions'] },
-          { name: 'Directories', href: '/directories', icon: FolderSync, minRole: 'admin', keywords: ['ldap', 'active directory', 'sync'] },
-          { name: 'Service Accounts', href: '/service-accounts', icon: KeyIcon, minRole: 'admin', keywords: ['machine', 'api accounts'] },
-          { name: 'Bulk Operations', href: '/bulk-operations', icon: Layers, minRole: 'operator', keywords: ['import', 'export', 'csv'] },
+          { name: 'Users', nameKey: 'nav.items.users', href: '/users', icon: Users, minRole: 'operator', keywords: ['people', 'accounts', 'iam'] },
+          { name: 'Groups', nameKey: 'nav.items.groups', href: '/groups', icon: Users2, minRole: 'operator', keywords: ['teams', 'membership'] },
+          { name: 'Roles', nameKey: 'nav.items.roles', href: '/roles', icon: ShieldCheck, minRole: 'admin', keywords: ['rbac', 'permissions'] },
+          { name: 'Directories', nameKey: 'nav.items.directories', href: '/directories', icon: FolderSync, minRole: 'admin', keywords: ['ldap', 'active directory', 'sync'] },
+          { name: 'Service Accounts', nameKey: 'nav.items.serviceAccounts', href: '/service-accounts', icon: KeyIcon, minRole: 'admin', keywords: ['machine', 'api accounts'] },
+          { name: 'Bulk Operations', nameKey: 'nav.items.bulkOperations', href: '/bulk-operations', icon: Layers, minRole: 'operator', keywords: ['import', 'export', 'csv'] },
         ],
       },
       {
         label: 'Applications & Federation',
+        labelKey: 'nav.sections.appsFederation',
         items: [
-          { name: 'Applications', href: '/applications', icon: AppWindow, minRole: 'admin', keywords: ['oauth', 'clients', 'sso'] },
-          { name: 'Identity Providers', href: '/identity-providers', icon: KeyIcon, minRole: 'admin', keywords: ['idp', 'oidc', 'saml'] },
-          { name: 'SAML Providers', href: '/saml-service-providers', icon: Fingerprint, minRole: 'admin', keywords: ['saml', 'service provider', 'federation'] },
-          { name: 'Social Providers', href: '/social-providers', icon: Globe, minRole: 'admin', keywords: ['google', 'github', 'social login'] },
-          { name: 'Federation', href: '/federation-config', icon: Link2, minRole: 'admin', keywords: ['trust', 'external idp'] },
-          { name: 'Provisioning Rules', href: '/provisioning-rules', icon: Workflow, minRole: 'admin', keywords: ['scim', 'sync rules'] },
-          { name: 'Lifecycle Workflows', href: '/lifecycle-workflows', icon: Workflow, minRole: 'admin', keywords: ['joiner', 'mover', 'leaver', 'onboarding'] },
+          { name: 'Applications', nameKey: 'nav.items.applications', href: '/applications', icon: AppWindow, minRole: 'admin', keywords: ['oauth', 'clients', 'sso'] },
+          { name: 'Identity Providers', nameKey: 'nav.items.identityProviders', href: '/identity-providers', icon: KeyIcon, minRole: 'admin', keywords: ['idp', 'oidc', 'saml'] },
+          { name: 'SAML Providers', nameKey: 'nav.items.samlProviders', href: '/saml-service-providers', icon: Fingerprint, minRole: 'admin', keywords: ['saml', 'service provider', 'federation'] },
+          { name: 'Social Providers', nameKey: 'nav.items.socialProviders', href: '/social-providers', icon: Globe, minRole: 'admin', keywords: ['google', 'github', 'social login'] },
+          { name: 'Federation', nameKey: 'nav.items.federation', href: '/federation-config', icon: Link2, minRole: 'admin', keywords: ['trust', 'external idp'] },
+          { name: 'Provisioning Rules', nameKey: 'nav.items.provisioningRules', href: '/provisioning-rules', icon: Workflow, minRole: 'admin', keywords: ['scim', 'sync rules'] },
+          { name: 'Lifecycle Workflows', nameKey: 'nav.items.lifecycleWorkflows', href: '/lifecycle-workflows', icon: Workflow, minRole: 'admin', keywords: ['joiner', 'mover', 'leaver', 'onboarding'] },
         ],
       },
       {
         label: 'Governance',
+        labelKey: 'nav.sections.governance',
         items: [
-          { name: 'Policies', href: '/policies', icon: Scale, minRole: 'operator', keywords: ['opa', 'rules'] },
-          { name: 'Approval Policies', href: '/approval-policies', icon: ShieldCheck, minRole: 'admin', keywords: ['workflow', 'approvers'] },
-          { name: 'Access Reviews', href: '/access-reviews', icon: ClipboardCheck, minRole: 'operator', keywords: ['recertification', 'review'] },
-          { name: 'Cert Campaigns', href: '/certification-campaigns', icon: Target, minRole: 'admin', keywords: ['certification', 'campaign'] },
-          { name: 'Attestation', href: '/attestation-campaigns', icon: ClipboardSignature, minRole: 'admin', keywords: ['attest', 'campaign'] },
-          { name: 'Entitlements', href: '/entitlements', icon: Package, minRole: 'admin', keywords: ['grants', 'catalog'] },
-          { name: 'Assignment Report', href: '/assignment-report', icon: ClipboardList, minRole: 'admin', keywords: ['assignment', 'enforcement', 'who loses access'] },
-          { name: 'ABAC Policies', href: '/abac-policies', icon: Filter, minRole: 'admin', keywords: ['attribute', 'context'] },
-          { name: 'Lifecycle Policies', href: '/lifecycle-policies', icon: UserMinus, minRole: 'admin', keywords: ['deprovision', 'dormant', 'offboarding'] },
-          { name: 'Sessions', href: '/sessions', icon: Monitor, minRole: 'operator', keywords: ['active sessions', 'revoke'] },
-          { name: 'Delegations', href: '/delegations', icon: UserCheck, minRole: 'admin', keywords: ['delegate', 'admin rights'] },
-          { name: 'Privacy Dashboard', href: '/privacy-dashboard', icon: Shield, minRole: 'admin', keywords: ['gdpr', 'data subject'] },
-          { name: 'Consent Mgmt', href: '/consent-management', icon: FileCheck, minRole: 'admin', keywords: ['consent', 'gdpr'] },
+          { name: 'Policies', nameKey: 'nav.items.policies', href: '/policies', icon: Scale, minRole: 'operator', keywords: ['opa', 'rules'] },
+          { name: 'Approval Policies', nameKey: 'nav.items.approvalPolicies', href: '/approval-policies', icon: ShieldCheck, minRole: 'admin', keywords: ['workflow', 'approvers'] },
+          { name: 'Access Reviews', nameKey: 'nav.items.accessReviews', href: '/access-reviews', icon: ClipboardCheck, minRole: 'operator', keywords: ['recertification', 'review'] },
+          { name: 'Cert Campaigns', nameKey: 'nav.items.certCampaigns', href: '/certification-campaigns', icon: Target, minRole: 'admin', keywords: ['certification', 'campaign'] },
+          { name: 'Attestation', nameKey: 'nav.items.attestation', href: '/attestation-campaigns', icon: ClipboardSignature, minRole: 'admin', keywords: ['attest', 'campaign'] },
+          { name: 'Entitlements', nameKey: 'nav.items.entitlements', href: '/entitlements', icon: Package, minRole: 'admin', keywords: ['grants', 'catalog'] },
+          { name: 'Assignment Report', nameKey: 'nav.items.assignmentReport', href: '/assignment-report', icon: ClipboardList, minRole: 'admin', keywords: ['assignment', 'enforcement', 'who loses access'] },
+          { name: 'ABAC Policies', nameKey: 'nav.items.abacPolicies', href: '/abac-policies', icon: Filter, minRole: 'admin', keywords: ['attribute', 'context'] },
+          { name: 'Lifecycle Policies', nameKey: 'nav.items.lifecyclePolicies', href: '/lifecycle-policies', icon: UserMinus, minRole: 'admin', keywords: ['deprovision', 'dormant', 'offboarding'] },
+          { name: 'Sessions', nameKey: 'nav.items.sessions', href: '/sessions', icon: Monitor, minRole: 'operator', keywords: ['active sessions', 'revoke'] },
+          { name: 'Delegations', nameKey: 'nav.items.delegations', href: '/delegations', icon: UserCheck, minRole: 'admin', keywords: ['delegate', 'admin rights'] },
+          { name: 'Privacy Dashboard', nameKey: 'nav.items.privacyDashboard', href: '/privacy-dashboard', icon: Shield, minRole: 'admin', keywords: ['gdpr', 'data subject'] },
+          { name: 'Consent Mgmt', nameKey: 'nav.items.consentMgmt', href: '/consent-management', icon: FileCheck, minRole: 'admin', keywords: ['consent', 'gdpr'] },
         ],
       },
       {
         label: 'Security & MFA',
+        labelKey: 'nav.sections.securityMfa',
         items: [
-          { name: 'MFA Management', href: '/mfa-management', icon: Shield, minRole: 'operator', keywords: ['totp', 'factors', 'reset mfa'] },
-          { name: 'Risk Policies', href: '/risk-policies', icon: Activity, minRole: 'admin', keywords: ['adaptive', 'conditional access'] },
-          { name: 'Login Anomalies', href: '/login-anomalies', icon: AlertTriangle, minRole: 'operator', keywords: ['impossible travel', 'suspicious'] },
-          { name: 'Security Alerts', href: '/security-alerts', icon: ShieldAlert, minRole: 'operator', keywords: ['incidents', 'threats'] },
-          { name: 'Hardware Tokens', href: '/hardware-tokens', icon: KeyRound, minRole: 'operator', keywords: ['yubikey', 'otp'] },
-          { name: 'Device Trust Approval', href: '/device-trust-approval', icon: Fingerprint, minRole: 'operator', keywords: ['device approval'] },
-          { name: 'MFA Bypass Codes', href: '/mfa-bypass-codes', icon: ShieldOff, minRole: 'admin', keywords: ['recovery', 'backup codes'] },
-          { name: 'Passwordless', href: '/passwordless-settings', icon: Link2, minRole: 'admin', keywords: ['magic link', 'webauthn'] },
-          { name: 'Security Keys', href: '/security-keys', icon: KeyRound, minRole: 'admin', keywords: ['webauthn', 'fido2', 'passkey'] },
-          { name: 'Push Devices', href: '/push-devices', icon: Bell, minRole: 'admin', keywords: ['push mfa', 'mobile'] },
+          { name: 'MFA Management', nameKey: 'nav.items.mfaManagement', href: '/mfa-management', icon: Shield, minRole: 'operator', keywords: ['totp', 'factors', 'reset mfa'] },
+          { name: 'Risk Policies', nameKey: 'nav.items.riskPolicies', href: '/risk-policies', icon: Activity, minRole: 'admin', keywords: ['adaptive', 'conditional access'] },
+          { name: 'Login Anomalies', nameKey: 'nav.items.loginAnomalies', href: '/login-anomalies', icon: AlertTriangle, minRole: 'operator', keywords: ['impossible travel', 'suspicious'] },
+          { name: 'Security Alerts', nameKey: 'nav.items.securityAlerts', href: '/security-alerts', icon: ShieldAlert, minRole: 'operator', keywords: ['incidents', 'threats'] },
+          { name: 'Hardware Tokens', nameKey: 'nav.items.hardwareTokens', href: '/hardware-tokens', icon: KeyRound, minRole: 'operator', keywords: ['yubikey', 'otp'] },
+          { name: 'Device Trust Approval', nameKey: 'nav.items.deviceTrustApproval', href: '/device-trust-approval', icon: Fingerprint, minRole: 'operator', keywords: ['device approval'] },
+          { name: 'MFA Bypass Codes', nameKey: 'nav.items.mfaBypassCodes', href: '/mfa-bypass-codes', icon: ShieldOff, minRole: 'admin', keywords: ['recovery', 'backup codes'] },
+          { name: 'Passwordless', nameKey: 'nav.items.passwordless', href: '/passwordless-settings', icon: Link2, minRole: 'admin', keywords: ['magic link', 'webauthn'] },
+          { name: 'Security Keys', nameKey: 'nav.items.securityKeys', href: '/security-keys', icon: KeyRound, minRole: 'admin', keywords: ['webauthn', 'fido2', 'passkey'] },
+          { name: 'Push Devices', nameKey: 'nav.items.pushDevices', href: '/push-devices', icon: Bell, minRole: 'admin', keywords: ['push mfa', 'mobile'] },
         ],
       },
     ],
@@ -205,30 +226,33 @@ export const navigation: NavDomainGroup[] = [
   {
     id: 'ziti',
     label: 'Zero Trust Network (Ziti)',
+    labelKey: 'nav.domains.ziti',
     icon: Network,
     sections: [
       {
         label: 'Network Access',
+        labelKey: 'nav.sections.networkAccess',
         items: [
-          { name: 'Zero Trust Access', href: '/zero-trust', icon: Shield, minRole: 'admin', keywords: ['ztna', 'ziti', 'services'] },
-          { name: 'Proxy Routes', href: '/proxy-routes', icon: Network, minRole: 'admin', keywords: ['reverse proxy', 'gateway', 'vhost'] },
-          { name: 'Network Setup', href: '/ziti-setup', icon: Server, minRole: 'admin', keywords: ['ziti setup', 'controller', 'router'] },
-          { name: 'Ziti Network', href: '/ziti-network', icon: Globe, minRole: 'admin', keywords: ['openziti', 'identities', 'edge routers'] },
-          { name: 'Network Topology', href: '/network-topology', icon: Share2, minRole: 'operator', keywords: ['map', 'overlay', 'graph', 'topology'] },
-          { name: 'Ziti Discovery', href: '/ziti-discovery', icon: Search, minRole: 'admin', keywords: ['scan', 'discover services'] },
-          { name: 'AI Insights', href: '/ziti-ai-insights', icon: Brain, minRole: 'admin', keywords: ['anomaly', 'risk score', 'quarantine', 'ai'] },
-          { name: 'BrowZer', href: '/browzer-management', icon: Play, minRole: 'admin', keywords: ['browser access', 'clientless'] },
-          { name: 'App Publish', href: '/app-publish', icon: Upload, minRole: 'admin', keywords: ['publish application', 'expose'] },
-          { name: 'Certificates', href: '/certificates', icon: FileKey, minRole: 'admin', keywords: ['tls', 'pki', 'ca'] },
+          { name: 'Zero Trust Access', nameKey: 'nav.items.zeroTrustAccess', href: '/zero-trust', icon: Shield, minRole: 'admin', keywords: ['ztna', 'ziti', 'services'] },
+          { name: 'Proxy Routes', nameKey: 'nav.items.proxyRoutes', href: '/proxy-routes', icon: Network, minRole: 'admin', keywords: ['reverse proxy', 'gateway', 'vhost'] },
+          { name: 'Network Setup', nameKey: 'nav.items.networkSetup', href: '/ziti-setup', icon: Server, minRole: 'admin', keywords: ['ziti setup', 'controller', 'router'] },
+          { name: 'Ziti Network', nameKey: 'nav.items.zitiNetwork', href: '/ziti-network', icon: Globe, minRole: 'admin', keywords: ['openziti', 'identities', 'edge routers'] },
+          { name: 'Network Topology', nameKey: 'nav.items.networkTopology', href: '/network-topology', icon: Share2, minRole: 'operator', keywords: ['map', 'overlay', 'graph', 'topology'] },
+          { name: 'Ziti Discovery', nameKey: 'nav.items.zitiDiscovery', href: '/ziti-discovery', icon: Search, minRole: 'admin', keywords: ['scan', 'discover services'] },
+          { name: 'AI Insights', nameKey: 'nav.items.aiInsights', href: '/ziti-ai-insights', icon: Brain, minRole: 'admin', keywords: ['anomaly', 'risk score', 'quarantine', 'ai'] },
+          { name: 'BrowZer', nameKey: 'nav.items.browzer', href: '/browzer-management', icon: Play, minRole: 'admin', keywords: ['browser access', 'clientless'] },
+          { name: 'App Publish', nameKey: 'nav.items.appPublish', href: '/app-publish', icon: Upload, minRole: 'admin', keywords: ['publish application', 'expose'] },
+          { name: 'Certificates', nameKey: 'nav.items.certificates', href: '/certificates', icon: FileKey, minRole: 'admin', keywords: ['tls', 'pki', 'ca'] },
         ],
       },
       {
         label: 'Devices & Endpoints',
+        labelKey: 'nav.sections.devicesEndpoints',
         items: [
-          { name: 'Devices', href: '/devices', icon: Smartphone, minRole: 'operator', keywords: ['endpoints', 'posture'] },
-          { name: 'Agent Fleet', href: '/agent-fleet', icon: Radio, minRole: 'operator', keywords: ['agents', 'tunneler', 'fleet'] },
-          { name: 'Kiosk Policies', href: '/kiosk-policies', icon: Lock, minRole: 'admin', keywords: ['kiosk', 'shared device'] },
-          { name: 'Remote Support', href: '/remote-support', icon: Video, minRole: 'operator', keywords: ['screen share', 'assist'] },
+          { name: 'Devices', nameKey: 'nav.items.devices', href: '/devices', icon: Smartphone, minRole: 'operator', keywords: ['endpoints', 'posture'] },
+          { name: 'Agent Fleet', nameKey: 'nav.items.agentFleet', href: '/agent-fleet', icon: Radio, minRole: 'operator', keywords: ['agents', 'tunneler', 'fleet'] },
+          { name: 'Kiosk Policies', nameKey: 'nav.items.kioskPolicies', href: '/kiosk-policies', icon: Lock, minRole: 'admin', keywords: ['kiosk', 'shared device'] },
+          { name: 'Remote Support', nameKey: 'nav.items.remoteSupport', href: '/remote-support', icon: Video, minRole: 'operator', keywords: ['screen share', 'assist'] },
         ],
       },
     ],
@@ -236,18 +260,19 @@ export const navigation: NavDomainGroup[] = [
   {
     id: 'pam',
     label: 'Privileged Access (PAM)',
+    labelKey: 'nav.domains.pam',
     icon: KeyRound,
     sections: [
       {
         label: '',
         items: [
-          { name: 'PAM Dashboard', href: '/pam-dashboard', icon: Gauge, minRole: 'admin', keywords: ['pam overview', 'privileged access', 'summary'] },
-          { name: 'Connections', href: '/pam-connections', icon: Server, minRole: 'operator', keywords: ['rdm', 'remote desktop manager', 'devolutions', 'rdp', 'ssh', 'vnc', 'connection manager', 'passwordless', 'launch'] },
-          { name: 'Windows Apps', href: '/windows-apps', icon: AppWindow, minRole: 'operator', keywords: ['remoteapp', 'ssms', 'published applications', 'rds', 'app catalog', 'windows', 'single app', 'seamless'] },
-          { name: 'Quick Links', href: '/quick-links-admin', icon: Link2, minRole: 'admin', keywords: ['support', 'shortcuts', 'launcher', 'teams', 'zoom', 'curate', 'links'] },
-          { name: 'Vault Secrets', href: '/vault-secrets', icon: KeyRound, minRole: 'admin', keywords: ['pam', 'secrets', 'credentials', 'vault'] },
-          { name: 'Rotation Policies', href: '/rotation-policies', icon: RefreshCw, minRole: 'admin', keywords: ['password rotation', 'rotate'] },
-          { name: 'Privileged Sessions', href: '/guacamole-sessions', icon: MonitorPlay, minRole: 'operator', keywords: ['rdp', 'ssh', 'vnc', 'session recording', 'guacamole'] },
+          { name: 'PAM Dashboard', nameKey: 'nav.items.pamDashboard', href: '/pam-dashboard', icon: Gauge, minRole: 'admin', keywords: ['pam overview', 'privileged access', 'summary'] },
+          { name: 'Connections', nameKey: 'nav.items.connections', href: '/pam-connections', icon: Server, minRole: 'operator', keywords: ['rdm', 'remote desktop manager', 'devolutions', 'rdp', 'ssh', 'vnc', 'connection manager', 'passwordless', 'launch'] },
+          { name: 'Windows Apps', nameKey: 'nav.items.windowsApps', href: '/windows-apps', icon: AppWindow, minRole: 'operator', keywords: ['remoteapp', 'ssms', 'published applications', 'rds', 'app catalog', 'windows', 'single app', 'seamless'] },
+          { name: 'Quick Links', nameKey: 'nav.items.quickLinks', href: '/quick-links-admin', icon: Link2, minRole: 'admin', keywords: ['support', 'shortcuts', 'launcher', 'teams', 'zoom', 'curate', 'links'] },
+          { name: 'Vault Secrets', nameKey: 'nav.items.vaultSecrets', href: '/vault-secrets', icon: KeyRound, minRole: 'admin', keywords: ['pam', 'secrets', 'credentials', 'vault'] },
+          { name: 'Rotation Policies', nameKey: 'nav.items.rotationPolicies', href: '/rotation-policies', icon: RefreshCw, minRole: 'admin', keywords: ['password rotation', 'rotate'] },
+          { name: 'Privileged Sessions', nameKey: 'nav.items.privilegedSessions', href: '/guacamole-sessions', icon: MonitorPlay, minRole: 'operator', keywords: ['rdp', 'ssh', 'vnc', 'session recording', 'guacamole'] },
         ],
       },
     ],
@@ -255,28 +280,31 @@ export const navigation: NavDomainGroup[] = [
   {
     id: 'audit',
     label: 'Audit & Reporting',
+    labelKey: 'nav.domains.audit',
     icon: FileText,
     sections: [
       {
         label: 'Audit Trail',
+        labelKey: 'nav.sections.auditTrail',
         items: [
-          { name: 'Audit Logs', href: '/audit-logs', icon: FileText, minRole: 'auditor', keywords: ['events', 'trail', 'reporter'] },
-          { name: 'Live Audit Stream', href: '/audit/dashboard', icon: Radio, minRole: 'auditor', keywords: ['realtime', 'websocket', 'stream'] },
-          { name: 'Unified Audit', href: '/unified-audit', icon: Layers, minRole: 'auditor', keywords: ['combined', 'all services'] },
-          { name: 'Admin Audit Log', href: '/admin-audit-log', icon: ScrollText, minRole: 'auditor', keywords: ['admin actions', 'changes'] },
-          { name: 'Audit Archival', href: '/audit-archival', icon: ArchiveRestore, minRole: 'admin', keywords: ['retention', 'archive', 'export'] },
+          { name: 'Audit Logs', nameKey: 'nav.items.auditLogs', href: '/audit-logs', icon: FileText, minRole: 'auditor', keywords: ['events', 'trail', 'reporter'] },
+          { name: 'Live Audit Stream', nameKey: 'nav.items.liveAuditStream', href: '/audit/dashboard', icon: Radio, minRole: 'auditor', keywords: ['realtime', 'websocket', 'stream'] },
+          { name: 'Unified Audit', nameKey: 'nav.items.unifiedAudit', href: '/unified-audit', icon: Layers, minRole: 'auditor', keywords: ['combined', 'all services'] },
+          { name: 'Admin Audit Log', nameKey: 'nav.items.adminAuditLog', href: '/admin-audit-log', icon: ScrollText, minRole: 'auditor', keywords: ['admin actions', 'changes'] },
+          { name: 'Audit Archival', nameKey: 'nav.items.auditArchival', href: '/audit-archival', icon: ArchiveRestore, minRole: 'admin', keywords: ['retention', 'archive', 'export'] },
         ],
       },
       {
         label: 'Analytics & Reports',
+        labelKey: 'nav.sections.analyticsReports',
         items: [
-          { name: 'Login Analytics', href: '/login-analytics', icon: Activity, minRole: 'auditor', keywords: ['sign-in', 'trends'] },
-          { name: 'Auth Analytics', href: '/auth-analytics', icon: TrendingUp, minRole: 'auditor', keywords: ['authentication', 'mfa usage'] },
-          { name: 'Usage Analytics', href: '/usage-analytics', icon: PieChart, minRole: 'auditor', keywords: ['adoption', 'activity'] },
-          { name: 'Risk Dashboard', href: '/risk-dashboard', icon: AlertTriangle, minRole: 'auditor', keywords: ['risk score', 'threats'] },
-          { name: 'Compliance', href: '/compliance-reports', icon: ClipboardList, minRole: 'auditor', keywords: ['soc2', 'iso', 'gdpr', 'reports'] },
-          { name: 'Compliance Posture', href: '/compliance-dashboard', icon: Gauge, minRole: 'auditor', keywords: ['posture', 'controls'] },
-          { name: 'Reports', href: '/reports', icon: BarChart3, minRole: 'auditor', keywords: ['scheduled', 'export', 'reporter'] },
+          { name: 'Login Analytics', nameKey: 'nav.items.loginAnalytics', href: '/login-analytics', icon: Activity, minRole: 'auditor', keywords: ['sign-in', 'trends'] },
+          { name: 'Auth Analytics', nameKey: 'nav.items.authAnalytics', href: '/auth-analytics', icon: TrendingUp, minRole: 'auditor', keywords: ['authentication', 'mfa usage'] },
+          { name: 'Usage Analytics', nameKey: 'nav.items.usageAnalytics', href: '/usage-analytics', icon: PieChart, minRole: 'auditor', keywords: ['adoption', 'activity'] },
+          { name: 'Risk Dashboard', nameKey: 'nav.items.riskDashboard', href: '/risk-dashboard', icon: AlertTriangle, minRole: 'auditor', keywords: ['risk score', 'threats'] },
+          { name: 'Compliance', nameKey: 'nav.items.compliance', href: '/compliance-reports', icon: ClipboardList, minRole: 'auditor', keywords: ['soc2', 'iso', 'gdpr', 'reports'] },
+          { name: 'Compliance Posture', nameKey: 'nav.items.compliancePosture', href: '/compliance-dashboard', icon: Gauge, minRole: 'auditor', keywords: ['posture', 'controls'] },
+          { name: 'Reports', nameKey: 'nav.items.reports', href: '/reports', icon: BarChart3, minRole: 'auditor', keywords: ['scheduled', 'export', 'reporter'] },
         ],
       },
     ],
@@ -284,16 +312,17 @@ export const navigation: NavDomainGroup[] = [
   {
     id: 'ai',
     label: 'AI & Intelligence',
+    labelKey: 'nav.domains.ai',
     icon: Brain,
     sections: [
       {
         label: '',
         items: [
-          { name: 'AI Agents', href: '/ai-agents', icon: Bot, minRole: 'admin', keywords: ['assistant', 'automation'] },
-          { name: 'Security Posture', href: '/ispm', icon: ShieldCheck, minRole: 'admin', keywords: ['ispm', 'posture management'] },
-          { name: 'Identity Intelligence', href: '/ai-intelligence', icon: Brain, minRole: 'admin', keywords: ['fusion', 'copilot', 'briefing', 'local ai', 'llm'] },
-          { name: 'Recommendations', href: '/ai-recommendations', icon: Lightbulb, minRole: 'admin', keywords: ['suggestions', 'insights'] },
-          { name: 'Predictions', href: '/predictive-analytics', icon: TrendingUp, minRole: 'admin', keywords: ['forecast', 'ml'] },
+          { name: 'AI Agents', nameKey: 'nav.items.aiAgents', href: '/ai-agents', icon: Bot, minRole: 'admin', keywords: ['assistant', 'automation'] },
+          { name: 'Security Posture', nameKey: 'nav.items.securityPosture', href: '/ispm', icon: ShieldCheck, minRole: 'admin', keywords: ['ispm', 'posture management'] },
+          { name: 'Identity Intelligence', nameKey: 'nav.items.identityIntelligence', href: '/ai-intelligence', icon: Brain, minRole: 'admin', keywords: ['fusion', 'copilot', 'briefing', 'local ai', 'llm'] },
+          { name: 'Recommendations', nameKey: 'nav.items.recommendations', href: '/ai-recommendations', icon: Lightbulb, minRole: 'admin', keywords: ['suggestions', 'insights'] },
+          { name: 'Predictions', nameKey: 'nav.items.predictions', href: '/predictive-analytics', icon: TrendingUp, minRole: 'admin', keywords: ['forecast', 'ml'] },
         ],
       },
     ],
@@ -301,28 +330,31 @@ export const navigation: NavDomainGroup[] = [
   {
     id: 'platform',
     label: 'Platform',
+    labelKey: 'nav.domains.platform',
     icon: Settings,
     sections: [
       {
         label: 'System',
+        labelKey: 'nav.sections.system',
         items: [
-          { name: 'System Health', href: '/system-health', icon: HeartPulse, minRole: 'operator', keywords: ['status', 'services', 'uptime'] },
-          { name: 'Organizations', href: '/organizations', icon: Building2, minRole: 'admin', keywords: ['orgs', 'multi-tenant'] },
-          { name: 'Tenant Mgmt', href: '/tenant-management', icon: Building2, minRole: 'admin', keywords: ['tenants', 'platform admin', 'branding', 'logo', 'theme', 'colors', 'white label'] },
-          { name: 'Email Templates', href: '/email-templates', icon: Mail, minRole: 'admin', keywords: ['mail', 'templates'] },
-          { name: 'Notification Mgmt', href: '/notification-admin', icon: Send, minRole: 'admin', keywords: ['broadcast', 'announcements'] },
-          { name: 'Webhooks', href: '/webhooks', icon: Bell, minRole: 'admin', keywords: ['events', 'integrations', 'callbacks'] },
-          { name: 'Settings', href: '/settings', icon: Settings, minRole: 'admin', keywords: ['configuration', 'system settings'] },
+          { name: 'System Health', nameKey: 'nav.items.systemHealth', href: '/system-health', icon: HeartPulse, minRole: 'operator', keywords: ['status', 'services', 'uptime'] },
+          { name: 'Organizations', nameKey: 'nav.items.organizations', href: '/organizations', icon: Building2, minRole: 'admin', keywords: ['orgs', 'multi-tenant'] },
+          { name: 'Tenant Mgmt', nameKey: 'nav.items.tenantMgmt', href: '/tenant-management', icon: Building2, minRole: 'admin', keywords: ['tenants', 'platform admin', 'branding', 'logo', 'theme', 'colors', 'white label'] },
+          { name: 'Email Templates', nameKey: 'nav.items.emailTemplates', href: '/email-templates', icon: Mail, minRole: 'admin', keywords: ['mail', 'templates'] },
+          { name: 'Notification Mgmt', nameKey: 'nav.items.notificationMgmt', href: '/notification-admin', icon: Send, minRole: 'admin', keywords: ['broadcast', 'announcements'] },
+          { name: 'Webhooks', nameKey: 'nav.items.webhooks', href: '/webhooks', icon: Bell, minRole: 'admin', keywords: ['events', 'integrations', 'callbacks'] },
+          { name: 'Settings', nameKey: 'nav.items.settings', href: '/settings', icon: Settings, minRole: 'admin', keywords: ['configuration', 'system settings'] },
         ],
       },
       {
         label: 'Developer',
+        labelKey: 'nav.sections.developer',
         items: [
-          { name: 'API Explorer', href: '/api-explorer', icon: Code2, minRole: 'admin', keywords: ['rest', 'try api'] },
-          { name: 'OAuth Playground', href: '/oauth-playground', icon: Play, minRole: 'admin', keywords: ['token', 'flows', 'debug'] },
-          { name: 'API Docs', href: '/api-docs', icon: BookOpen, minRole: 'admin', keywords: ['swagger', 'openapi', 'reference'] },
-          { name: 'Developer Settings', href: '/developer-settings', icon: Settings, minRole: 'admin', keywords: ['api keys', 'sdk'] },
-          { name: 'Error Catalog', href: '/error-catalog', icon: AlertTriangle, minRole: 'admin', keywords: ['error codes', 'troubleshooting'] },
+          { name: 'API Explorer', nameKey: 'nav.items.apiExplorer', href: '/api-explorer', icon: Code2, minRole: 'admin', keywords: ['rest', 'try api'] },
+          { name: 'OAuth Playground', nameKey: 'nav.items.oauthPlayground', href: '/oauth-playground', icon: Play, minRole: 'admin', keywords: ['token', 'flows', 'debug'] },
+          { name: 'API Docs', nameKey: 'nav.items.apiDocs', href: '/api-docs', icon: BookOpen, minRole: 'admin', keywords: ['swagger', 'openapi', 'reference'] },
+          { name: 'Developer Settings', nameKey: 'nav.items.developerSettings', href: '/developer-settings', icon: Settings, minRole: 'admin', keywords: ['api keys', 'sdk'] },
+          { name: 'Error Catalog', nameKey: 'nav.items.errorCatalog', href: '/error-catalog', icon: AlertTriangle, minRole: 'admin', keywords: ['error codes', 'troubleshooting'] },
         ],
       },
     ],
@@ -359,10 +391,21 @@ function itemVisible(item: NavItem, domain: NavDomain, filter: NavFilter): boole
   return hasMinRole(filter.roles, item.minRole, domain === 'audit')
 }
 
-function itemMatches(item: NavItem, sectionLabel: string, domainLabel: string, query: string): boolean {
+function itemMatches(item: NavItem, section: NavSection, group: NavDomainGroup, query: string): boolean {
   const q = query.trim().toLowerCase()
   if (!q) return true
-  const haystack = [item.name, item.href, sectionLabel, domainLabel, ...(item.keywords ?? [])]
+  // Both the translated names/labels and the canonical English ones match, so
+  // search works in either language (keywords stay English synonyms).
+  const haystack = [
+    navItemName(item),
+    item.name,
+    item.href,
+    navSectionLabel(section),
+    section.label,
+    navDomainLabel(group),
+    group.label,
+    ...(item.keywords ?? []),
+  ]
     .join(' ')
     .toLowerCase()
   return q.split(/\s+/).every((term) => haystack.includes(term))
@@ -382,7 +425,7 @@ export function filterNavigation(filter: NavFilter, groups: NavDomainGroup[] = n
           items: section.items.filter(
             (item) =>
               itemVisible(item, group.id, filter) &&
-              itemMatches(item, section.label, group.label, filter.query ?? '')
+              itemMatches(item, section, group, filter.query ?? '')
           ),
         }))
         .filter((section) => section.items.length > 0),
@@ -398,6 +441,7 @@ export function allNavHrefs(groups: NavDomainGroup[] = navigation): string[] {
 /** A nav item flattened with its domain label — the row shape the command palette renders. */
 export interface FlatNavItem extends NavItem {
   domainLabel: string
+  domainLabelKey: string
 }
 
 /**
@@ -410,7 +454,11 @@ export function flattenNavItems(groups: NavDomainGroup[] = navigation): FlatNavI
   for (const g of groups) {
     for (const s of g.sections) {
       for (const item of s.items) {
-        out.push({ ...item, domainLabel: g.label || 'Home' })
+        out.push({
+          ...item,
+          domainLabel: g.label || 'Home',
+          domainLabelKey: g.labelKey ?? 'nav.domains.home',
+        })
       }
     }
   }
@@ -425,11 +473,15 @@ export function flattenNavItems(groups: NavDomainGroup[] = navigation): FlatNavI
  */
 export function scoreNavItem(item: FlatNavItem, q: string): number {
   if (!q) return 1
-  const name = item.name.toLowerCase()
-  if (name === q) return 100
-  if (name.startsWith(q)) return 80
-  if (new RegExp(`\\b${escapeRegExp(q)}`).test(name)) return 60
-  if (name.includes(q)) return 40
+  // The displayed (translated) name scores exactly like the canonical English
+  // one, so typing in either language surfaces the page.
+  for (const name of [navItemName(item).toLowerCase(), item.name.toLowerCase()]) {
+    if (name === q) return 100
+    if (name.startsWith(q)) return 80
+    if (new RegExp(`\\b${escapeRegExp(q)}`).test(name)) return 60
+    if (name.includes(q)) return 40
+  }
+  if (i18n.t(item.domainLabelKey).toLowerCase().includes(q)) return 20
   if (item.domainLabel.toLowerCase().includes(q)) return 20
   for (const kw of item.keywords ?? []) {
     if (kw.toLowerCase().includes(q)) return 15
