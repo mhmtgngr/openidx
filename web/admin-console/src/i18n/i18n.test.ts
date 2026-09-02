@@ -256,6 +256,69 @@ describe('i18n', () => {
       ...['user_access', 'compliance', 'entitlement', 'activity'].map(
         (k) => `pages.reports.reportTypes.${k}`,
       ),
+      // policies: the badge keys off the policy's own type; the form Select and
+      // the rule builder read their own lists
+      ...[
+        'separation_of_duty',
+        'risk_based',
+        'timebound',
+        'location',
+        'conditional_access',
+      ].map((k) => `pages.policies.types.${k}`),
+      ...['separation_of_duty', 'risk_based', 'timebound', 'location'].map(
+        (k) => `pages.policies.formTypes.${k}`,
+      ),
+      ...['allow', 'deny', 'require_approval', 'step_up_mfa'].map(
+        (k) => `pages.policies.effects.${k}`,
+      ),
+      // conditionTemplates carries only the field name; both the label and the
+      // example resolve from it, so every field needs both halves present
+      ...[
+        'conflicting_roles',
+        'min_risk_score',
+        'max_risk_score',
+        'start_hour',
+        'end_hour',
+        'days',
+        'allowed_ips',
+        'blocked_ips',
+        'require_mfa',
+        'device_trust_required',
+        'allowed_locations',
+        'blocked_locations',
+      ].flatMap((k) => [`pages.policies.conditions.${k}`, `pages.policies.placeholders.${k}`]),
+      'pages.policies.placeholders.conditional_max_risk_score',
+      // abac-policies: resourceTypes/attributeOptions/operatorOptions are
+      // module-level value lists resolved at render
+      ...['application', 'route', 'service', 'all'].map(
+        (k) => `pages.abacPolicies.resourceTypes.${k}`,
+      ),
+      ...[
+        'department',
+        'location',
+        'device_trust_level',
+        'time_of_day',
+        'risk_score',
+        'group_membership',
+        'ip_range',
+      ].map((k) => `pages.abacPolicies.attributes.${k}`),
+      ...[
+        'eq',
+        'neq',
+        'in',
+        'not_in',
+        'gt',
+        'gte',
+        'lt',
+        'lte',
+        'between',
+        'contains',
+      ].map((k) => `pages.abacPolicies.operators.${k}`),
+      // zero-trust: the access-method chip keys off the route's own transport
+      ...['proxy', 'ziti', 'browzer', 'guacamole'].map((k) => `pages.zeroTrust.methods.${k}`),
+      ...['notConfigured', 'reachable', 'unreachable'].map(
+        (k) => `pages.zeroTrust.zitiStatus.${k}`,
+      ),
       // lib/connection-path + lib/remote-app resolve through the i18n singleton
       'pam.remoteAppSecretHint',
       ...[
@@ -357,6 +420,21 @@ describe('i18n', () => {
     expect(i18n.t('pages.adminAuditLog.toast.exportedDesc', { count: 4 })).toBe(
       '4 kayıt CSV olarak dışa aktarıldı.',
     )
+  })
+
+  it('pluralizes the ABAC counts in both languages', async () => {
+    await i18n.changeLanguage('en')
+    // The list header and the per-row chip both read from these, and the page
+    // tests assert the exact strings ("0 policies", "1 condition").
+    expect(i18n.t('pages.abacPolicies.policyCount', { count: 0 })).toBe('0 policies')
+    expect(i18n.t('pages.abacPolicies.policyCount', { count: 1 })).toBe('1 policy')
+    expect(i18n.t('pages.abacPolicies.policyCount', { count: 2 })).toBe('2 policies')
+    expect(i18n.t('pages.abacPolicies.conditionCount', { count: 1 })).toBe('1 condition')
+    expect(i18n.t('pages.abacPolicies.conditionCount', { count: 2 })).toBe('2 conditions')
+
+    await i18n.changeLanguage('tr')
+    expect(i18n.t('pages.abacPolicies.policyCount', { count: 2 })).toBe('2 politika')
+    expect(i18n.t('pages.abacPolicies.conditionCount', { count: 2 })).toBe('2 koşul')
   })
 
   it('resolves an unknown audit event type to its prettified raw value', async () => {

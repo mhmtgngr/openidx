@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import {
@@ -95,17 +96,18 @@ interface AuditEvent {
 
 // Access-method badges for one resource.
 function MethodBadges({ r }: { r: OverviewRoute }) {
-  const methods: { label: string; cls: string; icon: typeof Globe }[] = []
-  if (r.route_type === '' || r.route_type === 'http') methods.push({ label: 'Proxy', cls: 'bg-slate-100 text-slate-700', icon: Globe })
-  if (r.ziti_enabled) methods.push({ label: 'Ziti', cls: 'bg-purple-100 text-purple-700', icon: Network })
-  if (r.browzer_enabled) methods.push({ label: 'BrowZer', cls: 'bg-blue-100 text-blue-700', icon: Globe })
-  if (r.guacamole_enabled) methods.push({ label: 'Guacamole', cls: 'bg-amber-100 text-amber-800', icon: MonitorSmartphone })
+  const { t } = useTranslation()
+  const methods: { key: string; cls: string; icon: typeof Globe }[] = []
+  if (r.route_type === '' || r.route_type === 'http') methods.push({ key: 'proxy', cls: 'bg-slate-100 text-slate-700', icon: Globe })
+  if (r.ziti_enabled) methods.push({ key: 'ziti', cls: 'bg-purple-100 text-purple-700', icon: Network })
+  if (r.browzer_enabled) methods.push({ key: 'browzer', cls: 'bg-blue-100 text-blue-700', icon: Globe })
+  if (r.guacamole_enabled) methods.push({ key: 'guacamole', cls: 'bg-amber-100 text-amber-800', icon: MonitorSmartphone })
   return (
     <div className="flex flex-wrap gap-1">
       {methods.map((m) => (
-        <Badge key={m.label} className={`${m.cls} text-xs gap-1`}>
+        <Badge key={m.key} className={`${m.cls} text-xs gap-1`}>
           <m.icon className="h-3 w-3" />
-          {m.label}
+          {t(`pages.zeroTrust.methods.${m.key}`)}
         </Badge>
       ))}
     </div>
@@ -114,29 +116,30 @@ function MethodBadges({ r }: { r: OverviewRoute }) {
 
 // Zero-trust control chips for one resource.
 function PolicyBadges({ r }: { r: OverviewRoute }) {
+  const { t } = useTranslation()
   return (
     <div className="flex flex-wrap gap-1">
       {r.require_auth ? (
-        <Badge variant="outline" className="text-xs gap-1"><Lock className="h-3 w-3" />auth</Badge>
+        <Badge variant="outline" className="text-xs gap-1"><Lock className="h-3 w-3" />{t('pages.zeroTrust.badges.auth')}</Badge>
       ) : (
-        <Badge className="bg-red-100 text-red-700 text-xs gap-1"><Unlock className="h-3 w-3" />no auth</Badge>
+        <Badge className="bg-red-100 text-red-700 text-xs gap-1"><Unlock className="h-3 w-3" />{t('pages.zeroTrust.badges.noAuth')}</Badge>
       )}
       {r.allowed_roles_count > 0 && (
-        <Badge variant="outline" className="text-xs gap-1"><Users className="h-3 w-3" />roles:{r.allowed_roles_count}</Badge>
+        <Badge variant="outline" className="text-xs gap-1"><Users className="h-3 w-3" />{t('pages.zeroTrust.badges.roles', { n: r.allowed_roles_count })}</Badge>
       )}
       {r.require_device_trust && (
-        <Badge variant="outline" className="text-xs gap-1"><Fingerprint className="h-3 w-3" />device</Badge>
+        <Badge variant="outline" className="text-xs gap-1"><Fingerprint className="h-3 w-3" />{t('pages.zeroTrust.badges.device')}</Badge>
       )}
       {r.posture_check_count > 0 && (
-        <Badge variant="outline" className="text-xs gap-1"><ScanFace className="h-3 w-3" />posture:{r.posture_check_count}</Badge>
+        <Badge variant="outline" className="text-xs gap-1"><ScanFace className="h-3 w-3" />{t('pages.zeroTrust.badges.posture', { n: r.posture_check_count })}</Badge>
       )}
       {r.max_risk_score < 100 && (
-        <Badge variant="outline" className="text-xs gap-1"><Activity className="h-3 w-3" />risk≤{r.max_risk_score}</Badge>
+        <Badge variant="outline" className="text-xs gap-1"><Activity className="h-3 w-3" />{t('pages.zeroTrust.badges.risk', { n: r.max_risk_score })}</Badge>
       )}
       {r.allowed_countries_count > 0 && (
-        <Badge variant="outline" className="text-xs gap-1"><MapPin className="h-3 w-3" />geo:{r.allowed_countries_count}</Badge>
+        <Badge variant="outline" className="text-xs gap-1"><MapPin className="h-3 w-3" />{t('pages.zeroTrust.badges.geo', { n: r.allowed_countries_count })}</Badge>
       )}
-      {r.has_inline_policy && <Badge variant="outline" className="text-xs">inline</Badge>}
+      {r.has_inline_policy && <Badge variant="outline" className="text-xs">{t('pages.zeroTrust.badges.inline')}</Badge>}
     </div>
   )
 }
@@ -149,6 +152,7 @@ function healthColor(h: string) {
 }
 
 export function ZeroTrustPage() {
+  const { t } = useTranslation()
   const queryClient = useQueryClient()
   const { toast } = useToast()
   const [tab, setTab] = useState('resources')
@@ -246,9 +250,15 @@ export function ZeroTrustPage() {
       api.post(`/api/v1/access/services/${id}/features/${feature}/${on ? 'enable' : 'disable'}`),
     onSuccess: (_d, v) => {
       queryClient.invalidateQueries({ queryKey: ['access-overview'] })
-      toast({ title: 'Updated', description: `${v.feature === 'ziti' ? 'OpenZiti' : 'BrowZer'} ${v.on ? 'enabled' : 'disabled'}.` })
+      toast({
+        title: t('pages.zeroTrust.toast.updated'),
+        description: t(
+          v.on ? 'pages.zeroTrust.toast.featureEnabled' : 'pages.zeroTrust.toast.featureDisabled',
+          { feature: v.feature === 'ziti' ? 'OpenZiti' : 'BrowZer' },
+        ),
+      })
     },
-    onError: (e: Error) => toast({ title: 'Failed', description: e.message, variant: 'destructive' }),
+    onError: (e: Error) => toast({ title: t('pages.zeroTrust.toast.failed'), description: e.message, variant: 'destructive' }),
   })
 
   const data = overviewQuery.data
@@ -264,27 +274,40 @@ export function ZeroTrustPage() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
             <Shield className="h-7 w-7" />
-            Zero Trust Access
+            {t('pages.zeroTrust.title')}
           </h1>
           <p className="text-muted-foreground">
-            Every protected resource, how it's reached, the controls guarding it, and who's connected.
+            {t('pages.zeroTrust.subtitle')}
           </p>
         </div>
         <Badge variant={data?.ziti.configured ? 'secondary' : 'outline'} className="gap-1">
           <Network className="h-3 w-3" />
-          Ziti: {!data?.ziti.configured ? 'not configured' : data?.ziti.controller_reachable ? 'reachable' : 'unreachable'}
+          {t('pages.zeroTrust.ziti', {
+            status: t(
+              !data?.ziti.configured
+                ? 'pages.zeroTrust.zitiStatus.notConfigured'
+                : data?.ziti.controller_reachable
+                  ? 'pages.zeroTrust.zitiStatus.reachable'
+                  : 'pages.zeroTrust.zitiStatus.unreachable',
+            ),
+          })}
         </Badge>
       </div>
 
       {/* Summary cards */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-        <SummaryCard label="Resources" value={s?.total_routes} sub={`${s?.enabled_routes ?? 0} enabled`} icon={Shield} />
-        <SummaryCard label="Via Ziti" value={s?.via_ziti} icon={Network} />
-        <SummaryCard label="Via BrowZer" value={s?.via_browzer} icon={Globe} />
-        <SummaryCard label="Via Guacamole" value={s?.via_guacamole} icon={MonitorSmartphone} />
-        <SummaryCard label="Active sessions" value={s?.active_sessions} icon={Activity} />
         <SummaryCard
-          label="Need hardening"
+          label={t('pages.zeroTrust.cards.resources')}
+          value={s?.total_routes}
+          sub={t('pages.zeroTrust.cards.enabledSub', { n: s?.enabled_routes ?? 0 })}
+          icon={Shield}
+        />
+        <SummaryCard label={t('pages.zeroTrust.cards.viaZiti')} value={s?.via_ziti} icon={Network} />
+        <SummaryCard label={t('pages.zeroTrust.cards.viaBrowZer')} value={s?.via_browzer} icon={Globe} />
+        <SummaryCard label={t('pages.zeroTrust.cards.viaGuacamole')} value={s?.via_guacamole} icon={MonitorSmartphone} />
+        <SummaryCard label={t('pages.zeroTrust.cards.activeSessions')} value={s?.active_sessions} icon={Activity} />
+        <SummaryCard
+          label={t('pages.zeroTrust.cards.needHardening')}
           value={(s?.missing_auth ?? 0) + (s?.missing_device_trust ?? 0) + (s?.missing_posture ?? 0)}
           icon={ShieldAlert}
           danger
@@ -293,9 +316,9 @@ export function ZeroTrustPage() {
 
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
-          <TabsTrigger value="resources">Resources</TabsTrigger>
-          <TabsTrigger value="live">Live Access</TabsTrigger>
-          <TabsTrigger value="gaps">Coverage Gaps {gapRoutes.length ? `(${gapRoutes.length})` : ''}</TabsTrigger>
+          <TabsTrigger value="resources">{t('pages.zeroTrust.tabs.resources')}</TabsTrigger>
+          <TabsTrigger value="live">{t('pages.zeroTrust.tabs.live')}</TabsTrigger>
+          <TabsTrigger value="gaps">{t('pages.zeroTrust.tabs.gaps')} {gapRoutes.length ? `(${gapRoutes.length})` : ''}</TabsTrigger>
         </TabsList>
 
         {/* ---- Resources (spine) ---- */}
@@ -303,7 +326,7 @@ export function ZeroTrustPage() {
           {overviewQuery.isLoading ? (
             <LoadingSpinner />
           ) : overviewQuery.isError ? (
-            <QueryError error={overviewQuery.error} resource="the access overview" />
+            <QueryError error={overviewQuery.error} resource={t('pages.zeroTrust.overviewResource')} />
           ) : routes.length === 0 ? (
             <EmptyState />
           ) : (
@@ -312,12 +335,12 @@ export function ZeroTrustPage() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Resource</TableHead>
-                      <TableHead>Access methods</TableHead>
-                      <TableHead>Zero-trust policy</TableHead>
-                      <TableHead>Sessions</TableHead>
-                      <TableHead>Health</TableHead>
-                      <TableHead className="text-right">Controls</TableHead>
+                      <TableHead>{t('pages.zeroTrust.columns.resource')}</TableHead>
+                      <TableHead>{t('pages.zeroTrust.columns.accessMethods')}</TableHead>
+                      <TableHead>{t('pages.zeroTrust.columns.policy')}</TableHead>
+                      <TableHead>{t('pages.zeroTrust.columns.sessions')}</TableHead>
+                      <TableHead>{t('pages.zeroTrust.columns.health')}</TableHead>
+                      <TableHead className="text-right">{t('pages.zeroTrust.columns.controls')}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -352,7 +375,7 @@ export function ZeroTrustPage() {
                         <TableCell>
                           <div className="flex items-center justify-end gap-3">
                             <label className="flex items-center gap-1 text-xs text-muted-foreground">
-                              Ziti
+                              {t('pages.zeroTrust.methods.ziti')}
                               <Switch
                                 checked={r.ziti_enabled}
                                 disabled={toggleFeature.isPending}
@@ -360,14 +383,14 @@ export function ZeroTrustPage() {
                               />
                             </label>
                             <label className="flex items-center gap-1 text-xs text-muted-foreground">
-                              BrowZer
+                              {t('pages.zeroTrust.methods.browzer')}
                               <Switch
                                 checked={r.browzer_enabled}
                                 disabled={toggleFeature.isPending || !r.ziti_enabled}
                                 onCheckedChange={(on) => toggleFeature.mutate({ id: r.id, feature: 'browzer', on })}
                               />
                             </label>
-                            <Link to="/proxy-routes" title="Manage route">
+                            <Link to="/proxy-routes" title={t('pages.zeroTrust.manageRoute')}>
                               <Button variant="ghost" size="sm"><ExternalLink className="h-4 w-4" /></Button>
                             </Link>
                           </div>
@@ -380,27 +403,27 @@ export function ZeroTrustPage() {
             </Card>
           )}
           <div className="flex gap-3 text-sm text-muted-foreground">
-            <Link to="/ziti-network" className="hover:underline flex items-center gap-1"><Network className="h-3 w-3" />Ziti Network</Link>
-            <Link to="/app-publish" className="hover:underline flex items-center gap-1"><ExternalLink className="h-3 w-3" />App Publish</Link>
-            <Link to="/devices" className="hover:underline flex items-center gap-1"><MonitorSmartphone className="h-3 w-3" />Devices</Link>
+            <Link to="/ziti-network" className="hover:underline flex items-center gap-1"><Network className="h-3 w-3" />{t('nav.items.zitiNetwork')}</Link>
+            <Link to="/app-publish" className="hover:underline flex items-center gap-1"><ExternalLink className="h-3 w-3" />{t('nav.items.appPublish')}</Link>
+            <Link to="/devices" className="hover:underline flex items-center gap-1"><MonitorSmartphone className="h-3 w-3" />{t('nav.items.devices')}</Link>
           </div>
         </TabsContent>
 
         {/* ---- Live access ---- */}
         <TabsContent value="live" className="space-y-4">
           <Card>
-            <CardHeader><CardTitle className="text-base">Active sessions</CardTitle></CardHeader>
+            <CardHeader><CardTitle className="text-base">{t('pages.zeroTrust.live.activeSessions')}</CardTitle></CardHeader>
             <CardContent className="p-0">
               {sessionsQuery.isLoading ? (
                 <div className="p-4"><LoadingSpinner /></div>
               ) : sessionsQuery.isError ? (
-                <QueryError error={sessionsQuery.error} resource="active sessions" />
+                <QueryError error={sessionsQuery.error} resource={t('pages.zeroTrust.sessionsResource')} />
               ) : (sessionsQuery.data?.sessions || []).length === 0 ? (
-                <p className="p-4 text-sm text-muted-foreground">No active sessions.</p>
+                <p className="p-4 text-sm text-muted-foreground">{t('pages.zeroTrust.live.noSessions')}</p>
               ) : (
                 <Table>
                   <TableHeader><TableRow>
-                    <TableHead>User</TableHead><TableHead>Resource</TableHead><TableHead>IP</TableHead><TableHead>Last active</TableHead>
+                    <TableHead>{t('pages.zeroTrust.live.user')}</TableHead><TableHead>{t('pages.zeroTrust.live.resource')}</TableHead><TableHead>{t('pages.zeroTrust.live.ip')}</TableHead><TableHead>{t('pages.zeroTrust.live.lastActive')}</TableHead>
                   </TableRow></TableHeader>
                   <TableBody>
                     {(sessionsQuery.data?.sessions || []).map((sess) => (
@@ -417,18 +440,18 @@ export function ZeroTrustPage() {
             </CardContent>
           </Card>
           <Card>
-            <CardHeader><CardTitle className="text-base">Recent access events</CardTitle></CardHeader>
+            <CardHeader><CardTitle className="text-base">{t('pages.zeroTrust.live.recentEvents')}</CardTitle></CardHeader>
             <CardContent className="p-0">
               {auditQuery.isLoading ? (
                 <div className="p-4"><LoadingSpinner /></div>
               ) : auditQuery.isError ? (
-                <QueryError error={auditQuery.error} resource="recent access events" />
+                <QueryError error={auditQuery.error} resource={t('pages.zeroTrust.eventsResource')} />
               ) : (auditQuery.data?.events || []).length === 0 ? (
-                <p className="p-4 text-sm text-muted-foreground">No recent events.</p>
+                <p className="p-4 text-sm text-muted-foreground">{t('pages.zeroTrust.live.noEvents')}</p>
               ) : (
                 <Table>
                   <TableHeader><TableRow>
-                    <TableHead>When</TableHead><TableHead>Event</TableHead><TableHead>User</TableHead><TableHead>IP</TableHead><TableHead>Source</TableHead>
+                    <TableHead>{t('pages.zeroTrust.live.when')}</TableHead><TableHead>{t('pages.zeroTrust.live.event')}</TableHead><TableHead>{t('pages.zeroTrust.live.user')}</TableHead><TableHead>{t('pages.zeroTrust.live.ip')}</TableHead><TableHead>{t('pages.zeroTrust.live.source')}</TableHead>
                   </TableRow></TableHeader>
                   <TableBody>
                     {(auditQuery.data?.events || []).map((e, i) => (
@@ -448,29 +471,29 @@ export function ZeroTrustPage() {
             </CardContent>
           </Card>
           <Link to="/unified-audit" className="text-sm text-muted-foreground hover:underline flex items-center gap-1">
-            <ExternalLink className="h-3 w-3" />Full unified audit log
+            <ExternalLink className="h-3 w-3" />{t('pages.zeroTrust.live.fullAudit')}
           </Link>
         </TabsContent>
 
         {/* ---- Coverage gaps ---- */}
         <TabsContent value="gaps" className="space-y-4">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <SummaryCard label="No authentication" value={s?.missing_auth} icon={Unlock} danger />
-            <SummaryCard label="No device trust" value={s?.missing_device_trust} icon={Fingerprint} />
-            <SummaryCard label="No posture checks" value={s?.missing_posture} icon={ScanFace} />
-            <SummaryCard label="No risk cap" value={s?.missing_risk_cap} icon={Activity} />
+            <SummaryCard label={t('pages.zeroTrust.gaps.noAuth')} value={s?.missing_auth} icon={Unlock} danger />
+            <SummaryCard label={t('pages.zeroTrust.gaps.noDeviceTrust')} value={s?.missing_device_trust} icon={Fingerprint} />
+            <SummaryCard label={t('pages.zeroTrust.gaps.noPosture')} value={s?.missing_posture} icon={ScanFace} />
+            <SummaryCard label={t('pages.zeroTrust.gaps.noRiskCap')} value={s?.missing_risk_cap} icon={Activity} />
           </div>
           {gapRoutes.length === 0 ? (
             <Card><CardContent className="py-12 text-center text-muted-foreground">
               <Shield className="h-10 w-10 mx-auto mb-3 text-green-600" />
-              Every resource has auth, device-trust, posture and a risk cap. No gaps.
+              {t('pages.zeroTrust.gaps.allGood')}
             </CardContent></Card>
           ) : (
             <Card>
               <CardContent className="p-0">
                 <Table>
                   <TableHeader><TableRow>
-                    <TableHead>Resource</TableHead><TableHead>Gaps</TableHead><TableHead className="text-right">Fix</TableHead>
+                    <TableHead>{t('pages.zeroTrust.gaps.resource')}</TableHead><TableHead>{t('pages.zeroTrust.gaps.gaps')}</TableHead><TableHead className="text-right">{t('pages.zeroTrust.gaps.fix')}</TableHead>
                   </TableRow></TableHeader>
                   <TableBody>
                     {gapRoutes.map((r) => (
@@ -481,14 +504,14 @@ export function ZeroTrustPage() {
                         </TableCell>
                         <TableCell>
                           <div className="flex flex-wrap gap-1">
-                            {!r.require_auth && <Badge className="bg-red-100 text-red-700 text-xs">no auth</Badge>}
-                            {!r.require_device_trust && <Badge variant="outline" className="text-xs">no device trust</Badge>}
-                            {r.posture_check_count === 0 && <Badge variant="outline" className="text-xs">no posture</Badge>}
-                            {r.max_risk_score >= 100 && <Badge variant="outline" className="text-xs">no risk cap</Badge>}
+                            {!r.require_auth && <Badge className="bg-red-100 text-red-700 text-xs">{t('pages.zeroTrust.gaps.chipNoAuth')}</Badge>}
+                            {!r.require_device_trust && <Badge variant="outline" className="text-xs">{t('pages.zeroTrust.gaps.chipNoDeviceTrust')}</Badge>}
+                            {r.posture_check_count === 0 && <Badge variant="outline" className="text-xs">{t('pages.zeroTrust.gaps.chipNoPosture')}</Badge>}
+                            {r.max_risk_score >= 100 && <Badge variant="outline" className="text-xs">{t('pages.zeroTrust.gaps.chipNoRiskCap')}</Badge>}
                           </div>
                         </TableCell>
                         <TableCell className="text-right">
-                          <Link to="/proxy-routes"><Button variant="outline" size="sm">Harden</Button></Link>
+                          <Link to="/proxy-routes"><Button variant="outline" size="sm">{t('pages.zeroTrust.gaps.harden')}</Button></Link>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -531,15 +554,16 @@ function SummaryCard({
 }
 
 function EmptyState() {
+  const { t } = useTranslation()
   return (
     <Card>
       <CardContent className="py-12 text-center">
         <Shield className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-        <p className="text-lg font-medium">No protected resources yet</p>
+        <p className="text-lg font-medium">{t('pages.zeroTrust.empty.title')}</p>
         <p className="text-muted-foreground">
-          Publish an app or add a proxy route to start enforcing zero-trust access.
+          {t('pages.zeroTrust.empty.desc')}
         </p>
-        <Link to="/app-publish"><Button className="mt-4">Go to App Publish</Button></Link>
+        <Link to="/app-publish"><Button className="mt-4">{t('pages.zeroTrust.empty.cta')}</Button></Link>
       </CardContent>
     </Card>
   )

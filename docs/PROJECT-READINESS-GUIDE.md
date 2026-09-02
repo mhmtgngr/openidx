@@ -21,7 +21,7 @@ security, access, sessions, devices, trusted browsers, notifications,
 access requests, profile — are fully bilingual; the end-user experience
 is complete in both languages). Open: P1 rollout Task 16 (operator
 action), P3.1 cut v1.28.0 (post-merge), the remaining P4 items incl.
-the ~46 remaining admin page bodies and the Expo-vs-Flutter mobile pick.)
+the ~43 remaining admin page bodies and the Expo-vs-Flutter mobile pick.)
 **Question this document answers:** *Is OpenIDX fully functional and well defined end to end, as experienced by the people who use it — and what are the next steps and controls to get it there?*
 
 This is the product-and-user-side companion to
@@ -646,8 +646,20 @@ all four pillars, deploy, log in, and find PAM.
    rather than as a bare key; and the exported CSV's column names stay
    English on purpose — that file is a machine-readable schema, and
    localizing its header would break every consumer that parses it.
-   *Remaining:* the ~46 other admin page bodies — mechanical, batch by
-   batch, against this pattern.
+   *And the pages that decide who gets in:* Policies (the SoD / risk /
+   timebound / location / conditional-access vocabulary, the stat row, the
+   policy table with its enable-disable toggle, and the rule builder —
+   whose condition rows now carry only the backend's field name, with both
+   the label and the worked example resolved from it, so a new condition
+   field cannot ship half-translated), ABAC Policies (the attribute and
+   operator vocabularies, the condition builder, the delete confirmation
+   that names the policy, and the evaluate-against-sample-attributes
+   dialog with its ALLOWED/DENIED verdict), and Zero Trust Access (the
+   resource spine with its access-method and control chips, the live
+   sessions and recent-events tabs, and the coverage-gaps view that names
+   exactly which of auth, device trust, posture and risk cap each resource
+   is missing). *Remaining:* the ~43 other admin page bodies — mechanical,
+   batch by batch, against this pattern.
 2. Accessibility pass to a VPAT (needs real assistive-technology testing,
    not just an automated axe sweep).
 3. Separate/hardened end-user portal bundle.

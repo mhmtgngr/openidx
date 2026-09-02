@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Search, Scale, Shield, Clock, MapPin, AlertTriangle, Edit, Trash2, ToggleLeft, ToggleRight, X, ChevronLeft, ChevronRight, Fingerprint, MoreHorizontal } from 'lucide-react'
 import { Button } from '../components/ui/button'
@@ -72,41 +73,27 @@ const policyTypeColors: Record<string, string> = {
   conditional_access: 'bg-orange-100 text-orange-800',
 }
 
-const policyTypeLabels: Record<string, string> = {
-  separation_of_duty: 'Separation of Duty',
-  risk_based: 'Risk-based',
-  timebound: 'Timebound',
-  location: 'Location-based',
-  conditional_access: 'Conditional Access',
-}
-
-const conditionTemplates: Record<string, { key: string; label: string; placeholder: string }[]> = {
-  separation_of_duty: [
-    { key: 'conflicting_roles', label: 'Conflicting Roles', placeholder: 'e.g., finance_approver, finance_requester' },
-  ],
-  risk_based: [
-    { key: 'min_risk_score', label: 'Min Risk Score', placeholder: 'e.g., 0' },
-    { key: 'max_risk_score', label: 'Max Risk Score', placeholder: 'e.g., 100' },
-  ],
-  timebound: [
-    { key: 'start_hour', label: 'Start Hour (0-23)', placeholder: 'e.g., 9' },
-    { key: 'end_hour', label: 'End Hour (0-23)', placeholder: 'e.g., 17' },
-    { key: 'days', label: 'Days', placeholder: 'e.g., mon,tue,wed,thu,fri' },
-  ],
-  location: [
-    { key: 'allowed_ips', label: 'Allowed IPs', placeholder: 'e.g., 10.0.0.0/8, 192.168.1.0/24' },
-    { key: 'blocked_ips', label: 'Blocked IPs', placeholder: 'e.g., 0.0.0.0/0' },
-  ],
+// Condition rows are module-level, so they carry catalog keys rather than
+// English. `key` doubles as the catalog key -- both are the backend's own
+// condition field name -- except where one field needs a different example
+// per policy type (`placeholderKey`).
+const conditionTemplates: Record<string, { key: string; placeholderKey?: string }[]> = {
+  separation_of_duty: [{ key: 'conflicting_roles' }],
+  risk_based: [{ key: 'min_risk_score' }, { key: 'max_risk_score' }],
+  timebound: [{ key: 'start_hour' }, { key: 'end_hour' }, { key: 'days' }],
+  location: [{ key: 'allowed_ips' }, { key: 'blocked_ips' }],
   conditional_access: [
-    { key: 'require_mfa', label: 'Require MFA', placeholder: 'true or false' },
-    { key: 'device_trust_required', label: 'Require Trusted Device', placeholder: 'true or false' },
-    { key: 'allowed_locations', label: 'Allowed Countries', placeholder: 'e.g., US,CA,GB' },
-    { key: 'blocked_locations', label: 'Blocked Countries', placeholder: 'e.g., CN,RU' },
-    { key: 'max_risk_score', label: 'Max Risk Score', placeholder: 'e.g., 70' },
+    { key: 'require_mfa' },
+    { key: 'device_trust_required' },
+    { key: 'allowed_locations' },
+    { key: 'blocked_locations' },
+    { key: 'max_risk_score', placeholderKey: 'conditional_max_risk_score' },
   ],
 }
 
 const effectOptions = ['allow', 'deny', 'require_approval', 'step_up_mfa']
+
+const POLICY_FORM_TYPES = ['separation_of_duty', 'risk_based', 'timebound', 'location'] as const
 
 interface FormRule {
   condition: Record<string, string>
@@ -115,6 +102,7 @@ interface FormRule {
 }
 
 export function PoliciesPage() {
+  const { t } = useTranslation()
   const queryClient = useQueryClient()
   const { toast } = useToast()
   const [search, setSearch] = useState('')
@@ -153,8 +141,8 @@ export function PoliciesPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['policies'] })
       toast({
-        title: 'Success',
-        description: 'Policy created successfully!',
+        title: t('pages.policies.toast.success'),
+        description: t('pages.policies.toast.created'),
         variant: 'success',
       })
       setCreateModal(false)
@@ -162,8 +150,8 @@ export function PoliciesPage() {
     },
     onError: (error: Error) => {
       toast({
-        title: 'Error',
-        description: `Failed to create policy: ${error.message}`,
+        title: t('pages.policies.toast.error'),
+        description: t('pages.policies.toast.createFailed', { message: error.message }),
         variant: 'destructive',
       })
     },
@@ -175,8 +163,8 @@ export function PoliciesPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['policies'] })
       toast({
-        title: 'Success',
-        description: 'Policy updated successfully!',
+        title: t('pages.policies.toast.success'),
+        description: t('pages.policies.toast.updated'),
         variant: 'success',
       })
       setEditModal(false)
@@ -184,8 +172,8 @@ export function PoliciesPage() {
     },
     onError: (error: Error) => {
       toast({
-        title: 'Error',
-        description: `Failed to update policy: ${error.message}`,
+        title: t('pages.policies.toast.error'),
+        description: t('pages.policies.toast.updateFailed', { message: error.message }),
         variant: 'destructive',
       })
     },
@@ -196,8 +184,8 @@ export function PoliciesPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['policies'] })
       toast({
-        title: 'Success',
-        description: 'Policy deleted successfully!',
+        title: t('pages.policies.toast.success'),
+        description: t('pages.policies.toast.deleted'),
         variant: 'success',
       })
       setDeleteDialog(false)
@@ -205,8 +193,8 @@ export function PoliciesPage() {
     },
     onError: (error: Error) => {
       toast({
-        title: 'Error',
-        description: `Failed to delete policy: ${error.message}`,
+        title: t('pages.policies.toast.error'),
+        description: t('pages.policies.toast.deleteFailed', { message: error.message }),
         variant: 'destructive',
       })
     },
@@ -218,15 +206,15 @@ export function PoliciesPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['policies'] })
       toast({
-        title: 'Success',
-        description: 'Policy status updated!',
+        title: t('pages.policies.toast.success'),
+        description: t('pages.policies.toast.statusUpdated'),
         variant: 'success',
       })
     },
     onError: (error: Error) => {
       toast({
-        title: 'Error',
-        description: `Failed to update policy: ${error.message}`,
+        title: t('pages.policies.toast.error'),
+        description: t('pages.policies.toast.updateFailed', { message: error.message }),
         variant: 'destructive',
       })
     },
@@ -322,18 +310,18 @@ export function PoliciesPage() {
     return (
       <div className="space-y-3">
         <div className="flex items-center justify-between">
-          <Label className="text-base font-semibold">Rules</Label>
+          <Label className="text-base font-semibold">{t('pages.policies.rules.title')}</Label>
           <Button type="button" variant="outline" size="sm" onClick={addRule}>
-            <Plus className="h-3 w-3 mr-1" /> Add Rule
+            <Plus className="h-3 w-3 mr-1" /> {t('pages.policies.rules.add')}
           </Button>
         </div>
         {rules.length === 0 && (
-          <p className="text-sm text-muted-foreground">No rules defined. Add rules to specify conditions and effects.</p>
+          <p className="text-sm text-muted-foreground">{t('pages.policies.rules.empty')}</p>
         )}
         {rules.map((rule, ruleIndex) => (
           <div key={ruleIndex} className="border rounded-lg p-3 space-y-3 relative">
             <div className="flex items-center justify-between">
-              <span className="text-sm font-medium">Rule {ruleIndex + 1}</span>
+              <span className="text-sm font-medium">{t('pages.policies.rules.ruleN', { n: ruleIndex + 1 })}</span>
               <Button type="button" variant="ghost" size="sm" onClick={() => removeRule(ruleIndex)}>
                 <X className="h-4 w-4" />
               </Button>
@@ -341,10 +329,10 @@ export function PoliciesPage() {
             <div className="grid gap-2">
               {templates.map(template => (
                 <div key={template.key} className="grid grid-cols-3 gap-2 items-center">
-                  <Label className="text-xs">{template.label}</Label>
+                  <Label className="text-xs">{t(`pages.policies.conditions.${template.key}`)}</Label>
                   <Input
                     className="col-span-2 h-8 text-sm"
-                    placeholder={template.placeholder}
+                    placeholder={t(`pages.policies.placeholders.${template.placeholderKey || template.key}`)}
                     value={rule.condition[template.key] || ''}
                     onChange={(e) => updateRuleCondition(ruleIndex, template.key, e.target.value)}
                   />
@@ -353,20 +341,20 @@ export function PoliciesPage() {
             </div>
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1">
-                <Label className="text-xs">Effect</Label>
+                <Label className="text-xs">{t('pages.policies.rules.effect')}</Label>
                 <Select value={rule.effect} onValueChange={(value) => updateRuleEffect(ruleIndex, value)}>
                   <SelectTrigger className="h-8 text-sm">
-                    <SelectValue placeholder="Select effect" />
+                    <SelectValue placeholder={t('pages.policies.rules.selectEffect')} />
                   </SelectTrigger>
                   <SelectContent>
                     {effectOptions.map(opt => (
-                      <SelectItem key={opt} value={opt}>{opt.replace(/_/g, ' ')}</SelectItem>
+                      <SelectItem key={opt} value={opt}>{t(`pages.policies.effects.${opt}`)}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
               <div className="space-y-1">
-                <Label className="text-xs">Priority</Label>
+                <Label className="text-xs">{t('pages.policies.rules.priority')}</Label>
                 <Input
                   type="number"
                   className="h-8 text-sm"
@@ -398,11 +386,11 @@ export function PoliciesPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Policies</h1>
-          <p className="text-muted-foreground">Manage access control policies</p>
+          <h1 className="text-3xl font-bold tracking-tight">{t('nav.items.policies')}</h1>
+          <p className="text-muted-foreground">{t('pages.policies.subtitle')}</p>
         </div>
         <Button onClick={() => setCreateModal(true)}>
-          <Plus className="mr-2 h-4 w-4" /> Create Policy
+          <Plus className="mr-2 h-4 w-4" /> {t('pages.policies.createPolicy')}
         </Button>
       </div>
 
@@ -417,7 +405,7 @@ export function PoliciesPage() {
                 <p className="text-2xl font-bold">
                   {policies?.filter(p => p.type === 'separation_of_duty').length || 0}
                 </p>
-                <p className="text-sm text-muted-foreground">SoD Policies</p>
+                <p className="text-sm text-muted-foreground">{t('pages.policies.sodPolicies')}</p>
               </div>
             </div>
           </CardContent>
@@ -432,7 +420,7 @@ export function PoliciesPage() {
                 <p className="text-2xl font-bold">
                   {policies?.filter(p => p.type === 'risk_based').length || 0}
                 </p>
-                <p className="text-sm text-muted-foreground">Risk-based</p>
+                <p className="text-sm text-muted-foreground">{t('pages.policies.riskBased')}</p>
               </div>
             </div>
           </CardContent>
@@ -447,7 +435,7 @@ export function PoliciesPage() {
                 <p className="text-2xl font-bold">
                   {policies?.filter(p => p.enabled).length || 0}
                 </p>
-                <p className="text-sm text-muted-foreground">Active</p>
+                <p className="text-sm text-muted-foreground">{t('pages.policies.active')}</p>
               </div>
             </div>
           </CardContent>
@@ -460,7 +448,7 @@ export function PoliciesPage() {
               </div>
               <div>
                 <p className="text-2xl font-bold">{policies?.length || 0}</p>
-                <p className="text-sm text-muted-foreground">Total Policies</p>
+                <p className="text-sm text-muted-foreground">{t('pages.policies.totalPolicies')}</p>
               </div>
             </div>
           </CardContent>
@@ -473,7 +461,7 @@ export function PoliciesPage() {
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
-                placeholder="Search policies..."
+                placeholder={t('pages.policies.searchPlaceholder')}
                 value={search}
                 onChange={(e) => { setSearch(e.target.value); setPage(0) }}
                 className="pl-9"
@@ -485,23 +473,23 @@ export function PoliciesPage() {
           {isLoading ? (
             <TableSkeleton rows={8} cols={5} />
           ) : isError ? (
-            <QueryError error={error} resource="policies" />
+            <QueryError error={error} resource={t('pages.policies.resourceName')} />
           ) : !filteredPolicies || filteredPolicies.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
               <Shield className="h-12 w-12 text-muted-foreground/40 mb-3" />
-              <p className="font-medium">No policies found</p>
-              <p className="text-sm">Create a policy to get started with access control</p>
+              <p className="font-medium">{t('pages.policies.emptyTitle')}</p>
+              <p className="text-sm">{t('pages.policies.emptyDesc')}</p>
             </div>
           ) : (
           <div className="rounded-md border">
             <Table>
               <TableHeader>
                 <TableRow className="border-b bg-muted">
-                  <TableHead className="p-3 text-left text-sm font-medium">Policy</TableHead>
-                  <TableHead className="p-3 text-left text-sm font-medium">Type</TableHead>
-                  <TableHead className="p-3 text-left text-sm font-medium">Status</TableHead>
-                  <TableHead className="p-3 text-left text-sm font-medium">Priority</TableHead>
-                  <TableHead className="p-3 text-right text-sm font-medium">Actions</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">{t('pages.policies.columns.policy')}</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">{t('pages.policies.columns.type')}</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">{t('pages.policies.columns.status')}</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">{t('pages.policies.columns.priority')}</TableHead>
+                  <TableHead className="p-3 text-right text-sm font-medium">{t('pages.policies.columns.actions')}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -521,7 +509,7 @@ export function PoliciesPage() {
                       <TableCell className="p-3">
                         <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${policyTypeColors[policy.type] || 'bg-muted text-foreground'}`}>
                           {policyTypeIcons[policy.type]}
-                          {policyTypeLabels[policy.type] || policy.type}
+                          {t(`pages.policies.types.${policy.type}`, { defaultValue: policy.type })}
                         </span>
                       </TableCell>
                       <TableCell className="p-3">
@@ -536,12 +524,12 @@ export function PoliciesPage() {
                           {policy.enabled ? (
                             <>
                               <ToggleRight className="h-4 w-4" />
-                              Enabled
+                              {t('pages.policies.enabled')}
                             </>
                           ) : (
                             <>
                               <ToggleLeft className="h-4 w-4" />
-                              Disabled
+                              {t('pages.policies.disabled')}
                             </>
                           )}
                         </button>
@@ -559,18 +547,18 @@ export function PoliciesPage() {
                           <DropdownMenuContent align="end">
                             <DropdownMenuItem onClick={() => handleEditClick(policy)}>
                               <Edit className="h-4 w-4 mr-2" />
-                              Edit
+                              {t('pages.policies.edit')}
                             </DropdownMenuItem>
                             <DropdownMenuItem onClick={() => handleToggleEnabled(policy)}>
                               {policy.enabled ? (
                                 <>
                                   <ToggleLeft className="h-4 w-4 mr-2" />
-                                  Disable
+                                  {t('pages.policies.disable')}
                                 </>
                               ) : (
                                 <>
                                   <ToggleRight className="h-4 w-4 mr-2" />
-                                  Enable
+                                  {t('pages.policies.enable')}
                                 </>
                               )}
                             </DropdownMenuItem>
@@ -580,7 +568,7 @@ export function PoliciesPage() {
                               className="text-red-600 focus:text-red-600"
                             >
                               <Trash2 className="h-4 w-4 mr-2" />
-                              Delete
+                              {t('common.delete')}
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
@@ -596,7 +584,11 @@ export function PoliciesPage() {
           {totalCount > PAGE_SIZE && (
             <div className="flex items-center justify-between pt-4 px-1">
               <p className="text-sm text-muted-foreground">
-                Showing {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, totalCount)} of {totalCount} policies
+                {t('pages.policies.showingPolicies', {
+                  from: page * PAGE_SIZE + 1,
+                  to: Math.min((page + 1) * PAGE_SIZE, totalCount),
+                  total: totalCount,
+                })}
               </p>
               <div className="flex items-center gap-2">
                 <Button
@@ -606,10 +598,10 @@ export function PoliciesPage() {
                   disabled={page === 0}
                 >
                   <ChevronLeft className="h-4 w-4 mr-1" />
-                  Previous
+                  {t('common.pagination.previous')}
                 </Button>
                 <span className="text-sm text-muted-foreground">
-                  Page {page + 1} of {Math.ceil(totalCount / PAGE_SIZE)}
+                  {t('common.pagination.pageOf', { page: page + 1, pages: Math.ceil(totalCount / PAGE_SIZE) })}
                 </span>
                 <Button
                   variant="outline"
@@ -617,7 +609,7 @@ export function PoliciesPage() {
                   onClick={() => setPage(p => p + 1)}
                   disabled={(page + 1) * PAGE_SIZE >= totalCount}
                 >
-                  Next
+                  {t('common.pagination.next')}
                   <ChevronRight className="h-4 w-4 ml-1" />
                 </Button>
               </div>
@@ -630,47 +622,46 @@ export function PoliciesPage() {
       <Dialog open={createModal} onOpenChange={setCreateModal}>
         <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Create Policy</DialogTitle>
+            <DialogTitle>{t('pages.policies.dialog.createTitle')}</DialogTitle>
           </DialogHeader>
           <form onSubmit={handleCreateSubmit} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="name">Policy Name *</Label>
+              <Label htmlFor="name">{t('pages.policies.dialog.name')}</Label>
               <Input
                 id="name"
                 name="name"
                 value={formData.name}
                 onChange={handleFormChange}
-                placeholder="e.g., SoD - Finance/Approver"
+                placeholder={t('pages.policies.dialog.namePlaceholder')}
                 required
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="description">Description</Label>
+              <Label htmlFor="description">{t('pages.policies.dialog.description')}</Label>
               <Textarea
                 id="description"
                 name="description"
                 value={formData.description}
                 onChange={handleFormChange}
-                placeholder="Describe what this policy enforces..."
+                placeholder={t('pages.policies.dialog.descriptionPlaceholder')}
                 rows={3}
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="type">Policy Type *</Label>
+              <Label htmlFor="type">{t('pages.policies.dialog.type')}</Label>
               <Select value={formData.type} onValueChange={(value) => { setFormData(prev => ({ ...prev, type: value })); setRules([]) }}>
                 <SelectTrigger>
-                  <SelectValue placeholder="Select policy type" />
+                  <SelectValue placeholder={t('pages.policies.dialog.selectType')} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="separation_of_duty">Separation of Duty (SoD)</SelectItem>
-                  <SelectItem value="risk_based">Risk-based</SelectItem>
-                  <SelectItem value="timebound">Timebound</SelectItem>
-                  <SelectItem value="location">Location-based</SelectItem>
+                  {POLICY_FORM_TYPES.map(pt => (
+                    <SelectItem key={pt} value={pt}>{t(`pages.policies.formTypes.${pt}`)}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="priority">Priority</Label>
+              <Label htmlFor="priority">{t('pages.policies.dialog.priority')}</Label>
               <Input
                 id="priority"
                 name="priority"
@@ -680,7 +671,7 @@ export function PoliciesPage() {
                 min={0}
                 max={100}
               />
-              <p className="text-xs text-muted-foreground">Higher priority policies are evaluated first</p>
+              <p className="text-xs text-muted-foreground">{t('pages.policies.dialog.priorityHint')}</p>
             </div>
             <div className="flex items-center gap-2">
               <input
@@ -691,7 +682,7 @@ export function PoliciesPage() {
                 onChange={(e) => setFormData(prev => ({ ...prev, enabled: e.target.checked }))}
                 className="h-4 w-4"
               />
-              <Label htmlFor="enabled">Enable policy immediately</Label>
+              <Label htmlFor="enabled">{t('pages.policies.dialog.enableNow')}</Label>
             </div>
             {renderRuleBuilder()}
             <div className="flex justify-end gap-2 pt-4">
@@ -701,10 +692,10 @@ export function PoliciesPage() {
                 onClick={() => { setCreateModal(false); resetForm(); }}
                 disabled={createPolicyMutation.isPending}
               >
-                Cancel
+                {t('common.cancel')}
               </Button>
               <Button type="submit" disabled={createPolicyMutation.isPending}>
-                {createPolicyMutation.isPending ? 'Creating...' : 'Create Policy'}
+                {t(createPolicyMutation.isPending ? 'pages.policies.dialog.creating' : 'pages.policies.createPolicy')}
               </Button>
             </div>
           </form>
@@ -715,11 +706,11 @@ export function PoliciesPage() {
       <Dialog open={editModal} onOpenChange={setEditModal}>
         <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Edit Policy</DialogTitle>
+            <DialogTitle>{t('pages.policies.dialog.editTitle')}</DialogTitle>
           </DialogHeader>
           <form onSubmit={handleEditSubmit} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="edit-name">Policy Name *</Label>
+              <Label htmlFor="edit-name">{t('pages.policies.dialog.name')}</Label>
               <Input
                 id="edit-name"
                 name="name"
@@ -729,7 +720,7 @@ export function PoliciesPage() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="edit-description">Description</Label>
+              <Label htmlFor="edit-description">{t('pages.policies.dialog.description')}</Label>
               <Textarea
                 id="edit-description"
                 name="description"
@@ -739,21 +730,20 @@ export function PoliciesPage() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="edit-type">Policy Type *</Label>
+              <Label htmlFor="edit-type">{t('pages.policies.dialog.type')}</Label>
               <Select value={formData.type} onValueChange={(value) => { setFormData(prev => ({ ...prev, type: value })); setRules([]) }}>
                 <SelectTrigger>
-                  <SelectValue placeholder="Select policy type" />
+                  <SelectValue placeholder={t('pages.policies.dialog.selectType')} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="separation_of_duty">Separation of Duty (SoD)</SelectItem>
-                  <SelectItem value="risk_based">Risk-based</SelectItem>
-                  <SelectItem value="timebound">Timebound</SelectItem>
-                  <SelectItem value="location">Location-based</SelectItem>
+                  {POLICY_FORM_TYPES.map(pt => (
+                    <SelectItem key={pt} value={pt}>{t(`pages.policies.formTypes.${pt}`)}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="edit-priority">Priority</Label>
+              <Label htmlFor="edit-priority">{t('pages.policies.dialog.priority')}</Label>
               <Input
                 id="edit-priority"
                 name="priority"
@@ -773,7 +763,7 @@ export function PoliciesPage() {
                 onChange={(e) => setFormData(prev => ({ ...prev, enabled: e.target.checked }))}
                 className="h-4 w-4"
               />
-              <Label htmlFor="edit-enabled">Policy enabled</Label>
+              <Label htmlFor="edit-enabled">{t('pages.policies.dialog.enabled')}</Label>
             </div>
             {renderRuleBuilder()}
             <div className="flex justify-end gap-2 pt-4">
@@ -783,10 +773,10 @@ export function PoliciesPage() {
                 onClick={() => { setEditModal(false); setSelectedPolicy(null); }}
                 disabled={updatePolicyMutation.isPending}
               >
-                Cancel
+                {t('common.cancel')}
               </Button>
               <Button type="submit" disabled={updatePolicyMutation.isPending}>
-                {updatePolicyMutation.isPending ? 'Saving...' : 'Save Changes'}
+                {t(updatePolicyMutation.isPending ? 'pages.policies.dialog.saving' : 'pages.policies.dialog.saveChanges')}
               </Button>
             </div>
           </form>
@@ -797,19 +787,19 @@ export function PoliciesPage() {
       <AlertDialog open={deleteDialog} onOpenChange={setDeleteDialog}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete Policy</AlertDialogTitle>
+            <AlertDialogTitle>{t('pages.policies.deleteTitle')}</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete "{selectedPolicy?.name}"? This action cannot be undone.
+              {t('pages.policies.deleteDesc', { name: selectedPolicy?.name ?? '' })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={deletePolicyMutation.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={deletePolicyMutation.isPending}>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => selectedPolicy && deletePolicyMutation.mutate(selectedPolicy.id)}
               disabled={deletePolicyMutation.isPending}
               className="bg-red-600 hover:bg-red-700"
             >
-              {deletePolicyMutation.isPending ? 'Deleting...' : 'Delete'}
+              {t(deletePolicyMutation.isPending ? 'pages.policies.deleting' : 'common.delete')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
