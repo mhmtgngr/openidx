@@ -536,13 +536,19 @@ all four pillars, deploy, log in, and find PAM.
    tokens, authorized apps) are fully bilingual, as are the shared
    compliance-score tooltips. **Every page a non-admin user can reach
    now renders in English and Türkçe end to end.** *And the admin
-   surface has begun:* the IAM identity core — Users, Groups, Roles
+   surface is under way:* the IAM identity core — Users, Groups, Roles
    and Bulk Operations, the pages an admin drives daily (CRUD dialogs,
    role/permission and membership management, CSV import/export,
    policy-violation surfacing, pagination) — is bilingual, with shared
-   pagination/confirm strings promoted to the common catalog.
-   *Remaining:* the ~85 other admin page bodies — mechanical, batch by
-   batch, against this pattern.
+   pagination/confirm strings promoted to the common catalog; and so is
+   the rest of the Identity section plus the app registry: Applications
+   (OAuth/OIDC registration, SSO settings, secret regeneration), the
+   Directory Integrations page (the four-tab LDAP/AD/Azure AD connection
+   dialog incl. its inline validation messages and the
+   diagnose-and-auto-fix flow), Service Accounts (API-key lifecycle),
+   and the Operations Cockpit (health tiles, posture/threat cards, PAM
+   broker health). *Remaining:* the ~81 other admin page bodies —
+   mechanical, batch by batch, against this pattern.
 2. Accessibility pass to a VPAT (needs real assistive-technology testing,
    not just an automated axe sweep).
 3. Separate/hardened end-user portal bundle.

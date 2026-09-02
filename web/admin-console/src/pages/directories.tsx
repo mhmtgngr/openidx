@@ -50,6 +50,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '../components/ui/alert-dialog'
+import { useTranslation } from 'react-i18next'
+import i18n from '../i18n'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
@@ -226,27 +228,27 @@ function validateForm(f: DirectoryFormData, isEditing: boolean): Record<string, 
   const e: Record<string, string> = {}
   const c = f.config
   const s = (v?: string) => (v ?? '').trim()
-  if (s(f.name) === '') e['name'] = 'Name is required.'
-  if (s(f.type) === '') { e['type'] = 'Directory type is required.'; return e }
+  if (s(f.name) === '') e['name'] = i18n.t('pages.directories.validation.nameRequired')
+  if (s(f.type) === '') { e['type'] = i18n.t('pages.directories.validation.typeRequired'); return e }
 
   if (f.type === 'ldap' || f.type === 'active_directory') {
-    if (s(c.host) === '') e['config.host'] = 'Host is required.'
-    if (!c.port || c.port <= 0) e['config.port'] = 'Port is required.'
-    if (s(c.bind_dn) === '') e['config.bind_dn'] = 'Bind DN is required (e.g. user@domain for AD).'
+    if (s(c.host) === '') e['config.host'] = i18n.t('pages.directories.validation.hostRequired')
+    if (!c.port || c.port <= 0) e['config.port'] = i18n.t('pages.directories.validation.portRequired')
+    if (s(c.bind_dn) === '') e['config.bind_dn'] = i18n.t('pages.directories.validation.bindDnRequired')
     // On edit, a blank bind password means "keep the stored one"; only require it on create.
-    if (!isEditing && s(c.bind_password) === '') e['config.bind_password'] = 'Bind password is required.'
+    if (!isEditing && s(c.bind_password) === '') e['config.bind_password'] = i18n.t('pages.directories.validation.bindPasswordRequired')
     if (s(c.base_dn) === '' && s(c.user_base_dn) === '')
-      e['config.base_dn'] = 'Base DN is required (e.g. DC=corp,DC=local). Try "Diagnose & Auto-Fix".'
-    if (s(c.user_filter) === '') e['config.user_filter'] = 'User filter is required.'
+      e['config.base_dn'] = i18n.t('pages.directories.validation.baseDnRequired')
+    if (s(c.user_filter) === '') e['config.user_filter'] = i18n.t('pages.directories.validation.userFilterRequired')
     if (s(c.attribute_mapping?.username) === '')
-      e['config.attribute_mapping.username'] = 'Username mapping is required (e.g. sAMAccountName for AD).'
+      e['config.attribute_mapping.username'] = i18n.t('pages.directories.validation.usernameMappingRequired')
     if (s(c.attribute_mapping?.email) === '')
-      e['config.attribute_mapping.email'] = 'Email mapping is required (e.g. userPrincipalName for AD).'
+      e['config.attribute_mapping.email'] = i18n.t('pages.directories.validation.emailMappingRequired')
   } else if (f.type === 'azure_ad') {
-    if (s(c.tenant_id) === '') e['config.tenant_id'] = 'Tenant ID is required.'
-    if (s(c.client_id) === '') e['config.client_id'] = 'Client ID is required.'
+    if (s(c.tenant_id) === '') e['config.tenant_id'] = i18n.t('pages.directories.validation.tenantIdRequired')
+    if (s(c.client_id) === '') e['config.client_id'] = i18n.t('pages.directories.validation.clientIdRequired')
     // On edit, a blank client secret means "keep the stored one"; only require it on create.
-    if (!isEditing && s(c.client_secret) === '') e['config.client_secret'] = 'Client secret is required.'
+    if (!isEditing && s(c.client_secret) === '') e['config.client_secret'] = i18n.t('pages.directories.validation.clientSecretRequired')
   }
   return e
 }
@@ -254,6 +256,7 @@ function validateForm(f: DirectoryFormData, isEditing: boolean): Record<string, 
 export function DirectoriesPage() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const { t } = useTranslation()
   const [search, setSearch] = useState('')
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -279,9 +282,9 @@ export function DirectoriesPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['directories'] })
       setDialogOpen(false)
-      toast({ title: 'Directory created' })
+      toast({ title: t('pages.directories.toasts.created') })
     },
-    onError: (err) => handleMutationError(err, 'Failed to create directory'),
+    onError: (err) => handleMutationError(err, t('pages.directories.toasts.createFailed')),
   })
 
   const updateMutation = useMutation({
@@ -290,9 +293,9 @@ export function DirectoriesPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['directories'] })
       setDialogOpen(false)
-      toast({ title: 'Directory updated' })
+      toast({ title: t('pages.directories.toasts.updated') })
     },
-    onError: (err) => handleMutationError(err, 'Failed to update directory'),
+    onError: (err) => handleMutationError(err, t('pages.directories.toasts.updateFailed')),
   })
 
   const deleteMutation = useMutation({
@@ -300,9 +303,9 @@ export function DirectoriesPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['directories'] })
       setDeleteId(null)
-      toast({ title: 'Directory deleted' })
+      toast({ title: t('pages.directories.toasts.deleted') })
     },
-    onError: () => toast({ title: 'Failed to delete directory', variant: 'destructive' }),
+    onError: () => toast({ title: t('pages.directories.toasts.deleteFailed'), variant: 'destructive' }),
   })
 
   const syncMutation = useMutation({
@@ -310,18 +313,18 @@ export function DirectoriesPage() {
       api.post(`/api/v1/directories/${id}/sync?full=${full}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['directories'] })
-      toast({ title: 'Sync initiated' })
+      toast({ title: t('pages.directories.toasts.syncStarted') })
     },
-    onError: () => toast({ title: 'Failed to trigger sync', variant: 'destructive' }),
+    onError: () => toast({ title: t('pages.directories.toasts.syncFailed'), variant: 'destructive' }),
   })
 
   const testMutation = useMutation({
     mutationFn: (id: string) => api.post<{ success: boolean; message: string }>(`/api/v1/directories/${id}/test`),
     onSuccess: (data) => {
       const result = data as { success: boolean; message: string }
-      toast({ title: result.success ? 'Connection successful' : 'Connection failed' })
+      toast({ title: result.success ? t('pages.directories.toasts.testOk') : t('pages.directories.toasts.testFail') })
     },
-    onError: () => toast({ title: 'Connection test failed', variant: 'destructive' }),
+    onError: () => toast({ title: t('pages.directories.toasts.testError'), variant: 'destructive' }),
   })
 
   // --- Live diagnostics (auto-detect + suggest fixes) ---
@@ -336,7 +339,7 @@ export function DirectoriesPage() {
       setDiagResult(data as DiagnoseResult)
     },
     onError: () =>
-      toast({ title: 'Diagnostics failed to run', variant: 'destructive' }),
+      toast({ title: t('pages.directories.toasts.diagFailed'), variant: 'destructive' }),
   })
 
   // Apply the merged suggested_config patch to the form. Suggestion keys use the
@@ -357,7 +360,7 @@ export function DirectoriesPage() {
       }
       return next
     })
-    toast({ title: 'Suggestions applied', description: 'Review the fields, then Test or Save.' })
+    toast({ title: t('pages.directories.toasts.suggestionsApplied'), description: t('pages.directories.toasts.suggestionsAppliedDesc') })
     setDiagResult(null)
   }
 
@@ -398,7 +401,7 @@ export function DirectoriesPage() {
     const fields = resp?.data?.fields
     if (fields && Object.keys(fields).length > 0) {
       setFieldErrors(fields)
-      toast({ title: 'Please fix the highlighted fields', variant: 'destructive' })
+      toast({ title: t('pages.directories.toasts.fixFields'), variant: 'destructive' })
       return
     }
     toast({ title: resp?.data?.error || fallback, variant: 'destructive' })
@@ -431,7 +434,7 @@ export function DirectoriesPage() {
       } else if (firstKey.startsWith('config.attribute_mapping')) {
         setActiveTab('mapping')
       }
-      toast({ title: 'Please fix the highlighted fields', variant: 'destructive' })
+      toast({ title: t('pages.directories.toasts.fixFields'), variant: 'destructive' })
       return
     }
     if (editingId) {
@@ -462,16 +465,16 @@ export function DirectoriesPage() {
 
   const statusBadge = (status: string) => {
     switch (status) {
-      case 'synced': return <Badge variant="default" className="bg-green-600">Synced</Badge>
-      case 'syncing': return <Badge variant="default" className="bg-primary">Syncing</Badge>
-      case 'failed': return <Badge variant="destructive">Failed</Badge>
-      default: return <Badge variant="secondary">Never</Badge>
+      case 'synced': return <Badge variant="default" className="bg-green-600">{t('pages.directories.statuses.synced')}</Badge>
+      case 'syncing': return <Badge variant="default" className="bg-primary">{t('pages.directories.statuses.syncing')}</Badge>
+      case 'failed': return <Badge variant="destructive">{t('pages.directories.statuses.failed')}</Badge>
+      default: return <Badge variant="secondary">{t('pages.directories.never')}</Badge>
     }
   }
 
   if (isLoading) return <div className="flex justify-center p-8"><LoadingSpinner size="lg" /></div>
 
-  if (isError) return <QueryError error={error} resource="directory integrations" />
+  if (isError) return <QueryError error={error} resource={t('pages.directories.resourceName')} />
 
   // Inline error text for a field path (empty when no error).
   const FieldError = ({ path }: { path: string }) =>
@@ -481,14 +484,14 @@ export function DirectoriesPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Directory Integrations</h1>
+          <h1 className="text-3xl font-bold tracking-tight">{t('pages.directories.title')}</h1>
           <p className="text-muted-foreground">
-            Connect LDAP and Active Directory servers for user/group synchronization
+            {t('pages.directories.subtitle')}
           </p>
         </div>
         <Button onClick={openCreate}>
           <Plus className="mr-2 h-4 w-4" />
-          Add Directory
+          {t('pages.directories.addDirectory')}
         </Button>
       </div>
 
@@ -496,7 +499,7 @@ export function DirectoriesPage() {
         <div className="relative flex-1 max-w-sm">
           <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
           <Input
-            placeholder="Search directories..."
+            placeholder={t('pages.directories.searchPlaceholder')}
             className="pl-8"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -506,18 +509,18 @@ export function DirectoriesPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Directories</CardTitle>
-          <CardDescription>{filtered.length} directory integration(s)</CardDescription>
+          <CardTitle>{t('pages.directories.card.title')}</CardTitle>
+          <CardDescription>{t('pages.directories.card.count', { n: filtered.length })}</CardDescription>
         </CardHeader>
         <CardContent>
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Type</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Last Sync</TableHead>
-                <TableHead>Enabled</TableHead>
+                <TableHead>{t('pages.directories.table.name')}</TableHead>
+                <TableHead>{t('pages.directories.table.type')}</TableHead>
+                <TableHead>{t('pages.directories.table.status')}</TableHead>
+                <TableHead>{t('pages.directories.table.lastSync')}</TableHead>
+                <TableHead>{t('pages.directories.enabled')}</TableHead>
                 <TableHead className="w-[70px]" />
               </TableRow>
             </TableHeader>
@@ -525,7 +528,7 @@ export function DirectoriesPage() {
               {filtered.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
-                    No directory integrations configured
+                    {t('pages.directories.empty')}
                   </TableCell>
                 </TableRow>
               ) : (
@@ -541,11 +544,11 @@ export function DirectoriesPage() {
                     <TableCell>
                       {dir.last_sync_at
                         ? new Date(dir.last_sync_at).toLocaleString()
-                        : 'Never'}
+                        : t('pages.directories.never')}
                     </TableCell>
                     <TableCell>
                       <Badge variant={dir.enabled ? 'default' : 'secondary'}>
-                        {dir.enabled ? 'Enabled' : 'Disabled'}
+                        {dir.enabled ? t('pages.directories.enabled') : t('pages.directories.disabled')}
                       </Badge>
                     </TableCell>
                     <TableCell>
@@ -558,30 +561,30 @@ export function DirectoriesPage() {
                         <DropdownMenuContent align="end">
                           <DropdownMenuItem onClick={() => openEdit(dir)}>
                             <Edit className="mr-2 h-4 w-4" />
-                            Edit
+                            {t('pages.directories.menu.edit')}
                           </DropdownMenuItem>
                           <DropdownMenuItem onClick={() => testMutation.mutate(dir.id)}>
                             <Plug className="mr-2 h-4 w-4" />
-                            Test Connection
+                            {t('pages.directories.menu.test')}
                           </DropdownMenuItem>
                           <DropdownMenuItem onClick={() => syncMutation.mutate({ id: dir.id, full: false })}>
                             <RefreshCw className="mr-2 h-4 w-4" />
-                            Incremental Sync
+                            {t('pages.directories.menu.incrementalSync')}
                           </DropdownMenuItem>
                           <DropdownMenuItem onClick={() => syncMutation.mutate({ id: dir.id, full: true })}>
                             <RefreshCw className="mr-2 h-4 w-4" />
-                            Full Sync
+                            {t('pages.directories.menu.fullSync')}
                           </DropdownMenuItem>
                           <DropdownMenuItem onClick={() => setSyncLogsId(dir.id)}>
                             <History className="mr-2 h-4 w-4" />
-                            Sync History
+                            {t('pages.directories.menu.history')}
                           </DropdownMenuItem>
                           <DropdownMenuItem
                             className="text-destructive"
                             onClick={() => setDeleteId(dir.id)}
                           >
                             <Trash2 className="mr-2 h-4 w-4" />
-                            Delete
+                            {t('common.delete')}
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
@@ -598,24 +601,24 @@ export function DirectoriesPage() {
       <Dialog open={!!syncLogsId} onOpenChange={(open) => { if (!open) setSyncLogsId(null) }}>
         <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Sync History</DialogTitle>
+            <DialogTitle>{t('pages.directories.menu.history')}</DialogTitle>
           </DialogHeader>
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Type</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Started</TableHead>
-                <TableHead>Users +/-</TableHead>
-                <TableHead>Groups +/-</TableHead>
-                <TableHead>Error</TableHead>
+                <TableHead>{t('pages.directories.table.type')}</TableHead>
+                <TableHead>{t('pages.directories.table.status')}</TableHead>
+                <TableHead>{t('pages.directories.table.started')}</TableHead>
+                <TableHead>{t('pages.directories.table.users')}</TableHead>
+                <TableHead>{t('pages.directories.table.groups')}</TableHead>
+                <TableHead>{t('pages.directories.table.error')}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {syncLogs.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={6} className="text-center text-muted-foreground py-4">
-                    No sync history
+                    {t('pages.directories.historyEmpty')}
                   </TableCell>
                 </TableRow>
               ) : (
@@ -655,7 +658,7 @@ export function DirectoriesPage() {
         <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
-              {editingId ? 'Edit Directory' : 'Add Directory'}
+              {editingId ? t('pages.directories.dialog.editTitle') : t('pages.directories.addDirectory')}
             </DialogTitle>
           </DialogHeader>
 
@@ -671,7 +674,7 @@ export function DirectoriesPage() {
                     : 'border-transparent text-muted-foreground hover:text-foreground'
                 }`}
               >
-                {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                {t(`pages.directories.tabs.${tab}`)}
               </button>
             ))}
           </div>
@@ -681,16 +684,16 @@ export function DirectoriesPage() {
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label>Name</Label>
+                  <Label>{t('pages.directories.fields.name')}</Label>
                   <Input
                     value={formData.name}
                     onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                    placeholder="My LDAP Server"
+                    placeholder={t('pages.directories.fields.namePlaceholder')}
                   />
                   <FieldError path="name" />
                 </div>
                 <div className="space-y-2">
-                  <Label>Type</Label>
+                  <Label>{t('pages.directories.fields.type')}</Label>
                   <Select
                     value={formData.type}
                     onValueChange={(v) => {
@@ -700,9 +703,9 @@ export function DirectoriesPage() {
                   >
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="ldap">LDAP (OpenLDAP, etc.)</SelectItem>
-                      <SelectItem value="active_directory">Active Directory</SelectItem>
-                      <SelectItem value="azure_ad">Azure AD / Entra ID</SelectItem>
+                      <SelectItem value="ldap">{t('pages.directories.fields.typeLdap')}</SelectItem>
+                      <SelectItem value="active_directory">{t('pages.directories.fields.typeAd')}</SelectItem>
+                      <SelectItem value="azure_ad">{t('pages.directories.fields.typeAzure')}</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -711,7 +714,7 @@ export function DirectoriesPage() {
               {formData.type === 'azure_ad' ? (
                 <>
                   <div className="space-y-2">
-                    <Label>Tenant ID</Label>
+                    <Label>{t('pages.directories.fields.tenantId')}</Label>
                     <Input
                       value={formData.config.tenant_id}
                       onChange={(e) => setFormData({
@@ -720,11 +723,11 @@ export function DirectoriesPage() {
                       })}
                       placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
                     />
-                    <p className="text-xs text-muted-foreground">Azure AD tenant (directory) ID from the Azure portal</p>
+                    <p className="text-xs text-muted-foreground">{t('pages.directories.fields.tenantIdHint')}</p>
                   </div>
 
                   <div className="space-y-2">
-                    <Label>Client ID (Application ID)</Label>
+                    <Label>{t('pages.directories.fields.clientId')}</Label>
                     <Input
                       value={formData.config.client_id}
                       onChange={(e) => setFormData({
@@ -733,11 +736,11 @@ export function DirectoriesPage() {
                       })}
                       placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
                     />
-                    <p className="text-xs text-muted-foreground">App registration client ID with Microsoft Graph API permissions</p>
+                    <p className="text-xs text-muted-foreground">{t('pages.directories.fields.clientIdHint')}</p>
                   </div>
 
                   <div className="space-y-2">
-                    <Label>Client Secret</Label>
+                    <Label>{t('pages.directories.fields.clientSecret')}</Label>
                     <SecretField
                       mode={editingId ? 'edit' : 'create'}
                       value={formData.config.client_secret}
@@ -748,14 +751,14 @@ export function DirectoriesPage() {
                       })}
                     />
                     <FieldError path="config.client_secret" />
-                    <p className="text-xs text-muted-foreground">Client secret from the app registration certificates &amp; secrets</p>
+                    <p className="text-xs text-muted-foreground">{t('pages.directories.fields.clientSecretHint')}</p>
                   </div>
                 </>
               ) : (
                 <>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <Label>Host</Label>
+                      <Label>{t('pages.directories.fields.host')}</Label>
                       <Input
                         value={formData.config.host}
                         onChange={(e) => setFormData({
@@ -767,7 +770,7 @@ export function DirectoriesPage() {
                       <FieldError path="config.host" />
                     </div>
                     <div className="space-y-2">
-                      <Label>Port</Label>
+                      <Label>{t('pages.directories.fields.port')}</Label>
                       <Input
                         type="number"
                         value={formData.config.port}
@@ -788,7 +791,7 @@ export function DirectoriesPage() {
                           config: { ...formData.config, use_tls: v, port: v ? 636 : 389 },
                         })}
                       />
-                      <Label>LDAPS (TLS)</Label>
+                      <Label>{t('pages.directories.fields.ldaps')}</Label>
                     </div>
                     <div className="flex items-center space-x-2">
                       <Switch
@@ -798,7 +801,7 @@ export function DirectoriesPage() {
                           config: { ...formData.config, start_tls: v },
                         })}
                       />
-                      <Label>StartTLS</Label>
+                      <Label>{t('pages.directories.fields.startTls')}</Label>
                     </div>
                     <div className="flex items-center space-x-2">
                       <Switch
@@ -808,12 +811,12 @@ export function DirectoriesPage() {
                           config: { ...formData.config, skip_tls_verify: v },
                         })}
                       />
-                      <Label>Skip TLS Verify</Label>
+                      <Label>{t('pages.directories.fields.skipTlsVerify')}</Label>
                     </div>
                   </div>
 
                   <div className="space-y-2">
-                    <Label>Bind DN</Label>
+                    <Label>{t('pages.directories.fields.bindDn')}</Label>
                     <Input
                       value={formData.config.bind_dn}
                       onChange={(e) => setFormData({
@@ -826,7 +829,7 @@ export function DirectoriesPage() {
                   </div>
 
                   <div className="space-y-2">
-                    <Label>Bind Password</Label>
+                    <Label>{t('pages.directories.fields.bindPassword')}</Label>
                     <SecretField
                       mode={editingId ? 'edit' : 'create'}
                       value={formData.config.bind_password}
@@ -846,7 +849,7 @@ export function DirectoriesPage() {
                   checked={formData.enabled}
                   onCheckedChange={(v) => setFormData({ ...formData, enabled: v })}
                 />
-                <Label>Enabled</Label>
+                <Label>{t('pages.directories.enabled')}</Label>
               </div>
             </div>
           )}
@@ -858,7 +861,7 @@ export function DirectoriesPage() {
                 <>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <Label>User Filter (OData $filter)</Label>
+                      <Label>{t('pages.directories.fields.userFilterOdata')}</Label>
                       <Input
                         value={formData.config.user_filter}
                         onChange={(e) => setFormData({
@@ -867,10 +870,10 @@ export function DirectoriesPage() {
                         })}
                         placeholder="accountEnabled eq true"
                       />
-                      <p className="text-xs text-muted-foreground">OData filter expression for Microsoft Graph /users endpoint</p>
+                      <p className="text-xs text-muted-foreground">{t('pages.directories.fields.userFilterOdataHint')}</p>
                     </div>
                     <div className="space-y-2">
-                      <Label>Group Filter (OData $filter)</Label>
+                      <Label>{t('pages.directories.fields.groupFilterOdata')}</Label>
                       <Input
                         value={formData.config.group_filter}
                         onChange={(e) => setFormData({
@@ -879,14 +882,14 @@ export function DirectoriesPage() {
                         })}
                         placeholder="securityEnabled eq true"
                       />
-                      <p className="text-xs text-muted-foreground">OData filter expression for Microsoft Graph /groups endpoint</p>
+                      <p className="text-xs text-muted-foreground">{t('pages.directories.fields.groupFilterOdataHint')}</p>
                     </div>
                   </div>
                 </>
               ) : (
                 <>
                   <div className="space-y-2">
-                    <Label>Base DN</Label>
+                    <Label>{t('pages.directories.fields.baseDn')}</Label>
                     <Input
                       value={formData.config.base_dn}
                       onChange={(e) => setFormData({
@@ -899,7 +902,7 @@ export function DirectoriesPage() {
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <Label>User Base DN (optional)</Label>
+                      <Label>{t('pages.directories.fields.userBaseDn')}</Label>
                       <Input
                         value={formData.config.user_base_dn}
                         onChange={(e) => setFormData({
@@ -910,7 +913,7 @@ export function DirectoriesPage() {
                       />
                     </div>
                     <div className="space-y-2">
-                      <Label>Group Base DN (optional)</Label>
+                      <Label>{t('pages.directories.fields.groupBaseDn')}</Label>
                       <Input
                         value={formData.config.group_base_dn}
                         onChange={(e) => setFormData({
@@ -923,7 +926,7 @@ export function DirectoriesPage() {
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <Label>User Filter</Label>
+                      <Label>{t('pages.directories.fields.userFilter')}</Label>
                       <Input
                         value={formData.config.user_filter}
                         onChange={(e) => setFormData({
@@ -934,7 +937,7 @@ export function DirectoriesPage() {
                       <FieldError path="config.user_filter" />
                     </div>
                     <div className="space-y-2">
-                      <Label>Group Filter</Label>
+                      <Label>{t('pages.directories.fields.groupFilter')}</Label>
                       <Input
                         value={formData.config.group_filter}
                         onChange={(e) => setFormData({
@@ -946,7 +949,7 @@ export function DirectoriesPage() {
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <Label>Member Attribute</Label>
+                      <Label>{t('pages.directories.fields.memberAttribute')}</Label>
                       <Input
                         value={formData.config.member_attribute}
                         onChange={(e) => setFormData({
@@ -956,7 +959,7 @@ export function DirectoriesPage() {
                       />
                     </div>
                     <div className="space-y-2">
-                      <Label>Page Size</Label>
+                      <Label>{t('pages.directories.fields.pageSize')}</Label>
                       <Input
                         type="number"
                         value={formData.config.page_size}
@@ -977,13 +980,13 @@ export function DirectoriesPage() {
             <div className="space-y-4">
               <div className="flex justify-end">
                 <Button variant="outline" size="sm" onClick={applyDefaults}>
-                  Apply {formData.type === 'active_directory' ? 'AD' : 'LDAP'} Defaults
+                  {t('pages.directories.mapping.applyDefaults', { type: formData.type === 'active_directory' ? 'AD' : 'LDAP' })}
                 </Button>
               </div>
               {(['username', 'email', 'first_name', 'last_name', 'display_name', 'group_name'] as const).map(
                 (field) => (
                   <div key={field} className="grid grid-cols-2 gap-4 items-start">
-                    <Label className="capitalize mt-2">{field.replace('_', ' ')}</Label>
+                    <Label className="mt-2">{t(`pages.directories.mapping.${field}`)}</Label>
                     <div>
                       <Input
                         value={formData.config.attribute_mapping[field]}
@@ -1019,10 +1022,10 @@ export function DirectoriesPage() {
                     config: { ...formData.config, sync_enabled: v },
                   })}
                 />
-                <Label>Enable Scheduled Sync</Label>
+                <Label>{t('pages.directories.sync.enableScheduled')}</Label>
               </div>
               <div className="space-y-2">
-                <Label>Sync Interval (minutes)</Label>
+                <Label>{t('pages.directories.sync.interval')}</Label>
                 <Input
                   type="number"
                   value={formData.config.sync_interval}
@@ -1034,7 +1037,7 @@ export function DirectoriesPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label>Deprovision Action</Label>
+                <Label>{t('pages.directories.sync.deprovision')}</Label>
                 <Select
                   value={formData.config.deprovision_action}
                   onValueChange={(v) => setFormData({
@@ -1044,12 +1047,12 @@ export function DirectoriesPage() {
                 >
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="disable">Disable account</SelectItem>
-                    <SelectItem value="delete">Delete account</SelectItem>
+                    <SelectItem value="disable">{t('pages.directories.sync.disableAccount')}</SelectItem>
+                    <SelectItem value="delete">{t('pages.directories.sync.deleteAccount')}</SelectItem>
                   </SelectContent>
                 </Select>
                 <p className="text-sm text-muted-foreground">
-                  Action taken when a user is removed from the LDAP directory during full sync.
+                  {t('pages.directories.sync.deprovisionHint')}
                 </p>
               </div>
             </div>
@@ -1064,7 +1067,7 @@ export function DirectoriesPage() {
                   {diagResult.summary}
                 </div>
                 <Button variant="ghost" size="sm" onClick={() => setDiagResult(null)}>
-                  Dismiss
+                  {t('pages.directories.diag.dismiss')}
                 </Button>
               </div>
               <div className="space-y-1.5 max-h-64 overflow-y-auto">
@@ -1094,7 +1097,7 @@ export function DirectoriesPage() {
                       {f.detail && <div className="text-muted-foreground">{f.detail}</div>}
                       {f.suggested && (
                         <div className="text-muted-foreground mt-0.5">
-                          Suggested:{' '}
+                          {t('pages.directories.diag.suggested')}{' '}
                           {Object.entries(f.suggested)
                             .map(([k, v]) => `${k} = ${String(v)}`)
                             .join(', ')}
@@ -1110,7 +1113,7 @@ export function DirectoriesPage() {
                   className="w-full"
                   onClick={() => applySuggestions(diagResult.suggested_config!)}
                 >
-                  Apply all suggested fixes ({Object.keys(diagResult.suggested_config).length})
+                  {t('pages.directories.diag.applyAll', { n: Object.keys(diagResult.suggested_config).length })}
                 </Button>
               )}
             </div>
@@ -1118,7 +1121,7 @@ export function DirectoriesPage() {
 
           <div className="flex justify-end space-x-2 pt-4">
             <Button variant="outline" onClick={() => setDialogOpen(false)}>
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button
               variant="secondary"
@@ -1126,13 +1129,13 @@ export function DirectoriesPage() {
               disabled={diagnoseMutation.isPending || (formData.type !== 'ldap' && formData.type !== 'active_directory')}
             >
               {diagnoseMutation.isPending && <LoadingSpinner size="sm" className="mr-2" />}
-              Diagnose &amp; Auto-Fix
+              {t('pages.directories.diag.diagnose')}
             </Button>
             <Button onClick={handleSubmit} disabled={createMutation.isPending || updateMutation.isPending}>
               {(createMutation.isPending || updateMutation.isPending) && (
                 <LoadingSpinner size="sm" className="mr-2" />
               )}
-              {editingId ? 'Update' : 'Create'}
+              {editingId ? t('pages.directories.dialog.update') : t('pages.directories.dialog.create')}
             </Button>
           </div>
         </DialogContent>
@@ -1142,19 +1145,18 @@ export function DirectoriesPage() {
       <AlertDialog open={!!deleteId} onOpenChange={(open) => { if (!open) setDeleteId(null) }}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete Directory Integration?</AlertDialogTitle>
+            <AlertDialogTitle>{t('pages.directories.deleteDialog.title')}</AlertDialogTitle>
             <AlertDialogDescription>
-              This will remove the directory integration and its sync history.
-              Synced users will not be deleted but will no longer be updated.
+              {t('pages.directories.deleteDialog.description')}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               onClick={() => deleteId && deleteMutation.mutate(deleteId)}
             >
-              Delete
+              {t('common.delete')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

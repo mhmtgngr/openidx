@@ -88,6 +88,31 @@ describe('i18n', () => {
         'removeFromGroup',
         'resetPasswords',
       ].flatMap((k) => [`pages.bulkOps.types.${k}.label`, `pages.bulkOps.types.${k}.desc`]),
+      // ops-cockpit: BrokerRow badge label via template-literal key
+      'pages.opsCockpit.brokers.health.healthy',
+      'pages.opsCockpit.brokers.health.degraded',
+      'pages.opsCockpit.brokers.health.down',
+      // directories: dialog tab labels + attribute-mapping rows via template-literal keys
+      ...['connection', 'search', 'mapping', 'sync'].map((k) => `pages.directories.tabs.${k}`),
+      ...['username', 'email', 'first_name', 'last_name', 'display_name', 'group_name'].map(
+        (k) => `pages.directories.mapping.${k}`,
+      ),
+      // directories: validateForm messages resolved through the i18n singleton
+      ...[
+        'nameRequired',
+        'typeRequired',
+        'hostRequired',
+        'portRequired',
+        'bindDnRequired',
+        'bindPasswordRequired',
+        'baseDnRequired',
+        'userFilterRequired',
+        'usernameMappingRequired',
+        'emailMappingRequired',
+        'tenantIdRequired',
+        'clientIdRequired',
+        'clientSecretRequired',
+      ].map((k) => `pages.directories.validation.${k}`),
     ]
     for (const lang of supportedLanguages) {
       for (const key of mapKeys) {

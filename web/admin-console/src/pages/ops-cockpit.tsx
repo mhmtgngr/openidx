@@ -6,6 +6,7 @@ import {
   Gauge, Server, Router, Activity, Network, ShieldCheck, ShieldAlert,
   Share2, ExternalLink, ArrowRight, KeyRound, ArrowRightLeft,
 } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { api } from '../lib/api'
 import { QueryGate } from '../components/query-gate'
 import { Skeleton } from '../components/ui/skeleton'
@@ -172,6 +173,7 @@ function StatTile({
 // ─── Page ──────────────────────────────────────────────────────────────────────
 
 export function OpsCockpitPage() {
+  const { t } = useTranslation()
   // Primary query: the fabric overview drives the whole cockpit's health story,
   // so a 401/403 here surfaces through QueryGate (never masked as "—").
   const overviewQuery = useQuery({
@@ -284,16 +286,13 @@ export function OpsCockpitPage() {
       <div className="flex items-center gap-3">
         <Gauge className="h-7 w-7 text-primary" />
         <div>
-          <h1 className="text-3xl font-bold tracking-tight text-foreground">Operations Cockpit</h1>
-          <p className="text-muted-foreground">
-            One situational-awareness surface for overlay health, device posture, and active threats —
-            each tile drills into the source page.
-          </p>
+          <h1 className="text-3xl font-bold tracking-tight text-foreground">{t('pages.opsCockpit.title')}</h1>
+          <p className="text-muted-foreground">{t('pages.opsCockpit.subtitle')}</p>
         </div>
       </div>
 
       {/* The fabric overview is the primary read — QueryGate owns its 401/403. */}
-      <QueryGate query={overviewQuery} resource="operations cockpit">
+      <QueryGate query={overviewQuery} resource={t('pages.opsCockpit.resourceName')}>
         {(overview) => {
           const h = overview?.health
           const controllerUp = (h?.controller_reachable ?? statusQuery.data?.controller_reachable) ?? false
@@ -302,8 +301,8 @@ export function OpsCockpitPage() {
             <div className="space-y-6">
               {/* Health stat tiles */}
               <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-                <StatTile to="/ziti-network" title="Services" icon={Server} accent="text-purple-500"
-                  description="Registered overlay services">
+                <StatTile to="/ziti-network" title={t('pages.opsCockpit.tiles.services')} icon={Server} accent="text-purple-500"
+                  description={t('pages.opsCockpit.tiles.servicesDesc')}>
                   <TileValue
                     query={servicesQuery}
                     render={(d) => {
@@ -313,7 +312,7 @@ export function OpsCockpitPage() {
                   />
                 </StatTile>
 
-                <StatTile to="/ziti-network" title="Edge Routers" icon={Router}
+                <StatTile to="/ziti-network" title={t('pages.opsCockpit.tiles.routers')} icon={Router}
                   description={
                     <RouterDesc overview={h} routers={routersQuery} />
                   }>
@@ -328,19 +327,19 @@ export function OpsCockpitPage() {
                   />
                 </StatTile>
 
-                <StatTile to="/ziti-network" title="Active Sessions" icon={Activity} accent="text-orange-500"
-                  description="Live overlay dial/bind sessions">
+                <StatTile to="/ziti-network" title={t('pages.opsCockpit.tiles.sessions')} icon={Activity} accent="text-orange-500"
+                  description={t('pages.opsCockpit.tiles.sessionsDesc')}>
                   <TileValue
                     query={sessionsQuery}
                     render={(s) => <span>{Array.isArray(s) ? s.length : 0}</span>}
                   />
                 </StatTile>
 
-                <StatTile to="/zero-trust" title="Overlay Status" icon={Network}
+                <StatTile to="/zero-trust" title={t('pages.opsCockpit.tiles.overlay')} icon={Network}
                   accent={controllerUp ? 'text-green-500' : 'text-red-500'}
-                  description={(h?.sdk_ready ?? statusQuery.data?.sdk_ready) ? 'SDK ready' : 'SDK not ready'}>
+                  description={(h?.sdk_ready ?? statusQuery.data?.sdk_ready) ? t('pages.opsCockpit.tiles.sdkReady') : t('pages.opsCockpit.tiles.sdkNotReady')}>
                   <span className={controllerUp ? 'text-green-500' : 'text-red-500'}>
-                    {controllerUp ? 'Online' : 'Offline'}
+                    {controllerUp ? t('pages.opsCockpit.tiles.online') : t('pages.opsCockpit.tiles.offline')}
                   </span>
                 </StatTile>
               </div>
@@ -359,11 +358,11 @@ export function OpsCockpitPage() {
               <Card>
                 <CardHeader className="flex flex-row items-center justify-between">
                   <CardTitle className="flex items-center gap-2 text-base text-foreground">
-                    <Share2 className="h-4 w-4 text-primary" /> Overlay Topology
+                    <Share2 className="h-4 w-4 text-primary" /> {t('pages.opsCockpit.topology.title')}
                   </CardTitle>
                   <Button variant="outline" size="sm" asChild>
                     <Link to="/network-topology">
-                      <ExternalLink className="mr-2 h-4 w-4" /> Open full map
+                      <ExternalLink className="mr-2 h-4 w-4" /> {t('pages.opsCockpit.topology.openMap')}
                     </Link>
                   </Button>
                 </CardHeader>
@@ -394,11 +393,12 @@ function RouterDesc({
   overview?: FabricHealth
   routers: Pick<UseQueryResult<FabricRouterResp[]>, 'isLoading' | 'isError' | 'data'>
 }) {
-  if (routers.isLoading) return <span>Loading…</span>
+  const { t } = useTranslation()
+  if (routers.isLoading) return <span>{t('pages.opsCockpit.tiles.loading')}</span>
   const list = Array.isArray(routers.data) ? routers.data : []
   const online = overview?.routers_online ?? list.filter((r) => r.isOnline).length
   const total = overview?.routers_total ?? list.length
-  return <span>{online} online, {Math.max(0, total - online)} offline</span>
+  return <span>{t('pages.opsCockpit.tiles.routerDesc', { online, offline: Math.max(0, total - online) })}</span>
 }
 
 // ─── Posture tile ──────────────────────────────────────────────────────────────
@@ -408,6 +408,7 @@ function PostureCard({
 }: {
   identities: Pick<UseQueryResult<{ identities: ZitiIdentityResp[] }>, 'isLoading' | 'isError' | 'data'>
 }) {
+  const { t } = useTranslation()
   const list = identities.data?.identities ?? []
   const compliant = list.filter((i) => i.enrolled && !i.disabled).length
   const atRisk = list.filter((i) => !i.enrolled || i.disabled).length
@@ -416,10 +417,10 @@ function PostureCard({
     <Card>
       <CardHeader className="flex flex-row items-center justify-between pb-2">
         <CardTitle className="flex items-center gap-2 text-base text-foreground">
-          <ShieldCheck className="h-4 w-4 text-primary" /> Device Posture
+          <ShieldCheck className="h-4 w-4 text-primary" /> {t('pages.opsCockpit.posture.title')}
         </CardTitle>
         <Link to="/devices" className="text-xs text-primary hover:underline inline-flex items-center gap-1">
-          Devices <ArrowRight className="h-3 w-3" />
+          {t('pages.opsCockpit.posture.devices')} <ArrowRight className="h-3 w-3" />
         </Link>
       </CardHeader>
       <CardContent>
@@ -431,17 +432,17 @@ function PostureCard({
           <div className="flex items-center gap-8">
             <div>
               <div className="text-2xl font-bold text-green-500">{compliant}</div>
-              <p className="text-xs text-muted-foreground">Enrolled &amp; compliant</p>
+              <p className="text-xs text-muted-foreground">{t('pages.opsCockpit.posture.compliant')}</p>
             </div>
             <div>
               <div className="text-2xl font-bold text-red-500">{atRisk}</div>
-              <p className="text-xs text-muted-foreground">Unenrolled / disabled</p>
+              <p className="text-xs text-muted-foreground">{t('pages.opsCockpit.posture.atRisk')}</p>
             </div>
           </div>
         )}
         <div className="mt-3 border-t border-border pt-3">
           <Link to="/zero-trust" className="text-xs text-primary hover:underline inline-flex items-center gap-1">
-            Zero-trust posture policies <ArrowRight className="h-3 w-3" />
+            {t('pages.opsCockpit.posture.policies')} <ArrowRight className="h-3 w-3" />
           </Link>
         </div>
       </CardContent>
@@ -465,6 +466,7 @@ function SecurityCard({
   alerts: Pick<UseQueryResult<{ alerts: SecurityAlert[]; total: number }>, 'isLoading' | 'isError' | 'data'>
   risk: Pick<UseQueryResult<{ risk: RiskOverview }>, 'isLoading' | 'isError' | 'data'>
 }) {
+  const { t } = useTranslation()
   const openAlerts = alerts.data?.alerts ?? []
   const openCount = alerts.data?.total ?? openAlerts.length
   const top3 = openAlerts.slice(0, 3)
@@ -473,10 +475,10 @@ function SecurityCard({
     <Card>
       <CardHeader className="flex flex-row items-center justify-between pb-2">
         <CardTitle className="flex items-center gap-2 text-base text-foreground">
-          <ShieldAlert className="h-4 w-4 text-red-500" /> Open Threats
+          <ShieldAlert className="h-4 w-4 text-red-500" /> {t('pages.opsCockpit.security.title')}
         </CardTitle>
         <Link to="/security-alerts" className="text-xs text-primary hover:underline inline-flex items-center gap-1">
-          Alerts <ArrowRight className="h-3 w-3" />
+          {t('pages.opsCockpit.security.alerts')} <ArrowRight className="h-3 w-3" />
         </Link>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -489,7 +491,7 @@ function SecurityCard({
                 {alerts.isError ? '—' : openCount}
               </div>
             )}
-            <p className="text-xs text-muted-foreground">Open alerts</p>
+            <p className="text-xs text-muted-foreground">{t('pages.opsCockpit.security.openAlerts')}</p>
           </div>
           <div>
             {risk.isLoading ? (
@@ -499,7 +501,7 @@ function SecurityCard({
                 {risk.isError || !risk.data ? '—' : risk.data.risk.active_alerts}
               </div>
             )}
-            <p className="text-xs text-muted-foreground">Risk engine alerts</p>
+            <p className="text-xs text-muted-foreground">{t('pages.opsCockpit.security.riskAlerts')}</p>
           </div>
         </div>
 
@@ -518,7 +520,7 @@ function SecurityCard({
 
         <div className="border-t border-border pt-3">
           <Link to="/risk-dashboard" className="text-xs text-primary hover:underline inline-flex items-center gap-1">
-            Open risk dashboard <ArrowRight className="h-3 w-3" />
+            {t('pages.opsCockpit.security.riskDashboard')} <ArrowRight className="h-3 w-3" />
           </Link>
         </div>
       </CardContent>
@@ -532,11 +534,6 @@ const brokerBadgeVariant: Record<BrokerHealth, 'success' | 'warning' | 'destruct
   healthy: 'success',
   degraded: 'warning',
   down: 'destructive',
-}
-const brokerBadgeLabel: Record<BrokerHealth, string> = {
-  healthy: 'Healthy',
-  degraded: 'Degraded',
-  down: 'Down',
 }
 
 /** Roll up the direct broker: configured? then reachable + authenticated. */
@@ -562,6 +559,7 @@ function BrokerRow({
   loading: boolean
   details: React.ReactNode
 }) {
+  const { t } = useTranslation()
   return (
     <div className="flex items-start justify-between gap-3 rounded-lg border border-border p-3">
       <div className="flex items-start gap-2">
@@ -575,7 +573,7 @@ function BrokerRow({
         <Skeleton className="h-5 w-16" />
       ) : (
         <Badge variant={brokerBadgeVariant[health]} className="shrink-0">
-          {brokerBadgeLabel[health]}
+          {t(`pages.opsCockpit.brokers.health.${health}`)}
         </Badge>
       )}
     </div>
@@ -589,6 +587,7 @@ function PamBrokersCard({
   status: Pick<UseQueryResult<PamBrokerStatusResp>, 'isLoading' | 'isError' | 'data'>
   guac: Pick<UseQueryResult<GuacamoleHealthResp>, 'isLoading' | 'isError' | 'data'>
 }) {
+  const { t } = useTranslation()
   // Fall back to safe defaults so a failed/absent status read renders both
   // brokers as "down (unconfigured)" rather than crashing or masking.
   const s = status.data
@@ -602,15 +601,15 @@ function PamBrokersCard({
   const zitiHealth: BrokerHealth = zitiConfigured ? 'healthy' : 'down'
 
   const directDetails = !directConfigured ? (
-    <span>Not configured</span>
+    <span>{t('pages.opsCockpit.brokers.notConfigured')}</span>
   ) : status.isError ? (
-    <span>Broker status unavailable</span>
+    <span>{t('pages.opsCockpit.brokers.brokerUnavailable')}</span>
   ) : (
     <>
-      <div>guacd reachable: {g ? (g.server_reachable ? 'yes' : 'no') : 'unknown'}</div>
-      <div>authenticated: {g ? (g.authenticated ? 'yes' : 'no') : 'unknown'}</div>
+      <div>{t('pages.opsCockpit.brokers.guacdReachable', { v: g ? (g.server_reachable ? t('pages.opsCockpit.brokers.yes') : t('pages.opsCockpit.brokers.no')) : t('pages.opsCockpit.brokers.unknown') })}</div>
+      <div>{t('pages.opsCockpit.brokers.authenticated', { v: g ? (g.authenticated ? t('pages.opsCockpit.brokers.yes') : t('pages.opsCockpit.brokers.no')) : t('pages.opsCockpit.brokers.unknown') })}</div>
       {g && g.server_reachable && (
-        <div>active sessions: {g.active_sessions}</div>
+        <div>{t('pages.opsCockpit.brokers.activeSessions', { n: g.active_sessions })}</div>
       )}
       {g?.error_message ? (
         <div className="text-red-500">{g.error_message}</div>
@@ -619,38 +618,38 @@ function PamBrokersCard({
   )
 
   const zitiDetails = zitiConfigured ? (
-    <span>Broker configured, overlay linked</span>
+    <span>{t('pages.opsCockpit.brokers.zitiLinked')}</span>
   ) : (
-    <span>Not configured (needs ziti broker + live overlay)</span>
+    <span>{t('pages.opsCockpit.brokers.zitiNotConfigured')}</span>
   )
 
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between pb-2">
         <CardTitle className="flex items-center gap-2 text-base text-foreground">
-          <KeyRound className="h-4 w-4 text-primary" /> PAM Brokers
+          <KeyRound className="h-4 w-4 text-primary" /> {t('pages.opsCockpit.brokers.title')}
         </CardTitle>
         <Link to="/pam-connections" className="text-xs text-primary hover:underline inline-flex items-center gap-1">
-          Connections <ArrowRight className="h-3 w-3" />
+          {t('pages.opsCockpit.brokers.connections')} <ArrowRight className="h-3 w-3" />
         </Link>
       </CardHeader>
       <CardContent>
         {status.isError ? (
           <p className="text-sm text-muted-foreground">
-            Broker status unavailable — treating brokers as unreachable.
+            {t('pages.opsCockpit.brokers.statusUnavailable')}
           </p>
         ) : null}
         <div className="grid gap-3 sm:grid-cols-2">
           <BrokerRow
             icon={KeyRound}
-            name="Direct broker"
+            name={t('pages.opsCockpit.brokers.direct')}
             health={directHealth}
             loading={status.isLoading || (directConfigured && guac.isLoading)}
             details={directDetails}
           />
           <BrokerRow
             icon={ArrowRightLeft}
-            name="Ziti broker"
+            name={t('pages.opsCockpit.brokers.ziti')}
             health={zitiHealth}
             loading={status.isLoading}
             details={zitiDetails}
