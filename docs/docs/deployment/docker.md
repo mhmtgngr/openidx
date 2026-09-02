@@ -31,7 +31,6 @@ This starts:
 - **PostgreSQL 16** — port 5432
 - **Redis 7** — port 6379
 - **Elasticsearch 8.12** — port 9200
-- **Keycloak 23** — port 8180
 - **APISIX 3.8** — ports 8088 (HTTP), 8443 (HTTPS)
 - **etcd 3.5** — internal only
 - **OPA 0.61** — port 8281

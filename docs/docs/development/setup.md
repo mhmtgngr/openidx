@@ -60,7 +60,7 @@ sudo apt install -y build-essential
 
 ```bash
 # Clone the repository
-git clone https://github.com/openidx/openidx.git
+git clone https://github.com/mhmtgngr/openidx.git
 cd openidx
 
 # Verify Go installation
@@ -117,7 +117,6 @@ This starts the following services via Docker Compose:
 | PostgreSQL Replica | openidx-postgres-replica | 5433 | Read replica |
 | Redis | openidx-redis | 6379 | Cache layer |
 | Elasticsearch | openidx-elasticsearch | 9200 | Audit log storage |
-| Keycloak | openidx-keycloak | 8180 | External IdP |
 | APISIX | openidx-apisix | 8088 | API Gateway |
 | etcd | openidx-etcd | 2379 | Service discovery |
 | OPA | openidx-opa | 8281 | Policy engine |
@@ -149,7 +148,7 @@ curl http://localhost:9200/_cluster/health
 # - openidx_test (test database)
 
 # Run migrations
-make migrate-up
+go run ./cmd/migrate up
 ```
 
 ## Backend Development Setup
@@ -391,23 +390,19 @@ open http://localhost:5050  # if configured
 
 ```bash
 # Apply all pending migrations
-make migrate-up
+go run ./cmd/migrate up
 
 # Rollback last migration
-make migrate-down
+go run ./cmd/migrate down
 
 # Create new migration
-make migrate-new NAME=create_users_table
+go run ./cmd/migrate create create_users_table
 ```
 
-### Reset Database
+### Seed Test Data
 
 ```bash
-# Drop and recreate all tables
-make migrate-reset
-
-# Seed with test data
-make seed
+go run ./cmd/openidx seed
 ```
 
 ## Debugging

@@ -12,6 +12,21 @@ Deploy OpenIDX to Kubernetes using the Helm chart.
 
 ## Install
 
+Each tagged release publishes the chart to GHCR as a cosign-signed OCI
+artifact (chart version = release version — pick one from the
+[releases page](https://github.com/mhmtgngr/openidx/releases); signature
+verification is in
+[RELEASING.md](https://github.com/mhmtgngr/openidx/blob/main/docs/RELEASING.md)):
+
+```bash
+helm install openidx oci://ghcr.io/mhmtgngr/openidx/charts/openidx \
+  --version <X.Y.Z> \
+  --namespace openidx \
+  --create-namespace
+```
+
+Or install from a repository checkout:
+
 ```bash
 # Add dependency charts
 helm dependency update deployments/kubernetes/helm/openidx
@@ -21,6 +36,14 @@ helm install openidx deployments/kubernetes/helm/openidx \
   --namespace openidx \
   --create-namespace
 ```
+
+The install itself bootstraps the platform: a post-install/pre-upgrade
+hook Job runs the database migrations (`helm install` waits for it to
+complete — if the install errors, inspect it with
+`kubectl -n openidx logs job/openidx-migrate`), and the chart deploys
+OPA for the policy engine — load your policies into the ConfigMap named
+by `opa.policyConfigMap`, because governance fails closed while OPA has
+no policies.
 
 ## Configuration
 
@@ -35,8 +58,7 @@ helm install openidx deployments/kubernetes/helm/openidx \
   --set secrets.postgresPassword="$(openssl rand -base64 32)" \
   --set secrets.redisPassword="$(openssl rand -base64 32)" \
   --set secrets.jwtSecret="$(openssl rand -hex 32)" \
-  --set secrets.encryptionKey="$(openssl rand -base64 24)" \
-  --set secrets.keycloakAdminPassword="$(openssl rand -base64 16)"
+  --set secrets.encryptionKey="$(openssl rand -base64 24)"
 ```
 
 Or create a `values-production.yaml`:
@@ -47,7 +69,6 @@ secrets:
   redisPassword: "your-redis-password"
   jwtSecret: "your-64-char-hex-secret"
   encryptionKey: "your-32-byte-encryption-key!!!"
-  keycloakAdminPassword: "your-keycloak-password"
 
 config:
   oauthIssuer: "https://auth.yourdomain.com"
@@ -167,21 +188,34 @@ kubectl port-forward -n openidx svc/openidx-identity-service 8001:8001
 
 ```
 helm/openidx/
-├── Chart.yaml              # Chart metadata and dependencies
-├── values.yaml             # Default values
+├── Chart.yaml               # Chart metadata and dependencies
+├── values.yaml              # Default values
+├── values-prod.yaml         # Production profile (External Secrets, HA)
 └── templates/
-    ├── _helpers.tpl         # Template helpers
-    ├── configmap.yaml       # Service configuration
-    ├── secrets.yaml         # Kubernetes/External secrets
-    ├── serviceaccount.yaml  # Service account
-    ├── ingress.yaml         # API + admin console ingress
-    ├── hpa.yaml             # Horizontal pod autoscalers
+    ├── _helpers.tpl          # Template helpers
+    ├── configmap.yaml        # Service configuration
+    ├── secrets.yaml          # Kubernetes/External secrets
+    ├── serviceaccount.yaml   # Service account
+    ├── ingress.yaml          # API + admin console ingress
+    ├── hpa.yaml              # Horizontal pod autoscalers
+    ├── pdb.yaml              # Pod disruption budgets
+    ├── networkpolicy.yaml    # Optional hardened network profile
+    ├── migrate-job.yaml      # DB migrations (post-install/pre-upgrade hook)
+    ├── opa.yaml              # OPA policy engine (Deployment + Service)
+    ├── servicemonitor.yaml   # Opt-in Prometheus scraping (all 8 services)
+    ├── backup-cronjob.yaml   # Opt-in encrypted backups (PVC or S3)
+    ├── prometheus-rules.yaml # Alerting rules
+    ├── alertmanager-config.yaml
     ├── identity-service.yaml
     ├── governance-service.yaml
     ├── provisioning-service.yaml
     ├── audit-service.yaml
     ├── admin-api.yaml
     ├── oauth-service.yaml
+    ├── gateway-service.yaml
+    ├── access-service.yaml
     ├── admin-console.yaml
-    └── NOTES.txt            # Post-install notes
+    ├── pam-broker.yaml       # Guacamole-based PAM session brokers
+    ├── ziti-fabric.yaml      # OpenZiti controller/router (ZTNA overlay)
+    └── NOTES.txt             # Post-install notes
 ```

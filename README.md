@@ -144,12 +144,22 @@ make dev         # or: full stack via the base compose file
 
 ### Kubernetes
 
-The Helm chart lives in-repo at `deployments/kubernetes/helm/openidx`
-(no hosted chart repository yet). It runs database migrations itself (a
-post-install/pre-upgrade hook Job) and deploys OPA for the policy engine;
-run `helm dependency update` first for the bundled PostgreSQL/Redis/
-Elasticsearch, and read [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) before
-using it:
+Each tagged release publishes the Helm chart to GHCR as a cosign-signed
+OCI artifact (chart version = release version; see the
+[releases page](https://github.com/mhmtgngr/openidx/releases) for
+available versions and [docs/RELEASING.md](docs/RELEASING.md) for
+signature verification):
+
+```bash
+helm install openidx oci://ghcr.io/mhmtgngr/openidx/charts/openidx \
+  --version <X.Y.Z> --namespace openidx --create-namespace
+```
+
+The chart runs database migrations itself (a post-install/pre-upgrade
+hook Job) and deploys OPA for the policy engine; read
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) before using it. To install
+from source instead, run `helm dependency update` first for the bundled
+PostgreSQL/Redis/Elasticsearch:
 
 ```bash
 helm install openidx ./deployments/kubernetes/helm/openidx \

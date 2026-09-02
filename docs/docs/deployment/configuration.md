@@ -107,15 +107,6 @@ redis://[:password@]host:port[/db]
 | `APISIX_ADMIN_KEY` | string | - | APISIX admin key |
 | `APISIX_BASE_URL` | string | `http://localhost:8088` | APISIX proxy URL |
 
-### Keycloak Settings
-
-| Variable | Type | Default | Description |
-|----------|------|---------|-------------|
-| `KEYCLOAK_URL` | string | - | Keycloak base URL |
-| `KEYCLOAK_REALM` | string | `master` | Keycloak realm |
-| `KEYCLOAK_CLIENT_ID` | string | - | Keycloak client ID |
-| `KEYCLOAK_CLIENT_SECRET` | string | - | Keycloak client secret |
-
 ### MFA Settings
 
 | Variable | Type | Default | Description |

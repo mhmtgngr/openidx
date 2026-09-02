@@ -74,6 +74,11 @@ jobs:
             --output-certificate dist/SHA256SUMS.pem \
             dist/SHA256SUMS
 
+      # Chart version referenced in the release body below: the tag without
+      # the leading v (shell parameter expansion doesn't run inside `body:`).
+      - name: Compute chart version
+        run: echo "CHART_VERSION=${RELEASE_VERSION#v}" >> "$GITHUB_ENV"
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
@@ -92,4 +97,88 @@ jobs:
               SHA256SUMS
             sha256sum --ignore-missing -c SHA256SUMS
             ```
+
+            ### Install the Helm chart
+
+            The chart for this release is published to GHCR as an OCI artifact
+            (chart version = release version) and signed with the same keyless
+            identity:
+
+            ```sh
+            cosign verify \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              --certificate-identity-regexp '^https://github.com/${{ github.repository }}/\.github/workflows/release\.yml@' \
+              ghcr.io/${{ github.repository }}/charts/openidx:${{ env.CHART_VERSION }}
+            helm install openidx oci://ghcr.io/${{ github.repository }}/charts/openidx \
+              --version ${{ env.CHART_VERSION }} --namespace openidx --create-namespace
+            ```
           files: dist/*
+
+  # Publishes the Helm chart as an OCI artifact alongside the binaries. Runs
+  # after the release job so a failed test suite or build blocks the chart too.
+  helm-chart:
+    needs: release
+    runs-on: ubuntu-latest
+    env:
+      CHART: deployments/kubernetes/helm/openidx
+      # ghcr.io/mhmtgngr/openidx/charts/openidx — same namespace as the images.
+      CHART_OCI_REPO: ghcr.io/${{ github.repository }}/charts
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v5
+        with:
+          version: v3.14.4
+
+      - name: Build chart dependencies
+        run: |
+          helm repo add bitnami https://charts.bitnami.com/bitnami
+          helm dependency build "$CHART"
+
+      # The committed Chart.yaml carries a development version; a release pins
+      # chart version = product version (v1.28.0 → chart 1.28.0), so each tag
+      # yields exactly one immutable chart version.
+      - name: Package chart
+        run: |
+          helm package "$CHART" \
+            --version "${RELEASE_VERSION#v}" \
+            --app-version "${RELEASE_VERSION}" \
+            --destination dist/
+
+      # docker/login-action writes ~/.docker/config.json, which cosign reads
+      # when pushing the signature; helm push needs its own registry login.
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to GHCR (helm)
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | \
+            helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Push chart
+        id: push
+        run: |
+          out=$(helm push "dist/openidx-${RELEASE_VERSION#v}.tgz" "oci://${CHART_OCI_REPO}" 2>&1)
+          echo "$out"
+          digest=$(echo "$out" | awk '/^Digest:/ {print $2}')
+          if [ -z "$digest" ]; then
+            echo "::error::could not parse chart digest from helm push output"
+            exit 1
+          fi
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      # Signing by digest (not tag) binds the signature to the exact pushed
+      # artifact; consumers verify with the same workflow-identity pin as the
+      # binary checksums.
+      - name: Sign chart (keyless)
+        run: |
+          cosign sign --yes \
+            "${CHART_OCI_REPO}/openidx@${{ steps.push.outputs.digest }}"

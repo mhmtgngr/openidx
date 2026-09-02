@@ -6,12 +6,15 @@ P1 A-defect tail done (A2/A3/A4), P2 done in full** (docs site, quickstart
 fold + banners, PAM guide **and the full `/pam/*` OpenAPI spec**, auditor
 artifacts: [threat model](./THREAT-MODEL.md) and
 [control mapping](./COMPLIANCE-CONTROL-MAPPING.md), doc-tree separation
-via [docs/README.md](./README.md)), **P3.2–3.5a done** (Helm chart
-finished — migration hook Job, real OPA, ServiceMonitor, backup CronJob,
-Keycloak/APISIX ghosts removed; WebAuthn→Redis; signed releases;
-Dependabot/Renovate dedupe; dead surfaces pruned). Open: P1 rollout
-Task 16 (operator action), P3.1 cut v1.28.0 (post-merge), chart-repo
-publishing, the P4 items incl. the Expo-vs-Flutter mobile pick.)
+via [docs/README.md](./README.md)), **P3.2–3.5 done** (Helm chart
+finished *and published per release* — migration hook Job, real OPA,
+ServiceMonitor, backup CronJob, Keycloak/APISIX ghosts removed, chart
+pushed to GHCR as a signed OCI artifact on every tag; WebAuthn→Redis;
+signed releases; Dependabot/Renovate dedupe; dead surfaces pruned; a
+second site truth-sweep fixed the remaining phantom install/config
+surfaces). Open: P1 rollout
+Task 16 (operator action), P3.1 cut v1.28.0 (post-merge), the P4 items
+incl. the Expo-vs-Flutter mobile pick.)
 **Question this document answers:** *Is OpenIDX fully functional and well defined end to end, as experienced by the people who use it — and what are the next steps and controls to get it there?*
 
 This is the product-and-user-side companion to
@@ -355,6 +358,17 @@ policy. This is the moment the IAM/PAM/ZTNA confusion structurally ends.
    (ZTNA)** sections. The strong repo-level deep dives are linked from the
    published pages rather than duplicated; repo URLs in `mkdocs.yml`
    corrected. Site builds clean under `mkdocs --strict`.
+   *Second sweep (with the chart publishing):* the remaining phantom
+   surfaces on the site are gone — `charts.openidx.org` and the fake
+   `openidx-linux-amd64.tar.gz` release asset replaced with the real
+   OCI chart + per-service signed binaries; `github.com/openidx/...`
+   **URLs** repointed at the real repo (Go **import paths** correctly
+   keep the module path); the `make migrate-*`/`make seed` targets that
+   don't exist replaced with the real `cmd/migrate`/`openidx seed`
+   CLIs; the last Keycloak ghosts (env-var tables, compose service
+   rows, an 8180 health check, a `keycloakAdminPassword` chart value)
+   deleted; `deployment/kubernetes.md` now shows the 0.2.0 chart
+   (migration hook, OPA fail-closed note, real template tree).
 2. ✅ **Quickstart fixed and stale entry docs bannered** — *shipped on
    this branch*: the published quickstart drops Keycloak, states the
    authoritative first login and hardware floor; PROJECT-STATUS.md,
@@ -410,8 +424,15 @@ all four pillars, deploy, log in, and find PAM.
    `networkPolicy` profile now admits migrate/backup→Postgres and
    services→OPA. Validated: `helm lint` clean, `helm template` parsed
    across default/all-on/external-secrets/networkPolicy combinations.
-   *Still open:* publishing the chart to a hosted repo (README documents
-   the in-repo install honestly).
+   ✅ **And published:** `release.yml` now packages the chart per tag
+   (chart version = release version) and pushes it to
+   `oci://ghcr.io/mhmtgngr/openidx/charts/openidx`, cosign-signed by
+   digest with the same workflow-identity pin as the binaries
+   (packaging + dependency build verified locally end-to-end); README,
+   the site's installation/kubernetes pages and
+   [RELEASING.md](./RELEASING.md) document install-from-registry and
+   verification — replacing the site's phantom `charts.openidx.org`
+   instructions.
 3. ✅ **WebAuthn challenges moved to Redis with TTL** — shipped on this
    branch (`internal/identity/webauthn.go`); the in-memory map remains
    only as a single-replica fallback with lazy expiry.

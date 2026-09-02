@@ -1,12 +1,12 @@
 # Contributing
 
-See the full [CONTRIBUTING.md](https://github.com/openidx/openidx/blob/main/CONTRIBUTING.md) in the repository root.
+See the full [CONTRIBUTING.md](https://github.com/mhmtgngr/openidx/blob/main/CONTRIBUTING.md) in the repository root.
 
 ## Development Setup
 
 ```bash
 # Clone
-git clone https://github.com/openidx/openidx.git
+git clone https://github.com/mhmtgngr/openidx.git
 cd openidx
 
 # Generate secrets
