@@ -12,25 +12,52 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 OUTPUT="${1:-$REPO_ROOT/.env}"
 
 # --- helpers ---
+# Draw `want` characters from `charset`.
+#
+# The obvious spelling of this -- `tr -dc "$charset" </dev/urandom | head -c N`
+# -- cannot work in a script with `set -o pipefail`, and this one had it three
+# times. /dev/urandom never ends, so `tr` is still writing when `head` has its
+# N bytes and exits; `tr` then dies of SIGPIPE, the pipeline reports 141, and
+# `set -e` aborts the script on its very first secret. It failed that way every
+# run, which means `./scripts/generate-secrets.sh` -- the first command of the
+# README's quick start, and the file compose refuses to start without -- had
+# never produced a .env at all. Nothing in CI ran it, so nothing caught it.
+#
+# So: read a BOUNDED block, let `tr` reach EOF and exit 0, and slice in bash.
+# Loop because a restrictive charset keeps only a fraction of the bytes, and
+# assert the length at the end -- a generator that silently returns a short
+# string hands out a weak key, which is worse than failing.
+rand_from() {
+  local charset="$1" want="$2" out="" tries=0
+  while [ "${#out}" -lt "$want" ]; do
+    tries=$((tries + 1))
+    if [ "$tries" -gt 100 ]; then
+      echo "generate-secrets: could not read enough randomness for a ${want}-character secret" >&2
+      exit 1
+    fi
+    out+="$(LC_ALL=C tr -dc "$charset" <<<"$(head -c 4096 /dev/urandom | LC_ALL=C tr -d '\0')")"
+  done
+  printf '%s' "${out:0:$want}"
+}
+
 rand_password() {
-  # 32-character base64url string (no special chars that break connection strings)
-  LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32
+  # 32 alphanumerics: no characters that would need escaping in a connection string.
+  rand_from 'A-Za-z0-9' 32
 }
 
 rand_hex() {
-  # 32-byte hex string (64 hex chars)
-  LC_ALL=C tr -dc 'a-f0-9' </dev/urandom | head -c 64
+  # 32 bytes rendered as 64 hex characters.
+  rand_from 'a-f0-9' 64
 }
 
 rand_key_32() {
-  # Exactly 32 printable ASCII characters (for AES-256)
-  LC_ALL=C tr -dc 'A-Za-z0-9!@#%^&*_+=' </dev/urandom | head -c 32
+  # Exactly 32 printable ASCII characters (AES-256 key material).
+  rand_from 'A-Za-z0-9!@#%^&*_+=' 32
 }
 
 # --- generate values ---
 POSTGRES_PASSWORD="$(rand_password)"
 REDIS_PASSWORD="$(rand_password)"
-KEYCLOAK_ADMIN_PASSWORD="$(rand_password)"
 JWT_SECRET="$(rand_hex)"
 ENCRYPTION_KEY="$(rand_key_32)"
 GRAFANA_ADMIN_PASSWORD="$(rand_password)"
@@ -39,6 +66,16 @@ ACCESS_SESSION_SECRET="$(rand_key_32)"
 GUACAMOLE_ADMIN_PASSWORD="$(rand_password)"
 GUACAMOLE_ZITI_ADMIN_PASSWORD="$(rand_password)"
 PAM_GUAC_DB_PASSWORD="$(rand_password)"
+# Both of these are declared REQUIRED by deployments/docker/docker-compose.yml
+# (`${VAR:?...}`), and its error message tells the operator to run this
+# script -- which never wrote either of them, so the documented quick start
+# stopped at "required variable ... is missing a value" even once the
+# generator itself ran. Both are safe to generate here because both sides
+# read the same value: set-app-role-password.sh runs ALTER ROLE openidx_app
+# ... PASSWORD from OPENIDX_APP_PASSWORD, and APISIX resolves its admin key
+# from APISIX_ADMIN_KEY in its own container environment.
+OPENIDX_APP_PASSWORD="$(rand_password)"
+APISIX_ADMIN_KEY="$(rand_password)"
 
 # --- backup existing file ---
 if [ -f "$OUTPUT" ]; then
@@ -58,6 +95,9 @@ LOG_LEVEL=debug
 
 # ----- Database -----
 POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+# The application role the services connect as; the postgres init hook sets
+# this role's password from this value (deployments/docker/set-app-role-password.sh).
+OPENIDX_APP_PASSWORD=${OPENIDX_APP_PASSWORD}
 DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD}@localhost:5432/openidx?sslmode=disable
 
 # ----- Redis -----
@@ -67,11 +107,8 @@ REDIS_URL=redis://:${REDIS_PASSWORD}@localhost:6379
 # ----- Elasticsearch -----
 ELASTICSEARCH_URL=http://localhost:9200
 
-# ----- Keycloak -----
-KEYCLOAK_URL=http://localhost:8180
-KEYCLOAK_REALM=openidx
-KEYCLOAK_CLIENT_ID=openidx-api
-KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD}
+# ----- API gateway (APISIX) -----
+APISIX_ADMIN_KEY=${APISIX_ADMIN_KEY}
 
 # ----- OPA -----
 OPA_URL=http://localhost:8281
@@ -114,12 +151,38 @@ SMTP_PASSWORD=
 SMTP_FROM=noreply@openidx.io
 EOF
 
+# --- make the file visible to compose -------------------------------------
+# Compose resolves ${VAR} from a .env in the PROJECT directory, which is the
+# directory holding the compose file -- so `docker compose -f
+# deployments/docker/docker-compose.yml up` never read the .env this script
+# writes at the repo root, and the README's two quick-start commands did not
+# work together: the second one died on "required variable ... is missing a
+# value" no matter how well the first one ran. `--project-directory .` would
+# also fix interpolation but would re-root every relative bind mount in the
+# compose file, so instead link the generated file where compose looks. A
+# symlink rather than a copy: one file, so editing a secret cannot leave the
+# two out of step. Falls back to a copy where symlinks are unavailable.
+if [ "$OUTPUT" = "$REPO_ROOT/.env" ]; then
+  COMPOSE_ENV="$REPO_ROOT/deployments/docker/.env"
+  if [ -e "$COMPOSE_ENV" ] && [ ! -L "$COMPOSE_ENV" ]; then
+    cp "$COMPOSE_ENV" "${COMPOSE_ENV}.bak"
+    echo "Backed up existing $COMPOSE_ENV to ${COMPOSE_ENV}.bak"
+  fi
+  rm -f "$COMPOSE_ENV"
+  if ln -s ../../.env "$COMPOSE_ENV" 2>/dev/null; then
+    :
+  else
+    cp "$OUTPUT" "$COMPOSE_ENV"
+  fi
+fi
+
 echo "Generated $OUTPUT with random secrets."
 echo ""
 echo "Secrets summary:"
 echo "  POSTGRES_PASSWORD  = ${POSTGRES_PASSWORD:0:8}..."
 echo "  REDIS_PASSWORD     = ${REDIS_PASSWORD:0:8}..."
-echo "  KEYCLOAK_ADMIN_PW  = ${KEYCLOAK_ADMIN_PASSWORD:0:8}..."
+echo "  OPENIDX_APP_PW     = ${OPENIDX_APP_PASSWORD:0:8}..."
+echo "  APISIX_ADMIN_KEY   = ${APISIX_ADMIN_KEY:0:8}..."
 echo "  JWT_SECRET         = ${JWT_SECRET:0:8}..."
 echo "  ENCRYPTION_KEY     = ${ENCRYPTION_KEY:0:8}..."
 echo "  GRAFANA_ADMIN_PW   = ${GRAFANA_ADMIN_PASSWORD:0:8}..."

@@ -448,10 +448,59 @@ All six items landed with this guide (commits on
    through both real proxies and assert on what the upstream actually
    receives; §4.4 of the threat model carries the row.
 
-*Exit test (run it):* a new operator with only the README reaches a
-logged-in, rotated-admin console; `security-scan.yml` goes red on a
-seeded critical; revoking a session in the console kills the refresh
-token.
+9. ✅ **The documented first run did not work — three separate stoppers, in
+   the first two commands.** The exit test below says "run it". Running it is
+   what found these; every one of them halted the install, and every one was
+   invisible because **nothing in CI, no test and no Makefile target had ever
+   executed `scripts/generate-secrets.sh`**. (a) The script aborted on its own
+   first line of work: `tr -dc … </dev/urandom | head -c 32` under
+   `set -o pipefail` always ends with `tr` killed by SIGPIPE — /dev/urandom
+   never ends, so `tr` is still writing when `head` has its bytes — the
+   pipeline returns 141 and `set -e` quits. Three generators had that shape,
+   so **the script had never produced a `.env` at all**, and the README calls
+   it the file "compose refuses to start without". It now draws from a bounded
+   read, slices in bash, and asserts each secret's length rather than risk
+   silently handing out a short key. (b) `docker-compose.yml` declares
+   `OPENIDX_APP_PASSWORD` and `APISIX_ADMIN_KEY` required — in an error message
+   that tells the operator to run this script — and the script wrote neither.
+   Both are safe to generate, because both sides read the same value
+   (`set-app-role-password.sh` sets the `openidx_app` role's password from the
+   first; APISIX resolves the second from its own container environment).
+   (c) Compose interpolates `${VAR}` from a `.env` in the **project**
+   directory, which is the directory holding the compose file — so the `.env`
+   written at the repo root was never seen by the documented
+   `docker compose -f deployments/docker/docker-compose.yml` command, and the
+   two README steps did not work together at all. The generator now links the
+   file where compose looks (a symlink, so there is one file and the two
+   cannot drift; `--project-directory .` would have fixed interpolation but
+   re-rooted every relative bind mount). **Verified: the README's two commands
+   now run clean, and `docker compose … config` resolves the whole stack.**
+   `scripts/check-first-run.test.sh` runs that path in CI, and its case 4
+   derives the required-variable list *from the compose file*, so the next
+   `${VAR:?}` someone adds fails the build instead of the operator. All five
+   defect classes were confirmed to make it go red.
+
+10. ✅ **A dead Keycloak service with an `admin` default password, on an
+   advertised path.** Found in the same sweep: `docker-compose.infra.yml` —
+   which `make dev-infra` and the published dev-setup docs both tell you to
+   run — still started `quay.io/keycloak/keycloak:23.0` with
+   `KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}`. That is the
+   same default-credential class item 6 closed for Grafana, and it survived
+   the Keycloak purge. It was also already broken: it bind-mounts
+   `./keycloak/realm-export.json` and `./keycloak/themes`, a directory deleted
+   in the earlier prune. Nothing depends on it and no Go or TypeScript reads a
+   `KEYCLOAK_*` variable, so the service is deleted rather than given a
+   required variable — and the generator no longer writes the `KEYCLOAK_*`
+   block that told a new operator this platform runs on Keycloak.
+
+*Exit test (run it — and it was run):* a new operator with only the README
+reaches a logged-in, rotated-admin console; `security-scan.yml` goes red on a
+seeded critical; revoking a session in the console kills the refresh token.
+The first clause is now gated as far as this environment can take it — the
+quick start's two commands run clean and compose resolves the full stack
+(`scripts/check-first-run.test.sh`). What still needs a machine with a Docker
+daemon is the rest of that sentence: containers actually reaching healthy, and
+the first login through to a rotated admin password.
 
 ### P1 — One access model: execute the convergence rollout (~2–4 weeks, the anti-confusion fix)
 

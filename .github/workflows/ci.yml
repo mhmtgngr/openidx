@@ -86,6 +86,20 @@ jobs:
       - name: Both Docker build attempts must stay identical
         run: bash scripts/check-docker-retry-drift.sh
 
+  # The README's quick start is two commands, and nothing had ever run either
+  # of them: generate-secrets.sh aborted on SIGPIPE, it omitted two variables
+  # compose declares required, and compose could not see the .env it wrote.
+  # Three separate stoppers in the first thing a new operator does, all of them
+  # invisible because no job exercised the path.
+  first-run:
+    name: The documented first run works
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Run the README quick start and check compose resolves
+        run: bash scripts/check-first-run.test.sh
+
   ui-safety-guards:
     name: UI safety guards
     runs-on: ubuntu-latest
