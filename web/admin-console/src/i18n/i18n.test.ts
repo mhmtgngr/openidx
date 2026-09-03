@@ -435,6 +435,26 @@ describe('i18n', () => {
       ...['low', 'medium', 'high', 'critical'].map(
         (k) => `pages.zitiNetwork.posture.severities.${k}`,
       ),
+      // notification-admin: the delivery channels and broadcast vocabularies
+      // the notification service uses, plus the two client-side option lists.
+      ...['in_app', 'email', 'sms', 'push'].map(
+        (k) => `pages.notificationAdmin.channels.${k}`,
+      ),
+      ...['draft', 'scheduled', 'sent'].map(
+        (k) => `pages.notificationAdmin.statuses.${k}`,
+      ),
+      ...['all', 'role', 'group'].map(
+        (k) => `pages.notificationAdmin.targetTypes.${k}`,
+      ),
+      ...['low', 'normal', 'high', 'urgent'].map(
+        (k) => `pages.notificationAdmin.priorities.${k}`,
+      ),
+      // user-access-360: the device-source labels `deviceSourceLabel` returns
+      // as keys, and the agent's compliance vocabulary.
+      ...['linked', 'iam', 'ziti'].map((k) => `pages.userAccess360.devices.sources.${k}`),
+      ...['compliant', 'non_compliant', 'grace_period', 'unknown'].map(
+        (k) => `pages.userAccess360.devices.complianceStatuses.${k}`,
+      ),
     ]
     for (const lang of supportedLanguages) {
       for (const key of mapKeys) {
@@ -552,6 +572,60 @@ describe('i18n', () => {
     expect(
       i18n.t('pages.consentManagement.risks.severe', { defaultValue: 'Severe' }),
     ).toBe('Severe')
+  })
+
+  it('keeps the notification channel breakdown invariant, not pluralized', async () => {
+    // The count is interpolated as {{n}} so i18next does not try to resolve a
+    // plural form the catalog deliberately does not carry, and Turkish keeps
+    // its percent sign in front of the number.
+    await i18n.changeLanguage('en')
+    expect(
+      i18n.t('pages.notificationAdmin.stats.channelCount', { n: 12, percentage: 40 }),
+    ).toBe('12 (40%)')
+
+    await i18n.changeLanguage('tr')
+    expect(
+      i18n.t('pages.notificationAdmin.stats.channelCount', { n: 1, percentage: 3 }),
+    ).toBe('1 (%3)')
+  })
+
+  it('pluralizes the Access 360 dial-policy line in both languages', async () => {
+    await i18n.changeLanguage('en')
+    expect(i18n.t('pages.userAccess360.ziti.via', { count: 1, names: 'a' })).toBe(
+      'Via 1 dial policy: a',
+    )
+    expect(i18n.t('pages.userAccess360.ziti.via', { count: 2, names: 'a, b' })).toBe(
+      'Via 2 dial policies: a, b',
+    )
+
+    await i18n.changeLanguage('tr')
+    expect(i18n.t('pages.userAccess360.ziti.via', { count: 2, names: 'a, b' })).toBe(
+      '2 çevirme politikası üzerinden: a, b',
+    )
+  })
+
+  it('resolves an unknown agent compliance status to its prettified raw value', async () => {
+    // The agent reports the status; an unknown one still reads as itself rather
+    // than surfacing a bare key in the badge.
+    await i18n.changeLanguage('en')
+    expect(i18n.t('pages.userAccess360.devices.complianceStatuses.non_compliant')).toBe(
+      'non compliant',
+    )
+    expect(
+      i18n.t('pages.userAccess360.devices.complianceStatuses.pending_scan', {
+        defaultValue: 'pending scan',
+      }),
+    ).toBe('pending scan')
+  })
+
+  it('resolves an unknown notification channel to its raw value', async () => {
+    // A channel the notification service adds later must still read as itself
+    // in the rule table, the broadcast row and the delivery breakdown alike.
+    await i18n.changeLanguage('tr')
+    expect(i18n.t('pages.notificationAdmin.channels.in_app')).toBe('Uygulama içi')
+    expect(
+      i18n.t('pages.notificationAdmin.channels.webhook', { defaultValue: 'webhook' }),
+    ).toBe('webhook')
   })
 
   it('resolves an unknown Ziti posture check type to its raw value', async () => {

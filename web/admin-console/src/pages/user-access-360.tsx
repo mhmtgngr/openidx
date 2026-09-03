@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Trans, useTranslation } from 'react-i18next'
 import { complianceTooltip, formatCompliancePercent } from '../lib/compliance'
 import { useParams, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -168,18 +169,21 @@ function complianceBadge(status: string) {
   }
 }
 
-function deviceSourceLabel(source: string): { label: string; cls: string } {
+// Module level, so the label is a catalog key resolved at render rather than
+// a string frozen at import time.
+function deviceSourceLabel(source: string): { labelKey: string; cls: string } {
   switch (source) {
     case 'linked':
-      return { label: 'IAM + Ziti', cls: 'bg-blue-50 text-blue-700 border-blue-200' }
+      return { labelKey: 'pages.userAccess360.devices.sources.linked', cls: 'bg-blue-50 text-blue-700 border-blue-200' }
     case 'iam':
-      return { label: 'IAM only', cls: 'bg-slate-50 text-slate-600 border-slate-200' }
+      return { labelKey: 'pages.userAccess360.devices.sources.iam', cls: 'bg-slate-50 text-slate-600 border-slate-200' }
     default:
-      return { label: 'Ziti only', cls: 'bg-green-50 text-green-700 border-green-200' }
+      return { labelKey: 'pages.userAccess360.devices.sources.ziti', cls: 'bg-green-50 text-green-700 border-green-200' }
   }
 }
 
 export function UserAccess360Page() {
+  const { t } = useTranslation()
   const { id } = useParams<{ id: string }>()
   const queryClient = useQueryClient()
   const { toast } = useToast()
@@ -206,12 +210,16 @@ export function UserAccess360Page() {
       queryClient.invalidateQueries({ queryKey: ['user-devices', id] })
       queryClient.invalidateQueries({ queryKey: ['user-access-map', id] })
       const net = res.ziti_edge_sessions_terminated + res.ziti_api_sessions_terminated
+      // One sentence per outcome, so each locale controls its own punctuation.
+      const outcomes = [t('pages.userAccess360.devices.revokedSessions', { count: net })]
+      if (res.ziti_identity_deleted) outcomes.push(t('pages.userAccess360.devices.revokedIdentity'))
+      if (res.known_device_untrusted) outcomes.push(t('pages.userAccess360.devices.revokedUntrusted'))
       toast({
-        title: 'Device revoked',
-        description: `Severed ${net} network session(s)${res.ziti_identity_deleted ? ', deleted Ziti identity' : ''}${res.known_device_untrusted ? ', untrusted the device' : ''}.`,
+        title: t('pages.userAccess360.devices.revoked'),
+        description: outcomes.join(' '),
       })
     },
-    onError: () => toast({ title: 'Device revoke failed', variant: 'destructive' }),
+    onError: () => toast({ title: t('pages.userAccess360.devices.revokeFailed'), variant: 'destructive' }),
   })
 
   const killMutation = useMutation({
@@ -221,21 +229,28 @@ export function UserAccess360Page() {
       queryClient.invalidateQueries({ queryKey: ['user-access-map', id] })
       queryClient.invalidateQueries({ queryKey: ['users'] })
       const parts = [
-        `${res.iam_sessions_revoked} sessions`,
-        `${res.pam_checkouts_revoked} checkouts`,
-        `${res.pam_jit_grants_revoked} JIT grants`,
-        `${res.pam_privileged_sessions_terminated} privileged sessions`,
-        `${res.ziti_edge_sessions_terminated + res.ziti_api_sessions_terminated} network sessions`,
+        t('pages.userAccess360.kill.partSessions', { n: res.iam_sessions_revoked }),
+        t('pages.userAccess360.kill.partCheckouts', { n: res.pam_checkouts_revoked }),
+        t('pages.userAccess360.kill.partJit', { n: res.pam_jit_grants_revoked }),
+        t('pages.userAccess360.kill.partPrivSessions', { n: res.pam_privileged_sessions_terminated }),
+        t('pages.userAccess360.kill.partNetwork', {
+          n: res.ziti_edge_sessions_terminated + res.ziti_api_sessions_terminated,
+        }),
       ]
+      const detail = parts.join(', ')
       toast({
-        title: res.user_disabled ? 'Kill switch executed — account disabled' : 'Kill switch executed',
-        description: `Severed: ${parts.join(', ')}${res.warnings?.length ? ` (${res.warnings.length} warnings)` : ''}`,
+        title: res.user_disabled
+          ? t('pages.userAccess360.kill.executedDisabled')
+          : t('pages.userAccess360.kill.executed'),
+        description: res.warnings?.length
+          ? t('pages.userAccess360.kill.descWithWarnings', { detail, n: res.warnings.length })
+          : t('pages.userAccess360.kill.desc', { detail }),
       })
       setKillOpen(false)
       setReason('')
       setDisableUser(false)
     },
-    onError: () => toast({ title: 'Kill switch failed', variant: 'destructive' }),
+    onError: () => toast({ title: t('pages.userAccess360.kill.failed'), variant: 'destructive' }),
   })
 
   if (isError) {
@@ -243,9 +258,9 @@ export function UserAccess360Page() {
       <div className="space-y-6">
         <div className="flex items-center gap-3">
           <Link to="/users"><Button variant="ghost" size="icon"><ArrowLeft className="h-4 w-4" /></Button></Link>
-          <h1 className="text-3xl font-bold tracking-tight">Access 360</h1>
+          <h1 className="text-3xl font-bold tracking-tight">{t('pages.userAccess360.title')}</h1>
         </div>
-        <QueryError error={error} resource="the user access map" />
+        <QueryError error={error} resource={t('pages.userAccess360.resource')} />
       </div>
     )
   }
@@ -255,9 +270,11 @@ export function UserAccess360Page() {
       <div className="space-y-6">
         <div className="flex items-center gap-3">
           <Link to="/users"><Button variant="ghost" size="icon"><ArrowLeft className="h-4 w-4" /></Button></Link>
-          <h1 className="text-3xl font-bold tracking-tight">Access 360</h1>
+          <h1 className="text-3xl font-bold tracking-tight">{t('pages.userAccess360.title')}</h1>
         </div>
-        <p className="text-muted-foreground">{isLoading ? 'Correlating access across IAM, PAM and Ziti…' : 'User not found'}</p>
+        <p className="text-muted-foreground">
+          {isLoading ? t('pages.userAccess360.correlating') : t('pages.userAccess360.notFound')}
+        </p>
       </div>
     )
   }
@@ -276,20 +293,20 @@ export function UserAccess360Page() {
             <div className="flex items-center gap-3">
               <h1 className="text-3xl font-bold tracking-tight">{user.username}</h1>
               <Badge className={user.enabled ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}>
-                {user.enabled ? 'Active' : 'Disabled'}
+                {user.enabled ? t('pages.userAccess360.active') : t('pages.userAccess360.disabled')}
               </Badge>
             </div>
             <p className="text-muted-foreground">
-              {user.email} · One view of everything this user can reach across IAM, PAM and the Ziti network
+              {t('pages.userAccess360.subtitle', { email: user.email })}
             </p>
           </div>
         </div>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isFetching}>
-            <RefreshCw className={`mr-2 h-4 w-4 ${isFetching ? 'animate-spin' : ''}`} />Refresh
+            <RefreshCw className={`mr-2 h-4 w-4 ${isFetching ? 'animate-spin' : ''}`} />{t('common.refresh')}
           </Button>
           <Button variant="destructive" onClick={() => setKillOpen(true)}>
-            <Zap className="mr-2 h-4 w-4" />Kill Switch
+            <Zap className="mr-2 h-4 w-4" />{t('pages.userAccess360.killSwitch')}
           </Button>
         </div>
       </div>
@@ -302,7 +319,7 @@ export function UserAccess360Page() {
               <div className="p-2 bg-blue-100 rounded-lg"><Shield className="h-6 w-6 text-primary" /></div>
               <div>
                 <p className="text-2xl font-bold">{iam.active_sessions}</p>
-                <p className="text-sm text-muted-foreground">IAM Sessions</p>
+                <p className="text-sm text-muted-foreground">{t('pages.userAccess360.summary.iamSessions')}</p>
               </div>
             </div>
           </CardContent>
@@ -313,7 +330,7 @@ export function UserAccess360Page() {
               <div className="p-2 bg-amber-100 rounded-lg"><Key className="h-6 w-6 text-amber-600" /></div>
               <div>
                 <p className="text-2xl font-bold">{pam.active_checkouts.length}</p>
-                <p className="text-sm text-muted-foreground">Checkouts</p>
+                <p className="text-sm text-muted-foreground">{t('pages.userAccess360.summary.checkouts')}</p>
               </div>
             </div>
           </CardContent>
@@ -324,7 +341,7 @@ export function UserAccess360Page() {
               <div className="p-2 bg-purple-100 rounded-lg"><Lock className="h-6 w-6 text-purple-600" /></div>
               <div>
                 <p className="text-2xl font-bold">{pam.active_sessions.length}</p>
-                <p className="text-sm text-muted-foreground">Priv. Sessions</p>
+                <p className="text-sm text-muted-foreground">{t('pages.userAccess360.summary.privSessions')}</p>
               </div>
             </div>
           </CardContent>
@@ -335,7 +352,7 @@ export function UserAccess360Page() {
               <div className="p-2 bg-green-100 rounded-lg"><Network className="h-6 w-6 text-green-600" /></div>
               <div>
                 <p className="text-2xl font-bold">{ziti.reachable_services.length}</p>
-                <p className="text-sm text-muted-foreground">Network Services</p>
+                <p className="text-sm text-muted-foreground">{t('pages.userAccess360.summary.networkServices')}</p>
               </div>
             </div>
           </CardContent>
@@ -346,7 +363,7 @@ export function UserAccess360Page() {
               <div className="p-2 bg-slate-100 rounded-lg"><Laptop className="h-6 w-6 text-slate-600" /></div>
               <div>
                 <p className="text-2xl font-bold">{ziti.devices.length}</p>
-                <p className="text-sm text-muted-foreground">Devices</p>
+                <p className="text-sm text-muted-foreground">{t('pages.userAccess360.summary.devices')}</p>
               </div>
             </div>
           </CardContent>
@@ -359,41 +376,41 @@ export function UserAccess360Page() {
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-lg">
-              <Shield className="h-5 w-5 text-primary" />Identity (IAM)
+              <Shield className="h-5 w-5 text-primary" />{t('pages.userAccess360.iam.heading')}
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <div>
-              <p className="text-sm font-medium mb-2">Roles ({iam.roles.length})</p>
+              <p className="text-sm font-medium mb-2">{t('pages.userAccess360.iam.roles', { n: iam.roles.length })}</p>
               <div className="flex flex-wrap gap-1.5">
                 {iam.roles.length > 0
                   ? iam.roles.map(r => <Badge key={r.id} variant="outline" className="bg-blue-50">{r.name}</Badge>)
-                  : <span className="text-sm text-muted-foreground">None</span>}
+                  : <span className="text-sm text-muted-foreground">{t('pages.userAccess360.iam.none')}</span>}
               </div>
             </div>
             <div>
-              <p className="text-sm font-medium mb-2">Groups ({iam.groups.length})</p>
+              <p className="text-sm font-medium mb-2">{t('pages.userAccess360.iam.groups', { n: iam.groups.length })}</p>
               <div className="flex flex-wrap gap-1.5">
                 {iam.groups.length > 0
                   ? iam.groups.map(g => <Badge key={g.id} variant="outline" className="bg-green-50">{g.name}</Badge>)
-                  : <span className="text-sm text-muted-foreground">None</span>}
+                  : <span className="text-sm text-muted-foreground">{t('pages.userAccess360.iam.none')}</span>}
               </div>
               <p className="text-xs text-muted-foreground mt-1.5">
-                Groups become Ziti role attributes via the identity sync
+                {t('pages.userAccess360.iam.groupsHint')}
               </p>
             </div>
             <div className="grid grid-cols-3 gap-2 text-center border rounded-lg p-2">
               <div>
                 <p className="text-lg font-semibold">{iam.active_sessions}</p>
-                <p className="text-xs text-muted-foreground">Sessions</p>
+                <p className="text-xs text-muted-foreground">{t('pages.userAccess360.iam.sessions')}</p>
               </div>
               <div>
                 <p className="text-lg font-semibold">{iam.active_api_keys}</p>
-                <p className="text-xs text-muted-foreground">API Keys</p>
+                <p className="text-xs text-muted-foreground">{t('pages.userAccess360.iam.apiKeys')}</p>
               </div>
               <div>
                 <p className="text-lg font-semibold">{iam.pending_access_requests}</p>
-                <p className="text-xs text-muted-foreground">Pending Req.</p>
+                <p className="text-xs text-muted-foreground">{t('pages.userAccess360.iam.pendingRequests')}</p>
               </div>
             </div>
           </CardContent>
@@ -403,12 +420,12 @@ export function UserAccess360Page() {
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-lg">
-              <Key className="h-5 w-5 text-amber-600" />Privileged (PAM)
+              <Key className="h-5 w-5 text-amber-600" />{t('pages.userAccess360.pam.heading')}
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <div>
-              <p className="text-sm font-medium mb-2">Vault Access ({pam.vault_grants.length})</p>
+              <p className="text-sm font-medium mb-2">{t('pages.userAccess360.pam.vaultAccess', { n: pam.vault_grants.length })}</p>
               {pam.vault_grants.length > 0 ? (
                 <div className="space-y-1.5 max-h-40 overflow-y-auto">
                   {pam.vault_grants.map((g, i) => (
@@ -416,30 +433,34 @@ export function UserAccess360Page() {
                       <span className="font-medium truncate">{g.secret_name}</span>
                       <span className="flex gap-1 shrink-0">
                         <Badge variant="secondary" className="text-xs">{g.via}</Badge>
-                        {g.actions.includes('reveal') && <Badge variant="outline" className="text-xs text-amber-700">reveal</Badge>}
+                        {g.actions.includes('reveal') && <Badge variant="outline" className="text-xs text-amber-700">{t('pages.userAccess360.pam.reveal')}</Badge>}
                       </span>
                     </div>
                   ))}
                 </div>
-              ) : <span className="text-sm text-muted-foreground">No vault grants</span>}
+              ) : <span className="text-sm text-muted-foreground">{t('pages.userAccess360.pam.noVaultGrants')}</span>}
             </div>
             <div>
-              <p className="text-sm font-medium mb-2">Active Checkouts ({pam.active_checkouts.length})</p>
+              <p className="text-sm font-medium mb-2">{t('pages.userAccess360.pam.checkouts', { n: pam.active_checkouts.length })}</p>
               {pam.active_checkouts.length > 0 ? (
                 <div className="space-y-1.5">
                   {pam.active_checkouts.map(co => (
                     <div key={co.id} className="flex items-center justify-between p-2 rounded bg-amber-50 text-sm">
                       <span className="font-medium">{co.secret_name}</span>
                       <span className="text-xs text-muted-foreground">
-                        {co.expires_at ? `expires ${new Date(co.expires_at).toLocaleTimeString()}` : co.mode}
+                        {co.expires_at
+                          ? t('pages.userAccess360.pam.expiresAt', {
+                              time: new Date(co.expires_at).toLocaleTimeString(),
+                            })
+                          : co.mode}
                       </span>
                     </div>
                   ))}
                 </div>
-              ) : <span className="text-sm text-muted-foreground">None</span>}
+              ) : <span className="text-sm text-muted-foreground">{t('pages.userAccess360.pam.none')}</span>}
             </div>
             <div>
-              <p className="text-sm font-medium mb-2">JIT Elevations ({pam.active_jit_grants.length})</p>
+              <p className="text-sm font-medium mb-2">{t('pages.userAccess360.pam.jit', { n: pam.active_jit_grants.length })}</p>
               {pam.active_jit_grants.length > 0 ? (
                 <div className="space-y-1.5">
                   {pam.active_jit_grants.map(j => (
@@ -451,25 +472,25 @@ export function UserAccess360Page() {
                     </div>
                   ))}
                 </div>
-              ) : <span className="text-sm text-muted-foreground">None</span>}
+              ) : <span className="text-sm text-muted-foreground">{t('pages.userAccess360.pam.none')}</span>}
             </div>
             <div>
-              <p className="text-sm font-medium mb-2">Live Privileged Sessions ({pam.active_sessions.length})</p>
+              <p className="text-sm font-medium mb-2">{t('pages.userAccess360.pam.liveSessions', { n: pam.active_sessions.length })}</p>
               {pam.active_sessions.length > 0 ? (
                 <div className="space-y-1.5">
                   {pam.active_sessions.map(ps => (
                     <div key={ps.id} className="flex items-center justify-between p-2 rounded bg-purple-50 text-sm">
-                      <span className="font-medium truncate">{ps.route_name || ps.protocol || 'session'}</span>
+                      <span className="font-medium truncate">{ps.route_name || ps.protocol || t('pages.userAccess360.pam.sessionFallback')}</span>
                       {ps.over_ziti && (
                         <Badge variant="outline" className="text-xs bg-green-50 text-green-700 border-green-200">
-                          <Network className="mr-1 h-3 w-3" />over Ziti
+                          <Network className="mr-1 h-3 w-3" />{t('pages.userAccess360.pam.overZiti')}
                         </Badge>
                       )}
                     </div>
                   ))}
                 </div>
-              ) : <span className="text-sm text-muted-foreground">None</span>}
-              <p className="text-xs text-muted-foreground mt-1.5">{pam.sessions_30d} sessions in the last 30 days</p>
+              ) : <span className="text-sm text-muted-foreground">{t('pages.userAccess360.pam.none')}</span>}
+              <p className="text-xs text-muted-foreground mt-1.5">{t('pages.userAccess360.pam.sessions30d', { count: pam.sessions_30d })}</p>
             </div>
           </CardContent>
         </Card>
@@ -478,12 +499,12 @@ export function UserAccess360Page() {
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-lg">
-              <Network className="h-5 w-5 text-green-600" />Network (Ziti)
+              <Network className="h-5 w-5 text-green-600" />{t('pages.userAccess360.ziti.heading')}
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <div>
-              <p className="text-sm font-medium mb-2">Ziti Identity</p>
+              <p className="text-sm font-medium mb-2">{t('pages.userAccess360.ziti.identity')}</p>
               {ziti.identity ? (
                 <div className="p-2 rounded bg-muted/50 space-y-1.5">
                   <div className="flex items-center justify-between text-sm">
@@ -491,7 +512,9 @@ export function UserAccess360Page() {
                     <Badge variant="outline" className={ziti.identity.enrolled
                       ? 'bg-green-50 text-green-700 border-green-200'
                       : 'bg-yellow-50 text-yellow-700 border-yellow-200'}>
-                      {ziti.identity.enrolled ? 'Enrolled' : 'Awaiting enrollment'}
+                      {ziti.identity.enrolled
+                        ? t('pages.userAccess360.ziti.enrolled')
+                        : t('pages.userAccess360.ziti.awaitingEnrollment')}
                     </Badge>
                   </div>
                   <div className="flex flex-wrap gap-1">
@@ -500,17 +523,17 @@ export function UserAccess360Page() {
                     ))}
                     {ziti.trusted_device && (
                       <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200">
-                        <Fingerprint className="mr-1 h-3 w-3" />trusted device
+                        <Fingerprint className="mr-1 h-3 w-3" />{t('pages.userAccess360.ziti.trustedDevice')}
                       </Badge>
                     )}
                   </div>
                 </div>
               ) : (
-                <span className="text-sm text-muted-foreground">Not synced to Ziti (sync runs every 30s for enabled users)</span>
+                <span className="text-sm text-muted-foreground">{t('pages.userAccess360.ziti.notSynced')}</span>
               )}
             </div>
             <div>
-              <p className="text-sm font-medium mb-2">Reachable Services ({ziti.reachable_services.length})</p>
+              <p className="text-sm font-medium mb-2">{t('pages.userAccess360.ziti.reachableServices', { n: ziti.reachable_services.length })}</p>
               {ziti.reachable_services.length > 0 ? (
                 <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto">
                   {ziti.reachable_services.map(svc => (
@@ -519,16 +542,18 @@ export function UserAccess360Page() {
                     </Badge>
                   ))}
                 </div>
-              ) : <span className="text-sm text-muted-foreground">No dial policies match this identity</span>}
+              ) : <span className="text-sm text-muted-foreground">{t('pages.userAccess360.ziti.noDialPolicies')}</span>}
               {ziti.dial_policies.length > 0 && (
                 <p className="text-xs text-muted-foreground mt-1.5">
-                  Via {ziti.dial_policies.length} dial {ziti.dial_policies.length === 1 ? 'policy' : 'policies'}:{' '}
-                  {ziti.dial_policies.map(p => p.name).join(', ')}
+                  {t('pages.userAccess360.ziti.via', {
+                    count: ziti.dial_policies.length,
+                    names: ziti.dial_policies.map(p => p.name).join(', '),
+                  })}
                 </p>
               )}
             </div>
             <div>
-              <p className="text-sm font-medium mb-2">Devices ({ziti.devices.length})</p>
+              <p className="text-sm font-medium mb-2">{t('pages.userAccess360.ziti.devices', { n: ziti.devices.length })}</p>
               {ziti.devices.length > 0 ? (
                 <div className="space-y-1.5 max-h-36 overflow-y-auto">
                   {ziti.devices.map(d => (
@@ -541,13 +566,15 @@ export function UserAccess360Page() {
                         {d.platform && <Badge variant="secondary" className="text-xs">{d.platform}</Badge>}
                         <Badge variant="outline" className={`text-xs ${d.compliance_status === 'compliant'
                           ? 'bg-green-50 text-green-700' : 'bg-yellow-50 text-yellow-700'}`}>
-                          {d.compliance_status}
+                          {t(`pages.userAccess360.devices.complianceStatuses.${d.compliance_status}`, {
+                            defaultValue: d.compliance_status.replace('_', ' '),
+                          })}
                         </Badge>
                       </span>
                     </div>
                   ))}
                 </div>
-              ) : <span className="text-sm text-muted-foreground">No enrolled agents</span>}
+              ) : <span className="text-sm text-muted-foreground">{t('pages.userAccess360.ziti.noAgents')}</span>}
             </div>
           </CardContent>
         </Card>
@@ -557,12 +584,12 @@ export function UserAccess360Page() {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-lg">
-            <MonitorSmartphone className="h-5 w-5" />Devices — IAM Trust ⇄ Ziti Compliance
+            <MonitorSmartphone className="h-5 w-5" />{t('pages.userAccess360.devices.heading')}
           </CardTitle>
         </CardHeader>
         <CardContent>
           {!devicesData?.devices?.length ? (
-            <p className="text-center py-6 text-muted-foreground">No devices registered for this user</p>
+            <p className="text-center py-6 text-muted-foreground">{t('pages.userAccess360.devices.empty')}</p>
           ) : (
             <div className="space-y-3">
               {devicesData.devices.map((d, i) => {
@@ -575,23 +602,27 @@ export function UserAccess360Page() {
                       <div className="flex items-center gap-2 flex-wrap">
                         <Laptop className="h-4 w-4 shrink-0" />
                         <span className="font-medium truncate">
-                          {d.iam?.name || d.ziti?.agent_id || 'device'}
+                          {d.iam?.name || d.ziti?.agent_id || t('pages.userAccess360.devices.deviceFallback')}
                         </span>
                         <Badge variant="outline" className={`text-xs ${src.cls}`}>
-                          {d.source === 'linked' && <Link2 className="mr-1 h-3 w-3" />}{src.label}
+                          {d.source === 'linked' && <Link2 className="mr-1 h-3 w-3" />}{t(src.labelKey)}
                         </Badge>
                         {d.iam && (
                           <Badge variant="outline" className={`text-xs ${d.iam.trusted
                             ? 'bg-green-50 text-green-700 border-green-200'
                             : 'bg-slate-50 text-slate-600 border-slate-200'}`}>
                             {d.iam.trusted ? <ShieldCheck className="mr-1 h-3 w-3" /> : <Shield className="mr-1 h-3 w-3" />}
-                            {d.iam.trusted ? 'Trusted' : 'Untrusted'}
+                            {d.iam.trusted
+                              ? t('pages.userAccess360.devices.trusted')
+                              : t('pages.userAccess360.devices.untrusted')}
                           </Badge>
                         )}
                         {comp && d.ziti && (
                           <Badge variant="outline" className={`text-xs ${comp.cls}`}>
                             <comp.Icon className="mr-1 h-3 w-3" />
-                            {d.ziti.compliance_status.replace('_', ' ')}
+                            {t(`pages.userAccess360.devices.complianceStatuses.${d.ziti.compliance_status}`, {
+                              defaultValue: d.ziti.compliance_status.replace('_', ' '),
+                            })}
                           </Badge>
                         )}
                       </div>
@@ -599,9 +630,17 @@ export function UserAccess360Page() {
                         {d.ziti?.platform && <span>{d.ziti.platform}</span>}
                         {d.ziti?.management_mode && <span>{d.ziti.management_mode}</span>}
                         {d.iam?.ip_address && <span>{d.iam.ip_address}</span>}
-                        {d.ziti && <span title={complianceTooltip(d.ziti.compliance_status)}>score {formatCompliancePercent(d.ziti.compliance_status, d.ziti.compliance_score)}</span>}
+                        {d.ziti && (
+                          <span title={complianceTooltip(d.ziti.compliance_status)}>
+                            {t('pages.userAccess360.devices.score', {
+                              score: formatCompliancePercent(d.ziti.compliance_status, d.ziti.compliance_score),
+                            })}
+                          </span>
+                        )}
                         {d.ziti?.status && d.ziti.status !== 'active' && (
-                          <span className="text-red-600">agent {d.ziti.status}</span>
+                          <span className="text-red-600">
+                            {t('pages.userAccess360.devices.agentStatus', { status: d.ziti.status })}
+                          </span>
                         )}
                       </div>
                       {failing.length > 0 && (
@@ -616,18 +655,18 @@ export function UserAccess360Page() {
                     </div>
                     {d.ziti && d.ziti.status !== 'revoked' && (
                       <ConfirmAction
-                        title="Revoke this device's access?"
-                        description="This severs the device's Ziti network sessions and revokes its access. The user may need to re-enroll the device to regain access."
+                        title={t('pages.userAccess360.devices.revokeTitle')}
+                        description={t('pages.userAccess360.devices.revokeDesc')}
                         destructive
                         requireReason
-                        confirmLabel="Revoke"
+                        confirmLabel={t('pages.userAccess360.devices.revoke')}
                         onConfirm={(reason) => revokeDeviceMutation.mutateAsync({ agentId: d.ziti!.agent_id, reason: reason || '' })}
                       >
                         {(open) => (
                           <Button variant="outline" size="sm" className="shrink-0 text-red-600 hover:text-red-700"
                             disabled={revokeDeviceMutation.isPending}
                             onClick={open}>
-                            <Ban className="mr-1 h-3.5 w-3.5" />Revoke
+                            <Ban className="mr-1 h-3.5 w-3.5" />{t('pages.userAccess360.devices.revoke')}
                           </Button>
                         )}
                       </ConfirmAction>
@@ -638,9 +677,10 @@ export function UserAccess360Page() {
             </div>
           )}
           <p className="text-xs text-muted-foreground mt-3">
-            Devices marked <span className="font-medium">IAM + Ziti</span> are the same physical machine seen by both
-            pillars (agent enrolled while signed in). Revoke severs the device's Ziti sessions, deletes its network
-            identity, and untrusts it in IAM.
+            <Trans
+              i18nKey="pages.userAccess360.devices.footnote"
+              components={[<span key="0" className="font-medium" />]}
+            />
           </p>
         </CardContent>
       </Card>
@@ -649,20 +689,20 @@ export function UserAccess360Page() {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-lg">
-            <Activity className="h-5 w-5" />Recent Activity Across Pillars
+            <Activity className="h-5 w-5" />{t('pages.userAccess360.activity.heading')}
           </CardTitle>
         </CardHeader>
         <CardContent>
           {activity.length === 0 ? (
-            <p className="text-center py-6 text-muted-foreground">No unified audit events for this user yet</p>
+            <p className="text-center py-6 text-muted-foreground">{t('pages.userAccess360.activity.empty')}</p>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Source</TableHead>
-                  <TableHead>Event</TableHead>
-                  <TableHead>IP</TableHead>
-                  <TableHead>When</TableHead>
+                  <TableHead>{t('pages.userAccess360.activity.colSource')}</TableHead>
+                  <TableHead>{t('pages.userAccess360.activity.colEvent')}</TableHead>
+                  <TableHead>{t('pages.userAccess360.activity.colIp')}</TableHead>
+                  <TableHead>{t('pages.userAccess360.activity.colWhen')}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -687,40 +727,52 @@ export function UserAccess360Page() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <AlertTriangle className="h-5 w-5 text-red-500" />Kill Switch — {user.username}
+              <AlertTriangle className="h-5 w-5 text-red-500" />
+              {t('pages.userAccess360.kill.dialogTitle', { username: user.username })}
             </DialogTitle>
-            <DialogDescription>
-              Severs this user's live access across all three pillars at once: IAM sessions are revoked,
-              vault checkouts and JIT elevations are revoked, live privileged sessions are terminated,
-              and Ziti network sessions are severed on the controller.
-            </DialogDescription>
+            <DialogDescription>{t('pages.userAccess360.kill.dialogDesc')}</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="p-3 rounded-lg bg-red-50 text-sm text-red-800">
-              Will sever now: {iam.active_sessions} IAM sessions, {pam.active_checkouts.length} checkouts,{' '}
-              {pam.active_jit_grants.length} JIT grants, {pam.active_sessions.length} privileged sessions
-              {ziti.identity ? `, and all Ziti sessions for ${ziti.identity.name}` : ''}.
-              {liveTotal === 0 && ' (nothing live right now — still safe to run)'}
+              {ziti.identity
+                ? t('pages.userAccess360.kill.willSeverWithZiti', {
+                    iamSessions: iam.active_sessions,
+                    checkouts: pam.active_checkouts.length,
+                    jit: pam.active_jit_grants.length,
+                    privSessions: pam.active_sessions.length,
+                    identity: ziti.identity.name,
+                  })
+                : t('pages.userAccess360.kill.willSever', {
+                    iamSessions: iam.active_sessions,
+                    checkouts: pam.active_checkouts.length,
+                    jit: pam.active_jit_grants.length,
+                    privSessions: pam.active_sessions.length,
+                  })}
+              {liveTotal === 0 && t('pages.userAccess360.kill.nothingLive')}
             </div>
             <div>
-              <label className="text-sm font-medium">Reason</label>
+              <label className="text-sm font-medium">{t('pages.userAccess360.kill.reason')}</label>
               <Textarea value={reason} onChange={e => setReason(e.target.value)} rows={2}
-                placeholder="Why is this user's access being severed?" className="mt-1" />
+                placeholder={t('pages.userAccess360.kill.reasonPlaceholder')} className="mt-1" />
             </div>
             <label className="flex items-center gap-2 text-sm">
               <Checkbox checked={disableUser} onCheckedChange={v => setDisableUser(v === true)} />
               <span>
-                Also <span className="font-medium">disable the account</span> and delete the Ziti identity
-                (full deprovision, blocks new logins)
+                <Trans
+                  i18nKey="pages.userAccess360.kill.disableAccount"
+                  components={[<span key="0" className="font-medium" />]}
+                />
               </span>
             </label>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setKillOpen(false)}>Cancel</Button>
+            <Button variant="outline" onClick={() => setKillOpen(false)}>{t('common.cancel')}</Button>
             <Button variant="destructive" disabled={killMutation.isPending}
               onClick={() => killMutation.mutate({ reason, disable_user: disableUser })}>
               <Zap className="mr-2 h-4 w-4" />
-              {killMutation.isPending ? 'Severing…' : 'Sever All Access'}
+              {killMutation.isPending
+                ? t('pages.userAccess360.kill.severing')
+                : t('pages.userAccess360.kill.severAll')}
             </Button>
           </DialogFooter>
         </DialogContent>
