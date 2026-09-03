@@ -1,5 +1,3 @@
-import { readdirSync, readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
 import { describe, it, expect, afterEach } from 'vitest'
 import i18n, { supportedLanguages } from './index'
 
@@ -1252,16 +1250,18 @@ describe('i18n', () => {
   // fails here rather than in review — and a page that genuinely has no copy of
   // its own has to say so out loud, in this list, with a reason.
   it('resolves every page body through the catalogs', () => {
-    // vitest runs with the package root as its working directory.
-    const pagesDir = resolve(process.cwd(), 'src/pages')
-    const pages = readdirSync(pagesDir).filter(
-      (f) => f.endsWith('.tsx') && !f.endsWith('.test.tsx'),
-    )
+    // Vite inlines each page's source at transform time, so this needs no
+    // filesystem access and runs in the same environment as the rest of the
+    // suite (the app's tsconfig deliberately carries no node types).
+    const sources = import.meta.glob('../pages/*.tsx', {
+      query: '?raw',
+      import: 'default',
+      eager: true,
+    }) as Record<string, string>
+    const pages = Object.keys(sources).filter((p) => !p.endsWith('.test.tsx'))
     // Sanity: the glob must actually be finding the pages.
     expect(pages.length).toBeGreaterThan(90)
-    const untranslated = pages.filter(
-      (f) => !readFileSync(`${pagesDir}/${f}`, 'utf8').includes('useTranslation'),
-    )
+    const untranslated = pages.filter((p) => !sources[p].includes('useTranslation'))
     expect(untranslated).toEqual([])
   })
 
