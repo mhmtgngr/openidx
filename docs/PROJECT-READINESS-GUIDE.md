@@ -394,9 +394,12 @@ All six items landed with this guide (commits on
      the gate itself: both govulncheck jobs ran `govulncheck ./...` from the
      repo root, which stops at the module boundary, so they reported "0
      reachable vulnerabilities" while never once looking at the agent. Both
-     jobs now scan `agent/` as a second blocking step. Adding `-lresolv` to
-     the `openidx_engine` podspec remains tracked, but it is now a
-     prerequisite for a *future* 1.26 move rather than a security fix.
+     jobs now scan `agent/` as a second blocking step. The `-lresolv` link
+     flag is also in place now (`s.libraries = 'resolv'` in the
+     `openidx_engine` podspec, verified by CI's `build-ios`): staying on 1.25
+     is a deliberate choice rather than a constraint, and a future 1.26 move
+     is a version bump rather than an investigation into three undefined
+     symbols.
 6. ✅ **Grafana admin/admin fallback removed; dev-kube generates real
    secrets** (B5).
 7. ✅ **CI stops going red on other people's outages.** `build

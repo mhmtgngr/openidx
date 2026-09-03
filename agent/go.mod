@@ -6,11 +6,13 @@ go 1.25.0
 // carries 29 known advisories that the agent's own code reaches — among them
 // GO-2025-4008 (crypto/tls, via the Ziti dialer and the SSO listener) and
 // GO-2025-4007 (crypto/x509, via Ziti enrolment). All of them are fixed inside
-// the 1.25 line (1.25.3), so this stays on 1.25 deliberately: the mobile
-// engine's gomobile framework does not link libresolv, which go1.26's darwin
-// resolver needs, so moving this module to 1.26 requires the -lresolv flag in
-// the openidx_engine podspec first. Pinning the patched toolchain closes the
-// advisories now, without waiting for that.
+// the 1.25 line (1.25.3), so this stays on 1.25 deliberately, and pinning the
+// patched toolchain closes the advisories without a major-version move.
+//
+// The blocker that made 1.26 expensive is now cleared, should a reason to move
+// ever appear: go1.26's darwin resolver needs libresolv, which the gomobile
+// static framework does not declare, and the openidx_engine podspec now links
+// it (s.libraries = 'resolv'). Staying on 1.25 is a choice, not a constraint.
 toolchain go1.25.13
 
 require (
