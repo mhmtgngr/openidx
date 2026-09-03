@@ -572,21 +572,8 @@ func (zm *ZitiManager) forwardHTTPConnection(zitiConn edge.Conn, targetAddr, ser
 
 	// Create reverse proxy to upstream
 	target, _ := url.Parse("http://" + targetAddr)
-	proxy := httputil.NewSingleHostReverseProxy(target)
-	// nolint:staticcheck // SA1019: Director is deprecated as of Go 1.26 in favour
-	// of Rewrite. See the matching note in service.go — the migration changes
-	// X-Forwarded-For semantics on a zero-trust proxy path, so it is tracked as
-	// its own change.
-	origDirector := proxy.Director             //nolint:staticcheck
-	proxy.Director = func(req *http.Request) { //nolint:staticcheck
-		origDirector(req)
-		if callerID != "" {
-			req.Header.Set("X-Forwarded-User", callerID)
-			req.Header.Set("X-Forwarded-Email", email)
-			req.Header.Set("X-Forwarded-Name", strings.TrimSpace(name))
-			req.Header.Set("X-Forwarded-Roles", roles)
-			req.Header.Set("X-Ziti-Identity", callerID)
-		}
+	proxy := &httputil.ReverseProxy{
+		Rewrite: zitiProxyRewrite(target, callerID, email, strings.TrimSpace(name), roles),
 	}
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 		zm.logger.Error("Ziti HTTP proxy error",
@@ -602,6 +589,58 @@ func (zm *ZitiManager) forwardHTTPConnection(zitiConn edge.Conn, targetAddr, ser
 	ln := &singleConnListener{ch: make(chan net.Conn, 1)}
 	ln.ch <- zitiConn
 	server.Serve(ln)
+}
+
+// zitiProxyRewrite builds the Rewrite hook for the overlay's HTTP proxy.
+//
+// The Director this replaces did more than it looked like. It wrapped the one
+// NewSingleHostReverseProxy installs and only appended identity headers — but
+// on the Director path the standard library folds the CLIENT'S
+// X-Forwarded-For into the outbound one and passes Forwarded,
+// X-Forwarded-Host and X-Forwarded-Proto through untouched. A Ziti client
+// sending "X-Forwarded-For: 9.9.9.9" reached the upstream as
+// "9.9.9.9, <overlay peer>", and an upstream reading the leftmost entry —
+// the usual convention for "the real client" — believed 9.9.9.9. Rewrite
+// deletes all four before this runs, so nothing the caller claimed survives.
+//
+// X-Forwarded-Proto and X-Forwarded-Host are then deliberately not re-set.
+// This hop cannot honestly name the scheme the browser used: the overlay
+// carries its own encryption and Go sees a plain conn, so asserting "http" to
+// an upstream that redirects http→https would loop. Nothing is lost by
+// staying quiet — the Director never asserted either value itself, it only
+// let the caller's claim through. What identifies the caller here is the
+// enrolled Ziti identity below, which the request cannot influence.
+func zitiProxyRewrite(target *url.URL, callerID, email, name, roles string) func(*httputil.ProxyRequest) {
+	return func(pr *httputil.ProxyRequest) {
+		pr.SetURL(target)
+		// SetURL clears Out.Host so the target's host is used. The Director
+		// this replaces left the inbound Host alone, and a name-based virtual
+		// host upstream depends on that, so it is restored.
+		pr.Out.Host = pr.In.Host
+
+		// Whatever the caller asserted about itself goes before anything is
+		// written, so a connection with no resolved identity forwards none
+		// rather than the caller's own.
+		for _, h := range proxyOwnedHeaders {
+			pr.Out.Header.Del(h)
+		}
+
+		// The overlay peer, as this proxy observed it — not as anyone claimed
+		// it. If the address is not host:port shaped, say nothing rather than
+		// forward a value that would be read as a client address.
+		if host, _, err := net.SplitHostPort(pr.In.RemoteAddr); err == nil {
+			pr.Out.Header.Set("X-Forwarded-For", host)
+			pr.Out.Header.Set("X-Real-IP", host)
+		}
+
+		if callerID != "" {
+			pr.Out.Header.Set("X-Forwarded-User", callerID)
+			pr.Out.Header.Set("X-Forwarded-Email", email)
+			pr.Out.Header.Set("X-Forwarded-Name", name)
+			pr.Out.Header.Set("X-Forwarded-Roles", roles)
+			pr.Out.Header.Set("X-Ziti-Identity", callerID)
+		}
+	}
 }
 
 // singleConnListener wraps a single net.Conn as a net.Listener for http.Server.Serve

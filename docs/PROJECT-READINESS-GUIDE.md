@@ -419,6 +419,32 @@ All six items landed with this guide (commits on
    retry would build, and on a push publish, an image the first attempt
    never tried).
 
+8. ✅ **Both proxies stop forwarding the caller's own claims about who it
+   is.** This started as deprecation cleanup — Go 1.26 deprecates
+   `httputil.ReverseProxy.Director`, and the ZTNA route proxy and the Ziti
+   overlay proxy both set one. Migrating to `Rewrite` turned out to close a
+   real hole. On the `Director` path the standard library never deletes the
+   caller's `Forwarded` / `X-Forwarded-Host` / `X-Forwarded-Proto` headers and
+   folds the caller's `X-Forwarded-For` into the outbound one, so a request
+   arriving with `X-Forwarded-For: 9.9.9.9, X-Forwarded-Host:
+   evil.example.com` reached the upstream with **`evil.example.com` intact**,
+   and through the overlay proxy with **`9.9.9.9` as the leftmost
+   `X-Forwarded-For` entry** — the entry an upstream reads when it wants "the
+   real client". Worse, the headers the proxies *own* (`X-Forwarded-User`,
+   `-Email`, `-Name`, `-Roles`, `X-Ziti-Identity`) are in no library delete
+   list, so on a `require_auth: false` route, or an overlay connection whose
+   Ziti identity did not resolve, the caller's own `X-Forwarded-User: root`
+   went straight through to an upstream whose only reason to trust that header
+   is that this proxy sets it. Both hooks now delete that whole namespace
+   before writing anything, and every value the upstream receives is one the
+   proxy determined itself: identity from the verified session or the enrolled
+   Ziti identity, the client address from gin's resolved peer (which honours
+   the deployment's trusted-proxy list — `SetXForwarded()` is deliberately not
+   used, because it would ignore that configuration). Nine tests in
+   `internal/access/proxy_forwarding_test.go` send a fully forged header set
+   through both real proxies and assert on what the upstream actually
+   receives; §4.4 of the threat model carries the row.
+
 *Exit test (run it):* a new operator with only the README reaches a
 logged-in, rotated-admin console; `security-scan.yml` goes red on a
 seeded critical; revoking a session in the console kills the refresh

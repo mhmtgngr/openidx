@@ -2258,7 +2258,9 @@ func (s *Service) handleProxy(c *gin.Context) {
 		return
 	}
 
-	proxy := httputil.NewSingleHostReverseProxy(target)
+	proxy := &httputil.ReverseProxy{
+		Rewrite: proxyRewrite(target, route, session, c.ClientIP()),
+	}
 
 	// Use Ziti transport if the route has Ziti enabled and ZitiManager is available
 	if route.ZitiEnabled && route.ZitiServiceName != "" && s.ziti() != nil && s.ziti().IsInitialized() {
@@ -2266,42 +2268,6 @@ func (s *Service) handleProxy(c *gin.Context) {
 		s.logger.Debug("Proxying through Ziti overlay",
 			zap.String("service", route.ZitiServiceName),
 			zap.String("route", route.Name))
-	}
-
-	// nolint:staticcheck // SA1019: Director is deprecated as of Go 1.26 in favour
-	// of Rewrite. Migrating is not mechanical here: Rewrite does not append
-	// X-Forwarded-For the way Director does — the caller must decide between
-	// SetXForwarded() (which REPLACES the inbound chain) and preserving it, and
-	// this is the ZTNA proxy path where that choice is a security decision.
-	// Tracked as its own change rather than folded into an unrelated one.
-	proxy.Director = func(req *http.Request) { //nolint:staticcheck
-		req.URL.Scheme = target.Scheme
-		req.URL.Host = target.Host
-		req.URL.Path = singleJoiningSlash(target.Path, c.Request.URL.Path)
-		req.URL.RawQuery = c.Request.URL.RawQuery
-
-		if route.PreserveHost {
-			req.Host = c.Request.Host
-		} else {
-			req.Host = target.Host
-		}
-
-		// Inject identity headers
-		if session != nil {
-			req.Header.Set("X-Forwarded-User", session.UserID)
-			req.Header.Set("X-Forwarded-Email", session.Email)
-			req.Header.Set("X-Forwarded-Name", session.Name)
-			req.Header.Set("X-Forwarded-Roles", strings.Join(session.Roles, ","))
-		}
-
-		req.Header.Set("X-Forwarded-For", c.ClientIP())
-		req.Header.Set("X-Forwarded-Proto", "http")
-		req.Header.Set("X-Real-IP", c.ClientIP())
-
-		// Custom headers
-		for k, v := range route.CustomHeaders {
-			req.Header.Set(k, v)
-		}
 	}
 
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
@@ -3300,6 +3266,108 @@ func hasAnyRole(userRoles, requiredRoles []string) bool {
 		}
 	}
 	return false
+}
+
+// proxyOwnedHeaders are the headers these proxies assert *about* the caller.
+//
+// The standard library deletes Forwarded and the X-Forwarded-{For,Host,Proto}
+// trio from the outbound request on the Rewrite path, but it knows nothing
+// about these, and an upstream cannot tell a header the proxy vouched for
+// from one the caller typed. So every one of them is deleted before the
+// verified values are written — including on the paths that write none, which
+// is where the hole was: a route with require_auth false, or an overlay
+// connection whose Ziti identity did not resolve, forwarded the caller's own
+// X-Forwarded-User straight through to an upstream that has no reason to
+// doubt it.
+var proxyOwnedHeaders = []string{
+	"X-Forwarded-User",
+	"X-Forwarded-Email",
+	"X-Forwarded-Name",
+	"X-Forwarded-Roles",
+	"X-Ziti-Identity",
+	"X-Real-IP",
+}
+
+// proxyRewrite builds the ReverseProxy.Rewrite hook for one proxied request.
+//
+// It replaces a Director, and the change is not only that Director is
+// deprecated as of Go 1.26. Under Director the standard library hands the
+// upstream the CLIENT'S OWN forwarding headers: it never deletes Forwarded,
+// X-Forwarded-Host or X-Forwarded-Proto, and it folds the inbound
+// X-Forwarded-For into the outbound one. A request arriving at this ZTNA data
+// path with
+//
+//	X-Forwarded-For: 9.9.9.9
+//	X-Forwarded-Host: evil.example.com
+//	Forwarded: for=9.9.9.9
+//
+// reached the upstream with X-Forwarded-Host and Forwarded intact, and with
+// X-Forwarded-For reading "<resolved client>, <peer>" — the same address
+// twice whenever there is no front proxy. An upstream that generates absolute
+// URLs from X-Forwarded-Host, or reads the leftmost X-Forwarded-For entry as
+// "the real client", was being fed attacker-controlled provenance by a proxy
+// whose entire job is to be the thing the upstream can trust.
+//
+// Rewrite deletes Forwarded and all three X-Forwarded-* headers before this
+// func runs, so every value set below is one this proxy determined itself.
+// ProxyRequest.SetXForwarded is deliberately NOT used: it takes the raw peer
+// out of In.RemoteAddr, whereas clientIP is gin's resolved address, which
+// honours the deployment's trusted-proxy list — the whole point of
+// configuring one.
+//
+// It takes everything it needs as arguments so the forwarding contract is
+// testable without a Service, a database or a gin engine. The headers an
+// upstream receives from this path are a security boundary, and a boundary
+// that can only be exercised end to end does not get exercised.
+//
+// session may be nil, for a route that does not require auth.
+func proxyRewrite(target *url.URL, route *ProxyRoute, session *ProxySession, clientIP string) func(*httputil.ProxyRequest) {
+	return func(pr *httputil.ProxyRequest) {
+		pr.Out.URL.Scheme = target.Scheme
+		pr.Out.URL.Host = target.Host
+		pr.Out.URL.Path = singleJoiningSlash(target.Path, pr.In.URL.Path)
+		// RawQuery is left exactly as the standard library prepared it. On the
+		// Rewrite path it has already been stripped of unparsable parameters,
+		// which is the request-smuggling guard the Director path never applied;
+		// re-assigning the inbound query here would throw that away.
+
+		if route.PreserveHost {
+			pr.Out.Host = pr.In.Host
+		} else {
+			pr.Out.Host = target.Host
+		}
+
+		// Identity, from the verified session and nowhere else. The caller's
+		// own copies go first, so an unauthenticated route cannot forward one.
+		for _, h := range proxyOwnedHeaders {
+			pr.Out.Header.Del(h)
+		}
+		if session != nil {
+			pr.Out.Header.Set("X-Forwarded-User", session.UserID)
+			pr.Out.Header.Set("X-Forwarded-Email", session.Email)
+			pr.Out.Header.Set("X-Forwarded-Name", session.Name)
+			pr.Out.Header.Set("X-Forwarded-Roles", strings.Join(session.Roles, ","))
+		}
+
+		// Provenance, all of it this proxy's own observation of the request.
+		pr.Out.Header.Set("X-Forwarded-For", clientIP)
+		pr.Out.Header.Set("X-Real-IP", clientIP)
+		pr.Out.Header.Set("X-Forwarded-Host", pr.In.Host)
+		// The old code hardcoded "http" here, which was wrong for a direct-TLS
+		// deployment. Behind a TLS-terminating load balancer In.TLS is nil and
+		// the answer is still "http", exactly as before.
+		if pr.In.TLS != nil {
+			pr.Out.Header.Set("X-Forwarded-Proto", "https")
+		} else {
+			pr.Out.Header.Set("X-Forwarded-Proto", "http")
+		}
+
+		// Operator-configured headers last, so a route can deliberately
+		// override anything above.
+		for k, v := range route.CustomHeaders {
+			pr.Out.Header.Set(k, v)
+		}
+	}
 }
 
 func singleJoiningSlash(a, b string) string {
