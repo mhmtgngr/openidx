@@ -2586,6 +2586,8 @@ function EdgeRouterPoliciesSection() {
   )
 }
 
+const POSTURE_CHECK_TYPES = ['OS', 'Domain', 'MFA', 'Process', 'MAC'] as const
+
 function PostureSection() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
@@ -2708,7 +2710,11 @@ function PostureSection() {
               {checks.map((check) => (
                 <TableRow key={check.id} className="hover:bg-muted/50">
                   <TableCell className="font-medium">{check.name}</TableCell>
-                  <TableCell><Badge variant="outline">{check.check_type}</Badge></TableCell>
+                  <TableCell>
+                    <Badge variant="outline">
+                      {t(`pages.zitiNetwork.posture.checkTypes.${check.check_type}`, { defaultValue: check.check_type })}
+                    </Badge>
+                  </TableCell>
                   <TableCell>
                     {/* Severity is the controller's own value; unknown ones
                         still read as themselves. */}
@@ -2772,11 +2778,11 @@ function PostureSection() {
                 <div className="space-y-2">
                   <Label>{t('pages.zitiNetwork.posture.checkType')}</Label>
                   <select value={form.check_type} onChange={(e) => setForm({ ...form, check_type: e.target.value })} className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm">
-                    <option value="OS">OS</option>
-                    <option value="Domain">Domain</option>
-                    <option value="MFA">MFA</option>
-                    <option value="Process">Process</option>
-                    <option value="MAC">MAC</option>
+                    {POSTURE_CHECK_TYPES.map((checkType) => (
+                      <option key={checkType} value={checkType}>
+                        {t(`pages.zitiNetwork.posture.checkTypes.${checkType}`)}
+                      </option>
+                    ))}
                   </select>
                 </div>
                 <div className="space-y-2">
@@ -3113,6 +3119,7 @@ function CertificatesSection() {
 function PolicySyncSection() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const { t } = useTranslation()
   const [createModal, setCreateModal] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<PolicySync | null>(null)
   const [form, setForm] = useState({ governance_policy_id: '', config: '{}', auto_fetch: true })
@@ -3138,18 +3145,18 @@ function PolicySyncSection() {
       queryClient.invalidateQueries({ queryKey: ['ziti-policy-sync'] })
       setCreateModal(false)
       setForm({ governance_policy_id: '', config: '{}', auto_fetch: true })
-      toast({ title: 'Policy sync created' })
+      toast({ title: t('pages.zitiNetwork.policySync.toast.created') })
     },
-    onError: () => toast({ title: 'Error', description: 'Failed to create policy sync.', variant: 'destructive' }),
+    onError: () => toast({ title: t('common.error'), description: t('pages.zitiNetwork.policySync.toast.createFailed'), variant: 'destructive' }),
   })
 
   const triggerMutation = useMutation({
     mutationFn: (id: string) => api.post(`/api/v1/access/ziti/policy-sync/${id}/trigger`, {}),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['ziti-policy-sync'] })
-      toast({ title: 'Re-sync triggered' })
+      toast({ title: t('pages.zitiNetwork.policySync.toast.resynced') })
     },
-    onError: () => toast({ title: 'Error', description: 'Failed to trigger re-sync.', variant: 'destructive' }),
+    onError: () => toast({ title: t('common.error'), description: t('pages.zitiNetwork.policySync.toast.resyncFailed'), variant: 'destructive' }),
   })
 
   const syncAllMutation = useMutation({
@@ -3170,8 +3177,10 @@ function PolicySyncSection() {
       const succeeded = results.filter(r => r.success).length
       const failed = results.filter(r => !r.success).length
       toast({
-        title: 'Sync All complete',
-        description: `${succeeded} synced${failed > 0 ? `, ${failed} failed` : ''}`,
+        title: t('pages.zitiNetwork.policySync.toast.syncAllDone'),
+        description:
+          t('pages.zitiNetwork.policySync.toast.syncAllDesc', { succeeded }) +
+          (failed > 0 ? t('pages.zitiNetwork.policySync.toast.syncAllFailedSuffix', { failed }) : ''),
         variant: failed > 0 ? 'destructive' : undefined,
       })
     },
@@ -3182,9 +3191,9 @@ function PolicySyncSection() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['ziti-policy-sync'] })
       setDeleteTarget(null)
-      toast({ title: 'Policy sync deleted' })
+      toast({ title: t('pages.zitiNetwork.policySync.toast.deleted') })
     },
-    onError: () => toast({ title: 'Error', description: 'Failed to delete policy sync.', variant: 'destructive' }),
+    onError: () => toast({ title: t('common.error'), description: t('pages.zitiNetwork.policySync.toast.deleteFailed'), variant: 'destructive' }),
   })
 
   const syncs = Array.isArray(syncsData) ? syncsData : []
@@ -3199,35 +3208,35 @@ function PolicySyncSection() {
   const govPolicyMap = new Map((Array.isArray(governancePolicies) ? governancePolicies : []).map(p => [p.id, p.name]))
 
   return (
-    <CollapsibleSection title="Governance → Ziti Sync" count={syncs.length} icon={RefreshCw} defaultOpen={false}>
+    <CollapsibleSection title={t('pages.zitiNetwork.policySync.title')} count={syncs.length} icon={RefreshCw} defaultOpen={false}>
       <p className="text-sm text-muted-foreground mb-3">
-        Link governance access policies to Ziti service policies. When access reviews grant or revoke access, the corresponding Ziti policies update automatically.
+        {t('pages.zitiNetwork.policySync.desc')}
       </p>
       <div className="flex items-center justify-between gap-4 mb-3">
         <div className="flex items-center gap-2">
           {syncs.length > 0 && (
             <Button variant="outline" size="sm" onClick={() => syncAllMutation.mutate()} disabled={syncAllMutation.isPending}>
               <RefreshCw className={`mr-2 h-3 w-3 ${syncAllMutation.isPending ? 'animate-spin' : ''}`} />
-              {syncAllMutation.isPending ? 'Syncing...' : 'Sync All'}
+              {syncAllMutation.isPending ? t('pages.zitiNetwork.policySync.syncing') : t('pages.zitiNetwork.policySync.syncAll')}
             </Button>
           )}
         </div>
         <Button size="sm" onClick={() => setCreateModal(true)}>
-          <Plus className="mr-2 h-4 w-4" /> Link Policy
+          <Plus className="mr-2 h-4 w-4" /> {t('pages.zitiNetwork.policySync.link')}
         </Button>
       </div>
 
       {isLoading ? <Spinner /> : syncs.length === 0 ? (
-        <EmptyState icon={RefreshCw} title="No policy sync mappings" description="Sync governance policies to Ziti network policies." />
+        <EmptyState icon={RefreshCw} title={t('pages.zitiNetwork.policySync.emptyTitle')} description={t('pages.zitiNetwork.policySync.emptyDesc')} />
       ) : (
         <Card>
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Governance Policy</TableHead>
-                <TableHead>Ziti Policy</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Last Synced</TableHead>
+                <TableHead>{t('pages.zitiNetwork.policySync.colGovernance')}</TableHead>
+                <TableHead>{t('pages.zitiNetwork.policySync.colZiti')}</TableHead>
+                <TableHead>{t('pages.zitiNetwork.policySync.colStatus')}</TableHead>
+                <TableHead>{t('pages.zitiNetwork.policySync.colLastSynced')}</TableHead>
                 <TableHead className="w-[50px]" />
               </TableRow>
             </TableHeader>
@@ -3239,21 +3248,22 @@ function PolicySyncSection() {
                       {govPolicyMap.get(sync.governance_policy_id) ? (
                         <span className="font-medium">{govPolicyMap.get(sync.governance_policy_id)}</span>
                       ) : (
-                        <TruncatedId value={sync.governance_policy_id} label="Governance Policy ID" />
+                        <TruncatedId value={sync.governance_policy_id} label={t('pages.zitiNetwork.policySync.governanceIdLabel')} />
                       )}
                     </div>
                   </TableCell>
                   <TableCell>
-                    {sync.ziti_policy_id ? <TruncatedId value={sync.ziti_policy_id} label="Ziti Policy ID" /> : <span className="text-muted-foreground">-</span>}
+                    {sync.ziti_policy_id ? <TruncatedId value={sync.ziti_policy_id} label={t('pages.zitiNetwork.policySync.zitiIdLabel')} /> : <span className="text-muted-foreground">-</span>}
                   </TableCell>
                   <TableCell>
+                    {/* Sync status and any error text come from the server. */}
                     <Badge variant={statusVariant(sync.sync_status)}>{sync.sync_status}</Badge>
                     {sync.error_message && (
                       <p className="text-xs text-red-500 mt-0.5 max-w-[200px] truncate" title={sync.error_message}>{sync.error_message}</p>
                     )}
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">
-                    {sync.last_synced_at ? new Date(sync.last_synced_at).toLocaleString() : 'Never'}
+                    {sync.last_synced_at ? new Date(sync.last_synced_at).toLocaleString() : t('pages.zitiNetwork.policySync.never')}
                   </TableCell>
                   <TableCell>
                     <DropdownMenu>
@@ -3262,11 +3272,11 @@ function PolicySyncSection() {
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
                         <DropdownMenuItem onClick={() => triggerMutation.mutate(sync.id)}>
-                          <RefreshCw className="mr-2 h-4 w-4" /> Re-sync
+                          <RefreshCw className="mr-2 h-4 w-4" /> {t('pages.zitiNetwork.policySync.resync')}
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
                         <DropdownMenuItem className="text-red-600" onClick={() => setDeleteTarget(sync)}>
-                          <Trash2 className="mr-2 h-4 w-4" /> Delete
+                          <Trash2 className="mr-2 h-4 w-4" /> {t('common.delete')}
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
@@ -3281,10 +3291,10 @@ function PolicySyncSection() {
       {/* Create Dialog */}
       <Dialog open={createModal} onOpenChange={setCreateModal}>
         <DialogContent className="sm:max-w-md">
-          <DialogHeader><DialogTitle>Link Governance Policy to Ziti</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{t('pages.zitiNetwork.policySync.dialogTitle')}</DialogTitle></DialogHeader>
           <form onSubmit={(e) => { e.preventDefault(); createMutation.mutate(form) }} className="space-y-4">
             <div className="space-y-2">
-              <Label>Governance Policy</Label>
+              <Label>{t('pages.zitiNetwork.policySync.governancePolicy')}</Label>
               {Array.isArray(governancePolicies) && governancePolicies.length > 0 ? (
                 <select
                   value={form.governance_policy_id}
@@ -3292,41 +3302,39 @@ function PolicySyncSection() {
                   className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                   required
                 >
-                  <option value="">Select a governance policy...</option>
+                  <option value="">{t('pages.zitiNetwork.policySync.selectPolicy')}</option>
                   {governancePolicies.map((p) => (
                     <option key={p.id} value={p.id}>{p.name}{p.description ? ` — ${p.description}` : ''}</option>
                   ))}
                 </select>
               ) : (
-                <Input value={form.governance_policy_id} onChange={(e) => setForm({ ...form, governance_policy_id: e.target.value })} placeholder="UUID of governance policy" required />
+                <Input value={form.governance_policy_id} onChange={(e) => setForm({ ...form, governance_policy_id: e.target.value })} placeholder={t('pages.zitiNetwork.policySync.policyIdPlaceholder')} required />
               )}
-              <p className="text-xs text-muted-foreground">Access review decisions on this policy will auto-update Ziti service policies.</p>
+              <p className="text-xs text-muted-foreground">{t('pages.zitiNetwork.policySync.policyHint')}</p>
             </div>
             <div className="flex items-center gap-2">
               <Switch checked={form.auto_fetch} onCheckedChange={(checked) => setForm({ ...form, auto_fetch: checked })} />
-              <Label>Auto-detect policy rules</Label>
+              <Label>{t('pages.zitiNetwork.policySync.autoDetect')}</Label>
             </div>
             <p className="text-xs text-muted-foreground -mt-2">
-              {form.auto_fetch
-                ? 'Policy type and rules will be automatically fetched and transformed into Ziti roles.'
-                : 'Manually specify how governance decisions map to Ziti policy rules.'}
+              {form.auto_fetch ? t('pages.zitiNetwork.policySync.autoHint') : t('pages.zitiNetwork.policySync.manualHint')}
             </p>
             {!form.auto_fetch && (
               <div className="space-y-2">
-                <Label>Mapping Config (JSON)</Label>
+                <Label>{t('pages.zitiNetwork.policySync.mappingConfig')}</Label>
                 <textarea
                   value={form.config}
                   onChange={(e) => setForm({ ...form, config: e.target.value })}
                   className="w-full h-32 rounded-md border border-input bg-background px-3 py-2 text-sm font-mono"
                   placeholder='{"action": "allow", "service_roles": ["#web"], "identity_roles": ["#engineering"]}'
                 />
-                <p className="text-xs text-muted-foreground">Defines how governance decisions map to Ziti policy rules.</p>
+                <p className="text-xs text-muted-foreground">{t('pages.zitiNetwork.policySync.mappingHint')}</p>
               </div>
             )}
             <div className="flex justify-end gap-2 pt-2">
-              <Button type="button" variant="outline" onClick={() => setCreateModal(false)}>Cancel</Button>
+              <Button type="button" variant="outline" onClick={() => setCreateModal(false)}>{t('common.cancel')}</Button>
               <Button type="submit" disabled={createMutation.isPending}>
-                {createMutation.isPending ? 'Linking...' : 'Link Policy'}
+                {createMutation.isPending ? t('pages.zitiNetwork.policySync.linking') : t('pages.zitiNetwork.policySync.link')}
               </Button>
             </div>
           </form>
@@ -3336,12 +3344,12 @@ function PolicySyncSection() {
       <AlertDialog open={!!deleteTarget} onOpenChange={() => setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete Policy Sync</AlertDialogTitle>
-            <AlertDialogDescription>Are you sure? The Ziti policy will also be removed.</AlertDialogDescription>
+            <AlertDialogTitle>{t('pages.zitiNetwork.policySync.deleteTitle')}</AlertDialogTitle>
+            <AlertDialogDescription>{t('pages.zitiNetwork.policySync.deleteDesc')}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction className="bg-red-600 hover:bg-red-700" onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}>Delete</AlertDialogAction>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+            <AlertDialogAction className="bg-red-600 hover:bg-red-700" onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}>{t('common.delete')}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -3354,6 +3362,7 @@ function PolicySyncSection() {
 function RemoteAccessTab() {
   const { toast } = useToast()
   const queryClient = useQueryClient()
+  const { t } = useTranslation()
 
   // BrowZer status
   const { data: browzerStatus, isLoading: browzerLoading } = useQuery<BrowZerStatus>({
@@ -3375,14 +3384,14 @@ function RemoteAccessTab() {
 
   const enableMutation = useMutation({
     mutationFn: () => api.post('/api/v1/access/ziti/browzer/enable'),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['browzer-status'] }); toast({ title: 'BrowZer enabled' }) },
-    onError: () => toast({ title: 'Failed to enable BrowZer', variant: 'destructive' }),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['browzer-status'] }); toast({ title: t('pages.zitiNetwork.remoteAccess.toast.enabled') }) },
+    onError: () => toast({ title: t('pages.zitiNetwork.remoteAccess.toast.enableFailed'), variant: 'destructive' }),
   })
 
   const disableMutation = useMutation({
     mutationFn: () => api.post('/api/v1/access/ziti/browzer/disable'),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['browzer-status'] }); toast({ title: 'BrowZer disabled' }) },
-    onError: () => toast({ title: 'Failed to disable BrowZer', variant: 'destructive' }),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['browzer-status'] }); toast({ title: t('pages.zitiNetwork.remoteAccess.toast.disabled') }) },
+    onError: () => toast({ title: t('pages.zitiNetwork.remoteAccess.toast.disableFailed'), variant: 'destructive' }),
   })
 
   const connectMutation = useMutation({
@@ -3391,7 +3400,7 @@ function RemoteAccessTab() {
       const connectUrl = (resp as Record<string, string>)?.connect_url
       if (connectUrl) window.open(connectUrl, '_blank', 'noopener,noreferrer')
     },
-    onError: () => toast({ title: 'Error', description: 'Failed to get connection URL.', variant: 'destructive' }),
+    onError: () => toast({ title: t('common.error'), description: t('pages.zitiNetwork.remoteAccess.toast.connectFailed'), variant: 'destructive' }),
   })
 
   const enableOnServiceMutation = useMutation({
@@ -3405,9 +3414,9 @@ function RemoteAccessTab() {
       queryClient.invalidateQueries({ queryKey: ['ziti-services'] })
       queryClient.invalidateQueries({ queryKey: ['ziti-services-browzer'] })
       setInitialized(false)
-      toast({ title: 'BrowZer enabled on service' })
+      toast({ title: t('pages.zitiNetwork.remoteAccess.toast.serviceEnabled') })
     },
-    onError: (err: Error) => toast({ title: 'Failed to enable BrowZer on service', description: err.message, variant: 'destructive' }),
+    onError: (err: Error) => toast({ title: t('pages.zitiNetwork.remoteAccess.toast.serviceEnableFailed'), description: err.message, variant: 'destructive' }),
   })
 
   const disableOnServiceMutation = useMutation({
@@ -3416,9 +3425,9 @@ function RemoteAccessTab() {
       queryClient.invalidateQueries({ queryKey: ['ziti-services'] })
       queryClient.invalidateQueries({ queryKey: ['ziti-services-browzer'] })
       setInitialized(false)
-      toast({ title: 'BrowZer disabled on service' })
+      toast({ title: t('pages.zitiNetwork.remoteAccess.toast.serviceDisabled') })
     },
-    onError: (err: Error) => toast({ title: 'Failed to disable BrowZer on service', description: err.message, variant: 'destructive' }),
+    onError: (err: Error) => toast({ title: t('pages.zitiNetwork.remoteAccess.toast.serviceDisableFailed'), description: err.message, variant: 'destructive' }),
   })
 
   const connections = connData?.connections || []
@@ -3463,13 +3472,13 @@ function RemoteAccessTab() {
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="font-semibold">BrowZer</h3>
+                <h3 className="font-semibold">{t('pages.zitiNetwork.remoteAccess.browzer')}</h3>
                 <Badge variant={browzerStatus?.enabled ? 'default' : 'secondary'}>
-                  {browzerStatus?.enabled ? 'Enabled' : 'Disabled'}
+                  {browzerStatus?.enabled ? t('pages.zitiNetwork.remoteAccess.enabled') : t('pages.zitiNetwork.remoteAccess.disabled')}
                 </Badge>
               </div>
               <p className="text-sm text-muted-foreground">
-                Browser-native zero-trust access via Ziti Service Worker
+                {t('pages.zitiNetwork.remoteAccess.browzerDesc')}
               </p>
             </div>
           </div>
@@ -3481,7 +3490,7 @@ function RemoteAccessTab() {
                 rel="noopener noreferrer"
                 className="flex items-center gap-1 text-sm text-primary hover:underline"
               >
-                Open Bootstrapper <ExternalLink className="h-3 w-3" />
+                {t('pages.zitiNetwork.remoteAccess.openBootstrapper')} <ExternalLink className="h-3 w-3" />
               </a>
             )}
             <Button
@@ -3490,7 +3499,7 @@ function RemoteAccessTab() {
               onClick={() => browzerStatus?.enabled ? disableMutation.mutate() : enableMutation.mutate()}
               disabled={enableMutation.isPending || disableMutation.isPending}
             >
-              {browzerStatus?.enabled ? 'Disable' : 'Enable'}
+              {browzerStatus?.enabled ? t('pages.zitiNetwork.remoteAccess.disable') : t('pages.zitiNetwork.remoteAccess.enable')}
             </Button>
           </div>
         </CardContent>
@@ -3501,26 +3510,26 @@ function RemoteAccessTab() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {browzerStatus.bootstrapper_url && (
             <div className="text-sm">
-              <span className="text-muted-foreground block text-xs">Bootstrapper URL</span>
+              <span className="text-muted-foreground block text-xs">{t('pages.zitiNetwork.remoteAccess.bootstrapperUrl')}</span>
               <code className="text-xs bg-muted px-1.5 py-0.5 rounded">{browzerStatus.bootstrapper_url}</code>
             </div>
           )}
           {browzerStatus.oidc_issuer && (
             <div className="text-sm">
-              <span className="text-muted-foreground block text-xs">OIDC Issuer</span>
+              <span className="text-muted-foreground block text-xs">{t('pages.zitiNetwork.remoteAccess.oidcIssuer')}</span>
               <code className="text-xs bg-muted px-1.5 py-0.5 rounded">{browzerStatus.oidc_issuer}</code>
             </div>
           )}
           {browzerStatus.oidc_client_id && (
             <div className="text-sm">
-              <span className="text-muted-foreground block text-xs">OIDC Client ID</span>
+              <span className="text-muted-foreground block text-xs">{t('pages.zitiNetwork.remoteAccess.oidcClientId')}</span>
               <code className="text-xs bg-muted px-1.5 py-0.5 rounded">{browzerStatus.oidc_client_id}</code>
             </div>
           )}
           {browzerStatus.external_jwt_signer_id && (
             <div className="text-sm">
-              <span className="text-muted-foreground block text-xs">JWT Signer</span>
-              <TruncatedId value={browzerStatus.external_jwt_signer_id} label="JWT Signer ID" />
+              <span className="text-muted-foreground block text-xs">{t('pages.zitiNetwork.remoteAccess.jwtSigner')}</span>
+              <TruncatedId value={browzerStatus.external_jwt_signer_id} label={t('pages.zitiNetwork.remoteAccess.jwtSignerIdLabel')} />
             </div>
           )}
         </div>
@@ -3528,23 +3537,23 @@ function RemoteAccessTab() {
 
       {/* Guacamole Connections */}
       <div className="space-y-3">
-        <h3 className="text-lg font-semibold">Connections</h3>
+        <h3 className="text-lg font-semibold">{t('pages.zitiNetwork.remoteAccess.connections')}</h3>
         {connections.length === 0 ? (
           <EmptyState
             icon={Monitor}
-            title="No remote access connections"
-            description="Create a proxy route with type SSH, RDP, or VNC to auto-provision Guacamole connections."
+            title={t('pages.zitiNetwork.remoteAccess.emptyTitle')}
+            description={t('pages.zitiNetwork.remoteAccess.emptyDesc')}
           />
         ) : (
           <Card>
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Protocol</TableHead>
-                  <TableHead>Target</TableHead>
-                  <TableHead>Guacamole ID</TableHead>
-                  <TableHead>Created</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
+                  <TableHead>{t('pages.zitiNetwork.remoteAccess.colProtocol')}</TableHead>
+                  <TableHead>{t('pages.zitiNetwork.remoteAccess.colTarget')}</TableHead>
+                  <TableHead>{t('pages.zitiNetwork.remoteAccess.colGuacId')}</TableHead>
+                  <TableHead>{t('pages.zitiNetwork.remoteAccess.colCreated')}</TableHead>
+                  <TableHead className="text-right">{t('pages.zitiNetwork.remoteAccess.colActions')}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -3558,13 +3567,13 @@ function RemoteAccessTab() {
                     <TableCell>
                       <code className="text-sm bg-muted px-1.5 py-0.5 rounded">{conn.hostname}:{conn.port}</code>
                     </TableCell>
-                    <TableCell><TruncatedId value={conn.guacamole_connection_id} label="Guacamole ID" /></TableCell>
+                    <TableCell><TruncatedId value={conn.guacamole_connection_id} label={t('pages.zitiNetwork.remoteAccess.guacIdLabel')} /></TableCell>
                     <TableCell className="text-sm text-muted-foreground">
                       {safeDate(conn.created_at)}
                     </TableCell>
                     <TableCell className="text-right">
                       <Button size="sm" onClick={() => connectMutation.mutate(conn.route_id)} disabled={connectMutation.isPending}>
-                        <ExternalLink className="mr-1 h-3 w-3" /> Connect
+                        <ExternalLink className="mr-1 h-3 w-3" /> {t('pages.zitiNetwork.remoteAccess.connect')}
                       </Button>
                     </TableCell>
                   </TableRow>
@@ -3578,20 +3587,20 @@ function RemoteAccessTab() {
       {/* Per-Service BrowZer Toggle */}
       {browzerStatus?.enabled && services.length > 0 && (
         <div className="space-y-3">
-          <h3 className="text-lg font-semibold">BrowZer-Enabled Services</h3>
+          <h3 className="text-lg font-semibold">{t('pages.zitiNetwork.remoteAccess.servicesTitle')}</h3>
           <p className="text-sm text-muted-foreground">
-            Toggle BrowZer access per service. Enabled services get the &quot;browzer-enabled&quot; role attribute.
+            {t('pages.zitiNetwork.remoteAccess.servicesDesc')}
           </p>
           <Card>
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Service</TableHead>
-                  <TableHead>Target</TableHead>
-                  <TableHead>Path</TableHead>
-                  <TableHead>Domain</TableHead>
-                  <TableHead>BrowZer</TableHead>
-                  <TableHead className="text-right">Action</TableHead>
+                  <TableHead>{t('pages.zitiNetwork.remoteAccess.colService')}</TableHead>
+                  <TableHead>{t('pages.zitiNetwork.remoteAccess.colTarget')}</TableHead>
+                  <TableHead>{t('pages.zitiNetwork.remoteAccess.colPath')}</TableHead>
+                  <TableHead>{t('pages.zitiNetwork.remoteAccess.colDomain')}</TableHead>
+                  <TableHead>{t('pages.zitiNetwork.remoteAccess.colBrowzer')}</TableHead>
+                  <TableHead className="text-right">{t('pages.zitiNetwork.remoteAccess.colAction')}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -3621,7 +3630,7 @@ function RemoteAccessTab() {
                       </TableCell>
                       <TableCell>
                         <Badge variant={isBrowzerEnabled ? 'default' : 'secondary'}>
-                          {isBrowzerEnabled ? 'Enabled' : 'Disabled'}
+                          {isBrowzerEnabled ? t('pages.zitiNetwork.remoteAccess.enabled') : t('pages.zitiNetwork.remoteAccess.disabled')}
                         </Badge>
                       </TableCell>
                       <TableCell className="text-right">
@@ -3638,7 +3647,7 @@ function RemoteAccessTab() {
                             }
                           }}
                         >
-                          {isBrowzerEnabled ? 'Disable' : 'Enable'}
+                          {isBrowzerEnabled ? t('pages.zitiNetwork.remoteAccess.disable') : t('pages.zitiNetwork.remoteAccess.enable')}
                         </Button>
                       </TableCell>
                     </TableRow>
@@ -3659,22 +3668,23 @@ function RemoteAccessTab() {
         className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
       >
         {showHowItWorks ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-        How BrowZer Works
+        {t('pages.zitiNetwork.remoteAccess.howItWorks')}
       </button>
       {showHowItWorks && (
         <Card>
           <CardContent className="pt-4 space-y-3">
             <ol className="text-sm space-y-1.5 list-decimal list-inside text-muted-foreground">
-              <li>User visits the BrowZer Bootstrapper URL</li>
-              <li>Bootstrapper redirects to OpenIDX OAuth for OIDC login</li>
-              <li>After authentication, the Ziti BrowZer Runtime (ZBR) is injected into the browser</li>
-              <li>ZBR registers a Service Worker that intercepts HTTP requests</li>
-              <li>The browser gets an ephemeral Ziti identity from the JWT token</li>
-              <li>All traffic flows through the Ziti overlay via WebSocket to the edge router</li>
-              <li>Press <kbd className="bg-muted px-1 py-0.5 rounded text-xs">Alt+F12</kbd> to open the ZBR debug panel</li>
+              <li>{t('pages.zitiNetwork.remoteAccess.step1')}</li>
+              <li>{t('pages.zitiNetwork.remoteAccess.step2')}</li>
+              <li>{t('pages.zitiNetwork.remoteAccess.step3')}</li>
+              <li>{t('pages.zitiNetwork.remoteAccess.step4')}</li>
+              <li>{t('pages.zitiNetwork.remoteAccess.step5')}</li>
+              <li>{t('pages.zitiNetwork.remoteAccess.step6')}</li>
+              <li>{t('pages.zitiNetwork.remoteAccess.step7Before')} <kbd className="bg-muted px-1 py-0.5 rounded text-xs">Alt+F12</kbd> {t('pages.zitiNetwork.remoteAccess.step7After')}</li>
             </ol>
             <div className="p-3 bg-muted rounded-lg">
-              <p className="text-xs font-medium mb-1">Connection Flow</p>
+              <p className="text-xs font-medium mb-1">{t('pages.zitiNetwork.remoteAccess.flowTitle')}</p>
+              {/* Component names in the data path, shown as-is. */}
               <code className="text-xs text-muted-foreground">
                 Browser (ZBR + SW) &rarr; WSS &rarr; Edge Router &rarr; Ziti Circuit &rarr; Access Service &rarr; Upstream
               </code>
@@ -3691,6 +3701,7 @@ function RemoteAccessTab() {
 function TempAccessLinksSection() {
   const { toast } = useToast()
   const queryClient = useQueryClient()
+  const { t } = useTranslation()
   const [createModal, setCreateModal] = useState(false)
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<TempAccessLink | null>(null)
@@ -3728,9 +3739,9 @@ function TempAccessLinksSection() {
       queryClient.invalidateQueries({ queryKey: ['temp-access-links'] })
       setCreateModal(false)
       resetForm()
-      toast({ title: 'Temporary access link created', description: 'Share the URL with your support vendor.' })
+      toast({ title: t('pages.zitiNetwork.tempAccess.toast.created'), description: t('pages.zitiNetwork.tempAccess.toast.createdDesc') })
     },
-    onError: () => toast({ title: 'Error', description: 'Failed to create access link.', variant: 'destructive' }),
+    onError: () => toast({ title: t('common.error'), description: t('pages.zitiNetwork.tempAccess.toast.createFailed'), variant: 'destructive' }),
   })
 
   // Revoke mutation
@@ -3739,9 +3750,9 @@ function TempAccessLinksSection() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['temp-access-links'] })
       setDeleteTarget(null)
-      toast({ title: 'Access link revoked' })
+      toast({ title: t('pages.zitiNetwork.tempAccess.toast.revoked') })
     },
-    onError: () => toast({ title: 'Error', description: 'Failed to revoke access link.', variant: 'destructive' }),
+    onError: () => toast({ title: t('common.error'), description: t('pages.zitiNetwork.tempAccess.toast.revokeFailed'), variant: 'destructive' }),
   })
 
   const resetForm = () => setForm({
@@ -3761,7 +3772,7 @@ function TempAccessLinksSection() {
   const copyToClipboard = (text: string, id: string) => {
     navigator.clipboard.writeText(text)
     setCopiedId(id)
-    toast({ title: 'Copied to clipboard' })
+    toast({ title: t('pages.zitiNetwork.tempAccess.toast.copied') })
     setTimeout(() => setCopiedId(null), 2000)
   }
 
@@ -3770,22 +3781,22 @@ function TempAccessLinksSection() {
   const getStatusBadge = (link: TempAccessLink) => {
     const now = new Date()
     const expires = new Date(link.expires_at)
-    if (link.status === 'revoked') return <Badge variant="destructive">Revoked</Badge>
-    if (link.status === 'expired' || expires < now) return <Badge variant="secondary">Expired</Badge>
-    if (link.max_uses > 0 && link.current_uses >= link.max_uses) return <Badge variant="secondary">Used</Badge>
-    return <Badge className="bg-green-600">Active</Badge>
+    if (link.status === 'revoked') return <Badge variant="destructive">{t('pages.zitiNetwork.tempAccess.revoked')}</Badge>
+    if (link.status === 'expired' || expires < now) return <Badge variant="secondary">{t('pages.zitiNetwork.tempAccess.expired')}</Badge>
+    if (link.max_uses > 0 && link.current_uses >= link.max_uses) return <Badge variant="secondary">{t('pages.zitiNetwork.tempAccess.used')}</Badge>
+    return <Badge className="bg-green-600">{t('pages.zitiNetwork.tempAccess.active')}</Badge>
   }
 
   const getTimeRemaining = (expiresAt: string) => {
     const now = new Date()
     const expires = new Date(expiresAt)
     const diff = expires.getTime() - now.getTime()
-    if (diff <= 0) return 'Expired'
+    if (diff <= 0) return t('pages.zitiNetwork.tempAccess.expired')
     const hours = Math.floor(diff / (1000 * 60 * 60))
     const mins = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60))
-    if (hours > 24) return `${Math.floor(hours / 24)}d ${hours % 24}h`
-    if (hours > 0) return `${hours}h ${mins}m`
-    return `${mins}m`
+    if (hours > 24) return t('pages.zitiNetwork.tempAccess.remainingDays', { d: Math.floor(hours / 24), h: hours % 24 })
+    if (hours > 0) return t('pages.zitiNetwork.tempAccess.remainingHours', { h: hours, m: mins })
+    return t('pages.zitiNetwork.tempAccess.remainingMinutes', { m: mins })
   }
 
   const protocolIcon = (protocol: string) => {
@@ -3811,17 +3822,17 @@ function TempAccessLinksSection() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Key className="h-5 w-5 text-muted-foreground" />
-          <h3 className="text-lg font-semibold">Temporary Access Links</h3>
+          <h3 className="text-lg font-semibold">{t('pages.zitiNetwork.tempAccess.title')}</h3>
           <Badge variant="outline" className="ml-2">{links.length}</Badge>
         </div>
         <Button size="sm" onClick={() => setCreateModal(true)}>
           <Plus className="h-4 w-4 mr-1" />
-          Create Temp Access
+          {t('pages.zitiNetwork.tempAccess.create')}
         </Button>
       </div>
 
       <p className="text-sm text-muted-foreground">
-        Generate time-limited access URLs for support vendors or temporary access needs.
+        {t('pages.zitiNetwork.tempAccess.desc')}
       </p>
 
       {isLoading ? (
@@ -3829,20 +3840,20 @@ function TempAccessLinksSection() {
       ) : links.length === 0 ? (
         <EmptyState
           icon={Link2}
-          title="No temporary access links"
-          description="Create a temporary access link to share with support vendors."
+          title={t('pages.zitiNetwork.tempAccess.emptyTitle')}
+          description={t('pages.zitiNetwork.tempAccess.emptyDesc')}
         />
       ) : (
         <Card>
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Target</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Usage</TableHead>
-                <TableHead>Expires</TableHead>
-                <TableHead>Access URL</TableHead>
+                <TableHead>{t('pages.zitiNetwork.tempAccess.colName')}</TableHead>
+                <TableHead>{t('pages.zitiNetwork.tempAccess.colTarget')}</TableHead>
+                <TableHead>{t('pages.zitiNetwork.tempAccess.colStatus')}</TableHead>
+                <TableHead>{t('pages.zitiNetwork.tempAccess.colUsage')}</TableHead>
+                <TableHead>{t('pages.zitiNetwork.tempAccess.colExpires')}</TableHead>
+                <TableHead>{t('pages.zitiNetwork.tempAccess.colUrl')}</TableHead>
                 <TableHead className="w-[50px]"></TableHead>
               </TableRow>
             </TableHeader>
@@ -3870,7 +3881,9 @@ function TempAccessLinksSection() {
                   <TableCell>{getStatusBadge(link)}</TableCell>
                   <TableCell>
                     <span className="text-sm">
-                      {link.current_uses}{link.max_uses > 0 ? `/${link.max_uses}` : ''} uses
+                      {link.max_uses > 0
+                        ? t('pages.zitiNetwork.tempAccess.usesOfMax', { used: link.current_uses, max: link.max_uses })
+                        : t('pages.zitiNetwork.tempAccess.uses', { used: link.current_uses })}
                     </span>
                   </TableCell>
                   <TableCell>
@@ -3908,11 +3921,11 @@ function TempAccessLinksSection() {
                       <DropdownMenuContent align="end">
                         <DropdownMenuItem onClick={() => copyToClipboard(link.access_url, link.id)}>
                           <Copy className="h-4 w-4 mr-2" />
-                          Copy URL
+                          {t('pages.zitiNetwork.tempAccess.copyUrl')}
                         </DropdownMenuItem>
                         <DropdownMenuItem onClick={() => window.open(link.access_url, '_blank')}>
                           <ExternalLink className="h-4 w-4 mr-2" />
-                          Open Link
+                          {t('pages.zitiNetwork.tempAccess.openLink')}
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
                         <DropdownMenuItem
@@ -3921,7 +3934,7 @@ function TempAccessLinksSection() {
                           disabled={link.status !== 'active'}
                         >
                           <Trash2 className="h-4 w-4 mr-2" />
-                          Revoke Access
+                          {t('pages.zitiNetwork.tempAccess.revokeAccess')}
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
@@ -3937,29 +3950,29 @@ function TempAccessLinksSection() {
       <Dialog open={createModal} onOpenChange={setCreateModal}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>Create Temporary Access Link</DialogTitle>
+            <DialogTitle>{t('pages.zitiNetwork.tempAccess.dialogTitle')}</DialogTitle>
           </DialogHeader>
           <form onSubmit={(e) => { e.preventDefault(); createMutation.mutate(form) }} className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="col-span-2">
-                <Label>Name</Label>
+                <Label>{t('pages.zitiNetwork.tempAccess.name')}</Label>
                 <Input
                   value={form.name}
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
-                  placeholder="Vendor SSH Access"
+                  placeholder={t('pages.zitiNetwork.tempAccess.namePlaceholder')}
                   required
                 />
               </div>
               <div className="col-span-2">
-                <Label>Description (optional)</Label>
+                <Label>{t('pages.zitiNetwork.tempAccess.description')}</Label>
                 <Input
                   value={form.description}
                   onChange={(e) => setForm({ ...form, description: e.target.value })}
-                  placeholder="Temporary access for ABC Corp support"
+                  placeholder={t('pages.zitiNetwork.tempAccess.descriptionPlaceholder')}
                 />
               </div>
               <div>
-                <Label>Protocol</Label>
+                <Label>{t('pages.zitiNetwork.tempAccess.protocol')}</Label>
                 <select
                   value={form.protocol}
                   onChange={(e) => {
@@ -3975,7 +3988,7 @@ function TempAccessLinksSection() {
                 </select>
               </div>
               <div>
-                <Label>Target Host</Label>
+                <Label>{t('pages.zitiNetwork.tempAccess.targetHost')}</Label>
                 <Input
                   value={form.target_host}
                   onChange={(e) => setForm({ ...form, target_host: e.target.value })}
@@ -3984,7 +3997,7 @@ function TempAccessLinksSection() {
                 />
               </div>
               <div>
-                <Label>Port</Label>
+                <Label>{t('pages.zitiNetwork.tempAccess.port')}</Label>
                 <Input
                   type="number"
                   value={form.target_port}
@@ -3993,7 +4006,7 @@ function TempAccessLinksSection() {
                 />
               </div>
               <div>
-                <Label>Username (optional)</Label>
+                <Label>{t('pages.zitiNetwork.tempAccess.username')}</Label>
                 <Input
                   value={form.username}
                   onChange={(e) => setForm({ ...form, username: e.target.value })}
@@ -4001,7 +4014,7 @@ function TempAccessLinksSection() {
                 />
               </div>
               <div>
-                <Label>Duration (minutes)</Label>
+                <Label>{t('pages.zitiNetwork.tempAccess.duration')}</Label>
                 <Input
                   type="number"
                   value={form.duration_mins}
@@ -4011,11 +4024,13 @@ function TempAccessLinksSection() {
                   required
                 />
                 <p className="text-xs text-muted-foreground mt-1">
-                  {form.duration_mins >= 60 ? `${Math.floor(form.duration_mins / 60)}h ${form.duration_mins % 60}m` : `${form.duration_mins}m`}
+                  {form.duration_mins >= 60
+                    ? t('pages.zitiNetwork.tempAccess.remainingHours', { h: Math.floor(form.duration_mins / 60), m: form.duration_mins % 60 })
+                    : t('pages.zitiNetwork.tempAccess.remainingMinutes', { m: form.duration_mins })}
                 </p>
               </div>
               <div>
-                <Label>Max Uses (0 = unlimited)</Label>
+                <Label>{t('pages.zitiNetwork.tempAccess.maxUses')}</Label>
                 <Input
                   type="number"
                   value={form.max_uses}
@@ -4024,7 +4039,7 @@ function TempAccessLinksSection() {
                 />
               </div>
               <div className="col-span-2">
-                <Label>Allowed IPs (comma-separated, optional)</Label>
+                <Label>{t('pages.zitiNetwork.tempAccess.allowedIps')}</Label>
                 <Input
                   value={form.allowed_ips}
                   onChange={(e) => setForm({ ...form, allowed_ips: e.target.value })}
@@ -4037,7 +4052,7 @@ function TempAccessLinksSection() {
                     checked={form.notify_on_use}
                     onCheckedChange={(v) => setForm({ ...form, notify_on_use: v })}
                   />
-                  <Label className="text-sm">Notify on use</Label>
+                  <Label className="text-sm">{t('pages.zitiNetwork.tempAccess.notifyOnUse')}</Label>
                 </div>
                 {form.notify_on_use && (
                   <Input
@@ -4051,10 +4066,10 @@ function TempAccessLinksSection() {
             </div>
             <div className="flex justify-end gap-2 pt-2">
               <Button type="button" variant="outline" onClick={() => { setCreateModal(false); resetForm() }}>
-                Cancel
+                {t('common.cancel')}
               </Button>
               <Button type="submit" disabled={createMutation.isPending}>
-                {createMutation.isPending ? 'Creating...' : 'Create Access Link'}
+                {createMutation.isPending ? t('pages.zitiNetwork.tempAccess.creating') : t('pages.zitiNetwork.tempAccess.submit')}
               </Button>
             </div>
           </form>
@@ -4065,18 +4080,18 @@ function TempAccessLinksSection() {
       <AlertDialog open={!!deleteTarget} onOpenChange={() => setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Revoke Temporary Access</AlertDialogTitle>
+            <AlertDialogTitle>{t('pages.zitiNetwork.tempAccess.revokeTitle')}</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to revoke &quot;{deleteTarget?.name}&quot;? The link will no longer work.
+              {t('pages.zitiNetwork.tempAccess.revokeDesc', { name: deleteTarget?.name ?? '' })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction
               className="bg-red-600 hover:bg-red-700"
               onClick={() => deleteTarget && revokeMutation.mutate(deleteTarget.id)}
             >
-              Revoke Access
+              {t('pages.zitiNetwork.tempAccess.revokeAccess')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -4110,6 +4125,7 @@ interface ResourceDiagnosis {
 }
 
 function ExplainServiceDialog({ name, onClose }: { name: string | null; onClose: () => void }) {
+  const { t } = useTranslation()
   const { data, isLoading } = useQuery({
     queryKey: ['ziti-explain', name],
     queryFn: () =>
@@ -4123,11 +4139,14 @@ function ExplainServiceDialog({ name, onClose }: { name: string | null; onClose:
     <Dialog open={!!name} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>How “{name}” works</DialogTitle>
+          <DialogTitle>{t('pages.zitiNetwork.explain.title', { name: name ?? '' })}</DialogTitle>
         </DialogHeader>
 
+        {/* Everything below is composed by the backend's explain endpoint —
+            the summary, and each hop's title, detail, fix and technical line —
+            so it is rendered as sent rather than translated in the client. */}
         {isLoading || !data ? (
-          <p className="py-8 text-center text-muted-foreground">Checking…</p>
+          <p className="py-8 text-center text-muted-foreground">{t('pages.zitiNetwork.explain.checking')}</p>
         ) : (
           <div className="space-y-4">
             <div

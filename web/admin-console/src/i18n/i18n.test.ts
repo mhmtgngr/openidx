@@ -427,6 +427,14 @@ describe('i18n', () => {
       ...['export', 'delete', 'restrict', 'access', 'rectify', 'portability'].map(
         (k) => `pages.consentManagement.requestTypes.${k}`,
       ),
+      // ziti-network: the posture-check vocabularies the controller returns,
+      // resolved by key in both the table and the create/edit dialog.
+      ...['OS', 'Domain', 'MFA', 'Process', 'MAC'].map(
+        (k) => `pages.zitiNetwork.posture.checkTypes.${k}`,
+      ),
+      ...['low', 'medium', 'high', 'critical'].map(
+        (k) => `pages.zitiNetwork.posture.severities.${k}`,
+      ),
     ]
     for (const lang of supportedLanguages) {
       for (const key of mapKeys) {
@@ -544,6 +552,16 @@ describe('i18n', () => {
     expect(
       i18n.t('pages.consentManagement.risks.severe', { defaultValue: 'Severe' }),
     ).toBe('Severe')
+  })
+
+  it('resolves an unknown Ziti posture check type to its raw value', async () => {
+    // The controller's own typeId is the wire value, so a check type a newer
+    // controller reports still renders instead of leaking a bare key.
+    await i18n.changeLanguage('tr')
+    expect(i18n.t('pages.zitiNetwork.posture.checkTypes.Domain')).toBe('Etki alanı')
+    expect(
+      i18n.t('pages.zitiNetwork.posture.checkTypes.Windows', { defaultValue: 'Windows' }),
+    ).toBe('Windows')
   })
 
   it('resolves an unknown connection-test probe to its prettified raw value', async () => {
