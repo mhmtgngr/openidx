@@ -8544,6 +8544,7 @@ const tr: typeof en = {
       resource: 'bildirim tercihleri',
       channelsTitle: 'Bildirim Kanalları',
       colEvent: 'Olay Türü',
+      toggleLabel: '{{event}} için {{channel}} bildirimleri',
       channels: {
         in_app: 'Uygulama İçi',
         email: 'E-posta',

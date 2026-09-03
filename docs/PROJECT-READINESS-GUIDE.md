@@ -21,7 +21,7 @@ security, access, sessions, devices, trusted browsers, notifications,
 access requests, profile — are fully bilingual; the end-user experience
 is complete in both languages). Open: P1 rollout Task 16 (operator
 action), P3.1 cut v1.28.0 (post-merge), the remaining P4 items incl.
-the accessibility/VPAT pass, the separate end-user bundle and the Expo-vs-Flutter mobile pick — every console page body is now bilingual.)
+the browser-based accessibility audit behind a VPAT, the separate end-user bundle and the Expo-vs-Flutter mobile pick — every console page body is now bilingual, and the automatable half of accessibility is gated.)
 **Question this document answers:** *Is OpenIDX fully functional and well defined end to end, as experienced by the people who use it — and what are the next steps and controls to get it there?*
 
 This is the product-and-user-side companion to
@@ -953,12 +953,41 @@ all four pillars, deploy, log in, and find PAM.
    **Every page body under `src/pages` now resolves through the catalogs —
    0 remaining, and a test enumerates the directory and fails if a page ever
    ships without `useTranslation` again.**
-   *Still open in P4:* accessibility to a VPAT, the separate hardened end-user
-   portal bundle, and the Expo-vs-Flutter mobile decision. The catalogs
-   themselves keep growing with the product; the framework guarantees a missing
-   translation fails `npm run type-check` rather than reaching a user.
-2. Accessibility pass to a VPAT (needs real assistive-technology testing,
-   not just an automated axe sweep).
+   *Still open in P4:* the browser-based accessibility audit behind a VPAT
+   (see the next item), the separate hardened end-user portal bundle, and the
+   Expo-vs-Flutter mobile decision. The catalogs themselves keep growing with
+   the product; the framework guarantees a missing translation fails
+   `npm run type-check` rather than reaching a user.
+1b. ✅ **The automatable half of accessibility is now a gate — and writing it
+   found a real defect.** `src/test/a11y.test.tsx` runs axe-core over the
+   thirteen surfaces a person outside the admin team reaches — every pre-login
+   flow (login, forgotten password, reset, magic-link verify, device
+   authorization) and every end-user page — and fails on any WCAG 2.1 A/AA
+   violation it can detect. It went red the first time it ran: the
+   notification-preferences page renders an event × channel grid of
+   **fourteen toggles that were `<button>`s containing nothing but a
+   decorative knob** — no text, no `aria-label`, no `role="switch"`, no
+   `aria-checked`. On screen a toggle is identified by its row and column; a
+   screen reader reads the control alone, so a person using one heard
+   fourteen anonymous buttons and could not tell what any of them controlled
+   or whether it was on. Each now carries `role="switch"`, `aria-checked`,
+   and a label naming both axes (“Email notifications for: Security alerts”,
+   translated in both catalogs), with the knob `aria-hidden`. Every other
+   surface was already clean, and the gate keeps it that way.
+   **What this is not:** a VPAT, or a claim that the console is accessible.
+   Two whole classes stay unmeasured and the test says so in its header —
+   colour contrast, because axe's contrast rule needs real paint and jsdom
+   cannot provide it (the rule is explicitly disabled rather than left to
+   fail silently, which reads exactly like a pass); and keyboard order, focus
+   management and screen-reader announcement, which axe does not test in any
+   environment. Those need a browser and a person. The gate ships with a
+   red-proof case — an unnamed button and an unlabelled input it must flag —
+   per the same rule the repo's shell and Go checkers follow.
+2. Accessibility audit to a VPAT in a real browser with real assistive
+   technology — colour contrast, keyboard order, focus management, screen-
+   reader announcement. The automated axe sweep is done and gated
+   (`src/test/a11y.test.tsx`, 13 surfaces, WCAG 2.1 A/AA); it covers the
+   subset a headless DOM can judge and no more.
 3. Separate/hardened end-user portal bundle.
 4. Mobile app decision (Expo vs Flutter) executed — maintainer's call.
 5. The existing roadmap epics (outbound SCIM, HR-driven JML, per-org

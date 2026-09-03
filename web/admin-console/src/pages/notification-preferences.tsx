@@ -156,15 +156,29 @@ export function NotificationPreferencesPage() {
                     </TableCell>
                     {CHANNELS.map(ch => (
                       <TableCell key={ch.key} className="text-center py-4 px-4">
+                        {/* On screen this toggle is identified by its row and
+                            column. Read on its own it was one of fourteen
+                            buttons with no name at all, so the label names
+                            both axes and aria-checked carries the state. */}
                         <button
+                          type="button"
+                          role="switch"
+                          aria-checked={isEnabled(et, ch.key)}
+                          aria-label={t('pages.notificationPreferences.toggleLabel', {
+                            channel: t(`pages.notificationPreferences.channels.${ch.key}`),
+                            event: t(`pages.notificationPreferences.events.${et}`),
+                          })}
                           onClick={() => toggle(et, ch.key)}
                           className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
                             isEnabled(et, ch.key) ? 'bg-primary' : 'bg-muted'
                           }`}
                         >
-                          <span className={`inline-block h-4 w-4 transform rounded-full bg-background transition-transform ${
-                            isEnabled(et, ch.key) ? 'translate-x-6' : 'translate-x-1'
-                          }`} />
+                          <span
+                            aria-hidden="true"
+                            className={`inline-block h-4 w-4 transform rounded-full bg-background transition-transform ${
+                              isEnabled(et, ch.key) ? 'translate-x-6' : 'translate-x-1'
+                            }`}
+                          />
                         </button>
                       </TableCell>
                     ))}

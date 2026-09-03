@@ -8803,6 +8803,12 @@ const en = {
       resource: 'notification preferences',
       channelsTitle: 'Notification Channels',
       colEvent: 'Event Type',
+      // The accessible name of one toggle in the event x channel grid. A
+      // screen reader reads the control on its own, without the row and
+      // column headers that make it legible on screen, so the name has to
+      // carry both -- and the on/off state comes from aria-checked, not from
+      // this string.
+      toggleLabel: '{{channel}} notifications for: {{event}}',
       channels: {
         in_app: 'In-App',
         email: 'Email',
