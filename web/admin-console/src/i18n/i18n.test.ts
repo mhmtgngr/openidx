@@ -493,6 +493,38 @@ describe('i18n', () => {
         (k) => `pages.systemHealth.statuses.${k}`,
       ),
       ...['up', 'degraded', 'down'].map((k) => `pages.systemHealth.depStatuses.${k}`),
+      // developer-settings: the tab strip and the API-key expiry presets, both
+      // driven off `id`/`key` lists that no longer carry English labels.
+      ...['api_keys', 'webhooks', 'cors', 'rate_limits'].map(
+        (k) => `pages.developerSettings.tabs.${k}`,
+      ),
+      ...['d30', 'd60', 'd90', 'd180', 'd365', 'never'].map(
+        (k) => `pages.developerSettings.apiKeys.expiry.${k}`,
+      ),
+      // device-trust-approval: the request lifecycle, shared by the tab strip
+      // and the row badge.
+      ...['pending', 'approved', 'rejected', 'expired'].map(
+        (k) => `pages.deviceTrustApproval.statuses.${k}`,
+      ),
+      // agent-fleet: the agent lifecycle and the posture-compliance vocabulary.
+      ...['active', 'pending', 'revoked'].map((k) => `pages.agentFleet.statuses.${k}`),
+      ...['compliant', 'grace_period', 'non_compliant', 'unknown'].map(
+        (k) => `pages.agentFleet.complianceStatuses.${k}`,
+      ),
+      // ziti-ai-insights: detector output, the shared severity scale used by
+      // anomalies/risk/recommendations alike, and the resolved subject kinds.
+      ...[
+        'new_service_access',
+        'off_hours_access',
+        'dormant_identity_active',
+        'session_spike',
+      ].map((k) => `pages.zitiAiInsights.anomalyTypes.${k}`),
+      ...['low', 'medium', 'high', 'critical'].map(
+        (k) => `pages.zitiAiInsights.severities.${k}`,
+      ),
+      ...['user', 'agent', 'service', 'unresolved', 'unknown'].map(
+        (k) => `pages.zitiAiInsights.subjectKinds.${k}`,
+      ),
     ]
     for (const lang of supportedLanguages) {
       for (const key of mapKeys) {
@@ -757,6 +789,83 @@ describe('i18n', () => {
         defaultValue: 'secret_rotation'.replace('_', ' '),
       }),
     ).toBe('secret rotation')
+  })
+
+  it('resolves an unknown agent status to its prettified raw value', async () => {
+    // Both agent badges fall back rather than rendering a bare key, so a
+    // lifecycle or compliance value the backend adds later is still readable.
+    await i18n.changeLanguage('en')
+    expect(
+      i18n.t('pages.agentFleet.statuses.quarantined', {
+        defaultValue: 'quarantined'.replace(/_/g, ' '),
+      }),
+    ).toBe('quarantined')
+    expect(
+      i18n.t('pages.agentFleet.complianceStatuses.awaiting_report', {
+        defaultValue: 'awaiting_report'.replace(/_/g, ' '),
+      }),
+    ).toBe('awaiting report')
+    // The known values still resolve through the catalog in both languages.
+    expect(i18n.t('pages.agentFleet.complianceStatuses.non_compliant')).toBe('non compliant')
+    await i18n.changeLanguage('tr')
+    expect(i18n.t('pages.agentFleet.complianceStatuses.non_compliant')).toBe('uyumsuz')
+  })
+
+  it('interpolates the agent enrolment checksum and the revoke confirmation', async () => {
+    await i18n.changeLanguage('en')
+    expect(i18n.t('pages.agentFleet.qr.downloadApk', { checksum: 'a1b2c3d4e5f6…' })).toBe(
+      'Download APK (a1b2c3d4e5f6…)',
+    )
+    expect(i18n.t('pages.agentFleet.revokeDialog.desc', { agentId: 'agt-001' })).toContain(
+      'agt-001',
+    )
+  })
+
+  it('resolves an unknown Ziti anomaly type and severity to their raw values', async () => {
+    await i18n.changeLanguage('en')
+    expect(
+      i18n.t('pages.zitiAiInsights.anomalyTypes.impossible_travel', {
+        defaultValue: 'impossible_travel'.replace(/_/g, ' '),
+      }),
+    ).toBe('impossible travel')
+    expect(
+      i18n.t('pages.zitiAiInsights.severities.info', { defaultValue: 'info' }),
+    ).toBe('info')
+  })
+
+  it('names the directory a resolved Ziti subject came from', async () => {
+    // A UUID-named overlay identity says nothing on its own, so the row states
+    // what kind of account it is — and, for a person, where they came from.
+    await i18n.changeLanguage('en')
+    expect(i18n.t('pages.zitiAiInsights.subjectFromSource', { source: 'ldap' })).toBe(
+      'person (ldap)',
+    )
+    expect(i18n.t('pages.zitiAiInsights.subjectKinds.unresolved')).toBe(
+      'account not visible here',
+    )
+    await i18n.changeLanguage('tr')
+    expect(i18n.t('pages.zitiAiInsights.subjectFromSource', { source: 'ldap' })).toBe(
+      'kişi (ldap)',
+    )
+  })
+
+  it('pluralizes both counts in the Ziti analysis summary', async () => {
+    await i18n.changeLanguage('en')
+    const one = i18n.t('pages.zitiAiInsights.toasts.analysisSummary', {
+      observations: i18n.t('pages.zitiAiInsights.toasts.analysisObservations', { count: 1 }),
+      anomalies: i18n.t('pages.zitiAiInsights.toasts.analysisAnomalies', { count: 1 }),
+    })
+    expect(one).toBe('1 observation analyzed, 1 new anomaly detected.')
+    const many = i18n.t('pages.zitiAiInsights.toasts.analysisSummary', {
+      observations: i18n.t('pages.zitiAiInsights.toasts.analysisObservations', { count: 12 }),
+      anomalies: i18n.t('pages.zitiAiInsights.toasts.analysisAnomalies', { count: 3 }),
+    })
+    expect(many).toBe('12 observations analyzed, 3 new anomalies detected.')
+
+    await i18n.changeLanguage('tr')
+    expect(
+      i18n.t('pages.zitiAiInsights.toasts.analysisObservations', { count: 12 }),
+    ).toBe('12 gözlem incelendi')
   })
 
   it('interpolates the page strings that carry values', async () => {

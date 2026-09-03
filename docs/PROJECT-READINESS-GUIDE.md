@@ -21,7 +21,7 @@ security, access, sessions, devices, trusted browsers, notifications,
 access requests, profile — are fully bilingual; the end-user experience
 is complete in both languages). Open: P1 rollout Task 16 (operator
 action), P3.1 cut v1.28.0 (post-merge), the remaining P4 items incl.
-the 35 remaining admin page bodies and the Expo-vs-Flutter mobile pick.)
+the 31 remaining admin page bodies and the Expo-vs-Flutter mobile pick.)
 **Question this document answers:** *Is OpenIDX fully functional and well defined end to end, as experienced by the people who use it — and what are the next steps and controls to get it there?*
 
 This is the product-and-user-side companion to
@@ -745,11 +745,28 @@ all four pillars, deploy, log in, and find PAM.
    matches those literally. Two more ungrammatical concatenations became real
    plurals ("safe fix(es) applied"), and the uptime formatter now takes the
    locale's own unit suffixes instead of hardcoding `d`/`h`/`m`.
-   *Remaining:* 35 other admin page bodies (a measured count, not an
+   Batch 18 took the endpoint-agent surfaces — Developer Settings, Device
+   Trust Approval, Agent Fleet and Ziti AI Insights. Three of the four hand
+   an operator a button that cuts someone off the network, so the raw/
+   translated line was drawn tightly: platform names (Linux, macOS, Windows,
+   Android, iOS), the `device-trusted` Ziti role attribute, CORS origins and
+   the controller's own HA/OIDC acronyms stay raw; so does every
+   server-composed string — upgrade advisories, risk-signal names,
+   recommendation titles and API error messages — because an operator matches
+   those against the fabric, not against a translation. The overlay's wire
+   vocabularies (agent lifecycle, posture compliance, anomaly types, the
+   shared low/medium/high/critical severity scale, resolved subject kinds)
+   now resolve through the catalog with a prettified raw fallback, so a value
+   the backend adds later still reads as words rather than as a bare key.
+   Two module-level label maps that froze English at import time became
+   components that re-resolve on a language switch, and the Ziti analysis
+   toast pluralizes both of its counts independently instead of concatenating
+   "1 observations".
+   *Remaining:* 31 other admin page bodies (a measured count, not an
    estimate: pages under `src/pages` with no `useTranslation`) — mechanical,
    batch by batch, against this pattern. The largest of them are
-   `developer-settings.tsx` (532 lines), `device-trust-approval.tsx` (517),
-   `agent-fleet.tsx` (513) and `ziti-ai-insights.tsx` (480).
+   `usage-analytics.tsx` (442 lines), `webhooks.tsx` (421),
+   `tenant-management.tsx` (420) and `devices.tsx` (392).
 2. Accessibility pass to a VPAT (needs real assistive-technology testing,
    not just an automated axe sweep).
 3. Separate/hardened end-user portal bundle.

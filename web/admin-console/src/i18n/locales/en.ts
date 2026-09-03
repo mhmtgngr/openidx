@@ -7010,6 +7010,335 @@ const en = {
         fixFailed: 'Fix failed',
       },
     },
+    // Developer settings. The OAuth scope strings and the IP/CIDR and origin
+    // examples stay raw: they are the literal values the API stores and
+    // matches against.
+    developerSettings: {
+      title: 'Developer Settings',
+      subtitle: 'Configure API keys, webhooks, CORS, and rate limits',
+      resource: 'developer settings',
+      loading: 'Loading developer settings...',
+      saving: 'Saving...',
+      save: 'Save Changes',
+      saved: 'Settings saved',
+      savedDesc: 'Developer settings updated successfully.',
+      saveFailed: 'Failed to save developer settings.',
+      tabs: {
+        api_keys: 'API Keys',
+        webhooks: 'Webhooks',
+        cors: 'CORS',
+        rate_limits: 'Rate Limits',
+      },
+      apiKeys: {
+        heading: 'API Key Defaults',
+        desc: 'Configure defaults for developer API key creation',
+        maxKeys: 'Max Keys Per User',
+        maxKeysHint: 'Maximum number of API keys a single user can create',
+        defaultExpiry: 'Default Expiry',
+        // The expiry choices the API accepts, keyed by their day count so a
+        // locale can phrase each one naturally.
+        expiry: {
+          d30: '30 days',
+          d60: '60 days',
+          d90: '90 days',
+          d180: '180 days',
+          d365: '1 year',
+          never: 'Never expires',
+        },
+        scopes: 'Allowed Scopes',
+        scopesDesc: 'Select which scopes can be assigned to API keys',
+      },
+      webhooks: {
+        heading: 'Webhook Configuration',
+        desc: 'Configure webhook delivery settings and IP restrictions',
+        maxRetries: 'Max Retries',
+        maxRetriesHint: 'Number of retry attempts for failed webhook deliveries',
+        retryDelay: 'Retry Delay (seconds)',
+        retryDelayHint: 'Base delay between retry attempts (exponential backoff applied)',
+        allowlist: 'IP Allowlist',
+        allowlistDesc:
+          'Restrict webhook delivery to specific IP addresses or CIDR ranges. Leave empty to allow all.',
+        allowlistHint: 'One IP address or CIDR range per line',
+      },
+      cors: {
+        heading: 'CORS Configuration',
+        desc: 'Configure Cross-Origin Resource Sharing (CORS) allowed origins for API access',
+        origins: 'Allowed Origins',
+        originsHint:
+          'One origin per line. Use <0>*</0> to allow all origins (not recommended for production).',
+      },
+      rateLimits: {
+        heading: 'Rate Limit Configuration',
+        desc: 'Set default rate limits applied to API key authenticated requests',
+        defaultLimit: 'Default Rate Limit (requests/minute)',
+        defaultLimitHint: 'The sustained request rate allowed per API key per minute',
+        burstLimit: 'Burst Limit (requests)',
+        burstLimitHint:
+          'Maximum number of requests allowed in a short burst above the sustained rate',
+      },
+    },
+    deviceTrustApproval: {
+      title: 'Device Trust Approval',
+      subtitle: 'Review and approve device trust requests',
+      settings: 'Settings',
+      resource: 'trust requests',
+      // The request lifecycle the trust service owns, resolved by key with the
+      // raw status as the fallback.
+      statuses: {
+        pending: 'Pending',
+        approved: 'Approved',
+        rejected: 'Rejected',
+        expired: 'Expired',
+      },
+      stats: {
+        pending: 'Pending Requests',
+        approvalRequired: 'Approval Required',
+        autoApprove: 'Auto-Approve',
+        knownIps: 'Known IPs',
+        corporate: 'Corporate',
+        disabled: 'Disabled',
+      },
+      yes: 'Yes',
+      no: 'No',
+      filterStatus: 'Filter by status',
+      all: 'All',
+      bulkApprove: 'Approve ({{n}})',
+      bulkReject: 'Reject ({{n}})',
+      listHeading: 'Trust Requests',
+      listDesc: 'Users requesting to trust their devices',
+      empty: 'No trust requests found',
+      colUser: 'User',
+      colDevice: 'Device',
+      colIp: 'IP Address',
+      colJustification: 'Justification',
+      colStatus: 'Status',
+      colRequested: 'Requested',
+      colActions: 'Actions',
+      approved: 'Request Approved',
+      approvedDesc: 'Device trust granted — network access updated.',
+      rejected: 'Request Rejected',
+      rejectedDesc: 'Device trust has been denied.',
+      bulkApproveTitle: 'Bulk Approve',
+      bulkApproveDesc: 'Approved {{n}} requests.',
+      bulkRejectTitle: 'Bulk Reject',
+      bulkRejectDesc: 'Rejected {{n}} requests.',
+      settingsUpdated: 'Settings Updated',
+      review: {
+        approveTitle: 'Approve Trust Request',
+        rejectTitle: 'Reject Trust Request',
+        user: 'User:',
+        device: 'Device:',
+        ip: 'IP:',
+        justification: 'Justification:',
+        // `device-trusted` is the Ziti role attribute the approval grants, so
+        // it stays raw.
+        approveHint:
+          "Approving will grant the user's Ziti network identity the <0>device-trusted</0> role, enabling access to policies that require trusted devices.",
+        notes: 'Review Notes',
+        notesPlaceholder: 'Optional notes for this decision...',
+        approve: 'Approve',
+        reject: 'Reject',
+      },
+      settingsDialog: {
+        title: 'Device Trust Settings',
+        requireApproval: 'Require Admin Approval',
+        requireApprovalHint: 'All trust requests need admin approval',
+        autoApproveIps: 'Auto-approve Known IPs',
+        autoApproveIpsHint: 'Trust devices from previously trusted IPs',
+        autoApproveCorporate: 'Auto-approve Corporate Devices',
+        autoApproveCorporateHint: 'Trust devices identified as corporate-managed',
+        notifyAdmins: 'Notify Admins',
+        notifyAdminsHint: 'Send notifications for new requests',
+        notifyUser: 'Notify User on Decision',
+        notifyUserHint: 'Send email when request is reviewed',
+      },
+    },
+    // Agent fleet. Platform names (Linux, macOS, Windows, Android, iOS) are
+    // product names and stay raw, as do the agent's own posture check types,
+    // severities and enforcement actions, and the `device-trusted` Ziti role
+    // attribute the tier badge names.
+    agentFleet: {
+      title: 'Agent Fleet',
+      subtitle:
+        'Endpoint agents enrolled in OpenIDX — desktop Go agent and Android unified agent.',
+      generateQr: 'Generate Android enrollment QR',
+      resource: 'agents',
+      summary: {
+        total: 'Total agents',
+        active: 'Active',
+        pending: 'Pending approval',
+        nonCompliant: 'Non-compliant',
+      },
+      listHeading: 'Enrolled agents',
+      allPlatforms: 'All platforms',
+      searchPlaceholder: 'Search hostname / agent / device id…',
+      colAgent: 'Agent',
+      colPlatform: 'Platform',
+      colStatus: 'Status',
+      colCompliance: 'Compliance',
+      colLastSeen: 'Last seen',
+      unknownPlatform: 'unknown',
+      empty: 'No agents match the current filters.',
+      approveAgent: 'Approve agent',
+      viewPosture: 'View posture & tier',
+      copyAgentId: 'Copy agent ID',
+      revoke: 'Revoke',
+      // Agent lifecycle and compliance vocabularies, resolved by key with the
+      // prettified raw value as the fallback.
+      statuses: {
+        active: 'active',
+        pending: 'pending',
+        revoked: 'revoked',
+      },
+      complianceStatuses: {
+        compliant: 'compliant',
+        grace_period: 'grace period',
+        non_compliant: 'non compliant',
+        unknown: 'unknown',
+      },
+      toasts: {
+        qrGenerated: 'Enrollment QR generated',
+        qrFailed: 'Failed to generate QR',
+        approved: 'Agent approved',
+        approveFailed: 'Failed to approve',
+        revoked: 'Agent revoked',
+        revokeFailed: 'Failed to revoke',
+        copied: 'Copied to clipboard',
+      },
+      qr: {
+        title: 'Generate Android enrollment QR',
+        intro:
+          'Factory-reset an Android device, tap the welcome screen 6 times, scan the QR. The device installs the OpenIDX agent as Device Owner.',
+        description: 'Description',
+        descriptionPlaceholder: 'e.g. front-desk-kiosks',
+        expiresIn: 'Expires in (minutes)',
+        generating: 'Generating…',
+        generate: 'Generate',
+        token: 'Token',
+        expires: 'Expires',
+        apk: 'APK',
+        downloadApk: 'Download APK ({{checksum}})',
+        noChecksum: 'no checksum',
+        copyJson: 'Copy JSON',
+        done: 'Done',
+      },
+      posture: {
+        title: 'Device posture & Ziti tier',
+        loading: 'Loading…',
+        compliant: 'Compliant',
+        nonCompliant: 'Non-compliant',
+        tier2: 'Tier 2 · device-trusted',
+        tier1: 'Tier 1 · minimum access',
+        tierHint:
+          'Tier 2 (remote/PAM + admin surfaces) is granted only while the device reports compliant posture. Tier 1 devices reach self-service + console only.',
+        reported: 'reported {{when}}',
+        empty: 'No posture reports yet from this device.',
+      },
+      revokeDialog: {
+        title: 'Revoke agent?',
+        desc:
+          '{{agentId}} will lose Ziti network access immediately and its identity will be removed. This is reversible only by re-enrolling the device.',
+        confirm: 'Revoke',
+      },
+    },
+    // Ziti AI insights. Controller capability acronyms (HA, OIDC) stay raw, as
+    // does every server-composed string on this page: upgrade advisories, risk
+    // signal names, recommendation titles/descriptions/actions and API error
+    // messages. Only the console's own chrome and the overlay's wire
+    // vocabularies resolve through the catalog.
+    zitiAiInsights: {
+      title: 'Ziti AI Insights',
+      subtitle:
+        'Behavioral anomaly detection, identity risk scoring and policy hygiene for the zero-trust overlay',
+      runAnalysis: 'Run Analysis',
+      resource: 'Ziti AI insights',
+      summary: {
+        atRisk: 'Identities at Risk',
+        openAnomalies: 'Open Anomalies',
+        recommendations: 'Recommendations',
+        controller: 'Controller',
+        unknownVersion: 'unknown',
+        jwtAuth: 'JWT Auth',
+        granularPerms: 'Granular Perms',
+      },
+      advisoriesTitle: 'OpenZiti Upgrade Advisories',
+      anomalies: {
+        title: 'Open Anomalies',
+        desc: 'Deviations from each identity\'s learned behavioral baseline',
+        colIdentity: 'Identity',
+        colAnomaly: 'Anomaly',
+        colSeverity: 'Severity',
+        colDetected: 'Detected',
+        colActions: 'Actions',
+        acknowledge: 'Acknowledge',
+        resolve: 'Resolve',
+        empty:
+          'No open anomalies — run an analysis to check the fabric against learned baselines',
+      },
+      // Detector output, resolved by key so an anomaly type the console has
+      // not seen yet still renders as its raw wire value.
+      anomalyTypes: {
+        new_service_access: 'New Service Access',
+        off_hours_access: 'Off-Hours Activity',
+        dormant_identity_active: 'Dormant Identity Reactivated',
+        session_spike: 'Session Spike',
+      },
+      // One vocabulary for anomaly severity, fused risk level and
+      // recommendation severity — the backend scores all three on this scale.
+      severities: {
+        low: 'low',
+        medium: 'medium',
+        high: 'high',
+        critical: 'critical',
+      },
+      risk: {
+        title: 'Identity Risk',
+        desc:
+          'Fused score from open anomalies, posture failures, enrollment and dormancy signals',
+        colIdentity: 'Identity',
+        colScore: 'Score',
+        colLevel: 'Level',
+        colSignals: 'Signals',
+        colActions: 'Actions',
+        restore: 'Restore Access',
+        quarantine: 'Quarantine',
+        confirmTitle: 'Quarantine this identity?',
+        confirmDesc:
+          'Quarantining "{{name}}" severs its Ziti role attributes and immediately terminates all active sessions, cutting this identity off the network. Access can be restored afterward, but any in-flight sessions are lost.',
+        empty: 'No identities found',
+      },
+      // How the overlay resolved the identity behind a fabric name.
+      subjectKinds: {
+        user: 'person',
+        agent: 'device agent',
+        service: 'service',
+        unresolved: 'account not visible here',
+        unknown: 'unknown',
+      },
+      subjectFromSource: 'person ({{source}})',
+      recommendations: {
+        title: 'Policy Hygiene Recommendations',
+        desc: 'Over-permissive policies, unused services and stale enrollments',
+        suggestedAction: 'Suggested action:',
+        empty: 'No recommendations — the fabric looks healthy',
+      },
+      toasts: {
+        analysisComplete: 'Analysis Complete',
+        analysisObservations_one: '{{count}} observation analyzed',
+        analysisObservations_other: '{{count}} observations analyzed',
+        analysisAnomalies_one: '{{count}} new anomaly detected',
+        analysisAnomalies_other: '{{count}} new anomalies detected',
+        analysisSummary: '{{observations}}, {{anomalies}}.',
+        analysisFailed: 'Analysis Failed',
+        updateFailed: 'Update Failed',
+        quarantined: 'Identity Quarantined',
+        quarantinedDesc: 'Role attributes severed and sessions terminated.',
+        quarantineFailed: 'Quarantine Failed',
+        restored: 'Identity Restored',
+        restoredDesc: 'Saved role attributes have been restored.',
+        restoreFailed: 'Restore Failed',
+      },
+    },
   },
   pam: {
     remoteAppSecretHint:
