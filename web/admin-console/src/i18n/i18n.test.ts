@@ -361,6 +361,16 @@ describe('i18n', () => {
         'clientIdRequired',
         'clientSecretRequired',
       ].map((k) => `pages.directories.validation.${k}`),
+      // proxy-routes: HOSTING_MODES / ROUTE_TYPES render through the catalog,
+      // and ConnectionTestButton names each backend probe the same way.
+      ...['identity', 'hop', 'direct'].flatMap((k) => [
+        `pages.proxyRoutes.hostingModes.${k}`,
+        `pages.proxyRoutes.hostingModeHints.${k}`,
+      ]),
+      ...['http', 'ssh', 'rdp', 'vnc', 'telnet'].map((k) => `pages.proxyRoutes.routeTypes.${k}`),
+      ...['upstream', 'ziti', 'guacamole', 'tcp'].map(
+        (k) => `pages.proxyRoutes.connectionTest.tests.${k}`,
+      ),
     ]
     for (const lang of supportedLanguages) {
       for (const key of mapKeys) {
@@ -445,6 +455,38 @@ describe('i18n', () => {
     await i18n.changeLanguage('tr')
     expect(i18n.t('pages.abacPolicies.policyCount', { count: 2 })).toBe('2 politika')
     expect(i18n.t('pages.abacPolicies.conditionCount', { count: 2 })).toBe('2 koşul')
+  })
+
+  it('pluralizes the proxy-route count in both languages', async () => {
+    await i18n.changeLanguage('en')
+    // The page test asserts the exact badge text ("2 routes").
+    expect(i18n.t('pages.proxyRoutes.routeCount', { count: 0 })).toBe('0 routes')
+    expect(i18n.t('pages.proxyRoutes.routeCount', { count: 1 })).toBe('1 route')
+    expect(i18n.t('pages.proxyRoutes.routeCount', { count: 2 })).toBe('2 routes')
+
+    await i18n.changeLanguage('tr')
+    expect(i18n.t('pages.proxyRoutes.routeCount', { count: 2 })).toBe('2 rota')
+  })
+
+  it('resolves an unknown connection-test probe to its prettified raw value', async () => {
+    // ConnectionTestButton names probes from the backend's own map, so one
+    // added later must still read as itself.
+    await i18n.changeLanguage('en')
+    expect(i18n.t('pages.proxyRoutes.connectionTest.tests.upstream')).toBe('Upstream')
+    expect(
+      i18n.t('pages.proxyRoutes.connectionTest.tests.dns_resolve', {
+        defaultValue: 'dns_resolve'.replace('_', ' '),
+      }),
+    ).toBe('dns resolve')
+  })
+
+  it('leaves an unrecognised hosting mode without a hint', async () => {
+    // The pre-i18n page rendered nothing when `.find()` missed; the catalog
+    // lookup must not surface a bare key in its place.
+    await i18n.changeLanguage('en')
+    expect(
+      i18n.t('pages.proxyRoutes.hostingModeHints.tunnel', { defaultValue: '' }),
+    ).toBe('')
   })
 
   it('resolves an unknown audit event type to its prettified raw value', async () => {

@@ -670,7 +670,18 @@ all four pillars, deploy, log in, and find PAM.
    `internal/access/ziti_setup_handlers.go`, so it stays untranslated;
    only the page's own chrome localizes. Translating server prose in the
    client would have produced a page that looks bilingual and silently
-   disagrees with the API. *Remaining:* 47 other admin page bodies (a
+   disagrees with the API. *And the route editor those pages send you to:*
+   Proxy Routes — the hosting-mode and route-type vocabularies, the route
+   rows with their badges and detail grid, the quick-create BrowZer flow,
+   the full create/edit form and the delete confirmation, plus the three
+   components the page owns (the per-route feature panel, the inline
+   OpenZiti/BrowZer switches, and the connection test with its per-probe
+   results). Two details carried over: the connection test names each
+   probe *through* the catalog with a prettified raw fallback, so a probe
+   the backend adds later still reads as itself; and the form's sample
+   placeholders (`admin, developer`, `192.168.1.100`, the policy DSL
+   expression) stay raw, because a translated example would stop matching
+   what the API accepts. *Remaining:* 46 other admin page bodies (a
    measured count, not an estimate: pages under `src/pages` with no
    `useTranslation`) — mechanical, batch by batch, against this pattern.
 2. Accessibility pass to a VPAT (needs real assistive-technology testing,
