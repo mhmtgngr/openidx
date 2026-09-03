@@ -622,6 +622,47 @@ describe('i18n', () => {
       ...['completed', 'creating', 'failed'].map(
         (k) => `pages.auditArchival.archives.statuses.${k}`,
       ),
+      // compliance-dashboard: the score tier the gauge picks, and the weight
+      // labels the composite list names.
+      ...['excellent', 'good', 'needsImprovement', 'critical'].map(
+        (k) => `pages.complianceDashboard.tiers.${k}`,
+      ),
+      ...[
+        'mfa',
+        'password',
+        'reviews',
+        'policy',
+        'accounts',
+        'campaignCoverage',
+        'campaignProgress',
+      ].map((k) => `pages.complianceDashboard.weights.${k}`),
+      // lifecycle-policies: the policy types (row badge + create form), the
+      // schedules (row line + create form) and the execution status.
+      ...[
+        'stale_account_disable',
+        'disabled_account_cleanup',
+        'orphan_detection',
+        'password_expiry_enforcement',
+        'scheduled_offboarding',
+      ].map((k) => `pages.lifecyclePolicies.policyTypes.${k}`),
+      ...['daily', 'weekly', 'monthly'].map(
+        (k) => `pages.lifecyclePolicies.schedules.${k}`,
+      ),
+      ...['running', 'completed'].map(
+        (k) => `pages.lifecyclePolicies.executionStatuses.${k}`,
+      ),
+      // ai-identity-intelligence: the friction the fusion engine recommends.
+      ...['low', 'normal', 'strict'].map(
+        (k) => `pages.identityIntelligence.frictions.${k}`,
+      ),
+      // ispm: one severity list behind both casings, and the check categories.
+      ...['critical', 'high', 'medium', 'low'].flatMap((k) => [
+        `pages.ispm.severities.${k}`,
+        `pages.ispm.severityLabels.${k}`,
+      ]),
+      ...['authentication', 'authorization', 'accounts', 'compliance'].map(
+        (k) => `pages.ispm.categories.${k}`,
+      ),
     ]
     for (const lang of supportedLanguages) {
       for (const key of mapKeys) {
@@ -1142,6 +1183,60 @@ describe('i18n', () => {
     expect(
       i18n.t('pages.auditArchival.archives.events', { count: 1, formatted: '1' }),
     ).toBe('1 event')
+  })
+
+  it('puts the compliance weight percent where each locale wants it', async () => {
+    // The weight itself lives in one const list on the page; the locale only
+    // writes the wording around it — and Turkish puts the sign in front.
+    await i18n.changeLanguage('en')
+    expect(
+      i18n.t('pages.complianceDashboard.weightLine', {
+        label: i18n.t('pages.complianceDashboard.weights.mfa'),
+        weight: 25,
+      }),
+    ).toBe('MFA adoption (25%)')
+
+    await i18n.changeLanguage('tr')
+    expect(
+      i18n.t('pages.complianceDashboard.weightLine', {
+        label: i18n.t('pages.complianceDashboard.weights.mfa'),
+        weight: 25,
+      }),
+    ).toBe('MFA benimseme (%25)')
+  })
+
+  it('names the lifecycle run consequence through its own clause', async () => {
+    // What the run does to a matching account is a clause, not an interpolated
+    // adjective, so a locale can inflect it with the rest of the sentence.
+    await i18n.changeLanguage('en')
+    expect(
+      i18n.t('pages.lifecyclePolicies.runConfirm.description', {
+        name: 'Stale accounts',
+        clause: i18n.t('pages.lifecyclePolicies.runConfirm.clauseDelete'),
+      }),
+    ).toContain('will be permanently deleted according to the policy actions')
+    expect(
+      i18n.t('pages.lifecyclePolicies.runConfirm.description', {
+        name: 'Stale accounts',
+        clause: i18n.t('pages.lifecyclePolicies.runConfirm.clauseDisable'),
+      }),
+    ).toContain('"Stale accounts"')
+  })
+
+  it('keeps both ISPM severity casings on one membership', async () => {
+    for (const lang of supportedLanguages) {
+      await i18n.changeLanguage(lang.code)
+      for (const s of ['critical', 'high', 'medium', 'low']) {
+        const badge = i18n.t(`pages.ispm.severities.${s}`)
+        const label = i18n.t(`pages.ispm.severityLabels.${s}`)
+        expect(badge.toLocaleLowerCase(lang.code)).toBe(label.toLocaleLowerCase(lang.code))
+      }
+    }
+    await i18n.changeLanguage('en')
+    // A category the scanner adds later still reads as itself.
+    expect(i18n.t('pages.ispm.categories.lifecycle', { defaultValue: 'lifecycle' })).toBe(
+      'lifecycle',
+    )
   })
 
   it('pluralizes the unified audit pagination line', async () => {

@@ -8129,6 +8129,250 @@ const en = {
         noDetails: 'No additional details.',
       },
     },
+    // Compliance posture dashboard. The score weights belong to the backend
+    // scorer, so they live in one const list on the page and are interpolated
+    // into the line: a locale writes the sentence, never the number (and
+    // Turkish puts the percent sign in front of it).
+    complianceDashboard: {
+      // The heading is exactly the nav item, so it reuses `nav.items`.
+      subtitle: 'Organization-wide compliance health at a glance',
+      loading: 'Loading compliance posture...',
+      resource: 'compliance posture',
+      overallScore: 'Overall Score',
+      tiers: {
+        excellent: 'Excellent',
+        good: 'Good',
+        needsImprovement: 'Needs Improvement',
+        critical: 'Critical',
+      },
+      weightsIntro: 'This score is a weighted composite of:',
+      weightLine: '{{label}} ({{weight}}%)',
+      weights: {
+        mfa: 'MFA adoption',
+        password: 'Password compliance',
+        reviews: 'Review timeliness',
+        policy: 'Policy compliance',
+        accounts: 'Account hygiene',
+        campaignCoverage: 'Campaign coverage',
+        campaignProgress: 'Campaign progress',
+      },
+      cards: {
+        mfaAdoption: 'MFA Adoption',
+        mfaAdoptionSub: 'Users with active MFA enrollment',
+        passwordCompliance: 'Password Compliance',
+        passwordComplianceSub: 'Passwords within 90-day policy',
+        openReviews: 'Open Reviews',
+        openReviewsSub: 'Pending or in-progress reviews',
+        overdueReviews: 'Overdue Reviews',
+        overdueReviewsSub: 'Reviews past their end date',
+        dormantAccounts: 'Dormant Accounts',
+        dormantAccountsSub: 'No login in 90+ days',
+        disabledAccounts: 'Disabled Accounts',
+        disabledAccountsSub: 'Currently disabled users',
+        activeCampaigns: 'Active Campaigns',
+        activeCampaignsSub: 'Certification campaigns running',
+        campaignCompletion: 'Campaign Completion',
+        campaignCompletionSub: 'Average across active runs',
+      },
+      actions: {
+        viewUsers: 'View Users',
+        viewReviews: 'View Reviews',
+        viewCampaigns: 'View Campaigns',
+        viewPolicies: 'View Policies',
+      },
+      violations: 'Policy Violations (last 30 days)',
+    },
+    // Account-lifecycle policies. The policy type, the schedule and the
+    // execution status are the backend's own wire values, so the badge on a
+    // row and the form's select resolve through the same map — each driven off
+    // one const list on the page, with the raw value as the fallback so a type
+    // the service adds later still reads as itself. (The five per-type
+    // descriptions the old label map carried were never rendered anywhere, so
+    // they are not extracted.)
+    lifecyclePolicies: {
+      // The heading is exactly the nav item, so it reuses `nav.items`.
+      subtitle: 'Automated de-provisioning and account lifecycle management',
+      resource: 'lifecycle policies',
+      create: 'Create Policy',
+      creating: 'Creating...',
+      policyTypes: {
+        stale_account_disable: 'Stale Account Disable',
+        disabled_account_cleanup: 'Disabled Account Cleanup',
+        orphan_detection: 'Orphan Detection',
+        password_expiry_enforcement: 'Password Expiry',
+        scheduled_offboarding: 'Scheduled Offboarding',
+      },
+      schedules: {
+        daily: 'Daily',
+        weekly: 'Weekly',
+        monthly: 'Monthly',
+      },
+      executionStatuses: {
+        running: 'running',
+        completed: 'completed',
+      },
+      form: {
+        title: 'New Lifecycle Policy',
+        name: 'Name',
+        policyType: 'Policy Type',
+        threshold: 'Threshold (days)',
+        schedule: 'Schedule',
+        gracePeriod: 'Grace Period (days)',
+        description: 'Description',
+      },
+      list: {
+        title: 'Policies ({{n}})',
+        empty: 'No lifecycle policies configured',
+        enabled: 'Enabled',
+        disabled: 'Disabled',
+        enable: 'Enable',
+        disable: 'Disable',
+        preview: 'Preview',
+        run: 'Run',
+        schedule: 'Schedule: {{schedule}}',
+        grace: 'Grace: {{days}}d',
+        lastRun: 'Last run: {{when}}',
+      },
+      runConfirm: {
+        title: 'Run this lifecycle policy for real?',
+        description:
+          'This executes "{{name}}" against live accounts (not a preview). Matching users will be {{clause}} according to the policy actions. This affects real users and cannot be undone — use Preview first to review who is affected.',
+        clauseDelete: 'permanently deleted',
+        clauseDisable: 'disabled',
+        confirm: 'Run Now',
+      },
+      deleteConfirm: {
+        title: 'Delete this lifecycle policy?',
+        description:
+          'This permanently removes the "{{name}}" lifecycle policy and its schedule. Existing execution history is retained, but the policy will no longer run.',
+      },
+      preview: {
+        title_one: 'Preview: {{count}} User Affected',
+        title_other: 'Preview: {{count}} Users Affected',
+        active: 'Active',
+        disabled: 'Disabled',
+      },
+      history: {
+        title: 'Execution History',
+        affected: '{{n}} affected',
+        scanned: '/ {{n}} scanned',
+      },
+    },
+    // Cross-pillar identity risk fusion. Everything the model or the backend
+    // composes stays raw: the briefing text, each identity's reason strings and
+    // the model name — an operator matches those against the deployment, not
+    // against a translation — and so does the AI_ENABLED config key, which is
+    // typed verbatim into an environment file. The fused risk level is the same
+    // severity scale the overlay scores on, so it resolves through
+    // `zitiAiInsights.severities` (the page this one links to) rather than
+    // keeping a second copy that could drift.
+    identityIntelligence: {
+      // The heading is exactly the nav item, so it reuses `nav.items`.
+      subtitle:
+        'Cross-pillar identity risk fusion — logins, alerts, MFA, devices, breaches and the zero-trust overlay in one score',
+      resource: 'identity intelligence',
+      cards: {
+        atRisk: 'Identities at Risk',
+        openAlerts: 'Open Security Alerts',
+        mfaCoverage: 'MFA Coverage',
+        localAi: 'Local AI',
+        aiOnline: 'Online',
+        aiUnreachable: 'Unreachable',
+        aiOff: 'Off',
+        onPremises: 'on-premises',
+        aiOffHint: 'Set AI_ENABLED=true (Ollama etc.)',
+      },
+      briefing: {
+        title: 'Security Briefing',
+        desc: 'Generated from live facts {{clause}}',
+        clauseNarrated: 'and narrated by {{model}} running locally',
+        clauseTemplate: '(template mode — enable local AI for narrated briefings)',
+        generate: 'Generate Briefing',
+        generatedBy: 'Generated by {{by}} at {{when}}',
+        failed: 'Briefing Failed',
+      },
+      ask: {
+        title: 'Ask the Security Copilot',
+        descEnabled:
+          'Answers are grounded strictly on the current fused facts and computed by your local model — nothing leaves this deployment.',
+        descDisabled:
+          'Requires the local AI provider (AI_ENABLED=true with an on-prem OpenAI-compatible endpoint such as Ollama).',
+        placeholder: 'e.g. Which identities need attention first, and why?',
+        submit: 'Ask',
+        failed: 'Ask Failed',
+      },
+      risks: {
+        title: 'Highest-Risk Identities',
+        desc:
+          'Fused from login risk, open alerts, MFA enrollment, device trust, breach involvement and overlay anomalies',
+        colUser: 'User',
+        colScore: 'Score',
+        colLevel: 'Level',
+        colMfa: 'MFA',
+        colFriction: 'Friction',
+        colWhy: 'Why',
+        noMfa: 'none',
+        empty: 'No identities found',
+      },
+      // The authentication friction the fusion engine recommends for an
+      // identity (internal/intelligence.FrictionRecommendation).
+      frictions: {
+        low: 'low',
+        normal: 'normal',
+        strict: 'strict',
+      },
+    },
+    // Identity security posture (ISPM). The finding severity is rendered twice
+    // in different shapes — lowercase on a finding's own badge, title case in
+    // the Open Findings summary — so each shape gets its own map, both keyed
+    // off one wire-value list on the page and both pinned by test, so the
+    // membership cannot drift even though the casing legitimately differs. The
+    // check category resolves through the catalog with the raw value as the
+    // fallback, so a category the scanner adds later still reads as itself.
+    // A finding's title, description and affected-entity name are composed by
+    // the scanner and render as sent.
+    ispm: {
+      title: 'Identity Security Posture',
+      subtitle: "Monitor and improve your organization's identity security hygiene",
+      resource: 'the security posture dashboard',
+      scan: 'Run Scan',
+      scanning: 'Scanning...',
+      overallScore: 'Overall Posture Score',
+      categoryBreakdown: 'Category Breakdown',
+      openFindings: 'Open Findings',
+      total: 'Total',
+      trend: 'Score Trend',
+      severities: {
+        critical: 'critical',
+        high: 'high',
+        medium: 'medium',
+        low: 'low',
+      },
+      severityLabels: {
+        critical: 'Critical',
+        high: 'High',
+        medium: 'Medium',
+        low: 'Low',
+      },
+      categories: {
+        authentication: 'authentication',
+        authorization: 'authorization',
+        accounts: 'accounts',
+        compliance: 'compliance',
+      },
+      findings: {
+        title: 'Active Findings ({{n}})',
+        affected: 'Affected: <0>{{name}}</0> ({{type}})',
+        remediate: 'Auto-remediate',
+        dismiss: 'Dismiss',
+        empty: 'No open findings - your posture looks great!',
+      },
+      rules: {
+        title: 'Posture Check Rules ({{n}})',
+        enabled: 'Enabled',
+        disabled: 'Disabled',
+      },
+    },
   },
   pam: {
     remoteAppSecretHint:

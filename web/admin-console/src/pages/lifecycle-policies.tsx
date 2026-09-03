@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { api } from '../lib/api'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
@@ -46,16 +47,26 @@ interface AffectedUser {
   reason: string
 }
 
-const policyTypeLabels: Record<string, { label: string; description: string }> = {
-  stale_account_disable: { label: 'Stale Account Disable', description: 'Disable accounts that have not logged in recently' },
-  disabled_account_cleanup: { label: 'Disabled Account Cleanup', description: 'Delete accounts that have been disabled for a long time' },
-  orphan_detection: { label: 'Orphan Detection', description: 'Flag accounts with no group memberships and no recent activity' },
-  password_expiry_enforcement: { label: 'Password Expiry', description: 'Disable accounts with passwords older than threshold' },
-  scheduled_offboarding: { label: 'Scheduled Offboarding', description: 'Deactivate users at a specified future date' },
-}
+/**
+ * The policy types the service accepts, in the order the form offers them.
+ * The row badge and the create form both resolve their label from this one
+ * list, so the two cannot drift apart. (The map this replaced also carried
+ * a per-type description that nothing rendered.)
+ */
+const POLICY_TYPES = [
+  'stale_account_disable',
+  'disabled_account_cleanup',
+  'orphan_detection',
+  'password_expiry_enforcement',
+  'scheduled_offboarding',
+] as const
+
+/** The schedules the service accepts. */
+const SCHEDULES = ['daily', 'weekly', 'monthly'] as const
 
 export function LifecyclePoliciesPage() {
   const queryClient = useQueryClient()
+  const { t } = useTranslation()
   const [showCreate, setShowCreate] = useState(false)
   const [selectedPolicy, setSelectedPolicy] = useState<string | null>(null)
   const [previewData, setPreviewData] = useState<AffectedUser[] | null>(null)
@@ -130,7 +141,7 @@ export function LifecyclePoliciesPage() {
 
   if (isLoading) return <div className="flex justify-center py-12"><LoadingSpinner size="lg" /></div>
 
-  if (isError) return <QueryError error={error} resource="lifecycle policies" />
+  if (isError) return <QueryError error={error} resource={t('pages.lifecyclePolicies.resource')} />
 
   const policies = policiesData?.data || []
   const executions = executionsData?.data || []
@@ -139,53 +150,74 @@ export function LifecyclePoliciesPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Lifecycle Policies</h1>
-          <p className="text-muted-foreground">Automated de-provisioning and account lifecycle management</p>
+          <h1 className="text-2xl font-bold">{t('nav.items.lifecyclePolicies')}</h1>
+          <p className="text-muted-foreground">{t('pages.lifecyclePolicies.subtitle')}</p>
         </div>
         <Button onClick={() => setShowCreate(!showCreate)}>
-          <Plus className="h-4 w-4 mr-2" />{showCreate ? 'Cancel' : 'Create Policy'}
+          <Plus className="h-4 w-4 mr-2" />
+          {showCreate ? t('common.cancel') : t('pages.lifecyclePolicies.create')}
         </Button>
       </div>
 
       {/* Create Form */}
       {showCreate && (
         <Card>
-          <CardHeader><CardTitle>New Lifecycle Policy</CardTitle></CardHeader>
+          <CardHeader><CardTitle>{t('pages.lifecyclePolicies.form.title')}</CardTitle></CardHeader>
           <CardContent className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="text-sm font-medium">Name</label>
+                <label className="text-sm font-medium">
+                  {t('pages.lifecyclePolicies.form.name')}
+                </label>
                 <input className="w-full border rounded px-3 py-2 mt-1 text-sm" value={formName} onChange={e => setFormName(e.target.value)} />
               </div>
               <div>
-                <label className="text-sm font-medium">Policy Type</label>
+                <label className="text-sm font-medium">
+                  {t('pages.lifecyclePolicies.form.policyType')}
+                </label>
                 <select className="w-full border rounded px-3 py-2 mt-1 text-sm" value={formType} onChange={e => setFormType(e.target.value)}>
-                  {Object.entries(policyTypeLabels).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+                  {POLICY_TYPES.map((k) => (
+                    <option key={k} value={k}>
+                      {t(`pages.lifecyclePolicies.policyTypes.${k}`)}
+                    </option>
+                  ))}
                 </select>
               </div>
               <div>
-                <label className="text-sm font-medium">Threshold (days)</label>
+                <label className="text-sm font-medium">
+                  {t('pages.lifecyclePolicies.form.threshold')}
+                </label>
                 <input type="number" className="w-full border rounded px-3 py-2 mt-1 text-sm" value={formDays} onChange={e => setFormDays(Number(e.target.value))} />
               </div>
               <div>
-                <label className="text-sm font-medium">Schedule</label>
+                <label className="text-sm font-medium">
+                  {t('pages.lifecyclePolicies.form.schedule')}
+                </label>
                 <select className="w-full border rounded px-3 py-2 mt-1 text-sm" value={formSchedule} onChange={e => setFormSchedule(e.target.value)}>
-                  <option value="daily">Daily</option>
-                  <option value="weekly">Weekly</option>
-                  <option value="monthly">Monthly</option>
+                  {SCHEDULES.map((s) => (
+                    <option key={s} value={s}>
+                      {t(`pages.lifecyclePolicies.schedules.${s}`)}
+                    </option>
+                  ))}
                 </select>
               </div>
               <div>
-                <label className="text-sm font-medium">Grace Period (days)</label>
+                <label className="text-sm font-medium">
+                  {t('pages.lifecyclePolicies.form.gracePeriod')}
+                </label>
                 <input type="number" className="w-full border rounded px-3 py-2 mt-1 text-sm" value={formGrace} onChange={e => setFormGrace(Number(e.target.value))} />
               </div>
             </div>
             <div>
-              <label className="text-sm font-medium">Description</label>
+              <label className="text-sm font-medium">
+                {t('pages.lifecyclePolicies.form.description')}
+              </label>
               <textarea className="w-full border rounded px-3 py-2 mt-1 text-sm h-16" value={formDesc} onChange={e => setFormDesc(e.target.value)} />
             </div>
             <Button onClick={handleCreate} disabled={!formName || createMutation.isPending}>
-              {createMutation.isPending ? 'Creating...' : 'Create Policy'}
+              {createMutation.isPending
+                ? t('pages.lifecyclePolicies.creating')
+                : t('pages.lifecyclePolicies.create')}
             </Button>
           </CardContent>
         </Card>
@@ -193,7 +225,9 @@ export function LifecyclePoliciesPage() {
 
       {/* Policy List */}
       <Card>
-        <CardHeader><CardTitle className="flex items-center gap-2"><UserMinus className="h-5 w-5" />Policies ({policies.length})</CardTitle></CardHeader>
+        <CardHeader><CardTitle className="flex items-center gap-2"><UserMinus className="h-5 w-5" />
+          {t('pages.lifecyclePolicies.list.title', { n: policies.length })}
+        </CardTitle></CardHeader>
         <CardContent>
           <div className="divide-y">
             {policies.map(p => (
@@ -202,42 +236,74 @@ export function LifecyclePoliciesPage() {
                   <div className="flex-1 cursor-pointer" onClick={() => setSelectedPolicy(selectedPolicy === p.id ? null : p.id)}>
                     <div className="flex items-center gap-2">
                       <p className="font-medium text-sm">{p.name}</p>
-                      <Badge variant="outline">{policyTypeLabels[p.policy_type]?.label || p.policy_type}</Badge>
-                      <Badge variant={p.enabled ? 'default' : 'secondary'}>{p.enabled ? 'Enabled' : 'Disabled'}</Badge>
+                      <Badge variant="outline">
+                        {t(`pages.lifecyclePolicies.policyTypes.${p.policy_type}`, {
+                          defaultValue: p.policy_type,
+                        })}
+                      </Badge>
+                      <Badge variant={p.enabled ? 'default' : 'secondary'}>
+                        {p.enabled
+                          ? t('pages.lifecyclePolicies.list.enabled')
+                          : t('pages.lifecyclePolicies.list.disabled')}
+                      </Badge>
                     </div>
                     <p className="text-xs text-muted-foreground mt-0.5">{p.description}</p>
                     <div className="flex gap-4 text-xs text-muted-foreground mt-1">
-                      <span>Schedule: {p.schedule}</span>
-                      <span>Grace: {p.grace_period_days}d</span>
-                      {p.last_run_at && <span>Last run: {new Date(p.last_run_at).toLocaleString()}</span>}
+                      <span>
+                        {t('pages.lifecyclePolicies.list.schedule', {
+                          schedule: t(`pages.lifecyclePolicies.schedules.${p.schedule}`, {
+                            defaultValue: p.schedule,
+                          }),
+                        })}
+                      </span>
+                      <span>{t('pages.lifecyclePolicies.list.grace', { days: p.grace_period_days })}</span>
+                      {p.last_run_at && (
+                        <span>
+                          {t('pages.lifecyclePolicies.list.lastRun', {
+                            when: new Date(p.last_run_at).toLocaleString(),
+                          })}
+                        </span>
+                      )}
                     </div>
                   </div>
                   <div className="flex gap-2 ml-4">
                     <Button size="sm" variant="outline" onClick={() => toggleMutation.mutate({ id: p.id, enabled: !p.enabled })}>
-                      {p.enabled ? 'Disable' : 'Enable'}
+                      {p.enabled
+                        ? t('pages.lifecyclePolicies.list.disable')
+                        : t('pages.lifecyclePolicies.list.enable')}
                     </Button>
                     <Button size="sm" variant="outline" onClick={() => { setSelectedPolicy(p.id); executeMutation.mutate({ id: p.id, dry_run: true }); }}>
-                      <Eye className="h-3 w-3 mr-1" />Preview
+                      <Eye className="h-3 w-3 mr-1" />
+                      {t('pages.lifecyclePolicies.list.preview')}
                     </Button>
                     <ConfirmAction
-                      title="Run this lifecycle policy for real?"
-                      description={`This executes "${p.name}" against live accounts (not a preview). Matching users will be ${p.policy_type === 'disabled_account_cleanup' ? 'permanently deleted' : 'disabled'} according to the policy actions. This affects real users and cannot be undone — use Preview first to review who is affected.`}
+                      title={t('pages.lifecyclePolicies.runConfirm.title')}
+                      description={t('pages.lifecyclePolicies.runConfirm.description', {
+                        name: p.name,
+                        clause:
+                          p.policy_type === 'disabled_account_cleanup'
+                            ? t('pages.lifecyclePolicies.runConfirm.clauseDelete')
+                            : t('pages.lifecyclePolicies.runConfirm.clauseDisable'),
+                      })}
                       destructive
                       requireReason
-                      confirmLabel="Run Now"
+                      confirmLabel={t('pages.lifecyclePolicies.runConfirm.confirm')}
                       onConfirm={() => executeMutation.mutateAsync({ id: p.id, dry_run: false })}
                     >
                       {(open) => (
                         <Button size="sm" onClick={open}>
-                          <Play className="h-3 w-3 mr-1" />Run
+                          <Play className="h-3 w-3 mr-1" />
+                          {t('pages.lifecyclePolicies.list.run')}
                         </Button>
                       )}
                     </ConfirmAction>
                     <ConfirmAction
-                      title="Delete this lifecycle policy?"
-                      description={`This permanently removes the "${p.name}" lifecycle policy and its schedule. Existing execution history is retained, but the policy will no longer run.`}
+                      title={t('pages.lifecyclePolicies.deleteConfirm.title')}
+                      description={t('pages.lifecyclePolicies.deleteConfirm.description', {
+                        name: p.name,
+                      })}
                       destructive
-                      confirmLabel="Delete"
+                      confirmLabel={t('common.delete')}
                       onConfirm={() => deleteMutation.mutateAsync(p.id)}
                     >
                       {(open) => (
@@ -250,7 +316,11 @@ export function LifecyclePoliciesPage() {
                 </div>
               </div>
             ))}
-            {policies.length === 0 && <p className="py-8 text-center text-muted-foreground">No lifecycle policies configured</p>}
+            {policies.length === 0 && (
+              <p className="py-8 text-center text-muted-foreground">
+                {t('pages.lifecyclePolicies.list.empty')}
+              </p>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -260,8 +330,12 @@ export function LifecyclePoliciesPage() {
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center justify-between">
-              <span>Preview: {previewData.length} Users Affected</span>
-              <Button variant="ghost" size="sm" onClick={() => setPreviewData(null)}>Close</Button>
+              <span>
+                {t('pages.lifecyclePolicies.preview.title', { count: previewData.length })}
+              </span>
+              <Button variant="ghost" size="sm" onClick={() => setPreviewData(null)}>
+                {t('common.close')}
+              </Button>
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -273,7 +347,12 @@ export function LifecyclePoliciesPage() {
                     <p className="text-xs text-muted-foreground">{u.email}</p>
                   </div>
                   <div className="text-right">
-                    <Badge variant={u.enabled ? 'default' : 'secondary'}>{u.enabled ? 'Active' : 'Disabled'}</Badge>
+                    <Badge variant={u.enabled ? 'default' : 'secondary'}>
+                      {u.enabled
+                        ? t('pages.lifecyclePolicies.preview.active')
+                        : t('pages.lifecyclePolicies.preview.disabled')}
+                    </Badge>
+                    {/* The reason is composed by the policy engine. */}
                     <p className="text-xs text-muted-foreground mt-0.5">{u.reason}</p>
                   </div>
                 </div>
@@ -286,7 +365,9 @@ export function LifecyclePoliciesPage() {
       {/* Execution History */}
       {selectedPolicy && executions.length > 0 && (
         <Card>
-          <CardHeader><CardTitle className="flex items-center gap-2"><Clock className="h-5 w-5" />Execution History</CardTitle></CardHeader>
+          <CardHeader><CardTitle className="flex items-center gap-2"><Clock className="h-5 w-5" />
+          {t('pages.lifecyclePolicies.history.title')}
+        </CardTitle></CardHeader>
           <CardContent>
             <div className="divide-y">
               {executions.map(e => (
@@ -295,11 +376,17 @@ export function LifecyclePoliciesPage() {
                     <div className="flex items-center gap-2">
                       {e.status === 'completed' ? <CheckCircle className="h-4 w-4 text-green-600" /> : <AlertTriangle className="h-4 w-4 text-yellow-600" />}
                       <span className="text-sm">{new Date(e.started_at).toLocaleString()}</span>
-                      <Badge className={e.status === 'completed' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}>{e.status}</Badge>
+                      <Badge className={e.status === 'completed' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}>
+                        {t(`pages.lifecyclePolicies.executionStatuses.${e.status}`, {
+                          defaultValue: e.status,
+                        })}
+                      </Badge>
                     </div>
                     <div className="text-sm text-right">
-                      <span>{e.users_affected} affected</span>
-                      <span className="text-muted-foreground ml-2">/ {e.users_scanned} scanned</span>
+                      <span>{t('pages.lifecyclePolicies.history.affected', { n: e.users_affected })}</span>
+                      <span className="text-muted-foreground ml-2">
+                        {t('pages.lifecyclePolicies.history.scanned', { n: e.users_scanned })}
+                      </span>
                     </div>
                   </div>
                 </div>

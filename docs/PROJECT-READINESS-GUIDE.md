@@ -21,7 +21,7 @@ security, access, sessions, devices, trusted browsers, notifications,
 access requests, profile — are fully bilingual; the end-user experience
 is complete in both languages). Open: P1 rollout Task 16 (operator
 action), P3.1 cut v1.28.0 (post-merge), the remaining P4 items incl.
-the 19 remaining admin page bodies and the Expo-vs-Flutter mobile pick.)
+the 15 remaining admin page bodies and the Expo-vs-Flutter mobile pick.)
 **Question this document answers:** *Is OpenIDX fully functional and well defined end to end, as experienced by the people who use it — and what are the next steps and controls to get it there?*
 
 This is the product-and-user-side companion to
@@ -815,11 +815,38 @@ all four pillars, deploy, log in, and find PAM.
    translated label would name something the filter cannot find), the three
    audit sources (product names), byte-size unit symbols, and the `org-slug`
    example that teaches the characters the field accepts.
-   *Remaining:* 19 other admin page bodies (a measured count, not an
+   Batch 22 took the Compliance Posture dashboard, Lifecycle Policies,
+   Identity Intelligence and the Identity Security Posture (ISPM) dashboard —
+   the four screens that score the deployment and act on that score. Two of
+   them put a number inside a sentence, and each does it the way its own
+   locale needs: the compliance score's weight list keeps the weights in one
+   const array on the page and interpolates them into a line the catalog owns,
+   so Turkish can write `(%25)` where English writes `(25%)` and neither
+   locale can mistype the number; ISPM's severity renders lowercase on a
+   finding's own badge and title case in the Open Findings summary, so it gets
+   the batch-20 two-map treatment off one wire list, with a test asserting the
+   two casings name the same set. Lifecycle Policies replaced a module-level
+   map that had frozen five policy-type labels at import time (and carried a
+   per-type description nothing rendered) with one wire-value list the row
+   badge and the create form both resolve through, and its "run this for real"
+   confirmation now names the consequence through its own clause key, so a
+   locale inflects "permanently deleted" with the sentence around it instead
+   of receiving it as a dropped-in adjective. Identity Intelligence reuses the
+   overlay's severity scale from `zitiAiInsights` rather than copying it — the
+   two pages link to each other and score the same fusion — and draws the raw
+   line where an operator matches text against the deployment: the briefing
+   the local model narrates, each identity's reason strings, the model's own
+   name, and the `AI_ENABLED=true` line typed verbatim into an environment
+   file. ISPM's dismissal reason is likewise sent as written, because it is
+   stored on the finding for whoever reads it next, not shown back to the
+   operator who clicked. One latent bug surfaced on the way: the ISPM trend
+   chart named its map variable `t`, which would have shadowed the translate
+   function; it is now `point`.
+   *Remaining:* 15 other admin page bodies (a measured count, not an
    estimate: pages under `src/pages` with no `useTranslation`) — mechanical,
    batch by batch, against this pattern. The largest of them are
-   `compliance-dashboard.tsx` (321 lines), `lifecycle-policies.tsx` (313),
-   `ai-identity-intelligence.tsx` (307) and `ispm-dashboard.tsx` (297).
+   `ai-recommendations.tsx` (292 lines), `device-authorization.tsx` (289),
+   `email-templates.tsx` (276) and `error-catalog.tsx` (272).
 2. Accessibility pass to a VPAT (needs real assistive-technology testing,
    not just an automated axe sweep).
 3. Separate/hardened end-user portal bundle.
