@@ -21,7 +21,7 @@ security, access, sessions, devices, trusted browsers, notifications,
 access requests, profile — are fully bilingual; the end-user experience
 is complete in both languages). Open: P1 rollout Task 16 (operator
 action), P3.1 cut v1.28.0 (post-merge), the remaining P4 items incl.
-the 47 remaining admin page bodies and the Expo-vs-Flutter mobile pick.)
+the 43 remaining admin page bodies and the Expo-vs-Flutter mobile pick.)
 **Question this document answers:** *Is OpenIDX fully functional and well defined end to end, as experienced by the people who use it — and what are the next steps and controls to get it there?*
 
 This is the product-and-user-side companion to
@@ -695,9 +695,30 @@ all four pillars, deploy, log in, and find PAM.
    and request-type vocabularies resolve through the catalog with a raw
    fallback, its badges became components so they re-resolve on a language
    switch, and one more `en-US`-pinned date now follows the browser locale.
-   *Remaining:* 44 other admin page bodies (a measured count, not an
+   *And the day-to-day Ziti operations console:* the Ziti Network page —
+   4,100 lines and by some margin the largest in the product — is now fully
+   localized across all six of its tabs. Connection, overview and services;
+   the identity roster with its enrolment JWTs and attribute sync; the nine
+   sections of the Security tab (active sessions, configurations, auth
+   policies, terminators, service policies, edge-router policies, posture
+   checks, the per-identity posture viewer and certificates); the policy-sync
+   panel; the Remote Access tab; and the temporary access-link manager that
+   issues time-limited vendor URLs. Two conventions did the work here. The
+   *explain service* dialog is composed entirely by the backend's explain
+   endpoint — the summary and every hop's title, detail, fix and technical
+   line — so it renders as sent, exactly as Network Setup does, with a
+   comment saying why; only the dialog title and its loading state are client
+   strings. And the controller's own vocabularies (posture check types,
+   severities) resolve *through* the catalog with a raw fallback, with the
+   select options driven off one constant so the badge and the form cannot
+   drift apart. What stays raw is what would break if translated: protocol
+   acronyms, and the sample values that teach a format (`10.0.0.5`,
+   `admin@company.com`, attribute lists like `#engineering, #vpn-users`).
+   *Remaining:* 43 other admin page bodies (a measured count, not an
    estimate: pages under `src/pages` with no `useTranslation`) — mechanical,
-   batch by batch, against this pattern.
+   batch by batch, against this pattern. The largest of them are
+   `notification-admin.tsx` (745 lines), `user-access-360.tsx` (730),
+   `oauth-playground.tsx` (695) and `lifecycle-workflows.tsx` (631).
 2. Accessibility pass to a VPAT (needs real assistive-technology testing,
    not just an automated axe sweep).
 3. Separate/hardened end-user portal bundle.
