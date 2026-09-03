@@ -425,14 +425,14 @@ export function CertificationCampaignsPage() {
               <Input value={newCampaign.name} onChange={(e) => setNewCampaign(prev => ({ ...prev, name: e.target.value }))} placeholder={t('pages.certCampaigns.createDialog.namePlaceholder')} required />
             </div>
             <div className="space-y-2">
-              <Label>{t('pages.certCampaigns.createDialog.description')}</Label>
-              <Textarea value={newCampaign.description} onChange={(e) => setNewCampaign(prev => ({ ...prev, description: e.target.value }))} rows={2} />
+              <Label htmlFor="certification-campaigns-description">{t('pages.certCampaigns.createDialog.description')}</Label>
+              <Textarea id="certification-campaigns-description" value={newCampaign.description} onChange={(e) => setNewCampaign(prev => ({ ...prev, description: e.target.value }))} rows={2} />
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>{t('pages.certCampaigns.createDialog.reviewType')}</Label>
+                <Label htmlFor="certification-campaigns-review-type">{t('pages.certCampaigns.createDialog.reviewType')}</Label>
                 <Select value={newCampaign.type} onValueChange={(val) => setNewCampaign(prev => ({ ...prev, type: val }))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger id="certification-campaigns-review-type"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="user_access">{t('pages.certCampaigns.createDialog.typeUserAccess')}</SelectItem>
                     <SelectItem value="role_assignment">{t('pages.certCampaigns.createDialog.typeRoleAssignment')}</SelectItem>
@@ -442,9 +442,9 @@ export function CertificationCampaignsPage() {
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label>{t('pages.certCampaigns.createDialog.schedule')}</Label>
+                <Label htmlFor="certification-campaigns-schedule">{t('pages.certCampaigns.createDialog.schedule')}</Label>
                 <Select value={newCampaign.schedule} onValueChange={(val) => setNewCampaign(prev => ({ ...prev, schedule: val }))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger id="certification-campaigns-schedule"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="once">{t('pages.certCampaigns.schedules.once')}</SelectItem>
                     <SelectItem value="quarterly">{t('pages.certCampaigns.schedules.quarterly')}</SelectItem>
@@ -456,9 +456,9 @@ export function CertificationCampaignsPage() {
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>{t('pages.certCampaigns.createDialog.reviewerStrategy')}</Label>
+                <Label htmlFor="certification-campaigns-reviewer-strategy">{t('pages.certCampaigns.createDialog.reviewerStrategy')}</Label>
                 <Select value={newCampaign.reviewer_strategy} onValueChange={(val) => setNewCampaign(prev => ({ ...prev, reviewer_strategy: val }))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger id="certification-campaigns-reviewer-strategy"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="manager">{t('pages.certCampaigns.createDialog.strategyManager')}</SelectItem>
                     <SelectItem value="app_owner">{t('pages.certCampaigns.createDialog.strategyAppOwner')}</SelectItem>
@@ -468,8 +468,8 @@ export function CertificationCampaignsPage() {
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label>{t('pages.certCampaigns.createDialog.duration')}</Label>
-                <Input type="number" value={newCampaign.duration_days} onChange={(e) => setNewCampaign(prev => ({ ...prev, duration_days: parseInt(e.target.value) || 30 }))} min={1} />
+                <Label htmlFor="certification-campaigns-duration">{t('pages.certCampaigns.createDialog.duration')}</Label>
+                <Input id="certification-campaigns-duration" type="number" value={newCampaign.duration_days} onChange={(e) => setNewCampaign(prev => ({ ...prev, duration_days: parseInt(e.target.value) || 30 }))} min={1} />
               </div>
             </div>
             <div className="flex items-center gap-4">
@@ -479,8 +479,8 @@ export function CertificationCampaignsPage() {
               </div>
               {newCampaign.auto_revoke && (
                 <div className="flex items-center gap-2">
-                  <Label>{t('pages.certCampaigns.createDialog.gracePeriod')}</Label>
-                  <Input type="number" value={newCampaign.grace_period_days} onChange={(e) => setNewCampaign(prev => ({ ...prev, grace_period_days: parseInt(e.target.value) || 7 }))} className="w-20" min={0} />
+                  <Label htmlFor="certification-campaigns-grace-period">{t('pages.certCampaigns.createDialog.gracePeriod')}</Label>
+                  <Input id="certification-campaigns-grace-period" type="number" value={newCampaign.grace_period_days} onChange={(e) => setNewCampaign(prev => ({ ...prev, grace_period_days: parseInt(e.target.value) || 7 }))} className="w-20" min={0} />
                   <span className="text-sm text-muted-foreground">{t('pages.certCampaigns.createDialog.days')}</span>
                 </div>
               )}

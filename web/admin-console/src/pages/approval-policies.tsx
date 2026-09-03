@@ -190,9 +190,9 @@ export function ApprovalPoliciesPage() {
               <Input value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} placeholder={t('pages.approvalPolicies.dialog.namePlaceholder')} />
             </div>
             <div>
-              <label className="text-sm font-medium">{t('pages.approvalPolicies.dialog.resourceType')}</label>
+              <label htmlFor="approval-policies-resource-type" className="text-sm font-medium">{t('pages.approvalPolicies.dialog.resourceType')}</label>
               <Select value={form.resource_type} onValueChange={v => setForm(p => ({ ...p, resource_type: v }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger id="approval-policies-resource-type"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="role">{t('pages.approvalPolicies.dialog.typeRole')}</SelectItem>
                   <SelectItem value="group">{t('pages.approvalPolicies.dialog.typeGroup')}</SelectItem>
@@ -201,13 +201,13 @@ export function ApprovalPoliciesPage() {
               </Select>
             </div>
             <div>
-              <label className="text-sm font-medium">{t('pages.approvalPolicies.dialog.maxWaitHours')}</label>
-              <Input type="number" value={form.max_wait_hours}
+              <label htmlFor="approval-policies-max-wait-hours" className="text-sm font-medium">{t('pages.approvalPolicies.dialog.maxWaitHours')}</label>
+              <Input id="approval-policies-max-wait-hours" type="number" value={form.max_wait_hours}
                 onChange={e => setForm(p => ({ ...p, max_wait_hours: parseInt(e.target.value) || 72 }))} />
             </div>
             <div>
-              <label className="text-sm font-medium">{t('pages.approvalPolicies.dialog.steps')}</label>
-              <textarea className="w-full rounded-md border p-2 font-mono text-sm" rows={4}
+              <label htmlFor="approval-policies-steps" className="text-sm font-medium">{t('pages.approvalPolicies.dialog.steps')}</label>
+              <textarea id="approval-policies-steps" className="w-full rounded-md border p-2 font-mono text-sm" rows={4}
                 value={form.approval_steps}
                 onChange={e => setForm(p => ({ ...p, approval_steps: e.target.value }))} />
               <p className="text-xs text-muted-foreground mt-1">

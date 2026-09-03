@@ -693,7 +693,7 @@ export function DirectoriesPage() {
                   <FieldError path="name" />
                 </div>
                 <div className="space-y-2">
-                  <Label>{t('pages.directories.fields.type')}</Label>
+                  <Label htmlFor="directories-type">{t('pages.directories.fields.type')}</Label>
                   <Select
                     value={formData.type}
                     onValueChange={(v) => {
@@ -701,7 +701,7 @@ export function DirectoriesPage() {
                       setFormData({ ...formData, type: v, config: { ...formData.config, attribute_mapping: mapping } })
                     }}
                   >
-                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectTrigger id="directories-type"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="ldap">{t('pages.directories.fields.typeLdap')}</SelectItem>
                       <SelectItem value="active_directory">{t('pages.directories.fields.typeAd')}</SelectItem>
@@ -770,8 +770,8 @@ export function DirectoriesPage() {
                       <FieldError path="config.host" />
                     </div>
                     <div className="space-y-2">
-                      <Label>{t('pages.directories.fields.port')}</Label>
-                      <Input
+                      <Label htmlFor="directories-port">{t('pages.directories.fields.port')}</Label>
+                      <Input id="directories-port"
                         type="number"
                         value={formData.config.port}
                         onChange={(e) => setFormData({
@@ -784,34 +784,34 @@ export function DirectoriesPage() {
 
                   <div className="flex items-center gap-6">
                     <div className="flex items-center space-x-2">
-                      <Switch
+                      <Switch id="directories-ldaps"
                         checked={formData.config.use_tls}
                         onCheckedChange={(v) => setFormData({
                           ...formData,
                           config: { ...formData.config, use_tls: v, port: v ? 636 : 389 },
                         })}
                       />
-                      <Label>{t('pages.directories.fields.ldaps')}</Label>
+                      <Label htmlFor="directories-ldaps">{t('pages.directories.fields.ldaps')}</Label>
                     </div>
                     <div className="flex items-center space-x-2">
-                      <Switch
+                      <Switch id="directories-start-tls"
                         checked={formData.config.start_tls}
                         onCheckedChange={(v) => setFormData({
                           ...formData,
                           config: { ...formData.config, start_tls: v },
                         })}
                       />
-                      <Label>{t('pages.directories.fields.startTls')}</Label>
+                      <Label htmlFor="directories-start-tls">{t('pages.directories.fields.startTls')}</Label>
                     </div>
                     <div className="flex items-center space-x-2">
-                      <Switch
+                      <Switch id="directories-skip-tls-verify"
                         checked={formData.config.skip_tls_verify}
                         onCheckedChange={(v) => setFormData({
                           ...formData,
                           config: { ...formData.config, skip_tls_verify: v },
                         })}
                       />
-                      <Label>{t('pages.directories.fields.skipTlsVerify')}</Label>
+                      <Label htmlFor="directories-skip-tls-verify">{t('pages.directories.fields.skipTlsVerify')}</Label>
                     </div>
                   </div>
 
@@ -845,11 +845,11 @@ export function DirectoriesPage() {
               )}
 
               <div className="flex items-center space-x-2">
-                <Switch
+                <Switch id="directories-enabled"
                   checked={formData.enabled}
                   onCheckedChange={(v) => setFormData({ ...formData, enabled: v })}
                 />
-                <Label>{t('pages.directories.enabled')}</Label>
+                <Label htmlFor="directories-enabled">{t('pages.directories.enabled')}</Label>
               </div>
             </div>
           )}
@@ -926,8 +926,8 @@ export function DirectoriesPage() {
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <Label>{t('pages.directories.fields.userFilter')}</Label>
-                      <Input
+                      <Label htmlFor="directories-user-filter">{t('pages.directories.fields.userFilter')}</Label>
+                      <Input id="directories-user-filter"
                         value={formData.config.user_filter}
                         onChange={(e) => setFormData({
                           ...formData,
@@ -937,8 +937,8 @@ export function DirectoriesPage() {
                       <FieldError path="config.user_filter" />
                     </div>
                     <div className="space-y-2">
-                      <Label>{t('pages.directories.fields.groupFilter')}</Label>
-                      <Input
+                      <Label htmlFor="directories-group-filter">{t('pages.directories.fields.groupFilter')}</Label>
+                      <Input id="directories-group-filter"
                         value={formData.config.group_filter}
                         onChange={(e) => setFormData({
                           ...formData,
@@ -949,8 +949,8 @@ export function DirectoriesPage() {
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <Label>{t('pages.directories.fields.memberAttribute')}</Label>
-                      <Input
+                      <Label htmlFor="directories-member-attribute">{t('pages.directories.fields.memberAttribute')}</Label>
+                      <Input id="directories-member-attribute"
                         value={formData.config.member_attribute}
                         onChange={(e) => setFormData({
                           ...formData,
@@ -959,8 +959,8 @@ export function DirectoriesPage() {
                       />
                     </div>
                     <div className="space-y-2">
-                      <Label>{t('pages.directories.fields.pageSize')}</Label>
-                      <Input
+                      <Label htmlFor="directories-page-size">{t('pages.directories.fields.pageSize')}</Label>
+                      <Input id="directories-page-size"
                         type="number"
                         value={formData.config.page_size}
                         onChange={(e) => setFormData({
@@ -986,9 +986,10 @@ export function DirectoriesPage() {
               {(['username', 'email', 'first_name', 'last_name', 'display_name', 'group_name'] as const).map(
                 (field) => (
                   <div key={field} className="grid grid-cols-2 gap-4 items-start">
-                    <Label className="mt-2">{t(`pages.directories.mapping.${field}`)}</Label>
+                    <Label htmlFor={`directories-mapping-${field}`} className="mt-2">{t(`pages.directories.mapping.${field}`)}</Label>
                     <div>
                       <Input
+                        id={`directories-mapping-${field}`}
                         value={formData.config.attribute_mapping[field]}
                         onChange={(e) =>
                           setFormData({
@@ -1015,18 +1016,18 @@ export function DirectoriesPage() {
           {activeTab === 'sync' && (
             <div className="space-y-4">
               <div className="flex items-center space-x-2">
-                <Switch
+                <Switch id="directories-enable-scheduled"
                   checked={formData.config.sync_enabled}
                   onCheckedChange={(v) => setFormData({
                     ...formData,
                     config: { ...formData.config, sync_enabled: v },
                   })}
                 />
-                <Label>{t('pages.directories.sync.enableScheduled')}</Label>
+                <Label htmlFor="directories-enable-scheduled">{t('pages.directories.sync.enableScheduled')}</Label>
               </div>
               <div className="space-y-2">
-                <Label>{t('pages.directories.sync.interval')}</Label>
-                <Input
+                <Label htmlFor="directories-interval">{t('pages.directories.sync.interval')}</Label>
+                <Input id="directories-interval"
                   type="number"
                   value={formData.config.sync_interval}
                   onChange={(e) => setFormData({
@@ -1037,7 +1038,7 @@ export function DirectoriesPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label>{t('pages.directories.sync.deprovision')}</Label>
+                <Label htmlFor="directories-deprovision">{t('pages.directories.sync.deprovision')}</Label>
                 <Select
                   value={formData.config.deprovision_action}
                   onValueChange={(v) => setFormData({
@@ -1045,7 +1046,7 @@ export function DirectoriesPage() {
                     config: { ...formData.config, deprovision_action: v },
                   })}
                 >
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger id="directories-deprovision"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="disable">{t('pages.directories.sync.disableAccount')}</SelectItem>
                     <SelectItem value="delete">{t('pages.directories.sync.deleteAccount')}</SelectItem>

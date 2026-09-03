@@ -160,31 +160,31 @@ export function EmailTemplatesPage() {
                   value={branding.header_text} onChange={e => setBranding({ ...branding, header_text: e.target.value })} />
               </div>
               <div>
-                <label className="text-sm font-medium">
+                <label id="email-templates-primary-color-label" className="text-sm font-medium">
                   {t('pages.emailTemplates.branding.primaryColor')}
                 </label>
                 <div className="flex gap-2 mt-1">
-                  <input type="color" value={branding.primary_color} onChange={e => setBranding({ ...branding, primary_color: e.target.value })} />
-                  <input className="flex-1 border rounded px-3 py-2 text-sm" value={branding.primary_color}
+                  <input aria-labelledby="email-templates-primary-color-label" type="color" value={branding.primary_color} onChange={e => setBranding({ ...branding, primary_color: e.target.value })} />
+                  <input aria-labelledby="email-templates-primary-color-label" className="flex-1 border rounded px-3 py-2 text-sm" value={branding.primary_color}
                     onChange={e => setBranding({ ...branding, primary_color: e.target.value })} />
                 </div>
               </div>
               <div>
-                <label className="text-sm font-medium">
+                <label id="email-templates-accent-color-label" className="text-sm font-medium">
                   {t('pages.emailTemplates.branding.accentColor')}
                 </label>
                 <div className="flex gap-2 mt-1">
-                  <input type="color" value={branding.accent_color} onChange={e => setBranding({ ...branding, accent_color: e.target.value })} />
-                  <input className="flex-1 border rounded px-3 py-2 text-sm" value={branding.accent_color}
+                  <input aria-labelledby="email-templates-accent-color-label" type="color" value={branding.accent_color} onChange={e => setBranding({ ...branding, accent_color: e.target.value })} />
+                  <input aria-labelledby="email-templates-accent-color-label" className="flex-1 border rounded px-3 py-2 text-sm" value={branding.accent_color}
                     onChange={e => setBranding({ ...branding, accent_color: e.target.value })} />
                 </div>
               </div>
             </div>
             <div>
-              <label className="text-sm font-medium">
+              <label htmlFor="email-templates-footer-text" className="text-sm font-medium">
                 {t('pages.emailTemplates.branding.footerText')}
               </label>
-              <textarea className="w-full border rounded px-3 py-2 mt-1 text-sm h-16"
+              <textarea id="email-templates-footer-text" className="w-full border rounded px-3 py-2 mt-1 text-sm h-16"
                 value={branding.footer_text} onChange={e => setBranding({ ...branding, footer_text: e.target.value })} />
             </div>
             <Button onClick={() => brandingMutation.mutate(branding)} disabled={brandingMutation.isPending}>
@@ -270,10 +270,10 @@ export function EmailTemplatesPage() {
             {selectedTemplate ? (
               <div className="space-y-4">
                 <div>
-                  <label className="text-sm font-medium">
+                  <label htmlFor="email-templates-subject" className="text-sm font-medium">
                     {t('pages.emailTemplates.editor.subject')}
                   </label>
-                  <input className="w-full border rounded px-3 py-2 mt-1 text-sm"
+                  <input id="email-templates-subject" className="w-full border rounded px-3 py-2 mt-1 text-sm"
                     value={editSubject} onChange={e => setEditSubject(e.target.value)} />
                 </div>
 
@@ -295,18 +295,18 @@ export function EmailTemplatesPage() {
                 )}
 
                 <div>
-                  <label className="text-sm font-medium">
+                  <label htmlFor="email-templates-html-body" className="text-sm font-medium">
                     {t('pages.emailTemplates.editor.htmlBody')}
                   </label>
-                  <textarea className="w-full border rounded px-3 py-2 mt-1 text-sm font-mono h-48"
+                  <textarea id="email-templates-html-body" className="w-full border rounded px-3 py-2 mt-1 text-sm font-mono h-48"
                     value={editHtml} onChange={e => setEditHtml(e.target.value)} />
                 </div>
 
                 <div>
-                  <label className="text-sm font-medium">
+                  <label htmlFor="email-templates-text-body" className="text-sm font-medium">
                     {t('pages.emailTemplates.editor.textBody')}
                   </label>
-                  <textarea className="w-full border rounded px-3 py-2 mt-1 text-sm font-mono h-24"
+                  <textarea id="email-templates-text-body" className="w-full border rounded px-3 py-2 mt-1 text-sm font-mono h-24"
                     value={editText} onChange={e => setEditText(e.target.value)} />
                 </div>
 

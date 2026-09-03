@@ -450,14 +450,14 @@ export function LifecycleWorkflowsPage() {
               <Input value={newWorkflow.name} onChange={(e) => setNewWorkflow(prev => ({ ...prev, name: e.target.value }))} placeholder={t('pages.lifecycleWorkflows.form.namePlaceholder')} required />
             </div>
             <div className="space-y-2">
-              <Label>{t('pages.lifecycleWorkflows.form.description')}</Label>
-              <Textarea value={newWorkflow.description} onChange={(e) => setNewWorkflow(prev => ({ ...prev, description: e.target.value }))} rows={2} />
+              <Label htmlFor="lifecycle-workflows-description">{t('pages.lifecycleWorkflows.form.description')}</Label>
+              <Textarea id="lifecycle-workflows-description" value={newWorkflow.description} onChange={(e) => setNewWorkflow(prev => ({ ...prev, description: e.target.value }))} rows={2} />
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>{t('pages.lifecycleWorkflows.form.eventType')}</Label>
+                <Label htmlFor="lifecycle-workflows-event-type">{t('pages.lifecycleWorkflows.form.eventType')}</Label>
                 <Select value={newWorkflow.event_type} onValueChange={(val) => setNewWorkflow(prev => ({ ...prev, event_type: val }))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger id="lifecycle-workflows-event-type"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {EVENT_TYPES.map(evt => (
                       <SelectItem key={evt} value={evt}>{t(`pages.lifecycleWorkflows.events.${evt}`)}</SelectItem>
@@ -466,9 +466,9 @@ export function LifecycleWorkflowsPage() {
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label>{t('pages.lifecycleWorkflows.form.trigger')}</Label>
+                <Label htmlFor="lifecycle-workflows-trigger">{t('pages.lifecycleWorkflows.form.trigger')}</Label>
                 <Select value={newWorkflow.trigger_type} onValueChange={(val) => setNewWorkflow(prev => ({ ...prev, trigger_type: val }))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger id="lifecycle-workflows-trigger"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {TRIGGER_TYPES.map(tt => (
                       <SelectItem key={tt} value={tt}>{t(`pages.lifecycleWorkflows.triggers.${tt}`)}</SelectItem>

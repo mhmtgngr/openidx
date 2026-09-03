@@ -340,23 +340,23 @@ export function SettingsPage() {
               <CardContent className="space-y-4">
                 <div className="grid gap-4 md:grid-cols-2">
                   <div className="space-y-2">
-                    <label className="text-sm font-medium">{t('pages.settings.general.orgName')}</label>
-                    <Input
+                    <label htmlFor="settings-org-name" className="text-sm font-medium">{t('pages.settings.general.orgName')}</label>
+                    <Input id="settings-org-name"
                       value={formData.general.organization_name}
                       onChange={(e) => updateGeneral('organization_name', e.target.value)}
                     />
                   </div>
                   <div className="space-y-2">
-                    <label className="text-sm font-medium">{t('pages.settings.general.supportEmail')}</label>
-                    <Input
+                    <label htmlFor="settings-support-email" className="text-sm font-medium">{t('pages.settings.general.supportEmail')}</label>
+                    <Input id="settings-support-email"
                       type="email"
                       value={formData.general.support_email}
                       onChange={(e) => updateGeneral('support_email', e.target.value)}
                     />
                   </div>
                   <div className="space-y-2">
-                    <label className="text-sm font-medium">{t('pages.settings.general.defaultLanguage')}</label>
-                    <select
+                    <label htmlFor="settings-default-language" className="text-sm font-medium">{t('pages.settings.general.defaultLanguage')}</label>
+                    <select id="settings-default-language"
                       value={formData.general.default_language}
                       onChange={(e) => updateGeneral('default_language', e.target.value)}
                       className="w-full border rounded-md px-3 py-2"
@@ -369,8 +369,8 @@ export function SettingsPage() {
                     </select>
                   </div>
                   <div className="space-y-2">
-                    <label className="text-sm font-medium">{t('pages.settings.general.defaultTimezone')}</label>
-                    <select
+                    <label htmlFor="settings-default-timezone" className="text-sm font-medium">{t('pages.settings.general.defaultTimezone')}</label>
+                    <select id="settings-default-timezone"
                       value={formData.general.default_timezone}
                       onChange={(e) => updateGeneral('default_timezone', e.target.value)}
                       className="w-full border rounded-md px-3 py-2"
@@ -400,8 +400,8 @@ export function SettingsPage() {
                 <CardContent className="space-y-4">
                   <div className="grid gap-4 md:grid-cols-2">
                     <div className="space-y-2">
-                      <label className="text-sm font-medium">{t('pages.settings.password.minLength')}</label>
-                      <Input
+                      <label htmlFor="settings-min-length" className="text-sm font-medium">{t('pages.settings.password.minLength')}</label>
+                      <Input id="settings-min-length"
                         type="number"
                         min={8}
                         max={32}
@@ -410,8 +410,8 @@ export function SettingsPage() {
                       />
                     </div>
                     <div className="space-y-2">
-                      <label className="text-sm font-medium">{t('pages.settings.password.maxAge')}</label>
-                      <Input
+                      <label htmlFor="settings-max-age" className="text-sm font-medium">{t('pages.settings.password.maxAge')}</label>
+                      <Input id="settings-max-age"
                         type="number"
                         min={0}
                         max={365}
@@ -420,8 +420,8 @@ export function SettingsPage() {
                       />
                     </div>
                     <div className="space-y-2">
-                      <label className="text-sm font-medium">{t('pages.settings.password.history')}</label>
-                      <Input
+                      <label htmlFor="settings-history" className="text-sm font-medium">{t('pages.settings.password.history')}</label>
+                      <Input id="settings-history"
                         type="number"
                         min={0}
                         max={24}
@@ -479,8 +479,8 @@ export function SettingsPage() {
                 <CardContent className="space-y-4">
                   <div className="grid gap-4 md:grid-cols-3">
                     <div className="space-y-2">
-                      <label className="text-sm font-medium">{t('pages.settings.session.sessionTimeout')}</label>
-                      <Input
+                      <label htmlFor="settings-session-timeout" className="text-sm font-medium">{t('pages.settings.session.sessionTimeout')}</label>
+                      <Input id="settings-session-timeout"
                         type="number"
                         min={5}
                         max={1440}
@@ -489,8 +489,8 @@ export function SettingsPage() {
                       />
                     </div>
                     <div className="space-y-2">
-                      <label className="text-sm font-medium">{t('pages.settings.session.maxFailedLogins')}</label>
-                      <Input
+                      <label htmlFor="settings-max-failed-logins" className="text-sm font-medium">{t('pages.settings.session.maxFailedLogins')}</label>
+                      <Input id="settings-max-failed-logins"
                         type="number"
                         min={1}
                         max={20}
@@ -499,8 +499,8 @@ export function SettingsPage() {
                       />
                     </div>
                     <div className="space-y-2">
-                      <label className="text-sm font-medium">{t('pages.settings.session.lockoutDuration')}</label>
-                      <Input
+                      <label htmlFor="settings-lockout-duration" className="text-sm font-medium">{t('pages.settings.session.lockoutDuration')}</label>
+                      <Input id="settings-lockout-duration"
                         type="number"
                         min={1}
                         max={1440}
@@ -529,8 +529,8 @@ export function SettingsPage() {
                 <CardContent className="space-y-4">
                   <div className="grid gap-4 md:grid-cols-3">
                     <div className="space-y-2">
-                      <label className="text-sm font-medium">{t('pages.settings.sessionPolicies.idleTimeout')}</label>
-                      <Input
+                      <label htmlFor="settings-idle-timeout" className="text-sm font-medium">{t('pages.settings.sessionPolicies.idleTimeout')}</label>
+                      <Input id="settings-idle-timeout"
                         type="number"
                         min={0}
                         max={86400}
@@ -540,8 +540,8 @@ export function SettingsPage() {
                       <p className="text-xs text-muted-foreground">{t('pages.settings.sessionPolicies.idleHint')}</p>
                     </div>
                     <div className="space-y-2">
-                      <label className="text-sm font-medium">{t('pages.settings.sessionPolicies.absoluteTimeout')}</label>
-                      <Input
+                      <label htmlFor="settings-absolute-timeout" className="text-sm font-medium">{t('pages.settings.sessionPolicies.absoluteTimeout')}</label>
+                      <Input id="settings-absolute-timeout"
                         type="number"
                         min={0}
                         max={604800}
@@ -551,8 +551,8 @@ export function SettingsPage() {
                       <p className="text-xs text-muted-foreground">{t('pages.settings.sessionPolicies.absoluteHint')}</p>
                     </div>
                     <div className="space-y-2">
-                      <label className="text-sm font-medium">{t('pages.settings.sessionPolicies.rememberMe')}</label>
-                      <Input
+                      <label htmlFor="settings-remember-me" className="text-sm font-medium">{t('pages.settings.sessionPolicies.rememberMe')}</label>
+                      <Input id="settings-remember-me"
                         type="number"
                         min={0}
                         max={7776000}
@@ -564,8 +564,8 @@ export function SettingsPage() {
                   </div>
                   <div className="grid gap-4 md:grid-cols-2">
                     <div className="space-y-2">
-                      <label className="text-sm font-medium">{t('pages.settings.sessionPolicies.maxConcurrent')}</label>
-                      <Input
+                      <label htmlFor="settings-max-concurrent" className="text-sm font-medium">{t('pages.settings.sessionPolicies.maxConcurrent')}</label>
+                      <Input id="settings-max-concurrent"
                         type="number"
                         min={0}
                         max={100}
@@ -575,8 +575,8 @@ export function SettingsPage() {
                       <p className="text-xs text-muted-foreground">{t('pages.settings.sessionPolicies.maxConcurrentHint')}</p>
                     </div>
                     <div className="space-y-2">
-                      <label className="text-sm font-medium">{t('pages.settings.sessionPolicies.strategy')}</label>
-                      <select
+                      <label htmlFor="settings-strategy" className="text-sm font-medium">{t('pages.settings.sessionPolicies.strategy')}</label>
+                      <select id="settings-strategy"
                         className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                         value={formData.security.concurrent_session_strategy ?? 'deny_new'}
                         onChange={(e) => updateSecurity('concurrent_session_strategy', e.target.value)}
@@ -861,8 +861,8 @@ export function SettingsPage() {
                   </label>
 
                   <div className="space-y-2">
-                    <label className="text-sm font-medium">{t('pages.settings.sms.provider')}</label>
-                    <select
+                    <label htmlFor="settings-provider" className="text-sm font-medium">{t('pages.settings.sms.provider')}</label>
+                    <select id="settings-provider"
                       value={smsFormData.provider}
                       onChange={(e) => setSmsFormData({
                         ...smsFormData,
@@ -923,8 +923,8 @@ export function SettingsPage() {
                 <CardContent>
                   <div className="grid gap-4 md:grid-cols-3">
                     <div className="space-y-2">
-                      <label className="text-sm font-medium">{t('pages.settings.sms.codeLength')}</label>
-                      <select
+                      <label htmlFor="settings-code-length" className="text-sm font-medium">{t('pages.settings.sms.codeLength')}</label>
+                      <select id="settings-code-length"
                         value={smsFormData.otp_length}
                         onChange={(e) => setSmsFormData({ ...smsFormData, otp_length: parseInt(e.target.value) })}
                         className="w-full border rounded-md px-3 py-2"
@@ -935,8 +935,8 @@ export function SettingsPage() {
                       </select>
                     </div>
                     <div className="space-y-2">
-                      <label className="text-sm font-medium">{t('pages.settings.sms.expiry')}</label>
-                      <Input
+                      <label htmlFor="settings-expiry" className="text-sm font-medium">{t('pages.settings.sms.expiry')}</label>
+                      <Input id="settings-expiry"
                         type="number"
                         min={60}
                         max={600}
@@ -951,8 +951,8 @@ export function SettingsPage() {
                       </p>
                     </div>
                     <div className="space-y-2">
-                      <label className="text-sm font-medium">{t('pages.settings.sms.maxAttempts')}</label>
-                      <Input
+                      <label htmlFor="settings-max-attempts" className="text-sm font-medium">{t('pages.settings.sms.maxAttempts')}</label>
+                      <Input id="settings-max-attempts"
                         type="number"
                         min={1}
                         max={10}
@@ -1033,30 +1033,30 @@ export function SettingsPage() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <label className="text-sm font-medium">{t('pages.settings.branding.primaryColor')}</label>
+                    <label id="settings-primary-color-label" className="text-sm font-medium">{t('pages.settings.branding.primaryColor')}</label>
                     <div className="flex gap-2">
-                      <input
+                      <input aria-labelledby="settings-primary-color-label"
                         type="color"
                         value={formData.branding.primary_color}
                         onChange={(e) => updateBranding('primary_color', e.target.value)}
                         className="h-10 w-14 rounded border cursor-pointer"
                       />
-                      <Input
+                      <Input aria-labelledby="settings-primary-color-label"
                         value={formData.branding.primary_color}
                         onChange={(e) => updateBranding('primary_color', e.target.value)}
                       />
                     </div>
                   </div>
                   <div className="space-y-2">
-                    <label className="text-sm font-medium">{t('pages.settings.branding.secondaryColor')}</label>
+                    <label id="settings-secondary-color-label" className="text-sm font-medium">{t('pages.settings.branding.secondaryColor')}</label>
                     <div className="flex gap-2">
-                      <input
+                      <input aria-labelledby="settings-secondary-color-label"
                         type="color"
                         value={formData.branding.secondary_color}
                         onChange={(e) => updateBranding('secondary_color', e.target.value)}
                         className="h-10 w-14 rounded border cursor-pointer"
                       />
-                      <Input
+                      <Input aria-labelledby="settings-secondary-color-label"
                         value={formData.branding.secondary_color}
                         onChange={(e) => updateBranding('secondary_color', e.target.value)}
                       />
@@ -1064,15 +1064,15 @@ export function SettingsPage() {
                   </div>
                 </div>
                 <div className="space-y-2">
-                  <label className="text-sm font-medium">{t('pages.settings.branding.loginTitle')}</label>
-                  <Input
+                  <label htmlFor="settings-login-title" className="text-sm font-medium">{t('pages.settings.branding.loginTitle')}</label>
+                  <Input id="settings-login-title"
                     value={formData.branding.login_page_title}
                     onChange={(e) => updateBranding('login_page_title', e.target.value)}
                   />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-sm font-medium">{t('pages.settings.branding.loginMessage')}</label>
-                  <textarea
+                  <label htmlFor="settings-login-message" className="text-sm font-medium">{t('pages.settings.branding.loginMessage')}</label>
+                  <textarea id="settings-login-message"
                     value={formData.branding.login_page_message}
                     onChange={(e) => updateBranding('login_page_message', e.target.value)}
                     className="w-full border rounded-md px-3 py-2 min-h-[80px]"

@@ -551,9 +551,9 @@ export function ABACPoliciesPage() {
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>{t('pages.abacPolicies.dialog.resourceType')}</Label>
+                <Label htmlFor="abac-policies-resource-type">{t('pages.abacPolicies.dialog.resourceType')}</Label>
                 <Select value={formResourceType} onValueChange={setFormResourceType}>
-                  <SelectTrigger>
+                  <SelectTrigger id="abac-policies-resource-type">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -574,9 +574,9 @@ export function ABACPoliciesPage() {
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>{t('pages.abacPolicies.dialog.effect')}</Label>
+                <Label htmlFor="abac-policies-effect">{t('pages.abacPolicies.dialog.effect')}</Label>
                 <Select value={formEffect} onValueChange={setFormEffect}>
-                  <SelectTrigger>
+                  <SelectTrigger id="abac-policies-effect">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -586,8 +586,8 @@ export function ABACPoliciesPage() {
                 </Select>
               </div>
               <div className="flex items-center gap-3 pt-6">
-                <Switch checked={formEnabled} onCheckedChange={setFormEnabled} />
-                <Label>{t('pages.abacPolicies.dialog.enabled')}</Label>
+                <Switch id="abac-policies-enabled" checked={formEnabled} onCheckedChange={setFormEnabled} />
+                <Label htmlFor="abac-policies-enabled">{t('pages.abacPolicies.dialog.enabled')}</Label>
               </div>
             </div>
 
@@ -698,9 +698,9 @@ export function ABACPoliciesPage() {
           <div className="space-y-4 py-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>{t('pages.abacPolicies.dialog.resourceType')}</Label>
+                <Label htmlFor="abac-policies-resource-type-2">{t('pages.abacPolicies.dialog.resourceType')}</Label>
                 <Select value={testResourceType} onValueChange={setTestResourceType}>
-                  <SelectTrigger>
+                  <SelectTrigger id="abac-policies-resource-type-2">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -720,8 +720,8 @@ export function ABACPoliciesPage() {
               </div>
             </div>
             <div className="space-y-2">
-              <Label>{t('pages.abacPolicies.test.attributes')}</Label>
-              <Textarea
+              <Label htmlFor="abac-policies-attributes">{t('pages.abacPolicies.test.attributes')}</Label>
+              <Textarea id="abac-policies-attributes"
                 className="font-mono text-sm"
                 rows={6}
                 value={testAttributes}

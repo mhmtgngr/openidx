@@ -812,9 +812,9 @@ function RouteForm({
           />
         </div>
         <div className="space-y-2">
-          <Label>{t('pages.proxyRoutes.form.routeType')}</Label>
+          <Label htmlFor="proxy-routes-route-type">{t('pages.proxyRoutes.form.routeType')}</Label>
           <Select value={formData.route_type} onValueChange={(value) => setFormData({ ...formData, route_type: value })}>
-            <SelectTrigger className="w-full">
+            <SelectTrigger id="proxy-routes-route-type" className="w-full">
               <SelectValue placeholder={t('pages.proxyRoutes.form.routeTypePlaceholder')} />
             </SelectTrigger>
             <SelectContent>
@@ -857,9 +857,9 @@ function RouteForm({
       </div>
 
       <div className="space-y-2">
-        <Label>{t('pages.proxyRoutes.form.hostingMode')}</Label>
+        <Label htmlFor="proxy-routes-hosting-mode">{t('pages.proxyRoutes.form.hostingMode')}</Label>
         <Select value={formData.hosting_mode} onValueChange={(value) => setFormData({ ...formData, hosting_mode: value })}>
-          <SelectTrigger className="w-full">
+          <SelectTrigger id="proxy-routes-hosting-mode" className="w-full">
             <SelectValue placeholder={t('pages.proxyRoutes.form.hostingModePlaceholder')} />
           </SelectTrigger>
           <SelectContent>
@@ -974,8 +974,8 @@ function RouteForm({
             />
           </div>
           <div className="space-y-2">
-            <Label>{t('pages.proxyRoutes.form.maxRisk')}</Label>
-            <Input
+            <Label htmlFor="proxy-routes-max-risk">{t('pages.proxyRoutes.form.maxRisk')}</Label>
+            <Input id="proxy-routes-max-risk"
               type="number"
               value={formData.max_risk_score}
               onChange={(e) => setFormData({ ...formData, max_risk_score: parseInt(e.target.value) || 100 })}
@@ -998,24 +998,24 @@ function RouteForm({
 
       <div className="grid grid-cols-3 gap-4">
         <div className="space-y-2">
-          <Label>{t('pages.proxyRoutes.form.idleTimeout')}</Label>
-          <Input
+          <Label htmlFor="proxy-routes-idle-timeout">{t('pages.proxyRoutes.form.idleTimeout')}</Label>
+          <Input id="proxy-routes-idle-timeout"
             type="number"
             value={formData.idle_timeout}
             onChange={(e) => setFormData({ ...formData, idle_timeout: parseInt(e.target.value) || 900 })}
           />
         </div>
         <div className="space-y-2">
-          <Label>{t('pages.proxyRoutes.form.absTimeout')}</Label>
-          <Input
+          <Label htmlFor="proxy-routes-abs-timeout">{t('pages.proxyRoutes.form.absTimeout')}</Label>
+          <Input id="proxy-routes-abs-timeout"
             type="number"
             value={formData.absolute_timeout}
             onChange={(e) => setFormData({ ...formData, absolute_timeout: parseInt(e.target.value) || 43200 })}
           />
         </div>
         <div className="space-y-2">
-          <Label>{t('pages.proxyRoutes.form.priority')}</Label>
-          <Input
+          <Label htmlFor="proxy-routes-priority">{t('pages.proxyRoutes.form.priority')}</Label>
+          <Input id="proxy-routes-priority"
             type="number"
             value={formData.priority}
             onChange={(e) => setFormData({ ...formData, priority: parseInt(e.target.value) || 0 })}

@@ -451,8 +451,8 @@ export function RiskPoliciesPage() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label>{t('pages.riskPolicies.dialog.priority')}</Label>
-                  <Input
+                  <Label htmlFor="risk-policies-priority">{t('pages.riskPolicies.dialog.priority')}</Label>
+                  <Input id="risk-policies-priority"
                     type="number"
                     value={formData.priority || 100}
                     onChange={(e) => setFormData({ ...formData, priority: parseInt(e.target.value) })}
@@ -663,7 +663,7 @@ export function RiskPoliciesPage() {
               </div>
 
               <div className="space-y-2">
-                <Label>{t('pages.riskPolicies.dialog.logLevel')}</Label>
+                <Label htmlFor="risk-policies-log-level">{t('pages.riskPolicies.dialog.logLevel')}</Label>
                 <Select
                   value={formData.actions?.log_level || 'info'}
                   onValueChange={(value) => setFormData({
@@ -671,7 +671,7 @@ export function RiskPoliciesPage() {
                     actions: { ...formData.actions!, log_level: value }
                   })}
                 >
-                  <SelectTrigger>
+                  <SelectTrigger id="risk-policies-log-level">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -724,8 +724,8 @@ export function RiskPoliciesPage() {
               </div>
             </div>
             <div className="space-y-2">
-              <Label>{t('pages.riskPolicies.testDialog.userAgent')}</Label>
-              <Input
+              <Label htmlFor="risk-policies-user-agent">{t('pages.riskPolicies.testDialog.userAgent')}</Label>
+              <Input id="risk-policies-user-agent"
                 value={testForm.user_agent}
                 onChange={(e) => setTestForm({ ...testForm, user_agent: e.target.value })}
               />

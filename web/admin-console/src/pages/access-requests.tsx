@@ -524,9 +524,9 @@ export function AccessRequestsPage() {
                 value={newReq.justification} onChange={e => setNewReq(p => ({ ...p, justification: e.target.value }))} />
             </div>
             <div>
-              <label className="text-sm font-medium">{t('pages.accessRequests.create.priorityLabel')}</label>
+              <label htmlFor="access-requests-priority-label" className="text-sm font-medium">{t('pages.accessRequests.create.priorityLabel')}</label>
               <Select value={newReq.priority} onValueChange={v => setNewReq(p => ({ ...p, priority: v }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger id="access-requests-priority-label"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="low">{t('pages.accessRequests.create.priorities.low')}</SelectItem>
                   <SelectItem value="normal">{t('pages.accessRequests.create.priorities.normal')}</SelectItem>

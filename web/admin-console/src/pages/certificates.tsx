@@ -319,12 +319,12 @@ export function CertificatesPage() {
               <p className="text-sm text-muted-foreground">{t('pages.certificates.platform.uploadDesc')}</p>
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
-                  <label className="text-sm font-medium mb-1 block">{t('pages.certificates.platform.certFile')}</label>
-                  <Input ref={certFileRef} type="file" accept=".pem,.crt,.cer" />
+                  <label htmlFor="certificates-cert-file" className="text-sm font-medium mb-1 block">{t('pages.certificates.platform.certFile')}</label>
+                  <Input id="certificates-cert-file" ref={certFileRef} type="file" accept=".pem,.crt,.cer" />
                 </div>
                 <div>
-                  <label className="text-sm font-medium mb-1 block">{t('pages.certificates.platform.keyFile')}</label>
-                  <Input ref={keyFileRef} type="file" accept=".pem,.key" />
+                  <label htmlFor="certificates-key-file" className="text-sm font-medium mb-1 block">{t('pages.certificates.platform.keyFile')}</label>
+                  <Input id="certificates-key-file" ref={keyFileRef} type="file" accept=".pem,.key" />
                 </div>
               </div>
               <div className="flex gap-2">

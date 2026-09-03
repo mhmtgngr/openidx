@@ -221,16 +221,16 @@ export function AuditArchivalPage() {
               <CardContent className="space-y-4">
                 <div className="grid grid-cols-3 gap-4">
                   <div>
-                    <label className="text-sm font-medium">
+                    <label htmlFor="audit-archival-name" className="text-sm font-medium">
                       {t('pages.auditArchival.retention.name')}
                     </label>
-                    <input className="w-full border rounded px-3 py-2 mt-1 text-sm" value={retName} onChange={e => setRetName(e.target.value)} />
+                    <input id="audit-archival-name" className="w-full border rounded px-3 py-2 mt-1 text-sm" value={retName} onChange={e => setRetName(e.target.value)} />
                   </div>
                   <div>
-                    <label className="text-sm font-medium">
+                    <label htmlFor="audit-archival-category" className="text-sm font-medium">
                       {t('pages.auditArchival.retention.category')}
                     </label>
-                    <select className="w-full border rounded px-3 py-2 mt-1 text-sm" value={retCategory} onChange={e => setRetCategory(e.target.value)}>
+                    <select id="audit-archival-category" className="w-full border rounded px-3 py-2 mt-1 text-sm" value={retCategory} onChange={e => setRetCategory(e.target.value)}>
                       {EVENT_CATEGORIES.map(category => (
                         <option key={category} value={category}>
                           {t(`pages.auditArchival.retention.categoryOptions.${category}`)}
@@ -239,10 +239,10 @@ export function AuditArchivalPage() {
                     </select>
                   </div>
                   <div>
-                    <label className="text-sm font-medium">
+                    <label htmlFor="audit-archival-days" className="text-sm font-medium">
                       {t('pages.auditArchival.retention.days')}
                     </label>
-                    <input type="number" className="w-full border rounded px-3 py-2 mt-1 text-sm" value={retDays} onChange={e => setRetDays(Number(e.target.value))} />
+                    <input id="audit-archival-days" type="number" className="w-full border rounded px-3 py-2 mt-1 text-sm" value={retDays} onChange={e => setRetDays(Number(e.target.value))} />
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -345,22 +345,22 @@ export function AuditArchivalPage() {
               <CardContent className="space-y-4">
                 <div className="grid grid-cols-3 gap-4">
                   <div>
-                    <label className="text-sm font-medium">
+                    <label htmlFor="audit-archival-name-2" className="text-sm font-medium">
                       {t('pages.auditArchival.archives.name')}
                     </label>
-                    <input className="w-full border rounded px-3 py-2 mt-1 text-sm" value={arcName} onChange={e => setArcName(e.target.value)} />
+                    <input id="audit-archival-name-2" className="w-full border rounded px-3 py-2 mt-1 text-sm" value={arcName} onChange={e => setArcName(e.target.value)} />
                   </div>
                   <div>
-                    <label className="text-sm font-medium">
+                    <label htmlFor="audit-archival-start-date" className="text-sm font-medium">
                       {t('pages.auditArchival.archives.startDate')}
                     </label>
-                    <input type="datetime-local" className="w-full border rounded px-3 py-2 mt-1 text-sm" value={arcStart} onChange={e => setArcStart(e.target.value)} />
+                    <input id="audit-archival-start-date" type="datetime-local" className="w-full border rounded px-3 py-2 mt-1 text-sm" value={arcStart} onChange={e => setArcStart(e.target.value)} />
                   </div>
                   <div>
-                    <label className="text-sm font-medium">
+                    <label htmlFor="audit-archival-end-date" className="text-sm font-medium">
                       {t('pages.auditArchival.archives.endDate')}
                     </label>
-                    <input type="datetime-local" className="w-full border rounded px-3 py-2 mt-1 text-sm" value={arcEnd} onChange={e => setArcEnd(e.target.value)} />
+                    <input id="audit-archival-end-date" type="datetime-local" className="w-full border rounded px-3 py-2 mt-1 text-sm" value={arcEnd} onChange={e => setArcEnd(e.target.value)} />
                   </div>
                 </div>
                 <Button onClick={() => createArchiveMutation.mutate({

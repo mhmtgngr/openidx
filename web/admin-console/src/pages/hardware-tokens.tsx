@@ -406,12 +406,12 @@ export function HardwareTokensPage() {
               />
             </div>
             <div className="space-y-2">
-              <Label>{t('pages.hardwareTokens.createDialog.type')}</Label>
+              <Label htmlFor="hardware-tokens-type">{t('pages.hardwareTokens.createDialog.type')}</Label>
               <Select
                 value={newToken.token_type}
                 onValueChange={(v) => setNewToken({ ...newToken, token_type: v })}
               >
-                <SelectTrigger>
+                <SelectTrigger id="hardware-tokens-type">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>

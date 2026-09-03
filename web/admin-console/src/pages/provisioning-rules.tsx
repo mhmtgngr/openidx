@@ -283,9 +283,9 @@ export function ProvisioningRulesPage() {
         />
       </div>
       <div>
-        <Label>{t('pages.provisioningRules.form.trigger')}</Label>
+        <Label htmlFor="provisioning-rules-trigger">{t('pages.provisioningRules.form.trigger')}</Label>
         <Select value={formData.trigger} onValueChange={(v) => setFormData({ ...formData, trigger: v })}>
-          <SelectTrigger>
+          <SelectTrigger id="provisioning-rules-trigger">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -305,11 +305,11 @@ export function ProvisioningRulesPage() {
         />
       </div>
       <div className="flex items-center gap-2">
-        <Switch
+        <Switch id="provisioning-rules-enabled"
           checked={formData.enabled}
           onCheckedChange={(checked) => setFormData({ ...formData, enabled: checked })}
         />
-        <Label>{t('pages.provisioningRules.form.enabled')}</Label>
+        <Label htmlFor="provisioning-rules-enabled">{t('pages.provisioningRules.form.enabled')}</Label>
       </div>
 
       {/* Conditions */}

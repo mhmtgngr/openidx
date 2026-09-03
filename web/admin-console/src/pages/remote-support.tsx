@@ -691,8 +691,8 @@ function StartSessionDialog({ onClose, onStarted }: StartSessionDialogProps) {
         </DialogHeader>
         <div className="space-y-4">
           <div>
-            <label className="text-sm font-medium">{t('pages.remoteSupport.startDialog.target')}</label>
-            <select
+            <label htmlFor="remote-support-target" className="text-sm font-medium">{t('pages.remoteSupport.startDialog.target')}</label>
+            <select id="remote-support-target"
               value={agentId}
               onChange={(e) => setAgentId(e.target.value)}
               className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
@@ -728,8 +728,8 @@ function StartSessionDialog({ onClose, onStarted }: StartSessionDialogProps) {
             </div>
           </div>
           <div>
-            <label className="text-sm font-medium">{t('pages.remoteSupport.startDialog.mode')}</label>
-            <select
+            <label htmlFor="remote-support-mode" className="text-sm font-medium">{t('pages.remoteSupport.startDialog.mode')}</label>
+            <select id="remote-support-mode"
               value={mode}
               onChange={(e) => setMode(e.target.value as 'interactive' | 'view')}
               className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
@@ -739,8 +739,8 @@ function StartSessionDialog({ onClose, onStarted }: StartSessionDialogProps) {
             </select>
           </div>
           <div>
-            <label className="text-sm font-medium">{t('pages.remoteSupport.startDialog.connection')}</label>
-            <select
+            <label htmlFor="remote-support-connection" className="text-sm font-medium">{t('pages.remoteSupport.startDialog.connection')}</label>
+            <select id="remote-support-connection"
               value={transport}
               onChange={(e) => setTransport(e.target.value as '' | 'webrtc' | 'relay')}
               className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"

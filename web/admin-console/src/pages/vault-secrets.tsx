@@ -278,9 +278,9 @@ export function VaultSecretsPage() {
                 />
               </div>
               <div>
-                <label className="text-sm font-medium">{t('pages.vaultSecrets.create.type')}</label>
+                <label htmlFor="vault-secrets-type" className="text-sm font-medium">{t('pages.vaultSecrets.create.type')}</label>
                 <Select value={formType} onValueChange={setFormType}>
-                  <SelectTrigger className="mt-1">
+                  <SelectTrigger id="vault-secrets-type" className="mt-1">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -818,9 +818,9 @@ export function VaultSecretsPage() {
           </DialogHeader>
           <div className="space-y-4">
             <div>
-              <label className="text-sm font-medium">{t('pages.vaultSecrets.grantDialog.principalType')}</label>
+              <label htmlFor="vault-secrets-principal-type" className="text-sm font-medium">{t('pages.vaultSecrets.grantDialog.principalType')}</label>
               <Select value={grantPrincipalType} onValueChange={setGrantPrincipalType}>
-                <SelectTrigger className="mt-1">
+                <SelectTrigger id="vault-secrets-principal-type" className="mt-1">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -833,8 +833,8 @@ export function VaultSecretsPage() {
               </Select>
             </div>
             <div>
-              <label className="text-sm font-medium">{t('pages.vaultSecrets.grantDialog.principalId')}</label>
-              <Input
+              <label htmlFor="vault-secrets-principal-id" className="text-sm font-medium">{t('pages.vaultSecrets.grantDialog.principalId')}</label>
+              <Input id="vault-secrets-principal-id"
                 className="mt-1"
                 value={grantPrincipalId}
                 onChange={(e) => setGrantPrincipalId(e.target.value)}
@@ -860,8 +860,8 @@ export function VaultSecretsPage() {
               </div>
             </div>
             <div>
-              <label className="text-sm font-medium">{t('pages.vaultSecrets.grantDialog.expiresAt')}</label>
-              <Input
+              <label htmlFor="vault-secrets-expires-at" className="text-sm font-medium">{t('pages.vaultSecrets.grantDialog.expiresAt')}</label>
+              <Input id="vault-secrets-expires-at"
                 type="datetime-local"
                 className="mt-1"
                 value={grantExpiresAt}

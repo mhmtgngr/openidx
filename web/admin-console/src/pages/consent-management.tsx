@@ -186,9 +186,9 @@ function UserConsentsTab() {
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3">
-        <Label className="text-sm font-medium">{t('pages.consentManagement.consents.filterLabel')}</Label>
+        <Label htmlFor="consent-management-filter-label" className="text-sm font-medium">{t('pages.consentManagement.consents.filterLabel')}</Label>
         <Select value={filterType} onValueChange={setFilterType}>
-          <SelectTrigger className="w-48">
+          <SelectTrigger id="consent-management-filter-label" className="w-48">
             <SelectValue placeholder={t('pages.consentManagement.consents.allTypesPlaceholder')} />
           </SelectTrigger>
           <SelectContent>
@@ -407,7 +407,7 @@ function DSARsTab() {
             <div className="space-y-2">
               <Label htmlFor="dsar-type">{t('pages.consentManagement.dsars.requestType')}</Label>
               <Select value={formType} onValueChange={setFormType}>
-                <SelectTrigger>
+                <SelectTrigger id="dsar-type">
                   <SelectValue placeholder={t('pages.consentManagement.dsars.typePlaceholder')} />
                 </SelectTrigger>
                 <SelectContent>
@@ -636,7 +636,7 @@ function RetentionPoliciesTab() {
             <div className="space-y-2">
               <Label htmlFor="retention-action">{t('pages.consentManagement.retention.actionLabel')}</Label>
               <Select value={formAction} onValueChange={setFormAction}>
-                <SelectTrigger>
+                <SelectTrigger id="retention-action">
                   <SelectValue placeholder={t('pages.consentManagement.retention.actionPlaceholder')} />
                 </SelectTrigger>
                 <SelectContent>
@@ -796,7 +796,7 @@ function ImpactAssessmentsTab() {
             <div className="space-y-2">
               <Label htmlFor="assessment-risk">{t('pages.consentManagement.assessments.riskLevel')}</Label>
               <Select value={formRiskLevel} onValueChange={setFormRiskLevel}>
-                <SelectTrigger>
+                <SelectTrigger id="assessment-risk">
                   <SelectValue placeholder={t('pages.consentManagement.assessments.riskPlaceholder')} />
                 </SelectTrigger>
                 <SelectContent>

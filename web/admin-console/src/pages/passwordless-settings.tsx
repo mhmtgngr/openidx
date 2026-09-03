@@ -389,8 +389,8 @@ export function PasswordlessSettingsPage() {
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label>{t('pages.passwordless.editDialog.magicExpiry')}</Label>
-              <Input
+              <Label htmlFor="passwordless-settings-magic-expiry">{t('pages.passwordless.editDialog.magicExpiry')}</Label>
+              <Input id="passwordless-settings-magic-expiry"
                 type="number"
                 value={editSettings.magic_link_expiry_minutes}
                 onChange={(e) => setEditSettings({
@@ -404,8 +404,8 @@ export function PasswordlessSettingsPage() {
             </div>
 
             <div className="space-y-2">
-              <Label>{t('pages.passwordless.editDialog.qrExpiry')}</Label>
-              <Input
+              <Label htmlFor="passwordless-settings-qr-expiry">{t('pages.passwordless.editDialog.qrExpiry')}</Label>
+              <Input id="passwordless-settings-qr-expiry"
                 type="number"
                 value={editSettings.qr_session_expiry_minutes}
                 onChange={(e) => setEditSettings({
@@ -419,8 +419,8 @@ export function PasswordlessSettingsPage() {
             </div>
 
             <div className="space-y-2">
-              <Label>{t('pages.passwordless.editDialog.maxLinks')}</Label>
-              <Input
+              <Label htmlFor="passwordless-settings-max-links">{t('pages.passwordless.editDialog.maxLinks')}</Label>
+              <Input id="passwordless-settings-max-links"
                 type="number"
                 value={editSettings.max_magic_links_per_hour}
                 onChange={(e) => setEditSettings({
@@ -435,10 +435,10 @@ export function PasswordlessSettingsPage() {
 
             <div className="flex items-center justify-between">
               <div>
-                <Label>{t('pages.passwordless.editDialog.deviceTrust')}</Label>
+                <Label htmlFor="passwordless-settings-device-trust">{t('pages.passwordless.editDialog.deviceTrust')}</Label>
                 <p className="text-xs text-muted-foreground">{t('pages.passwordless.editDialog.deviceTrustHint')}</p>
               </div>
-              <Switch
+              <Switch id="passwordless-settings-device-trust"
                 checked={editSettings.require_device_trust}
                 onCheckedChange={(checked) => setEditSettings({
                   ...editSettings,

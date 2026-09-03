@@ -586,7 +586,7 @@ export function ApplicationsPage() {
             <div className="space-y-2">
               <Label htmlFor="type">{t('pages.applications.registerDialog.typeLabel')}</Label>
               <Select value={formData.type} onValueChange={(value) => setFormData(prev => ({ ...prev, type: value }))}>
-                <SelectTrigger className="w-full">
+                <SelectTrigger id="type" className="w-full">
                   <SelectValue placeholder={t('pages.applications.registerDialog.typePlaceholder')} />
                 </SelectTrigger>
                 <SelectContent>

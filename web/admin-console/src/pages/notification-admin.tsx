@@ -337,8 +337,8 @@ export function NotificationAdminPage() {
                   </div>
                 </div>
                 <div>
-                  <label className="text-sm font-medium">{t('pages.notificationAdmin.routing.priority')}</label>
-                  <input
+                  <label htmlFor="notification-admin-priority" className="text-sm font-medium">{t('pages.notificationAdmin.routing.priority')}</label>
+                  <input id="notification-admin-priority"
                     type="number"
                     className="w-32 mt-1 px-3 py-2 border rounded-md text-sm"
                     value={ruleForm.priority}
@@ -488,8 +488,8 @@ export function NotificationAdminPage() {
                 </div>
                 <div className="grid grid-cols-3 gap-4">
                   <div>
-                    <label className="text-sm font-medium">{t('pages.notificationAdmin.broadcasts.channel')}</label>
-                    <select
+                    <label htmlFor="notification-admin-channel" className="text-sm font-medium">{t('pages.notificationAdmin.broadcasts.channel')}</label>
+                    <select id="notification-admin-channel"
                       className="w-full mt-1 px-3 py-2 border rounded-md text-sm"
                       value={broadcastForm.channel}
                       onChange={e => setBroadcastForm(p => ({ ...p, channel: e.target.value }))}
@@ -500,8 +500,8 @@ export function NotificationAdminPage() {
                     </select>
                   </div>
                   <div>
-                    <label className="text-sm font-medium">{t('pages.notificationAdmin.broadcasts.targetType')}</label>
-                    <select
+                    <label htmlFor="notification-admin-target-type" className="text-sm font-medium">{t('pages.notificationAdmin.broadcasts.targetType')}</label>
+                    <select id="notification-admin-target-type"
                       className="w-full mt-1 px-3 py-2 border rounded-md text-sm"
                       value={broadcastForm.target_type}
                       onChange={e => setBroadcastForm(p => ({ ...p, target_type: e.target.value }))}
@@ -512,8 +512,8 @@ export function NotificationAdminPage() {
                     </select>
                   </div>
                   <div>
-                    <label className="text-sm font-medium">{t('pages.notificationAdmin.broadcasts.priority')}</label>
-                    <select
+                    <label htmlFor="notification-admin-priority-2" className="text-sm font-medium">{t('pages.notificationAdmin.broadcasts.priority')}</label>
+                    <select id="notification-admin-priority-2"
                       className="w-full mt-1 px-3 py-2 border rounded-md text-sm"
                       value={broadcastForm.priority}
                       onChange={e => setBroadcastForm(p => ({ ...p, priority: e.target.value }))}

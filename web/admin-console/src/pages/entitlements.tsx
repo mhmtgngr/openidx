@@ -385,9 +385,9 @@ export function EntitlementsPage() {
                 <Badge variant="outline" className="ml-auto">{typeLabelKeys[selectedEntry.type] ? t(typeLabelKeys[selectedEntry.type]) : selectedEntry.type}</Badge>
               </div>
               <div className="space-y-2">
-                <Label>{t('pages.entitlements.dialog.riskLevel')}</Label>
+                <Label htmlFor="entitlements-risk-level">{t('pages.entitlements.dialog.riskLevel')}</Label>
                 <Select value={metadata.risk_level} onValueChange={(val) => setMetadata(prev => ({ ...prev, risk_level: val }))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger id="entitlements-risk-level"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="low">{t('pages.entitlements.riskFilter.low')}</SelectItem>
                     <SelectItem value="medium">{t('pages.entitlements.riskFilter.medium')}</SelectItem>
@@ -397,8 +397,8 @@ export function EntitlementsPage() {
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label>{t('pages.entitlements.dialog.description')}</Label>
-                <Textarea
+                <Label htmlFor="entitlements-description">{t('pages.entitlements.dialog.description')}</Label>
+                <Textarea id="entitlements-description"
                   value={metadata.description}
                   onChange={(e) => setMetadata(prev => ({ ...prev, description: e.target.value }))}
                   rows={2}

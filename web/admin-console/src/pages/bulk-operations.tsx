@@ -158,8 +158,8 @@ export function BulkOperationsPage() {
         <CardContent className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="text-sm font-medium">{t('pages.bulkOps.typeLabel')}</label>
-              <select className="w-full border rounded px-3 py-2 mt-1 text-sm" value={selectedType} onChange={e => setSelectedType(e.target.value)}>
+              <label htmlFor="bulk-operations-type-label" className="text-sm font-medium">{t('pages.bulkOps.typeLabel')}</label>
+              <select id="bulk-operations-type-label" className="w-full border rounded px-3 py-2 mt-1 text-sm" value={selectedType} onChange={e => setSelectedType(e.target.value)}>
                 <option value="">{t('pages.bulkOps.typePlaceholder')}</option>
                 {Object.entries(operationTypes).map(([key, val]) => (
                   <option key={key} value={key}>{t(val.labelKey)}</option>
@@ -170,8 +170,8 @@ export function BulkOperationsPage() {
             <div>
               {selectedType && operationTypes[selectedType]?.needsParam === 'role_id' && (
                 <>
-                  <label className="text-sm font-medium">{t('pages.bulkOps.roleLabel')}</label>
-                  <select className="w-full border rounded px-3 py-2 mt-1 text-sm" value={paramValue} onChange={e => setParamValue(e.target.value)}>
+                  <label htmlFor="bulk-operations-role-label" className="text-sm font-medium">{t('pages.bulkOps.roleLabel')}</label>
+                  <select id="bulk-operations-role-label" className="w-full border rounded px-3 py-2 mt-1 text-sm" value={paramValue} onChange={e => setParamValue(e.target.value)}>
                     <option value="">{t('pages.bulkOps.rolePlaceholder')}</option>
                     {roles.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
                   </select>
@@ -179,8 +179,8 @@ export function BulkOperationsPage() {
               )}
               {selectedType && operationTypes[selectedType]?.needsParam === 'group_id' && (
                 <>
-                  <label className="text-sm font-medium">{t('pages.bulkOps.groupLabel')}</label>
-                  <select className="w-full border rounded px-3 py-2 mt-1 text-sm" value={paramValue} onChange={e => setParamValue(e.target.value)}>
+                  <label htmlFor="bulk-operations-group-label" className="text-sm font-medium">{t('pages.bulkOps.groupLabel')}</label>
+                  <select id="bulk-operations-group-label" className="w-full border rounded px-3 py-2 mt-1 text-sm" value={paramValue} onChange={e => setParamValue(e.target.value)}>
                     <option value="">{t('pages.bulkOps.groupPlaceholder')}</option>
                     {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
                   </select>

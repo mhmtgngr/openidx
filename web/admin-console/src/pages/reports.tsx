@@ -305,9 +305,9 @@ export function ReportsPage() {
           <DialogHeader><DialogTitle>{t('pages.reports.dialog.generateTitle')}</DialogTitle></DialogHeader>
           <div className="space-y-4">
             <div>
-              <label className="text-sm font-medium">{t('pages.reports.dialog.reportType')}</label>
+              <label htmlFor="reports-report-type" className="text-sm font-medium">{t('pages.reports.dialog.reportType')}</label>
               <Select value={genForm.report_type} onValueChange={v => setGenForm(f => ({ ...f, report_type: v }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger id="reports-report-type"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {REPORT_TYPES.map(rt => (
                     <SelectItem key={rt} value={rt}>{t(`pages.reports.reportTypes.${rt}`)}</SelectItem>
@@ -317,9 +317,9 @@ export function ReportsPage() {
             </div>
             {genForm.report_type === 'compliance' && (
               <div>
-                <label className="text-sm font-medium">{t('pages.reports.dialog.framework')}</label>
+                <label htmlFor="reports-framework" className="text-sm font-medium">{t('pages.reports.dialog.framework')}</label>
                 <Select value={genForm.framework} onValueChange={v => setGenForm(f => ({ ...f, framework: v }))}>
-                  <SelectTrigger><SelectValue placeholder={t('pages.reports.dialog.selectFramework')} /></SelectTrigger>
+                  <SelectTrigger id="reports-framework"><SelectValue placeholder={t('pages.reports.dialog.selectFramework')} /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="SOC2">SOC 2</SelectItem>
                     <SelectItem value="ISO27001">ISO 27001</SelectItem>
@@ -330,9 +330,9 @@ export function ReportsPage() {
               </div>
             )}
             <div>
-              <label className="text-sm font-medium">{t('pages.reports.dialog.format')}</label>
+              <label htmlFor="reports-format" className="text-sm font-medium">{t('pages.reports.dialog.format')}</label>
               <Select value={genForm.format} onValueChange={v => setGenForm(f => ({ ...f, format: v }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger id="reports-format"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="csv">CSV</SelectItem>
                   <SelectItem value="json">JSON</SelectItem>
@@ -357,9 +357,9 @@ export function ReportsPage() {
               <Input value={schedForm.name} onChange={e => setSchedForm(f => ({ ...f, name: e.target.value }))} placeholder={t('pages.reports.dialog.namePlaceholder')} />
             </div>
             <div>
-              <label className="text-sm font-medium">{t('pages.reports.dialog.reportType')}</label>
+              <label htmlFor="reports-report-type-2" className="text-sm font-medium">{t('pages.reports.dialog.reportType')}</label>
               <Select value={schedForm.report_type} onValueChange={v => setSchedForm(f => ({ ...f, report_type: v }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger id="reports-report-type-2"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {REPORT_TYPES.map(rt => (
                     <SelectItem key={rt} value={rt}>{t(`pages.reports.reportTypes.${rt}`)}</SelectItem>
@@ -373,9 +373,9 @@ export function ReportsPage() {
               <p className="text-xs text-muted-foreground mt-1">{t('pages.reports.dialog.cronHint')}</p>
             </div>
             <div>
-              <label className="text-sm font-medium">{t('pages.reports.dialog.format')}</label>
+              <label htmlFor="reports-format-2" className="text-sm font-medium">{t('pages.reports.dialog.format')}</label>
               <Select value={schedForm.format} onValueChange={v => setSchedForm(f => ({ ...f, format: v }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger id="reports-format-2"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="csv">CSV</SelectItem>
                   <SelectItem value="json">JSON</SelectItem>

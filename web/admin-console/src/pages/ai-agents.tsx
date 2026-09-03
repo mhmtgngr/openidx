@@ -235,8 +235,8 @@ export function AIAgentsPage() {
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="text-sm font-medium">{t('pages.aiAgents.form.type')}</label>
-                <select className="w-full border rounded px-3 py-2 mt-1" value={newAgent.agent_type}
+                <label htmlFor="ai-agents-type" className="text-sm font-medium">{t('pages.aiAgents.form.type')}</label>
+                <select id="ai-agents-type" className="w-full border rounded px-3 py-2 mt-1" value={newAgent.agent_type}
                   onChange={(e) => setNewAgent({ ...newAgent, agent_type: e.target.value })}>
                   {AGENT_TYPES.map((type) => (
                     <option key={type} value={type}>
@@ -246,8 +246,8 @@ export function AIAgentsPage() {
                 </select>
               </div>
               <div>
-                <label className="text-sm font-medium">{t('pages.aiAgents.form.trustLevel')}</label>
-                <select className="w-full border rounded px-3 py-2 mt-1" value={newAgent.trust_level}
+                <label htmlFor="ai-agents-trust-level" className="text-sm font-medium">{t('pages.aiAgents.form.trustLevel')}</label>
+                <select id="ai-agents-trust-level" className="w-full border rounded px-3 py-2 mt-1" value={newAgent.trust_level}
                   onChange={(e) => setNewAgent({ ...newAgent, trust_level: e.target.value })}>
                   {TRUST_LEVELS.map((level) => (
                     <option key={level} value={level}>

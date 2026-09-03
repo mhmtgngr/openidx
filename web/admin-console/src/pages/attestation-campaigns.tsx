@@ -209,31 +209,31 @@ export function AttestationCampaignsPage() {
           <CardContent className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="text-sm font-medium">{t('pages.attestation.createForm.name')}</label>
-                <input className="w-full border rounded px-3 py-2 mt-1 text-sm" value={formName} onChange={e => setFormName(e.target.value)} />
+                <label htmlFor="attestation-campaigns-name" className="text-sm font-medium">{t('pages.attestation.createForm.name')}</label>
+                <input id="attestation-campaigns-name" className="w-full border rounded px-3 py-2 mt-1 text-sm" value={formName} onChange={e => setFormName(e.target.value)} />
               </div>
               <div>
-                <label className="text-sm font-medium">{t('pages.attestation.createForm.type')}</label>
-                <select className="w-full border rounded px-3 py-2 mt-1 text-sm" value={formType} onChange={e => setFormType(e.target.value)}>
+                <label htmlFor="attestation-campaigns-type" className="text-sm font-medium">{t('pages.attestation.createForm.type')}</label>
+                <select id="attestation-campaigns-type" className="w-full border rounded px-3 py-2 mt-1 text-sm" value={formType} onChange={e => setFormType(e.target.value)}>
                   {CAMPAIGN_TYPES.map((k) => <option key={k} value={k}>{t(`pages.attestation.types.${k}`)}</option>)}
                 </select>
               </div>
               <div>
-                <label className="text-sm font-medium">{t('pages.attestation.createForm.strategy')}</label>
-                <select className="w-full border rounded px-3 py-2 mt-1 text-sm" value={formStrategy} onChange={e => setFormStrategy(e.target.value)}>
+                <label htmlFor="attestation-campaigns-strategy" className="text-sm font-medium">{t('pages.attestation.createForm.strategy')}</label>
+                <select id="attestation-campaigns-strategy" className="w-full border rounded px-3 py-2 mt-1 text-sm" value={formStrategy} onChange={e => setFormStrategy(e.target.value)}>
                   <option value="manager">{t('pages.attestation.createForm.strategyManager')}</option>
                   <option value="owner">{t('pages.attestation.createForm.strategyOwner')}</option>
                   <option value="specific_user">{t('pages.attestation.createForm.strategySpecificUser')}</option>
                 </select>
               </div>
               <div>
-                <label className="text-sm font-medium">{t('pages.attestation.createForm.escalation')}</label>
-                <input type="number" className="w-full border rounded px-3 py-2 mt-1 text-sm" value={formEscalation} onChange={e => setFormEscalation(Number(e.target.value))} />
+                <label htmlFor="attestation-campaigns-escalation" className="text-sm font-medium">{t('pages.attestation.createForm.escalation')}</label>
+                <input id="attestation-campaigns-escalation" type="number" className="w-full border rounded px-3 py-2 mt-1 text-sm" value={formEscalation} onChange={e => setFormEscalation(Number(e.target.value))} />
               </div>
             </div>
             <div>
-              <label className="text-sm font-medium">{t('pages.attestation.createForm.description')}</label>
-              <textarea className="w-full border rounded px-3 py-2 mt-1 text-sm h-16" value={formDesc} onChange={e => setFormDesc(e.target.value)} />
+              <label htmlFor="attestation-campaigns-description" className="text-sm font-medium">{t('pages.attestation.createForm.description')}</label>
+              <textarea id="attestation-campaigns-description" className="w-full border rounded px-3 py-2 mt-1 text-sm h-16" value={formDesc} onChange={e => setFormDesc(e.target.value)} />
             </div>
             <div className="flex items-center gap-2">
               <input type="checkbox" id="autoRevoke" checked={formAutoRevoke} onChange={e => setFormAutoRevoke(e.target.checked)} />

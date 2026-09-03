@@ -325,8 +325,8 @@ function PolicyEditor({ policy, onClose, onSaved }: PolicyEditorProps) {
               <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={t('pages.kioskPolicies.editor.namePlaceholder')} />
             </div>
             <div>
-              <label className="text-sm font-medium">{t('pages.kioskPolicies.editor.mode')}</label>
-              <select
+              <label htmlFor="kiosk-policies-mode" className="text-sm font-medium">{t('pages.kioskPolicies.editor.mode')}</label>
+              <select id="kiosk-policies-mode"
                 value={mode}
                 onChange={(e) => setMode(e.target.value as KioskPolicy['mode'])}
                 className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"

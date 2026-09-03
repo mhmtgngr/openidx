@@ -589,16 +589,16 @@ export default function MFAManagement() {
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>{t('pages.mfaManagement.dialog.priority')}</Label>
-                <Input
+                <Label htmlFor="mfa-management-priority">{t('pages.mfaManagement.dialog.priority')}</Label>
+                <Input id="mfa-management-priority"
                   type="number"
                   value={formData.priority ?? 100}
                   onChange={(e) => setFormData({ ...formData, priority: parseInt(e.target.value) || 0 })}
                 />
               </div>
               <div className="space-y-2">
-                <Label>{t('pages.mfaManagement.dialog.gracePeriod')}</Label>
-                <Input
+                <Label htmlFor="mfa-management-grace-period">{t('pages.mfaManagement.dialog.gracePeriod')}</Label>
+                <Input id="mfa-management-grace-period"
                   type="number"
                   value={formData.grace_period_hours ?? 24}
                   onChange={(e) => setFormData({ ...formData, grace_period_hours: parseInt(e.target.value) || 0 })}

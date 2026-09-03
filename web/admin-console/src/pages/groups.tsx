@@ -662,7 +662,7 @@ export function GroupsPage() {
                 value={formData.parent_id}
                 onValueChange={(value) => setFormData(prev => ({ ...prev, parent_id: value === 'none' ? '' : value }))}
               >
-                <SelectTrigger>
+                <SelectTrigger id="parent_id">
                   <SelectValue placeholder={t('pages.groups.createDialog.parentPlaceholder')} />
                 </SelectTrigger>
                 <SelectContent>
@@ -725,7 +725,7 @@ export function GroupsPage() {
                 value={formData.parent_id}
                 onValueChange={(value) => setFormData(prev => ({ ...prev, parent_id: value === 'none' ? '' : value }))}
               >
-                <SelectTrigger>
+                <SelectTrigger id="edit-parent">
                   <SelectValue placeholder={t('pages.groups.editDialog.parentPlaceholder')} />
                 </SelectTrigger>
                 <SelectContent>

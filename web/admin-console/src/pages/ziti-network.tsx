@@ -1038,12 +1038,12 @@ function ServicesTab() {
                 <Input value={form.host} onChange={(e) => setForm({ ...form, host: e.target.value })} placeholder="10.0.0.5" required />
               </div>
               <div className="space-y-2">
-                <Label>{t('pages.zitiNetwork.services.port')}</Label>
-                <Input type="number" min={1} max={65535} value={form.port} onChange={(e) => setForm({ ...form, port: Math.max(1, Math.min(65535, parseInt(e.target.value) || 1)) })} required />
+                <Label htmlFor="ziti-network-port">{t('pages.zitiNetwork.services.port')}</Label>
+                <Input id="ziti-network-port" type="number" min={1} max={65535} value={form.port} onChange={(e) => setForm({ ...form, port: Math.max(1, Math.min(65535, parseInt(e.target.value) || 1)) })} required />
               </div>
               <div className="space-y-2">
-                <Label>{t('pages.zitiNetwork.services.protocol')}</Label>
-                <select
+                <Label htmlFor="ziti-network-protocol">{t('pages.zitiNetwork.services.protocol')}</Label>
+                <select id="ziti-network-protocol"
                   value={form.protocol}
                   onChange={(e) => setForm({ ...form, protocol: e.target.value })}
                   className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
@@ -1510,8 +1510,8 @@ function IdentitiesTab() {
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>{t('pages.zitiNetwork.identities.type')}</Label>
-                <select
+                <Label htmlFor="ziti-network-type">{t('pages.zitiNetwork.identities.type')}</Label>
+                <select id="ziti-network-type"
                   value={form.identity_type}
                   onChange={(e) => setForm({ ...form, identity_type: e.target.value })}
                   className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
@@ -1873,14 +1873,14 @@ function ConfigurationsSection() {
         <DialogContent>
           <DialogHeader><DialogTitle>{t('pages.zitiNetwork.configs.dialogTitle')}</DialogTitle></DialogHeader>
           <form onSubmit={(e) => { e.preventDefault(); createMutation.mutate(form) }} className="space-y-4">
-            <div><Label>{t('pages.zitiNetwork.configs.name')}</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required /></div>
-            <div><Label>{t('pages.zitiNetwork.configs.type')}</Label>
-              <select className="w-full border rounded-md p-2 text-sm" value={form.configTypeId} onChange={(e) => setForm({ ...form, configTypeId: e.target.value })} required>
+            <div><Label htmlFor="ziti-network-name">{t('pages.zitiNetwork.configs.name')}</Label><Input id="ziti-network-name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required /></div>
+            <div><Label htmlFor="ziti-network-type-2">{t('pages.zitiNetwork.configs.type')}</Label>
+              <select id="ziti-network-type-2" className="w-full border rounded-md p-2 text-sm" value={form.configTypeId} onChange={(e) => setForm({ ...form, configTypeId: e.target.value })} required>
                 <option value="">{t('pages.zitiNetwork.configs.typePlaceholder')}</option>
                 {configTypes?.map((ct) => <option key={ct.id} value={ct.id}>{ct.name}</option>)}
               </select>
             </div>
-            <div><Label>{t('pages.zitiNetwork.configs.data')}</Label><textarea className="w-full border rounded-md p-2 text-sm font-mono h-32" value={form.data} onChange={(e) => setForm({ ...form, data: e.target.value })} /></div>
+            <div><Label htmlFor="ziti-network-data">{t('pages.zitiNetwork.configs.data')}</Label><textarea id="ziti-network-data" className="w-full border rounded-md p-2 text-sm font-mono h-32" value={form.data} onChange={(e) => setForm({ ...form, data: e.target.value })} /></div>
             <div className="flex justify-end gap-2">
               <Button type="button" variant="outline" onClick={() => setCreateModal(false)}>{t('common.cancel')}</Button>
               <Button type="submit" disabled={createMutation.isPending}>{t('pages.zitiNetwork.configs.create')}</Button>
@@ -2323,8 +2323,8 @@ function ServicePoliciesSection() {
                 <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="allow-engineering-gitlab" required />
               </div>
               <div className="space-y-2">
-                <Label>{t('pages.zitiNetwork.servicePolicies.type')}</Label>
-                <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm">
+                <Label htmlFor={`ziti-service-policy-${i}-type`}>{t('pages.zitiNetwork.servicePolicies.type')}</Label>
+                <select id={`ziti-service-policy-${i}-type`} value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm">
                   <option value="Dial">{t('pages.zitiNetwork.servicePolicies.typeDial')}</option>
                   <option value="Bind">{t('pages.zitiNetwork.servicePolicies.typeBind')}</option>
                 </select>
@@ -2776,8 +2776,8 @@ function PostureSection() {
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label>{t('pages.zitiNetwork.posture.checkType')}</Label>
-                  <select value={form.check_type} onChange={(e) => setForm({ ...form, check_type: e.target.value })} className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm">
+                  <Label htmlFor={`ziti-posture-${i}-check-type`}>{t('pages.zitiNetwork.posture.checkType')}</Label>
+                  <select id={`ziti-posture-${i}-check-type`} value={form.check_type} onChange={(e) => setForm({ ...form, check_type: e.target.value })} className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm">
                     {POSTURE_CHECK_TYPES.map((checkType) => (
                       <option key={checkType} value={checkType}>
                         {t(`pages.zitiNetwork.posture.checkTypes.${checkType}`)}
@@ -2786,8 +2786,8 @@ function PostureSection() {
                   </select>
                 </div>
                 <div className="space-y-2">
-                  <Label>{t('pages.zitiNetwork.posture.severity')}</Label>
-                  <select value={form.severity} onChange={(e) => setForm({ ...form, severity: e.target.value })} className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm">
+                  <Label htmlFor={`ziti-posture-${i}-severity`}>{t('pages.zitiNetwork.posture.severity')}</Label>
+                  <select id={`ziti-posture-${i}-severity`} value={form.severity} onChange={(e) => setForm({ ...form, severity: e.target.value })} className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm">
                     <option value="low">{t('pages.zitiNetwork.posture.severities.low')}</option>
                     <option value="medium">{t('pages.zitiNetwork.posture.severities.medium')}</option>
                     <option value="high">{t('pages.zitiNetwork.posture.severities.high')}</option>
@@ -2831,8 +2831,8 @@ function PostureSection() {
                 </p>
               </div>
               <div className="flex items-center gap-2">
-                <Switch checked={form.enabled} onCheckedChange={(checked) => setForm({ ...form, enabled: checked })} />
-                <Label>{t('pages.zitiNetwork.posture.enabledLabel')}</Label>
+                <Switch id={`ziti-posture-${i}-enabled`} checked={form.enabled} onCheckedChange={(checked) => setForm({ ...form, enabled: checked })} />
+                <Label htmlFor={`ziti-posture-${i}-enabled`}>{t('pages.zitiNetwork.posture.enabledLabel')}</Label>
               </div>
               <div className="flex justify-end gap-2 pt-2">
                 <Button type="button" variant="outline" onClick={() => dlg.onOpenChange(false)}>{t('common.cancel')}</Button>
@@ -3294,9 +3294,9 @@ function PolicySyncSection() {
           <DialogHeader><DialogTitle>{t('pages.zitiNetwork.policySync.dialogTitle')}</DialogTitle></DialogHeader>
           <form onSubmit={(e) => { e.preventDefault(); createMutation.mutate(form) }} className="space-y-4">
             <div className="space-y-2">
-              <Label>{t('pages.zitiNetwork.policySync.governancePolicy')}</Label>
+              <Label htmlFor="ziti-network-governance-policy">{t('pages.zitiNetwork.policySync.governancePolicy')}</Label>
               {Array.isArray(governancePolicies) && governancePolicies.length > 0 ? (
-                <select
+                <select id="ziti-network-governance-policy"
                   value={form.governance_policy_id}
                   onChange={(e) => setForm({ ...form, governance_policy_id: e.target.value })}
                   className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
@@ -3313,8 +3313,8 @@ function PolicySyncSection() {
               <p className="text-xs text-muted-foreground">{t('pages.zitiNetwork.policySync.policyHint')}</p>
             </div>
             <div className="flex items-center gap-2">
-              <Switch checked={form.auto_fetch} onCheckedChange={(checked) => setForm({ ...form, auto_fetch: checked })} />
-              <Label>{t('pages.zitiNetwork.policySync.autoDetect')}</Label>
+              <Switch id="ziti-network-auto-detect" checked={form.auto_fetch} onCheckedChange={(checked) => setForm({ ...form, auto_fetch: checked })} />
+              <Label htmlFor="ziti-network-auto-detect">{t('pages.zitiNetwork.policySync.autoDetect')}</Label>
             </div>
             <p className="text-xs text-muted-foreground -mt-2">
               {form.auto_fetch ? t('pages.zitiNetwork.policySync.autoHint') : t('pages.zitiNetwork.policySync.manualHint')}
@@ -3972,8 +3972,8 @@ function TempAccessLinksSection() {
                 />
               </div>
               <div>
-                <Label>{t('pages.zitiNetwork.tempAccess.protocol')}</Label>
-                <select
+                <Label htmlFor="ziti-network-protocol-2">{t('pages.zitiNetwork.tempAccess.protocol')}</Label>
+                <select id="ziti-network-protocol-2"
                   value={form.protocol}
                   onChange={(e) => {
                     const proto = e.target.value
@@ -3997,8 +3997,8 @@ function TempAccessLinksSection() {
                 />
               </div>
               <div>
-                <Label>{t('pages.zitiNetwork.tempAccess.port')}</Label>
-                <Input
+                <Label htmlFor="ziti-network-port-2">{t('pages.zitiNetwork.tempAccess.port')}</Label>
+                <Input id="ziti-network-port-2"
                   type="number"
                   value={form.target_port}
                   onChange={(e) => setForm({ ...form, target_port: parseInt(e.target.value) || 22 })}
@@ -4014,8 +4014,8 @@ function TempAccessLinksSection() {
                 />
               </div>
               <div>
-                <Label>{t('pages.zitiNetwork.tempAccess.duration')}</Label>
-                <Input
+                <Label htmlFor="ziti-network-duration">{t('pages.zitiNetwork.tempAccess.duration')}</Label>
+                <Input id="ziti-network-duration"
                   type="number"
                   value={form.duration_mins}
                   onChange={(e) => setForm({ ...form, duration_mins: parseInt(e.target.value) || 120 })}
@@ -4030,8 +4030,8 @@ function TempAccessLinksSection() {
                 </p>
               </div>
               <div>
-                <Label>{t('pages.zitiNetwork.tempAccess.maxUses')}</Label>
-                <Input
+                <Label htmlFor="ziti-network-max-uses">{t('pages.zitiNetwork.tempAccess.maxUses')}</Label>
+                <Input id="ziti-network-max-uses"
                   type="number"
                   value={form.max_uses}
                   onChange={(e) => setForm({ ...form, max_uses: parseInt(e.target.value) || 0 })}
@@ -4039,8 +4039,9 @@ function TempAccessLinksSection() {
                 />
               </div>
               <div className="col-span-2">
-                <Label>{t('pages.zitiNetwork.tempAccess.allowedIps')}</Label>
+                <Label htmlFor="ziti-network-allowed-ips">{t('pages.zitiNetwork.tempAccess.allowedIps')}</Label>
                 <Input
+                  id="ziti-network-allowed-ips"
                   value={form.allowed_ips}
                   onChange={(e) => setForm({ ...form, allowed_ips: e.target.value })}
                   placeholder="1.2.3.4, 5.6.7.8"
@@ -4048,11 +4049,11 @@ function TempAccessLinksSection() {
               </div>
               <div className="col-span-2 flex items-center gap-4">
                 <div className="flex items-center gap-2">
-                  <Switch
+                  <Switch id="ziti-network-notify-on-use"
                     checked={form.notify_on_use}
                     onCheckedChange={(v) => setForm({ ...form, notify_on_use: v })}
                   />
-                  <Label className="text-sm">{t('pages.zitiNetwork.tempAccess.notifyOnUse')}</Label>
+                  <Label htmlFor="ziti-network-notify-on-use" className="text-sm">{t('pages.zitiNetwork.tempAccess.notifyOnUse')}</Label>
                 </div>
                 {form.notify_on_use && (
                   <Input

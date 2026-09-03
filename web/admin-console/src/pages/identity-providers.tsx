@@ -244,12 +244,12 @@ export function IdentityProvidersPage() {
         />
       </div>
       <div>
-        <Label>{t('pages.identityProviders.form.providerType')}</Label>
+        <Label htmlFor="identity-providers-provider-type">{t('pages.identityProviders.form.providerType')}</Label>
         <Select
           value={formData.provider_type}
           onValueChange={(v) => setFormData({ ...formData, provider_type: v as 'oidc' | 'saml' })}
         >
-          <SelectTrigger>
+          <SelectTrigger id="identity-providers-provider-type">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -296,11 +296,11 @@ export function IdentityProvidersPage() {
         />
       </div>
       <div className="flex items-center gap-2">
-        <Switch
+        <Switch id="identity-providers-enabled"
           checked={formData.enabled}
           onCheckedChange={(checked) => setFormData({ ...formData, enabled: checked })}
         />
-        <Label>{t('pages.identityProviders.form.enabled')}</Label>
+        <Label htmlFor="identity-providers-enabled">{t('pages.identityProviders.form.enabled')}</Label>
       </div>
       <div className="flex justify-end gap-2 pt-4">
         <Button variant="outline" onClick={() => { setAddModal(false); setEditModal(false) }}>

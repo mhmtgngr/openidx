@@ -386,12 +386,12 @@ function FederationRulesTab() {
               />
             </div>
             <div>
-              <Label>{t('pages.federation.rules.dialog.provider')}</Label>
+              <Label htmlFor="federation-config-provider">{t('pages.federation.rules.dialog.provider')}</Label>
               <Select
                 value={form.provider_id}
                 onValueChange={(v) => setForm((f) => ({ ...f, provider_id: v }))}
               >
-                <SelectTrigger className="mt-1">
+                <SelectTrigger id="federation-config-provider" className="mt-1">
                   <SelectValue placeholder={t('pages.federation.rules.dialog.providerPlaceholder')} />
                 </SelectTrigger>
                 <SelectContent>
@@ -417,15 +417,15 @@ function FederationRulesTab() {
               </p>
             </div>
             <div className="flex items-center justify-between">
-              <Label>{t('pages.federation.rules.dialog.autoRedirect')}</Label>
-              <Switch
+              <Label htmlFor="federation-config-auto-redirect">{t('pages.federation.rules.dialog.autoRedirect')}</Label>
+              <Switch id="federation-config-auto-redirect"
                 checked={form.auto_redirect}
                 onCheckedChange={(checked) => setForm((f) => ({ ...f, auto_redirect: checked }))}
               />
             </div>
             <div className="flex items-center justify-between">
-              <Label>{t('pages.federation.rules.dialog.enabled')}</Label>
-              <Switch
+              <Label htmlFor="federation-config-enabled">{t('pages.federation.rules.dialog.enabled')}</Label>
+              <Switch id="federation-config-enabled"
                 checked={form.enabled}
                 onCheckedChange={(checked) => setForm((f) => ({ ...f, enabled: checked }))}
               />
@@ -759,9 +759,9 @@ function ClaimsMappingTab() {
         </p>
         <div className="flex items-center gap-4">
           <div className="w-80">
-            <Label>{t('pages.federation.claims.application')}</Label>
+            <Label htmlFor="federation-config-application">{t('pages.federation.claims.application')}</Label>
             <Select value={selectedAppId} onValueChange={setSelectedAppId}>
-              <SelectTrigger className="mt-1">
+              <SelectTrigger id="federation-config-application" className="mt-1">
                 <SelectValue placeholder={t('pages.federation.claims.applicationPlaceholder')} />
               </SelectTrigger>
               <SelectContent>
@@ -897,12 +897,12 @@ function ClaimsMappingTab() {
               />
             </div>
             <div>
-              <Label>{t('pages.federation.claims.dialog.sourceType')}</Label>
+              <Label htmlFor="federation-config-source-type">{t('pages.federation.claims.dialog.sourceType')}</Label>
               <Select
                 value={form.source_type}
                 onValueChange={(v) => setForm((f) => ({ ...f, source_type: v }))}
               >
-                <SelectTrigger className="mt-1">
+                <SelectTrigger id="federation-config-source-type" className="mt-1">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -937,12 +937,12 @@ function ClaimsMappingTab() {
               </p>
             </div>
             <div>
-              <Label>{t('pages.federation.claims.dialog.claimType')}</Label>
+              <Label htmlFor="federation-config-claim-type">{t('pages.federation.claims.dialog.claimType')}</Label>
               <Select
                 value={form.claim_type}
                 onValueChange={(v) => setForm((f) => ({ ...f, claim_type: v }))}
               >
-                <SelectTrigger className="mt-1">
+                <SelectTrigger id="federation-config-claim-type" className="mt-1">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -987,8 +987,8 @@ function ClaimsMappingTab() {
               </div>
             </div>
             <div className="flex items-center justify-between pt-2">
-              <Label>{t('pages.federation.claims.dialog.enabled')}</Label>
-              <Switch
+              <Label htmlFor="federation-config-enabled-2">{t('pages.federation.claims.dialog.enabled')}</Label>
+              <Switch id="federation-config-enabled-2"
                 checked={form.enabled}
                 onCheckedChange={(checked) => setForm((f) => ({ ...f, enabled: checked }))}
               />

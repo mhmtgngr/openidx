@@ -272,9 +272,9 @@ export function OrganizationsPage() {
               </div>
             )}
             <div>
-              <label className="text-sm font-medium">{t('pages.organizations.form.plan')}</label>
+              <label htmlFor="organizations-plan" className="text-sm font-medium">{t('pages.organizations.form.plan')}</label>
               <Select value={form.plan} onValueChange={v => setForm(f => ({ ...f, plan: v }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger id="organizations-plan"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {PLANS.map(plan => (
                     <SelectItem key={plan} value={plan}>
@@ -286,14 +286,14 @@ export function OrganizationsPage() {
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="text-sm font-medium">{t('pages.organizations.form.maxUsers')}</label>
-                <Input type="number" value={form.max_users} onChange={e => setForm(f => ({ ...f, max_users: parseInt(e.target.value) || 10 }))} />
+                <label htmlFor="organizations-max-users" className="text-sm font-medium">{t('pages.organizations.form.maxUsers')}</label>
+                <Input id="organizations-max-users" type="number" value={form.max_users} onChange={e => setForm(f => ({ ...f, max_users: parseInt(e.target.value) || 10 }))} />
               </div>
               <div>
-                <label className="text-sm font-medium">
+                <label htmlFor="organizations-max-applications" className="text-sm font-medium">
                   {t('pages.organizations.form.maxApplications')}
                 </label>
-                <Input type="number" value={form.max_applications} onChange={e => setForm(f => ({ ...f, max_applications: parseInt(e.target.value) || 5 }))} />
+                <Input id="organizations-max-applications" type="number" value={form.max_applications} onChange={e => setForm(f => ({ ...f, max_applications: parseInt(e.target.value) || 5 }))} />
               </div>
             </div>
           </div>
@@ -373,9 +373,9 @@ export function OrganizationsPage() {
               <Input value={memberForm.user_id} onChange={e => setMemberForm(f => ({ ...f, user_id: e.target.value }))} placeholder={t('pages.organizations.members.userIdPlaceholder')} />
             </div>
             <div>
-              <label className="text-sm font-medium">{t('pages.organizations.members.role')}</label>
+              <label htmlFor="organizations-role" className="text-sm font-medium">{t('pages.organizations.members.role')}</label>
               <Select value={memberForm.role} onValueChange={v => setMemberForm(f => ({ ...f, role: v }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger id="organizations-role"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {MEMBER_ROLES.map(role => (
                     <SelectItem key={role} value={role}>

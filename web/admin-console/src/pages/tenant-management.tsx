@@ -265,12 +265,12 @@ export function TenantManagementPage() {
                         <div className="grid gap-4 md:grid-cols-3">
                           {(['primary_color', 'secondary_color', 'background_color'] as const).map(field => (
                             <div key={field} className="space-y-2">
-                              <label className="text-sm font-medium">
+                              <label id={`tenant-color-${field}-label`} className="text-sm font-medium">
                                 {t(`pages.tenantManagement.branding.colors.${field}`)}
                               </label>
                               <div className="flex gap-2">
-                                <input type="color" value={branding[field]} onChange={e => updateBranding(field, e.target.value)} className="h-10 w-14 rounded border cursor-pointer" />
-                                <Input value={branding[field]} onChange={e => updateBranding(field, e.target.value)} />
+                                <input aria-labelledby={`tenant-color-${field}-label`} type="color" value={branding[field]} onChange={e => updateBranding(field, e.target.value)} className="h-10 w-14 rounded border cursor-pointer" />
+                                <Input aria-labelledby={`tenant-color-${field}-label`} value={branding[field]} onChange={e => updateBranding(field, e.target.value)} />
                               </div>
                             </div>
                           ))}
@@ -283,23 +283,23 @@ export function TenantManagementPage() {
                         </div>
                         <div className="grid gap-4 md:grid-cols-2">
                           <div className="space-y-2">
-                            <label className="text-sm font-medium">
+                            <label htmlFor="tenant-management-login-page-title" className="text-sm font-medium">
                               {t('pages.tenantManagement.branding.loginPageTitle')}
                             </label>
-                            <Input value={branding.login_page_title} onChange={e => updateBranding('login_page_title', e.target.value)} />
+                            <Input id="tenant-management-login-page-title" value={branding.login_page_title} onChange={e => updateBranding('login_page_title', e.target.value)} />
                           </div>
                           <div className="space-y-2">
-                            <label className="text-sm font-medium">
+                            <label htmlFor="tenant-management-portal-title" className="text-sm font-medium">
                               {t('pages.tenantManagement.branding.portalTitle')}
                             </label>
-                            <Input value={branding.portal_title} onChange={e => updateBranding('portal_title', e.target.value)} />
+                            <Input id="tenant-management-portal-title" value={branding.portal_title} onChange={e => updateBranding('portal_title', e.target.value)} />
                           </div>
                         </div>
                         <div className="space-y-2">
-                          <label className="text-sm font-medium">
+                          <label htmlFor="tenant-management-login-page-message" className="text-sm font-medium">
                             {t('pages.tenantManagement.branding.loginPageMessage')}
                           </label>
-                          <textarea value={branding.login_page_message} onChange={e => updateBranding('login_page_message', e.target.value)} className="w-full border rounded-md px-3 py-2 min-h-[80px]" />
+                          <textarea id="tenant-management-login-page-message" value={branding.login_page_message} onChange={e => updateBranding('login_page_message', e.target.value)} className="w-full border rounded-md px-3 py-2 min-h-[80px]" />
                         </div>
                         <div className="space-y-2">
                           <label className="text-sm font-medium">
@@ -308,10 +308,10 @@ export function TenantManagementPage() {
                           <textarea value={branding.custom_css} onChange={e => updateBranding('custom_css', e.target.value)} className="w-full border rounded-md px-3 py-2 min-h-[100px] font-mono text-sm" placeholder="/* Custom CSS overrides */" />
                         </div>
                         <div className="space-y-2">
-                          <label className="text-sm font-medium">
+                          <label htmlFor="tenant-management-custom-footer" className="text-sm font-medium">
                             {t('pages.tenantManagement.branding.customFooter')}
                           </label>
-                          <textarea value={branding.custom_footer} onChange={e => updateBranding('custom_footer', e.target.value)} className="w-full border rounded-md px-3 py-2 min-h-[60px]" />
+                          <textarea id="tenant-management-custom-footer" value={branding.custom_footer} onChange={e => updateBranding('custom_footer', e.target.value)} className="w-full border rounded-md px-3 py-2 min-h-[60px]" />
                         </div>
                         <label className="flex items-center gap-2">
                           <input type="checkbox" checked={branding.powered_by_visible} onChange={e => updateBranding('powered_by_visible', e.target.checked)} className="rounded" />
@@ -543,11 +543,11 @@ export function TenantManagementPage() {
               <Input value={newDomain} onChange={e => setNewDomain(e.target.value)} placeholder="login.example.com" />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium">
+              <label htmlFor="tenant-management-type-label" className="text-sm font-medium">
                 {t('pages.tenantManagement.domains.typeLabel')}
               </label>
               <Select value={newDomainType} onValueChange={setNewDomainType}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger id="tenant-management-type-label"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="subdomain">
                     {t('pages.tenantManagement.domains.types.subdomain')}

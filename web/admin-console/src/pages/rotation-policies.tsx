@@ -565,12 +565,12 @@ export function RotationPoliciesPage() {
           <div className="space-y-4">
             {/* Secret */}
             <div>
-              <label className="text-sm font-medium">{t('pages.rotationPolicies.dialog.secret')}</label>
+              <label htmlFor="rotation-policies-secret" className="text-sm font-medium">{t('pages.rotationPolicies.dialog.secret')}</label>
               <Select
                 value={form.secretId}
                 onValueChange={(v) => setForm((f) => ({ ...f, secretId: v }))}
               >
-                <SelectTrigger className="mt-1" data-testid="secret-select">
+                <SelectTrigger id="rotation-policies-secret" className="mt-1" data-testid="secret-select">
                   <SelectValue placeholder={t('pages.rotationPolicies.dialog.secretPlaceholder')} />
                 </SelectTrigger>
                 <SelectContent>
@@ -585,14 +585,14 @@ export function RotationPoliciesPage() {
 
             {/* Connector type */}
             <div>
-              <label className="text-sm font-medium">{t('pages.rotationPolicies.dialog.connectorType')}</label>
+              <label htmlFor="rotation-policies-connector-type" className="text-sm font-medium">{t('pages.rotationPolicies.dialog.connectorType')}</label>
               <Select
                 value={form.connectorType}
                 onValueChange={(v) =>
                   setForm((f) => ({ ...f, connectorType: v, connectorConfig: seedConnectorConfig(v) }))
                 }
               >
-                <SelectTrigger className="mt-1" data-testid="connector-select">
+                <SelectTrigger id="rotation-policies-connector-type" className="mt-1" data-testid="connector-select">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -653,9 +653,9 @@ export function RotationPoliciesPage() {
 
             {/* Interval */}
             <div>
-              <label className="text-sm font-medium">{t('pages.rotationPolicies.dialog.interval')}</label>
+              <label htmlFor="rotation-policies-interval" className="text-sm font-medium">{t('pages.rotationPolicies.dialog.interval')}</label>
               <div className="flex gap-2 mt-1">
-                <Input
+                <Input id="rotation-policies-interval"
                   type="number"
                   min={0}
                   className="flex-1"
@@ -699,8 +699,8 @@ export function RotationPoliciesPage() {
             <div className="space-y-2 border rounded-lg p-3">
               <p className="text-sm font-medium">{t('pages.rotationPolicies.dialog.generation')}</p>
               <div>
-                <label className="text-xs text-muted-foreground">{t('pages.rotationPolicies.dialog.length')}</label>
-                <Input
+                <label htmlFor="rotation-policies-length" className="text-xs text-muted-foreground">{t('pages.rotationPolicies.dialog.length')}</label>
+                <Input id="rotation-policies-length"
                   type="number"
                   min={8}
                   max={256}

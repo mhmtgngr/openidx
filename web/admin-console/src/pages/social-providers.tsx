@@ -340,13 +340,13 @@ export function SocialProvidersPage() {
           </DialogHeader>
           <div className="space-y-4">
             <div>
-              <Label>{t('pages.socialProviders.dialog.providerKey')}</Label>
+              <Label htmlFor="social-providers-provider-key">{t('pages.socialProviders.dialog.providerKey')}</Label>
               <Select
                 value={form.provider_key}
                 onValueChange={handleProviderKeyChange}
                 disabled={!!editTarget}
               >
-                <SelectTrigger className="mt-1">
+                <SelectTrigger id="social-providers-provider-key" className="mt-1">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -395,15 +395,15 @@ export function SocialProvidersPage() {
               />
             </div>
             <div className="flex items-center justify-between">
-              <Label>{t('pages.socialProviders.dialog.autoCreate')}</Label>
-              <Switch
+              <Label htmlFor="social-providers-auto-create">{t('pages.socialProviders.dialog.autoCreate')}</Label>
+              <Switch id="social-providers-auto-create"
                 checked={form.auto_create_users}
                 onCheckedChange={(checked) => setForm((f) => ({ ...f, auto_create_users: checked }))}
               />
             </div>
             <div className="flex items-center justify-between">
-              <Label>{t('pages.socialProviders.dialog.autoLink')}</Label>
-              <Switch
+              <Label htmlFor="social-providers-auto-link">{t('pages.socialProviders.dialog.autoLink')}</Label>
+              <Switch id="social-providers-auto-link"
                 checked={form.auto_link_by_email}
                 onCheckedChange={(checked) => setForm((f) => ({ ...f, auto_link_by_email: checked }))}
               />
@@ -441,8 +441,8 @@ export function SocialProvidersPage() {
               />
             </div>
             <div className="flex items-center justify-between">
-              <Label>{t('pages.socialProviders.dialog.enabled')}</Label>
-              <Switch
+              <Label htmlFor="social-providers-enabled">{t('pages.socialProviders.dialog.enabled')}</Label>
+              <Switch id="social-providers-enabled"
                 checked={form.enabled}
                 onCheckedChange={(checked) => setForm((f) => ({ ...f, enabled: checked }))}
               />

@@ -194,16 +194,16 @@ export function QuickLinksAdminPage() {
               <Input value={form.title} onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))} placeholder="Microsoft Teams" />
             </div>
             <div>
-              <label className="text-sm font-medium">
+              <label htmlFor="quick-links-admin-description" className="text-sm font-medium">
                 {t('pages.quickLinks.dialog.description')}
               </label>
-              <Textarea value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} rows={2} />
+              <Textarea id="quick-links-admin-description" value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} rows={2} />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-sm font-medium">{t('pages.quickLinks.dialog.type')}</label>
+                <label htmlFor="quick-links-admin-type" className="text-sm font-medium">{t('pages.quickLinks.dialog.type')}</label>
                 <Select value={form.type} onValueChange={(v) => setForm((f) => ({ ...f, type: v as 'external' | 'pam' }))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger id="quick-links-admin-type"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="external">{t('pages.quickLinks.typeOptions.external')}</SelectItem>
                     <SelectItem value="pam">{t('pages.quickLinks.typeOptions.pam')}</SelectItem>
@@ -211,9 +211,9 @@ export function QuickLinksAdminPage() {
                 </Select>
               </div>
               <div>
-                <label className="text-sm font-medium">{t('pages.quickLinks.dialog.category')}</label>
+                <label htmlFor="quick-links-admin-category" className="text-sm font-medium">{t('pages.quickLinks.dialog.category')}</label>
                 <Select value={form.category} onValueChange={(v) => setForm((f) => ({ ...f, category: v }))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger id="quick-links-admin-category"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {CATEGORIES.map((c) => (
                       <SelectItem key={c} value={c}>
@@ -233,11 +233,11 @@ export function QuickLinksAdminPage() {
               </div>
             ) : (
               <div>
-                <label className="text-sm font-medium">
+                <label htmlFor="quick-links-admin-pam-connection" className="text-sm font-medium">
                   {t('pages.quickLinks.dialog.pamConnection')}
                 </label>
                 <Select value={form.pam_entry_id || ''} onValueChange={(v) => setForm((f) => ({ ...f, pam_entry_id: v }))}>
-                  <SelectTrigger>
+                  <SelectTrigger id="quick-links-admin-pam-connection">
                     <SelectValue placeholder={t('pages.quickLinks.dialog.selectConnection')} />
                   </SelectTrigger>
                   <SelectContent>
@@ -251,18 +251,18 @@ export function QuickLinksAdminPage() {
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-sm font-medium">{t('pages.quickLinks.dialog.icon')}</label>
+                <label htmlFor="quick-links-admin-icon" className="text-sm font-medium">{t('pages.quickLinks.dialog.icon')}</label>
                 <Select value={form.icon} onValueChange={(v) => setForm((f) => ({ ...f, icon: v }))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger id="quick-links-admin-icon"><SelectValue /></SelectTrigger>
                   <SelectContent>{ICONS.map((i) => <SelectItem key={i} value={i}>{i}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
               <div>
-                <label className="text-sm font-medium">
+                <label htmlFor="quick-links-admin-min-role" className="text-sm font-medium">
                   {t('pages.quickLinks.dialog.minRole')}
                 </label>
                 <Select value={form.min_role} onValueChange={(v) => setForm((f) => ({ ...f, min_role: v }))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger id="quick-links-admin-min-role"><SelectValue /></SelectTrigger>
                   <SelectContent>{ROLES.map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
@@ -274,14 +274,14 @@ export function QuickLinksAdminPage() {
                 {t('pages.quickLinks.dialog.enabled')}
               </label>
               {form.type === 'external' && (
-                <label className="flex items-center gap-2 text-sm">
+                <label htmlFor="quick-links-admin-checkbox-checked-on-checked-change" className="flex items-center gap-2 text-sm">
                   <Checkbox checked={form.open_in_new} onCheckedChange={(v) => setForm((f) => ({ ...f, open_in_new: !!v }))} />
                   {t('pages.quickLinks.dialog.openInNew')}
                 </label>
               )}
               <div className="flex items-center gap-2 text-sm">
                 <span>{t('pages.quickLinks.dialog.sort')}</span>
-                <Input type="number" className="w-20 h-8" value={form.sort_order} onChange={(e) => setForm((f) => ({ ...f, sort_order: Number(e.target.value) }))} />
+                <Input id="quick-links-admin-checkbox-checked-on-checked-change" type="number" className="w-20 h-8" value={form.sort_order} onChange={(e) => setForm((f) => ({ ...f, sort_order: Number(e.target.value) }))} />
               </div>
             </div>
           </div>

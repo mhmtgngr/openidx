@@ -548,7 +548,7 @@ export function AccessReviewsPage() {
             <div className="space-y-2">
               <Label htmlFor="type">{t('pages.accessReviews.form.type')}</Label>
               <Select value={newReview.type} onValueChange={(val) => setNewReview(prev => ({ ...prev, type: val }))}>
-                <SelectTrigger className="w-full">
+                <SelectTrigger id="type" className="w-full">
                   <SelectValue placeholder={t('pages.accessReviews.form.typePlaceholder')} />
                 </SelectTrigger>
                 <SelectContent>
@@ -632,7 +632,7 @@ export function AccessReviewsPage() {
             <div className="space-y-2">
               <Label htmlFor="edit-type">{t('pages.accessReviews.form.type')}</Label>
               <Select value={editReview.type} onValueChange={(val) => setEditReview(prev => ({ ...prev, type: val }))}>
-                <SelectTrigger className="w-full">
+                <SelectTrigger id="edit-type" className="w-full">
                   <SelectValue placeholder={t('pages.accessReviews.form.typePlaceholder')} />
                 </SelectTrigger>
                 <SelectContent>

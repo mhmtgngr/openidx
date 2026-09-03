@@ -480,10 +480,10 @@ export function DeviceTrustApprovalPage() {
             <div className="space-y-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <Label>{t('pages.deviceTrustApproval.settingsDialog.requireApproval')}</Label>
+                  <Label htmlFor="device-trust-approval-require-approval">{t('pages.deviceTrustApproval.settingsDialog.requireApproval')}</Label>
                   <p className="text-xs text-muted-foreground">{t('pages.deviceTrustApproval.settingsDialog.requireApprovalHint')}</p>
                 </div>
-                <Switch
+                <Switch id="device-trust-approval-require-approval"
                   checked={settings.require_approval}
                   onCheckedChange={(checked) =>
                     updateSettingsMutation.mutate({ ...settings, require_approval: checked })
@@ -492,10 +492,10 @@ export function DeviceTrustApprovalPage() {
               </div>
               <div className="flex items-center justify-between">
                 <div>
-                  <Label>{t('pages.deviceTrustApproval.settingsDialog.autoApproveIps')}</Label>
+                  <Label htmlFor="device-trust-approval-auto-approve-ips">{t('pages.deviceTrustApproval.settingsDialog.autoApproveIps')}</Label>
                   <p className="text-xs text-muted-foreground">{t('pages.deviceTrustApproval.settingsDialog.autoApproveIpsHint')}</p>
                 </div>
-                <Switch
+                <Switch id="device-trust-approval-auto-approve-ips"
                   checked={settings.auto_approve_known_ips}
                   onCheckedChange={(checked) =>
                     updateSettingsMutation.mutate({ ...settings, auto_approve_known_ips: checked })
@@ -504,10 +504,10 @@ export function DeviceTrustApprovalPage() {
               </div>
               <div className="flex items-center justify-between">
                 <div>
-                  <Label>{t('pages.deviceTrustApproval.settingsDialog.autoApproveCorporate')}</Label>
+                  <Label htmlFor="device-trust-approval-auto-approve-corporate">{t('pages.deviceTrustApproval.settingsDialog.autoApproveCorporate')}</Label>
                   <p className="text-xs text-muted-foreground">{t('pages.deviceTrustApproval.settingsDialog.autoApproveCorporateHint')}</p>
                 </div>
-                <Switch
+                <Switch id="device-trust-approval-auto-approve-corporate"
                   checked={settings.auto_approve_corporate_devices}
                   onCheckedChange={(checked) =>
                     updateSettingsMutation.mutate({ ...settings, auto_approve_corporate_devices: checked })
@@ -516,10 +516,10 @@ export function DeviceTrustApprovalPage() {
               </div>
               <div className="flex items-center justify-between">
                 <div>
-                  <Label>{t('pages.deviceTrustApproval.settingsDialog.notifyAdmins')}</Label>
+                  <Label htmlFor="device-trust-approval-notify-admins">{t('pages.deviceTrustApproval.settingsDialog.notifyAdmins')}</Label>
                   <p className="text-xs text-muted-foreground">{t('pages.deviceTrustApproval.settingsDialog.notifyAdminsHint')}</p>
                 </div>
-                <Switch
+                <Switch id="device-trust-approval-notify-admins"
                   checked={settings.notify_admins}
                   onCheckedChange={(checked) =>
                     updateSettingsMutation.mutate({ ...settings, notify_admins: checked })
@@ -528,10 +528,10 @@ export function DeviceTrustApprovalPage() {
               </div>
               <div className="flex items-center justify-between">
                 <div>
-                  <Label>{t('pages.deviceTrustApproval.settingsDialog.notifyUser')}</Label>
+                  <Label htmlFor="device-trust-approval-notify-user">{t('pages.deviceTrustApproval.settingsDialog.notifyUser')}</Label>
                   <p className="text-xs text-muted-foreground">{t('pages.deviceTrustApproval.settingsDialog.notifyUserHint')}</p>
                 </div>
-                <Switch
+                <Switch id="device-trust-approval-notify-user"
                   checked={settings.notify_user_on_decision}
                   onCheckedChange={(checked) =>
                     updateSettingsMutation.mutate({ ...settings, notify_user_on_decision: checked })

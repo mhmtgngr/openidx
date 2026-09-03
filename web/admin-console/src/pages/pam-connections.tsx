@@ -595,9 +595,9 @@ export function PamConnectionsPage() {
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="text-sm font-medium">{t('pages.pamConnections.entryDialog.type')}</label>
+                <label htmlFor="pam-connections-type" className="text-sm font-medium">{t('pages.pamConnections.entryDialog.type')}</label>
                 <Select value={form.entry_type} onValueChange={(v) => setForm((f) => ({ ...f, entry_type: v }))} disabled={!!editingId}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger id="pam-connections-type"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {entryTypes.map((t) => (
                       <SelectItem key={t.type} value={t.type}>{t.label}</SelectItem>
@@ -741,12 +741,12 @@ export function PamConnectionsPage() {
             {/* Credential: own secret or linked credential entry */}
             {selectedType?.kind === 'session' && credentialEntries.length > 0 && (
               <div>
-                <label className="text-sm font-medium">{t('pages.pamConnections.entryDialog.linkedCredential')}</label>
+                <label htmlFor="pam-connections-linked-credential" className="text-sm font-medium">{t('pages.pamConnections.entryDialog.linkedCredential')}</label>
                 <Select
                   value={form.credential_entry_id || 'none'}
                   onValueChange={(v) => setForm((f) => ({ ...f, credential_entry_id: v === 'none' ? '' : v }))}
                 >
-                  <SelectTrigger>
+                  <SelectTrigger id="pam-connections-linked-credential">
                     <SelectValue placeholder={t('pages.pamConnections.entryDialog.ownSecret')} />
                   </SelectTrigger>
                   <SelectContent>
@@ -775,8 +775,8 @@ export function PamConnectionsPage() {
             )}
 
             <div>
-              <label className="text-sm font-medium">{t('pages.pamConnections.entryDialog.description')}</label>
-              <Input value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} />
+              <label htmlFor="pam-connections-description" className="text-sm font-medium">{t('pages.pamConnections.entryDialog.description')}</label>
+              <Input id="pam-connections-description" value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} />
             </div>
 
             <div className="flex flex-wrap gap-4 pt-2">

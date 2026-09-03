@@ -451,12 +451,12 @@ function SPForm({
         />
       </div>
       <div>
-        <label className="text-sm font-medium">{t('pages.samlProviders.form.nameIdFormat')}</label>
+        <label htmlFor="saml-service-providers-name-id-format" className="text-sm font-medium">{t('pages.samlProviders.form.nameIdFormat')}</label>
         <Select
           value={form.name_id_format}
           onValueChange={(value) => setForm((f) => ({ ...f, name_id_format: value }))}
         >
-          <SelectTrigger className="mt-1">
+          <SelectTrigger id="saml-service-providers-name-id-format" className="mt-1">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>

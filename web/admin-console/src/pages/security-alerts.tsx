@@ -377,9 +377,9 @@ export function SecurityAlertsPage() {
                 onChange={e => setNewIP(p => ({ ...p, ip_address: e.target.value }))} />
             </div>
             <div>
-              <label className="text-sm font-medium">{t('pages.securityAlerts.blockDialog.threatType')}</label>
+              <label htmlFor="security-alerts-threat-type" className="text-sm font-medium">{t('pages.securityAlerts.blockDialog.threatType')}</label>
               <Select value={newIP.threat_type} onValueChange={v => setNewIP(p => ({ ...p, threat_type: v }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger id="security-alerts-threat-type"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="manual">{t('pages.securityAlerts.blockDialog.typeManual')}</SelectItem>
                   <SelectItem value="brute_force">{t('pages.securityAlerts.blockDialog.typeBruteForce')}</SelectItem>

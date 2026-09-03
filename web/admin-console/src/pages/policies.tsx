@@ -341,9 +341,9 @@ export function PoliciesPage() {
             </div>
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1">
-                <Label className="text-xs">{t('pages.policies.rules.effect')}</Label>
+                <Label htmlFor={`policy-rule-${ruleIndex}-effect`} className="text-xs">{t('pages.policies.rules.effect')}</Label>
                 <Select value={rule.effect} onValueChange={(value) => updateRuleEffect(ruleIndex, value)}>
-                  <SelectTrigger className="h-8 text-sm">
+                  <SelectTrigger id={`policy-rule-${ruleIndex}-effect`} className="h-8 text-sm">
                     <SelectValue placeholder={t('pages.policies.rules.selectEffect')} />
                   </SelectTrigger>
                   <SelectContent>
@@ -354,8 +354,9 @@ export function PoliciesPage() {
                 </Select>
               </div>
               <div className="space-y-1">
-                <Label className="text-xs">{t('pages.policies.rules.priority')}</Label>
+                <Label htmlFor={`policy-rule-${ruleIndex}-priority`} className="text-xs">{t('pages.policies.rules.priority')}</Label>
                 <Input
+                  id={`policy-rule-${ruleIndex}-priority`}
                   type="number"
                   className="h-8 text-sm"
                   value={rule.priority}
@@ -650,7 +651,7 @@ export function PoliciesPage() {
             <div className="space-y-2">
               <Label htmlFor="type">{t('pages.policies.dialog.type')}</Label>
               <Select value={formData.type} onValueChange={(value) => { setFormData(prev => ({ ...prev, type: value })); setRules([]) }}>
-                <SelectTrigger>
+                <SelectTrigger id="type">
                   <SelectValue placeholder={t('pages.policies.dialog.selectType')} />
                 </SelectTrigger>
                 <SelectContent>
@@ -732,7 +733,7 @@ export function PoliciesPage() {
             <div className="space-y-2">
               <Label htmlFor="edit-type">{t('pages.policies.dialog.type')}</Label>
               <Select value={formData.type} onValueChange={(value) => { setFormData(prev => ({ ...prev, type: value })); setRules([]) }}>
-                <SelectTrigger>
+                <SelectTrigger id="edit-type">
                   <SelectValue placeholder={t('pages.policies.dialog.selectType')} />
                 </SelectTrigger>
                 <SelectContent>

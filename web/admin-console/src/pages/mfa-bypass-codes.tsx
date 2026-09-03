@@ -352,8 +352,8 @@ export function MFABypassCodesPage() {
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>{t('pages.mfaBypassCodes.createDialog.validHours')}</Label>
-                <Input
+                <Label htmlFor="mfa-bypass-codes-valid-hours">{t('pages.mfaBypassCodes.createDialog.validHours')}</Label>
+                <Input id="mfa-bypass-codes-valid-hours"
                   type="number"
                   value={newCode.valid_hours}
                   onChange={(e) => setNewCode({ ...newCode, valid_hours: parseInt(e.target.value) })}
@@ -362,8 +362,8 @@ export function MFABypassCodesPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label>{t('pages.mfaBypassCodes.createDialog.maxUses')}</Label>
-                <Input
+                <Label htmlFor="mfa-bypass-codes-max-uses">{t('pages.mfaBypassCodes.createDialog.maxUses')}</Label>
+                <Input id="mfa-bypass-codes-max-uses"
                   type="number"
                   value={newCode.max_uses}
                   onChange={(e) => setNewCode({ ...newCode, max_uses: parseInt(e.target.value) })}

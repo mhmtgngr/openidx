@@ -303,8 +303,8 @@ export function DeveloperSettingsPage() {
                 <CardContent className="space-y-4">
                   <div className="grid gap-4 md:grid-cols-2">
                     <div className="space-y-2">
-                      <label className="text-sm font-medium">{t('pages.developerSettings.apiKeys.maxKeys')}</label>
-                      <Input
+                      <label htmlFor="developer-settings-max-keys" className="text-sm font-medium">{t('pages.developerSettings.apiKeys.maxKeys')}</label>
+                      <Input id="developer-settings-max-keys"
                         type="number"
                         min={1}
                         max={50}
@@ -318,8 +318,8 @@ export function DeveloperSettingsPage() {
                       </p>
                     </div>
                     <div className="space-y-2">
-                      <label className="text-sm font-medium">{t('pages.developerSettings.apiKeys.defaultExpiry')}</label>
-                      <select
+                      <label htmlFor="developer-settings-default-expiry" className="text-sm font-medium">{t('pages.developerSettings.apiKeys.defaultExpiry')}</label>
+                      <select id="developer-settings-default-expiry"
                         value={formData.api_keys.default_expiry_days}
                         onChange={(e) =>
                           updateApiKeys('default_expiry_days', parseInt(e.target.value))
@@ -375,8 +375,8 @@ export function DeveloperSettingsPage() {
                 <CardContent className="space-y-4">
                   <div className="grid gap-4 md:grid-cols-2">
                     <div className="space-y-2">
-                      <label className="text-sm font-medium">{t('pages.developerSettings.webhooks.maxRetries')}</label>
-                      <Input
+                      <label htmlFor="developer-settings-max-retries" className="text-sm font-medium">{t('pages.developerSettings.webhooks.maxRetries')}</label>
+                      <Input id="developer-settings-max-retries"
                         type="number"
                         min={0}
                         max={10}
@@ -390,8 +390,8 @@ export function DeveloperSettingsPage() {
                       </p>
                     </div>
                     <div className="space-y-2">
-                      <label className="text-sm font-medium">{t('pages.developerSettings.webhooks.retryDelay')}</label>
-                      <Input
+                      <label htmlFor="developer-settings-retry-delay" className="text-sm font-medium">{t('pages.developerSettings.webhooks.retryDelay')}</label>
+                      <Input id="developer-settings-retry-delay"
                         type="number"
                         min={1}
                         max={3600}
@@ -484,10 +484,10 @@ export function DeveloperSettingsPage() {
               <CardContent className="space-y-4">
                 <div className="grid gap-4 md:grid-cols-2">
                   <div className="space-y-2">
-                    <label className="text-sm font-medium">
+                    <label htmlFor="developer-settings-default-limit" className="text-sm font-medium">
                       {t('pages.developerSettings.rateLimits.defaultLimit')}
                     </label>
-                    <Input
+                    <Input id="developer-settings-default-limit"
                       type="number"
                       min={1}
                       max={100000}
@@ -504,10 +504,10 @@ export function DeveloperSettingsPage() {
                     </p>
                   </div>
                   <div className="space-y-2">
-                    <label className="text-sm font-medium">
+                    <label htmlFor="developer-settings-burst-limit" className="text-sm font-medium">
                       {t('pages.developerSettings.rateLimits.burstLimit')}
                     </label>
-                    <Input
+                    <Input id="developer-settings-burst-limit"
                       type="number"
                       min={1}
                       max={10000}

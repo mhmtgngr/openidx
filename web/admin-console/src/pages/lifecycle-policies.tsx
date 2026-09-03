@@ -167,16 +167,16 @@ export function LifecyclePoliciesPage() {
           <CardContent className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="text-sm font-medium">
+                <label htmlFor="lifecycle-policies-name" className="text-sm font-medium">
                   {t('pages.lifecyclePolicies.form.name')}
                 </label>
-                <input className="w-full border rounded px-3 py-2 mt-1 text-sm" value={formName} onChange={e => setFormName(e.target.value)} />
+                <input id="lifecycle-policies-name" className="w-full border rounded px-3 py-2 mt-1 text-sm" value={formName} onChange={e => setFormName(e.target.value)} />
               </div>
               <div>
-                <label className="text-sm font-medium">
+                <label htmlFor="lifecycle-policies-policy-type" className="text-sm font-medium">
                   {t('pages.lifecyclePolicies.form.policyType')}
                 </label>
-                <select className="w-full border rounded px-3 py-2 mt-1 text-sm" value={formType} onChange={e => setFormType(e.target.value)}>
+                <select id="lifecycle-policies-policy-type" className="w-full border rounded px-3 py-2 mt-1 text-sm" value={formType} onChange={e => setFormType(e.target.value)}>
                   {POLICY_TYPES.map((k) => (
                     <option key={k} value={k}>
                       {t(`pages.lifecyclePolicies.policyTypes.${k}`)}
@@ -185,16 +185,16 @@ export function LifecyclePoliciesPage() {
                 </select>
               </div>
               <div>
-                <label className="text-sm font-medium">
+                <label htmlFor="lifecycle-policies-threshold" className="text-sm font-medium">
                   {t('pages.lifecyclePolicies.form.threshold')}
                 </label>
-                <input type="number" className="w-full border rounded px-3 py-2 mt-1 text-sm" value={formDays} onChange={e => setFormDays(Number(e.target.value))} />
+                <input id="lifecycle-policies-threshold" type="number" className="w-full border rounded px-3 py-2 mt-1 text-sm" value={formDays} onChange={e => setFormDays(Number(e.target.value))} />
               </div>
               <div>
-                <label className="text-sm font-medium">
+                <label htmlFor="lifecycle-policies-schedule" className="text-sm font-medium">
                   {t('pages.lifecyclePolicies.form.schedule')}
                 </label>
-                <select className="w-full border rounded px-3 py-2 mt-1 text-sm" value={formSchedule} onChange={e => setFormSchedule(e.target.value)}>
+                <select id="lifecycle-policies-schedule" className="w-full border rounded px-3 py-2 mt-1 text-sm" value={formSchedule} onChange={e => setFormSchedule(e.target.value)}>
                   {SCHEDULES.map((s) => (
                     <option key={s} value={s}>
                       {t(`pages.lifecyclePolicies.schedules.${s}`)}
@@ -203,17 +203,17 @@ export function LifecyclePoliciesPage() {
                 </select>
               </div>
               <div>
-                <label className="text-sm font-medium">
+                <label htmlFor="lifecycle-policies-grace-period" className="text-sm font-medium">
                   {t('pages.lifecyclePolicies.form.gracePeriod')}
                 </label>
-                <input type="number" className="w-full border rounded px-3 py-2 mt-1 text-sm" value={formGrace} onChange={e => setFormGrace(Number(e.target.value))} />
+                <input id="lifecycle-policies-grace-period" type="number" className="w-full border rounded px-3 py-2 mt-1 text-sm" value={formGrace} onChange={e => setFormGrace(Number(e.target.value))} />
               </div>
             </div>
             <div>
-              <label className="text-sm font-medium">
+              <label htmlFor="lifecycle-policies-description" className="text-sm font-medium">
                 {t('pages.lifecyclePolicies.form.description')}
               </label>
-              <textarea className="w-full border rounded px-3 py-2 mt-1 text-sm h-16" value={formDesc} onChange={e => setFormDesc(e.target.value)} />
+              <textarea id="lifecycle-policies-description" className="w-full border rounded px-3 py-2 mt-1 text-sm h-16" value={formDesc} onChange={e => setFormDesc(e.target.value)} />
             </div>
             <Button onClick={handleCreate} disabled={!formName || createMutation.isPending}>
               {createMutation.isPending

@@ -330,8 +330,8 @@ export function AgentFleetPage() {
                 />
               </div>
               <div>
-                <label className="text-sm font-medium">{t('pages.agentFleet.qr.expiresIn')}</label>
-                <Input
+                <label htmlFor="agent-fleet-expires-in" className="text-sm font-medium">{t('pages.agentFleet.qr.expiresIn')}</label>
+                <Input id="agent-fleet-expires-in"
                   type="number"
                   min={1}
                   max={1440}

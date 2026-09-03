@@ -200,7 +200,7 @@ export function ManageAppAccessDialog({
         <div className="space-y-4">
           <div className="flex items-end gap-2">
             <div className="w-32">
-              <label className="text-sm font-medium">Assign to</label>
+              <label htmlFor="manage-app-access-dialog-assign-to" className="text-sm font-medium">Assign to</label>
               <Select
                 value={principalType}
                 onValueChange={(v) => {
@@ -208,7 +208,7 @@ export function ManageAppAccessDialog({
                   setPrincipalId('')
                 }}
               >
-                <SelectTrigger className="mt-1">
+                <SelectTrigger id="manage-app-access-dialog-assign-to" className="mt-1">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -218,9 +218,9 @@ export function ManageAppAccessDialog({
               </Select>
             </div>
             <div className="flex-1">
-              <label className="text-sm font-medium capitalize">{principalType}</label>
+              <label htmlFor="manage-app-access-dialog-field" className="text-sm font-medium capitalize">{principalType}</label>
               <Select value={principalId} onValueChange={setPrincipalId}>
-                <SelectTrigger className="mt-1">
+                <SelectTrigger id="manage-app-access-dialog-field" className="mt-1">
                   <SelectValue placeholder={`Select a ${principalType}…`} />
                 </SelectTrigger>
                 <SelectContent>

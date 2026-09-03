@@ -428,7 +428,7 @@ export function WindowsAppsPage() {
 
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="text-sm font-medium">{t('pages.windowsApps.appDialog.host')}</label>
+                <label htmlFor="windows-apps-host" className="text-sm font-medium">{t('pages.windowsApps.appDialog.host')}</label>
                 <Select
                   value={form.pool_id ? `pool:${form.pool_id}` : (form.host_entry_id ? `host:${form.host_entry_id}` : '')}
                   onValueChange={(v) => {
@@ -436,7 +436,7 @@ export function WindowsAppsPage() {
                     else setForm((f) => ({ ...f, host_entry_id: v.slice(5), pool_id: '' }))
                   }}
                 >
-                  <SelectTrigger>
+                  <SelectTrigger id="windows-apps-host">
                     <SelectValue placeholder={t('pages.windowsApps.appDialog.hostPlaceholder')} />
                   </SelectTrigger>
                   <SelectContent>
@@ -521,9 +521,9 @@ export function WindowsAppsPage() {
               {t('pages.windowsApps.importDialog.instructionsAfter')}
             </p>
             <div>
-              <label className="text-sm font-medium">{t('pages.windowsApps.importDialog.host')}</label>
+              <label htmlFor="windows-apps-host-2" className="text-sm font-medium">{t('pages.windowsApps.importDialog.host')}</label>
               <Select value={importHost} onValueChange={setImportHost}>
-                <SelectTrigger>
+                <SelectTrigger id="windows-apps-host-2">
                   <SelectValue placeholder={t('pages.windowsApps.importDialog.hostPlaceholder')} />
                 </SelectTrigger>
                 <SelectContent>
@@ -656,9 +656,9 @@ function PoolsDialog({ open, onOpenChange, pools, appHosts, onChanged }: {
             <Input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder={t('pages.windowsApps.pools.newNamePlaceholder')} />
           </div>
           <div>
-            <label className="text-sm font-medium">{t('pages.windowsApps.pools.placement')}</label>
+            <label htmlFor="windows-apps-placement" className="text-sm font-medium">{t('pages.windowsApps.pools.placement')}</label>
             <Select value={newPlacement} onValueChange={setNewPlacement}>
-              <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+              <SelectTrigger id="windows-apps-placement" className="w-40"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="least_loaded">{t('pages.windowsApps.pools.leastLoaded')}</SelectItem>
                 <SelectItem value="round_robin">{t('pages.windowsApps.pools.roundRobin')}</SelectItem>
