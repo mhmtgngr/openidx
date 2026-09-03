@@ -375,16 +375,28 @@ All six items landed with this guide (commits on
      bumping the mobile workflows to it broke `flutter build ios` with
      undefined `_res_9_ninit`/`_nsearch`/`_nclose` — Go 1.26's darwin
      resolver pulls in libresolv, and the gomobile static framework never
-     declares that link requirement. Those two workflows are back on
-     1.25.x with the reason in a comment. Two follow-ups are tracked and
-     **not** folded into this branch: adding `-lresolv` to the
-     `openidx_engine` podspec, and then pinning a patched toolchain in
-     `agent/go.mod` — which today resolves to the go1.25.0 stdlib and so
-     carries 29 known stdlib advisories (`crypto/tls` GO-2025-4008 via the
-     Ziti dialer and the SSO listener, `crypto/x509` GO-2025-4007 via Ziti
-     enrolment). That is a pre-existing condition on `main`, not a
-     regression here, but it is a real gap in the agent's supply chain and
-     should be closed next.
+     declares that link requirement. Those two workflows stay on 1.25.x
+     with the reason in a comment.
+   - ✅ **The agent's supply chain is closed — and the gate that missed it
+     is fixed.** `agent/` declared `go 1.25.0` with no `toolchain` line, so
+     it resolved to the go1.25.0 stdlib and carried **29 advisories the
+     agent's own code reaches** (`crypto/tls` GO-2025-4008 via the Ziti
+     dialer and the SSO listener, `crypto/x509` GO-2025-4007 via Ziti
+     enrolment). The first read of this was that closing it needed the Go
+     1.26 move, and so the podspec work first; that was wrong. Every one of
+     those advisories is fixed *inside* the 1.25 line (1.25.3), so
+     `agent/go.mod` now pins `toolchain go1.25.13` and stays on 1.25 — no
+     libresolv exposure, no podspec change needed. The one advisory left
+     after that was a dependency, not the stdlib: `golang.org/x/net` v0.52.0
+     (GO-2026-5942, reached through pion/webrtc's `SetLocalDescription` →
+     `dnsmessage.Message.Unpack`), now v0.57.0, matching the root module.
+     **`govulncheck ./...` in `agent/` goes 29 → 0.** The deeper defect was
+     the gate itself: both govulncheck jobs ran `govulncheck ./...` from the
+     repo root, which stops at the module boundary, so they reported "0
+     reachable vulnerabilities" while never once looking at the agent. Both
+     jobs now scan `agent/` as a second blocking step. Adding `-lresolv` to
+     the `openidx_engine` podspec remains tracked, but it is now a
+     prerequisite for a *future* 1.26 move rather than a security fix.
 6. ✅ **Grafana admin/admin fallback removed; dev-kube generates real
    secrets** (B5).
 

@@ -782,6 +782,14 @@ jobs:
           go install golang.org/x/vuln/cmd/govulncheck@latest
           govulncheck ./...
 
+      # `./...` stops at the module boundary, so this gate never looked at the
+      # agent — its own module — and reported "0 reachable vulnerabilities"
+      # while the agent's stdlib carried 29 the agent's own code reached. It
+      # ships on endpoints, so it gets exactly the same blocking gate.
+      - name: Run govulncheck (agent module)
+        working-directory: agent
+        run: govulncheck ./...
+
   # Coverage reporting with codecov
   coverage-report:
     name: Coverage Report

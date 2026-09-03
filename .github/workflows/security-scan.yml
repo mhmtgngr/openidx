@@ -158,6 +158,16 @@ jobs:
           set -o pipefail
           govulncheck ./... | tee govulncheck-report.txt
 
+      # The scan above stops at the root module's boundary. The agent is its
+      # own module and ships on endpoints, so it is scanned too — without this
+      # step the gate reported clean while the agent reached 29 stdlib
+      # advisories. Appended to the same report so the artifact carries both.
+      - name: Run govulncheck (agent module)
+        working-directory: agent
+        run: |
+          set -o pipefail
+          govulncheck ./... | tee -a ../govulncheck-report.txt
+
       - name: Upload govulncheck results
         if: always()
         uses: actions/upload-artifact@v6

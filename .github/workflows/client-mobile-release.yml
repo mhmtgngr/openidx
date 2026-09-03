@@ -20,7 +20,9 @@ permissions:
 
 env:
   FLUTTER_VERSION: "3.24.0"
-  # Tracks agent/go.mod (go 1.25.0), NOT the root module's go1.26 -- see the
+  # Tracks agent/go.mod, which pins `toolchain go1.25.13` -- NOT the root
+  # module's go1.26. `1.25.x` resolves to the latest 1.25 patch, so it
+  # satisfies that floor. See the
   # same note in client-mobile-build.yml: go1.26 breaks the iOS link until the
   # openidx_engine podspec carries -lresolv.
   GO_VERSION: "1.25.x"

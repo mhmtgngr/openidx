@@ -2,6 +2,17 @@ module github.com/openidx/openidx/agent
 
 go 1.25.0
 
+// Without a toolchain line this module resolves to the go1.25.0 stdlib, which
+// carries 29 known advisories that the agent's own code reaches — among them
+// GO-2025-4008 (crypto/tls, via the Ziti dialer and the SSO listener) and
+// GO-2025-4007 (crypto/x509, via Ziti enrolment). All of them are fixed inside
+// the 1.25 line (1.25.3), so this stays on 1.25 deliberately: the mobile
+// engine's gomobile framework does not link libresolv, which go1.26's darwin
+// resolver needs, so moving this module to 1.26 requires the -lresolv flag in
+// the openidx_engine podspec first. Pinning the patched toolchain closes the
+// advisories now, without waiting for that.
+toolchain go1.25.13
+
 require (
 	github.com/Microsoft/go-winio v0.6.2
 	github.com/getlantern/systray v1.2.2
@@ -15,7 +26,7 @@ require (
 	github.com/stretchr/testify v1.11.1
 	go.uber.org/zap v1.27.0
 	golang.org/x/mobile v0.0.0-20250606033058-a2a15c67f36f
-	golang.org/x/sys v0.42.0
+	golang.org/x/sys v0.47.0
 )
 
 require (
@@ -127,16 +138,16 @@ require (
 	go.opentelemetry.io/otel/trace v1.42.0 // indirect
 	go.uber.org/multierr v1.10.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
-	golang.org/x/crypto v0.49.0 // indirect
+	golang.org/x/crypto v0.54.0 // indirect
 	golang.org/x/image v0.28.0 // indirect
-	golang.org/x/mod v0.33.0 // indirect
-	golang.org/x/net v0.52.0 // indirect
+	golang.org/x/mod v0.37.0 // indirect
+	golang.org/x/net v0.57.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
-	golang.org/x/sync v0.20.0 // indirect
-	golang.org/x/term v0.41.0 // indirect
-	golang.org/x/text v0.35.0 // indirect
+	golang.org/x/sync v0.22.0 // indirect
+	golang.org/x/term v0.45.0 // indirect
+	golang.org/x/text v0.40.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
-	golang.org/x/tools v0.42.0 // indirect
+	golang.org/x/tools v0.47.0 // indirect
 	golang.org/x/tools/go/packages/packagestest v0.1.1-deprecated // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect

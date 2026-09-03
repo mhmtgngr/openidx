@@ -22,12 +22,16 @@ on:
 
 env:
   FLUTTER_VERSION: "3.24.0"
-  # Tracks agent/go.mod (go 1.25.0), NOT the root module's go1.26 -- nothing
-  # here builds the root module; gomobile binds ./agent/mobile only. Keep them
-  # decoupled: go1.26's darwin resolver pulls libresolv (_res_9_ninit and
-  # friends) into the gomobile static framework, and the Xcode app target links
-  # no -lresolv, so `flutter build ios` fails with undefined symbols. Raising
-  # this needs that link flag added to the openidx_engine podspec first.
+  # Tracks agent/go.mod, which pins `toolchain go1.25.13` -- NOT the root
+  # module's go1.26; nothing here builds the root module, gomobile binds
+  # ./agent/mobile only. `1.25.x` resolves to the latest 1.25 patch, so it
+  # satisfies that toolchain floor. Keep the two decoupled: go1.26's darwin
+  # resolver pulls libresolv (_res_9_ninit and friends) into the gomobile
+  # static framework, and the Xcode app target links no -lresolv, so
+  # `flutter build ios` fails with undefined symbols. Raising this needs that
+  # link flag added to the openidx_engine podspec first -- and there is no
+  # security reason to: the stdlib advisories the agent reached are all fixed
+  # inside the 1.25 line, which the toolchain pin now guarantees.
   GO_VERSION: "1.25.x"
 
 jobs:
