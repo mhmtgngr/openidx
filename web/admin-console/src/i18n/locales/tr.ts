@@ -318,6 +318,7 @@ const tr: typeof en = {
   },
   landing: {
     nav: {
+      toggleMenu: 'Gezinme menüsünü aç/kapat',
       features: 'Özellikler',
       integrations: 'Entegrasyonlar',
       documentation: 'Belgeler',
@@ -2289,6 +2290,7 @@ const tr: typeof en = {
       },
       searchPlaceholder: 'İncelemelerde ara...',
       filter: {
+        statusLabel: 'Duruma göre filtrele',
         all: 'Tüm Durumlar',
         pending: 'Bekliyor',
         inProgress: 'Devam Ediyor',
@@ -2431,6 +2433,7 @@ const tr: typeof en = {
       },
       searchPlaceholder: 'Kampanyalarda ara...',
       filter: {
+        statusLabel: 'Duruma göre filtrele',
         all: 'Tüm Durumlar',
         active: 'Etkin',
         paused: 'Duraklatıldı',
@@ -2577,12 +2580,14 @@ const tr: typeof en = {
       },
       searchPlaceholder: 'Yetkilerde ara...',
       typeFilter: {
+        label: 'Türe göre filtrele',
         all: 'Tüm Türler',
         roles: 'Roller',
         groups: 'Gruplar',
         applications: 'Uygulamalar',
       },
       riskFilter: {
+        label: 'Risk düzeyine göre filtrele',
         all: 'Tüm Risk Düzeyleri',
         low: 'Düşük',
         medium: 'Orta',
@@ -2766,6 +2771,7 @@ const tr: typeof en = {
       },
       userFilter: 'Kullanıcı kimliğine göre filtrele...',
       statusFilter: {
+        label: 'Duruma göre filtrele',
         all: 'Tüm durumlar',
         active: 'Etkin',
         used: 'Kullanılmış',
@@ -2916,6 +2922,7 @@ const tr: typeof en = {
       },
       searchPlaceholder: 'Anahtar ara...',
       statusFilter: {
+        label: 'Duruma göre filtrele',
         all: 'Tüm durumlar',
         available: 'Uygun',
         assigned: 'Atanmış',
@@ -3085,6 +3092,7 @@ const tr: typeof en = {
         threats: 'IP Tehdit Listesi',
       },
       statusFilter: {
+        label: 'Duruma göre filtrele',
         placeholder: 'Durum',
         all: 'Tüm Durumlar',
         open: 'Açık',
@@ -3093,6 +3101,7 @@ const tr: typeof en = {
         falsePositive: 'Yanlış Pozitif',
       },
       severityFilter: {
+        label: 'Önem düzeyine göre filtrele',
         placeholder: 'Önem',
         all: 'Tüm Önem Düzeyleri',
         critical: 'Kritik',
@@ -4410,6 +4419,8 @@ const tr: typeof en = {
       exportCsv: 'CSV Dışa Aktar',
       exporting: 'Dışa aktarılıyor...',
       dateRange: 'Tarih Aralığı:',
+      startDate: 'Başlangıç tarihi',
+      endDate: 'Bitiş tarihi',
       to: '-',
       totalEvents: 'Toplam Olay',
       successRate: 'Başarı Oranı',
@@ -4423,7 +4434,9 @@ const tr: typeof en = {
       dayEvents_other: '{{date}}: {{count}} olay',
       searchPlaceholder: 'Eyleme, aktöre veya IP adresine göre arayın...',
       allEventTypes: 'Tüm Olay Türleri',
+      eventTypeFilterLabel: 'Olay türüne göre filtrele',
       allOutcomes: 'Tüm Sonuçlar',
+      outcomeFilterLabel: 'Sonuca göre filtrele',
       emptyTitle: 'Denetim kaydı bulunamadı',
       emptyDesc: 'Etkinlik oluştukça denetim olayları burada görünecek',
       showingEvents: '{{total}} olaydan {{from}}\u2013{{to}} arası gösteriliyor',
@@ -4773,6 +4786,7 @@ const tr: typeof en = {
       createPolicy: 'Politika Oluştur',
       searchPlaceholder: 'Politikalarda ara...',
       allResourceTypes: 'Tüm Kaynak Türleri',
+      resourceTypeFilterLabel: 'Kaynak türüne göre filtrele',
       policyCount_one: '{{count}} politika',
       policyCount_other: '{{count}} politika',
       conditionCount_one: '{{count}} koşul',
@@ -6410,6 +6424,7 @@ const tr: typeof en = {
       },
     },
     userAccess360: {
+      backToUsers: 'Kullanıcılara dön',
       title: 'Erişim 360',
       resource: 'kullanıcı erişim haritası',
       correlating: 'Erişim IAM, PAM ve Ziti genelinde ilişkilendiriliyor…',
@@ -6631,6 +6646,7 @@ const tr: typeof en = {
       },
       searchPlaceholder: 'İş akışlarında ara...',
       allEvents: 'Tüm Olaylar',
+      eventFilterLabel: 'Olaya göre filtrele',
       loading: 'İş akışları yükleniyor...',
       resource: 'yaşam döngüsü iş akışları',
       emptyTitle: 'İş akışı bulunamadı',
@@ -6693,6 +6709,7 @@ const tr: typeof en = {
       subtitle: 'Kullanıcılara devredilen yönetici izinlerini yönetin',
       add: 'Yetki Devri Ekle',
       allScopeTypes: 'Tüm kapsam türleri',
+      scopeFilterLabel: 'Kapsam türüne göre filtrele',
       scopeTypes: {
         group: 'Grup',
         role: 'Rol',
@@ -7081,6 +7098,7 @@ const tr: typeof en = {
       },
     },
     agentFleet: {
+      platformFilterLabel: 'Platforma göre filtrele',
       title: 'Ajan Filosu',
       subtitle:
         'OpenIDX’e kaydedilmiş uç nokta ajanları — masaüstü Go ajanı ve Android birleşik ajanı.',
@@ -7941,6 +7959,7 @@ const tr: typeof en = {
       resource: 'denetim olayları',
       total24h: 'Toplam (24s)',
       allSources: 'Tüm Kaynaklar',
+      sourceFilterLabel: 'Kaynağa göre filtrele',
       eventTypePlaceholder: 'Olay türüne göre filtrele...',
       colTimestamp: 'Zaman damgası',
       colSource: 'Kaynak',
@@ -8299,6 +8318,7 @@ const tr: typeof en = {
       },
     },
     errorCatalog: {
+      categoryFilterLabel: 'Kategoriye göre filtrele',
       subtitle: 'Tüm hata kodlarının, açıklamaların ve çözüm ipuçlarının başvurusu',
       resource: 'hata kataloğu',
       searchPlaceholder: 'Hata koduna veya açıklamaya göre ara...',

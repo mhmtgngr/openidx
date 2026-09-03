@@ -257,7 +257,7 @@ export function UserAccess360Page() {
     return (
       <div className="space-y-6">
         <div className="flex items-center gap-3">
-          <Link to="/users"><Button variant="ghost" size="icon"><ArrowLeft className="h-4 w-4" /></Button></Link>
+          <Button variant="ghost" size="icon" asChild><Link to="/users" aria-label={t('pages.userAccess360.backToUsers')}><ArrowLeft className="h-4 w-4" /></Link></Button>
           <h1 className="text-3xl font-bold tracking-tight">{t('pages.userAccess360.title')}</h1>
         </div>
         <QueryError error={error} resource={t('pages.userAccess360.resource')} />
@@ -269,7 +269,7 @@ export function UserAccess360Page() {
     return (
       <div className="space-y-6">
         <div className="flex items-center gap-3">
-          <Link to="/users"><Button variant="ghost" size="icon"><ArrowLeft className="h-4 w-4" /></Button></Link>
+          <Button variant="ghost" size="icon" asChild><Link to="/users" aria-label={t('pages.userAccess360.backToUsers')}><ArrowLeft className="h-4 w-4" /></Link></Button>
           <h1 className="text-3xl font-bold tracking-tight">{t('pages.userAccess360.title')}</h1>
         </div>
         <p className="text-muted-foreground">
@@ -288,7 +288,7 @@ export function UserAccess360Page() {
       {/* Header */}
       <div className="flex items-start justify-between">
         <div className="flex items-center gap-3">
-          <Link to="/users"><Button variant="ghost" size="icon"><ArrowLeft className="h-4 w-4" /></Button></Link>
+          <Button variant="ghost" size="icon" asChild><Link to="/users" aria-label={t('pages.userAccess360.backToUsers')}><ArrowLeft className="h-4 w-4" /></Link></Button>
           <div>
             <div className="flex items-center gap-3">
               <h1 className="text-3xl font-bold tracking-tight">{user.username}</h1>

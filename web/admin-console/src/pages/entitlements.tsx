@@ -240,7 +240,7 @@ export function EntitlementsPage() {
               />
             </div>
             <Select value={typeFilter || 'all'} onValueChange={(val) => { setTypeFilter(val === 'all' ? '' : val); setPage(0) }}>
-              <SelectTrigger className="w-[160px]">
+              <SelectTrigger className="w-[160px]" aria-label={t('pages.entitlements.typeFilter.label')}>
                 <SelectValue placeholder={t('pages.entitlements.typeFilter.all')} />
               </SelectTrigger>
               <SelectContent>
@@ -251,7 +251,7 @@ export function EntitlementsPage() {
               </SelectContent>
             </Select>
             <Select value={riskFilter || 'all'} onValueChange={(val) => { setRiskFilter(val === 'all' ? '' : val); setPage(0) }}>
-              <SelectTrigger className="w-[160px]">
+              <SelectTrigger className="w-[160px]" aria-label={t('pages.entitlements.riskFilter.label')}>
                 <SelectValue placeholder={t('pages.entitlements.riskFilter.all')} />
               </SelectTrigger>
               <SelectContent>

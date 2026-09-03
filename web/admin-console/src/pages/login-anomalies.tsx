@@ -190,9 +190,9 @@ export default function LoginAnomalies() {
         <CardContent className="pt-6">
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2">
-              <span className="text-sm font-medium">{t('pages.loginAnomalies.filters.days')}</span>
+              <label htmlFor="anomaly-days" className="text-sm font-medium">{t('pages.loginAnomalies.filters.days')}</label>
               <Select value={days} onValueChange={setDays}>
-                <SelectTrigger className="w-[120px]">
+                <SelectTrigger id="anomaly-days" className="w-[120px]">
                   <SelectValue placeholder={t('pages.loginAnomalies.filters.daysPlaceholder')} />
                 </SelectTrigger>
                 <SelectContent>
@@ -205,9 +205,9 @@ export default function LoginAnomalies() {
               </Select>
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-sm font-medium">{t('pages.loginAnomalies.filters.minScore')}</span>
+              <label htmlFor="anomaly-min-score" className="text-sm font-medium">{t('pages.loginAnomalies.filters.minScore')}</label>
               <Select value={minScore} onValueChange={setMinScore}>
-                <SelectTrigger className="w-[120px]">
+                <SelectTrigger id="anomaly-min-score" className="w-[120px]">
                   <SelectValue placeholder={t('pages.loginAnomalies.filters.minScorePlaceholder')} />
                 </SelectTrigger>
                 <SelectContent>

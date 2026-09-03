@@ -153,6 +153,8 @@ export function LandingPage() {
             {/* Mobile menu button */}
             <button
               className="md:hidden p-2"
+              aria-label={t('landing.nav.toggleMenu')}
+              aria-expanded={mobileMenuOpen}
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
             >
               {mobileMenuOpen ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}

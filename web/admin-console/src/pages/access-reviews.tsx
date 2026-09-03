@@ -354,7 +354,7 @@ export function AccessReviewsPage() {
               />
             </div>
             <Select value={statusFilter} onValueChange={(val) => { setStatusFilter(val === 'all' ? '' : val); setPage(0) }}>
-              <SelectTrigger className="w-[180px]">
+              <SelectTrigger className="w-[180px]" aria-label={t('pages.accessReviews.filter.statusLabel')}>
                 <SelectValue placeholder={t('pages.accessReviews.filter.all')} />
               </SelectTrigger>
               <SelectContent>

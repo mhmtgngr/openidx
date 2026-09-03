@@ -200,9 +200,9 @@ export function TenantManagementPage() {
       )}
 
       <div className="space-y-2">
-        <label className="text-sm font-medium">{t('pages.tenantManagement.organization')}</label>
+        <label htmlFor="tenant-org" className="text-sm font-medium">{t('pages.tenantManagement.organization')}</label>
         <Select value={selectedOrgId} onValueChange={setSelectedOrgId}>
-          <SelectTrigger className="w-64">
+          <SelectTrigger id="tenant-org" className="w-64">
             <SelectValue placeholder={t('pages.tenantManagement.selectOrg')} />
           </SelectTrigger>
           <SelectContent>

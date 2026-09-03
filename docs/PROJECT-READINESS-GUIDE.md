@@ -1165,11 +1165,56 @@ all four pillars, deploy, log in, and find PAM.
    second version read the doc comment quoting `` `<div onClick>` `` as code.
    Both are now cases 3 and 4 of the self-test, and both were confirmed to go
    red when the corresponding fix is reverted.
+
+1i. ✅ **The accessibility gate now covers every page, and extending it found
+   twenty-nine more violations.** 1b's gate named thirteen surfaces by hand.
+   That list was right about priority — the pre-login and end-user screens are
+   the ones someone may have no choice about using — and wrong about scope: it
+   left **ninety-four admin pages ungated**. The gate is now derived from the
+   `src/pages` directory instead of written down, so a page added tomorrow is
+   covered the day it lands, and the sweep went from 13 surfaces to **106**.
+   Turning it on found twenty-nine violations of exactly the class 1b existed
+   to catch:
+   - **Sixteen filter dropdowns with no accessible name at all.** Every one
+     was a Radix `SelectTrigger` whose only text was its own current value, so
+     a screen reader announced either nothing or “All Outcomes, combo box” —
+     the value, never the purpose. Each now carries an `aria-label` naming
+     what it filters, in both catalogs.
+   - **Five filters on the admin audit log whose visible labels named
+     nothing.** They were bare `<label>` elements with no `htmlFor`, so a
+     sighted operator saw five labelled controls and a screen-reader user
+     heard five anonymous ones. Associating the labels that already existed
+     was the right fix — one name, visible and programmatic, that cannot
+     drift.
+   - **The landing page's mobile menu button**, the only control in the
+     mobile header, with no name and no `aria-expanded`.
+   - **Access 360 nested a `<Button>` inside a `<Link>`** in three places.
+     That is invalid HTML — interactive content inside an anchor — and it
+     produced *both* a nameless link and a nameless button; `asChild`
+     collapses the pair into one named `<a>`.
+   - Two more filters on `login-anomalies`, a page the previous sweep never
+     saw at all because it is a `default` export and the loader only looked
+     for named ones. A coverage sweep that silently drops a page is the
+     failure mode this whole item is about, so the loader now takes both and
+     the sweep asserts its own size.
+   The exemption list is itself tested: `api-docs` cannot render here because
+   `swagger-ui-react` bundles its own copy of React, and the test for it
+   **fails if it starts working**, so the list cannot quietly grow into a list
+   of the awkward cases. The sweep was also confirmed to go red on a real
+   page: dropping one `aria-label` from `audit-logs.tsx` fails that page's
+   case with `button-name`, and nothing else.
+   **Still not a VPAT**, and the gate says so in its own header: contrast
+   cannot run in jsdom (1d–1e cover it), nothing behind an interaction is
+   mounted — a dialog body or dropdown is invisible to this gate — and what a
+   screen reader *announces* is still not something any tool judges.
 2. Accessibility audit to a VPAT with real assistive technology — what a
    screen reader actually *announces*, and whether a person can complete each
    journey with one. That still needs a person: no tool judges whether an
-   announcement is intelligible. What no longer needs one, and is now gated,
-   is contrast (1c–1e) and keyboard reachability (1g–1h).
+   announcement is intelligible, and nothing behind an interaction (dialog
+   bodies, dropdown menus) is reachable by the automated sweep at all. What
+   no longer needs a person, and is now gated, is contrast (1c–1e), keyboard
+   reachability (1g–1h), and every axe-detectable WCAG 2.1 A/AA rule over all
+   106 renderable console pages (1i).
 3. Separate/hardened end-user portal bundle.
 4. Mobile app decision (Expo vs Flutter) executed — maintainer's call.
 5. The existing roadmap epics (outbound SCIM, HR-driven JML, per-org

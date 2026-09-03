@@ -275,7 +275,7 @@ export function DeviceTrustApprovalPage() {
       {/* Filters and Bulk Actions */}
       <div className="flex items-center justify-between">
         <Select value={statusFilter || 'all'} onValueChange={(v) => setStatusFilter(v === 'all' ? '' : v)}>
-          <SelectTrigger className="w-[180px]">
+          <SelectTrigger className="w-[180px]" aria-label={t('pages.deviceTrustApproval.filterStatus')}>
             <SelectValue placeholder={t('pages.deviceTrustApproval.filterStatus')} />
           </SelectTrigger>
           <SelectContent>

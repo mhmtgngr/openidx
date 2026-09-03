@@ -253,7 +253,7 @@ export function DelegationsPage() {
           <div className="flex items-center gap-4">
             <div className="w-48">
               <Select value={scopeFilter} onValueChange={(v) => { setScopeFilter(v === 'all' ? '' : v); setPage(0) }}>
-                <SelectTrigger>
+                <SelectTrigger aria-label={t('pages.delegations.scopeFilterLabel')}>
                   <SelectValue placeholder={t('pages.delegations.allScopeTypes')} />
                 </SelectTrigger>
                 <SelectContent>

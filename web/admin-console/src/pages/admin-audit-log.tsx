@@ -364,10 +364,11 @@ export function AdminAuditLogPage() {
         <CardContent>
           <div className="grid gap-3 md:grid-cols-5">
             <div className="space-y-1">
-              <label className="text-xs font-medium text-muted-foreground">{t('pages.adminAuditLog.columns.actor')}</label>
+              <label htmlFor="aal-actor" className="text-xs font-medium text-muted-foreground">{t('pages.adminAuditLog.columns.actor')}</label>
               <div className="relative">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
                 <Input
+                  id="aal-actor"
                   placeholder={t('pages.adminAuditLog.actorPlaceholder')}
                   value={actorFilter}
                   onChange={(e) => {
@@ -379,8 +380,9 @@ export function AdminAuditLogPage() {
               </div>
             </div>
             <div className="space-y-1">
-              <label className="text-xs font-medium text-muted-foreground">{t('pages.adminAuditLog.columns.action')}</label>
+              <label htmlFor="aal-action" className="text-xs font-medium text-muted-foreground">{t('pages.adminAuditLog.columns.action')}</label>
               <select
+                id="aal-action"
                 value={actionFilter}
                 onChange={(e) => {
                   setActionFilter(e.target.value)
@@ -396,8 +398,9 @@ export function AdminAuditLogPage() {
               </select>
             </div>
             <div className="space-y-1">
-              <label className="text-xs font-medium text-muted-foreground">{t('pages.adminAuditLog.columns.targetType')}</label>
+              <label htmlFor="aal-target-type" className="text-xs font-medium text-muted-foreground">{t('pages.adminAuditLog.columns.targetType')}</label>
               <select
+                id="aal-target-type"
                 value={targetTypeFilter}
                 onChange={(e) => {
                   setTargetTypeFilter(e.target.value)
@@ -413,8 +416,9 @@ export function AdminAuditLogPage() {
               </select>
             </div>
             <div className="space-y-1">
-              <label className="text-xs font-medium text-muted-foreground">{t('pages.adminAuditLog.startDate')}</label>
+              <label htmlFor="aal-start-date" className="text-xs font-medium text-muted-foreground">{t('pages.adminAuditLog.startDate')}</label>
               <Input
+                id="aal-start-date"
                 type="date"
                 value={startDate}
                 onChange={(e) => {
@@ -425,8 +429,9 @@ export function AdminAuditLogPage() {
               />
             </div>
             <div className="space-y-1">
-              <label className="text-xs font-medium text-muted-foreground">{t('pages.adminAuditLog.endDate')}</label>
+              <label htmlFor="aal-end-date" className="text-xs font-medium text-muted-foreground">{t('pages.adminAuditLog.endDate')}</label>
               <Input
+                id="aal-end-date"
                 type="date"
                 value={endDate}
                 onChange={(e) => {

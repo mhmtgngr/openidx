@@ -236,7 +236,7 @@ export function MFABypassCodesPage() {
           className="max-w-sm"
         />
         <Select value={statusFilter || 'all'} onValueChange={(v) => setStatusFilter(v === 'all' ? '' : v)}>
-          <SelectTrigger className="w-[180px]">
+          <SelectTrigger className="w-[180px]" aria-label={t('pages.mfaBypassCodes.statusFilter.label')}>
             <SelectValue placeholder={t('pages.mfaBypassCodes.statusFilter.all')} />
           </SelectTrigger>
           <SelectContent>

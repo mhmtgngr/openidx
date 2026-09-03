@@ -318,6 +318,7 @@ const en = {
   },
   landing: {
     nav: {
+      toggleMenu: 'Toggle navigation menu',
       features: 'Features',
       integrations: 'Integrations',
       documentation: 'Documentation',
@@ -2291,6 +2292,7 @@ const en = {
       },
       searchPlaceholder: 'Search reviews...',
       filter: {
+        statusLabel: 'Filter by status',
         all: 'All Statuses',
         pending: 'Pending',
         inProgress: 'In Progress',
@@ -2433,6 +2435,7 @@ const en = {
       },
       searchPlaceholder: 'Search campaigns...',
       filter: {
+        statusLabel: 'Filter by status',
         all: 'All Statuses',
         active: 'Active',
         paused: 'Paused',
@@ -2579,12 +2582,14 @@ const en = {
       },
       searchPlaceholder: 'Search entitlements...',
       typeFilter: {
+        label: 'Filter by type',
         all: 'All Types',
         roles: 'Roles',
         groups: 'Groups',
         applications: 'Applications',
       },
       riskFilter: {
+        label: 'Filter by risk level',
         all: 'All Risk Levels',
         low: 'Low',
         medium: 'Medium',
@@ -2768,6 +2773,7 @@ const en = {
       },
       userFilter: 'Filter by user ID...',
       statusFilter: {
+        label: 'Filter by status',
         all: 'All statuses',
         active: 'Active',
         used: 'Used',
@@ -2917,6 +2923,7 @@ const en = {
       },
       searchPlaceholder: 'Search tokens...',
       statusFilter: {
+        label: 'Filter by status',
         all: 'All statuses',
         available: 'Available',
         assigned: 'Assigned',
@@ -3085,6 +3092,7 @@ const en = {
         threats: 'IP Threat List',
       },
       statusFilter: {
+        label: 'Filter by status',
         placeholder: 'Status',
         all: 'All Status',
         open: 'Open',
@@ -3093,6 +3101,7 @@ const en = {
         falsePositive: 'False Positive',
       },
       severityFilter: {
+        label: 'Filter by severity',
         placeholder: 'Severity',
         all: 'All Severity',
         critical: 'Critical',
@@ -4409,6 +4418,8 @@ const en = {
       exportCsv: 'Export CSV',
       exporting: 'Exporting...',
       dateRange: 'Date Range:',
+      startDate: 'Start date',
+      endDate: 'End date',
       to: 'to',
       totalEvents: 'Total Events',
       successRate: 'Success Rate',
@@ -4422,7 +4433,9 @@ const en = {
       dayEvents_other: '{{date}}: {{count}} events',
       searchPlaceholder: 'Search by action, actor, IP address...',
       allEventTypes: 'All Event Types',
+      eventTypeFilterLabel: 'Filter by event type',
       allOutcomes: 'All Outcomes',
+      outcomeFilterLabel: 'Filter by outcome',
       emptyTitle: 'No audit logs found',
       emptyDesc: 'Audit events will appear here as activity occurs',
       showingEvents: 'Showing {{from}}\u2013{{to}} of {{total}} events',
@@ -4781,6 +4794,7 @@ const en = {
       createPolicy: 'Create Policy',
       searchPlaceholder: 'Search policies...',
       allResourceTypes: 'All Resource Types',
+      resourceTypeFilterLabel: 'Filter by resource type',
       policyCount_one: '{{count}} policy',
       policyCount_other: '{{count}} policies',
       conditionCount_one: '{{count}} condition',
@@ -6456,6 +6470,7 @@ const en = {
     // strings here are pinned by the page's own test, so they must stay
     // byte-identical to what the page rendered before extraction.
     userAccess360: {
+      backToUsers: 'Back to users',
       title: 'Access 360',
       resource: 'the user access map',
       correlating: 'Correlating access across IAM, PAM and Ziti…',
@@ -6686,6 +6701,7 @@ const en = {
       },
       searchPlaceholder: 'Search workflows...',
       allEvents: 'All Events',
+      eventFilterLabel: 'Filter by event',
       loading: 'Loading workflows...',
       resource: 'lifecycle workflows',
       emptyTitle: 'No workflows found',
@@ -6747,6 +6763,7 @@ const en = {
       subtitle: 'Manage delegated admin permissions for users',
       add: 'Add Delegation',
       allScopeTypes: 'All scope types',
+      scopeFilterLabel: 'Filter by scope type',
       // The scope kinds the delegation API accepts, resolved by key with the
       // capitalized raw value as the fallback.
       scopeTypes: {
@@ -7158,6 +7175,7 @@ const en = {
     // severities and enforcement actions, and the `device-trusted` Ziti role
     // attribute the tier badge names.
     agentFleet: {
+      platformFilterLabel: 'Filter by platform',
       title: 'Agent Fleet',
       subtitle:
         'Endpoint agents enrolled in OpenIDX — desktop Go agent and Android unified agent.',
@@ -8105,6 +8123,7 @@ const en = {
       resource: 'audit events',
       total24h: 'Total (24h)',
       allSources: 'All Sources',
+      sourceFilterLabel: 'Filter by source',
       eventTypePlaceholder: 'Filter by event type...',
       colTimestamp: 'Timestamp',
       colSource: 'Source',
@@ -8523,6 +8542,7 @@ const en = {
     // registry's vocabulary and appears in two shapes: lowercase on a row badge
     // and title case in the filter, both off one wire list.
     errorCatalog: {
+      categoryFilterLabel: 'Filter by category',
       // The heading is exactly the nav item, so it reuses `nav.items`.
       subtitle: 'Reference of all error codes, descriptions, and resolution hints',
       resource: 'the error catalog',

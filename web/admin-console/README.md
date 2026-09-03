@@ -66,7 +66,7 @@ cover the others:
 
 | Check | Runs | Covers | Cannot cover |
 | --- | --- | --- | --- |
-| `src/test/a11y.test.tsx` | CI (vitest/jsdom) | The axe WCAG 2.1 A/AA rule set over the 13 surfaces a non-admin reaches | Colour contrast — jsdom has no layout or paint, so the rule is disabled there rather than left to fail silently |
+| `src/test/a11y.test.tsx` | CI (vitest/jsdom) | The axe WCAG 2.1 A/AA rule set over **every page in `src/pages`**, derived from the directory so a new page is covered the day it lands | Colour contrast — jsdom has no layout or paint, so the rule is disabled there rather than left to fail silently. Also anything behind an interaction: a dialog body or dropdown is not mounted until it is opened |
 | `src/test/design-token-contrast.test.ts` | CI (vitest) | Every design-token pair the components render, in **both** themes, straight out of `index.css` | Pairings built from Tailwind palette utilities, and tinted surfaces that composite per theme |
 | `scripts/contrast-audit.mjs` | By hand | axe's `color-contrast` over 36 routes × 2 colour schemes in real Chromium, with a stubbed API so authenticated pages render | Only what a route actually paints — a control inside an unopened dialog is never measured |
 
@@ -82,6 +82,20 @@ ROUTES="my-security vault" node scripts/contrast-audit.mjs
 It exits non-zero on any violation **or** on any route that renders blank —
 a page that rendered nothing reports zero violations, which looks exactly
 like a pass, so it is called out instead of counted.
+
+The page sweep replaced a hand-written list of thirteen surfaces. The list was
+right about priority — the pre-login and end-user screens are the ones someone
+may have no choice about using — and wrong about scope: it left ninety-four
+admin pages ungated, and they held twenty-nine violations of exactly the class
+the gate existed to catch, including sixteen filter dropdowns that announced
+nothing at all and five filters whose visible labels were bare `<label>`
+elements with no `htmlFor`. An admin who uses a screen reader is not a lesser
+user, and "the surfaces that matter" is not a list anyone keeps up to date.
+
+One page is exempt: `api-docs`, because `swagger-ui-react` bundles its own copy
+of React and cannot render in this environment. The exemption is itself a test
+— it fails if the page starts rendering — so the list cannot quietly grow into
+a list of the awkward cases.
 
 Keyboard reachability is gated separately, by
 `scripts/check-keyboard-reachable.sh` at the repo root (with the other UI

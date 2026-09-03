@@ -158,6 +158,7 @@ export function ErrorCatalogPage() {
             <div className="flex items-center gap-2">
               <Filter className="h-4 w-4 text-muted-foreground" />
               <select
+                aria-label={t('pages.errorCatalog.categoryFilterLabel')}
                 value={categoryFilter}
                 onChange={(e) => setCategoryFilter(e.target.value)}
                 className="flex h-10 rounded-md border border-input bg-background px-3 py-2 text-sm"

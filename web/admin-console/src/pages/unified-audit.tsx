@@ -164,7 +164,7 @@ export function UnifiedAuditPage() {
           <div className="flex flex-wrap gap-4">
             <div className="flex-1 min-w-[200px]">
               <Select value={source} onValueChange={setSource}>
-                <SelectTrigger>
+                <SelectTrigger aria-label={t('pages.unifiedAudit.sourceFilterLabel')}>
                   <SelectValue placeholder={t('pages.unifiedAudit.allSources')} />
                 </SelectTrigger>
                 <SelectContent>

@@ -160,7 +160,7 @@ export function SecurityAlertsPage() {
             <CardHeader>
               <div className="flex items-center gap-4">
                 <Select value={statusFilter} onValueChange={setStatusFilter}>
-                  <SelectTrigger className="w-[150px]">
+                  <SelectTrigger className="w-[150px]" aria-label={t('pages.securityAlerts.statusFilter.label')}>
                     <SelectValue placeholder={t('pages.securityAlerts.statusFilter.placeholder')} />
                   </SelectTrigger>
                   <SelectContent>
@@ -172,7 +172,7 @@ export function SecurityAlertsPage() {
                   </SelectContent>
                 </Select>
                 <Select value={severityFilter} onValueChange={setSeverityFilter}>
-                  <SelectTrigger className="w-[150px]">
+                  <SelectTrigger className="w-[150px]" aria-label={t('pages.securityAlerts.severityFilter.label')}>
                     <SelectValue placeholder={t('pages.securityAlerts.severityFilter.placeholder')} />
                   </SelectTrigger>
                   <SelectContent>

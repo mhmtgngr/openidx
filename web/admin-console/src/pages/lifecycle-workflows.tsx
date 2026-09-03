@@ -275,7 +275,7 @@ export function LifecycleWorkflowsPage() {
               />
             </div>
             <Select value={eventFilter || 'all'} onValueChange={(val) => { setEventFilter(val === 'all' ? '' : val); setPage(0) }}>
-              <SelectTrigger className="w-[160px]">
+              <SelectTrigger className="w-[160px]" aria-label={t('pages.lifecycleWorkflows.eventFilterLabel')}>
                 <SelectValue placeholder={t('pages.lifecycleWorkflows.allEvents')} />
               </SelectTrigger>
               <SelectContent>

@@ -261,6 +261,7 @@ export function AuditLogsPage() {
             <div className="flex items-center gap-2">
               <Input
                 type="date"
+                aria-label={t('pages.auditLogs.startDate')}
                 value={startDate}
                 onChange={(e) => { setStartDate(e.target.value); setPage(0) }}
                 className="w-40"
@@ -268,6 +269,7 @@ export function AuditLogsPage() {
               <span className="text-muted-foreground">{t('pages.auditLogs.to')}</span>
               <Input
                 type="date"
+                aria-label={t('pages.auditLogs.endDate')}
                 value={endDate}
                 onChange={(e) => { setEndDate(e.target.value); setPage(0) }}
                 className="w-40"
@@ -485,7 +487,7 @@ export function AuditLogsPage() {
             <div className="flex items-center gap-2">
               <Filter className="h-4 w-4 text-muted-foreground" />
               <Select value={eventTypeFilter || 'all'} onValueChange={(val) => { setEventTypeFilter(val === 'all' ? '' : val); setPage(0) }}>
-                <SelectTrigger className="w-[180px]">
+                <SelectTrigger aria-label={t('pages.auditLogs.eventTypeFilterLabel')} className="w-[180px]">
                   <SelectValue placeholder={t('pages.auditLogs.allEventTypes')} />
                 </SelectTrigger>
                 <SelectContent>
@@ -496,7 +498,7 @@ export function AuditLogsPage() {
                 </SelectContent>
               </Select>
               <Select value={outcomeFilter || 'all'} onValueChange={(val) => { setOutcomeFilter(val === 'all' ? '' : val); setPage(0) }}>
-                <SelectTrigger className="w-[180px]">
+                <SelectTrigger aria-label={t('pages.auditLogs.outcomeFilterLabel')} className="w-[180px]">
                   <SelectValue placeholder={t('pages.auditLogs.allOutcomes')} />
                 </SelectTrigger>
                 <SelectContent>

@@ -373,7 +373,7 @@ export function ABACPoliciesPage() {
               />
             </div>
             <Select value={resourceTypeFilter} onValueChange={(val) => { setResourceTypeFilter(val === 'all' ? '' : val); setOffset(0) }}>
-              <SelectTrigger className="w-[200px]">
+              <SelectTrigger className="w-[200px]" aria-label={t('pages.abacPolicies.resourceTypeFilterLabel')}>
                 <SelectValue placeholder={t('pages.abacPolicies.allResourceTypes')} />
               </SelectTrigger>
               <SelectContent>

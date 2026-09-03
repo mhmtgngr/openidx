@@ -199,6 +199,7 @@ export function AgentFleetPage() {
           <CardTitle>{t('pages.agentFleet.listHeading')}</CardTitle>
           <div className="flex items-center gap-2">
             <select
+              aria-label={t('pages.agentFleet.platformFilterLabel')}
               value={platformFilter}
               onChange={(e) => setPlatformFilter(e.target.value)}
               className="h-9 rounded-md border border-input bg-background px-3 text-sm"

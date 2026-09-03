@@ -246,7 +246,7 @@ export function HardwareTokensPage() {
           />
         </div>
         <Select value={statusFilter || 'all'} onValueChange={(v) => setStatusFilter(v === 'all' ? '' : v)}>
-          <SelectTrigger className="w-[180px]">
+          <SelectTrigger className="w-[180px]" aria-label={t('pages.hardwareTokens.statusFilter.label')}>
             <SelectValue placeholder={t('pages.hardwareTokens.statusFilter.all')} />
           </SelectTrigger>
           <SelectContent>

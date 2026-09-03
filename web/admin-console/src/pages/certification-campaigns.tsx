@@ -266,7 +266,7 @@ export function CertificationCampaignsPage() {
               />
             </div>
             <Select value={statusFilter || 'all'} onValueChange={(val) => { setStatusFilter(val === 'all' ? '' : val); setPage(0) }}>
-              <SelectTrigger className="w-[160px]">
+              <SelectTrigger className="w-[160px]" aria-label={t('pages.certCampaigns.filter.statusLabel')}>
                 <SelectValue placeholder={t('pages.certCampaigns.filter.all')} />
               </SelectTrigger>
               <SelectContent>
