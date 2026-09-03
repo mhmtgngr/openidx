@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import { Search, Share2, ExternalLink } from 'lucide-react'
 import { api } from '../lib/api'
 import { QueryGate } from '../components/query-gate'
@@ -57,12 +58,9 @@ interface ZitiSessionResp {
 
 type KindFilter = 'all' | TopoKind
 
-const KIND_FILTERS: { value: KindFilter; label: string }[] = [
-  { value: 'all', label: 'All' },
-  { value: 'identity', label: 'Identities' },
-  { value: 'router', label: 'Routers' },
-  { value: 'service', label: 'Services' },
-]
+// The filter values, resolved through the catalog at render so the buttons
+// and the summary rows below cannot come to name different kinds.
+const KIND_FILTERS: KindFilter[] = ['all', 'identity', 'router', 'service']
 
 // ─── Filtering ────────────────────────────────────────────────────────────────
 
@@ -101,6 +99,7 @@ function refMatchesNode(refs: string[], node: TopoNode, roleAttributes: string[]
 // ─── Page ────────────────────────────────────────────────────────────────────
 
 export function NetworkTopologyPage() {
+  const { t } = useTranslation()
   const [search, setSearch] = useState('')
   const [kind, setKind] = useState<KindFilter>('all')
   const [showSessions, setShowSessions] = useState(false)
@@ -180,9 +179,11 @@ export function NetworkTopologyPage() {
       <div className="flex items-center gap-3">
         <Share2 className="h-7 w-7 text-primary" />
         <div>
-          <h1 className="text-3xl font-bold tracking-tight text-foreground">Network Topology</h1>
+          <h1 className="text-3xl font-bold tracking-tight text-foreground">
+            {t('nav.items.networkTopology')}
+          </h1>
           <p className="text-muted-foreground">
-            Interactive overlay map of identities, edge routers, and services with their access policies.
+            {t('pages.networkTopology.subtitle')}
           </p>
         </div>
       </div>
@@ -192,32 +193,32 @@ export function NetworkTopologyPage() {
         <div className="relative max-w-sm flex-1">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
-            placeholder="Filter nodes by name..."
+            placeholder={t('pages.networkTopology.searchPlaceholder')}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pl-9"
           />
         </div>
         <div className="flex items-center gap-1 rounded-md border border-border p-0.5">
-          {KIND_FILTERS.map((f) => (
+          {KIND_FILTERS.map((value) => (
             <Button
-              key={f.value}
-              variant={kind === f.value ? 'default' : 'ghost'}
+              key={value}
+              variant={kind === value ? 'default' : 'ghost'}
               size="sm"
-              onClick={() => setKind(f.value)}
+              onClick={() => setKind(value)}
             >
-              {f.label}
+              {t(`pages.networkTopology.kinds.${value}`)}
             </Button>
           ))}
         </div>
         <label className="ml-auto flex items-center gap-2 text-sm text-muted-foreground">
           <Switch checked={showSessions} onCheckedChange={setShowSessions} />
-          Show live sessions
+          {t('pages.networkTopology.showSessions')}
         </label>
       </div>
 
       {/* Main */}
-      <QueryGate query={identitiesQuery} resource="network topology">
+      <QueryGate query={identitiesQuery} resource={t('pages.networkTopology.resource')}>
         {() => {
           const anyLoading =
             servicesQuery.isLoading || routersQuery.isLoading || policiesQuery.isLoading
@@ -260,41 +261,51 @@ const STATUS_VARIANT: Record<string, 'default' | 'destructive' | 'secondary'> = 
 }
 
 function DetailPanel({ node, policies }: { node: TopoNode; policies: ServicePolicyResp[] }) {
+  const { t } = useTranslation()
   return (
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center justify-between text-base">
           <span className="truncate text-foreground">{node.label}</span>
-          <Badge variant="outline" className="capitalize">{node.kind}</Badge>
+          <Badge variant="outline">
+            {t(`pages.networkTopology.nodeKinds.${node.kind}`, { defaultValue: node.kind })}
+          </Badge>
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4 text-sm">
         <div className="flex items-center justify-between">
-          <span className="text-muted-foreground">Status</span>
-          <Badge variant={STATUS_VARIANT[node.status] ?? 'secondary'} className="capitalize">
-            {node.status}
+          <span className="text-muted-foreground">{t('pages.networkTopology.detail.status')}</span>
+          <Badge variant={STATUS_VARIANT[node.status] ?? 'secondary'}>
+            {t(`pages.networkTopology.statuses.${node.status}`, {
+              defaultValue: node.status,
+            })}
           </Badge>
         </div>
 
         {(node.kind === 'identity' || node.kind === 'service') && (
           <div className="space-y-2">
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Service policies ({policies.length})
+              {t('pages.networkTopology.detail.policies', { n: policies.length })}
             </p>
             {policies.length === 0 ? (
-              <p className="text-xs text-muted-foreground">No service policies reference this {node.kind}.</p>
+              <p className="text-xs text-muted-foreground">
+                {t(`pages.networkTopology.detail.noPolicies.${node.kind}`)}
+              </p>
             ) : (
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Policy</TableHead>
-                    <TableHead>Type</TableHead>
+                    <TableHead>{t('pages.networkTopology.detail.colPolicy')}</TableHead>
+                    <TableHead>{t('pages.networkTopology.detail.colType')}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {policies.map((p, idx) => (
                     <TableRow key={p.id ?? `${p.name}-${idx}`}>
-                      <TableCell className="font-medium">{p.name ?? p.id ?? 'policy'}</TableCell>
+                      {/* Policy name and type come from the controller. */}
+                      <TableCell className="font-medium">
+                        {p.name ?? p.id ?? t('pages.networkTopology.detail.policyFallback')}
+                      </TableCell>
                       <TableCell className="text-muted-foreground">{p.type ?? '—'}</TableCell>
                     </TableRow>
                   ))}
@@ -307,13 +318,15 @@ function DetailPanel({ node, policies }: { node: TopoNode; policies: ServicePoli
         <div className="flex flex-col gap-2 border-t border-border pt-3">
           <Button variant="outline" size="sm" asChild>
             <Link to="/ziti-network">
-              <ExternalLink className="mr-2 h-4 w-4" /> Open Ziti Network
+              <ExternalLink className="mr-2 h-4 w-4" />{' '}
+              {t('pages.networkTopology.detail.openZitiNetwork')}
             </Link>
           </Button>
           {node.kind === 'identity' && (
             <Button variant="outline" size="sm" asChild>
               <Link to="/devices">
-                <ExternalLink className="mr-2 h-4 w-4" /> View Devices
+                <ExternalLink className="mr-2 h-4 w-4" />{' '}
+                {t('pages.networkTopology.detail.viewDevices')}
               </Link>
             </Button>
           )}
@@ -326,6 +339,7 @@ function DetailPanel({ node, policies }: { node: TopoNode; policies: ServicePoli
 // ─── Summary panel (no selection) ─────────────────────────────────────────────
 
 function SummaryPanel({ topology }: { topology: Topology }) {
+  const { t } = useTranslation()
   const counts = useMemo(() => {
     let identities = 0
     let routers = 0
@@ -341,27 +355,37 @@ function SummaryPanel({ topology }: { topology: Topology }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base text-foreground">Overlay summary</CardTitle>
+        <CardTitle className="text-base text-foreground">
+          {t('pages.networkTopology.summary.title')}
+        </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3 text-sm">
         <div className="flex items-center justify-between">
-          <span className="text-muted-foreground">Identities</span>
+          <span className="text-muted-foreground">
+            {t('pages.networkTopology.kinds.identity')}
+          </span>
           <span className="font-medium text-foreground">{counts.identities}</span>
         </div>
         <div className="flex items-center justify-between">
-          <span className="text-muted-foreground">Routers</span>
+          <span className="text-muted-foreground">
+            {t('pages.networkTopology.kinds.router')}
+          </span>
           <span className="font-medium text-foreground">{counts.routers}</span>
         </div>
         <div className="flex items-center justify-between">
-          <span className="text-muted-foreground">Services</span>
+          <span className="text-muted-foreground">
+            {t('pages.networkTopology.kinds.service')}
+          </span>
           <span className="font-medium text-foreground">{counts.services}</span>
         </div>
         <div className="flex items-center justify-between">
-          <span className="text-muted-foreground">Edges</span>
+          <span className="text-muted-foreground">
+            {t('pages.networkTopology.summary.edges')}
+          </span>
           <span className="font-medium text-foreground">{topology.edges.length}</span>
         </div>
         <p className="border-t border-border pt-3 text-xs text-muted-foreground">
-          Select a node in the map to inspect its status, access policies, and quick links.
+          {t('pages.networkTopology.summary.hint')}
         </p>
       </CardContent>
     </Card>

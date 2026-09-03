@@ -562,6 +562,39 @@ describe('i18n', () => {
       // enrolment state derived from the device's Ziti identity.
       ...['mobile', 'tablet', 'desktop'].map((k) => `pages.devices.deviceTypes.${k}`),
       ...['enrolled', 'pending', 'none'].map((k) => `pages.devices.zitiStatuses.${k}`),
+      // ai-agents: the agent lifecycle vocabularies, each rendered twice —
+      // lowercase on the row badge, title case in the create form.
+      ...['assistant', 'autonomous', 'workflow', 'integration'].flatMap((k) => [
+        `pages.aiAgents.agentTypes.${k}`,
+        `pages.aiAgents.form.typeOptions.${k}`,
+      ]),
+      ...['low', 'medium', 'high'].flatMap((k) => [
+        `pages.aiAgents.trustLevels.${k}`,
+        `pages.aiAgents.form.trustOptions.${k}`,
+      ]),
+      ...['active', 'suspended', 'inactive'].map((k) => `pages.aiAgents.statuses.${k}`),
+      ...['active', 'revoked', 'expired'].map(
+        (k) => `pages.aiAgents.credentialStatuses.${k}`,
+      ),
+      // network-topology: the node kinds, plural for the filter buttons and the
+      // summary rows, singular for the selected node's badge, plus the node
+      // health the topology model computes and the per-kind empty sentence.
+      ...['all', 'identity', 'router', 'service'].map(
+        (k) => `pages.networkTopology.kinds.${k}`,
+      ),
+      ...['identity', 'router', 'service'].map(
+        (k) => `pages.networkTopology.nodeKinds.${k}`,
+      ),
+      ...['up', 'down', 'degraded', 'unknown'].map(
+        (k) => `pages.networkTopology.statuses.${k}`,
+      ),
+      ...['identity', 'service'].map(
+        (k) => `pages.networkTopology.detail.noPolicies.${k}`,
+      ),
+      // predictive-analytics: the forecaster's trend directions.
+      ...['increasing', 'decreasing', 'stable', 'insufficient_data'].map(
+        (k) => `pages.predictiveAnalytics.trends.${k}`,
+      ),
     ]
     for (const lang of supportedLanguages) {
       for (const key of mapKeys) {
@@ -964,6 +997,73 @@ describe('i18n', () => {
     expect(
       i18n.t('pages.devices.showing', { from: 1, to: 20, total: 42, count: 42 }),
     ).toBe('42 cihazdan 1-20 arası gösteriliyor')
+  })
+
+  it('renders the AI agent vocabularies in both the badge and the form casing', async () => {
+    await i18n.changeLanguage('en')
+    expect(i18n.t('pages.aiAgents.agentTypes.assistant')).toBe('assistant')
+    expect(i18n.t('pages.aiAgents.form.typeOptions.assistant')).toBe('Assistant')
+    expect(
+      i18n.t('pages.aiAgents.trustBadge', {
+        level: i18n.t('pages.aiAgents.trustLevels.high'),
+      }),
+    ).toBe('Trust: high')
+    // A lifecycle value the API adds later still reads as itself.
+    expect(
+      i18n.t('pages.aiAgents.statuses.quarantined', { defaultValue: 'quarantined' }),
+    ).toBe('quarantined')
+  })
+
+  it('pluralizes the Ziti bulk-import summary in both languages', async () => {
+    await i18n.changeLanguage('en')
+    expect(
+      i18n.t('pages.zitiDiscovery.toasts.bulkSummary', {
+        imported: i18n.t('pages.zitiDiscovery.toasts.bulkImported', { count: 1 }),
+        failed: i18n.t('pages.zitiDiscovery.toasts.bulkFailed', { n: 0 }),
+      }),
+    ).toBe('Imported 1 service. 0 failed.')
+    expect(
+      i18n.t('pages.zitiDiscovery.toasts.bulkSummary', {
+        imported: i18n.t('pages.zitiDiscovery.toasts.bulkImported', { count: 7 }),
+        failed: i18n.t('pages.zitiDiscovery.toasts.bulkFailed', { n: 2 }),
+      }),
+    ).toBe('Imported 7 services. 2 failed.')
+    expect(i18n.t('pages.zitiDiscovery.bulk.submit', { count: 1 })).toBe(
+      'Import 1 Service',
+    )
+
+    await i18n.changeLanguage('tr')
+    expect(
+      i18n.t('pages.zitiDiscovery.toasts.bulkImported', { count: 7 }),
+    ).toBe('7 servis aktarıldı.')
+  })
+
+  it('inflects the topology empty sentence per node kind', async () => {
+    // Keyed by the node kind rather than interpolating the word, so a locale
+    // that inflects the noun can write each sentence out.
+    await i18n.changeLanguage('en')
+    expect(i18n.t('pages.networkTopology.detail.noPolicies.identity')).toBe(
+      'No service policies reference this identity.',
+    )
+    expect(i18n.t('pages.networkTopology.detail.noPolicies.service')).toBe(
+      'No service policies reference this service.',
+    )
+    await i18n.changeLanguage('tr')
+    expect(i18n.t('pages.networkTopology.detail.noPolicies.identity')).toContain(
+      'kimliğe',
+    )
+  })
+
+  it('resolves an unknown forecast trend to its prettified raw value', async () => {
+    await i18n.changeLanguage('en')
+    expect(
+      i18n.t('pages.predictiveAnalytics.trends.accelerating', {
+        defaultValue: 'accelerating'.replace(/_/g, ' '),
+      }),
+    ).toBe('accelerating')
+    expect(i18n.t('pages.predictiveAnalytics.trends.insufficient_data')).toBe(
+      'Insufficient data',
+    )
   })
 
   it('interpolates the page strings that carry values', async () => {

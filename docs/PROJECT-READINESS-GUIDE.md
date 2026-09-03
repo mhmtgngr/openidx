@@ -21,7 +21,7 @@ security, access, sessions, devices, trusted browsers, notifications,
 access requests, profile — are fully bilingual; the end-user experience
 is complete in both languages). Open: P1 rollout Task 16 (operator
 action), P3.1 cut v1.28.0 (post-merge), the remaining P4 items incl.
-the 27 remaining admin page bodies and the Expo-vs-Flutter mobile pick.)
+the 23 remaining admin page bodies and the Expo-vs-Flutter mobile pick.)
 **Question this document answers:** *Is OpenIDX fully functional and well defined end to end, as experienced by the people who use it — and what are the next steps and controls to get it there?*
 
 This is the product-and-user-side companion to
@@ -779,11 +779,29 @@ all four pillars, deploy, log in, and find PAM.
    1 of 1 device"), with the registration total keeping its locale-formatted
    number by passing the raw count for the plural rule and the formatted
    string for the sentence.
-   *Remaining:* 27 other admin page bodies (a measured count, not an
+   Batch 20 took AI Agents, Ziti Discovery, Network Topology and Predictive
+   Analytics. Two of those pages render the same vocabulary twice in different
+   grammatical shapes — the agent's type and trust level appear lowercase on a
+   row badge and title case in the create form; the topology's node kinds
+   appear plural on the filter buttons and singular on the selected node's
+   badge — so each shape gets its own catalog map, both keyed off one
+   wire-value list, and both pinned by test: the *membership* cannot drift even
+   though the casing legitimately differs. Where a sentence names a kind, the
+   sentence itself is keyed by that kind rather than interpolating the word
+   ("No service policies reference this identity."), so a locale that inflects
+   the noun can write each variant out instead of gluing a nominative into a
+   slot. Three more concatenations became real plurals — the Ziti bulk-import
+   summary ("Imported 1 service. 0 failed."), its confirm button, and the
+   login-forecast day counts — and the bulk-import confirmation moved onto
+   `Trans` so the count stays bold. What stays raw: OAuth scopes, the
+   credential key prefix, Ziti protocol names and host:port pairs, the
+   URL-path example, the controller's policy names and types, and the
+   forecaster's own peak-weekday string.
+   *Remaining:* 23 other admin page bodies (a measured count, not an
    estimate: pages under `src/pages` with no `useTranslation`) — mechanical,
    batch by batch, against this pattern. The largest of them are
-   `ai-agents.tsx` (390 lines), `ziti-discovery.tsx` (379),
-   `network-topology.tsx` (371) and `predictive-analytics.tsx` (349).
+   `organizations.tsx` (345 lines), `audit-archival.tsx` (345),
+   `privacy-dashboard.tsx` (332) and `unified-audit.tsx` (328).
 2. Accessibility pass to a VPAT (needs real assistive-technology testing,
    not just an automated axe sweep).
 3. Separate/hardened end-user portal bundle.

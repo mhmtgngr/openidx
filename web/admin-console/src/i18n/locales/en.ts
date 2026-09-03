@@ -7629,6 +7629,269 @@ const en = {
         fingerprintCopied: 'Fingerprint copied to clipboard',
       },
     },
+    // AI agents. OAuth scopes and the credential key prefix are wire values and
+    // stay raw. The agent's type and trust level are rendered twice — lowercase
+    // on the row badge, title case in the create form — so each rendering has
+    // its own map, both keyed off the same wire-value list so their membership
+    // cannot drift apart.
+    aiAgents: {
+      title: 'AI Agent Management',
+      subtitle: 'Manage AI agent identities, credentials, and permissions',
+      resource: 'AI agents',
+      create: 'Create Agent',
+      newKeyWarning: 'New API Key Generated - Copy it now, it won\'t be shown again:',
+      dismiss: 'Dismiss',
+      stats: {
+        total: 'Total Agents',
+        active: 'Active',
+        suspended: 'Suspended',
+        expiringKeys: 'Expiring Keys',
+        actions24h: 'Actions (24h)',
+        failures24h: 'Failures (24h)',
+      },
+      form: {
+        title: 'Create New AI Agent',
+        name: 'Name',
+        namePlaceholder: 'e.g., CI/CD Pipeline Bot',
+        description: 'Description',
+        descriptionPlaceholder: 'What does this agent do?',
+        type: 'Type',
+        trustLevel: 'Trust Level',
+        creating: 'Creating...',
+        submit: 'Create Agent',
+        typeOptions: {
+          assistant: 'Assistant',
+          autonomous: 'Autonomous',
+          workflow: 'Workflow',
+          integration: 'Integration',
+        },
+        trustOptions: {
+          low: 'Low',
+          medium: 'Medium',
+          high: 'High',
+        },
+      },
+      listTitle: 'Agents ({{n}})',
+      noDescription: 'No description',
+      trustBadge: 'Trust: {{level}}',
+      empty: 'No AI agents configured',
+      agentTypes: {
+        assistant: 'assistant',
+        autonomous: 'autonomous',
+        workflow: 'workflow',
+        integration: 'integration',
+      },
+      trustLevels: {
+        low: 'low',
+        medium: 'medium',
+        high: 'high',
+      },
+      statuses: {
+        active: 'active',
+        suspended: 'suspended',
+        inactive: 'inactive',
+      },
+      detail: {
+        type: 'Type',
+        trustLevel: 'Trust Level',
+        status: 'Status',
+        owner: 'Owner',
+        lastActive: 'Last Active',
+        scopes: 'Scopes',
+        credentials: 'Credentials',
+        expires: 'Exp: {{date}}',
+        selectPrompt: 'Select an agent to view details',
+      },
+      // Credential lifecycle, separate from the agent's own.
+      credentialStatuses: {
+        active: 'active',
+        revoked: 'revoked',
+        expired: 'expired',
+      },
+      rotate: {
+        button: 'Rotate Key',
+        title: 'Rotate this agent\'s key?',
+        desc:
+          'A new credential is issued and the agent\'s current key stops working immediately. Update anything using the old key before rotating.',
+        confirm: 'Rotate',
+      },
+      suspend: 'Suspend',
+      activate: 'Activate',
+      deleteDialog: {
+        title: 'Delete this agent?',
+        desc:
+          'This permanently removes the AI agent and its issued credentials. This cannot be undone.',
+      },
+    },
+    // Ziti service discovery. Protocol names, host:port pairs, the controller's
+    // service id and the URL-path example are wire values and stay raw.
+    zitiDiscovery: {
+      title: 'Ziti Service Discovery',
+      subtitle: 'Discover and import existing Ziti services into OpenIDX',
+      resource: 'discovered Ziti services',
+      stats: {
+        total: 'Total Services',
+        managed: 'Already Managed',
+        available: 'Available to Import',
+      },
+      searchPlaceholder: 'Search services...',
+      importSelected: 'Import Selected ({{n}})',
+      colName: 'Service Name',
+      colProtocol: 'Protocol',
+      colHostPort: 'Host:Port',
+      colStatus: 'Status',
+      colActions: 'Actions',
+      managed: 'Managed',
+      available: 'Available',
+      import: 'Import',
+      empty: 'No services found',
+      single: {
+        title: 'Import Ziti Service',
+        routeName: 'Route Name',
+        routeNamePlaceholder: 'Enter route name',
+        urlPath: 'URL Path',
+        description: 'Description (optional)',
+        descriptionPlaceholder: 'Enter description',
+      },
+      bulk: {
+        title: 'Confirm Bulk Import',
+        confirm_one:
+          'You are about to import <0>{{count}}</0> Ziti service as a proxy route.',
+        confirm_other:
+          'You are about to import <0>{{count}}</0> Ziti services as proxy routes.',
+        note: 'Each service will be created with default settings. You can customize them later.',
+        submit_one: 'Import {{count}} Service',
+        submit_other: 'Import {{count}} Services',
+      },
+      toasts: {
+        imported: 'Service Imported',
+        importedDesc: 'The Ziti service has been imported as a proxy route.',
+        importFailed: 'Import Failed',
+        bulkComplete: 'Bulk Import Complete',
+        // Two counts in one line: the first pluralizes, the second is the same
+        // word either way, so it stays invariant.
+        bulkImported_one: 'Imported {{count}} service.',
+        bulkImported_other: 'Imported {{count}} services.',
+        bulkFailed: '{{n}} failed.',
+        bulkSummary: '{{imported}} {{failed}}',
+        bulkFailedTitle: 'Bulk Import Failed',
+      },
+    },
+    // Network topology. Node labels, policy names and the policy type are the
+    // controller's own values and render as sent. The node kinds appear both
+    // plural (filter buttons, summary rows) and singular (the selected node's
+    // badge), so each grammatical number has its own map keyed off the same
+    // wire values.
+    networkTopology: {
+      // The heading is exactly the nav item, so it reuses `nav.items`.
+      subtitle:
+        'Interactive overlay map of identities, edge routers, and services with their access policies.',
+      resource: 'network topology',
+      searchPlaceholder: 'Filter nodes by name...',
+      showSessions: 'Show live sessions',
+      kinds: {
+        all: 'All',
+        identity: 'Identities',
+        router: 'Routers',
+        service: 'Services',
+      },
+      nodeKinds: {
+        identity: 'Identity',
+        router: 'Router',
+        service: 'Service',
+      },
+      // Node health as the topology model computes it.
+      statuses: {
+        up: 'Up',
+        down: 'Down',
+        degraded: 'Degraded',
+        unknown: 'Unknown',
+      },
+      detail: {
+        status: 'Status',
+        policies: 'Service policies ({{n}})',
+        colPolicy: 'Policy',
+        colType: 'Type',
+        policyFallback: 'policy',
+        // Keyed by the node kind so each locale can inflect the sentence.
+        noPolicies: {
+          identity: 'No service policies reference this identity.',
+          service: 'No service policies reference this service.',
+        },
+        openZitiNetwork: 'Open Ziti Network',
+        viewDevices: 'View Devices',
+      },
+      summary: {
+        title: 'Overlay summary',
+        edges: 'Edges',
+        hint: 'Select a node in the map to inspect its status, access policies, and quick links.',
+      },
+    },
+    // Predictive analytics. The forecaster's peak weekday name is composed
+    // server-side and renders as sent; the chart dates are the API's own.
+    predictiveAnalytics: {
+      title: 'Predictive Analytics',
+      subtitle: 'Forward-looking insights for capacity planning and proactive security',
+      resource: 'predictive analytics',
+      empty: 'No prediction data available',
+      // Forecast direction, resolved by key with the prettified raw value as a
+      // fallback so a direction the forecaster adds later still reads.
+      trends: {
+        increasing: 'Increasing',
+        decreasing: 'Decreasing',
+        stable: 'Stable',
+        insufficient_data: 'Insufficient data',
+      },
+      notAvailable: 'N/A',
+      cards: {
+        avgDailyLogins: 'Avg Daily Logins',
+        avgRiskScore: 'Avg Risk Score',
+        activeUsers: 'Active Users',
+        monthlyGrowth: '{{n}}%/mo',
+        projected30d: 'Projected 30d: {{n}}',
+        peakSessions: 'Peak Sessions',
+        capacityHint: 'Capacity: {{n}} recommended',
+      },
+      chart: {
+        pointTooltip: '{{date}}: {{value}}',
+        predictedSuffix: ' (predicted)',
+      },
+      loginForecast: {
+        title: 'Login Volume Forecast',
+        historical_one: 'Historical ({{count}} day)',
+        historical_other: 'Historical ({{count}} days)',
+        predicted_one: 'Predicted ({{count}} day)',
+        predicted_other: 'Predicted ({{count}} days)',
+      },
+      riskForecast: {
+        title: 'Risk Score Forecast',
+      },
+      capacity: {
+        title: 'Capacity Planning',
+        peakConcurrent: 'Peak Concurrent Sessions',
+        avgConcurrent: 'Average Concurrent Sessions',
+        peakHour: 'Peak Hour',
+        peakHourValue: '{{hour}}:00',
+        peakDay: 'Peak Day',
+        licenseUtilization: 'License Utilization',
+        recommended: 'Recommended Capacity',
+        recommendedValue_one: '{{count}} session',
+        recommendedValue_other: '{{count}} sessions',
+      },
+      churn: {
+        title: 'Churn Risk Users ({{n}})',
+        lastLogin: 'Last login: {{date}}',
+        risk: 'Risk: {{pct}}%',
+        loginDrop: '{{pct}}% login drop',
+        empty: 'No churn risk users detected',
+      },
+      growth: {
+        title: 'Account Growth Projection',
+        current: 'Current',
+        projected30: '30-Day Projected',
+        projected90: '90-Day Projected',
+      },
+    },
   },
   pam: {
     remoteAppSecretHint:
