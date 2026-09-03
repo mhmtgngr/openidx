@@ -681,9 +681,23 @@ all four pillars, deploy, log in, and find PAM.
    the backend adds later still reads as itself; and the form's sample
    placeholders (`admin, developer`, `192.168.1.100`, the policy DSL
    expression) stay raw, because a translated example would stop matching
-   what the API accepts. *Remaining:* 46 other admin page bodies (a
-   measured count, not an estimate: pages under `src/pages` with no
-   `useTranslation`) — mechanical, batch by batch, against this pattern.
+   what the API accepts. *And the two configuration surfaces an operator
+   touches first:* Settings — general, password policy, session and lockout,
+   the advanced session policies, country-based access control,
+   authentication, the SMS/OTP gateway and branding — and Consent
+   Management, the privacy surface (user consents, data subject access
+   requests, retention policies, impact assessments). The SMS provider
+   registry is the clearest win of the pass: eleven gateways previously
+   carried their own hardcoded field labels, so "API Key" appeared eight
+   times in English; the registry now names a `labelKey` per field and each
+   label is translated once, which also means a new gateway cannot ship with
+   a translated name and English fields. Consent Management's status, risk
+   and request-type vocabularies resolve through the catalog with a raw
+   fallback, its badges became components so they re-resolve on a language
+   switch, and one more `en-US`-pinned date now follows the browser locale.
+   *Remaining:* 44 other admin page bodies (a measured count, not an
+   estimate: pages under `src/pages` with no `useTranslation`) — mechanical,
+   batch by batch, against this pattern.
 2. Accessibility pass to a VPAT (needs real assistive-technology testing,
    not just an automated axe sweep).
 3. Separate/hardened end-user portal bundle.

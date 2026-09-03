@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Shield,
@@ -87,11 +88,12 @@ interface ImpactAssessment {
 
 // --- Helpers ---
 
+// Labels resolve from pages.consentManagement.tabs.<key> at render.
 const tabs = [
-  { key: 'consents', label: 'User Consents', icon: Shield },
-  { key: 'dsars', label: 'Data Subject Requests', icon: FileCheck },
-  { key: 'retention', label: 'Retention Policies', icon: Clock },
-  { key: 'assessments', label: 'Impact Assessments', icon: AlertTriangle },
+  { key: 'consents', icon: Shield },
+  { key: 'dsars', icon: FileCheck },
+  { key: 'retention', icon: Clock },
+  { key: 'assessments', icon: AlertTriangle },
 ] as const
 
 type TabKey = (typeof tabs)[number]['key']
@@ -105,7 +107,10 @@ function isUuid(value: string): boolean {
   return UUID_RE.test(value)
 }
 
-function getStatusBadge(status: string) {
+// Status and risk are backend enums. Both render through the catalog with a
+// raw fallback, so a value the server adds later still reads as itself.
+function StatusBadge({ status }: { status: string }) {
+  const { t } = useTranslation()
   const styles: Record<string, string> = {
     pending: 'bg-yellow-100 text-yellow-800',
     in_progress: 'bg-blue-100 text-blue-800',
@@ -115,23 +120,15 @@ function getStatusBadge(status: string) {
     in_review: 'bg-blue-100 text-blue-800',
     approved: 'bg-green-100 text-green-800',
   }
-  const labels: Record<string, string> = {
-    pending: 'Pending',
-    in_progress: 'In Progress',
-    completed: 'Completed',
-    rejected: 'Rejected',
-    draft: 'Draft',
-    in_review: 'In Review',
-    approved: 'Approved',
-  }
   return (
     <Badge className={styles[status] || 'bg-muted text-foreground'}>
-      {labels[status] || status}
+      {t(`pages.consentManagement.statuses.${status}`, { defaultValue: status })}
     </Badge>
   )
 }
 
-function getRiskBadge(level: string) {
+function RiskBadge({ level }: { level: string }) {
+  const { t } = useTranslation()
   const styles: Record<string, string> = {
     low: 'bg-green-100 text-green-800',
     medium: 'bg-yellow-100 text-yellow-800',
@@ -140,7 +137,9 @@ function getRiskBadge(level: string) {
   }
   return (
     <Badge className={styles[level] || 'bg-muted text-foreground'}>
-      {level.charAt(0).toUpperCase() + level.slice(1)}
+      {t(`pages.consentManagement.risks.${level}`, {
+        defaultValue: level.charAt(0).toUpperCase() + level.slice(1),
+      })}
     </Badge>
   )
 }
@@ -148,28 +147,18 @@ function getRiskBadge(level: string) {
 function formatDate(dateStr: string | null): string {
   if (!dateStr) return '-'
   const date = new Date(dateStr)
-  return date.toLocaleDateString('en-US', {
+  // Browser locale, not a pinned en-US: the date follows the reader.
+  return date.toLocaleDateString(undefined, {
     year: 'numeric',
     month: 'short',
     day: 'numeric',
   })
 }
 
-function formatRequestType(type: string): string {
-  const labels: Record<string, string> = {
-    export: 'Data Export',
-    delete: 'Data Deletion',
-    restrict: 'Restrict Processing',
-    access: 'Data Access',
-    rectify: 'Rectification',
-    portability: 'Data Portability',
-  }
-  return labels[type] || type
-}
-
 // --- Tab Components ---
 
 function UserConsentsTab() {
+  const { t } = useTranslation()
   const [filterType, setFilterType] = useState<string>('all')
 
   const { data: consentsData, isLoading, isError, error } = useQuery({
@@ -192,18 +181,19 @@ function UserConsentsTab() {
     )
   }
 
-  if (isError) return <QueryError error={error} resource="user consents" />
+  if (isError) return <QueryError error={error} resource={t('pages.consentManagement.consents.resourceName')} />
 
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3">
-        <Label className="text-sm font-medium">Filter by type:</Label>
+        <Label className="text-sm font-medium">{t('pages.consentManagement.consents.filterLabel')}</Label>
         <Select value={filterType} onValueChange={setFilterType}>
           <SelectTrigger className="w-48">
-            <SelectValue placeholder="All types" />
+            <SelectValue placeholder={t('pages.consentManagement.consents.allTypesPlaceholder')} />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All Types</SelectItem>
+            <SelectItem value="all">{t('pages.consentManagement.consents.allTypes')}</SelectItem>
+            {/* Consent types are the server's own vocabulary, shown as sent. */}
             {consentTypes.map((type) => (
               <SelectItem key={type} value={type}>
                 {type.replace(/_/g, ' ')}
@@ -214,18 +204,18 @@ function UserConsentsTab() {
       </div>
 
       {filtered.length === 0 ? (
-        <p className="text-sm text-muted-foreground py-8 text-center">No consent records found</p>
+        <p className="text-sm text-muted-foreground py-8 text-center">{t('pages.consentManagement.consents.empty')}</p>
       ) : (
         <div className="overflow-x-auto rounded-md border">
           <Table>
             <TableHeader>
               <TableRow className="border-b bg-muted">
-                <TableHead className="text-left py-3 px-4 font-medium text-muted-foreground">User</TableHead>
-                <TableHead className="text-left py-3 px-4 font-medium text-muted-foreground">Type</TableHead>
-                <TableHead className="text-left py-3 px-4 font-medium text-muted-foreground">Version</TableHead>
-                <TableHead className="text-left py-3 px-4 font-medium text-muted-foreground">Granted</TableHead>
-                <TableHead className="text-left py-3 px-4 font-medium text-muted-foreground">Granted At</TableHead>
-                <TableHead className="text-left py-3 px-4 font-medium text-muted-foreground">Revoked At</TableHead>
+                <TableHead className="text-left py-3 px-4 font-medium text-muted-foreground">{t('pages.consentManagement.consents.user')}</TableHead>
+                <TableHead className="text-left py-3 px-4 font-medium text-muted-foreground">{t('pages.consentManagement.consents.type')}</TableHead>
+                <TableHead className="text-left py-3 px-4 font-medium text-muted-foreground">{t('pages.consentManagement.consents.version')}</TableHead>
+                <TableHead className="text-left py-3 px-4 font-medium text-muted-foreground">{t('pages.consentManagement.consents.granted')}</TableHead>
+                <TableHead className="text-left py-3 px-4 font-medium text-muted-foreground">{t('pages.consentManagement.consents.grantedAt')}</TableHead>
+                <TableHead className="text-left py-3 px-4 font-medium text-muted-foreground">{t('pages.consentManagement.consents.revokedAt')}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -236,7 +226,7 @@ function UserConsentsTab() {
                   <TableCell className="py-3 px-4 text-muted-foreground">{consent.version}</TableCell>
                   <TableCell className="py-3 px-4">
                     <Badge className={consent.granted ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}>
-                      {consent.granted ? 'Yes' : 'No'}
+                      {consent.granted ? t('pages.consentManagement.consents.yes') : t('pages.consentManagement.consents.no')}
                     </Badge>
                   </TableCell>
                   <TableCell className="py-3 px-4 text-muted-foreground">{formatDate(consent.granted_at)}</TableCell>
@@ -254,6 +244,7 @@ function UserConsentsTab() {
 function DSARsTab() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const { t } = useTranslation()
   const [showCreate, setShowCreate] = useState(false)
   const [formUserId, setFormUserId] = useState('')
   const [formType, setFormType] = useState('export')
@@ -274,10 +265,10 @@ function DSARsTab() {
       setFormUserId('')
       setFormType('export')
       setFormReason('')
-      toast({ title: 'DSAR created successfully' })
+      toast({ title: t('pages.consentManagement.dsars.toast.created') })
     },
     onError: () => {
-      toast({ title: 'Failed to create DSAR', variant: 'destructive' })
+      toast({ title: t('pages.consentManagement.dsars.toast.createFailed'), variant: 'destructive' })
     },
   })
 
@@ -287,10 +278,10 @@ function DSARsTab() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['privacy-dsars'] })
       queryClient.invalidateQueries({ queryKey: ['privacy-dashboard'] })
-      toast({ title: 'DSAR status updated to In Progress' })
+      toast({ title: t('pages.consentManagement.dsars.toast.processed') })
     },
     onError: () => {
-      toast({ title: 'Failed to update DSAR', variant: 'destructive' })
+      toast({ title: t('pages.consentManagement.dsars.toast.processFailed'), variant: 'destructive' })
     },
   })
 
@@ -300,10 +291,10 @@ function DSARsTab() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['privacy-dsars'] })
       queryClient.invalidateQueries({ queryKey: ['privacy-dashboard'] })
-      toast({ title: 'DSAR executed successfully' })
+      toast({ title: t('pages.consentManagement.dsars.toast.executed') })
     },
     onError: () => {
-      toast({ title: 'Failed to execute DSAR', variant: 'destructive' })
+      toast({ title: t('pages.consentManagement.dsars.toast.executeFailed'), variant: 'destructive' })
     },
   })
 
@@ -317,32 +308,32 @@ function DSARsTab() {
     )
   }
 
-  if (isError) return <QueryError error={error} resource="data subject requests" />
+  if (isError) return <QueryError error={error} resource={t('pages.consentManagement.dsars.resourceName')} />
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h3 className="text-lg font-medium">Data Subject Access Requests</h3>
+        <h3 className="text-lg font-medium">{t('pages.consentManagement.dsars.heading')}</h3>
         <Button onClick={() => setShowCreate(true)}>
           <Plus className="h-4 w-4 mr-2" />
-          Create DSAR
+          {t('pages.consentManagement.dsars.create')}
         </Button>
       </div>
 
       {dsars.length === 0 ? (
-        <p className="text-sm text-muted-foreground py-8 text-center">No DSARs found</p>
+        <p className="text-sm text-muted-foreground py-8 text-center">{t('pages.consentManagement.dsars.empty')}</p>
       ) : (
         <div className="overflow-x-auto rounded-md border">
           <Table>
             <TableHeader>
               <TableRow className="border-b bg-muted">
-                <TableHead className="text-left py-3 px-4 font-medium text-muted-foreground">ID</TableHead>
-                <TableHead className="text-left py-3 px-4 font-medium text-muted-foreground">User</TableHead>
-                <TableHead className="text-left py-3 px-4 font-medium text-muted-foreground">Type</TableHead>
-                <TableHead className="text-left py-3 px-4 font-medium text-muted-foreground">Status</TableHead>
-                <TableHead className="text-left py-3 px-4 font-medium text-muted-foreground">Due Date</TableHead>
-                <TableHead className="text-left py-3 px-4 font-medium text-muted-foreground">Created</TableHead>
-                <TableHead className="text-left py-3 px-4 font-medium text-muted-foreground">Actions</TableHead>
+                <TableHead className="text-left py-3 px-4 font-medium text-muted-foreground">{t('pages.consentManagement.dsars.id')}</TableHead>
+                <TableHead className="text-left py-3 px-4 font-medium text-muted-foreground">{t('pages.consentManagement.dsars.user')}</TableHead>
+                <TableHead className="text-left py-3 px-4 font-medium text-muted-foreground">{t('pages.consentManagement.dsars.type')}</TableHead>
+                <TableHead className="text-left py-3 px-4 font-medium text-muted-foreground">{t('pages.consentManagement.dsars.status')}</TableHead>
+                <TableHead className="text-left py-3 px-4 font-medium text-muted-foreground">{t('pages.consentManagement.dsars.dueDate')}</TableHead>
+                <TableHead className="text-left py-3 px-4 font-medium text-muted-foreground">{t('pages.consentManagement.dsars.created')}</TableHead>
+                <TableHead className="text-left py-3 px-4 font-medium text-muted-foreground">{t('pages.consentManagement.dsars.actions')}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -350,8 +341,10 @@ function DSARsTab() {
                 <TableRow key={dsar.id} className="border-b last:border-0 hover:bg-muted">
                   <TableCell className="py-3 px-4 font-mono text-xs">{dsar.id.slice(0, 8)}...</TableCell>
                   <TableCell className="py-3 px-4 font-medium">{dsar.username}</TableCell>
-                  <TableCell className="py-3 px-4">{formatRequestType(dsar.request_type)}</TableCell>
-                  <TableCell className="py-3 px-4">{getStatusBadge(dsar.status)}</TableCell>
+                  <TableCell className="py-3 px-4">
+                    {t(`pages.consentManagement.requestTypes.${dsar.request_type}`, { defaultValue: dsar.request_type })}
+                  </TableCell>
+                  <TableCell className="py-3 px-4"><StatusBadge status={dsar.status} /></TableCell>
                   <TableCell className="py-3 px-4 text-muted-foreground">{formatDate(dsar.due_date)}</TableCell>
                   <TableCell className="py-3 px-4 text-muted-foreground">{formatDate(dsar.created_at)}</TableCell>
                   <TableCell className="py-3 px-4">
@@ -364,7 +357,7 @@ function DSARsTab() {
                           disabled={processMutation.isPending}
                         >
                           <Play className="h-3 w-3 mr-1" />
-                          Process
+                          {t('pages.consentManagement.dsars.process')}
                         </Button>
                       )}
                       {dsar.status === 'in_progress' && (
@@ -375,7 +368,7 @@ function DSARsTab() {
                           disabled={executeMutation.isPending}
                         >
                           <CheckCircle className="h-3 w-3 mr-1" />
-                          Execute
+                          {t('pages.consentManagement.dsars.execute')}
                         </Button>
                       )}
                     </div>
@@ -391,11 +384,11 @@ function DSARsTab() {
       <Dialog open={showCreate} onOpenChange={setShowCreate}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Create Data Subject Access Request</DialogTitle>
+            <DialogTitle>{t('pages.consentManagement.dsars.dialogTitle')}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <Label htmlFor="dsar-user-id">User ID</Label>
+              <Label htmlFor="dsar-user-id">{t('pages.consentManagement.dsars.userId')}</Label>
               <Input
                 id="dsar-user-id"
                 placeholder="e.g. 00000000-0000-0000-0000-000000000000"
@@ -403,32 +396,32 @@ function DSARsTab() {
                 onChange={(e) => setFormUserId(e.target.value)}
               />
               <p className="text-xs text-muted-foreground">
-                The data subject's user UUID. Copy it from the Users page.
+                {t('pages.consentManagement.dsars.userIdHint')}
               </p>
               {formUserId.trim() !== '' && !isUuid(formUserId.trim()) && (
                 <p className="text-xs text-destructive">
-                  This must be a user UUID, not a username or email.
+                  {t('pages.consentManagement.dsars.userIdInvalid')}
                 </p>
               )}
             </div>
             <div className="space-y-2">
-              <Label htmlFor="dsar-type">Request Type</Label>
+              <Label htmlFor="dsar-type">{t('pages.consentManagement.dsars.requestType')}</Label>
               <Select value={formType} onValueChange={setFormType}>
                 <SelectTrigger>
-                  <SelectValue placeholder="Select type" />
+                  <SelectValue placeholder={t('pages.consentManagement.dsars.typePlaceholder')} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="export">Data Export</SelectItem>
-                  <SelectItem value="delete">Data Deletion</SelectItem>
-                  <SelectItem value="restrict">Restrict Processing</SelectItem>
+                  <SelectItem value="export">{t('pages.consentManagement.requestTypes.export')}</SelectItem>
+                  <SelectItem value="delete">{t('pages.consentManagement.requestTypes.delete')}</SelectItem>
+                  <SelectItem value="restrict">{t('pages.consentManagement.requestTypes.restrict')}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="dsar-reason">Reason</Label>
+              <Label htmlFor="dsar-reason">{t('pages.consentManagement.dsars.reason')}</Label>
               <Textarea
                 id="dsar-reason"
-                placeholder="Enter reason for the request"
+                placeholder={t('pages.consentManagement.dsars.reasonPlaceholder')}
                 value={formReason}
                 onChange={(e) => setFormReason(e.target.value)}
                 rows={3}
@@ -437,7 +430,7 @@ function DSARsTab() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowCreate(false)}>
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button
               onClick={() =>
@@ -449,7 +442,7 @@ function DSARsTab() {
               }
               disabled={!isUuid(formUserId.trim()) || !formReason || createMutation.isPending}
             >
-              {createMutation.isPending ? 'Creating...' : 'Create DSAR'}
+              {createMutation.isPending ? t('pages.consentManagement.dsars.creating') : t('pages.consentManagement.dsars.create')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -461,6 +454,7 @@ function DSARsTab() {
 function RetentionPoliciesTab() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const { t } = useTranslation()
   const [showCreate, setShowCreate] = useState(false)
   const [formName, setFormName] = useState('')
   const [formCategory, setFormCategory] = useState('')
@@ -486,10 +480,10 @@ function RetentionPoliciesTab() {
       setFormCategory('')
       setFormDays(365)
       setFormAction('delete')
-      toast({ title: 'Retention policy created successfully' })
+      toast({ title: t('pages.consentManagement.retention.toast.created') })
     },
     onError: () => {
-      toast({ title: 'Failed to create retention policy', variant: 'destructive' })
+      toast({ title: t('pages.consentManagement.retention.toast.createFailed'), variant: 'destructive' })
     },
   })
 
@@ -498,10 +492,10 @@ function RetentionPoliciesTab() {
       api.put(`/api/v1/privacy/retention/${id}`, { enabled }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['privacy-retention'] })
-      toast({ title: 'Policy updated' })
+      toast({ title: t('pages.consentManagement.retention.toast.updated') })
     },
     onError: () => {
-      toast({ title: 'Failed to update policy', variant: 'destructive' })
+      toast({ title: t('pages.consentManagement.retention.toast.updateFailed'), variant: 'destructive' })
     },
   })
 
@@ -509,10 +503,10 @@ function RetentionPoliciesTab() {
     mutationFn: (id: string) => api.delete(`/api/v1/privacy/retention/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['privacy-retention'] })
-      toast({ title: 'Policy deleted' })
+      toast({ title: t('pages.consentManagement.retention.toast.deleted') })
     },
     onError: () => {
-      toast({ title: 'Failed to delete policy', variant: 'destructive' })
+      toast({ title: t('pages.consentManagement.retention.toast.deleteFailed'), variant: 'destructive' })
     },
   })
 
@@ -526,31 +520,31 @@ function RetentionPoliciesTab() {
     )
   }
 
-  if (isError) return <QueryError error={error} resource="retention policies" />
+  if (isError) return <QueryError error={error} resource={t('pages.consentManagement.retention.resourceName')} />
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h3 className="text-lg font-medium">Data Retention Policies</h3>
+        <h3 className="text-lg font-medium">{t('pages.consentManagement.retention.heading')}</h3>
         <Button onClick={() => setShowCreate(true)}>
           <Plus className="h-4 w-4 mr-2" />
-          Create Policy
+          {t('pages.consentManagement.retention.create')}
         </Button>
       </div>
 
       {policies.length === 0 ? (
-        <p className="text-sm text-muted-foreground py-8 text-center">No retention policies configured</p>
+        <p className="text-sm text-muted-foreground py-8 text-center">{t('pages.consentManagement.retention.empty')}</p>
       ) : (
         <div className="overflow-x-auto rounded-md border">
           <Table>
             <TableHeader>
               <TableRow className="border-b bg-muted">
-                <TableHead className="text-left py-3 px-4 font-medium text-muted-foreground">Name</TableHead>
-                <TableHead className="text-left py-3 px-4 font-medium text-muted-foreground">Category</TableHead>
-                <TableHead className="text-right py-3 px-4 font-medium text-muted-foreground">Retention (Days)</TableHead>
-                <TableHead className="text-left py-3 px-4 font-medium text-muted-foreground">Action</TableHead>
-                <TableHead className="text-center py-3 px-4 font-medium text-muted-foreground">Enabled</TableHead>
-                <TableHead className="text-left py-3 px-4 font-medium text-muted-foreground">Actions</TableHead>
+                <TableHead className="text-left py-3 px-4 font-medium text-muted-foreground">{t('pages.consentManagement.retention.name')}</TableHead>
+                <TableHead className="text-left py-3 px-4 font-medium text-muted-foreground">{t('pages.consentManagement.retention.category')}</TableHead>
+                <TableHead className="text-right py-3 px-4 font-medium text-muted-foreground">{t('pages.consentManagement.retention.days')}</TableHead>
+                <TableHead className="text-left py-3 px-4 font-medium text-muted-foreground">{t('pages.consentManagement.retention.action')}</TableHead>
+                <TableHead className="text-center py-3 px-4 font-medium text-muted-foreground">{t('pages.consentManagement.retention.enabled')}</TableHead>
+                <TableHead className="text-left py-3 px-4 font-medium text-muted-foreground">{t('pages.consentManagement.retention.actions')}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -561,7 +555,9 @@ function RetentionPoliciesTab() {
                   <TableCell className="py-3 px-4 text-right">{policy.retention_days}</TableCell>
                   <TableCell className="py-3 px-4">
                     <Badge className={policy.action === 'delete' ? 'bg-red-100 text-red-800' : 'bg-blue-100 text-blue-800'}>
-                      {policy.action === 'delete' ? 'Delete' : 'Anonymize'}
+                      {policy.action === 'delete'
+                        ? t('pages.consentManagement.retention.actionDelete')
+                        : t('pages.consentManagement.retention.actionAnonymize')}
                     </Badge>
                   </TableCell>
                   <TableCell className="py-3 px-4 text-center">
@@ -574,10 +570,13 @@ function RetentionPoliciesTab() {
                   </TableCell>
                   <TableCell className="py-3 px-4">
                     <ConfirmAction
-                      title="Delete this retention policy?"
-                      description={`This removes the retention policy ${policy.name}. Data in the ${policy.data_category} category will no longer be governed by it.`}
+                      title={t('pages.consentManagement.retention.deleteTitle')}
+                      description={t('pages.consentManagement.retention.deleteDesc', {
+                        name: policy.name,
+                        category: policy.data_category,
+                      })}
                       destructive
-                      confirmLabel="Delete"
+                      confirmLabel={t('common.delete')}
                       onConfirm={() => deleteMutation.mutateAsync(policy.id)}
                     >
                       {(open) => (
@@ -603,11 +602,11 @@ function RetentionPoliciesTab() {
       <Dialog open={showCreate} onOpenChange={setShowCreate}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Create Retention Policy</DialogTitle>
+            <DialogTitle>{t('pages.consentManagement.retention.dialogTitle')}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <Label htmlFor="retention-name">Policy Name</Label>
+              <Label htmlFor="retention-name">{t('pages.consentManagement.retention.policyName')}</Label>
               <Input
                 id="retention-name"
                 placeholder="e.g., Audit Log Retention"
@@ -616,7 +615,7 @@ function RetentionPoliciesTab() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="retention-category">Data Category</Label>
+              <Label htmlFor="retention-category">{t('pages.consentManagement.retention.dataCategory')}</Label>
               <Input
                 id="retention-category"
                 placeholder="e.g., audit_logs, session_data, user_profiles"
@@ -625,7 +624,7 @@ function RetentionPoliciesTab() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="retention-days">Retention Period (Days)</Label>
+              <Label htmlFor="retention-days">{t('pages.consentManagement.retention.period')}</Label>
               <Input
                 id="retention-days"
                 type="number"
@@ -635,21 +634,21 @@ function RetentionPoliciesTab() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="retention-action">Action</Label>
+              <Label htmlFor="retention-action">{t('pages.consentManagement.retention.actionLabel')}</Label>
               <Select value={formAction} onValueChange={setFormAction}>
                 <SelectTrigger>
-                  <SelectValue placeholder="Select action" />
+                  <SelectValue placeholder={t('pages.consentManagement.retention.actionPlaceholder')} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="delete">Delete</SelectItem>
-                  <SelectItem value="anonymize">Anonymize</SelectItem>
+                  <SelectItem value="delete">{t('pages.consentManagement.retention.actionDelete')}</SelectItem>
+                  <SelectItem value="anonymize">{t('pages.consentManagement.retention.actionAnonymize')}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowCreate(false)}>
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button
               onClick={() =>
@@ -662,7 +661,7 @@ function RetentionPoliciesTab() {
               }
               disabled={!formName || !formCategory || createMutation.isPending}
             >
-              {createMutation.isPending ? 'Creating...' : 'Create Policy'}
+              {createMutation.isPending ? t('pages.consentManagement.retention.creating') : t('pages.consentManagement.retention.create')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -674,6 +673,7 @@ function RetentionPoliciesTab() {
 function ImpactAssessmentsTab() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const { t } = useTranslation()
   const [showCreate, setShowCreate] = useState(false)
   const [formTitle, setFormTitle] = useState('')
   const [formDescription, setFormDescription] = useState('')
@@ -702,10 +702,10 @@ function ImpactAssessmentsTab() {
       setFormRiskLevel('medium')
       setFormCategories('')
       setFormPurposes('')
-      toast({ title: 'Impact assessment created successfully' })
+      toast({ title: t('pages.consentManagement.assessments.toast.created') })
     },
     onError: () => {
-      toast({ title: 'Failed to create assessment', variant: 'destructive' })
+      toast({ title: t('pages.consentManagement.assessments.toast.createFailed'), variant: 'destructive' })
     },
   })
 
@@ -719,30 +719,30 @@ function ImpactAssessmentsTab() {
     )
   }
 
-  if (isError) return <QueryError error={error} resource="impact assessments" />
+  if (isError) return <QueryError error={error} resource={t('pages.consentManagement.assessments.resourceName')} />
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h3 className="text-lg font-medium">Data Protection Impact Assessments</h3>
+        <h3 className="text-lg font-medium">{t('pages.consentManagement.assessments.heading')}</h3>
         <Button onClick={() => setShowCreate(true)}>
           <Plus className="h-4 w-4 mr-2" />
-          Create Assessment
+          {t('pages.consentManagement.assessments.create')}
         </Button>
       </div>
 
       {assessments.length === 0 ? (
-        <p className="text-sm text-muted-foreground py-8 text-center">No impact assessments found</p>
+        <p className="text-sm text-muted-foreground py-8 text-center">{t('pages.consentManagement.assessments.empty')}</p>
       ) : (
         <div className="overflow-x-auto rounded-md border">
           <Table>
             <TableHeader>
               <TableRow className="border-b bg-muted">
-                <TableHead className="text-left py-3 px-4 font-medium text-muted-foreground">Title</TableHead>
-                <TableHead className="text-left py-3 px-4 font-medium text-muted-foreground">Risk Level</TableHead>
-                <TableHead className="text-left py-3 px-4 font-medium text-muted-foreground">Status</TableHead>
-                <TableHead className="text-left py-3 px-4 font-medium text-muted-foreground">Assessor</TableHead>
-                <TableHead className="text-left py-3 px-4 font-medium text-muted-foreground">Created</TableHead>
+                <TableHead className="text-left py-3 px-4 font-medium text-muted-foreground">{t('pages.consentManagement.assessments.colTitle')}</TableHead>
+                <TableHead className="text-left py-3 px-4 font-medium text-muted-foreground">{t('pages.consentManagement.assessments.riskLevel')}</TableHead>
+                <TableHead className="text-left py-3 px-4 font-medium text-muted-foreground">{t('pages.consentManagement.assessments.status')}</TableHead>
+                <TableHead className="text-left py-3 px-4 font-medium text-muted-foreground">{t('pages.consentManagement.assessments.assessor')}</TableHead>
+                <TableHead className="text-left py-3 px-4 font-medium text-muted-foreground">{t('pages.consentManagement.assessments.created')}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -756,8 +756,8 @@ function ImpactAssessmentsTab() {
                       </p>
                     </div>
                   </TableCell>
-                  <TableCell className="py-3 px-4">{getRiskBadge(assessment.risk_level)}</TableCell>
-                  <TableCell className="py-3 px-4">{getStatusBadge(assessment.status)}</TableCell>
+                  <TableCell className="py-3 px-4"><RiskBadge level={assessment.risk_level} /></TableCell>
+                  <TableCell className="py-3 px-4"><StatusBadge status={assessment.status} /></TableCell>
                   <TableCell className="py-3 px-4 text-muted-foreground">{assessment.assessor}</TableCell>
                   <TableCell className="py-3 px-4 text-muted-foreground">{formatDate(assessment.created_at)}</TableCell>
                 </TableRow>
@@ -771,11 +771,11 @@ function ImpactAssessmentsTab() {
       <Dialog open={showCreate} onOpenChange={setShowCreate}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>Create Impact Assessment</DialogTitle>
+            <DialogTitle>{t('pages.consentManagement.assessments.dialogTitle')}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <Label htmlFor="assessment-title">Title</Label>
+              <Label htmlFor="assessment-title">{t('pages.consentManagement.assessments.titleLabel')}</Label>
               <Input
                 id="assessment-title"
                 placeholder="e.g., User Analytics Processing Assessment"
@@ -784,31 +784,31 @@ function ImpactAssessmentsTab() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="assessment-description">Description</Label>
+              <Label htmlFor="assessment-description">{t('pages.consentManagement.assessments.description')}</Label>
               <Textarea
                 id="assessment-description"
-                placeholder="Describe the processing activity being assessed"
+                placeholder={t('pages.consentManagement.assessments.descriptionPlaceholder')}
                 value={formDescription}
                 onChange={(e) => setFormDescription(e.target.value)}
                 rows={3}
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="assessment-risk">Risk Level</Label>
+              <Label htmlFor="assessment-risk">{t('pages.consentManagement.assessments.riskLevel')}</Label>
               <Select value={formRiskLevel} onValueChange={setFormRiskLevel}>
                 <SelectTrigger>
-                  <SelectValue placeholder="Select risk level" />
+                  <SelectValue placeholder={t('pages.consentManagement.assessments.riskPlaceholder')} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="low">Low</SelectItem>
-                  <SelectItem value="medium">Medium</SelectItem>
-                  <SelectItem value="high">High</SelectItem>
-                  <SelectItem value="critical">Critical</SelectItem>
+                  <SelectItem value="low">{t('pages.consentManagement.risks.low')}</SelectItem>
+                  <SelectItem value="medium">{t('pages.consentManagement.risks.medium')}</SelectItem>
+                  <SelectItem value="high">{t('pages.consentManagement.risks.high')}</SelectItem>
+                  <SelectItem value="critical">{t('pages.consentManagement.risks.critical')}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="assessment-categories">Data Categories (comma-separated)</Label>
+              <Label htmlFor="assessment-categories">{t('pages.consentManagement.assessments.categories')}</Label>
               <Input
                 id="assessment-categories"
                 placeholder="e.g., personal_data, behavioral_data, financial_data"
@@ -817,7 +817,7 @@ function ImpactAssessmentsTab() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="assessment-purposes">Processing Purposes (comma-separated)</Label>
+              <Label htmlFor="assessment-purposes">{t('pages.consentManagement.assessments.purposes')}</Label>
               <Input
                 id="assessment-purposes"
                 placeholder="e.g., analytics, fraud_detection, personalization"
@@ -828,7 +828,7 @@ function ImpactAssessmentsTab() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowCreate(false)}>
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button
               onClick={() =>
@@ -848,7 +848,7 @@ function ImpactAssessmentsTab() {
               }
               disabled={!formTitle || !formDescription || createMutation.isPending}
             >
-              {createMutation.isPending ? 'Creating...' : 'Create Assessment'}
+              {createMutation.isPending ? t('pages.consentManagement.assessments.creating') : t('pages.consentManagement.assessments.create')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -860,14 +860,15 @@ function ImpactAssessmentsTab() {
 // --- Main Page ---
 
 export function ConsentManagementPage() {
+  const { t } = useTranslation()
   const [activeTab, setActiveTab] = useState<TabKey>('consents')
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold tracking-tight">Consent Management</h1>
+        <h1 className="text-3xl font-bold tracking-tight">{t('pages.consentManagement.title')}</h1>
         <p className="text-muted-foreground">
-          Manage user consents, data subject requests, retention policies, and impact assessments
+          {t('pages.consentManagement.subtitle')}
         </p>
       </div>
 
@@ -887,7 +888,7 @@ export function ConsentManagementPage() {
                 }`}
               >
                 <Icon className="h-4 w-4" />
-                {tab.label}
+                {t(`pages.consentManagement.tabs.${tab.key}`)}
               </button>
             )
           })}

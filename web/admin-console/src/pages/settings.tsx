@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Save, Building, Shield, Key, Palette, X, Plus, Smartphone, Send } from 'lucide-react'
@@ -71,74 +72,79 @@ interface SMSSettings {
 
 interface ProviderField {
   key: string
-  label: string
+  /** Key under pages.settings.sms.fields — shared by every provider that asks
+   *  for the same thing, so "API Key" is translated once, not eight times. */
+  labelKey: string
   sensitive: boolean
+  /** Format example, deliberately not translated. */
   placeholder?: string
 }
 
 interface ProviderDef {
   id: string
-  label: string
   fields: ProviderField[]
 }
 
+// The provider's display name comes from pages.settings.sms.providers.<id>,
+// so a gateway cannot ship with a name in one language and fields in another.
 const SMS_PROVIDERS: ProviderDef[] = [
-  { id: 'mock', label: 'Mock (Development)', fields: [] },
-  { id: 'twilio', label: 'Twilio', fields: [
-    { key: 'twilio_sid', label: 'Account SID', sensitive: false },
-    { key: 'twilio_token', label: 'Auth Token', sensitive: true },
-    { key: 'twilio_from', label: 'From Number', sensitive: false, placeholder: '+1234567890' },
+  { id: 'mock', fields: [] },
+  { id: 'twilio', fields: [
+    { key: 'twilio_sid', labelKey: 'accountSid', sensitive: false },
+    { key: 'twilio_token', labelKey: 'authToken', sensitive: true },
+    { key: 'twilio_from', labelKey: 'fromNumber', sensitive: false, placeholder: '+1234567890' },
   ]},
-  { id: 'aws_sns', label: 'AWS SNS', fields: [
-    { key: 'aws_region', label: 'Region', sensitive: false, placeholder: 'us-east-1' },
-    { key: 'aws_access_key', label: 'Access Key', sensitive: false },
-    { key: 'aws_secret_key', label: 'Secret Key', sensitive: true },
+  { id: 'aws_sns', fields: [
+    { key: 'aws_region', labelKey: 'region', sensitive: false, placeholder: 'us-east-1' },
+    { key: 'aws_access_key', labelKey: 'accessKey', sensitive: false },
+    { key: 'aws_secret_key', labelKey: 'secretKey', sensitive: true },
   ]},
-  { id: 'netgsm', label: 'NetGSM', fields: [
-    { key: 'netgsm_usercode', label: 'User Code', sensitive: false },
-    { key: 'netgsm_password', label: 'Password', sensitive: true },
-    { key: 'netgsm_header', label: 'Sender Header', sensitive: false },
+  { id: 'netgsm', fields: [
+    { key: 'netgsm_usercode', labelKey: 'userCode', sensitive: false },
+    { key: 'netgsm_password', labelKey: 'password', sensitive: true },
+    { key: 'netgsm_header', labelKey: 'senderHeader', sensitive: false },
   ]},
-  { id: 'ileti_merkezi', label: 'Ileti Merkezi', fields: [
-    { key: 'iletimerkezi_key', label: 'API Key', sensitive: false },
-    { key: 'iletimerkezi_secret', label: 'API Secret', sensitive: true },
-    { key: 'iletimerkezi_sender', label: 'Sender Name', sensitive: false },
+  { id: 'ileti_merkezi', fields: [
+    { key: 'iletimerkezi_key', labelKey: 'apiKey', sensitive: false },
+    { key: 'iletimerkezi_secret', labelKey: 'apiSecret', sensitive: true },
+    { key: 'iletimerkezi_sender', labelKey: 'senderName', sensitive: false },
   ]},
-  { id: 'verimor', label: 'Verimor', fields: [
-    { key: 'verimor_username', label: 'Username', sensitive: false, placeholder: '908501234567' },
-    { key: 'verimor_password', label: 'Password', sensitive: true },
-    { key: 'verimor_source_addr', label: 'Sender ID', sensitive: false },
+  { id: 'verimor', fields: [
+    { key: 'verimor_username', labelKey: 'username', sensitive: false, placeholder: '908501234567' },
+    { key: 'verimor_password', labelKey: 'password', sensitive: true },
+    { key: 'verimor_source_addr', labelKey: 'senderId', sensitive: false },
   ]},
-  { id: 'turkcell', label: 'Turkcell Mesajussu', fields: [
-    { key: 'turkcell_username', label: 'Username', sensitive: false },
-    { key: 'turkcell_password', label: 'Password', sensitive: true },
-    { key: 'turkcell_sender', label: 'Sender Name', sensitive: false },
+  { id: 'turkcell', fields: [
+    { key: 'turkcell_username', labelKey: 'username', sensitive: false },
+    { key: 'turkcell_password', labelKey: 'password', sensitive: true },
+    { key: 'turkcell_sender', labelKey: 'senderName', sensitive: false },
   ]},
-  { id: 'vodafone', label: 'Vodafone', fields: [
-    { key: 'vodafone_api_key', label: 'API Key', sensitive: false },
-    { key: 'vodafone_secret', label: 'API Secret', sensitive: true },
-    { key: 'vodafone_sender', label: 'Sender Address', sensitive: false },
+  { id: 'vodafone', fields: [
+    { key: 'vodafone_api_key', labelKey: 'apiKey', sensitive: false },
+    { key: 'vodafone_secret', labelKey: 'apiSecret', sensitive: true },
+    { key: 'vodafone_sender', labelKey: 'senderAddress', sensitive: false },
   ]},
-  { id: 'turk_telekom', label: 'Turk Telekom', fields: [
-    { key: 'turktelekom_api_key', label: 'API Key', sensitive: false },
-    { key: 'turktelekom_secret', label: 'API Secret', sensitive: true },
-    { key: 'turktelekom_sender', label: 'Sender Name', sensitive: false },
+  { id: 'turk_telekom', fields: [
+    { key: 'turktelekom_api_key', labelKey: 'apiKey', sensitive: false },
+    { key: 'turktelekom_secret', labelKey: 'apiSecret', sensitive: true },
+    { key: 'turktelekom_sender', labelKey: 'senderName', sensitive: false },
   ]},
-  { id: 'mutlucell', label: 'Mutlucell', fields: [
-    { key: 'mutlucell_username', label: 'Username', sensitive: false },
-    { key: 'mutlucell_password', label: 'Password', sensitive: true },
-    { key: 'mutlucell_api_key', label: 'API Key', sensitive: true },
-    { key: 'mutlucell_sender', label: 'Sender Name', sensitive: false },
+  { id: 'mutlucell', fields: [
+    { key: 'mutlucell_username', labelKey: 'username', sensitive: false },
+    { key: 'mutlucell_password', labelKey: 'password', sensitive: true },
+    { key: 'mutlucell_api_key', labelKey: 'apiKey', sensitive: true },
+    { key: 'mutlucell_sender', labelKey: 'senderName', sensitive: false },
   ]},
-  { id: 'webhook', label: 'Custom Webhook', fields: [
-    { key: 'webhook_url', label: 'Webhook URL', sensitive: false, placeholder: 'https://...' },
-    { key: 'webhook_api_key', label: 'API Key', sensitive: true },
+  { id: 'webhook', fields: [
+    { key: 'webhook_url', labelKey: 'webhookUrl', sensitive: false, placeholder: 'https://...' },
+    { key: 'webhook_api_key', labelKey: 'apiKey', sensitive: true },
   ]},
 ]
 
 export function SettingsPage() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const { t } = useTranslation()
   const [activeTab, setActiveTab] = useState<'general' | 'security' | 'authentication' | 'sms' | 'branding'>('general')
 
   const { data: settings, isLoading, isError, error } = useQuery({
@@ -176,10 +182,10 @@ export function SettingsPage() {
     mutationFn: (data: Settings) => api.put('/api/v1/settings', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['settings'] })
-      toast({ title: 'Settings saved', description: 'Your changes have been saved successfully.' })
+      toast({ title: t('pages.settings.toast.saved'), description: t('pages.settings.toast.savedDesc') })
     },
     onError: (error: Error) => {
-      toast({ title: 'Error', description: error.message || 'Failed to save settings.', variant: 'destructive' })
+      toast({ title: t('common.error'), description: error.message || t('pages.settings.toast.saveFailed'), variant: 'destructive' })
     },
   })
 
@@ -188,10 +194,10 @@ export function SettingsPage() {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['sms-settings'] })
       setSmsFormData(data)
-      toast({ title: 'SMS settings saved', description: 'Configuration will take effect within 30 seconds.' })
+      toast({ title: t('pages.settings.toast.smsSaved'), description: t('pages.settings.toast.smsSavedDesc') })
     },
     onError: (error: Error) => {
-      toast({ title: 'Error', description: error.message || 'Failed to save SMS settings.', variant: 'destructive' })
+      toast({ title: t('common.error'), description: error.message || t('pages.settings.toast.smsSaveFailed'), variant: 'destructive' })
     },
   })
 
@@ -199,10 +205,10 @@ export function SettingsPage() {
     mutationFn: (req: { phone_number: string; settings: SMSSettings }) =>
       api.post<{ success: boolean; message: string }>('/api/v1/settings/sms/test', req),
     onSuccess: () => {
-      toast({ title: 'Test SMS sent', description: 'Check the target phone for the message.' })
+      toast({ title: t('pages.settings.toast.testSent'), description: t('pages.settings.toast.testSentDesc') })
     },
     onError: (error: Error) => {
-      toast({ title: 'Test failed', description: error.message || 'Failed to send test SMS.', variant: 'destructive' })
+      toast({ title: t('pages.settings.toast.testFailed'), description: error.message || t('pages.settings.toast.testFailedDesc'), variant: 'destructive' })
     },
   })
 
@@ -267,8 +273,8 @@ export function SettingsPage() {
   if (isError) {
     return (
       <div className="space-y-6">
-        <h1 className="text-3xl font-bold tracking-tight">Settings</h1>
-        <QueryError error={error} resource="settings" />
+        <h1 className="text-3xl font-bold tracking-tight">{t('nav.items.settings')}</h1>
+        <QueryError error={error} resource={t('pages.settings.resourceName')} />
       </div>
     )
   }
@@ -276,18 +282,19 @@ export function SettingsPage() {
   if (isLoading || !formData) {
     return (
       <div className="space-y-6">
-        <h1 className="text-3xl font-bold tracking-tight">Settings</h1>
-        <p className="text-center py-8">Loading settings...</p>
+        <h1 className="text-3xl font-bold tracking-tight">{t('nav.items.settings')}</h1>
+        <p className="text-center py-8">{t('pages.settings.loading')}</p>
       </div>
     )
   }
 
+  // Labels resolve from pages.settings.tabs.<id> at render.
   const tabs = [
-    { id: 'general', label: 'General', icon: Building },
-    { id: 'security', label: 'Security', icon: Shield },
-    { id: 'authentication', label: 'Authentication', icon: Key },
-    { id: 'sms', label: 'SMS / OTP', icon: Smartphone },
-    { id: 'branding', label: 'Branding', icon: Palette },
+    { id: 'general', icon: Building },
+    { id: 'security', icon: Shield },
+    { id: 'authentication', icon: Key },
+    { id: 'sms', icon: Smartphone },
+    { id: 'branding', icon: Palette },
   ] as const
 
   const currentProvider = SMS_PROVIDERS.find(p => p.id === smsFormData?.provider) || SMS_PROVIDERS[0]
@@ -296,12 +303,12 @@ export function SettingsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Settings</h1>
-          <p className="text-muted-foreground">Configure system settings</p>
+          <h1 className="text-3xl font-bold tracking-tight">{t('nav.items.settings')}</h1>
+          <p className="text-muted-foreground">{t('pages.settings.subtitle')}</p>
         </div>
         <Button onClick={handleSave} disabled={isSaving}>
           <Save className="mr-2 h-4 w-4" />
-          {isSaving ? 'Saving...' : 'Save Changes'}
+          {isSaving ? t('pages.settings.saving') : t('pages.settings.save')}
         </Button>
       </div>
 
@@ -318,7 +325,7 @@ export function SettingsPage() {
               }`}
             >
               <tab.icon className="h-4 w-4" />
-              {tab.label}
+              {t(`pages.settings.tabs.${tab.id}`)}
             </button>
           ))}
         </div>
@@ -327,20 +334,20 @@ export function SettingsPage() {
           {activeTab === 'general' && (
             <Card>
               <CardHeader>
-                <CardTitle>General Settings</CardTitle>
-                <CardDescription>Basic organization and system configuration</CardDescription>
+                <CardTitle>{t('pages.settings.general.title')}</CardTitle>
+                <CardDescription>{t('pages.settings.general.desc')}</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="grid gap-4 md:grid-cols-2">
                   <div className="space-y-2">
-                    <label className="text-sm font-medium">Organization Name</label>
+                    <label className="text-sm font-medium">{t('pages.settings.general.orgName')}</label>
                     <Input
                       value={formData.general.organization_name}
                       onChange={(e) => updateGeneral('organization_name', e.target.value)}
                     />
                   </div>
                   <div className="space-y-2">
-                    <label className="text-sm font-medium">Support Email</label>
+                    <label className="text-sm font-medium">{t('pages.settings.general.supportEmail')}</label>
                     <Input
                       type="email"
                       value={formData.general.support_email}
@@ -348,34 +355,34 @@ export function SettingsPage() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <label className="text-sm font-medium">Default Language</label>
+                    <label className="text-sm font-medium">{t('pages.settings.general.defaultLanguage')}</label>
                     <select
                       value={formData.general.default_language}
                       onChange={(e) => updateGeneral('default_language', e.target.value)}
                       className="w-full border rounded-md px-3 py-2"
                     >
-                      <option value="en">English</option>
-                      <option value="es">Spanish</option>
-                      <option value="fr">French</option>
-                      <option value="de">German</option>
-                      <option value="tr">Turkish</option>
+                      <option value="en">{t('pages.settings.general.languages.en')}</option>
+                      <option value="es">{t('pages.settings.general.languages.es')}</option>
+                      <option value="fr">{t('pages.settings.general.languages.fr')}</option>
+                      <option value="de">{t('pages.settings.general.languages.de')}</option>
+                      <option value="tr">{t('pages.settings.general.languages.tr')}</option>
                     </select>
                   </div>
                   <div className="space-y-2">
-                    <label className="text-sm font-medium">Default Timezone</label>
+                    <label className="text-sm font-medium">{t('pages.settings.general.defaultTimezone')}</label>
                     <select
                       value={formData.general.default_timezone}
                       onChange={(e) => updateGeneral('default_timezone', e.target.value)}
                       className="w-full border rounded-md px-3 py-2"
                     >
-                      <option value="UTC">UTC</option>
-                      <option value="America/New_York">Eastern Time</option>
-                      <option value="America/Chicago">Central Time</option>
-                      <option value="America/Denver">Mountain Time</option>
-                      <option value="America/Los_Angeles">Pacific Time</option>
-                      <option value="Europe/Istanbul">Turkey (Istanbul)</option>
-                      <option value="Europe/London">London</option>
-                      <option value="Europe/Berlin">Berlin</option>
+                      <option value="UTC">{t('pages.settings.general.timezones.utc')}</option>
+                      <option value="America/New_York">{t('pages.settings.general.timezones.eastern')}</option>
+                      <option value="America/Chicago">{t('pages.settings.general.timezones.central')}</option>
+                      <option value="America/Denver">{t('pages.settings.general.timezones.mountain')}</option>
+                      <option value="America/Los_Angeles">{t('pages.settings.general.timezones.pacific')}</option>
+                      <option value="Europe/Istanbul">{t('pages.settings.general.timezones.istanbul')}</option>
+                      <option value="Europe/London">{t('pages.settings.general.timezones.london')}</option>
+                      <option value="Europe/Berlin">{t('pages.settings.general.timezones.berlin')}</option>
                     </select>
                   </div>
                 </div>
@@ -387,13 +394,13 @@ export function SettingsPage() {
             <div className="space-y-6">
               <Card>
                 <CardHeader>
-                  <CardTitle>Password Policy</CardTitle>
-                  <CardDescription>Configure password requirements</CardDescription>
+                  <CardTitle>{t('pages.settings.password.title')}</CardTitle>
+                  <CardDescription>{t('pages.settings.password.desc')}</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="grid gap-4 md:grid-cols-2">
                     <div className="space-y-2">
-                      <label className="text-sm font-medium">Minimum Length</label>
+                      <label className="text-sm font-medium">{t('pages.settings.password.minLength')}</label>
                       <Input
                         type="number"
                         min={8}
@@ -403,7 +410,7 @@ export function SettingsPage() {
                       />
                     </div>
                     <div className="space-y-2">
-                      <label className="text-sm font-medium">Password Max Age (days)</label>
+                      <label className="text-sm font-medium">{t('pages.settings.password.maxAge')}</label>
                       <Input
                         type="number"
                         min={0}
@@ -413,7 +420,7 @@ export function SettingsPage() {
                       />
                     </div>
                     <div className="space-y-2">
-                      <label className="text-sm font-medium">Password History</label>
+                      <label className="text-sm font-medium">{t('pages.settings.password.history')}</label>
                       <Input
                         type="number"
                         min={0}
@@ -431,7 +438,7 @@ export function SettingsPage() {
                         onChange={(e) => updatePasswordPolicy('require_uppercase', e.target.checked)}
                         className="rounded"
                       />
-                      <span className="text-sm">Require Uppercase</span>
+                      <span className="text-sm">{t('pages.settings.password.requireUppercase')}</span>
                     </label>
                     <label className="flex items-center gap-2">
                       <input
@@ -440,7 +447,7 @@ export function SettingsPage() {
                         onChange={(e) => updatePasswordPolicy('require_lowercase', e.target.checked)}
                         className="rounded"
                       />
-                      <span className="text-sm">Require Lowercase</span>
+                      <span className="text-sm">{t('pages.settings.password.requireLowercase')}</span>
                     </label>
                     <label className="flex items-center gap-2">
                       <input
@@ -449,7 +456,7 @@ export function SettingsPage() {
                         onChange={(e) => updatePasswordPolicy('require_numbers', e.target.checked)}
                         className="rounded"
                       />
-                      <span className="text-sm">Require Numbers</span>
+                      <span className="text-sm">{t('pages.settings.password.requireNumbers')}</span>
                     </label>
                     <label className="flex items-center gap-2">
                       <input
@@ -458,7 +465,7 @@ export function SettingsPage() {
                         onChange={(e) => updatePasswordPolicy('require_special', e.target.checked)}
                         className="rounded"
                       />
-                      <span className="text-sm">Require Special Characters</span>
+                      <span className="text-sm">{t('pages.settings.password.requireSpecial')}</span>
                     </label>
                   </div>
                 </CardContent>
@@ -466,13 +473,13 @@ export function SettingsPage() {
 
               <Card>
                 <CardHeader>
-                  <CardTitle>Session & Lockout</CardTitle>
-                  <CardDescription>Configure session and lockout policies</CardDescription>
+                  <CardTitle>{t('pages.settings.session.title')}</CardTitle>
+                  <CardDescription>{t('pages.settings.session.desc')}</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="grid gap-4 md:grid-cols-3">
                     <div className="space-y-2">
-                      <label className="text-sm font-medium">Session Timeout (minutes)</label>
+                      <label className="text-sm font-medium">{t('pages.settings.session.sessionTimeout')}</label>
                       <Input
                         type="number"
                         min={5}
@@ -482,7 +489,7 @@ export function SettingsPage() {
                       />
                     </div>
                     <div className="space-y-2">
-                      <label className="text-sm font-medium">Max Failed Logins</label>
+                      <label className="text-sm font-medium">{t('pages.settings.session.maxFailedLogins')}</label>
                       <Input
                         type="number"
                         min={1}
@@ -492,7 +499,7 @@ export function SettingsPage() {
                       />
                     </div>
                     <div className="space-y-2">
-                      <label className="text-sm font-medium">Lockout Duration (minutes)</label>
+                      <label className="text-sm font-medium">{t('pages.settings.session.lockoutDuration')}</label>
                       <Input
                         type="number"
                         min={1}
@@ -509,20 +516,20 @@ export function SettingsPage() {
                       onChange={(e) => updateSecurity('require_mfa', e.target.checked)}
                       className="rounded"
                     />
-                    <span className="text-sm font-medium">Require MFA for all users</span>
+                    <span className="text-sm font-medium">{t('pages.settings.session.requireMfa')}</span>
                   </label>
                 </CardContent>
               </Card>
 
               <Card>
                 <CardHeader>
-                  <CardTitle>Session Policies</CardTitle>
-                  <CardDescription>Configure advanced session management policies</CardDescription>
+                  <CardTitle>{t('pages.settings.sessionPolicies.title')}</CardTitle>
+                  <CardDescription>{t('pages.settings.sessionPolicies.desc')}</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="grid gap-4 md:grid-cols-3">
                     <div className="space-y-2">
-                      <label className="text-sm font-medium">Idle Timeout (seconds)</label>
+                      <label className="text-sm font-medium">{t('pages.settings.sessionPolicies.idleTimeout')}</label>
                       <Input
                         type="number"
                         min={0}
@@ -530,10 +537,10 @@ export function SettingsPage() {
                         value={formData.security.idle_timeout ?? 1800}
                         onChange={(e) => updateSecurity('idle_timeout', parseInt(e.target.value) || 0)}
                       />
-                      <p className="text-xs text-muted-foreground">0 = disabled. Default: 1800 (30 min)</p>
+                      <p className="text-xs text-muted-foreground">{t('pages.settings.sessionPolicies.idleHint')}</p>
                     </div>
                     <div className="space-y-2">
-                      <label className="text-sm font-medium">Absolute Timeout (seconds)</label>
+                      <label className="text-sm font-medium">{t('pages.settings.sessionPolicies.absoluteTimeout')}</label>
                       <Input
                         type="number"
                         min={0}
@@ -541,10 +548,10 @@ export function SettingsPage() {
                         value={formData.security.absolute_timeout ?? 86400}
                         onChange={(e) => updateSecurity('absolute_timeout', parseInt(e.target.value) || 0)}
                       />
-                      <p className="text-xs text-muted-foreground">0 = disabled. Default: 86400 (24h)</p>
+                      <p className="text-xs text-muted-foreground">{t('pages.settings.sessionPolicies.absoluteHint')}</p>
                     </div>
                     <div className="space-y-2">
-                      <label className="text-sm font-medium">Remember Me Duration (seconds)</label>
+                      <label className="text-sm font-medium">{t('pages.settings.sessionPolicies.rememberMe')}</label>
                       <Input
                         type="number"
                         min={0}
@@ -552,12 +559,12 @@ export function SettingsPage() {
                         value={formData.security.remember_me_duration ?? 2592000}
                         onChange={(e) => updateSecurity('remember_me_duration', parseInt(e.target.value) || 0)}
                       />
-                      <p className="text-xs text-muted-foreground">Default: 2592000 (30 days)</p>
+                      <p className="text-xs text-muted-foreground">{t('pages.settings.sessionPolicies.rememberMeHint')}</p>
                     </div>
                   </div>
                   <div className="grid gap-4 md:grid-cols-2">
                     <div className="space-y-2">
-                      <label className="text-sm font-medium">Max Concurrent Sessions</label>
+                      <label className="text-sm font-medium">{t('pages.settings.sessionPolicies.maxConcurrent')}</label>
                       <Input
                         type="number"
                         min={0}
@@ -565,18 +572,18 @@ export function SettingsPage() {
                         value={formData.security.max_concurrent_sessions ?? 0}
                         onChange={(e) => updateSecurity('max_concurrent_sessions', parseInt(e.target.value) || 0)}
                       />
-                      <p className="text-xs text-muted-foreground">0 = unlimited</p>
+                      <p className="text-xs text-muted-foreground">{t('pages.settings.sessionPolicies.maxConcurrentHint')}</p>
                     </div>
                     <div className="space-y-2">
-                      <label className="text-sm font-medium">Concurrent Session Strategy</label>
+                      <label className="text-sm font-medium">{t('pages.settings.sessionPolicies.strategy')}</label>
                       <select
                         className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                         value={formData.security.concurrent_session_strategy ?? 'deny_new'}
                         onChange={(e) => updateSecurity('concurrent_session_strategy', e.target.value)}
                       >
-                        <option value="deny_new">Deny New Login</option>
-                        <option value="terminate_oldest">Terminate Oldest Session</option>
-                        <option value="prompt_user">Ask User to Choose</option>
+                        <option value="deny_new">{t('pages.settings.sessionPolicies.strategies.deny_new')}</option>
+                        <option value="terminate_oldest">{t('pages.settings.sessionPolicies.strategies.terminate_oldest')}</option>
+                        <option value="prompt_user">{t('pages.settings.sessionPolicies.strategies.prompt_user')}</option>
                       </select>
                     </div>
                   </div>
@@ -588,7 +595,7 @@ export function SettingsPage() {
                         onChange={(e) => updateSecurity('bind_session_to_ip', e.target.checked)}
                         className="rounded"
                       />
-                      <span className="text-sm font-medium">Bind sessions to IP address</span>
+                      <span className="text-sm font-medium">{t('pages.settings.sessionPolicies.bindToIp')}</span>
                     </label>
                     <label className="flex items-center gap-2">
                       <input
@@ -597,7 +604,7 @@ export function SettingsPage() {
                         onChange={(e) => updateSecurity('force_logout_on_password_change', e.target.checked)}
                         className="rounded"
                       />
-                      <span className="text-sm font-medium">Force logout on password change</span>
+                      <span className="text-sm font-medium">{t('pages.settings.sessionPolicies.forceLogout')}</span>
                     </label>
                   </div>
                 </CardContent>
@@ -605,12 +612,12 @@ export function SettingsPage() {
 
               <Card>
                 <CardHeader>
-                  <CardTitle>Country-Based Access Control</CardTitle>
-                  <CardDescription>Block login attempts from specific countries (ISO 3166-1 alpha-2 codes)</CardDescription>
+                  <CardTitle>{t('pages.settings.geo.title')}</CardTitle>
+                  <CardDescription>{t('pages.settings.geo.desc')}</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="space-y-2">
-                    <label className="text-sm font-medium">Blocked Countries</label>
+                    <label className="text-sm font-medium">{t('pages.settings.geo.blocked')}</label>
                     <div className="flex gap-2">
                       <Input
                         placeholder="e.g. CN, RU, KP"
@@ -677,7 +684,7 @@ export function SettingsPage() {
                       ))}
                     </div>
                     {(!formData.security.blocked_countries || formData.security.blocked_countries.length === 0) && (
-                      <p className="text-xs text-muted-foreground">No countries blocked. Users can log in from any location.</p>
+                      <p className="text-xs text-muted-foreground">{t('pages.settings.geo.none')}</p>
                     )}
                   </div>
                 </CardContent>
@@ -689,8 +696,8 @@ export function SettingsPage() {
             <div className="space-y-6">
               <Card>
                 <CardHeader>
-                  <CardTitle>Authentication Settings</CardTitle>
-                  <CardDescription>Configure authentication methods and restrictions</CardDescription>
+                  <CardTitle>{t('pages.settings.auth.title')}</CardTitle>
+                  <CardDescription>{t('pages.settings.auth.desc')}</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="space-y-4">
@@ -701,7 +708,7 @@ export function SettingsPage() {
                         onChange={(e) => updateAuthentication('allow_registration', e.target.checked)}
                         className="rounded"
                       />
-                      <span className="text-sm font-medium">Allow Self Registration</span>
+                      <span className="text-sm font-medium">{t('pages.settings.auth.allowRegistration')}</span>
                     </label>
                     <label className="flex items-center gap-2">
                       <input
@@ -710,11 +717,11 @@ export function SettingsPage() {
                         onChange={(e) => updateAuthentication('require_email_verify', e.target.checked)}
                         className="rounded"
                       />
-                      <span className="text-sm font-medium">Require Email Verification</span>
+                      <span className="text-sm font-medium">{t('pages.settings.auth.requireEmailVerify')}</span>
                     </label>
                   </div>
                   <div className="space-y-2">
-                    <label className="text-sm font-medium">MFA Methods</label>
+                    <label className="text-sm font-medium">{t('pages.settings.auth.mfaMethods')}</label>
                     <div className="flex gap-4">
                       {['totp', 'webauthn', 'sms'].map(method => (
                         <label key={method} className="flex items-center gap-2">
@@ -729,6 +736,8 @@ export function SettingsPage() {
                             }}
                             className="rounded"
                           />
+                          {/* Factor identifiers (totp/webauthn/sms) are protocol
+                              names, shown as-is in every language. */}
                           <span className="text-sm uppercase">{method}</span>
                         </label>
                       ))}
@@ -739,8 +748,8 @@ export function SettingsPage() {
 
               <Card>
                 <CardHeader>
-                  <CardTitle>Allowed Domains</CardTitle>
-                  <CardDescription>Restrict registration to specific email domains</CardDescription>
+                  <CardTitle>{t('pages.settings.auth.domainsTitle')}</CardTitle>
+                  <CardDescription>{t('pages.settings.auth.domainsDesc')}</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="flex gap-2">
@@ -770,12 +779,12 @@ export function SettingsPage() {
                         }
                       }}
                     >
-                      <Plus className="h-4 w-4 mr-1" /> Add
+                      <Plus className="h-4 w-4 mr-1" /> {t('common.add')}
                     </Button>
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {(formData.authentication.allowed_domains || []).length === 0 ? (
-                      <p className="text-sm text-muted-foreground">No domain restrictions. All domains are allowed.</p>
+                      <p className="text-sm text-muted-foreground">{t('pages.settings.auth.domainsNone')}</p>
                     ) : (
                       formData.authentication.allowed_domains.map(domain => (
                         <span
@@ -799,11 +808,12 @@ export function SettingsPage() {
 
               <Card>
                 <CardHeader>
-                  <CardTitle>Social Providers</CardTitle>
-                  <CardDescription>Enable social login providers for user authentication</CardDescription>
+                  <CardTitle>{t('pages.settings.auth.socialTitle')}</CardTitle>
+                  <CardDescription>{t('pages.settings.auth.socialDesc')}</CardDescription>
                 </CardHeader>
                 <CardContent>
                   <div className="grid gap-3 md:grid-cols-2">
+                    {/* Vendor names; they read the same in every language. */}
                     {[
                       { id: 'google', label: 'Google' },
                       { id: 'github', label: 'GitHub' },
@@ -836,8 +846,8 @@ export function SettingsPage() {
             <div className="space-y-6">
               <Card>
                 <CardHeader>
-                  <CardTitle>SMS Provider</CardTitle>
-                  <CardDescription>Configure the SMS gateway for OTP delivery</CardDescription>
+                  <CardTitle>{t('pages.settings.sms.providerTitle')}</CardTitle>
+                  <CardDescription>{t('pages.settings.sms.providerDesc')}</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <label className="flex items-center gap-2">
@@ -847,11 +857,11 @@ export function SettingsPage() {
                       onChange={(e) => setSmsFormData({ ...smsFormData, enabled: e.target.checked })}
                       className="rounded"
                     />
-                    <span className="text-sm font-medium">Enable SMS OTP delivery</span>
+                    <span className="text-sm font-medium">{t('pages.settings.sms.enable')}</span>
                   </label>
 
                   <div className="space-y-2">
-                    <label className="text-sm font-medium">Provider</label>
+                    <label className="text-sm font-medium">{t('pages.settings.sms.provider')}</label>
                     <select
                       value={smsFormData.provider}
                       onChange={(e) => setSmsFormData({
@@ -862,32 +872,36 @@ export function SettingsPage() {
                       className="w-full border rounded-md px-3 py-2"
                     >
                       {SMS_PROVIDERS.map(p => (
-                        <option key={p.id} value={p.id}>{p.label}</option>
+                        <option key={p.id} value={p.id}>{t(`pages.settings.sms.providers.${p.id}`)}</option>
                       ))}
                     </select>
                   </div>
 
                   <div className="space-y-2">
-                    <label className="text-sm font-medium">Message Prefix</label>
+                    <label className="text-sm font-medium">{t('pages.settings.sms.prefix')}</label>
                     <Input
                       value={smsFormData.message_prefix}
                       onChange={(e) => setSmsFormData({ ...smsFormData, message_prefix: e.target.value })}
                       placeholder="OpenIDX"
                     />
-                    <p className="text-xs text-muted-foreground">Appears at the start of OTP messages, e.g. &quot;OpenIDX: Your code is 123456&quot;</p>
+                    <p className="text-xs text-muted-foreground">{t('pages.settings.sms.prefixHint')}</p>
                   </div>
 
                   {currentProvider.fields.length > 0 && (
                     <div className="border-t pt-4 mt-4">
-                      <h4 className="text-sm font-medium mb-3">{currentProvider.label} Credentials</h4>
+                      <h4 className="text-sm font-medium mb-3">
+                        {t('pages.settings.sms.credentials', {
+                          provider: t(`pages.settings.sms.providers.${currentProvider.id}`),
+                        })}
+                      </h4>
                       <div className="grid gap-4 md:grid-cols-2">
                         {currentProvider.fields.map(field => (
                           <div key={field.key} className="space-y-2">
-                            <label className="text-sm font-medium">{field.label}</label>
+                            <label className="text-sm font-medium">{t(`pages.settings.sms.fields.${field.labelKey}`)}</label>
                             <Input
                               type={field.sensitive ? 'password' : 'text'}
                               value={smsFormData.credentials[field.key] || ''}
-                              placeholder={field.sensitive ? 'Enter new value to change' : field.placeholder || ''}
+                              placeholder={field.sensitive ? t('pages.settings.sms.sensitivePlaceholder') : field.placeholder || ''}
                               onChange={(e) => setSmsFormData({
                                 ...smsFormData,
                                 credentials: { ...smsFormData.credentials, [field.key]: e.target.value },
@@ -903,25 +917,25 @@ export function SettingsPage() {
 
               <Card>
                 <CardHeader>
-                  <CardTitle>OTP Settings</CardTitle>
-                  <CardDescription>Configure one-time password behavior</CardDescription>
+                  <CardTitle>{t('pages.settings.sms.otpTitle')}</CardTitle>
+                  <CardDescription>{t('pages.settings.sms.otpDesc')}</CardDescription>
                 </CardHeader>
                 <CardContent>
                   <div className="grid gap-4 md:grid-cols-3">
                     <div className="space-y-2">
-                      <label className="text-sm font-medium">Code Length</label>
+                      <label className="text-sm font-medium">{t('pages.settings.sms.codeLength')}</label>
                       <select
                         value={smsFormData.otp_length}
                         onChange={(e) => setSmsFormData({ ...smsFormData, otp_length: parseInt(e.target.value) })}
                         className="w-full border rounded-md px-3 py-2"
                       >
-                        <option value={4}>4 digits</option>
-                        <option value={6}>6 digits</option>
-                        <option value={8}>8 digits</option>
+                        <option value={4}>{t('pages.settings.sms.digits', { count: 4 })}</option>
+                        <option value={6}>{t('pages.settings.sms.digits', { count: 6 })}</option>
+                        <option value={8}>{t('pages.settings.sms.digits', { count: 8 })}</option>
                       </select>
                     </div>
                     <div className="space-y-2">
-                      <label className="text-sm font-medium">Expiry (seconds)</label>
+                      <label className="text-sm font-medium">{t('pages.settings.sms.expiry')}</label>
                       <Input
                         type="number"
                         min={60}
@@ -929,10 +943,15 @@ export function SettingsPage() {
                         value={smsFormData.otp_expiry}
                         onChange={(e) => setSmsFormData({ ...smsFormData, otp_expiry: parseInt(e.target.value) || 300 })}
                       />
-                      <p className="text-xs text-muted-foreground">{Math.floor(smsFormData.otp_expiry / 60)}m {smsFormData.otp_expiry % 60}s</p>
+                      <p className="text-xs text-muted-foreground">
+                        {t('pages.settings.sms.expiryPreview', {
+                          m: Math.floor(smsFormData.otp_expiry / 60),
+                          s: smsFormData.otp_expiry % 60,
+                        })}
+                      </p>
                     </div>
                     <div className="space-y-2">
-                      <label className="text-sm font-medium">Max Attempts</label>
+                      <label className="text-sm font-medium">{t('pages.settings.sms.maxAttempts')}</label>
                       <Input
                         type="number"
                         min={1}
@@ -947,8 +966,8 @@ export function SettingsPage() {
 
               <Card>
                 <CardHeader>
-                  <CardTitle>Test SMS</CardTitle>
-                  <CardDescription>Send a test message to verify your configuration works</CardDescription>
+                  <CardTitle>{t('pages.settings.sms.testTitle')}</CardTitle>
+                  <CardDescription>{t('pages.settings.sms.testDesc')}</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="flex gap-2">
@@ -968,11 +987,11 @@ export function SettingsPage() {
                       disabled={testSMSMutation.isPending || !testPhone}
                     >
                       <Send className="mr-2 h-4 w-4" />
-                      {testSMSMutation.isPending ? 'Sending...' : 'Send Test SMS'}
+                      {testSMSMutation.isPending ? t('pages.settings.sms.sending') : t('pages.settings.sms.sendTest')}
                     </Button>
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    Save your settings first, then send a test to verify the provider is configured correctly.
+                    {t('pages.settings.sms.testHint')}
                   </p>
                 </CardContent>
               </Card>
@@ -980,25 +999,25 @@ export function SettingsPage() {
           )}
 
           {activeTab === 'sms' && !smsFormData && (
-            <p className="text-center py-8">Loading SMS settings...</p>
+            <p className="text-center py-8">{t('pages.settings.sms.loading')}</p>
           )}
 
           {activeTab === 'branding' && (
             <Card>
               <CardHeader>
-                <CardTitle>Branding Settings</CardTitle>
-                <CardDescription>Customize the look and feel of the login page</CardDescription>
+                <CardTitle>{t('pages.settings.branding.title')}</CardTitle>
+                <CardDescription>{t('pages.settings.branding.desc')}</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="bg-muted border border-border rounded-md p-3 text-sm">
-                  Full per-tenant branding — logo, colors, and a live login preview — is managed in Tenant Management.{' '}
+                  {t('pages.settings.branding.tenantNote')}{' '}
                   <Link to="/tenant-management" className="text-primary hover:underline">
-                    Open Tenant Management → Branding
+                    {t('pages.settings.branding.tenantLink')}
                   </Link>
                 </div>
                 <div className="grid gap-4 md:grid-cols-2">
                   <div className="space-y-2">
-                    <label className="text-sm font-medium">Logo URL</label>
+                    <label className="text-sm font-medium">{t('pages.settings.branding.logoUrl')}</label>
                     <Input
                       value={formData.branding.logo_url}
                       onChange={(e) => updateBranding('logo_url', e.target.value)}
@@ -1006,7 +1025,7 @@ export function SettingsPage() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <label className="text-sm font-medium">Favicon URL</label>
+                    <label className="text-sm font-medium">{t('pages.settings.branding.faviconUrl')}</label>
                     <Input
                       value={formData.branding.favicon_url}
                       onChange={(e) => updateBranding('favicon_url', e.target.value)}
@@ -1014,7 +1033,7 @@ export function SettingsPage() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <label className="text-sm font-medium">Primary Color</label>
+                    <label className="text-sm font-medium">{t('pages.settings.branding.primaryColor')}</label>
                     <div className="flex gap-2">
                       <input
                         type="color"
@@ -1029,7 +1048,7 @@ export function SettingsPage() {
                     </div>
                   </div>
                   <div className="space-y-2">
-                    <label className="text-sm font-medium">Secondary Color</label>
+                    <label className="text-sm font-medium">{t('pages.settings.branding.secondaryColor')}</label>
                     <div className="flex gap-2">
                       <input
                         type="color"
@@ -1045,14 +1064,14 @@ export function SettingsPage() {
                   </div>
                 </div>
                 <div className="space-y-2">
-                  <label className="text-sm font-medium">Login Page Title</label>
+                  <label className="text-sm font-medium">{t('pages.settings.branding.loginTitle')}</label>
                   <Input
                     value={formData.branding.login_page_title}
                     onChange={(e) => updateBranding('login_page_title', e.target.value)}
                   />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-sm font-medium">Login Page Message</label>
+                  <label className="text-sm font-medium">{t('pages.settings.branding.loginMessage')}</label>
                   <textarea
                     value={formData.branding.login_page_message}
                     onChange={(e) => updateBranding('login_page_message', e.target.value)}

@@ -371,6 +371,62 @@ describe('i18n', () => {
       ...['upstream', 'ziti', 'guacamole', 'tcp'].map(
         (k) => `pages.proxyRoutes.connectionTest.tests.${k}`,
       ),
+      // settings: the tab strip, the SMS provider registry and the credential
+      // field labels every provider draws from.
+      ...['general', 'security', 'authentication', 'sms', 'branding'].map(
+        (k) => `pages.settings.tabs.${k}`,
+      ),
+      ...[
+        'mock',
+        'twilio',
+        'aws_sns',
+        'netgsm',
+        'ileti_merkezi',
+        'verimor',
+        'turkcell',
+        'vodafone',
+        'turk_telekom',
+        'mutlucell',
+        'webhook',
+      ].map((k) => `pages.settings.sms.providers.${k}`),
+      ...[
+        'accountSid',
+        'authToken',
+        'fromNumber',
+        'region',
+        'accessKey',
+        'secretKey',
+        'userCode',
+        'password',
+        'senderHeader',
+        'apiKey',
+        'apiSecret',
+        'senderName',
+        'username',
+        'senderId',
+        'senderAddress',
+        'webhookUrl',
+      ].map((k) => `pages.settings.sms.fields.${k}`),
+      // consent-management: tabs plus the three backend vocabularies its
+      // badges and request-type column resolve through.
+      ...['consents', 'dsars', 'retention', 'assessments'].map(
+        (k) => `pages.consentManagement.tabs.${k}`,
+      ),
+      ...[
+        'pending',
+        'in_progress',
+        'completed',
+        'rejected',
+        'draft',
+        'in_review',
+        'approved',
+      ].map((k) => `pages.consentManagement.statuses.${k}`),
+      ...['low', 'medium', 'high', 'critical'].map(
+        (k) => `pages.consentManagement.risks.${k}`,
+      ),
+      ...['export', 'delete', 'restrict', 'access', 'rectify', 'portability'].map(
+        (k) => `pages.consentManagement.requestTypes.${k}`,
+      ),
     ]
     for (const lang of supportedLanguages) {
       for (const key of mapKeys) {
@@ -466,6 +522,28 @@ describe('i18n', () => {
 
     await i18n.changeLanguage('tr')
     expect(i18n.t('pages.proxyRoutes.routeCount', { count: 2 })).toBe('2 rota')
+  })
+
+  it('pluralizes the OTP code length in both languages', async () => {
+    await i18n.changeLanguage('en')
+    expect(i18n.t('pages.settings.sms.digits', { count: 4 })).toBe('4 digits')
+    expect(i18n.t('pages.settings.sms.digits', { count: 1 })).toBe('1 digit')
+
+    await i18n.changeLanguage('tr')
+    expect(i18n.t('pages.settings.sms.digits', { count: 6 })).toBe('6 hane')
+  })
+
+  it('resolves an unknown consent status or risk level to its raw value', async () => {
+    // Both badges fall back rather than rendering a bare key, so a value the
+    // privacy service adds later is still readable.
+    await i18n.changeLanguage('en')
+    expect(i18n.t('pages.consentManagement.statuses.in_review')).toBe('In Review')
+    expect(
+      i18n.t('pages.consentManagement.statuses.escalated', { defaultValue: 'escalated' }),
+    ).toBe('escalated')
+    expect(
+      i18n.t('pages.consentManagement.risks.severe', { defaultValue: 'Severe' }),
+    ).toBe('Severe')
   })
 
   it('resolves an unknown connection-test probe to its prettified raw value', async () => {
