@@ -2589,6 +2589,7 @@ function EdgeRouterPoliciesSection() {
 function PostureSection() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const { t } = useTranslation()
   const [search, setSearch] = useState('')
   const [createModal, setCreateModal] = useState(false)
   const [editTarget, setEditTarget] = useState<PostureCheck | null>(null)
@@ -2612,9 +2613,9 @@ function PostureSection() {
       queryClient.invalidateQueries({ queryKey: ['ziti-posture-summary'] })
       setCreateModal(false)
       resetForm()
-      toast({ title: 'Posture check created' })
+      toast({ title: t('pages.zitiNetwork.posture.toast.created') })
     },
-    onError: () => toast({ title: 'Error', description: 'Failed to create posture check.', variant: 'destructive' }),
+    onError: () => toast({ title: t('common.error'), description: t('pages.zitiNetwork.posture.toast.createFailed'), variant: 'destructive' }),
   })
 
   const updateMutation = useMutation({
@@ -2625,9 +2626,9 @@ function PostureSection() {
       queryClient.invalidateQueries({ queryKey: ['ziti-posture-summary'] })
       setEditTarget(null)
       resetForm()
-      toast({ title: 'Posture check updated' })
+      toast({ title: t('pages.zitiNetwork.posture.toast.updated') })
     },
-    onError: () => toast({ title: 'Error', description: 'Failed to update posture check.', variant: 'destructive' }),
+    onError: () => toast({ title: t('common.error'), description: t('pages.zitiNetwork.posture.toast.updateFailed'), variant: 'destructive' }),
   })
 
   const deleteMutation = useMutation({
@@ -2636,9 +2637,9 @@ function PostureSection() {
       queryClient.invalidateQueries({ queryKey: ['ziti-posture-checks'] })
       queryClient.invalidateQueries({ queryKey: ['ziti-posture-summary'] })
       setDeleteTarget(null)
-      toast({ title: 'Posture check deleted' })
+      toast({ title: t('pages.zitiNetwork.posture.toast.deleted') })
     },
-    onError: () => toast({ title: 'Error', description: 'Failed to delete posture check.', variant: 'destructive' }),
+    onError: () => toast({ title: t('common.error'), description: t('pages.zitiNetwork.posture.toast.deleteFailed'), variant: 'destructive' }),
   })
 
   const resetForm = () => setForm({ name: '', check_type: 'OS', parameters: '{}', severity: 'medium', enabled: true, platforms: [] })
@@ -2668,12 +2669,12 @@ function PostureSection() {
   const totalChecks = summary?.total_checks || (Array.isArray(checksData) ? checksData.length : 0)
 
   return (
-    <CollapsibleSection title="Posture Checks" count={totalChecks} icon={Fingerprint} defaultOpen>
+    <CollapsibleSection title={t('pages.zitiNetwork.posture.title')} count={totalChecks} icon={Fingerprint} defaultOpen>
       {/* Summary row */}
       {summary && (
         <div className="flex gap-4 mb-4 text-sm">
-          <span className="text-green-600 font-medium">{summary.enabled_checks} enabled</span>
-          <span className="text-muted-foreground">{summary.disabled_checks} disabled</span>
+          <span className="text-green-600 font-medium">{t('pages.zitiNetwork.posture.enabledCount', { n: summary.enabled_checks })}</span>
+          <span className="text-muted-foreground">{t('pages.zitiNetwork.posture.disabledCount', { n: summary.disabled_checks })}</span>
           {summary.by_type && Object.entries(summary.by_type).map(([type, count]) => (
             <Badge key={type} variant="outline" className="text-xs">{type}: {count}</Badge>
           ))}
@@ -2681,25 +2682,25 @@ function PostureSection() {
       )}
 
       <div className="flex items-center justify-between gap-4 mb-3">
-        <SearchInput value={search} onChange={setSearch} placeholder="Search posture checks..." />
+        <SearchInput value={search} onChange={setSearch} placeholder={t('pages.zitiNetwork.posture.searchPlaceholder')} />
         <Button size="sm" onClick={() => { resetForm(); setCreateModal(true) }}>
-          <Plus className="mr-2 h-4 w-4" /> Add Check
+          <Plus className="mr-2 h-4 w-4" /> {t('pages.zitiNetwork.posture.add')}
         </Button>
       </div>
 
       {isLoading ? <Spinner /> : checks.length === 0 ? (
-        <EmptyState icon={Fingerprint} title="No posture checks" description="Create posture checks to enforce device compliance." />
+        <EmptyState icon={Fingerprint} title={t('pages.zitiNetwork.posture.emptyTitle')} description={t('pages.zitiNetwork.posture.emptyDesc')} />
       ) : (
         <Card>
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Type</TableHead>
-                <TableHead>Severity</TableHead>
-                <TableHead>Platforms</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Created</TableHead>
+                <TableHead>{t('pages.zitiNetwork.posture.colName')}</TableHead>
+                <TableHead>{t('pages.zitiNetwork.posture.colType')}</TableHead>
+                <TableHead>{t('pages.zitiNetwork.posture.colSeverity')}</TableHead>
+                <TableHead>{t('pages.zitiNetwork.posture.colPlatforms')}</TableHead>
+                <TableHead>{t('pages.zitiNetwork.posture.colStatus')}</TableHead>
+                <TableHead>{t('pages.zitiNetwork.posture.colCreated')}</TableHead>
                 <TableHead className="w-[50px]" />
               </TableRow>
             </TableHeader>
@@ -2708,15 +2709,21 @@ function PostureSection() {
                 <TableRow key={check.id} className="hover:bg-muted/50">
                   <TableCell className="font-medium">{check.name}</TableCell>
                   <TableCell><Badge variant="outline">{check.check_type}</Badge></TableCell>
-                  <TableCell><Badge variant={severityColor(check.severity)}>{check.severity}</Badge></TableCell>
+                  <TableCell>
+                    {/* Severity is the controller's own value; unknown ones
+                        still read as themselves. */}
+                    <Badge variant={severityColor(check.severity)}>
+                      {t(`pages.zitiNetwork.posture.severities.${check.severity}`, { defaultValue: check.severity })}
+                    </Badge>
+                  </TableCell>
                   <TableCell className="text-sm text-muted-foreground">
                     {Array.isArray(check.platforms) && check.platforms.length > 0
                       ? check.platforms.join(', ')
-                      : 'all'}
+                      : t('pages.zitiNetwork.posture.allPlatforms')}
                   </TableCell>
                   <TableCell>
                     <Badge variant={check.enabled ? 'default' : 'secondary'}>
-                      {check.enabled ? 'Enabled' : 'Disabled'}
+                      {check.enabled ? t('pages.zitiNetwork.posture.enabled') : t('pages.zitiNetwork.posture.disabled')}
                     </Badge>
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">
@@ -2730,10 +2737,10 @@ function PostureSection() {
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={() => openEditModal(check)}>Edit</DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => openEditModal(check)}>{t('pages.zitiNetwork.posture.edit')}</DropdownMenuItem>
                         <DropdownMenuSeparator />
                         <DropdownMenuItem className="text-red-600" onClick={() => setDeleteTarget(check)}>
-                          <Trash2 className="mr-2 h-4 w-4" /> Delete
+                          <Trash2 className="mr-2 h-4 w-4" /> {t('common.delete')}
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
@@ -2750,20 +2757,20 @@ function PostureSection() {
 
       {/* Create/Edit Dialogs */}
       {[
-        { open: createModal, onOpenChange: (v: boolean) => { if (!v) setCreateModal(false) }, title: 'Create Posture Check', onSubmit: () => createMutation.mutate(form), pending: createMutation.isPending, submitLabel: 'Create Check' },
-        { open: !!editTarget, onOpenChange: (v: boolean) => { if (!v) { setEditTarget(null); resetForm() } }, title: 'Edit Posture Check', onSubmit: () => editTarget && updateMutation.mutate({ id: editTarget.id, data: form }), pending: updateMutation.isPending, submitLabel: 'Update Check' },
+        { open: createModal, onOpenChange: (v: boolean) => { if (!v) setCreateModal(false) }, title: t('pages.zitiNetwork.posture.createTitle'), onSubmit: () => createMutation.mutate(form), pending: createMutation.isPending, submitLabel: t('pages.zitiNetwork.posture.createSubmit') },
+        { open: !!editTarget, onOpenChange: (v: boolean) => { if (!v) { setEditTarget(null); resetForm() } }, title: t('pages.zitiNetwork.posture.editTitle'), onSubmit: () => editTarget && updateMutation.mutate({ id: editTarget.id, data: form }), pending: updateMutation.isPending, submitLabel: t('pages.zitiNetwork.posture.editSubmit') },
       ].map((dlg, i) => (
         <Dialog key={i} open={dlg.open} onOpenChange={dlg.onOpenChange}>
           <DialogContent className="sm:max-w-md">
             <DialogHeader><DialogTitle>{dlg.title}</DialogTitle></DialogHeader>
             <form onSubmit={(e) => { e.preventDefault(); dlg.onSubmit() }} className="space-y-4">
               <div className="space-y-2">
-                <Label>Name</Label>
-                <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Posture check name" required />
+                <Label>{t('pages.zitiNetwork.posture.name')}</Label>
+                <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder={t('pages.zitiNetwork.posture.namePlaceholder')} required />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label>Check Type</Label>
+                  <Label>{t('pages.zitiNetwork.posture.checkType')}</Label>
                   <select value={form.check_type} onChange={(e) => setForm({ ...form, check_type: e.target.value })} className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm">
                     <option value="OS">OS</option>
                     <option value="Domain">Domain</option>
@@ -2773,17 +2780,17 @@ function PostureSection() {
                   </select>
                 </div>
                 <div className="space-y-2">
-                  <Label>Severity</Label>
+                  <Label>{t('pages.zitiNetwork.posture.severity')}</Label>
                   <select value={form.severity} onChange={(e) => setForm({ ...form, severity: e.target.value })} className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm">
-                    <option value="low">Low</option>
-                    <option value="medium">Medium</option>
-                    <option value="high">High</option>
-                    <option value="critical">Critical</option>
+                    <option value="low">{t('pages.zitiNetwork.posture.severities.low')}</option>
+                    <option value="medium">{t('pages.zitiNetwork.posture.severities.medium')}</option>
+                    <option value="high">{t('pages.zitiNetwork.posture.severities.high')}</option>
+                    <option value="critical">{t('pages.zitiNetwork.posture.severities.critical')}</option>
                   </select>
                 </div>
               </div>
               <div className="space-y-2">
-                <Label>Parameters (JSON)</Label>
+                <Label>{t('pages.zitiNetwork.posture.parameters')}</Label>
                 <textarea
                   value={form.parameters}
                   onChange={(e) => setForm({ ...form, parameters: e.target.value })}
@@ -2792,7 +2799,8 @@ function PostureSection() {
                 />
               </div>
               <div className="space-y-2">
-                <Label>Platforms</Label>
+                <Label>{t('pages.zitiNetwork.posture.platforms')}</Label>
+                {/* Platform identifiers are shown as the controller names them. */}
                 <div className="flex flex-wrap gap-3">
                   {['android', 'ios', 'windows', 'macos', 'linux'].map((p) => (
                     <label key={p} className="flex items-center gap-1.5 text-sm">
@@ -2813,18 +2821,17 @@ function PostureSection() {
                   ))}
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  Leave all unchecked to apply to every platform. Select android/ios to scope a
-                  check to mobile devices only.
+                  {t('pages.zitiNetwork.posture.platformsHint')}
                 </p>
               </div>
               <div className="flex items-center gap-2">
                 <Switch checked={form.enabled} onCheckedChange={(checked) => setForm({ ...form, enabled: checked })} />
-                <Label>Enabled</Label>
+                <Label>{t('pages.zitiNetwork.posture.enabledLabel')}</Label>
               </div>
               <div className="flex justify-end gap-2 pt-2">
-                <Button type="button" variant="outline" onClick={() => dlg.onOpenChange(false)}>Cancel</Button>
+                <Button type="button" variant="outline" onClick={() => dlg.onOpenChange(false)}>{t('common.cancel')}</Button>
                 <Button type="submit" disabled={dlg.pending}>
-                  {dlg.pending ? 'Saving...' : dlg.submitLabel}
+                  {dlg.pending ? t('pages.zitiNetwork.posture.saving') : dlg.submitLabel}
                 </Button>
               </div>
             </form>
@@ -2835,12 +2842,12 @@ function PostureSection() {
       <AlertDialog open={!!deleteTarget} onOpenChange={() => setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete Posture Check</AlertDialogTitle>
-            <AlertDialogDescription>Are you sure you want to delete &quot;{deleteTarget?.name}&quot;?</AlertDialogDescription>
+            <AlertDialogTitle>{t('pages.zitiNetwork.posture.deleteTitle')}</AlertDialogTitle>
+            <AlertDialogDescription>{t('pages.zitiNetwork.posture.deleteDesc', { name: deleteTarget?.name ?? '' })}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction className="bg-red-600 hover:bg-red-700" onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}>Delete</AlertDialogAction>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+            <AlertDialogAction className="bg-red-600 hover:bg-red-700" onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}>{t('common.delete')}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -2851,6 +2858,7 @@ function PostureSection() {
 function IdentityPostureViewer() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const { t } = useTranslation()
   const [identityId, setIdentityId] = useState('')
   const [searchId, setSearchId] = useState('')
 
@@ -2865,9 +2873,9 @@ function IdentityPostureViewer() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['ziti-identity-posture', searchId] })
       queryClient.invalidateQueries({ queryKey: ['ziti-posture-summary'] })
-      toast({ title: 'Posture evaluation triggered' })
+      toast({ title: t('pages.zitiNetwork.identityPosture.toast.evaluated') })
     },
-    onError: () => toast({ title: 'Error', description: 'Failed to evaluate posture.', variant: 'destructive' }),
+    onError: () => toast({ title: t('common.error'), description: t('pages.zitiNetwork.identityPosture.toast.evaluateFailed'), variant: 'destructive' }),
   })
 
   const handleLookup = (e: React.FormEvent) => {
@@ -2878,17 +2886,17 @@ function IdentityPostureViewer() {
   return (
     <div className="mt-6 border-t pt-4">
       <h4 className="text-sm font-semibold mb-3 flex items-center gap-2">
-        <Search className="h-4 w-4" /> Identity Posture Lookup
+        <Search className="h-4 w-4" /> {t('pages.zitiNetwork.identityPosture.title')}
       </h4>
       <form onSubmit={handleLookup} className="flex gap-2 mb-3">
         <Input
           value={identityId}
           onChange={(e) => setIdentityId(e.target.value)}
-          placeholder="Enter identity ID..."
+          placeholder={t('pages.zitiNetwork.identityPosture.placeholder')}
           className="max-w-sm"
         />
         <Button type="submit" size="sm" variant="outline" disabled={!identityId.trim()}>
-          Lookup
+          {t('pages.zitiNetwork.identityPosture.lookup')}
         </Button>
         {searchId && (
           <Button
@@ -2899,7 +2907,7 @@ function IdentityPostureViewer() {
             disabled={evaluateMutation.isPending}
           >
             <RefreshCw className={`mr-2 h-4 w-4 ${evaluateMutation.isPending ? 'animate-spin' : ''}`} />
-            Evaluate Now
+            {t('pages.zitiNetwork.identityPosture.evaluate')}
           </Button>
         )}
       </form>
@@ -2908,14 +2916,14 @@ function IdentityPostureViewer() {
         <div className="space-y-3">
           <div className="flex items-center gap-3 text-sm">
             <Badge variant={postureData.overall_passed ? 'default' : 'destructive'}>
-              {postureData.overall_passed ? 'Passed' : 'Failed'}
+              {postureData.overall_passed ? t('pages.zitiNetwork.identityPosture.passed') : t('pages.zitiNetwork.identityPosture.failed')}
             </Badge>
             <span className="text-muted-foreground">
-              {postureData.results?.length || 0} check(s) evaluated
+              {t('pages.zitiNetwork.identityPosture.checksEvaluated', { n: postureData.results?.length || 0 })}
             </span>
             {postureData.evaluated_at && (
               <span className="text-muted-foreground">
-                at {new Date(postureData.evaluated_at).toLocaleString()}
+                {t('pages.zitiNetwork.identityPosture.evaluatedAt', { time: new Date(postureData.evaluated_at).toLocaleString() })}
               </span>
             )}
           </div>
@@ -2925,11 +2933,11 @@ function IdentityPostureViewer() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Check ID</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Details</TableHead>
-                    <TableHead>Checked At</TableHead>
-                    <TableHead>Expires At</TableHead>
+                    <TableHead>{t('pages.zitiNetwork.identityPosture.colCheckId')}</TableHead>
+                    <TableHead>{t('pages.zitiNetwork.identityPosture.colStatus')}</TableHead>
+                    <TableHead>{t('pages.zitiNetwork.identityPosture.colDetails')}</TableHead>
+                    <TableHead>{t('pages.zitiNetwork.identityPosture.colCheckedAt')}</TableHead>
+                    <TableHead>{t('pages.zitiNetwork.identityPosture.colExpiresAt')}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -2938,7 +2946,7 @@ function IdentityPostureViewer() {
                       <TableCell className="font-mono text-xs">{r.check_id}</TableCell>
                       <TableCell>
                         <Badge variant={r.passed ? 'default' : 'destructive'}>
-                          {r.passed ? 'Passed' : 'Failed'}
+                          {r.passed ? t('pages.zitiNetwork.identityPosture.passed') : t('pages.zitiNetwork.identityPosture.failed')}
                         </Badge>
                       </TableCell>
                       <TableCell className="text-xs max-w-[300px] truncate">
@@ -2965,6 +2973,7 @@ function IdentityPostureViewer() {
 function CertificatesSection() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const { t } = useTranslation()
 
   const { data: certsData, isLoading } = useQuery({
     queryKey: ['ziti-certificates'],
@@ -2981,9 +2990,9 @@ function CertificatesSection() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['ziti-certificates'] })
       queryClient.invalidateQueries({ queryKey: ['ziti-certificates-expiry'] })
-      toast({ title: 'Certificate rotated', description: 'Certificate rotation has been initiated.' })
+      toast({ title: t('pages.zitiNetwork.certificates.toast.rotated'), description: t('pages.zitiNetwork.certificates.toast.rotatedDesc') })
     },
-    onError: () => toast({ title: 'Error', description: 'Failed to rotate certificate.', variant: 'destructive' }),
+    onError: () => toast({ title: t('common.error'), description: t('pages.zitiNetwork.certificates.toast.rotateFailed'), variant: 'destructive' }),
   })
 
   const certs = Array.isArray(certsData) ? certsData : []
@@ -2991,18 +3000,22 @@ function CertificatesSection() {
 
   const expiryBadge = (days: number) => {
     const variant: 'default' | 'destructive' | 'secondary' = days < 30 ? 'destructive' : days <= 60 ? 'secondary' : 'default'
-    const label = days < 0 ? 'Expired' : days === 0 ? 'Expires today' : `${days}d remaining`
+    const label = days < 0
+      ? t('pages.zitiNetwork.certificates.expired')
+      : days === 0
+        ? t('pages.zitiNetwork.certificates.expiresToday')
+        : t('pages.zitiNetwork.certificates.daysRemaining', { n: days })
     return <Badge variant={variant}>{label}</Badge>
   }
 
   return (
-    <CollapsibleSection title="Certificates" count={certs.length} icon={FileKey}>
+    <CollapsibleSection title={t('pages.zitiNetwork.certificates.title')} count={certs.length} icon={FileKey}>
       {/* Expiry alerts */}
       {alerts.length > 0 && (
         <div className="mb-4 p-3 rounded-lg border border-yellow-300 bg-yellow-50">
           <div className="flex items-center gap-2 mb-2">
             <AlertTriangle className="h-4 w-4 text-yellow-600" />
-            <span className="text-sm font-medium text-yellow-800">Certificates Expiring Soon ({alerts.length})</span>
+            <span className="text-sm font-medium text-yellow-800">{t('pages.zitiNetwork.certificates.expiringTitle', { n: alerts.length })}</span>
           </div>
           <div className="space-y-1">
             {alerts.map((cert) => (
@@ -3010,18 +3023,20 @@ function CertificatesSection() {
                 <span className="font-medium text-yellow-900">{cert.name}</span>
                 <div className="flex items-center gap-2">
                   <span className="text-yellow-700">
-                    {cert.days_until_expiry < 0 ? `Expired ${Math.abs(cert.days_until_expiry)} days ago` : `${cert.days_until_expiry} days left`}
+                    {cert.days_until_expiry < 0
+                      ? t('pages.zitiNetwork.certificates.expiredAgo', { n: Math.abs(cert.days_until_expiry) })
+                      : t('pages.zitiNetwork.certificates.daysLeft', { n: cert.days_until_expiry })}
                   </span>
                   <ConfirmAction
-                    title="Rotate this certificate?"
-                    description="A new Ziti certificate is issued and the old certificate stops working once rotated. Any component still presenting the old certificate will fail until it picks up the new one."
+                    title={t('pages.zitiNetwork.certificates.rotateTitle')}
+                    description={t('pages.zitiNetwork.certificates.rotateDesc')}
                     destructive
-                    confirmLabel="Rotate"
+                    confirmLabel={t('pages.zitiNetwork.certificates.rotate')}
                     onConfirm={() => rotateMutation.mutate(cert.id)}
                   >
                     {(open) => (
                       <Button variant="outline" size="sm" onClick={open} disabled={rotateMutation.isPending}>
-                        Rotate
+                        {t('pages.zitiNetwork.certificates.rotate')}
                       </Button>
                     )}
                   </ConfirmAction>
@@ -3033,17 +3048,17 @@ function CertificatesSection() {
       )}
 
       {isLoading ? <Spinner /> : certs.length === 0 ? (
-        <EmptyState icon={FileKey} title="No certificates" description="No Ziti certificates are being managed." />
+        <EmptyState icon={FileKey} title={t('pages.zitiNetwork.certificates.emptyTitle')} description={t('pages.zitiNetwork.certificates.emptyDesc')} />
       ) : (
         <Card>
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Type</TableHead>
-                <TableHead>Subject</TableHead>
-                <TableHead>Expiry</TableHead>
-                <TableHead>Auto Renew</TableHead>
+                <TableHead>{t('pages.zitiNetwork.certificates.colName')}</TableHead>
+                <TableHead>{t('pages.zitiNetwork.certificates.colType')}</TableHead>
+                <TableHead>{t('pages.zitiNetwork.certificates.colSubject')}</TableHead>
+                <TableHead>{t('pages.zitiNetwork.certificates.colExpiry')}</TableHead>
+                <TableHead>{t('pages.zitiNetwork.certificates.colAutoRenew')}</TableHead>
                 <TableHead className="w-[50px]" />
               </TableRow>
             </TableHeader>
@@ -3055,7 +3070,7 @@ function CertificatesSection() {
                   <TableCell className="text-sm text-muted-foreground max-w-[200px] truncate" title={cert.subject}>{cert.subject}</TableCell>
                   <TableCell>{expiryBadge(cert.days_until_expiry)}</TableCell>
                   <TableCell>
-                    <Badge variant={cert.auto_renew ? 'default' : 'secondary'}>{cert.auto_renew ? 'Yes' : 'No'}</Badge>
+                    <Badge variant={cert.auto_renew ? 'default' : 'secondary'}>{cert.auto_renew ? t('pages.zitiNetwork.certificates.yes') : t('pages.zitiNetwork.certificates.no')}</Badge>
                   </TableCell>
                   <TableCell>
                     <DropdownMenu>
@@ -3065,20 +3080,20 @@ function CertificatesSection() {
                       <DropdownMenuContent align="end">
                         <DropdownMenuItem onClick={() => {
                           navigator.clipboard.writeText(cert.fingerprint)
-                          toast({ title: 'Copied', description: 'Fingerprint copied.' })
+                          toast({ title: t('pages.zitiNetwork.copied'), description: t('pages.zitiNetwork.certificates.toast.fingerprintCopied') })
                         }}>
-                          <Copy className="mr-2 h-4 w-4" /> Copy Fingerprint
+                          <Copy className="mr-2 h-4 w-4" /> {t('pages.zitiNetwork.certificates.copyFingerprint')}
                         </DropdownMenuItem>
                         <ConfirmAction
-                          title="Rotate this certificate?"
-                          description="A new Ziti certificate is issued and the old certificate stops working once rotated. Any component still presenting the old certificate will fail until it picks up the new one."
+                          title={t('pages.zitiNetwork.certificates.rotateTitle')}
+                          description={t('pages.zitiNetwork.certificates.rotateDesc')}
                           destructive
-                          confirmLabel="Rotate"
+                          confirmLabel={t('pages.zitiNetwork.certificates.rotate')}
                           onConfirm={() => rotateMutation.mutate(cert.id)}
                         >
                           {(open) => (
                             <DropdownMenuItem onSelect={(e) => { e.preventDefault(); open() }}>
-                              <RefreshCw className="mr-2 h-4 w-4" /> Rotate
+                              <RefreshCw className="mr-2 h-4 w-4" /> {t('pages.zitiNetwork.certificates.rotate')}
                             </DropdownMenuItem>
                           )}
                         </ConfirmAction>
