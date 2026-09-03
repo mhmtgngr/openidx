@@ -1059,6 +1059,27 @@ all four pillars, deploy, log in, and find PAM.
    red-proofed against the three real regressions it exists to catch (it
    reproduces 3.59:1, 3.97:1 and the previous increment's 4.34:1 exactly),
    and pins the contrast maths against black-on-white = 21:1.
+1f. ✅ **The console no longer white-screens on a bad API response.** Found
+   while building the contrast probe, not looked for: pointing the console at
+   a backend that returns one wrong-shaped response (an object where a page
+   maps an array) rendered a **completely blank page — zero characters** with
+   no way back except clearing site data. There *was* an `ErrorBoundary`, but
+   it sits inside `Layout`, wrapping the routed page only, so anything that
+   throws in the chrome, in `AuthProvider`, or while resolving a route fell
+   straight past it to the root. `main.tsx` now mounts the same boundary as
+   the outermost element. Its reset had to change to make that useful: the
+   default "Try again" clears the boundary's own state, which is right for
+   the per-route mount (the route remounts and usually succeeds) and useless
+   at the root, where the same broken shell just throws again on the next
+   frame — so the root passes a reload. And because that boundary now also
+   wraps the login screen, the raw stack trace it printed is development-only
+   now; the message a user can quote to support stays, and the full stack
+   still goes to the browser console in every build. Verified in Chromium on
+   the exact scenario that used to blank: a readable card, a working recovery
+   button, and no stack in a production build. This matters more for a
+   security product than most: the console is where an operator goes *during*
+   an incident, and a version-skewed API response is exactly the kind of
+   thing an incident involves.
 2. Accessibility audit to a VPAT with real assistive technology — keyboard
    order, focus management, screen-reader announcement. These are not
    covered by axe in *any* environment and need a person with a keyboard and
