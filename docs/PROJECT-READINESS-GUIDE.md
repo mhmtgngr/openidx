@@ -1207,14 +1207,69 @@ all four pillars, deploy, log in, and find PAM.
    cannot run in jsdom (1d–1e cover it), nothing behind an interaction is
    mounted — a dialog body or dropdown is invisible to this gate — and what a
    screen reader *announces* is still not something any tool judges.
+
+1j. ✅ **260 form controls a screen reader could not name — the half the page
+   sweep structurally cannot see.** 1i gated every page, but a page gate only
+   sees what renders on load, and almost every form in this console lives
+   inside a dialog whose body is not mounted until it is opened. Scanning the
+   source instead found **260 controls with no accessible name at all**: a
+   screen reader announces "combo box", "edit text", "switch", and nothing
+   else. **215 of them already had a visible label sitting right beside them**
+   — it just was not associated, so a sighted user saw a labelled form and a
+   screen-reader user heard an anonymous one. Those are fixed by association
+   rather than by adding an `aria-label`, because the visible label *is* the
+   name and tying the two together cannot drift:
+   - 204 label/control pairs given a matching `htmlFor` and `id`. Where the
+     control renders in a loop the loop's own key goes into both halves — a
+     literal id would appear many times in one document and the label would
+     name whichever copy the browser matched first.
+   - **10 labels that already declared `htmlFor`, pointing at an id no element
+     carried.** The worst of the three shapes: it reads as correct in review
+     and names nothing at runtime.
+   - 4 colour fields where one label sits above two controls (a swatch and its
+     hex field); the label carries an id and both point at it.
+   The remaining 42 had nothing visible to associate and now carry an
+   `aria-label`, 21 of them from keys that already existed and 21 from new ones
+   in both catalogs.
+   **Two defects the automated pass introduced itself**, both caught before
+   commit and both recorded because they are this change's characteristic
+   failure mode: searching *backwards* for a nearby label crosses group
+   boundaries, so in `directories.tsx` every TLS switch took the label of the
+   row above it (the LDAPS label named the StartTLS switch) and in
+   `ziti-network.tsx` the "Allowed IPs" label ended up naming a notify-on-use
+   switch two groups down. **A mislabelled control is worse than an unlabelled
+   one** — it reads as correct and tells the user something false. All 382
+   associations in the tree were then re-checked by comparing each label's text
+   against the state its control is bound to; the 8 that shared no word are
+   tokenizer artifacts, verified by hand.
+   The sweep also found `pages/mfa/WebAuthnCredentials.tsx`: a duplicate of the
+   routed `/security-keys` page, imported by nothing but its own test, carrying
+   hardcoded English the i18n batches never covered because it sits in a
+   subdirectory. Deleted with its test — you do not add an accessible name to a
+   page no user can open. Its live neighbour
+   `components/my-privileged-access-section.tsx` **is** reachable (the
+   end-user My Network page composes it) and is still untranslated; it now has
+   `useTranslation` wired for the control name, with a comment saying its
+   visible copy is a separate batch. That is a real gap in the "every page a
+   non-admin can reach is bilingual" claim: the i18n sweep covered `src/pages`,
+   not the components a page composes.
+   Gated by **`scripts/check-control-names.sh`** with a 14-case self-test, in
+   the same style as the five UI guards it joins. Three of its cases are the
+   parser traps that produced false results in this repo's other JSX guards:
+   attributes after an arrow function must still be seen, markup quoted in a
+   doc comment must not be scanned as code, and a template-literal association
+   (`id={\`scope-${s}\`}` / `htmlFor={\`scope-${s}\`}`) must match — a matcher
+   that only reads `[A-Za-z0-9_-]` misses every dynamic pair and reports
+   correctly-labelled rows as offenders, which it did on the first run.
 2. Accessibility audit to a VPAT with real assistive technology — what a
    screen reader actually *announces*, and whether a person can complete each
    journey with one. That still needs a person: no tool judges whether an
    announcement is intelligible, and nothing behind an interaction (dialog
    bodies, dropdown menus) is reachable by the automated sweep at all. What
    no longer needs a person, and is now gated, is contrast (1c–1e), keyboard
-   reachability (1g–1h), and every axe-detectable WCAG 2.1 A/AA rule over all
-   106 renderable console pages (1i).
+   reachability (1g–1h), every axe-detectable WCAG 2.1 A/AA rule over all
+   renderable console pages (1i), and — from the source, so dialogs are
+   included — that every form control has an accessible name (1j).
 3. Separate/hardened end-user portal bundle.
 4. Mobile app decision (Expo vs Flutter) executed — maintainer's call.
 5. The existing roadmap epics (outbound SCIM, HR-driven JML, per-org

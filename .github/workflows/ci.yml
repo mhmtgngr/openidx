@@ -113,6 +113,7 @@ jobs:
           bash scripts/check-no-raw-neutral-literals.test.sh
           bash scripts/check-no-handrolled-tables.test.sh
           bash scripts/check-keyboard-reachable.test.sh
+          bash scripts/check-control-names.test.sh
       - name: Enforce UI safety guards
         run: |
           bash scripts/check-query-error-coverage.sh --enforce
@@ -120,6 +121,7 @@ jobs:
           bash scripts/check-no-raw-neutral-literals.sh --enforce
           bash scripts/check-no-handrolled-tables.sh --enforce
           bash scripts/check-keyboard-reachable.sh --enforce
+          bash scripts/check-control-names.sh --enforce
 
   # The self-heal loop is the ONLY thing allowed to restart box services on its
   # own, so its collectors, ledger dedup, and (most importantly) the remediator

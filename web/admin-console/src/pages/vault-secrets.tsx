@@ -745,7 +745,7 @@ export function VaultSecretsPage() {
                   </p>
                 </div>
                 <div className="flex gap-2">
-                  <Input
+                  <Input aria-label={t('common.revealedValue')}
                     value={revealedValue}
                     readOnly
                     className="font-mono text-sm"

@@ -453,7 +453,7 @@ export function ABACPoliciesPage() {
                         </TableCell>
                         <TableCell className="p-3 text-sm">{policy.priority}</TableCell>
                         <TableCell className="p-3">
-                          <Switch
+                          <Switch aria-label={t('pages.abacPolicies.togglePolicy', { name: policy.name })}
                             checked={policy.enabled}
                             onCheckedChange={() => toggleMutation.mutate(policy)}
                           />
@@ -605,7 +605,7 @@ export function ABACPoliciesPage() {
                   <div className="flex-1 space-y-2">
                     <div className="grid grid-cols-3 gap-2">
                       <Select value={cond.attribute} onValueChange={(val) => updateCondition(i, 'attribute', val)}>
-                        <SelectTrigger className="text-xs">
+                        <SelectTrigger aria-label={t('pages.abacPolicies.dialog.attribute')} className="text-xs">
                           <SelectValue placeholder={t('pages.abacPolicies.dialog.attribute')} />
                         </SelectTrigger>
                         <SelectContent>
@@ -615,7 +615,7 @@ export function ABACPoliciesPage() {
                         </SelectContent>
                       </Select>
                       <Select value={cond.operator} onValueChange={(val) => updateCondition(i, 'operator', val)}>
-                        <SelectTrigger className="text-xs">
+                        <SelectTrigger aria-label={t('pages.abacPolicies.dialog.operator')} className="text-xs">
                           <SelectValue placeholder={t('pages.abacPolicies.dialog.operator')} />
                         </SelectTrigger>
                         <SelectContent>

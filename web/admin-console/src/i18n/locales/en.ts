@@ -5,6 +5,9 @@ const en = {
     label: 'Language',
   },
   common: {
+    periodLabel: 'Time period',
+    revealedValue: 'Retrieved value',
+    selectAll: 'Select all',
     cancel: 'Cancel',
     refresh: 'Refresh',
     error: 'Error',
@@ -2381,6 +2384,7 @@ const en = {
       clearSelection: 'Clear Selection',
       itemsTitle: 'Review Items',
       filter: {
+        label: 'Filter items',
         all: 'All Items',
         pending: 'Pending',
         approved: 'Approved',
@@ -2677,6 +2681,7 @@ const en = {
       },
     },
     mfaManagement: {
+      togglePolicy: 'Enable policy {{name}}',
       subtitle: 'Manage multi-factor authentication enrollment, policies, and user status',
       tabs: {
         enrollment: 'Enrollment Overview',
@@ -3176,6 +3181,7 @@ const en = {
       },
     },
     riskPolicies: {
+      togglePolicy: 'Enable policy {{name}}',
       resourceName: 'risk policies',
       title: 'Risk-Based MFA Policies',
       subtitle: 'Configure adaptive authentication based on risk factors',
@@ -3596,6 +3602,7 @@ const en = {
       },
     },
     rotationPolicies: {
+      intervalUnitLabel: 'Interval unit',
       resourceName: 'rotation policies',
       subtitle: 'Manage automated credential rotation — admin guarded',
       newPolicy: 'New Policy',
@@ -3733,6 +3740,7 @@ const en = {
         delete: 'Delete',
       },
       entryDialog: {
+        securityModeLabel: 'RDP security mode',
         editTitle: 'Edit Entry',
         createTitle: 'New Entry',
         type: 'Type',
@@ -3849,6 +3857,7 @@ const en = {
       },
     },
     kioskPolicies: {
+      targetKindLabel: 'Assign by',
       resourceName: 'kiosk policies',
       title: 'Kiosk policies',
       subtitle: 'Lockdown configurations distributed to Android agents via /agent/config.',
@@ -4141,6 +4150,8 @@ const en = {
       },
     },
     appPublish: {
+      selectPath: 'Select {{path}}',
+      classificationFor: 'Classification for {{path}}',
       resourceName: 'published apps',
       subtitle:
         'Register internal apps, discover endpoints, classify security levels, and publish as proxy routes',
@@ -4336,6 +4347,7 @@ const en = {
         confirm: 'Remove',
       },
       pools: {
+        strategyLabel: 'Host selection strategy',
         title: 'Host pools',
         introBefore:
           'A pool is a set of interchangeable hosts. A launch is placed on a member with free capacity; a second app for the same user goes to another host. Set each host\'s',
@@ -4788,6 +4800,7 @@ const en = {
       },
     },
     abacPolicies: {
+      togglePolicy: 'Enable policy {{name}}',
       subtitle: 'Attribute-Based Access Control policies for fine-grained resource authorization',
       resourceName: 'ABAC policies',
       testPolicy: 'Test Policy',
@@ -5592,6 +5605,7 @@ const en = {
         },
       },
       retention: {
+        togglePolicy: 'Enable retention policy {{name}}',
         resourceName: 'retention policies',
         heading: 'Data Retention Policies',
         create: 'Create Policy',
@@ -5815,6 +5829,7 @@ const en = {
         disabled: 'Disabled',
       },
       identities: {
+        jwtLabel: 'Enrollment token',
         syncTitle: 'Identity Sync',
         syncCounts: '{{identities}} identities / {{users}} users',
         unsynced: '{{n}} unsynced',
@@ -6725,6 +6740,7 @@ const en = {
       executed: 'Workflow executed',
       deleted: 'Workflow deleted',
       form: {
+        actionTypeLabel: 'Action type',
         title: 'Create Lifecycle Workflow',
         name: 'Workflow Name *',
         namePlaceholder: 'New Employee Onboarding',
@@ -7095,6 +7111,7 @@ const en = {
       },
     },
     deviceTrustApproval: {
+      selectRequest: 'Select request for {{device}}',
       title: 'Device Trust Approval',
       subtitle: 'Review and approve device trust requests',
       settings: 'Settings',
@@ -7490,6 +7507,7 @@ const en = {
     // translated. Asset URLs, the sample domain and the CSS comment are format
     // examples and stay raw, as does the “Powered by OpenIDX” product line.
     tenantManagement: {
+      settingsJsonLabel: 'Settings JSON for {{category}}',
       title: 'Tenant Management',
       subtitle: 'Configure branding, settings, and domains per organization',
       orgsResource: 'organizations',
@@ -7744,6 +7762,7 @@ const en = {
     // Ziti service discovery. Protocol names, host:port pairs, the controller's
     // service id and the URL-path example are wire values and stay raw.
     zitiDiscovery: {
+      selectService: 'Select {{name}}',
       title: 'Ziti Service Discovery',
       subtitle: 'Discover and import existing Ziti services into OpenIDX',
       resource: 'discovered Ziti services',
@@ -8401,6 +8420,8 @@ const en = {
     // and title case in the filter — so each casing has its own map off one
     // wire list, and a category the engine adds later still reads as itself.
     aiRecommendations: {
+      statusFilterLabel: 'Filter by status',
+      categoryFilterLabel: 'Filter by category',
       title: 'AI Recommendations',
       subtitle: 'Intelligent suggestions to improve your security posture',
       resource: 'AI recommendations',

@@ -336,7 +336,7 @@ export function DeviceTrustApprovalPage() {
                   <TableRow className="border-b">
                     {statusFilter === 'pending' && (
                       <TableHead className="py-3 px-2">
-                        <Checkbox
+                        <Checkbox aria-label={t('common.selectAll')}
                           checked={selectedRequests.length === requests.length}
                           onCheckedChange={selectAll}
                         />
@@ -356,7 +356,7 @@ export function DeviceTrustApprovalPage() {
                     <TableRow key={request.id} className="border-b hover:bg-muted/50">
                       {statusFilter === 'pending' && (
                         <TableCell className="py-3 px-2">
-                          <Checkbox
+                          <Checkbox aria-label={t('pages.deviceTrustApproval.selectRequest', { device: request.device_name })}
                             checked={selectedRequests.includes(request.id)}
                             onCheckedChange={() => toggleSelectRequest(request.id)}
                           />

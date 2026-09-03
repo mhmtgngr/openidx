@@ -97,6 +97,19 @@ of React and cannot render in this environment. The exemption is itself a test
 — it fails if the page starts rendering — so the list cannot quietly grow into
 a list of the awkward cases.
 
+What the page sweep structurally cannot see is anything behind an
+interaction, and that is where almost every form in this console lives: a
+dialog body is not mounted until it is opened. `scripts/check-control-names.sh`
+covers that gap from the source instead — every `Input`, `Textarea`, `Switch`,
+`Checkbox`, `SelectTrigger` and native `select`/`input`/`textarea` must have a
+name, and it also reports the reverse defect, an `htmlFor` pointing at an id no
+element carries, which reads as correct in review and names nothing at runtime.
+Prefer associating the visible label (`htmlFor` + `id`) over adding an
+`aria-label`: one name, visible and programmatic, that cannot drift apart. For
+a control inside a loop put the loop's key in both halves — a literal id would
+appear many times in one document and the label would name whichever copy the
+browser matched first.
+
 Keyboard reachability is gated separately, by
 `scripts/check-keyboard-reachable.sh` at the repo root (with the other UI
 guards): a control you can click must be a control you can reach with a

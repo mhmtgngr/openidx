@@ -564,7 +564,7 @@ export function AppPublishPage() {
                       </div>
                     </div>
                     <Select value={classFilter} onValueChange={setClassFilter}>
-                      <SelectTrigger className="w-[160px]">
+                      <SelectTrigger aria-label={t('pages.appPublish.filters.classification')} className="w-[160px]">
                         <SelectValue placeholder={t('pages.appPublish.filters.classification')} />
                       </SelectTrigger>
                       <SelectContent>
@@ -608,7 +608,7 @@ export function AppPublishPage() {
                         <TableHeader className="bg-muted">
                           <TableRow>
                             <TableHead className="w-12 p-4">
-                              <Checkbox
+                              <Checkbox aria-label={t('common.selectAll')}
                                 checked={
                                   selected.size === unpublishedPaths.length &&
                                   unpublishedPaths.length > 0
@@ -630,7 +630,7 @@ export function AppPublishPage() {
                             return (
                               <TableRow key={path.id} className="hover:bg-muted/50">
                                 <TableCell className="p-4">
-                                  <Checkbox
+                                  <Checkbox aria-label={t('pages.appPublish.selectPath', { path: path.path })}
                                     checked={selected.has(path.id)}
                                     onCheckedChange={() => togglePath(path.id)}
                                     disabled={path.published}
@@ -660,7 +660,7 @@ export function AppPublishPage() {
                                       })
                                     }
                                   >
-                                    <SelectTrigger className="w-[140px] h-8">
+                                    <SelectTrigger aria-label={t('pages.appPublish.classificationFor', { path: path.path })} className="w-[140px] h-8">
                                       <SelectValue>
                                         <span className="flex items-center gap-1">
                                           <ClsIcon className="h-3 w-3" />

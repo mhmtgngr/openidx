@@ -657,7 +657,7 @@ export function PamConnectionsPage() {
                     value={settingStr('security') || 'default'}
                     onValueChange={(v) => setSetting('security', v === 'default' ? '' : v)}
                   >
-                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectTrigger aria-label={t('pages.pamConnections.entryDialog.securityModeLabel')}><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="default">{t('pages.pamConnections.entryDialog.securityDefault')}</SelectItem>
                       <SelectItem value="any">{t('pages.pamConnections.entryDialog.securityAny')}</SelectItem>
@@ -690,7 +690,7 @@ export function PamConnectionsPage() {
                       }))
                     }}
                   >
-                    <SelectTrigger>
+                    <SelectTrigger aria-label={t('pages.pamConnections.entryDialog.presetPlaceholder')}>
                       <SelectValue placeholder={t('pages.pamConnections.entryDialog.presetPlaceholder')} />
                     </SelectTrigger>
                     <SelectContent>
@@ -949,7 +949,7 @@ export function PamConnectionsPage() {
           ) : (
             <div className="space-y-3">
               <div className="flex items-center gap-2">
-                <Input readOnly value={revealedValue} className="font-mono" />
+                <Input aria-label={t('common.revealedValue')} readOnly value={revealedValue} className="font-mono" />
                 <Button size="sm" variant="outline" onClick={async () => {
                   const ok = await copyWithWarning(revealedValue)
                   if (ok) {

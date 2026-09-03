@@ -327,7 +327,7 @@ export function ProvisioningRulesPage() {
               className="flex-1"
             />
             <Select value={cond.operator} onValueChange={(v) => updateCondition(i, 'operator', v)}>
-              <SelectTrigger className="w-36">
+              <SelectTrigger aria-label={t('pages.provisioningRules.form.operatorPlaceholder')} className="w-36">
                 <SelectValue placeholder={t('pages.provisioningRules.form.operatorPlaceholder')} />
               </SelectTrigger>
               <SelectContent>
@@ -358,7 +358,7 @@ export function ProvisioningRulesPage() {
         {formData.actions.map((action, i) => (
           <div key={i} className="flex gap-2 mb-2">
             <Select value={action.type} onValueChange={(v) => updateAction(i, 'type', v)}>
-              <SelectTrigger className="flex-1">
+              <SelectTrigger aria-label={t('pages.provisioningRules.form.actionTypePlaceholder')} className="flex-1">
                 <SelectValue placeholder={t('pages.provisioningRules.form.actionTypePlaceholder')} />
               </SelectTrigger>
               <SelectContent>

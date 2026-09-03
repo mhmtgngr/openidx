@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { KeyRound, MonitorPlay, Play, Send, Timer, Undo2, Copy } from 'lucide-react'
@@ -72,6 +73,11 @@ const formatDate = (d: string) =>
  * user has no connections, requests, or checkouts at all.
  */
 export function MyPrivilegedAccessSection({ search }: { search: string }) {
+  // This section is reached from the end-user My Network page and its body is
+  // still hardcoded English -- the i18n sweep covered src/pages, not the
+  // components a page composes. The accessible name below goes through the
+  // catalog like every other control name; the visible copy is its own batch.
+  const { t } = useTranslation()
   const queryClient = useQueryClient()
   const { toast } = useToast()
   const [activeTab, setActiveTab] = useState('sessions')
@@ -532,7 +538,7 @@ export function MyPrivilegedAccessSection({ search }: { search: string }) {
                   </p>
                 </div>
                 <div className="flex gap-2">
-                  <Input
+                  <Input aria-label={t('common.revealedValue')}
                     value={retrievedValue}
                     readOnly
                     className="font-mono text-sm"

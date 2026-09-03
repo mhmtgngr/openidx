@@ -1551,7 +1551,7 @@ function IdentitiesTab() {
               {t('pages.zitiNetwork.identities.jwtIntro')} <code className="text-xs">ziti-edge-tunnel enroll --jwt &lt;file&gt;</code>{t('pages.zitiNetwork.identities.jwtIntroAfter')}
             </p>
             <div className="relative">
-              <textarea
+              <textarea aria-label={t('pages.zitiNetwork.identities.jwtLabel')}
                 readOnly
                 value={jwtModal?.jwt || ''}
                 className="w-full h-32 rounded-md border bg-muted p-3 text-xs font-mono"

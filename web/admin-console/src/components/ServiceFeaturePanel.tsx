@@ -189,7 +189,7 @@ export function ServiceFeaturePanel({ routeId, routeType, onUpdate }: ServiceFea
               {features.ziti?.enabled && (
                 <HealthBadge status={features.ziti.health_status} />
               )}
-              <Switch
+              <Switch aria-label={t('pages.proxyRoutes.serviceFeatures.ziti')}
                 checked={features.ziti?.enabled || false}
                 onCheckedChange={() => handleToggle('ziti', features.ziti?.enabled || false)}
                 disabled={enableFeature.isPending || disableFeature.isPending}
@@ -212,7 +212,7 @@ export function ServiceFeaturePanel({ routeId, routeType, onUpdate }: ServiceFea
               {features.browzer?.enabled && (
                 <HealthBadge status={features.browzer.health_status} />
               )}
-              <Switch
+              <Switch aria-label={t('pages.proxyRoutes.serviceFeatures.browzer')}
                 checked={features.browzer?.enabled || false}
                 onCheckedChange={() => handleToggle('browzer', features.browzer?.enabled || false)}
                 disabled={!features.ziti?.enabled || enableFeature.isPending || disableFeature.isPending}
@@ -236,7 +236,7 @@ export function ServiceFeaturePanel({ routeId, routeType, onUpdate }: ServiceFea
                 {features.guacamole?.enabled && (
                   <HealthBadge status={features.guacamole.health_status} />
                 )}
-                <Switch
+                <Switch aria-label={t('pages.proxyRoutes.serviceFeatures.guacamole')}
                   checked={features.guacamole?.enabled || false}
                   onCheckedChange={() => handleToggle('guacamole', features.guacamole?.enabled || false)}
                   disabled={enableFeature.isPending || disableFeature.isPending}

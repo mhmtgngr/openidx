@@ -508,7 +508,7 @@ export function LifecycleWorkflowsPage() {
               )}
               <div className="flex gap-2">
                 <Select value={newAction.type} onValueChange={(val) => setNewAction(prev => ({ ...prev, type: val }))}>
-                  <SelectTrigger className="flex-1"><SelectValue /></SelectTrigger>
+                  <SelectTrigger aria-label={t('pages.lifecycleWorkflows.form.actionTypeLabel')} className="flex-1"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {ACTION_TYPES.map(at => (
                       <SelectItem key={at} value={at}>{t(`pages.lifecycleWorkflows.actionTypes.${at}`)}</SelectItem>

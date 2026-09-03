@@ -561,7 +561,7 @@ function RetentionPoliciesTab() {
                     </Badge>
                   </TableCell>
                   <TableCell className="py-3 px-4 text-center">
-                    <Switch
+                    <Switch aria-label={t('pages.consentManagement.retention.togglePolicy', { name: policy.name })}
                       checked={policy.enabled}
                       onCheckedChange={(checked) =>
                         toggleMutation.mutate({ id: policy.id, enabled: checked })

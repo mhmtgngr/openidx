@@ -668,7 +668,7 @@ export function RotationPoliciesPage() {
                   value={form.intervalUnit}
                   onValueChange={(v) => setForm((f) => ({ ...f, intervalUnit: v as IntervalUnit }))}
                 >
-                  <SelectTrigger className="w-32">
+                  <SelectTrigger aria-label={t('pages.rotationPolicies.intervalUnitLabel')} className="w-32">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>

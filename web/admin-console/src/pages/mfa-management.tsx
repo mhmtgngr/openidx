@@ -383,7 +383,7 @@ export default function MFAManagement() {
                               </span>
                             </TableCell>
                             <TableCell>
-                              <Switch
+                              <Switch aria-label={t('pages.mfaManagement.togglePolicy', { name: policy.name })}
                                 checked={policy.enabled}
                                 onCheckedChange={(checked) => {
                                   updatePolicyMutation.mutate({

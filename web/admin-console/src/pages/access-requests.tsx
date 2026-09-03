@@ -418,7 +418,7 @@ export function AccessRequestsPage() {
               <div className="flex items-center justify-between">
                 <CardTitle>{t('pages.accessRequests.allCard')}</CardTitle>
                 <Select value={statusFilter} onValueChange={setStatusFilter}>
-                  <SelectTrigger className="w-[180px]"><SelectValue placeholder={t('pages.accessRequests.statusFilter.placeholder')} /></SelectTrigger>
+                  <SelectTrigger aria-label={t('pages.accessRequests.statusFilter.placeholder')} className="w-[180px]"><SelectValue placeholder={t('pages.accessRequests.statusFilter.placeholder')} /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">{t('pages.accessRequests.statusFilter.all')}</SelectItem>
                     <SelectItem value="pending">{t('pages.accessRequests.statusFilter.pending')}</SelectItem>
@@ -632,7 +632,7 @@ export function AccessRequestsPage() {
                   </p>
                 </div>
                 <div className="flex gap-2">
-                  <Input
+                  <Input aria-label={t('common.revealedValue')}
                     value={retrievedValue}
                     readOnly
                     className="font-mono text-sm"

@@ -683,7 +683,7 @@ function PoolsDialog({ open, onOpenChange, pools, appHosts, onChanged }: {
                 <span className="font-medium">{pool.name}</span>
                 <div className="flex items-center gap-2">
                   <Select value={pool.placement} onValueChange={(v) => updatePlacement.mutate({ pool, placement: v })}>
-                    <SelectTrigger className="h-8 w-36"><SelectValue /></SelectTrigger>
+                    <SelectTrigger aria-label={t('pages.windowsApps.pools.strategyLabel')} className="h-8 w-36"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="least_loaded">{t('pages.windowsApps.pools.leastLoaded')}</SelectItem>
                       <SelectItem value="round_robin">{t('pages.windowsApps.pools.roundRobin')}</SelectItem>
@@ -737,7 +737,7 @@ function PoolsDialog({ open, onOpenChange, pools, appHosts, onChanged }: {
               <div className="flex items-end gap-2">
                 <div className="flex-1">
                   <Select value={draft.host} onValueChange={(v) => setMemberDraft((s) => ({ ...s, [pool.id]: { ...draft, host: v } }))}>
-                    <SelectTrigger className="h-8">
+                    <SelectTrigger aria-label={t('pages.windowsApps.pools.addHost')} className="h-8">
                       <SelectValue placeholder={available.length
                         ? t('pages.windowsApps.pools.addHost')
                         : t('pages.windowsApps.pools.allHostsAdded')} />

@@ -216,7 +216,7 @@ export function PasswordlessSettingsPage() {
                 <Link2 className="h-5 w-5 text-primary" />
                 <CardTitle>{t('pages.passwordless.magicLinks.title')}</CardTitle>
               </div>
-              <Switch
+              <Switch aria-label={t('pages.passwordless.magicLinks.title')}
                 checked={settings.magic_link_enabled}
                 onCheckedChange={(checked) =>
                   toggleSettingMutation.mutate({ key: 'magic_link_enabled', value: checked })
@@ -257,7 +257,7 @@ export function PasswordlessSettingsPage() {
                 <QrCode className="h-5 w-5 text-purple-600" />
                 <CardTitle>{t('pages.passwordless.qrLogin.title')}</CardTitle>
               </div>
-              <Switch
+              <Switch aria-label={t('pages.passwordless.qrLogin.title')}
                 checked={settings.qr_login_enabled}
                 onCheckedChange={(checked) =>
                   toggleSettingMutation.mutate({ key: 'qr_login_enabled', value: checked })
@@ -298,7 +298,7 @@ export function PasswordlessSettingsPage() {
                 <Shield className="h-5 w-5 text-green-600" />
                 <CardTitle>{t('pages.passwordless.biometric.title')}</CardTitle>
               </div>
-              <Switch
+              <Switch aria-label={t('pages.passwordless.biometric.title')}
                 checked={settings.biometric_only_enabled}
                 onCheckedChange={(checked) =>
                   toggleSettingMutation.mutate({ key: 'biometric_only_enabled', value: checked })

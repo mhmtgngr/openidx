@@ -8,6 +8,9 @@ const tr: typeof en = {
     label: 'Dil',
   },
   common: {
+    periodLabel: 'Zaman aralığı',
+    revealedValue: 'Alınan değer',
+    selectAll: 'Tümünü seç',
     cancel: 'İptal',
     refresh: 'Yenile',
     error: 'Hata',
@@ -2379,6 +2382,7 @@ const tr: typeof en = {
       clearSelection: 'Seçimi Temizle',
       itemsTitle: 'İnceleme Öğeleri',
       filter: {
+        label: 'Öğeleri filtrele',
         all: 'Tüm Öğeler',
         pending: 'Bekliyor',
         approved: 'Onaylandı',
@@ -2675,6 +2679,7 @@ const tr: typeof en = {
       },
     },
     mfaManagement: {
+      togglePolicy: '{{name}} politikasını etkinleştir',
       subtitle: 'Çok faktörlü kimlik doğrulama kaydını, politikalarını ve kullanıcı durumunu yönetin',
       tabs: {
         enrollment: 'Kayıt Özeti',
@@ -3176,6 +3181,7 @@ const tr: typeof en = {
       },
     },
     riskPolicies: {
+      togglePolicy: '{{name}} politikasını etkinleştir',
       resourceName: 'risk politikaları',
       title: 'Risk Tabanlı MFA Politikaları',
       subtitle: 'Uyarlanabilir kimlik doğrulamayı risk etkenlerine göre yapılandırın',
@@ -3596,6 +3602,7 @@ const tr: typeof en = {
       },
     },
     rotationPolicies: {
+      intervalUnitLabel: 'Aralık birimi',
       resourceName: 'döndürme politikaları',
       subtitle: 'Otomatik kimlik bilgisi döndürmeyi yönetin — yönetici korumalı',
       newPolicy: 'Yeni Politika',
@@ -3733,6 +3740,7 @@ const tr: typeof en = {
         delete: 'Sil',
       },
       entryDialog: {
+        securityModeLabel: 'RDP güvenlik modu',
         editTitle: 'Kaydı Düzenle',
         createTitle: 'Yeni Kayıt',
         type: 'Tür',
@@ -3849,6 +3857,7 @@ const tr: typeof en = {
       },
     },
     kioskPolicies: {
+      targetKindLabel: 'Atama türü',
       resourceName: 'kiosk politikaları',
       title: 'Kiosk politikaları',
       subtitle: '/agent/config üzerinden Android aracılarına dağıtılan kilit yapılandırmaları.',
@@ -4142,6 +4151,8 @@ const tr: typeof en = {
       },
     },
     appPublish: {
+      selectPath: '{{path}} yolunu seç',
+      classificationFor: '{{path}} için sınıflandırma',
       resourceName: 'yayımlanan uygulamalar',
       subtitle:
         'İç uygulamaları kaydedin, uç noktaları keşfedin, güvenlik düzeylerini sınıflandırın ve proxy rotaları olarak yayımlayın',
@@ -4337,6 +4348,7 @@ const tr: typeof en = {
         confirm: 'Kaldır',
       },
       pools: {
+        strategyLabel: 'Ana makine seçim stratejisi',
         title: 'Sunucu havuzları',
         introBefore:
           'Havuz, birbirinin yerine geçebilen sunuculardan oluşur. Bir başlatma, boş kapasitesi olan bir üyeye yerleştirilir; aynı kullanıcının ikinci uygulaması başka bir sunucuya gider. Her sunucunun',
@@ -4780,6 +4792,7 @@ const tr: typeof en = {
       },
     },
     abacPolicies: {
+      togglePolicy: '{{name}} politikasını etkinleştir',
       subtitle: 'Ayrıntılı kaynak yetkilendirmesi için öznitelik tabanlı erişim denetimi politikaları',
       resourceName: 'ABAC politikaları',
       testPolicy: 'Politikayı Test Et',
@@ -5559,6 +5572,7 @@ const tr: typeof en = {
         },
       },
       retention: {
+        togglePolicy: '{{name}} saklama politikasını etkinleştir',
         resourceName: 'saklama politikaları',
         heading: 'Veri Saklama Politikaları',
         create: 'Politika Oluştur',
@@ -5780,6 +5794,7 @@ const tr: typeof en = {
         disabled: 'Devre dışı',
       },
       identities: {
+        jwtLabel: 'Kayıt jetonu',
         syncTitle: 'Kimlik Eşitleme',
         syncCounts: '{{identities}} kimlik / {{users}} kullanıcı',
         unsynced: '{{n}} eşitlenmemiş',
@@ -6671,6 +6686,7 @@ const tr: typeof en = {
       executed: 'İş akışı çalıştırıldı',
       deleted: 'İş akışı silindi',
       form: {
+        actionTypeLabel: 'Eylem türü',
         title: 'Yaşam Döngüsü İş Akışı Oluştur',
         name: 'İş Akışı Adı *',
         namePlaceholder: 'Yeni Çalışan İşe Alımı',
@@ -7026,6 +7042,7 @@ const tr: typeof en = {
       },
     },
     deviceTrustApproval: {
+      selectRequest: '{{device}} için isteği seç',
       title: 'Cihaz Güveni Onayı',
       subtitle: 'Cihaz güven taleplerini inceleyin ve onaylayın',
       settings: 'Ayarlar',
@@ -7380,6 +7397,7 @@ const tr: typeof en = {
       },
     },
     tenantManagement: {
+      settingsJsonLabel: '{{category}} için JSON ayarları',
       title: 'Kiracı Yönetimi',
       subtitle: 'Kuruluş bazında markalama, ayarlar ve alan adlarını yapılandırın',
       orgsResource: 'kuruluşlar',
@@ -7616,6 +7634,7 @@ const tr: typeof en = {
       },
     },
     zitiDiscovery: {
+      selectService: '{{name}} hizmetini seç',
       title: 'Ziti Servis Keşfi',
       subtitle: 'Mevcut Ziti servislerini keşfedin ve OpenIDX\'e aktarın',
       resource: 'keşfedilen Ziti servisleri',
@@ -8196,6 +8215,8 @@ const tr: typeof en = {
       },
     },
     aiRecommendations: {
+      statusFilterLabel: 'Duruma göre filtrele',
+      categoryFilterLabel: 'Kategoriye göre filtrele',
       title: 'Yapay Zekâ Önerileri',
       subtitle: 'Güvenlik duruşunuzu iyileştirmek için akıllı öneriler',
       resource: 'yapay zekâ önerileri',

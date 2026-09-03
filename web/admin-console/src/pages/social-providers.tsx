@@ -370,7 +370,7 @@ export function SocialProvidersPage() {
             <div>
               <Label htmlFor="button_color">{t('pages.socialProviders.dialog.buttonColor')}</Label>
               <div className="flex items-center gap-2 mt-1">
-                <input
+                <input aria-label={t('pages.socialProviders.dialog.buttonColor')}
                   type="color"
                   value={form.button_color}
                   onChange={(e) => setForm((f) => ({ ...f, button_color: e.target.value }))}

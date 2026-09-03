@@ -394,7 +394,7 @@ export function RiskPoliciesPage() {
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    <Switch
+                    <Switch aria-label={t('pages.riskPolicies.togglePolicy', { name: policy.name })}
                       checked={policy.enabled}
                       onCheckedChange={(checked) =>
                         toggleMutation.mutate({ id: policy.id, enabled: checked })

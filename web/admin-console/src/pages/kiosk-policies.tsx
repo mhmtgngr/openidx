@@ -515,7 +515,7 @@ function AssignmentsDialog({ policy, onClose }: AssignmentsDialogProps) {
 
         <div className="space-y-3">
           <div className="flex gap-2">
-            <select
+            <select aria-label={t('pages.kioskPolicies.targetKindLabel')}
               value={targetKind}
               onChange={(e) => setTargetKind(e.target.value as 'agent' | 'tag')}
               className="h-9 rounded-md border border-input bg-background px-3 text-sm"

@@ -237,7 +237,7 @@ export function ZitiDiscoveryPage() {
                 <TableHeader className="bg-muted">
                   <TableRow>
                     <TableHead className="w-12 p-4">
-                      <Checkbox
+                      <Checkbox aria-label={t('common.selectAll')}
                         checked={selected.size === importableServices.length && importableServices.length > 0}
                         onCheckedChange={selectAll}
                       />
@@ -263,7 +263,7 @@ export function ZitiDiscoveryPage() {
                   {filteredServices.map((service) => (
                     <TableRow key={service.ziti_id} className="hover:bg-muted/50">
                       <TableCell className="p-4">
-                        <Checkbox
+                        <Checkbox aria-label={t('pages.zitiDiscovery.selectService', { name: service.name })}
                           checked={selected.has(service.ziti_id)}
                           onCheckedChange={() => toggleService(service.ziti_id)}
                           disabled={!service.can_import}

@@ -395,7 +395,7 @@ export function TenantManagementPage() {
                       </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
-                      <textarea
+                      <textarea aria-label={t('pages.tenantManagement.settingsJsonLabel', { category })}
                         value={settingsJson[category] || '{}'}
                         onChange={e => setSettingsJson(s => ({ ...s, [category]: e.target.value }))}
                         className="w-full border rounded-md px-3 py-2 min-h-[200px] font-mono text-sm"

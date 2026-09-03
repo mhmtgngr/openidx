@@ -239,7 +239,7 @@ export function AIRecommendationsPage() {
 
       {/* Filters */}
       <div className="flex gap-3">
-        <select className="border rounded px-3 py-2 text-sm" value={statusFilter}
+        <select aria-label={t('pages.aiRecommendations.statusFilterLabel')} className="border rounded px-3 py-2 text-sm" value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}>
           {RECOMMENDATION_STATUSES.map((s) => (
             <option key={s} value={s}>
@@ -248,7 +248,7 @@ export function AIRecommendationsPage() {
           ))}
           <option value="">{t('pages.aiRecommendations.allStatuses')}</option>
         </select>
-        <select className="border rounded px-3 py-2 text-sm" value={categoryFilter}
+        <select aria-label={t('pages.aiRecommendations.categoryFilterLabel')} className="border rounded px-3 py-2 text-sm" value={categoryFilter}
           onChange={(e) => setCategoryFilter(e.target.value)}>
           <option value="">{t('pages.aiRecommendations.allCategories')}</option>
           {RECOMMENDATION_CATEGORIES.map((c) => (

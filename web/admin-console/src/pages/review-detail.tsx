@@ -365,7 +365,7 @@ export function ReviewDetailPage() {
           <div className="flex items-center justify-between">
             <CardTitle>{t('pages.reviewDetail.itemsTitle')}</CardTitle>
             <div className="flex items-center gap-2">
-              <select
+              <select aria-label={t('pages.reviewDetail.filter.label')}
                 value={filter}
                 onChange={(e) => setFilter(e.target.value)}
                 className="border rounded-md px-3 py-2 text-sm"

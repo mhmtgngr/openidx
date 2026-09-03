@@ -204,7 +204,7 @@ export function LoginAnalyticsPage() {
           <p className="text-muted-foreground">{t('pages.loginAnalytics.subtitle')}</p>
         </div>
         <Select value={period} onValueChange={setPeriod}>
-          <SelectTrigger className="w-[180px]">
+          <SelectTrigger aria-label={t('common.periodLabel')} className="w-[180px]">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
