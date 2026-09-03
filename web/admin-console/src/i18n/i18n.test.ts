@@ -475,6 +475,24 @@ describe('i18n', () => {
       ...['pending', 'in_progress', 'completed', 'failed', 'rejected'].map(
         (k) => `pages.lifecycleWorkflows.executionStatuses.${k}`,
       ),
+      // delegations: the delegation API's scope kinds, plus the per-kind hint
+      // that tells the operator where to find that scope's UUID.
+      ...['group', 'role', 'application', 'organization'].map(
+        (k) => `pages.delegations.scopeTypes.${k}`,
+      ),
+      ...['group', 'role', 'application', 'organization', 'fallback'].map(
+        (k) => `pages.delegations.scopeIdHints.${k}`,
+      ),
+      // api-explorer: the services the catalog endpoint groups endpoints by.
+      ...['identity', 'oauth', 'governance', 'audit', 'admin', 'provisioning'].map(
+        (k) => `pages.apiExplorer.services.${k}`,
+      ),
+      // system-health: the overall and per-dependency status vocabularies,
+      // whose config maps no longer carry English labels.
+      ...['healthy', 'degraded', 'unhealthy'].map(
+        (k) => `pages.systemHealth.statuses.${k}`,
+      ),
+      ...['up', 'degraded', 'down'].map((k) => `pages.systemHealth.depStatuses.${k}`),
     ]
     for (const lang of supportedLanguages) {
       for (const key of mapKeys) {
@@ -607,6 +625,35 @@ describe('i18n', () => {
     expect(
       i18n.t('pages.notificationAdmin.stats.channelCount', { n: 1, percentage: 3 }),
     ).toBe('1 (%3)')
+  })
+
+  it('falls back to the capitalized scope type and the generic scope hint', async () => {
+    // A scope kind the delegation API adds later reads as itself in the filter,
+    // the badge and both forms, and its Scope ID field still gets a hint.
+    await i18n.changeLanguage('en')
+    expect(
+      i18n.t('pages.delegations.scopeTypes.tenant', { defaultValue: 'Tenant' }),
+    ).toBe('Tenant')
+    expect(
+      i18n.t('pages.delegations.scopeIdHints.tenant', {
+        defaultValue: i18n.t('pages.delegations.scopeIdHints.fallback'),
+      }),
+    ).toBe('UUID of the scoped resource.')
+  })
+
+  it('pluralizes the relations-doctor scan result in both languages', async () => {
+    await i18n.changeLanguage('en')
+    expect(
+      i18n.t('pages.systemHealth.relations.scanResult', { count: 1, remaining: 2 }),
+    ).toBe('1 safe fix applied, 2 remaining.')
+    expect(
+      i18n.t('pages.systemHealth.relations.scanResult', { count: 3, remaining: 0 }),
+    ).toBe('3 safe fixes applied, 0 remaining.')
+
+    await i18n.changeLanguage('tr')
+    expect(
+      i18n.t('pages.systemHealth.relations.scanResult', { count: 1, remaining: 2 }),
+    ).toBe('1 güvenli düzeltme uygulandı, 2 tane kaldı.')
   })
 
   it('resolves an unknown lifecycle action type to its raw value', async () => {

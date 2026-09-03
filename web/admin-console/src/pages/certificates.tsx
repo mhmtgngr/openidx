@@ -1,4 +1,5 @@
 import { useRef } from 'react'
+import { Trans, useTranslation } from 'react-i18next'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Upload, RefreshCw, Server, Clock,
@@ -73,6 +74,7 @@ interface ZitiCertificate {
 }
 
 export function CertificatesPage() {
+  const { t } = useTranslation()
   const { toast } = useToast()
   const queryClient = useQueryClient()
   const certFileRef = useRef<HTMLInputElement>(null)
@@ -95,7 +97,7 @@ export function CertificatesPage() {
       const certInput = certFileRef.current
       const keyInput = keyFileRef.current
       if (!certInput?.files?.[0] || !keyInput?.files?.[0]) {
-        throw new Error('Please select both certificate and key files')
+        throw new Error(t('pages.certificates.platform.selectBoth'))
       }
       const formData = new FormData()
       formData.append('cert', certInput.files[0])
@@ -103,57 +105,63 @@ export function CertificatesPage() {
       return api.postFormData('/api/v1/access/certificates/platform', formData)
     },
     onSuccess: () => {
-      toast({ title: 'Certificate uploaded', description: 'All platform consumers will use the new certificate.' })
+      toast({
+        title: t('pages.certificates.platform.uploaded'),
+        description: t('pages.certificates.platform.uploadedDesc'),
+      })
       queryClient.invalidateQueries({ queryKey: ['certificates-status'] })
       if (certFileRef.current) certFileRef.current.value = ''
       if (keyFileRef.current) keyFileRef.current.value = ''
     },
     onError: (err: Error) => {
-      toast({ title: 'Upload failed', description: err.message, variant: 'destructive' })
+      toast({ title: t('pages.certificates.platform.uploadFailed'), description: err.message, variant: 'destructive' })
     },
   })
 
   const revertMutation = useMutation({
     mutationFn: () => api.delete('/api/v1/access/certificates/platform'),
     onSuccess: () => {
-      toast({ title: 'Reverted to self-signed certificate' })
+      toast({ title: t('pages.certificates.platform.reverted') })
       queryClient.invalidateQueries({ queryKey: ['certificates-status'] })
     },
     onError: (err: Error) => {
-      toast({ title: 'Revert failed', description: err.message, variant: 'destructive' })
+      toast({ title: t('pages.certificates.platform.revertFailed'), description: err.message, variant: 'destructive' })
     },
   })
 
   const enableApisixMutation = useMutation({
     mutationFn: () => api.post('/api/v1/access/certificates/apisix/enable'),
     onSuccess: () => {
-      toast({ title: 'APISIX HTTPS enabled', description: 'Available at https://localhost:8443' })
+      toast({
+        title: t('pages.certificates.apisix.enabledToast'),
+        description: t('pages.certificates.apisix.enabledToastDesc'),
+      })
       queryClient.invalidateQueries({ queryKey: ['certificates-status'] })
     },
     onError: (err: Error) => {
-      toast({ title: 'Failed to enable APISIX SSL', description: err.message, variant: 'destructive' })
+      toast({ title: t('pages.certificates.apisix.enableFailed'), description: err.message, variant: 'destructive' })
     },
   })
 
   const disableApisixMutation = useMutation({
     mutationFn: () => api.post('/api/v1/access/certificates/apisix/disable'),
     onSuccess: () => {
-      toast({ title: 'APISIX HTTPS disabled' })
+      toast({ title: t('pages.certificates.apisix.disabledToast') })
       queryClient.invalidateQueries({ queryKey: ['certificates-status'] })
     },
     onError: (err: Error) => {
-      toast({ title: 'Failed to disable APISIX SSL', description: err.message, variant: 'destructive' })
+      toast({ title: t('pages.certificates.apisix.disableFailed'), description: err.message, variant: 'destructive' })
     },
   })
 
   const rotateMutation = useMutation({
     mutationFn: (id: string) => api.post(`/api/v1/access/ziti/certificates/${id}/rotate`, {}),
     onSuccess: () => {
-      toast({ title: 'Certificate rotated' })
+      toast({ title: t('pages.certificates.ziti.rotated') })
       queryClient.invalidateQueries({ queryKey: ['ziti-certificates'] })
     },
     onError: () => {
-      toast({ title: 'Rotation failed', variant: 'destructive' })
+      toast({ title: t('pages.certificates.ziti.rotateFailed'), variant: 'destructive' })
     },
   })
 
@@ -165,7 +173,7 @@ export function CertificatesPage() {
     )
   }
 
-  if (isError) return <QueryError error={error} resource="certificates" />
+  if (isError) return <QueryError error={error} resource={t('pages.certificates.resource')} />
 
   const platform = certStatus?.platform
   const apisix = certStatus?.apisix
@@ -175,17 +183,18 @@ export function CertificatesPage() {
   const expiryBadge = (days: number) => {
     const variant: 'default' | 'destructive' | 'secondary' =
       days < 7 ? 'destructive' : days <= 30 ? 'secondary' : 'default'
-    const label = days <= 0 ? 'Expired' : `${days}d remaining`
+    const label =
+      days <= 0
+        ? t('pages.certificates.expired')
+        : t('pages.certificates.daysRemaining', { n: days })
     return <Badge variant={variant}>{label}</Badge>
   }
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold">Certificate Management</h1>
-        <p className="text-muted-foreground">
-          Manage TLS certificates across the OpenIDX platform
-        </p>
+        <h1 className="text-2xl font-bold">{t('pages.certificates.title')}</h1>
+        <p className="text-muted-foreground">{t('pages.certificates.subtitle')}</p>
       </div>
 
       {/* Expiry Alert Banner */}
@@ -195,8 +204,12 @@ export function CertificatesPage() {
           <div>
             {alerts.map((alert, i) => (
               <p key={i} className="text-sm">
-                <strong>{alert.name}</strong> expires in <strong>{alert.days_left} days</strong>
-                {alert.severity === 'critical' && ' — action required!'}
+                <Trans
+                  i18nKey="pages.certificates.expiryAlert"
+                  values={{ name: alert.name, days: alert.days_left }}
+                  components={[<strong key="0" />, <strong key="1" />]}
+                />
+                {alert.severity === 'critical' && t('pages.certificates.actionRequired')}
               </p>
             ))}
           </div>
@@ -205,9 +218,9 @@ export function CertificatesPage() {
 
       <Tabs defaultValue="platform">
         <TabsList>
-          <TabsTrigger value="platform">Platform TLS</TabsTrigger>
-          <TabsTrigger value="apisix">API Gateway</TabsTrigger>
-          <TabsTrigger value="ziti">Ziti Certificates</TabsTrigger>
+          <TabsTrigger value="platform">{t('pages.certificates.tabs.platform')}</TabsTrigger>
+          <TabsTrigger value="apisix">{t('pages.certificates.tabs.apisix')}</TabsTrigger>
+          <TabsTrigger value="ziti">{t('pages.certificates.tabs.ziti')}</TabsTrigger>
         </TabsList>
 
         {/* Platform TLS Tab */}
@@ -215,45 +228,55 @@ export function CertificatesPage() {
           {/* Certificate Details */}
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Platform TLS Certificate</CardTitle>
+              <CardTitle className="text-sm font-medium">{t('pages.certificates.platform.heading')}</CardTitle>
               <Badge variant={platform?.cert_type === 'custom' ? 'default' : 'outline'}>
-                {platform?.cert_type === 'custom' ? 'CA-Signed' : 'Self-Signed'}
+                {platform?.cert_type === 'custom'
+                  ? t('pages.certificates.platform.caSigned')
+                  : t('pages.certificates.platform.selfSigned')}
               </Badge>
             </CardHeader>
             <CardContent>
               <div className="grid gap-3 sm:grid-cols-2">
                 <div>
-                  <p className="text-xs text-muted-foreground">Subject</p>
-                  <p className="text-sm font-mono">{platform?.subject || 'N/A'}</p>
+                  <p className="text-xs text-muted-foreground">{t('pages.certificates.platform.subject')}</p>
+                  <p className="text-sm font-mono">{platform?.subject || t('pages.certificates.na')}</p>
                 </div>
                 <div>
-                  <p className="text-xs text-muted-foreground">Issuer</p>
-                  <p className="text-sm font-mono">{platform?.issuer || 'N/A'}</p>
+                  <p className="text-xs text-muted-foreground">{t('pages.certificates.platform.issuer')}</p>
+                  <p className="text-sm font-mono">{platform?.issuer || t('pages.certificates.na')}</p>
                 </div>
                 <div>
-                  <p className="text-xs text-muted-foreground">Valid From</p>
-                  <p className="text-sm">{platform?.not_before ? new Date(platform.not_before).toLocaleDateString() : 'N/A'}</p>
+                  <p className="text-xs text-muted-foreground">{t('pages.certificates.platform.validFrom')}</p>
+                  <p className="text-sm">
+                    {platform?.not_before
+                      ? new Date(platform.not_before).toLocaleDateString()
+                      : t('pages.certificates.na')}
+                  </p>
                 </div>
                 <div>
-                  <p className="text-xs text-muted-foreground">Expires</p>
+                  <p className="text-xs text-muted-foreground">{t('pages.certificates.platform.expires')}</p>
                   <p className={`text-sm ${certExpiringSoon ? 'text-yellow-500 font-semibold' : ''}`}>
-                    {platform?.not_after ? new Date(platform.not_after).toLocaleDateString() : 'N/A'}
-                    {platform?.days_left !== undefined && platform.days_left > 0
-                      ? ` (${platform.days_left} days left)`
-                      : ''}
+                    {!platform?.not_after
+                      ? t('pages.certificates.na')
+                      : platform.days_left > 0
+                        ? t('pages.certificates.platform.expiryWithDays', {
+                            date: new Date(platform.not_after).toLocaleDateString(),
+                            n: platform.days_left,
+                          })
+                        : new Date(platform.not_after).toLocaleDateString()}
                   </p>
                 </div>
                 <div className="sm:col-span-2">
-                  <p className="text-xs text-muted-foreground">Subject Alternative Names</p>
+                  <p className="text-xs text-muted-foreground">{t('pages.certificates.platform.sans')}</p>
                   <div className="flex flex-wrap gap-1 mt-1">
                     {platform?.sans?.length ? platform.sans.map((san, i) => (
                       <Badge key={i} variant="outline" className="text-xs font-mono">{san}</Badge>
-                    )) : <span className="text-sm text-muted-foreground">None</span>}
+                    )) : <span className="text-sm text-muted-foreground">{t('pages.certificates.none')}</span>}
                   </div>
                 </div>
                 <div className="sm:col-span-2">
-                  <p className="text-xs text-muted-foreground">SHA-256 Fingerprint</p>
-                  <p className="text-xs font-mono break-all">{platform?.fingerprint || 'N/A'}</p>
+                  <p className="text-xs text-muted-foreground">{t('pages.certificates.platform.fingerprint')}</p>
+                  <p className="text-xs font-mono break-all">{platform?.fingerprint || t('pages.certificates.na')}</p>
                 </div>
               </div>
             </CardContent>
@@ -262,7 +285,7 @@ export function CertificatesPage() {
           {/* Consumers */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-sm font-medium">Certificate Consumers</CardTitle>
+              <CardTitle className="text-sm font-medium">{t('pages.certificates.platform.consumers')}</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -290,20 +313,17 @@ export function CertificatesPage() {
           {/* Upload Custom Certificate */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-sm font-medium">Upload Custom Certificate</CardTitle>
+              <CardTitle className="text-sm font-medium">{t('pages.certificates.platform.upload')}</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <p className="text-sm text-muted-foreground">
-                Upload a PEM-encoded certificate and private key from a Certificate Authority.
-                This certificate will be used by all platform TLS consumers listed above.
-              </p>
+              <p className="text-sm text-muted-foreground">{t('pages.certificates.platform.uploadDesc')}</p>
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
-                  <label className="text-sm font-medium mb-1 block">Certificate (.pem, .crt)</label>
+                  <label className="text-sm font-medium mb-1 block">{t('pages.certificates.platform.certFile')}</label>
                   <Input ref={certFileRef} type="file" accept=".pem,.crt,.cer" />
                 </div>
                 <div>
-                  <label className="text-sm font-medium mb-1 block">Private Key (.pem, .key)</label>
+                  <label className="text-sm font-medium mb-1 block">{t('pages.certificates.platform.keyFile')}</label>
                   <Input ref={keyFileRef} type="file" accept=".pem,.key" />
                 </div>
               </div>
@@ -314,15 +334,15 @@ export function CertificatesPage() {
                   className="gap-2"
                 >
                   <Upload className={`h-4 w-4 ${uploadMutation.isPending ? 'animate-spin' : ''}`} />
-                  Upload Certificate
+                  {t('pages.certificates.platform.uploadButton')}
                 </Button>
                 {platform?.cert_type === 'custom' && (
                   <ConfirmAction
-                    title="Revert to self-signed certificate?"
-                    description="This removes the uploaded CA-signed platform TLS certificate and restores the auto-generated self-signed certificate. Every platform TLS consumer (APISIX, OAuth proxy, Ziti controller/router) will serve the self-signed cert, and clients that pinned or trusted the CA-signed cert will see TLS errors until reconfigured. This cannot be undone without re-uploading the certificate."
+                    title={t('pages.certificates.platform.revertTitle')}
+                    description={t('pages.certificates.platform.revertDesc')}
                     destructive
                     requireReason
-                    confirmLabel="Revert to Self-Signed"
+                    confirmLabel={t('pages.certificates.platform.revertConfirm')}
                     onConfirm={() => revertMutation.mutateAsync()}
                   >
                     {(open) => (
@@ -333,7 +353,7 @@ export function CertificatesPage() {
                         className="gap-2"
                       >
                         <Trash2 className="h-4 w-4" />
-                        Revert to Self-Signed
+                        {t('pages.certificates.platform.revertConfirm')}
                       </Button>
                     )}
                   </ConfirmAction>
@@ -347,12 +367,12 @@ export function CertificatesPage() {
             <CardHeader>
               <CardTitle className="text-sm font-medium flex items-center gap-2">
                 <AlertTriangle className="h-4 w-4 text-yellow-500" />
-                After Certificate Changes
+                {t('pages.certificates.platform.afterChanges')}
               </CardTitle>
             </CardHeader>
             <CardContent>
               <p className="text-sm text-muted-foreground mb-2">
-                The BrowZer bootstrapper and APISIX restart automatically. Other consumers need manual restart:
+                {t('pages.certificates.platform.afterChangesDesc')}
               </p>
               <pre className="bg-muted p-3 rounded text-xs font-mono">
 docker restart openidx-oauth-tls-proxy openidx-ziti-controller-proxy openidx-ziti-router
@@ -365,32 +385,32 @@ docker restart openidx-oauth-tls-proxy openidx-ziti-controller-proxy openidx-zit
         <TabsContent value="apisix" className="space-y-4">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">APISIX HTTPS</CardTitle>
+              <CardTitle className="text-sm font-medium">{t('pages.certificates.apisix.heading')}</CardTitle>
               {apisix?.enabled ? (
                 <Badge variant="default" className="gap-1">
-                  <Lock className="h-3 w-3" /> Enabled
+                  <Lock className="h-3 w-3" /> {t('pages.certificates.apisix.enabled')}
                 </Badge>
               ) : (
                 <Badge variant="secondary" className="gap-1">
-                  <Unlock className="h-3 w-3" /> Disabled
+                  <Unlock className="h-3 w-3" /> {t('pages.certificates.apisix.disabled')}
                 </Badge>
               )}
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid gap-3 sm:grid-cols-2">
                 <div>
-                  <p className="text-xs text-muted-foreground">HTTP Endpoint</p>
+                  <p className="text-xs text-muted-foreground">{t('pages.certificates.apisix.httpEndpoint')}</p>
                   <p className="text-sm font-mono">http://localhost:8088</p>
                 </div>
                 <div>
-                  <p className="text-xs text-muted-foreground">HTTPS Endpoint</p>
+                  <p className="text-xs text-muted-foreground">{t('pages.certificates.apisix.httpsEndpoint')}</p>
                   <p className={`text-sm font-mono ${apisix?.enabled ? '' : 'text-muted-foreground'}`}>
-                    {apisix?.enabled ? 'https://localhost:8443' : 'Not configured'}
+                    {apisix?.enabled ? 'https://localhost:8443' : t('pages.certificates.apisix.notConfigured')}
                   </p>
                 </div>
                 {apisix?.last_updated && (
                   <div className="sm:col-span-2">
-                    <p className="text-xs text-muted-foreground">Last Updated</p>
+                    <p className="text-xs text-muted-foreground">{t('pages.certificates.apisix.lastUpdated')}</p>
                     <p className="text-sm">
                       <Clock className="h-3 w-3 inline mr-1" />
                       {new Date(apisix.last_updated).toLocaleString()}
@@ -408,7 +428,7 @@ docker restart openidx-oauth-tls-proxy openidx-ziti-controller-proxy openidx-zit
                     className="gap-2"
                   >
                     <Unlock className="h-4 w-4" />
-                    Disable HTTPS
+                    {t('pages.certificates.apisix.disableHttps')}
                   </Button>
                 ) : (
                   <Button
@@ -417,7 +437,7 @@ docker restart openidx-oauth-tls-proxy openidx-ziti-controller-proxy openidx-zit
                     className="gap-2"
                   >
                     <Lock className={`h-4 w-4 ${enableApisixMutation.isPending ? 'animate-spin' : ''}`} />
-                    Enable HTTPS
+                    {t('pages.certificates.apisix.enableHttps')}
                   </Button>
                 )}
               </div>
@@ -426,15 +446,25 @@ docker restart openidx-oauth-tls-proxy openidx-ziti-controller-proxy openidx-zit
 
           <Card>
             <CardHeader>
-              <CardTitle className="text-sm font-medium">How it works</CardTitle>
+              <CardTitle className="text-sm font-medium">{t('pages.certificates.apisix.howItWorks')}</CardTitle>
             </CardHeader>
             <CardContent>
               <ul className="text-sm text-muted-foreground space-y-2 list-disc list-inside">
-                <li>Enabling HTTPS injects the platform TLS certificate into the APISIX configuration</li>
-                <li>APISIX automatically reloads when the configuration changes — no restart needed</li>
-                <li>HTTPS is served on port <span className="font-mono">8443</span> using the same certificate as other platform services</li>
-                <li>HTTP on port <span className="font-mono">8088</span> remains available regardless of HTTPS status</li>
-                <li>When you upload a new platform certificate, APISIX SSL is automatically updated</li>
+                <li>{t('pages.certificates.apisix.how1')}</li>
+                <li>{t('pages.certificates.apisix.how2')}</li>
+                <li>
+                  <Trans
+                    i18nKey="pages.certificates.apisix.how3"
+                    components={[<span key="0" className="font-mono" />]}
+                  />
+                </li>
+                <li>
+                  <Trans
+                    i18nKey="pages.certificates.apisix.how4"
+                    components={[<span key="0" className="font-mono" />]}
+                  />
+                </li>
+                <li>{t('pages.certificates.apisix.how5')}</li>
               </ul>
             </CardContent>
           </Card>
@@ -444,11 +474,11 @@ docker restart openidx-oauth-tls-proxy openidx-ziti-controller-proxy openidx-zit
         <TabsContent value="ziti" className="space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle className="text-sm font-medium">Ziti Internal Certificates</CardTitle>
+              <CardTitle className="text-sm font-medium">{t('pages.certificates.ziti.heading')}</CardTitle>
             </CardHeader>
             <CardContent>
               {!zitiCerts || zitiCerts.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No Ziti certificates found.</p>
+                <p className="text-sm text-muted-foreground">{t('pages.certificates.ziti.empty')}</p>
               ) : (
                 <div className="space-y-3">
                   {/* Expiry alerts */}
@@ -456,23 +486,28 @@ docker restart openidx-oauth-tls-proxy openidx-ziti-controller-proxy openidx-zit
                     <div className="p-3 rounded-lg border border-yellow-500/50 bg-yellow-500/10">
                       <div className="flex items-center gap-2 mb-1">
                         <AlertTriangle className="h-4 w-4 text-yellow-500" />
-                        <span className="text-sm font-medium">Certificates Expiring Soon</span>
+                        <span className="text-sm font-medium">{t('pages.certificates.ziti.expiringSoon')}</span>
                       </div>
                       {zitiCerts
                         .filter(c => c.days_until_expiry <= 30 && c.days_until_expiry > 0)
                         .map(cert => (
                           <div key={cert.id} className="flex items-center justify-between text-sm mt-1">
-                            <span>{cert.name} — {cert.days_until_expiry}d remaining</span>
+                            <span>
+                              {t('pages.certificates.ziti.expiringRow', {
+                                name: cert.name,
+                                n: cert.days_until_expiry,
+                              })}
+                            </span>
                             <ConfirmAction
-                              title="Rotate this certificate?"
-                              description="A new certificate is issued and the old certificate stops working once rotated. Anything still presenting the old certificate will fail until it picks up the new one."
+                              title={t('pages.certificates.ziti.rotateTitle')}
+                              description={t('pages.certificates.ziti.rotateDesc')}
                               destructive
-                              confirmLabel="Rotate"
+                              confirmLabel={t('pages.certificates.ziti.rotate')}
                               onConfirm={() => rotateMutation.mutate(cert.id)}
                             >
                               {(open) => (
                                 <Button variant="outline" size="sm" onClick={open}>
-                                  Rotate
+                                  {t('pages.certificates.ziti.rotate')}
                                 </Button>
                               )}
                             </ConfirmAction>
@@ -486,11 +521,11 @@ docker restart openidx-oauth-tls-proxy openidx-ziti-controller-proxy openidx-zit
                     <Table>
                       <TableHeader>
                         <TableRow className="border-b bg-muted/50">
-                          <TableHead className="p-2 text-left text-xs font-medium text-muted-foreground">Name</TableHead>
-                          <TableHead className="p-2 text-left text-xs font-medium text-muted-foreground">Type</TableHead>
-                          <TableHead className="p-2 text-left text-xs font-medium text-muted-foreground">Subject</TableHead>
-                          <TableHead className="p-2 text-left text-xs font-medium text-muted-foreground">Expiry</TableHead>
-                          <TableHead className="p-2 text-left text-xs font-medium text-muted-foreground">Auto Renew</TableHead>
+                          <TableHead className="p-2 text-left text-xs font-medium text-muted-foreground">{t('pages.certificates.ziti.colName')}</TableHead>
+                          <TableHead className="p-2 text-left text-xs font-medium text-muted-foreground">{t('pages.certificates.ziti.colType')}</TableHead>
+                          <TableHead className="p-2 text-left text-xs font-medium text-muted-foreground">{t('pages.certificates.ziti.colSubject')}</TableHead>
+                          <TableHead className="p-2 text-left text-xs font-medium text-muted-foreground">{t('pages.certificates.ziti.colExpiry')}</TableHead>
+                          <TableHead className="p-2 text-left text-xs font-medium text-muted-foreground">{t('pages.certificates.ziti.colAutoRenew')}</TableHead>
                           <TableHead className="p-2 w-[80px]"></TableHead>
                         </TableRow>
                       </TableHeader>
@@ -503,15 +538,17 @@ docker restart openidx-oauth-tls-proxy openidx-ziti-controller-proxy openidx-zit
                             <TableCell className="p-2">{expiryBadge(cert.days_until_expiry)}</TableCell>
                             <TableCell className="p-2">
                               <Badge variant={cert.auto_renew ? 'default' : 'secondary'} className="text-xs">
-                                {cert.auto_renew ? 'Yes' : 'No'}
+                                {cert.auto_renew
+                                  ? t('pages.certificates.ziti.yes')
+                                  : t('pages.certificates.ziti.no')}
                               </Badge>
                             </TableCell>
                             <TableCell className="p-2">
                               <ConfirmAction
-                                title="Rotate this certificate?"
-                                description="A new certificate is issued and the old certificate stops working once rotated. Anything still presenting the old certificate will fail until it picks up the new one."
+                                title={t('pages.certificates.ziti.rotateTitle')}
+                                description={t('pages.certificates.ziti.rotateDesc')}
                                 destructive
-                                confirmLabel="Rotate"
+                                confirmLabel={t('pages.certificates.ziti.rotate')}
                                 onConfirm={() => rotateMutation.mutate(cert.id)}
                               >
                                 {(open) => (
@@ -522,7 +559,7 @@ docker restart openidx-oauth-tls-proxy openidx-ziti-controller-proxy openidx-zit
                                     disabled={rotateMutation.isPending}
                                     className="gap-1 text-xs"
                                   >
-                                    <RefreshCw className="h-3 w-3" /> Rotate
+                                    <RefreshCw className="h-3 w-3" /> {t('pages.certificates.ziti.rotate')}
                                   </Button>
                                 )}
                               </ConfirmAction>

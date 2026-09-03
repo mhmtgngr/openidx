@@ -21,7 +21,7 @@ security, access, sessions, devices, trusted browsers, notifications,
 access requests, profile — are fully bilingual; the end-user experience
 is complete in both languages). Open: P1 rollout Task 16 (operator
 action), P3.1 cut v1.28.0 (post-merge), the remaining P4 items incl.
-the 43 remaining admin page bodies and the Expo-vs-Flutter mobile pick.)
+the 35 remaining admin page bodies and the Expo-vs-Flutter mobile pick.)
 **Question this document answers:** *Is OpenIDX fully functional and well defined end to end, as experienced by the people who use it — and what are the next steps and controls to get it there?*
 
 This is the product-and-user-side companion to
@@ -730,11 +730,26 @@ all four pillars, deploy, log in, and find PAM.
    paths stay untranslated, because they are the wire identifiers a developer
    types, not prose. Access 360's English is pinned by its own page test, so
    every extracted value stayed byte-identical and that test passes unchanged.
-   *Remaining:* 39 other admin page bodies (a measured count, not an
+   *And the operator's own diagnostic surfaces:* Delegated Administration,
+   the API Explorer, Certificate Management and System Health. Three more
+   module-level maps that had frozen English at import time now resolve at
+   render — the delegation scope kinds and their per-kind "where do I find
+   this UUID" hints, the API Explorer's service groups, and System Health's
+   overall and per-dependency status configs, which now carry only styling
+   and an icon. Two pages draw the raw/translated line explicitly: the API
+   Explorer keeps HTTP methods, endpoint paths, OAuth scopes, parameter
+   names and the cURL/JavaScript/Go/Python tab labels untranslated, because
+   they are the request a developer actually sends; Certificate Management
+   keeps endpoint URLs, ports, the `docker restart` line and every
+   server-sourced certificate field raw, because an operator copies or
+   matches those literally. Two more ungrammatical concatenations became real
+   plurals ("safe fix(es) applied"), and the uptime formatter now takes the
+   locale's own unit suffixes instead of hardcoding `d`/`h`/`m`.
+   *Remaining:* 35 other admin page bodies (a measured count, not an
    estimate: pages under `src/pages` with no `useTranslation`) — mechanical,
    batch by batch, against this pattern. The largest of them are
-   `delegations.tsx` (577 lines), `api-explorer.tsx` (565),
-   `certificates.tsx` (543) and `system-health.tsx` (533).
+   `developer-settings.tsx` (532 lines), `device-trust-approval.tsx` (517),
+   `agent-fleet.tsx` (513) and `ziti-ai-insights.tsx` (480).
 2. Accessibility pass to a VPAT (needs real assistive-technology testing,
    not just an automated axe sweep).
 3. Separate/hardened end-user portal bundle.
