@@ -68,8 +68,8 @@ export function ResetPasswordPage() {
         <Card className="w-full max-w-md shadow-xl">
           <CardContent className="pt-6">
             <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-md">
-              <AlertCircle className="h-4 w-4 text-red-600 flex-shrink-0" />
-              <p className="text-sm text-red-600">
+              <AlertCircle className="h-4 w-4 text-red-700 flex-shrink-0" />
+              <p className="text-sm text-red-700">
                 {t('pages.resetPassword.invalidToken')}
               </p>
             </div>
@@ -124,12 +124,12 @@ export function ResetPasswordPage() {
               {(error || violations.length > 0) && (
                 <div className="p-3 bg-red-50 border border-red-200 rounded-md">
                   <div className="flex items-center gap-2">
-                    <AlertCircle className="h-4 w-4 text-red-600 flex-shrink-0" />
+                    <AlertCircle className="h-4 w-4 text-red-700 flex-shrink-0" />
                     {/* Either one of this page's own messages or the API's. */}
-                    <p className="text-sm text-red-600">{error}</p>
+                    <p className="text-sm text-red-700">{error}</p>
                   </div>
                   {violations.length > 0 && (
-                    <ul className="mt-2 ml-6 list-disc text-sm text-red-600 space-y-1">
+                    <ul className="mt-2 ml-6 list-disc text-sm text-red-700 space-y-1">
                       {/* Each violation is composed by the password policy. */}
                       {violations.map((v, i) => <li key={i}>{v}</li>)}
                     </ul>

@@ -83,9 +83,9 @@ export function ForgotPasswordPage() {
             <form onSubmit={handleSubmit} className="space-y-4">
               {error && (
                 <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-md">
-                  <AlertCircle className="h-4 w-4 text-red-600 flex-shrink-0" />
+                  <AlertCircle className="h-4 w-4 text-red-700 flex-shrink-0" />
                   {/* Either this page's own message or the API's. */}
-                  <p className="text-sm text-red-600">{error}</p>
+                  <p className="text-sm text-red-700">{error}</p>
                 </div>
               )}
 

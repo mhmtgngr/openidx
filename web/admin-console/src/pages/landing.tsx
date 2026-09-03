@@ -357,7 +357,11 @@ export function LandingPage() {
       </section>
 
       {/* Footer */}
-      <footer className="py-12 px-4 sm:px-6 lg:px-8 bg-gray-900 text-muted-foreground">
+      {/* This footer is dark in both themes, so it cannot borrow the light
+          theme's muted-foreground: that pairing measured 3.73:1 on gray-900,
+          and darkening the token for light surfaces only made it worse here.
+          slate-400 is 6.92:1 against this background. */}
+      <footer className="py-12 px-4 sm:px-6 lg:px-8 bg-gray-900 text-slate-400">
         <div className="max-w-7xl mx-auto">
           <div className="grid md:grid-cols-4 gap-8 mb-8">
             <div>

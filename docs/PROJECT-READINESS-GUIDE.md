@@ -975,19 +975,44 @@ all four pillars, deploy, log in, and find PAM.
    translated in both catalogs), with the knob `aria-hidden`. Every other
    surface was already clean, and the gate keeps it that way.
    **What this is not:** a VPAT, or a claim that the console is accessible.
-   Two whole classes stay unmeasured and the test says so in its header —
-   colour contrast, because axe's contrast rule needs real paint and jsdom
-   cannot provide it (the rule is explicitly disabled rather than left to
-   fail silently, which reads exactly like a pass); and keyboard order, focus
-   management and screen-reader announcement, which axe does not test in any
-   environment. Those need a browser and a person. The gate ships with a
-   red-proof case — an unnamed button and an unlabelled input it must flag —
-   per the same rule the repo's shell and Go checkers follow.
-2. Accessibility audit to a VPAT in a real browser with real assistive
-   technology — colour contrast, keyboard order, focus management, screen-
-   reader announcement. The automated axe sweep is done and gated
-   (`src/test/a11y.test.tsx`, 13 surfaces, WCAG 2.1 A/AA); it covers the
-   subset a headless DOM can judge and no more.
+   The test says so in its own header — colour contrast cannot run there,
+   because axe's contrast rule needs real paint and jsdom cannot provide it
+   (the rule is explicitly disabled rather than left to throw, log and report
+   nothing, which reads exactly like a pass); and keyboard order, focus
+   management and screen-reader announcement are things axe does not test in
+   any environment. The gate ships with a red-proof case — an unnamed button
+   and an unlabelled input it must flag — per the same rule the repo's shell
+   and Go checkers follow.
+1c. ✅ **Colour contrast measured in a real browser — 23 WCAG AA failures
+   found and fixed.** Rather than leave contrast as an unmeasured caveat, it
+   was run: headless Chromium against the production build, axe's
+   `color-contrast` rule, all five pre-login routes (landing, login, forgotten
+   password, reset, magic-link verify) in **both** colour schemes. That found
+   **23 real failures**, in three root causes rather than 23 unrelated ones:
+   (a) the light theme's `--muted-foreground` was `#64748b`, which is
+   **4.34:1** on the slate-100 surfaces this app puts muted text on — under
+   AA's 4.5:1 — so secondary copy and every login-card footer link failed;
+   it is now 42% lightness (`#5a687d`, 5.17:1 there and 5.66:1 on white) and
+   still reads as muted. (b) The landing footer is `bg-gray-900
+   text-muted-foreground`: a permanently dark surface borrowing the *light*
+   theme's muted token, **3.73:1** — and darkening that token for light
+   surfaces made this pairing worse, not better, so the footer now carries
+   `text-slate-400` (6.92:1) of its own. (c) The auth pages' error boxes put
+   `text-red-600` on `bg-red-50`, **4.41:1**, failing in both schemes because
+   the pair is hardcoded; they use `text-red-700` (5.91:1) now. Scoped
+   deliberately: `text-red-600` appears in 70 files but passes AA on white,
+   so only the measured red-on-red-50 pairing changed rather than 70 files of
+   unmeasured churn. Re-measured after the fix: **0 failures across all ten
+   route × scheme combinations.** Still unmeasured: contrast on the
+   authenticated surfaces (they need a running backend to render), and the
+   whole keyboard/focus/screen-reader class.
+2. Accessibility audit to a VPAT with real assistive technology — keyboard
+   order, focus management, screen-reader announcement — plus contrast on the
+   authenticated surfaces, which need a running backend to render. Done and
+   gated already: the axe sweep over the 13 non-admin surfaces
+   (`src/test/a11y.test.tsx`, WCAG 2.1 A/AA), and the browser contrast pass
+   over the five pre-login routes in both colour schemes (23 failures found,
+   3 root causes fixed, re-measured at 0).
 3. Separate/hardened end-user portal bundle.
 4. Mobile app decision (Expo vs Flutter) executed — maintainer's call.
 5. The existing roadmap epics (outbound SCIM, HR-driven JML, per-org
