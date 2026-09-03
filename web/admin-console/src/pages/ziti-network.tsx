@@ -1696,6 +1696,7 @@ function SecurityTab() {
 function ActiveSessionsSection() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const { t } = useTranslation()
   const [deleteTarget, setDeleteTarget] = useState<ZitiSessionEntry | null>(null)
 
   const { data: sessions } = useQuery({
@@ -1708,7 +1709,7 @@ function ActiveSessionsSection() {
     mutationFn: (id: string) => api.delete(`/api/v1/access/ziti/sessions/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['ziti-sessions'] })
-      toast({ title: 'Session terminated' })
+      toast({ title: t('pages.zitiNetwork.sessions.toast.terminated') })
       setDeleteTarget(null)
     },
   })
@@ -1717,7 +1718,7 @@ function ActiveSessionsSection() {
     mutationFn: (identityId: string) => api.post('/api/v1/access/ziti/sessions/batch-terminate', { identity_id: identityId }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['ziti-sessions'] })
-      toast({ title: 'All sessions terminated for identity' })
+      toast({ title: t('pages.zitiNetwork.sessions.toast.batchTerminated') })
     },
   })
 
@@ -1726,26 +1727,26 @@ function ActiveSessionsSection() {
 
   return (
     <>
-      <CollapsibleSection title="Active Sessions" count={sessions?.length ?? 0} icon={Zap} defaultOpen>
-        <p className="text-xs text-muted-foreground mb-3">Currently active Ziti overlay connections. Dial = accessing a service; Bind = hosting a service endpoint.</p>
+      <CollapsibleSection title={t('pages.zitiNetwork.sessions.title')} count={sessions?.length ?? 0} icon={Zap} defaultOpen>
+        <p className="text-xs text-muted-foreground mb-3">{t('pages.zitiNetwork.sessions.desc')}</p>
         {uniqueIdentities.length > 1 && (
           <div className="flex flex-wrap gap-2 mb-3">
             {uniqueIdentities.map(ident => (
               <Button key={ident.id} variant="outline" size="sm" className="text-red-600 border-red-200 hover:bg-red-50" onClick={() => batchTerminateMutation.mutate(ident.id)} disabled={batchTerminateMutation.isPending}>
-                Terminate All: {ident.name || ident.id}
+                {t('pages.zitiNetwork.sessions.terminateAll', { name: ident.name || ident.id })}
               </Button>
             ))}
           </div>
         )}
         {!sessions || sessions.length === 0 ? (
-          <EmptyState icon={Clock} title="No active sessions" description="No one is currently connected through the Ziti overlay." />
+          <EmptyState icon={Clock} title={t('pages.zitiNetwork.sessions.emptyTitle')} description={t('pages.zitiNetwork.sessions.emptyDesc')} />
         ) : (
           <Table>
             <TableHeader><TableRow>
-              <TableHead>Identity</TableHead>
-              <TableHead>Service</TableHead>
-              <TableHead>Type</TableHead>
-              <TableHead>Connected Since</TableHead>
+              <TableHead>{t('pages.zitiNetwork.sessions.colIdentity')}</TableHead>
+              <TableHead>{t('pages.zitiNetwork.sessions.colService')}</TableHead>
+              <TableHead>{t('pages.zitiNetwork.sessions.colType')}</TableHead>
+              <TableHead>{t('pages.zitiNetwork.sessions.colSince')}</TableHead>
               <TableHead className="w-10" />
             </TableRow></TableHeader>
             <TableBody>
@@ -1758,7 +1759,7 @@ function ActiveSessionsSection() {
                   </TableCell>
                   <TableCell className="text-xs text-muted-foreground">{s.createdAt ? new Date(s.createdAt).toLocaleString() : '—'}</TableCell>
                   <TableCell>
-                    <Button variant="ghost" size="icon" className="h-7 w-7 text-red-500" onClick={() => setDeleteTarget(s)} title="Force disconnect">
+                    <Button variant="ghost" size="icon" className="h-7 w-7 text-red-500" onClick={() => setDeleteTarget(s)} title={t('pages.zitiNetwork.sessions.forceDisconnect')}>
                       <Trash2 className="h-3.5 w-3.5" />
                     </Button>
                   </TableCell>
@@ -1772,14 +1773,17 @@ function ActiveSessionsSection() {
       <AlertDialog open={!!deleteTarget} onOpenChange={() => setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Force Disconnect Session?</AlertDialogTitle>
+            <AlertDialogTitle>{t('pages.zitiNetwork.sessions.confirmTitle')}</AlertDialogTitle>
             <AlertDialogDescription>
-              This will immediately disconnect {deleteTarget?.identity?.name || 'this identity'} from {deleteTarget?.service?.name || 'the service'}.
+              {t('pages.zitiNetwork.sessions.confirmDesc', {
+                identity: deleteTarget?.identity?.name || t('pages.zitiNetwork.sessions.thisIdentity'),
+                service: deleteTarget?.service?.name || t('pages.zitiNetwork.sessions.theService'),
+              })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction className="bg-red-600 hover:bg-red-700" onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}>Disconnect</AlertDialogAction>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+            <AlertDialogAction className="bg-red-600 hover:bg-red-700" onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}>{t('pages.zitiNetwork.sessions.disconnect')}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -1792,6 +1796,7 @@ function ActiveSessionsSection() {
 function ConfigurationsSection() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const { t } = useTranslation()
   const [createModal, setCreateModal] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<ZitiConfig | null>(null)
   const [form, setForm] = useState({ name: '', configTypeId: '', data: '{}' })
@@ -1810,17 +1815,17 @@ function ConfigurationsSection() {
       api.post('/api/v1/access/ziti/configs', { name: data.name, configTypeId: data.configTypeId, data: JSON.parse(data.data) }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['ziti-configs'] })
-      toast({ title: 'Config created' })
+      toast({ title: t('pages.zitiNetwork.configs.toast.created') })
       setCreateModal(false)
       setForm({ name: '', configTypeId: '', data: '{}' })
     },
-    onError: (e: Error) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
+    onError: (e: Error) => toast({ title: t('common.error'), description: e.message, variant: 'destructive' }),
   })
   const deleteMutation = useMutation({
     mutationFn: (id: string) => api.delete(`/api/v1/access/ziti/configs/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['ziti-configs'] })
-      toast({ title: 'Config deleted' })
+      toast({ title: t('pages.zitiNetwork.configs.toast.deleted') })
       setDeleteTarget(null)
     },
   })
@@ -1829,19 +1834,19 @@ function ConfigurationsSection() {
 
   return (
     <>
-      <CollapsibleSection title="Configurations" count={configs?.length ?? 0} icon={Settings} defaultOpen={false}>
+      <CollapsibleSection title={t('pages.zitiNetwork.configs.title')} count={configs?.length ?? 0} icon={Settings} defaultOpen={false}>
         <div className="flex justify-between items-center mb-3">
-          <p className="text-xs text-muted-foreground">Ziti config objects (host.v1, intercept.v1, etc.) that define service behavior.</p>
-          <Button size="sm" onClick={() => setCreateModal(true)}><Plus className="h-4 w-4 mr-1" /> Add Config</Button>
+          <p className="text-xs text-muted-foreground">{t('pages.zitiNetwork.configs.desc')}</p>
+          <Button size="sm" onClick={() => setCreateModal(true)}><Plus className="h-4 w-4 mr-1" /> {t('pages.zitiNetwork.configs.add')}</Button>
         </div>
         {!configs || configs.length === 0 ? (
-          <EmptyState icon={Settings} title="No configurations" description="No Ziti config objects found." />
+          <EmptyState icon={Settings} title={t('pages.zitiNetwork.configs.emptyTitle')} description={t('pages.zitiNetwork.configs.emptyDesc')} />
         ) : (
           <Table>
             <TableHeader><TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Config Type</TableHead>
-              <TableHead>Data</TableHead>
+              <TableHead>{t('pages.zitiNetwork.configs.colName')}</TableHead>
+              <TableHead>{t('pages.zitiNetwork.configs.colType')}</TableHead>
+              <TableHead>{t('pages.zitiNetwork.configs.colData')}</TableHead>
               <TableHead className="w-10" />
             </TableRow></TableHeader>
             <TableBody>
@@ -1866,19 +1871,19 @@ function ConfigurationsSection() {
 
       <Dialog open={createModal} onOpenChange={setCreateModal}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Create Configuration</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{t('pages.zitiNetwork.configs.dialogTitle')}</DialogTitle></DialogHeader>
           <form onSubmit={(e) => { e.preventDefault(); createMutation.mutate(form) }} className="space-y-4">
-            <div><Label>Name</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required /></div>
-            <div><Label>Config Type</Label>
+            <div><Label>{t('pages.zitiNetwork.configs.name')}</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required /></div>
+            <div><Label>{t('pages.zitiNetwork.configs.type')}</Label>
               <select className="w-full border rounded-md p-2 text-sm" value={form.configTypeId} onChange={(e) => setForm({ ...form, configTypeId: e.target.value })} required>
-                <option value="">Select config type...</option>
+                <option value="">{t('pages.zitiNetwork.configs.typePlaceholder')}</option>
                 {configTypes?.map((ct) => <option key={ct.id} value={ct.id}>{ct.name}</option>)}
               </select>
             </div>
-            <div><Label>Data (JSON)</Label><textarea className="w-full border rounded-md p-2 text-sm font-mono h-32" value={form.data} onChange={(e) => setForm({ ...form, data: e.target.value })} /></div>
+            <div><Label>{t('pages.zitiNetwork.configs.data')}</Label><textarea className="w-full border rounded-md p-2 text-sm font-mono h-32" value={form.data} onChange={(e) => setForm({ ...form, data: e.target.value })} /></div>
             <div className="flex justify-end gap-2">
-              <Button type="button" variant="outline" onClick={() => setCreateModal(false)}>Cancel</Button>
-              <Button type="submit" disabled={createMutation.isPending}>Create</Button>
+              <Button type="button" variant="outline" onClick={() => setCreateModal(false)}>{t('common.cancel')}</Button>
+              <Button type="submit" disabled={createMutation.isPending}>{t('pages.zitiNetwork.configs.create')}</Button>
             </div>
           </form>
         </DialogContent>
@@ -1887,12 +1892,12 @@ function ConfigurationsSection() {
       <AlertDialog open={!!deleteTarget} onOpenChange={() => setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete Configuration?</AlertDialogTitle>
-            <AlertDialogDescription>This will delete &quot;{deleteTarget?.name}&quot;. Services using this config may break.</AlertDialogDescription>
+            <AlertDialogTitle>{t('pages.zitiNetwork.configs.deleteTitle')}</AlertDialogTitle>
+            <AlertDialogDescription>{t('pages.zitiNetwork.configs.deleteDesc', { name: deleteTarget?.name ?? '' })}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction className="bg-red-600 hover:bg-red-700" onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}>Delete</AlertDialogAction>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+            <AlertDialogAction className="bg-red-600 hover:bg-red-700" onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}>{t('common.delete')}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -1905,6 +1910,7 @@ function ConfigurationsSection() {
 function AuthPoliciesSection() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const { t } = useTranslation()
   const [deleteAPTarget, setDeleteAPTarget] = useState<ZitiAuthPolicy | null>(null)
   const [deleteJSTarget, setDeleteJSTarget] = useState<ZitiJWTSigner | null>(null)
 
@@ -1919,11 +1925,11 @@ function AuthPoliciesSection() {
 
   const deleteAPMutation = useMutation({
     mutationFn: (id: string) => api.delete(`/api/v1/access/ziti/auth-policies/${id}`),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['ziti-auth-policies'] }); toast({ title: 'Auth policy deleted' }); setDeleteAPTarget(null) },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['ziti-auth-policies'] }); toast({ title: t('pages.zitiNetwork.authPolicies.toast.policyDeleted') }); setDeleteAPTarget(null) },
   })
   const deleteJSMutation = useMutation({
     mutationFn: (id: string) => api.delete(`/api/v1/access/ziti/jwt-signers/${id}`),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['ziti-jwt-signers'] }); toast({ title: 'JWT signer deleted' }); setDeleteJSTarget(null) },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['ziti-jwt-signers'] }); toast({ title: t('pages.zitiNetwork.authPolicies.toast.signerDeleted') }); setDeleteJSTarget(null) },
   })
 
   const isSystem = (name: string) => name.startsWith('openidx-') || name === 'default'
@@ -1939,31 +1945,31 @@ function AuthPoliciesSection() {
 
   return (
     <>
-      <CollapsibleSection title="Auth Policies & JWT Signers" count={totalCount} icon={Key} defaultOpen={false}>
-        <p className="text-xs text-muted-foreground mb-3">Authentication policies control how identities authenticate to Ziti. JWT signers enable external JWT-based authentication.</p>
+      <CollapsibleSection title={t('pages.zitiNetwork.authPolicies.title')} count={totalCount} icon={Key} defaultOpen={false}>
+        <p className="text-xs text-muted-foreground mb-3">{t('pages.zitiNetwork.authPolicies.desc')}</p>
 
-        <h4 className="text-sm font-semibold mb-2">Auth Policies</h4>
+        <h4 className="text-sm font-semibold mb-2">{t('pages.zitiNetwork.authPolicies.policies')}</h4>
         {!authPolicies || authPolicies.length === 0 ? (
-          <p className="text-xs text-muted-foreground mb-4">No auth policies found.</p>
+          <p className="text-xs text-muted-foreground mb-4">{t('pages.zitiNetwork.authPolicies.noPolicies')}</p>
         ) : (
           <Table>
             <TableHeader><TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Primary Auth</TableHead>
-              <TableHead>TOTP</TableHead>
+              <TableHead>{t('pages.zitiNetwork.authPolicies.colName')}</TableHead>
+              <TableHead>{t('pages.zitiNetwork.authPolicies.colPrimary')}</TableHead>
+              <TableHead>{t('pages.zitiNetwork.authPolicies.colTotp')}</TableHead>
               <TableHead className="w-10" />
             </TableRow></TableHeader>
             <TableBody>
               {authPolicies.map((ap) => (
                 <TableRow key={ap.id}>
-                  <TableCell className="font-medium">{ap.name}{isSystem(ap.name) && <Badge variant="outline" className="ml-2 text-[10px]">system</Badge>}</TableCell>
+                  <TableCell className="font-medium">{ap.name}{isSystem(ap.name) && <Badge variant="outline" className="ml-2 text-[10px]">{t('pages.zitiNetwork.authPolicies.system')}</Badge>}</TableCell>
                   <TableCell className="flex gap-1 flex-wrap">
                     {authMethods(ap).map((m) => (
                       <Badge key={m} variant="secondary" className="text-[10px]">{m}</Badge>
                     ))}
-                    {authMethods(ap).length === 0 && <span className="text-xs text-muted-foreground">none</span>}
+                    {authMethods(ap).length === 0 && <span className="text-xs text-muted-foreground">{t('pages.zitiNetwork.authPolicies.none')}</span>}
                   </TableCell>
-                  <TableCell>{ap.secondary?.requireTotp ? <Badge className="text-[10px]">Required</Badge> : <span className="text-xs text-muted-foreground">No</span>}</TableCell>
+                  <TableCell>{ap.secondary?.requireTotp ? <Badge className="text-[10px]">{t('pages.zitiNetwork.authPolicies.totpRequired')}</Badge> : <span className="text-xs text-muted-foreground">{t('pages.zitiNetwork.authPolicies.no')}</span>}</TableCell>
                   <TableCell>
                     {!isSystem(ap.name) && (
                       <Button variant="ghost" size="icon" className="h-7 w-7 text-red-500" onClick={() => setDeleteAPTarget(ap)}>
@@ -1977,25 +1983,25 @@ function AuthPoliciesSection() {
           </Table>
         )}
 
-        <h4 className="text-sm font-semibold mt-4 mb-2">JWT Signers</h4>
+        <h4 className="text-sm font-semibold mt-4 mb-2">{t('pages.zitiNetwork.authPolicies.signers')}</h4>
         {!jwtSigners || jwtSigners.length === 0 ? (
-          <p className="text-xs text-muted-foreground">No external JWT signers found.</p>
+          <p className="text-xs text-muted-foreground">{t('pages.zitiNetwork.authPolicies.noSigners')}</p>
         ) : (
           <Table>
             <TableHeader><TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Issuer</TableHead>
-              <TableHead>Audience</TableHead>
-              <TableHead>Enabled</TableHead>
+              <TableHead>{t('pages.zitiNetwork.authPolicies.colName')}</TableHead>
+              <TableHead>{t('pages.zitiNetwork.authPolicies.colIssuer')}</TableHead>
+              <TableHead>{t('pages.zitiNetwork.authPolicies.colAudience')}</TableHead>
+              <TableHead>{t('pages.zitiNetwork.authPolicies.colEnabled')}</TableHead>
               <TableHead className="w-10" />
             </TableRow></TableHeader>
             <TableBody>
               {jwtSigners.map((js) => (
                 <TableRow key={js.id}>
-                  <TableCell className="font-medium">{js.name}{isSystem(js.name) && <Badge variant="outline" className="ml-2 text-[10px]">system</Badge>}</TableCell>
+                  <TableCell className="font-medium">{js.name}{isSystem(js.name) && <Badge variant="outline" className="ml-2 text-[10px]">{t('pages.zitiNetwork.authPolicies.system')}</Badge>}</TableCell>
                   <TableCell className="text-xs max-w-[150px] truncate">{js.issuer}</TableCell>
                   <TableCell className="text-xs">{js.audience}</TableCell>
-                  <TableCell>{js.enabled ? <Badge className="bg-green-100 text-green-700 text-[10px]">Yes</Badge> : <Badge variant="secondary" className="text-[10px]">No</Badge>}</TableCell>
+                  <TableCell>{js.enabled ? <Badge className="bg-green-100 text-green-700 text-[10px]">{t('pages.zitiNetwork.authPolicies.yes')}</Badge> : <Badge variant="secondary" className="text-[10px]">{t('pages.zitiNetwork.authPolicies.no')}</Badge>}</TableCell>
                   <TableCell>
                     {!isSystem(js.name) && (
                       <Button variant="ghost" size="icon" className="h-7 w-7 text-red-500" onClick={() => setDeleteJSTarget(js)}>
@@ -2012,23 +2018,23 @@ function AuthPoliciesSection() {
 
       <AlertDialog open={!!deleteAPTarget} onOpenChange={() => setDeleteAPTarget(null)}>
         <AlertDialogContent>
-          <AlertDialogHeader><AlertDialogTitle>Delete Auth Policy?</AlertDialogTitle>
-            <AlertDialogDescription>This will delete &quot;{deleteAPTarget?.name}&quot;. Identities using this policy may lose authentication.</AlertDialogDescription>
+          <AlertDialogHeader><AlertDialogTitle>{t('pages.zitiNetwork.authPolicies.deletePolicyTitle')}</AlertDialogTitle>
+            <AlertDialogDescription>{t('pages.zitiNetwork.authPolicies.deletePolicyDesc', { name: deleteAPTarget?.name ?? '' })}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction className="bg-red-600 hover:bg-red-700" onClick={() => deleteAPTarget && deleteAPMutation.mutate(deleteAPTarget.id)}>Delete</AlertDialogAction>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+            <AlertDialogAction className="bg-red-600 hover:bg-red-700" onClick={() => deleteAPTarget && deleteAPMutation.mutate(deleteAPTarget.id)}>{t('common.delete')}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
       <AlertDialog open={!!deleteJSTarget} onOpenChange={() => setDeleteJSTarget(null)}>
         <AlertDialogContent>
-          <AlertDialogHeader><AlertDialogTitle>Delete JWT Signer?</AlertDialogTitle>
-            <AlertDialogDescription>This will delete &quot;{deleteJSTarget?.name}&quot;. Auth policies referencing this signer will break.</AlertDialogDescription>
+          <AlertDialogHeader><AlertDialogTitle>{t('pages.zitiNetwork.authPolicies.deleteSignerTitle')}</AlertDialogTitle>
+            <AlertDialogDescription>{t('pages.zitiNetwork.authPolicies.deleteSignerDesc', { name: deleteJSTarget?.name ?? '' })}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction className="bg-red-600 hover:bg-red-700" onClick={() => deleteJSTarget && deleteJSMutation.mutate(deleteJSTarget.id)}>Delete</AlertDialogAction>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+            <AlertDialogAction className="bg-red-600 hover:bg-red-700" onClick={() => deleteJSTarget && deleteJSMutation.mutate(deleteJSTarget.id)}>{t('common.delete')}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -2041,6 +2047,7 @@ function AuthPoliciesSection() {
 function TerminatorsSection() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const { t } = useTranslation()
   const [deleteTarget, setDeleteTarget] = useState<ZitiTerminator | null>(null)
 
   const { data: terminators } = useQuery({
@@ -2052,39 +2059,39 @@ function TerminatorsSection() {
     mutationFn: (id: string) => api.delete(`/api/v1/access/ziti/terminators/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['ziti-terminators'] })
-      toast({ title: 'Terminator deleted' })
+      toast({ title: t('pages.zitiNetwork.terminators.toast.deleted') })
       setDeleteTarget(null)
     },
   })
 
   return (
     <>
-      <CollapsibleSection title="Terminators" count={terminators?.length ?? 0} icon={Link2} defaultOpen={false}>
-        <p className="text-xs text-muted-foreground mb-3">Terminators connect Ziti services to backend servers. They are auto-created when services are hosted.</p>
+      <CollapsibleSection title={t('pages.zitiNetwork.terminators.title')} count={terminators?.length ?? 0} icon={Link2} defaultOpen={false}>
+        <p className="text-xs text-muted-foreground mb-3">{t('pages.zitiNetwork.terminators.desc')}</p>
         {!terminators || terminators.length === 0 ? (
-          <EmptyState icon={Link2} title="No terminators" description="No service terminators found on the Ziti controller." />
+          <EmptyState icon={Link2} title={t('pages.zitiNetwork.terminators.emptyTitle')} description={t('pages.zitiNetwork.terminators.emptyDesc')} />
         ) : (
           <Table>
             <TableHeader><TableRow>
-              <TableHead>Service</TableHead>
-              <TableHead>Router</TableHead>
-              <TableHead>Binding</TableHead>
-              <TableHead>Address</TableHead>
-              <TableHead>Cost</TableHead>
-              <TableHead>Precedence</TableHead>
+              <TableHead>{t('pages.zitiNetwork.terminators.colService')}</TableHead>
+              <TableHead>{t('pages.zitiNetwork.terminators.colRouter')}</TableHead>
+              <TableHead>{t('pages.zitiNetwork.terminators.colBinding')}</TableHead>
+              <TableHead>{t('pages.zitiNetwork.terminators.colAddress')}</TableHead>
+              <TableHead>{t('pages.zitiNetwork.terminators.colCost')}</TableHead>
+              <TableHead>{t('pages.zitiNetwork.terminators.colPrecedence')}</TableHead>
               <TableHead className="w-10" />
             </TableRow></TableHeader>
             <TableBody>
-              {terminators.map((t) => (
-                <TableRow key={t.id}>
-                  <TableCell className="font-medium">{t.service?.name || t.serviceId}</TableCell>
-                  <TableCell>{t.router?.name || t.routerId}</TableCell>
-                  <TableCell><Badge variant="outline" className="text-[10px]">{t.binding}</Badge></TableCell>
-                  <TableCell className="text-xs font-mono">{t.address}</TableCell>
-                  <TableCell>{t.cost}</TableCell>
-                  <TableCell><Badge variant="secondary" className="text-[10px]">{t.precedence}</Badge></TableCell>
+              {terminators.map((term) => (
+                <TableRow key={term.id}>
+                  <TableCell className="font-medium">{term.service?.name || term.serviceId}</TableCell>
+                  <TableCell>{term.router?.name || term.routerId}</TableCell>
+                  <TableCell><Badge variant="outline" className="text-[10px]">{term.binding}</Badge></TableCell>
+                  <TableCell className="text-xs font-mono">{term.address}</TableCell>
+                  <TableCell>{term.cost}</TableCell>
+                  <TableCell><Badge variant="secondary" className="text-[10px]">{term.precedence}</Badge></TableCell>
                   <TableCell>
-                    <Button variant="ghost" size="icon" className="h-7 w-7 text-red-500" onClick={() => setDeleteTarget(t)} title="Delete terminator">
+                    <Button variant="ghost" size="icon" className="h-7 w-7 text-red-500" onClick={() => setDeleteTarget(term)} title={t('pages.zitiNetwork.terminators.deleteTooltip')}>
                       <Trash2 className="h-3.5 w-3.5" />
                     </Button>
                   </TableCell>
@@ -2098,14 +2105,14 @@ function TerminatorsSection() {
       <AlertDialog open={!!deleteTarget} onOpenChange={() => setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete Terminator?</AlertDialogTitle>
+            <AlertDialogTitle>{t('pages.zitiNetwork.terminators.deleteTitle')}</AlertDialogTitle>
             <AlertDialogDescription>
-              Deleting this terminator for &quot;{deleteTarget?.service?.name}&quot; may disrupt active connections to the backend server.
+              {t('pages.zitiNetwork.terminators.deleteDesc', { name: deleteTarget?.service?.name ?? '' })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction className="bg-red-600 hover:bg-red-700" onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}>Delete</AlertDialogAction>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+            <AlertDialogAction className="bg-red-600 hover:bg-red-700" onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}>{t('common.delete')}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -2118,6 +2125,7 @@ function TerminatorsSection() {
 function ServicePoliciesSection() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const { t } = useTranslation()
   const [search, setSearch] = useState('')
   const [createModal, setCreateModal] = useState(false)
   const [editTarget, setEditTarget] = useState<ServicePolicy | null>(null)
@@ -2140,9 +2148,9 @@ function ServicePoliciesSection() {
       queryClient.invalidateQueries({ queryKey: ['ziti-service-policies'] })
       setCreateModal(false)
       resetForm()
-      toast({ title: 'Service policy created' })
+      toast({ title: t('pages.zitiNetwork.servicePolicies.toast.created') })
     },
-    onError: () => toast({ title: 'Error', description: 'Failed to create service policy.', variant: 'destructive' }),
+    onError: () => toast({ title: t('common.error'), description: t('pages.zitiNetwork.servicePolicies.toast.createFailed'), variant: 'destructive' }),
   })
 
   const updateMutation = useMutation({
@@ -2156,11 +2164,11 @@ function ServicePoliciesSection() {
       queryClient.invalidateQueries({ queryKey: ['ziti-service-policies'] })
       setEditTarget(null)
       resetForm()
-      toast({ title: 'Service policy updated' })
+      toast({ title: t('pages.zitiNetwork.servicePolicies.toast.updated') })
     },
     onError: (err: Error & { response?: { data?: { error?: string } } }) => {
-      const msg = err?.response?.data?.error || 'Failed to update service policy.'
-      toast({ title: 'Error', description: msg, variant: 'destructive' })
+      const msg = err?.response?.data?.error || t('pages.zitiNetwork.servicePolicies.toast.updateFailed')
+      toast({ title: t('common.error'), description: msg, variant: 'destructive' })
     },
   })
 
@@ -2169,11 +2177,11 @@ function ServicePoliciesSection() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['ziti-service-policies'] })
       setDeleteTarget(null)
-      toast({ title: 'Service policy deleted' })
+      toast({ title: t('pages.zitiNetwork.servicePolicies.toast.deleted') })
     },
     onError: (err: Error & { response?: { data?: { error?: string } } }) => {
-      const msg = err?.response?.data?.error || 'Failed to delete service policy.'
-      toast({ title: 'Error', description: msg, variant: 'destructive' })
+      const msg = err?.response?.data?.error || t('pages.zitiNetwork.servicePolicies.toast.deleteFailed')
+      toast({ title: t('common.error'), description: msg, variant: 'destructive' })
     },
   })
 
@@ -2197,29 +2205,29 @@ function ServicePoliciesSection() {
   )
 
   return (
-    <CollapsibleSection title="Service Policies" count={policies.length} icon={ScrollText} defaultOpen>
+    <CollapsibleSection title={t('pages.zitiNetwork.servicePolicies.title')} count={policies.length} icon={ScrollText} defaultOpen>
       <p className="text-sm text-muted-foreground mb-3">
-        Control which identities can Dial (access) or Bind (host) services. Policies use role attributes prefixed with <code className="text-xs bg-muted px-1 py-0.5 rounded">#</code> for matching.
+        {t('pages.zitiNetwork.servicePolicies.desc')} <code className="text-xs bg-muted px-1 py-0.5 rounded">#</code> {t('pages.zitiNetwork.servicePolicies.descAfter')}
       </p>
 
       <div className="flex items-center justify-between gap-4 mb-3">
-        <SearchInput value={search} onChange={setSearch} placeholder="Search policies..." />
+        <SearchInput value={search} onChange={setSearch} placeholder={t('pages.zitiNetwork.servicePolicies.searchPlaceholder')} />
         <Button size="sm" onClick={() => { resetForm(); setCreateModal(true) }}>
-          <Plus className="mr-2 h-4 w-4" /> Add Policy
+          <Plus className="mr-2 h-4 w-4" /> {t('pages.zitiNetwork.servicePolicies.add')}
         </Button>
       </div>
 
       {isLoading ? <Spinner /> : policies.length === 0 ? (
-        <EmptyState icon={ScrollText} title="No service policies" description="Create policies to control identity access to services." />
+        <EmptyState icon={ScrollText} title={t('pages.zitiNetwork.servicePolicies.emptyTitle')} description={t('pages.zitiNetwork.servicePolicies.emptyDesc')} />
       ) : (
         <Card>
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Type</TableHead>
-                <TableHead>Service Roles</TableHead>
-                <TableHead>Identity Roles</TableHead>
+                <TableHead>{t('pages.zitiNetwork.servicePolicies.colName')}</TableHead>
+                <TableHead>{t('pages.zitiNetwork.servicePolicies.colType')}</TableHead>
+                <TableHead>{t('pages.zitiNetwork.servicePolicies.colServiceRoles')}</TableHead>
+                <TableHead>{t('pages.zitiNetwork.servicePolicies.colIdentityRoles')}</TableHead>
                 <TableHead className="w-[50px]" />
               </TableRow>
             </TableHeader>
@@ -2228,11 +2236,12 @@ function ServicePoliciesSection() {
                 <TableRow key={policy.id} className="hover:bg-muted/50">
                   <TableCell>
                     <div className="flex items-center gap-2">
-                      {isSystemPolicy(policy.name) && <span title="System policy"><Lock className="h-3.5 w-3.5 text-muted-foreground" /></span>}
+                      {isSystemPolicy(policy.name) && <span title={t('pages.zitiNetwork.servicePolicies.systemPolicy')}><Lock className="h-3.5 w-3.5 text-muted-foreground" /></span>}
                       <span className="font-medium">{policy.name}</span>
                     </div>
                   </TableCell>
                   <TableCell>
+                    {/* Dial / Bind are the controller's own policy types. */}
                     <Badge variant={policy.type === 'Dial' ? 'default' : 'secondary'}>
                       {policy.type}
                     </Badge>
@@ -2245,7 +2254,7 @@ function ServicePoliciesSection() {
                         const label = isAttr ? role.slice(1) : isId ? role.slice(1) : role
                         return (
                           <Badge key={role} variant="outline" className={`text-xs ${isAttr ? 'bg-purple-50 text-purple-700 border-purple-200' : isId ? 'bg-blue-50 text-blue-700 border-blue-200' : ''}`}
-                            title={isAttr ? `Attribute: matches services with role "${label}"` : isId ? `Specific service ID: ${label}` : role}
+                            title={isAttr ? t('pages.zitiNetwork.servicePolicies.serviceAttrTitle', { label }) : isId ? t('pages.zitiNetwork.servicePolicies.serviceIdTitle', { label }) : role}
                           >
                             {isAttr && <span className="text-purple-400 mr-0.5">#</span>}
                             {isId && <span className="text-blue-400 mr-0.5">@</span>}
@@ -2263,7 +2272,7 @@ function ServicePoliciesSection() {
                         const label = isAttr ? role.slice(1) : isId ? role.slice(1) : role
                         return (
                           <Badge key={role} variant="outline" className={`text-xs ${isAttr ? 'bg-orange-50 text-orange-700 border-orange-200' : isId ? 'bg-blue-50 text-blue-700 border-blue-200' : ''}`}
-                            title={isAttr ? `Attribute: matches identities with role "${label}"` : isId ? `Specific identity ID: ${label}` : role}
+                            title={isAttr ? t('pages.zitiNetwork.servicePolicies.identityAttrTitle', { label }) : isId ? t('pages.zitiNetwork.servicePolicies.identityIdTitle', { label }) : role}
                           >
                             {isAttr && <span className="text-orange-400 mr-0.5">#</span>}
                             {isId && <span className="text-blue-400 mr-0.5">@</span>}
@@ -2283,11 +2292,11 @@ function ServicePoliciesSection() {
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
                           <DropdownMenuItem onClick={() => openEditModal(policy)}>
-                            <Pencil className="mr-2 h-4 w-4" /> Edit
+                            <Pencil className="mr-2 h-4 w-4" /> {t('pages.zitiNetwork.servicePolicies.edit')}
                           </DropdownMenuItem>
                           <DropdownMenuSeparator />
                           <DropdownMenuItem className="text-red-600" onClick={() => setDeleteTarget(policy)}>
-                            <Trash2 className="mr-2 h-4 w-4" /> Delete
+                            <Trash2 className="mr-2 h-4 w-4" /> {t('common.delete')}
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
@@ -2302,38 +2311,38 @@ function ServicePoliciesSection() {
 
       {/* Create/Edit Dialogs */}
       {[
-        { open: createModal, onOpenChange: (v: boolean) => { if (!v) setCreateModal(false) }, title: 'Create Service Policy', onSubmit: () => createMutation.mutate(form), pending: createMutation.isPending, submitLabel: 'Create Policy' },
-        { open: !!editTarget, onOpenChange: (v: boolean) => { if (!v) { setEditTarget(null); resetForm() } }, title: 'Edit Service Policy', onSubmit: () => editTarget && updateMutation.mutate({ id: editTarget.id, data: form }), pending: updateMutation.isPending, submitLabel: 'Update Policy' },
+        { open: createModal, onOpenChange: (v: boolean) => { if (!v) setCreateModal(false) }, title: t('pages.zitiNetwork.servicePolicies.createTitle'), onSubmit: () => createMutation.mutate(form), pending: createMutation.isPending, submitLabel: t('pages.zitiNetwork.servicePolicies.createSubmit') },
+        { open: !!editTarget, onOpenChange: (v: boolean) => { if (!v) { setEditTarget(null); resetForm() } }, title: t('pages.zitiNetwork.servicePolicies.editTitle'), onSubmit: () => editTarget && updateMutation.mutate({ id: editTarget.id, data: form }), pending: updateMutation.isPending, submitLabel: t('pages.zitiNetwork.servicePolicies.editSubmit') },
       ].map((dlg, i) => (
         <Dialog key={i} open={dlg.open} onOpenChange={dlg.onOpenChange}>
           <DialogContent className="sm:max-w-md">
             <DialogHeader><DialogTitle>{dlg.title}</DialogTitle></DialogHeader>
             <form onSubmit={(e) => { e.preventDefault(); dlg.onSubmit() }} className="space-y-4">
               <div className="space-y-2">
-                <Label>Policy Name</Label>
+                <Label>{t('pages.zitiNetwork.servicePolicies.policyName')}</Label>
                 <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="allow-engineering-gitlab" required />
               </div>
               <div className="space-y-2">
-                <Label>Type</Label>
+                <Label>{t('pages.zitiNetwork.servicePolicies.type')}</Label>
                 <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm">
-                  <option value="Dial">Dial (access service)</option>
-                  <option value="Bind">Bind (host service)</option>
+                  <option value="Dial">{t('pages.zitiNetwork.servicePolicies.typeDial')}</option>
+                  <option value="Bind">{t('pages.zitiNetwork.servicePolicies.typeBind')}</option>
                 </select>
               </div>
               <div className="space-y-2">
-                <Label>Service Roles</Label>
+                <Label>{t('pages.zitiNetwork.servicePolicies.serviceRoles')}</Label>
                 <Input value={form.service_roles} onChange={(e) => setForm({ ...form, service_roles: e.target.value })} placeholder="#gitlab, #internal-apps" required />
-                <p className="text-xs text-muted-foreground">Comma-separated. <span className="text-purple-600 font-medium">#attribute</span> matches services by role, <span className="text-primary font-medium">@id</span> targets a specific service.</p>
+                <p className="text-xs text-muted-foreground">{t('pages.zitiNetwork.servicePolicies.commaSeparated')} <span className="text-purple-600 font-medium">#attribute</span> {t('pages.zitiNetwork.servicePolicies.serviceAttrHint')} <span className="text-primary font-medium">@id</span> {t('pages.zitiNetwork.servicePolicies.serviceIdHint')}</p>
               </div>
               <div className="space-y-2">
-                <Label>Identity Roles</Label>
+                <Label>{t('pages.zitiNetwork.servicePolicies.identityRoles')}</Label>
                 <Input value={form.identity_roles} onChange={(e) => setForm({ ...form, identity_roles: e.target.value })} placeholder="#engineering, #vpn-users" required />
-                <p className="text-xs text-muted-foreground">Comma-separated. <span className="text-orange-600 font-medium">#attribute</span> matches identities by role (e.g., group names), <span className="text-primary font-medium">@id</span> targets a specific identity.</p>
+                <p className="text-xs text-muted-foreground">{t('pages.zitiNetwork.servicePolicies.commaSeparated')} <span className="text-orange-600 font-medium">#attribute</span> {t('pages.zitiNetwork.servicePolicies.identityAttrHint')} <span className="text-primary font-medium">@id</span> {t('pages.zitiNetwork.servicePolicies.identityIdHint')}</p>
               </div>
               <div className="flex justify-end gap-2 pt-2">
-                <Button type="button" variant="outline" onClick={() => dlg.onOpenChange(false)}>Cancel</Button>
+                <Button type="button" variant="outline" onClick={() => dlg.onOpenChange(false)}>{t('common.cancel')}</Button>
                 <Button type="submit" disabled={dlg.pending}>
-                  {dlg.pending ? 'Saving...' : dlg.submitLabel}
+                  {dlg.pending ? t('pages.zitiNetwork.servicePolicies.saving') : dlg.submitLabel}
                 </Button>
               </div>
             </form>
@@ -2344,15 +2353,15 @@ function ServicePoliciesSection() {
       <AlertDialog open={!!deleteTarget} onOpenChange={() => setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete Service Policy</AlertDialogTitle>
+            <AlertDialogTitle>{t('pages.zitiNetwork.servicePolicies.deleteTitle')}</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete &quot;{deleteTarget?.name}&quot;? Identities matched by this policy will lose access.
+              {t('pages.zitiNetwork.servicePolicies.deleteDesc', { name: deleteTarget?.name ?? '' })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction className="bg-red-600 hover:bg-red-700" onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}>
-              Delete
+              {t('common.delete')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -2364,6 +2373,7 @@ function ServicePoliciesSection() {
 function EdgeRouterPoliciesSection() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const { t } = useTranslation()
   const [search, setSearch] = useState('')
   const [createModal, setCreateModal] = useState(false)
   const [editTarget, setEditTarget] = useState<EdgeRouterPolicy | null>(null)
@@ -2385,9 +2395,9 @@ function EdgeRouterPoliciesSection() {
       queryClient.invalidateQueries({ queryKey: ['ziti-edge-router-policies'] })
       setCreateModal(false)
       resetForm()
-      toast({ title: 'Edge router policy created' })
+      toast({ title: t('pages.zitiNetwork.edgeRouterPolicies.toast.created') })
     },
-    onError: () => toast({ title: 'Error', description: 'Failed to create edge router policy.', variant: 'destructive' }),
+    onError: () => toast({ title: t('common.error'), description: t('pages.zitiNetwork.edgeRouterPolicies.toast.createFailed'), variant: 'destructive' }),
   })
 
   const updateMutation = useMutation({
@@ -2400,9 +2410,9 @@ function EdgeRouterPoliciesSection() {
       queryClient.invalidateQueries({ queryKey: ['ziti-edge-router-policies'] })
       setEditTarget(null)
       resetForm()
-      toast({ title: 'Edge router policy updated' })
+      toast({ title: t('pages.zitiNetwork.edgeRouterPolicies.toast.updated') })
     },
-    onError: () => toast({ title: 'Error', description: 'Failed to update edge router policy.', variant: 'destructive' }),
+    onError: () => toast({ title: t('common.error'), description: t('pages.zitiNetwork.edgeRouterPolicies.toast.updateFailed'), variant: 'destructive' }),
   })
 
   const deleteMutation = useMutation({
@@ -2410,9 +2420,9 @@ function EdgeRouterPoliciesSection() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['ziti-edge-router-policies'] })
       setDeleteTarget(null)
-      toast({ title: 'Edge router policy deleted' })
+      toast({ title: t('pages.zitiNetwork.edgeRouterPolicies.toast.deleted') })
     },
-    onError: () => toast({ title: 'Error', description: 'Failed to delete edge router policy.', variant: 'destructive' }),
+    onError: () => toast({ title: t('common.error'), description: t('pages.zitiNetwork.edgeRouterPolicies.toast.deleteFailed'), variant: 'destructive' }),
   })
 
   const resetForm = () => setForm({ name: '', edge_router_roles: '', identity_roles: '' })
@@ -2433,28 +2443,28 @@ function EdgeRouterPoliciesSection() {
   )
 
   return (
-    <CollapsibleSection title="Edge Router Policies" count={policies.length} icon={Router} defaultOpen={false}>
+    <CollapsibleSection title={t('pages.zitiNetwork.edgeRouterPolicies.title')} count={policies.length} icon={Router} defaultOpen={false}>
       <p className="text-sm text-muted-foreground mb-3">
-        Control which identities can connect through which edge routers. Use role attributes to match identities and routers.
+        {t('pages.zitiNetwork.edgeRouterPolicies.desc')}
       </p>
 
       <div className="flex items-center justify-between gap-4 mb-3">
-        <SearchInput value={search} onChange={setSearch} placeholder="Search router policies..." />
+        <SearchInput value={search} onChange={setSearch} placeholder={t('pages.zitiNetwork.edgeRouterPolicies.searchPlaceholder')} />
         <Button size="sm" onClick={() => { resetForm(); setCreateModal(true) }}>
-          <Plus className="mr-2 h-4 w-4" /> Add Policy
+          <Plus className="mr-2 h-4 w-4" /> {t('pages.zitiNetwork.edgeRouterPolicies.add')}
         </Button>
       </div>
 
       {isLoading ? <Spinner /> : policies.length === 0 ? (
-        <EmptyState icon={Router} title="No edge router policies" description="Create policies to control identity access to edge routers." />
+        <EmptyState icon={Router} title={t('pages.zitiNetwork.edgeRouterPolicies.emptyTitle')} description={t('pages.zitiNetwork.edgeRouterPolicies.emptyDesc')} />
       ) : (
         <Card>
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Edge Router Roles</TableHead>
-                <TableHead>Identity Roles</TableHead>
+                <TableHead>{t('pages.zitiNetwork.edgeRouterPolicies.colName')}</TableHead>
+                <TableHead>{t('pages.zitiNetwork.edgeRouterPolicies.colRouterRoles')}</TableHead>
+                <TableHead>{t('pages.zitiNetwork.edgeRouterPolicies.colIdentityRoles')}</TableHead>
                 <TableHead className="w-[50px]" />
               </TableRow>
             </TableHeader>
@@ -2463,7 +2473,7 @@ function EdgeRouterPoliciesSection() {
                 <TableRow key={policy.id} className="hover:bg-muted/50">
                   <TableCell>
                     <div className="flex items-center gap-2">
-                      {isSystemPolicy(policy.name) && <span title="System policy"><Lock className="h-3.5 w-3.5 text-muted-foreground" /></span>}
+                      {isSystemPolicy(policy.name) && <span title={t('pages.zitiNetwork.edgeRouterPolicies.systemPolicy')}><Lock className="h-3.5 w-3.5 text-muted-foreground" /></span>}
                       <span className="font-medium">{policy.name}</span>
                     </div>
                   </TableCell>
@@ -2474,7 +2484,7 @@ function EdgeRouterPoliciesSection() {
                         const label = isAttr ? role.slice(1) : role
                         return (
                           <Badge key={role} variant="outline" className={`text-xs ${isAttr ? 'bg-teal-50 text-teal-700 border-teal-200' : ''}`}
-                            title={isAttr ? `Attribute: matches routers with role "${label}"` : role}>
+                            title={isAttr ? t('pages.zitiNetwork.edgeRouterPolicies.routerAttrTitle', { label }) : role}>
                             {isAttr && <span className="text-teal-400 mr-0.5">#</span>}{label}
                           </Badge>
                         )
@@ -2488,7 +2498,7 @@ function EdgeRouterPoliciesSection() {
                         const label = isAttr ? role.slice(1) : role
                         return (
                           <Badge key={role} variant="outline" className={`text-xs ${isAttr ? 'bg-orange-50 text-orange-700 border-orange-200' : ''}`}
-                            title={isAttr ? `Attribute: matches identities with role "${label}"` : role}>
+                            title={isAttr ? t('pages.zitiNetwork.edgeRouterPolicies.identityAttrTitle', { label }) : role}>
                             {isAttr && <span className="text-orange-400 mr-0.5">#</span>}{label}
                           </Badge>
                         )
@@ -2505,11 +2515,11 @@ function EdgeRouterPoliciesSection() {
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
                           <DropdownMenuItem onClick={() => openEditModal(policy)}>
-                            <Pencil className="mr-2 h-4 w-4" /> Edit
+                            <Pencil className="mr-2 h-4 w-4" /> {t('pages.zitiNetwork.servicePolicies.edit')}
                           </DropdownMenuItem>
                           <DropdownMenuSeparator />
                           <DropdownMenuItem className="text-red-600" onClick={() => setDeleteTarget(policy)}>
-                            <Trash2 className="mr-2 h-4 w-4" /> Delete
+                            <Trash2 className="mr-2 h-4 w-4" /> {t('common.delete')}
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
@@ -2524,31 +2534,31 @@ function EdgeRouterPoliciesSection() {
 
       {/* Create/Edit Dialogs */}
       {[
-        { open: createModal, onOpenChange: (v: boolean) => { if (!v) setCreateModal(false) }, title: 'Create Edge Router Policy', onSubmit: () => createMutation.mutate(form), pending: createMutation.isPending, submitLabel: 'Create Policy' },
-        { open: !!editTarget, onOpenChange: (v: boolean) => { if (!v) { setEditTarget(null); resetForm() } }, title: 'Edit Edge Router Policy', onSubmit: () => editTarget && updateMutation.mutate({ id: editTarget.id, data: form }), pending: updateMutation.isPending, submitLabel: 'Update Policy' },
+        { open: createModal, onOpenChange: (v: boolean) => { if (!v) setCreateModal(false) }, title: t('pages.zitiNetwork.edgeRouterPolicies.createTitle'), onSubmit: () => createMutation.mutate(form), pending: createMutation.isPending, submitLabel: t('pages.zitiNetwork.edgeRouterPolicies.createSubmit') },
+        { open: !!editTarget, onOpenChange: (v: boolean) => { if (!v) { setEditTarget(null); resetForm() } }, title: t('pages.zitiNetwork.edgeRouterPolicies.editTitle'), onSubmit: () => editTarget && updateMutation.mutate({ id: editTarget.id, data: form }), pending: updateMutation.isPending, submitLabel: t('pages.zitiNetwork.edgeRouterPolicies.editSubmit') },
       ].map((dlg, i) => (
         <Dialog key={i} open={dlg.open} onOpenChange={dlg.onOpenChange}>
           <DialogContent className="sm:max-w-md">
             <DialogHeader><DialogTitle>{dlg.title}</DialogTitle></DialogHeader>
             <form onSubmit={(e) => { e.preventDefault(); dlg.onSubmit() }} className="space-y-4">
               <div className="space-y-2">
-                <Label>Policy Name</Label>
+                <Label>{t('pages.zitiNetwork.edgeRouterPolicies.policyName')}</Label>
                 <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="allow-all-routers" required />
               </div>
               <div className="space-y-2">
-                <Label>Edge Router Roles</Label>
+                <Label>{t('pages.zitiNetwork.edgeRouterPolicies.routerRoles')}</Label>
                 <Input value={form.edge_router_roles} onChange={(e) => setForm({ ...form, edge_router_roles: e.target.value })} placeholder="#public, #datacenter-us" required />
-                <p className="text-xs text-muted-foreground"><span className="text-teal-600 font-medium">#attribute</span> matches routers by role. Use <code className="text-xs bg-muted px-1 rounded">#all</code> for all routers.</p>
+                <p className="text-xs text-muted-foreground"><span className="text-teal-600 font-medium">#attribute</span> {t('pages.zitiNetwork.edgeRouterPolicies.routerAttrHint')} <code className="text-xs bg-muted px-1 rounded">#all</code> {t('pages.zitiNetwork.edgeRouterPolicies.routerAllHint')}</p>
               </div>
               <div className="space-y-2">
-                <Label>Identity Roles</Label>
+                <Label>{t('pages.zitiNetwork.edgeRouterPolicies.identityRoles')}</Label>
                 <Input value={form.identity_roles} onChange={(e) => setForm({ ...form, identity_roles: e.target.value })} placeholder="#engineering, #vpn-users" required />
-                <p className="text-xs text-muted-foreground"><span className="text-orange-600 font-medium">#attribute</span> matches identities by role (e.g., group names).</p>
+                <p className="text-xs text-muted-foreground"><span className="text-orange-600 font-medium">#attribute</span> {t('pages.zitiNetwork.edgeRouterPolicies.identityAttrHint')}</p>
               </div>
               <div className="flex justify-end gap-2 pt-2">
-                <Button type="button" variant="outline" onClick={() => dlg.onOpenChange(false)}>Cancel</Button>
+                <Button type="button" variant="outline" onClick={() => dlg.onOpenChange(false)}>{t('common.cancel')}</Button>
                 <Button type="submit" disabled={dlg.pending}>
-                  {dlg.pending ? 'Saving...' : dlg.submitLabel}
+                  {dlg.pending ? t('pages.zitiNetwork.edgeRouterPolicies.saving') : dlg.submitLabel}
                 </Button>
               </div>
             </form>
@@ -2559,15 +2569,15 @@ function EdgeRouterPoliciesSection() {
       <AlertDialog open={!!deleteTarget} onOpenChange={() => setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete Edge Router Policy</AlertDialogTitle>
+            <AlertDialogTitle>{t('pages.zitiNetwork.edgeRouterPolicies.deleteTitle')}</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete &quot;{deleteTarget?.name}&quot;? Identities matched by this policy may lose router connectivity.
+              {t('pages.zitiNetwork.edgeRouterPolicies.deleteDesc', { name: deleteTarget?.name ?? '' })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction className="bg-red-600 hover:bg-red-700" onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}>
-              Delete
+              {t('common.delete')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
