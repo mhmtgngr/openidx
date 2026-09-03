@@ -7,6 +7,7 @@ import { Badge } from '../components/ui/badge'
 import { Button } from '../components/ui/button'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { QueryError } from '../components/query-error'
+import { SelectableRow } from '../components/selectable-row'
 import { Layers, Play, Download, X, CheckCircle, AlertTriangle, Clock } from 'lucide-react'
 
 interface BulkOperation {
@@ -205,8 +206,11 @@ export function BulkOperationsPage() {
         <CardContent>
           <div className="divide-y">
             {ops.map(op => (
-              <div key={op.id} className="py-3 flex items-center justify-between cursor-pointer hover:bg-muted px-2 rounded"
-                onClick={() => setSelectedOpId(op.id)}>
+              <SelectableRow
+                key={op.id}
+                aria-pressed={selectedOpId === op.id}
+                className="py-3 flex items-center justify-between hover:bg-muted px-2 rounded"
+                onSelect={() => setSelectedOpId(op.id)}>
                 <div className="flex items-center gap-3">
                   {statusIcons[op.status]}
                   <div>
@@ -229,7 +233,7 @@ export function BulkOperationsPage() {
                     </div>
                   )}
                 </div>
-              </div>
+              </SelectableRow>
             ))}
             {ops.length === 0 && (
               <p className="py-8 text-center text-muted-foreground">{t('pages.bulkOps.empty')}</p>

@@ -1080,11 +1080,47 @@ all four pillars, deploy, log in, and find PAM.
    security product than most: the console is where an operator goes *during*
    an incident, and a version-skewed API response is exactly the kind of
    thing an incident involves.
-2. Accessibility audit to a VPAT with real assistive technology — keyboard
-   order, focus management, screen-reader announcement. These are not
-   covered by axe in *any* environment and need a person with a keyboard and
-   a screen reader; nothing automated substitutes. Contrast is no longer on
-   this list: see 1c–1e.
+1g. ✅ **Five pages a keyboard could not operate at all.** "Keyboard order and
+   focus management need a person" was half true, and the half that wasn't is
+   now fixed. WCAG 2.1.1 (Keyboard, Level A) is decidable by reading the
+   markup: a `<div onClick>` with no `tabIndex`, no key handler and no role is
+   reachable by pointer and by nothing else. Five pages had exactly that on
+   the row you click to select an item — AI Agents, Bulk Operations, Email
+   Templates, Attestation Campaigns and Lifecycle Policies — and on all five,
+   selecting the row was the *only* way to reach that item's detail, so a
+   keyboard-only operator could not see any of it. They now share
+   `components/selectable-row.tsx`, which is one component rather than five
+   copies for a specific reason: Space has to be `preventDefault`'d or it
+   scrolls the page instead of activating the row, and that is the detail
+   that goes missing every time the ARIA pattern is hand-rolled (its test
+   pins Enter, Space, the preventDefault, and that other keys do nothing).
+   Verified in Chromium, not only in jsdom: on each of the five pages, Tab
+   reaches the row, Enter flips its `aria-pressed`/`aria-expanded`, and the
+   focus ring is present — because a row that takes focus invisibly fails
+   WCAG 2.4.7 just as surely. The same sweep found the two remote-desktop
+   surfaces focusable and keyed but role-less; they now carry
+   `role="application"`, which is what tells a screen reader to stop
+   intercepting arrow keys and pass them to the remote machine.
+
+1h. ✅ **A CI guard so a click-only control cannot land again** —
+   `scripts/check-keyboard-reachable.sh`, paired with a 12-case self-test, in
+   the same style as the four UI guards it joins. An element passes if it is
+   natively interactive or carries the whole ARIA substitute (role +
+   tabIndex + key handler); anything deliberately not a tab stop must say so
+   with `aria-hidden`, so skipping the keyboard has to be *declared* rather
+   than implied by omission. Writing it produced two of its own findings.
+   Its first version used a regex, which truncated every tag's attributes at
+   the `>` inside `onClick={() => …}` — so it reported the correctly-built
+   `SelectableRow` as broken and, worse, silently missed a genuine offender
+   in `remote-support-viewer.tsx` whose attributes sat past that point. Its
+   second version read the doc comment quoting `` `<div onClick>` `` as code.
+   Both are now cases 3 and 4 of the self-test, and both were confirmed to go
+   red when the corresponding fix is reverted.
+2. Accessibility audit to a VPAT with real assistive technology — what a
+   screen reader actually *announces*, and whether a person can complete each
+   journey with one. That still needs a person: no tool judges whether an
+   announcement is intelligible. What no longer needs one, and is now gated,
+   is contrast (1c–1e) and keyboard reachability (1g–1h).
 3. Separate/hardened end-user portal bundle.
 4. Mobile app decision (Expo vs Flutter) executed — maintainer's call.
 5. The existing roadmap epics (outbound SCIM, HR-driven JML, per-org

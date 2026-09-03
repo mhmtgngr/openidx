@@ -286,6 +286,8 @@ export function RelayRenderer({ wsUrl, mode, onEnd, onPopOut, autoFullscreen }: 
       </div>
       <div
         ref={overlayRef}
+        role="application"
+        aria-label="Remote screen. Keyboard and pointer input is sent to the remote machine."
         tabIndex={0}
         onPointerDown={onPointerDown}
         onPointerUp={onPointerUp}

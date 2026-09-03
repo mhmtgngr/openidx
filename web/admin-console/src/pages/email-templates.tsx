@@ -7,6 +7,7 @@ import { Badge } from '../components/ui/badge'
 import { Button } from '../components/ui/button'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { QueryError } from '../components/query-error'
+import { SelectableRow } from '../components/selectable-row'
 import { Mail, Eye, RotateCcw, Save, Palette } from 'lucide-react'
 
 interface EmailTemplate {
@@ -213,9 +214,11 @@ export function EmailTemplatesPage() {
                 </p>
                 <div className="space-y-1">
                   {tmpls.map(tmpl => (
-                    <div key={tmpl.id}
-                      className={`p-2 rounded cursor-pointer text-sm ${selectedId === tmpl.id ? 'bg-blue-50 border border-blue-200' : 'hover:bg-muted'}`}
-                      onClick={() => handleSelectTemplate(tmpl)}>
+                    <SelectableRow
+                      key={tmpl.id}
+                      aria-pressed={selectedId === tmpl.id}
+                      className={`p-2 rounded text-sm ${selectedId === tmpl.id ? 'bg-blue-50 border border-blue-200 dark:bg-blue-950/30 dark:border-blue-800' : 'hover:bg-muted'}`}
+                      onSelect={() => handleSelectTemplate(tmpl)}>
                       <div className="flex items-center justify-between">
                         {/* The template's own name and slug. */}
                         <span className="font-medium">{tmpl.name}</span>
@@ -226,7 +229,7 @@ export function EmailTemplatesPage() {
                         </Badge>
                       </div>
                       <p className="text-xs text-muted-foreground">{tmpl.slug}</p>
-                    </div>
+                    </SelectableRow>
                   ))}
                 </div>
               </div>

@@ -7,6 +7,7 @@ import { Badge } from '../components/ui/badge'
 import { Button } from '../components/ui/button'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { QueryError } from '../components/query-error'
+import { SelectableRow } from '../components/selectable-row'
 import { ClipboardCheck, Plus, Rocket, CheckCircle, X, ArrowRight, BarChart3 } from 'lucide-react'
 import { ConfirmAction } from '../components/confirm-action'
 import { RelatedLinks } from '../components/related-links'
@@ -255,7 +256,10 @@ export function AttestationCampaignsPage() {
               return (
                 <div key={c.id} className="py-3">
                   <div className="flex items-center justify-between">
-                    <div className="flex-1 cursor-pointer" onClick={() => setSelectedCampaign(selectedCampaign === c.id ? null : c.id)}>
+                    <SelectableRow
+                      className="flex-1"
+                      aria-expanded={selectedCampaign === c.id}
+                      onSelect={() => setSelectedCampaign(selectedCampaign === c.id ? null : c.id)}>
                       <div className="flex items-center gap-2">
                         <p className="font-medium text-sm">{c.name}</p>
                         <Badge variant="outline">{(CAMPAIGN_TYPES as readonly string[]).includes(c.campaign_type) ? t(`pages.attestation.types.${c.campaign_type}`) : c.campaign_type}</Badge>
@@ -273,7 +277,7 @@ export function AttestationCampaignsPage() {
                           <span className="text-xs text-yellow-600">{t('pages.attestation.pendingCount', { n: c.pending_count })}</span>
                         </div>
                       )}
-                    </div>
+                    </SelectableRow>
                     <div className="flex gap-2 ml-4">
                       {c.status === 'draft' && (
                         <Button size="sm" onClick={() => launchMutation.mutate(c.id)} disabled={launchMutation.isPending}>

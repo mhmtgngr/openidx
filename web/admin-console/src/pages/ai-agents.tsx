@@ -7,6 +7,7 @@ import { Badge } from '../components/ui/badge'
 import { Button } from '../components/ui/button'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { QueryError } from '../components/query-error'
+import { SelectableRow } from '../components/selectable-row'
 import { ConfirmAction } from '../components/confirm-action'
 import { Bot, Plus, RotateCw, Pause, Play, Trash2, Shield, Activity, Key, Clock } from 'lucide-react'
 
@@ -280,8 +281,11 @@ export function AIAgentsPage() {
             <CardContent>
               <div className="divide-y">
                 {agents.map((agent) => (
-                  <div key={agent.id} className={`py-3 flex items-center justify-between cursor-pointer hover:bg-muted px-2 rounded ${selectedAgent === agent.id ? 'bg-blue-50' : ''}`}
-                    onClick={() => setSelectedAgent(agent.id)}>
+                  <SelectableRow
+                    key={agent.id}
+                    aria-pressed={selectedAgent === agent.id}
+                    className={`py-3 flex items-center justify-between hover:bg-muted px-2 rounded ${selectedAgent === agent.id ? 'bg-blue-50 dark:bg-blue-950/30' : ''}`}
+                    onSelect={() => setSelectedAgent(agent.id)}>
                     <div className="flex items-center gap-3">
                       <Bot className="h-8 w-8 text-muted-foreground" />
                       <div>
@@ -310,7 +314,7 @@ export function AIAgentsPage() {
                         })}
                       </Badge>
                     </div>
-                  </div>
+                  </SelectableRow>
                 ))}
                 {agents.length === 0 && (
                   <p className="text-center text-muted-foreground py-8">

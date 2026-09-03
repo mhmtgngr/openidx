@@ -83,6 +83,14 @@ It exits non-zero on any violation **or** on any route that renders blank —
 a page that rendered nothing reports zero violations, which looks exactly
 like a pass, so it is called out instead of counted.
 
-None of this is a VPAT. Keyboard order, focus management on route change and
-dialog close, and screen-reader announcement are not covered by axe in any
-environment and still need a person with a keyboard and a screen reader.
+Keyboard reachability is gated separately, by
+`scripts/check-keyboard-reachable.sh` at the repo root (with the other UI
+guards): a control you can click must be a control you can reach with a
+keyboard. Prefer `components/selectable-row.tsx` over hand-rolling
+`role="button"` + `tabIndex` + `onKeyDown` — Space has to be
+`preventDefault`'d or it scrolls the page instead of activating the control,
+and that is the part that goes missing when the pattern is copied by hand.
+
+None of this is a VPAT. What a screen reader actually *announces*, and whether
+a person can finish each journey using one, is not something any of these
+tools judges — that still needs a person with a screen reader.

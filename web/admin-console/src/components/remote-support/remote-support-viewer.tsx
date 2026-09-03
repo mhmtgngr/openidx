@@ -540,6 +540,8 @@ export function RemoteSupportViewer({
 
       <div
         ref={overlayRef}
+        role="application"
+        aria-label="Remote screen. Keyboard and pointer input is sent to the remote machine."
         tabIndex={0}
         onPointerDown={(e) => { e.currentTarget.focus(); onPointerDown(e) }}
         onPointerUp={onPointerUp}

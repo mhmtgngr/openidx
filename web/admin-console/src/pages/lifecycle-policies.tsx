@@ -7,6 +7,7 @@ import { Badge } from '../components/ui/badge'
 import { Button } from '../components/ui/button'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { QueryError } from '../components/query-error'
+import { SelectableRow } from '../components/selectable-row'
 import { Trash2, Plus, Play, Eye, Clock, UserMinus, CheckCircle, AlertTriangle } from 'lucide-react'
 import { ConfirmAction } from '../components/confirm-action'
 
@@ -233,7 +234,10 @@ export function LifecyclePoliciesPage() {
             {policies.map(p => (
               <div key={p.id} className="py-3">
                 <div className="flex items-center justify-between">
-                  <div className="flex-1 cursor-pointer" onClick={() => setSelectedPolicy(selectedPolicy === p.id ? null : p.id)}>
+                  <SelectableRow
+                    className="flex-1"
+                    aria-expanded={selectedPolicy === p.id}
+                    onSelect={() => setSelectedPolicy(selectedPolicy === p.id ? null : p.id)}>
                     <div className="flex items-center gap-2">
                       <p className="font-medium text-sm">{p.name}</p>
                       <Badge variant="outline">
@@ -265,7 +269,7 @@ export function LifecyclePoliciesPage() {
                         </span>
                       )}
                     </div>
-                  </div>
+                  </SelectableRow>
                   <div className="flex gap-2 ml-4">
                     <Button size="sm" variant="outline" onClick={() => toggleMutation.mutate({ id: p.id, enabled: !p.enabled })}>
                       {p.enabled
