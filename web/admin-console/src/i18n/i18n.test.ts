@@ -683,6 +683,15 @@ describe('i18n', () => {
         `pages.errorCatalog.categories.${k}`,
         `pages.errorCatalog.categoryOptions.${k}`,
       ]),
+      // quick-links: the link type in both casings, and the categories, which
+      // are keyed by the value the operator's link is stored with.
+      ...['external', 'pam'].flatMap((k) => [
+        `pages.quickLinks.types.${k}`,
+        `pages.quickLinks.typeOptions.${k}`,
+      ]),
+      ...['Support', 'Collaboration', 'Monitoring', 'IT', 'Other'].map(
+        (k) => `pages.quickLinks.categories.${k}`,
+      ),
     ]
     for (const lang of supportedLanguages) {
       for (const key of mapKeys) {
@@ -1203,6 +1212,39 @@ describe('i18n', () => {
     expect(
       i18n.t('pages.auditArchival.archives.events', { count: 1, formatted: '1' }),
     ).toBe('1 event')
+  })
+
+  it('builds the assignment-report loss line from two independent plurals', async () => {
+    // The English original wrote "user(s)" and "application(s)" because one
+    // sentence cannot pluralize on two counts. Each half is its own key now.
+    await i18n.changeLanguage('en')
+    const line = (users: number, applications: number) =>
+      i18n.t('pages.assignmentReport.wouldLose', {
+        users: i18n.t('pages.assignmentReport.userCount', { count: users }),
+        applications: i18n.t('pages.assignmentReport.applicationCount', {
+          count: applications,
+        }),
+      })
+    expect(line(1, 1)).toBe('1 user would lose access to 1 application')
+    expect(line(3, 2)).toBe('3 users would lose access to 2 applications')
+  })
+
+  it('agrees the identity-less sentence with both of its counts', async () => {
+    // The subject agrees with the organization total, the rest of the sentence
+    // with how many users lack an identity, so the subject is composed first.
+    await i18n.changeLanguage('en')
+    const line = (without: number, total: number) =>
+      i18n.t('pages.assignmentReport.identityless', {
+        count: without,
+        subject: i18n.t('pages.assignmentReport.identitylessSubject', {
+          count: total,
+          n: without,
+        }),
+      })
+    expect(line(1, 5)).toContain('1 of 5 users in this organization has no Ziti identity')
+    expect(line(1, 5)).toContain('that user has no Ziti reach to lose and was not evaluated')
+    expect(line(2, 6)).toContain('2 of 6 users in this organization have no Ziti identity')
+    expect(line(2, 6)).toContain('those users have no Ziti reach to lose and were not evaluated')
   })
 
   it('pluralizes the device-code expiry instead of appending an s', async () => {

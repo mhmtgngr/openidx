@@ -21,7 +21,7 @@ security, access, sessions, devices, trusted browsers, notifications,
 access requests, profile — are fully bilingual; the end-user experience
 is complete in both languages). Open: P1 rollout Task 16 (operator
 action), P3.1 cut v1.28.0 (post-merge), the remaining P4 items incl.
-the 11 remaining page bodies and the Expo-vs-Flutter mobile pick.)
+the 7 remaining page bodies and the Expo-vs-Flutter mobile pick.)
 **Question this document answers:** *Is OpenIDX fully functional and well defined end to end, as experienced by the people who use it — and what are the next steps and controls to get it there?*
 
 This is the product-and-user-side companion to
@@ -861,13 +861,31 @@ all four pillars, deploy, log in, and find PAM.
    resolution; the template's own subject and bodies and the `{{.Variable}}` Go
    template syntax its badges insert; the OAuth scopes a device asked for; and
    the sample code, sample URL and product name that teach a field's shape.
-   *Remaining:* 11 other page bodies (a measured count, not an estimate:
-   pages under `src/pages` with no `useTranslation`) — mechanical, batch by
-   batch, against this pattern. The largest of them are
-   `assignment-report.tsx` (265 lines), `quick-links-admin.tsx` (237),
-   `pam-dashboard.tsx` (232) and `add-device.tsx` (216); the tail includes the
-   pre-login flows (password reset, forgotten password, magic-link
-   verification), which are end-user screens rather than admin ones.
+   Batch 24 took the Assignment Report, Quick Links administration, the PAM
+   dashboard and the add-a-device wizard. The assignment report is the page
+   that decides whether the P1 rollout is safe, and it was also the worst
+   offender for hand-rolled English agreement: `user(s)`, `route{s}`, and
+   inline `is`/`are`, `has`/`have`, `was`/`were` ternaries — nine of them in
+   one card. Every one is now a real plural key. Two sentences there agree
+   with *two different counts* at once; each composes a pluralized subject and
+   pluralizes the rest around it ("2 of 6 users in this organization have no
+   Ziti identity, so those users have no Ziti reach to lose and were not
+   evaluated"), so a locale writes each form out rather than receiving a
+   nominative dropped into a slot. Its fifteen existing tests, which pinned the
+   English wording, pass unchanged. The other three are smaller: the quick-link
+   category is stored as the operator typed it, so the form select and the row
+   badge resolve one map keyed by the stored value with a raw fallback, while
+   role names (the token's own vocabulary) and lucide icon ids stay raw; the
+   PAM dashboard turns two more "N somethings in the last 30 days" lines into
+   plurals; and the add-a-device wizard — an end-user screen — keeps the
+   operating-system names, the enrolment code, its deep link and the QR that
+   encodes it raw, with the "tap **Open in app**" sentence moved onto `Trans`
+   so the bolded phrase survives translation.
+   *Remaining:* 7 page bodies (a measured count, not an estimate: pages under
+   `src/pages` with no `useTranslation`), and they are no longer admin screens:
+   the pre-login flows (password reset, forgotten password, magic-link
+   verification), notification preferences, the PAM session and remote-support
+   pop-out windows, and the API-docs frame.
 2. Accessibility pass to a VPAT (needs real assistive-technology testing,
    not just an automated axe sweep).
 3. Separate/hardened end-user portal bundle.

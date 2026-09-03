@@ -8550,6 +8550,206 @@ const en = {
       resolution: 'Resolution',
       copied: 'Error code "{{code}}" copied to clipboard.',
     },
+    // The go/no-go page for the assignment-enforcement rollout. Almost every
+    // sentence here counts something, and the English original hand-rolled the
+    // agreement — "user(s)", "route{s}", is/are, has/have, was/were — which no
+    // other language can follow. Each of those is now a real plural key, and a
+    // sentence that agrees with two different counts composes a pluralized
+    // subject and pluralizes the rest around it, so a locale writes each form
+    // out. `ACCESS_ASSIGNMENT_ENFORCE` is an environment variable an operator
+    // sets, so it stays literal inside the sentence, and each row's enforcement
+    // point and reason are composed by the server.
+    assignmentReport: {
+      // The heading is exactly the nav item, so it reuses `nav.items`.
+      subtitle: 'Who would lose access when ACCESS_ASSIGNMENT_ENFORCE is turned on.',
+      resource: 'the assignment report',
+      checking: 'Checking…',
+      reachUnavailable: 'Reachability unavailable',
+      reportIncomplete: 'Report incomplete — some users could not be evaluated',
+      safe: 'No one would lose Ziti overlay reach — safe to enforce for the overlay',
+      wouldLose: '{{users}} would lose access to {{applications}}',
+      userCount_one: '{{count}} user',
+      userCount_other: '{{count}} users',
+      applicationCount_one: '{{count}} application',
+      applicationCount_other: '{{count}} applications',
+      overlayOnly:
+        'This report models Ziti overlay reach only. Assignment enforcement also applies at the reverse proxy for every application-backed route, including routes with no Ziti service, and to users with no Ziti identity. Those are not measured here.',
+      routesOutside_one:
+        '{{count}} application-backed route is enforced at the proxy and is not covered by this report.',
+      routesOutside_other:
+        '{{count}} application-backed routes are enforced at the proxy and are not covered by this report.',
+      controllerUnavailable:
+        'Could not read the Ziti controller, so this report cannot tell you who would lose access. Do not enable enforcement based on this page.',
+      incomplete_one:
+        '{{count}} user could not be evaluated and is excluded from this report. Treat this report as incomplete until that count is zero.',
+      incomplete_other:
+        '{{count}} users could not be evaluated and are excluded from this report. Treat this report as incomplete until that count is zero.',
+      incompleteBut_one:
+        'But {{count}} user could not be evaluated and is excluded from this report. Treat this report as incomplete until that count is zero.',
+      incompleteBut_other:
+        'But {{count}} users could not be evaluated and are excluded from this report. Treat this report as incomplete until that count is zero.',
+      identitylessSubject_one: '{{n}} of {{count}} user',
+      identitylessSubject_other: '{{n}} of {{count}} users',
+      identityless_one:
+        '{{subject}} in this organization has no Ziti identity, so that user has no Ziti reach to lose and was not evaluated. Check that none of them should have been enrolled.',
+      identityless_other:
+        '{{subject}} in this organization have no Ziti identity, so those users have no Ziti reach to lose and were not evaluated. Check that none of them should have been enrolled.',
+      noUsers:
+        'No users were found in this organization, so nothing was evaluated. An empty evaluation is not evidence that enforcement is safe.',
+      countsMissing:
+        'This response did not carry the user counts, so how much of the organization was evaluated is unknown. Do not read it as a clean result.',
+      evaluated_one: 'Evaluated {{n}} of {{count}} user in this organization.',
+      evaluated_other: 'Evaluated {{n}} of {{count}} users in this organization.',
+      countsMissingBody:
+        'User counts not reported by the server, so this report cannot say how much of the organization it covered.',
+      grants_one:
+        'Assignment currently grants {{count}} user–application pair in this organization. That half of the report is read from the database and is still accurate; only the "who can reach what today" half is missing.',
+      grants_other:
+        'Assignment currently grants {{count}} user–application pairs in this organization. That half of the report is read from the database and is still accurate; only the "who can reach what today" half is missing.',
+      identitylessTitle: 'Users with no Ziti identity',
+      colUser: 'User',
+      colApplication: 'Application',
+      colEnforcedAt: 'Enforced at',
+      colWhy: 'Why',
+    },
+    // Quick-links launcher administration. A link's title, description and URL
+    // are the operator's own content. The category is stored as written, so the
+    // form select and the row badge resolve one map keyed by the stored value
+    // with a raw fallback — a category added later still reads as itself. Role
+    // names (the JWT's own vocabulary) and lucide icon names are wire
+    // identifiers and stay raw, as does the PAM entry id a link points at.
+    quickLinks: {
+      // The heading is exactly the nav item, so it reuses `nav.items`.
+      subtitle: 'Curate the support/collaboration launcher your users see.',
+      resource: 'quick links',
+      add: 'Add link',
+      allTitle: 'All quick links',
+      loading: 'Loading…',
+      emptyTitle: 'No quick links yet',
+      emptyHint: 'Add Teams, Zoom, a status page, or a PAM connection.',
+      disabled: 'disabled',
+      types: {
+        external: 'external',
+        pam: 'pam',
+      },
+      typeOptions: {
+        external: 'External URL',
+        pam: 'PAM connection',
+      },
+      categories: {
+        Support: 'Support',
+        Collaboration: 'Collaboration',
+        Monitoring: 'Monitoring',
+        IT: 'IT',
+        Other: 'Other',
+      },
+      pamTarget: 'PAM: {{id}}',
+      dialog: {
+        editTitle: 'Edit quick link',
+        addTitle: 'Add quick link',
+        title: 'Title',
+        description: 'Description',
+        type: 'Type',
+        category: 'Category',
+        url: 'URL',
+        pamConnection: 'PAM connection',
+        selectConnection: 'Select a connection…',
+        icon: 'Icon',
+        minRole: 'Minimum role',
+        enabled: 'Enabled',
+        openInNew: 'Open in new tab',
+        sort: 'Sort',
+        save: 'Save',
+        create: 'Create',
+      },
+      deleteTitle: 'Delete quick link?',
+      deleteBody: '“{{title}}” will be removed for all users.',
+      toasts: {
+        updated: 'Quick link updated',
+        created: 'Quick link created',
+        deleted: 'Quick link deleted',
+        saveFailed: 'Save failed',
+        deleteFailed: 'Delete failed',
+      },
+    },
+    // PAM overview. The vault's own secret kinds render raw beside their counts.
+    pamDashboard: {
+      title: 'Privileged Access',
+      subtitle: 'Vault inventory, rotation health, checkout activity, and privileged sessions',
+      resource: 'PAM overview',
+      updated: 'Updated {{time}}',
+      secrets: 'Vault Secrets',
+      secretType: '{{type}}: {{count}}',
+      leases: 'Active Leases',
+      checkouts30d_one: '{{count}} checkout in the last 30 days',
+      checkouts30d_other: '{{count}} checkouts in the last 30 days',
+      activeSessions: 'Active Sessions',
+      sessions30d_one: '{{count}} session in the last 30 days',
+      sessions30d_other: '{{count}} sessions in the last 30 days',
+      pendingApprovals: 'Pending Approvals',
+      // Deliberately terse: the two numbers sit under a headline that already
+      // names what they count.
+      pendingBreakdown: '{{credential}} credential · {{session}} session',
+      rotation: {
+        title: 'Rotation Health',
+        healthy: 'Healthy',
+        attention: 'Needs attention',
+        desc: 'Credential rotation policies and recent runs',
+        policies: 'Policies',
+        enabled: 'Enabled',
+        failing: 'Failing (last run)',
+        overdue: 'Overdue',
+        runs: 'Runs (30 days)',
+        failedRuns: 'Failed runs (30 days)',
+      },
+      assurance: {
+        title: 'Session Assurance',
+        desc: 'Brokered privileged sessions and recording holds',
+        active: 'Active sessions',
+        sessions30d: 'Sessions (30 days)',
+        pending: 'Pending session requests',
+        holds: 'Recordings on legal hold',
+      },
+      manage: {
+        vault: 'Manage Vault Secrets',
+        rotation: 'Manage Rotation Policies',
+        sessions: 'Manage Privileged Sessions',
+      },
+    },
+    // The device-enrolment wizard an end user walks through. The operating
+    // system names are product names and stay raw in the page's own const list;
+    // so do the enrolment code, the deep link and the QR that encodes it.
+    addDevice: {
+      // The back link is exactly the nav item, so it reuses `nav.items`.
+      title: 'Add a device to the network',
+      subtitle: 'Connect this device to Zero Trust access in three steps — no keys to copy.',
+      step1: '1. Choose your device type',
+      step2: '2. Install the OpenIDX app',
+      step2Mobile:
+        'Install the OpenIDX app on your phone, then scan the code below from inside the app.',
+      step2Desktop:
+        'Install the OpenIDX client for your operating system, then continue below.',
+      download: 'Download for {{os}}',
+      installerFromAdmin: 'Installer for {{os}} is provided by your administrator.',
+      step3: '3. Connect this device',
+      generate: 'Generate connect code',
+      startFailed: 'Could not start',
+      resource: 'enrollment status',
+      connected: 'Device connected',
+      trusted: 'Trusted — full access',
+      pendingTrust: 'Pending trust approval',
+      done: 'Done',
+      typeCode:
+        'Type this code in the OpenIDX app (Add a device), or tap <0>Open in app</0> on this phone.',
+      clickToCopy: 'Click to copy',
+      openInApp: 'Open in app',
+      copyCode: 'Copy code',
+      enrollmentCode: 'Enrollment code',
+      copiedItem: '{{what}} copied to clipboard.',
+      showQr: 'Prefer to scan? Show QR',
+      scanHint: 'Scan this from inside the OpenIDX app.',
+      waiting: 'Waiting for this device to connect…',
+    },
   },
   pam: {
     remoteAppSecretHint:
