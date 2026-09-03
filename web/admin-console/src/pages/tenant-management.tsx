@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import { Building2, Palette, Settings, Globe, Plus, Trash2, CheckCircle, Copy, Save } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
@@ -34,6 +35,12 @@ interface TenantDomain {
   verification_token?: string
 }
 
+/**
+ * Seeds for a tenant that has never been branded. These are the tenant's
+ * own data — its end users read them on its login page — so they are sent
+ * to the API and rendered exactly as stored, in English, rather than
+ * translated into whatever language the operator happens to be using.
+ */
 const defaultBranding: TenantBranding = {
   logo_url: '', favicon_url: '', primary_color: '#3b82f6', secondary_color: '#6366f1',
   background_color: '#f8fafc', background_image_url: '', login_page_title: 'Sign In',
@@ -42,16 +49,20 @@ const defaultBranding: TenantBranding = {
 }
 
 const TABS = [
-  { id: 'branding', label: 'Branding', icon: Palette },
-  { id: 'settings', label: 'Settings', icon: Settings },
-  { id: 'domains', label: 'Domains', icon: Globe },
+  { id: 'branding', icon: Palette },
+  { id: 'settings', icon: Settings },
+  { id: 'domains', icon: Globe },
 ] as const
+
+/** The three JSON settings groups the tenant settings API accepts. */
+const SETTINGS_CATEGORIES = ['security', 'authentication', 'session'] as const
 
 type TabId = typeof TABS[number]['id']
 
 export function TenantManagementPage() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const { t } = useTranslation()
   const [activeTab, setActiveTab] = useState<TabId>('branding')
   const [selectedOrgId, setSelectedOrgId] = useState('')
   const [branding, setBranding] = useState<TenantBranding>(defaultBranding)
@@ -103,33 +114,72 @@ export function TenantManagementPage() {
 
   const saveBrandingMutation = useMutation({
     mutationFn: (data: TenantBranding) => api.put(`/api/v1/tenants/${selectedOrgId}/branding`, data),
-    onSuccess: () => { invalidate('tenant-branding')(); toast({ title: 'Branding saved' }) },
-    onError: () => toast({ title: 'Failed to save branding', variant: 'destructive' }),
+    onSuccess: () => {
+      invalidate('tenant-branding')()
+      toast({ title: t('pages.tenantManagement.toasts.brandingSaved') })
+    },
+    onError: () =>
+      toast({
+        title: t('pages.tenantManagement.toasts.brandingFailed'),
+        variant: 'destructive',
+      }),
   })
 
   const saveSettingsMutation = useMutation({
     mutationFn: ({ category, value }: { category: string; value: string }) =>
       api.put(`/api/v1/tenants/${selectedOrgId}/settings`, { category, settings: JSON.parse(value) }),
-    onSuccess: () => { invalidate('tenant-settings')(); toast({ title: 'Settings saved' }) },
-    onError: (err: Error) => toast({ title: 'Failed to save settings', description: err.message, variant: 'destructive' }),
+    onSuccess: () => {
+      invalidate('tenant-settings')()
+      toast({ title: t('pages.tenantManagement.toasts.settingsSaved') })
+    },
+    // The message is the JSON parser's own, so it is surfaced verbatim.
+    onError: (err: Error) =>
+      toast({
+        title: t('pages.tenantManagement.toasts.settingsFailed'),
+        description: err.message,
+        variant: 'destructive',
+      }),
   })
 
   const addDomainMutation = useMutation({
     mutationFn: (body: { domain: string; domain_type: string }) => api.post(`/api/v1/tenants/${selectedOrgId}/domains`, body),
-    onSuccess: () => { invalidate('tenant-domains')(); toast({ title: 'Domain added' }); setAddDomainOpen(false); setNewDomain('') },
-    onError: () => toast({ title: 'Failed to add domain', variant: 'destructive' }),
+    onSuccess: () => {
+      invalidate('tenant-domains')()
+      toast({ title: t('pages.tenantManagement.toasts.domainAdded') })
+      setAddDomainOpen(false)
+      setNewDomain('')
+    },
+    onError: () =>
+      toast({
+        title: t('pages.tenantManagement.toasts.domainAddFailed'),
+        variant: 'destructive',
+      }),
   })
 
   const verifyDomainMutation = useMutation({
     mutationFn: (domainId: string) => api.post(`/api/v1/tenants/${selectedOrgId}/domains/${domainId}/verify`, { token: '' }),
-    onSuccess: () => { invalidate('tenant-domains')(); toast({ title: 'Domain verified' }) },
-    onError: () => toast({ title: 'Verification failed', variant: 'destructive' }),
+    onSuccess: () => {
+      invalidate('tenant-domains')()
+      toast({ title: t('pages.tenantManagement.toasts.domainVerified') })
+    },
+    onError: () =>
+      toast({
+        title: t('pages.tenantManagement.toasts.verifyFailed'),
+        variant: 'destructive',
+      }),
   })
 
   const deleteDomainMutation = useMutation({
     mutationFn: (domainId: string) => api.delete(`/api/v1/tenants/${selectedOrgId}/domains/${domainId}`),
-    onSuccess: () => { invalidate('tenant-domains')(); toast({ title: 'Domain removed' }) },
-    onError: () => toast({ title: 'Failed to delete domain', variant: 'destructive' }),
+    onSuccess: () => {
+      invalidate('tenant-domains')()
+      toast({ title: t('pages.tenantManagement.toasts.domainRemoved') })
+    },
+    onError: () =>
+      toast({
+        title: t('pages.tenantManagement.toasts.domainDeleteFailed'),
+        variant: 'destructive',
+      }),
   })
 
   const updateBranding = (field: keyof TenantBranding, value: string | boolean) => {
@@ -140,17 +190,21 @@ export function TenantManagementPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Tenant Management</h1>
-          <p className="text-muted-foreground">Configure branding, settings, and domains per organization</p>
+          <h1 className="text-3xl font-bold tracking-tight">{t('pages.tenantManagement.title')}</h1>
+          <p className="text-muted-foreground">{t('pages.tenantManagement.subtitle')}</p>
         </div>
       </div>
 
-      {orgsError && <QueryError error={orgsErrorObj} resource="organizations" />}
+      {orgsError && (
+        <QueryError error={orgsErrorObj} resource={t('pages.tenantManagement.orgsResource')} />
+      )}
 
       <div className="space-y-2">
-        <label className="text-sm font-medium">Organization</label>
+        <label className="text-sm font-medium">{t('pages.tenantManagement.organization')}</label>
         <Select value={selectedOrgId} onValueChange={setSelectedOrgId}>
-          <SelectTrigger className="w-64"><SelectValue placeholder="Select organization" /></SelectTrigger>
+          <SelectTrigger className="w-64">
+            <SelectValue placeholder={t('pages.tenantManagement.selectOrg')} />
+          </SelectTrigger>
           <SelectContent>
             {orgs.map(o => <SelectItem key={o.id} value={o.id}>{o.name}</SelectItem>)}
           </SelectContent>
@@ -158,7 +212,7 @@ export function TenantManagementPage() {
       </div>
 
       {!selectedOrgId ? (
-        <div className="flex flex-col items-center py-12 text-muted-foreground"><Building2 className="h-12 w-12 text-muted-foreground/40 mb-3" /><p>Select an organization to manage</p></div>
+        <div className="flex flex-col items-center py-12 text-muted-foreground"><Building2 className="h-12 w-12 text-muted-foreground/40 mb-3" /><p>{t('pages.tenantManagement.noOrgSelected')}</p></div>
       ) : (
         <>
           <div className="flex gap-2 border-b">
@@ -172,7 +226,8 @@ export function TenantManagementPage() {
                     : 'border-transparent text-muted-foreground hover:text-foreground'
                 }`}
               >
-                <tab.icon className="h-4 w-4" />{tab.label}
+                <tab.icon className="h-4 w-4" />
+                {t(`pages.tenantManagement.tabs.${tab.id}`)}
               </button>
             ))}
           </div>
@@ -182,8 +237,10 @@ export function TenantManagementPage() {
               <div className="lg:col-span-2 space-y-6">
                 <Card>
                   <CardHeader>
-                    <CardTitle>Branding</CardTitle>
-                    <CardDescription>Customize the tenant appearance</CardDescription>
+                    <CardTitle>{t('pages.tenantManagement.branding.title')}</CardTitle>
+                    <CardDescription>
+                      {t('pages.tenantManagement.branding.desc')}
+                    </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-4">
                     {brandingLoading ? (
@@ -192,18 +249,25 @@ export function TenantManagementPage() {
                       <>
                         <div className="grid gap-4 md:grid-cols-2">
                           <div className="space-y-2">
-                            <label className="text-sm font-medium">Logo URL</label>
+                            <label className="text-sm font-medium">
+                              {t('pages.tenantManagement.branding.logoUrl')}
+                            </label>
+                            {/* Asset URLs teach the format the API stores. */}
                             <Input value={branding.logo_url} onChange={e => updateBranding('logo_url', e.target.value)} placeholder="https://example.com/logo.png" />
                           </div>
                           <div className="space-y-2">
-                            <label className="text-sm font-medium">Favicon URL</label>
+                            <label className="text-sm font-medium">
+                              {t('pages.tenantManagement.branding.faviconUrl')}
+                            </label>
                             <Input value={branding.favicon_url} onChange={e => updateBranding('favicon_url', e.target.value)} placeholder="https://example.com/favicon.ico" />
                           </div>
                         </div>
                         <div className="grid gap-4 md:grid-cols-3">
                           {(['primary_color', 'secondary_color', 'background_color'] as const).map(field => (
                             <div key={field} className="space-y-2">
-                              <label className="text-sm font-medium">{field.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}</label>
+                              <label className="text-sm font-medium">
+                                {t(`pages.tenantManagement.branding.colors.${field}`)}
+                              </label>
                               <div className="flex gap-2">
                                 <input type="color" value={branding[field]} onChange={e => updateBranding(field, e.target.value)} className="h-10 w-14 rounded border cursor-pointer" />
                                 <Input value={branding[field]} onChange={e => updateBranding(field, e.target.value)} />
@@ -212,37 +276,54 @@ export function TenantManagementPage() {
                           ))}
                         </div>
                         <div className="space-y-2">
-                          <label className="text-sm font-medium">Background Image URL</label>
+                          <label className="text-sm font-medium">
+                            {t('pages.tenantManagement.branding.backgroundImageUrl')}
+                          </label>
                           <Input value={branding.background_image_url} onChange={e => updateBranding('background_image_url', e.target.value)} placeholder="https://example.com/bg.jpg" />
                         </div>
                         <div className="grid gap-4 md:grid-cols-2">
                           <div className="space-y-2">
-                            <label className="text-sm font-medium">Login Page Title</label>
+                            <label className="text-sm font-medium">
+                              {t('pages.tenantManagement.branding.loginPageTitle')}
+                            </label>
                             <Input value={branding.login_page_title} onChange={e => updateBranding('login_page_title', e.target.value)} />
                           </div>
                           <div className="space-y-2">
-                            <label className="text-sm font-medium">Portal Title</label>
+                            <label className="text-sm font-medium">
+                              {t('pages.tenantManagement.branding.portalTitle')}
+                            </label>
                             <Input value={branding.portal_title} onChange={e => updateBranding('portal_title', e.target.value)} />
                           </div>
                         </div>
                         <div className="space-y-2">
-                          <label className="text-sm font-medium">Login Page Message</label>
+                          <label className="text-sm font-medium">
+                            {t('pages.tenantManagement.branding.loginPageMessage')}
+                          </label>
                           <textarea value={branding.login_page_message} onChange={e => updateBranding('login_page_message', e.target.value)} className="w-full border rounded-md px-3 py-2 min-h-[80px]" />
                         </div>
                         <div className="space-y-2">
-                          <label className="text-sm font-medium">Custom CSS</label>
+                          <label className="text-sm font-medium">
+                            {t('pages.tenantManagement.branding.customCss')}
+                          </label>
                           <textarea value={branding.custom_css} onChange={e => updateBranding('custom_css', e.target.value)} className="w-full border rounded-md px-3 py-2 min-h-[100px] font-mono text-sm" placeholder="/* Custom CSS overrides */" />
                         </div>
                         <div className="space-y-2">
-                          <label className="text-sm font-medium">Custom Footer</label>
+                          <label className="text-sm font-medium">
+                            {t('pages.tenantManagement.branding.customFooter')}
+                          </label>
                           <textarea value={branding.custom_footer} onChange={e => updateBranding('custom_footer', e.target.value)} className="w-full border rounded-md px-3 py-2 min-h-[60px]" />
                         </div>
                         <label className="flex items-center gap-2">
                           <input type="checkbox" checked={branding.powered_by_visible} onChange={e => updateBranding('powered_by_visible', e.target.checked)} className="rounded" />
-                          <span className="text-sm font-medium">Show &quot;Powered by OpenIDX&quot;</span>
+                          <span className="text-sm font-medium">
+                            {t('pages.tenantManagement.branding.poweredBy')}
+                          </span>
                         </label>
                         <Button onClick={() => saveBrandingMutation.mutate(branding)} disabled={saveBrandingMutation.isPending}>
-                          <Save className="mr-2 h-4 w-4" />{saveBrandingMutation.isPending ? 'Saving...' : 'Save Branding'}
+                          <Save className="mr-2 h-4 w-4" />
+                          {saveBrandingMutation.isPending
+                            ? t('pages.tenantManagement.branding.saving')
+                            : t('pages.tenantManagement.branding.save')}
                         </Button>
                       </>
                     )}
@@ -252,17 +333,38 @@ export function TenantManagementPage() {
 
               {/* Live preview */}
               <Card>
-                <CardHeader><CardTitle className="text-base">Preview</CardTitle></CardHeader>
+                <CardHeader>
+                  <CardTitle className="text-base">{t('pages.tenantManagement.preview.title')}</CardTitle>
+                </CardHeader>
                 <CardContent>
                   <div className="rounded-lg border overflow-hidden" style={{ backgroundColor: branding.background_color, backgroundImage: branding.background_image_url ? `url(${branding.background_image_url})` : undefined, backgroundSize: 'cover' }}>
                     <div className="p-6 flex flex-col items-center gap-4">
-                      {branding.logo_url && <img src={branding.logo_url} alt="Logo" className="h-10 object-contain" />}
-                      <h3 className="font-semibold text-sm" style={{ color: branding.primary_color }}>{branding.login_page_title || 'Sign In'}</h3>
+                      {branding.logo_url && (
+                        <img
+                          src={branding.logo_url}
+                          alt={t('pages.tenantManagement.preview.logoAlt')}
+                          className="h-10 object-contain"
+                        />
+                      )}
+                      {/* Title, message and footer are the tenant's own copy,
+                          shown exactly as it will appear to its users. */}
+                      <h3 className="font-semibold text-sm" style={{ color: branding.primary_color }}>
+                        {branding.login_page_title || defaultBranding.login_page_title}
+                      </h3>
                       <p className="text-xs text-center text-muted-foreground">{branding.login_page_message}</p>
                       <div className="w-full space-y-2">
-                        <div className="h-8 w-full bg-background border rounded px-2 flex items-center text-xs text-muted-foreground">username</div>
-                        <div className="h-8 w-full bg-background border rounded px-2 flex items-center text-xs text-muted-foreground">password</div>
-                        <div className="h-8 w-full rounded text-white text-xs flex items-center justify-center font-medium" style={{ backgroundColor: branding.primary_color }}>Sign In</div>
+                        <div className="h-8 w-full bg-background border rounded px-2 flex items-center text-xs text-muted-foreground">
+                          {t('pages.tenantManagement.preview.username')}
+                        </div>
+                        <div className="h-8 w-full bg-background border rounded px-2 flex items-center text-xs text-muted-foreground">
+                          {t('pages.tenantManagement.preview.password')}
+                        </div>
+                        <div
+                          className="h-8 w-full rounded text-white text-xs flex items-center justify-center font-medium"
+                          style={{ backgroundColor: branding.primary_color }}
+                        >
+                          {t('pages.tenantManagement.preview.signIn')}
+                        </div>
                       </div>
                       {branding.custom_footer && <p className="text-[10px] text-muted-foreground text-center">{branding.custom_footer}</p>}
                       {branding.powered_by_visible && <p className="text-[10px] text-muted-foreground">Powered by OpenIDX</p>}
@@ -278,11 +380,19 @@ export function TenantManagementPage() {
               {settingsLoading ? (
                 <div className="flex justify-center py-12"><LoadingSpinner size="lg" /></div>
               ) : (
-                (['security', 'authentication', 'session'] as const).map(category => (
+                SETTINGS_CATEGORIES.map(category => (
                   <Card key={category}>
                     <CardHeader>
-                      <CardTitle className="capitalize">{category}</CardTitle>
-                      <CardDescription>Edit {category} settings as JSON</CardDescription>
+                      <CardTitle>
+                        {t(`pages.tenantManagement.settings.categories.${category}`)}
+                      </CardTitle>
+                      <CardDescription>
+                        {t('pages.tenantManagement.settings.desc', {
+                          category: t(
+                            `pages.tenantManagement.settings.categories.${category}`,
+                          ),
+                        })}
+                      </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
                       <textarea
@@ -294,7 +404,12 @@ export function TenantManagementPage() {
                         onClick={() => saveSettingsMutation.mutate({ category, value: settingsJson[category] || '{}' })}
                         disabled={saveSettingsMutation.isPending}
                       >
-                        <Save className="mr-2 h-4 w-4" />Save {category}
+                        <Save className="mr-2 h-4 w-4" />
+                        {t('pages.tenantManagement.settings.save', {
+                          category: t(
+                            `pages.tenantManagement.settings.categories.${category}`,
+                          ),
+                        })}
                       </Button>
                     </CardContent>
                   </Card>
@@ -308,50 +423,74 @@ export function TenantManagementPage() {
               <CardHeader>
                 <div className="flex items-center justify-between">
                   <div>
-                    <CardTitle>Custom Domains</CardTitle>
-                    <CardDescription>Manage domains for this tenant</CardDescription>
+                    <CardTitle>{t('pages.tenantManagement.domains.title')}</CardTitle>
+                    <CardDescription>{t('pages.tenantManagement.domains.desc')}</CardDescription>
                   </div>
-                  <Button onClick={() => setAddDomainOpen(true)}><Plus className="mr-2 h-4 w-4" />Add Domain</Button>
+                  <Button onClick={() => setAddDomainOpen(true)}>
+                    <Plus className="mr-2 h-4 w-4" />
+                    {t('pages.tenantManagement.domains.add')}
+                  </Button>
                 </div>
               </CardHeader>
               <CardContent>
                 {domainsLoading ? (
                   <div className="flex justify-center py-8"><LoadingSpinner size="lg" /></div>
                 ) : domains.length === 0 ? (
-                  <div className="flex flex-col items-center py-12 text-muted-foreground"><Globe className="h-12 w-12 text-muted-foreground/40 mb-3" /><p className="font-medium">No domains configured</p><p className="text-sm">Add a custom domain to enable branded URLs</p></div>
+                  <div className="flex flex-col items-center py-12 text-muted-foreground"><Globe className="h-12 w-12 text-muted-foreground/40 mb-3" /><p className="font-medium">{t('pages.tenantManagement.domains.emptyTitle')}</p><p className="text-sm">{t('pages.tenantManagement.domains.emptyHint')}</p></div>
                 ) : (
                   <Table>
                     <TableHeader><TableRow>
-                      <TableHead>Domain</TableHead><TableHead>Type</TableHead><TableHead>Verified</TableHead>
-                      <TableHead>Primary</TableHead><TableHead>Actions</TableHead>
+                      <TableHead>{t('pages.tenantManagement.domains.colDomain')}</TableHead>
+                      <TableHead>{t('pages.tenantManagement.domains.colType')}</TableHead>
+                      <TableHead>{t('pages.tenantManagement.domains.colVerified')}</TableHead>
+                      <TableHead>{t('pages.tenantManagement.domains.colPrimary')}</TableHead>
+                      <TableHead>{t('pages.tenantManagement.domains.colActions')}</TableHead>
                     </TableRow></TableHeader>
                     <TableBody>
                       {domains.map(d => (
                         <TableRow key={d.id}>
                           <TableCell className="font-medium">{d.domain}</TableCell>
-                          <TableCell><Badge variant="outline">{d.domain_type}</Badge></TableCell>
                           <TableCell>
-                            <Badge variant={d.verified ? 'default' : 'secondary'}>{d.verified ? 'Verified' : 'Pending'}</Badge>
+                            <Badge variant="outline">
+                              {t(`pages.tenantManagement.domains.types.${d.domain_type}`, {
+                                defaultValue: d.domain_type,
+                              })}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant={d.verified ? 'default' : 'secondary'}>
+                              {d.verified
+                                ? t('pages.tenantManagement.domains.verified')
+                                : t('pages.tenantManagement.domains.pending')}
+                            </Badge>
                             {!d.verified && d.verification_token && (
                               <button
                                 className="ml-2 inline-flex items-center gap-1 text-xs text-primary hover:underline"
                                 onClick={() => {
                                   navigator.clipboard.writeText(d.verification_token || '')
-                                  toast({ title: 'Token copied' })
+                                  toast({ title: t('pages.tenantManagement.toasts.tokenCopied') })
                                 }}
                               >
                                 <Copy className="h-3 w-3" />{d.verification_token}
                               </button>
                             )}
                           </TableCell>
-                          <TableCell>{d.primary_domain ? <Badge variant="default">Primary</Badge> : '-'}</TableCell>
+                          <TableCell>
+                            {d.primary_domain ? (
+                              <Badge variant="default">{t('pages.tenantManagement.domains.primary')}</Badge>
+                            ) : (
+                              '-'
+                            )}
+                          </TableCell>
                           <TableCell>
                             <div className="flex gap-1">
                               {!d.verified && (
                                 <ConfirmAction
-                                  title="Verify this domain?"
-                                  description={`This marks ${d.domain} as a verified, trusted domain for this tenant. Verified domains are trusted for branded URLs and identity binding.`}
-                                  confirmLabel="Verify"
+                                  title={t('pages.tenantManagement.domains.verifyTitle')}
+                                  description={t('pages.tenantManagement.domains.verifyDesc', {
+                                    domain: d.domain,
+                                  })}
+                                  confirmLabel={t('pages.tenantManagement.domains.verifyConfirm')}
                                   onConfirm={() => verifyDomainMutation.mutateAsync(d.id)}
                                 >
                                   {(open) => (
@@ -362,10 +501,12 @@ export function TenantManagementPage() {
                                 </ConfirmAction>
                               )}
                               <ConfirmAction
-                                title="Delete this domain?"
-                                description={`This removes ${d.domain} from the tenant. Any branded URLs relying on it will stop working.`}
+                                title={t('pages.tenantManagement.domains.deleteTitle')}
+                                description={t('pages.tenantManagement.domains.deleteDesc', {
+                                  domain: d.domain,
+                                })}
                                 destructive
-                                confirmLabel="Delete"
+                                confirmLabel={t('common.delete')}
                                 onConfirm={() => deleteDomainMutation.mutateAsync(d.id)}
                               >
                                 {(open) => (
@@ -390,27 +531,42 @@ export function TenantManagementPage() {
       {/* Add Domain Dialog */}
       <Dialog open={addDomainOpen} onOpenChange={setAddDomainOpen}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Add Domain</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>{t('pages.tenantManagement.domains.add')}</DialogTitle>
+          </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
-              <label className="text-sm font-medium">Domain</label>
+              <label className="text-sm font-medium">
+                {t('pages.tenantManagement.domains.domainLabel')}
+              </label>
+              {/* The sample host teaches the format the API accepts. */}
               <Input value={newDomain} onChange={e => setNewDomain(e.target.value)} placeholder="login.example.com" />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium">Type</label>
+              <label className="text-sm font-medium">
+                {t('pages.tenantManagement.domains.typeLabel')}
+              </label>
               <Select value={newDomainType} onValueChange={setNewDomainType}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="subdomain">Subdomain</SelectItem>
-                  <SelectItem value="custom">Custom Domain</SelectItem>
+                  <SelectItem value="subdomain">
+                    {t('pages.tenantManagement.domains.types.subdomain')}
+                  </SelectItem>
+                  <SelectItem value="custom">
+                    {t('pages.tenantManagement.domains.types.custom')}
+                  </SelectItem>
                 </SelectContent>
               </Select>
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setAddDomainOpen(false)}>Cancel</Button>
+            <Button variant="outline" onClick={() => setAddDomainOpen(false)}>
+              {t('common.cancel')}
+            </Button>
             <Button disabled={!newDomain.trim() || addDomainMutation.isPending} onClick={() => addDomainMutation.mutate({ domain: newDomain.trim(), domain_type: newDomainType })}>
-              {addDomainMutation.isPending ? 'Adding...' : 'Add Domain'}
+              {addDomainMutation.isPending
+                ? t('pages.tenantManagement.domains.adding')
+                : t('pages.tenantManagement.domains.add')}
             </Button>
           </DialogFooter>
         </DialogContent>

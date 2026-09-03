@@ -525,6 +525,43 @@ describe('i18n', () => {
       ...['user', 'agent', 'service', 'unresolved', 'unknown'].map(
         (k) => `pages.zitiAiInsights.subjectKinds.${k}`,
       ),
+      // usage-analytics: the adoption endpoint's feature names, in both of the
+      // shapes it has shipped.
+      ...[
+        'mfa_totp',
+        'mfa_webauthn',
+        'passkey_login',
+        'magic_link',
+        'api_keys',
+        'social_login',
+        'totp',
+        'webauthn',
+        'passkey',
+        'sms',
+        'mfa',
+        'sso',
+      ].map((k) => `pages.usageAnalytics.features.${k}`),
+      // webhooks: the subscription lifecycle and the delivery lifecycle.
+      ...['active', 'disabled'].map((k) => `pages.webhooks.statuses.${k}`),
+      ...['delivered', 'failed', 'pending'].map(
+        (k) => `pages.webhooks.deliveryStatuses.${k}`,
+      ),
+      // tenant-management: the tab strip, the three colour fields keyed by the
+      // branding field name, the JSON settings groups and the domain kinds.
+      ...['branding', 'settings', 'domains'].map(
+        (k) => `pages.tenantManagement.tabs.${k}`,
+      ),
+      ...['primary_color', 'secondary_color', 'background_color'].map(
+        (k) => `pages.tenantManagement.branding.colors.${k}`,
+      ),
+      ...['security', 'authentication', 'session'].map(
+        (k) => `pages.tenantManagement.settings.categories.${k}`,
+      ),
+      ...['subdomain', 'custom'].map((k) => `pages.tenantManagement.domains.types.${k}`),
+      // devices: the type derived from the user agent, and the overlay
+      // enrolment state derived from the device's Ziti identity.
+      ...['mobile', 'tablet', 'desktop'].map((k) => `pages.devices.deviceTypes.${k}`),
+      ...['enrolled', 'pending', 'none'].map((k) => `pages.devices.zitiStatuses.${k}`),
     ]
     for (const lang of supportedLanguages) {
       for (const key of mapKeys) {
@@ -866,6 +903,67 @@ describe('i18n', () => {
     expect(
       i18n.t('pages.zitiAiInsights.toasts.analysisObservations', { count: 12 }),
     ).toBe('12 gözlem incelendi')
+  })
+
+  it('pluralizes the usage-analytics registration total in both languages', async () => {
+    // The raw number picks the plural; the locale-formatted string fills the
+    // sentence, so a five-figure total still reads as "12,345".
+    await i18n.changeLanguage('en')
+    expect(
+      i18n.t('pages.usageAnalytics.registrations.total', { count: 1, formatted: '1' }),
+    ).toBe('Total: 1 new user')
+    expect(
+      i18n.t('pages.usageAnalytics.registrations.total', {
+        count: 12345,
+        formatted: (12345).toLocaleString('en-US'),
+      }),
+    ).toBe('Total: 12,345 new users')
+
+    await i18n.changeLanguage('tr')
+    expect(
+      i18n.t('pages.usageAnalytics.registrations.total', { count: 3, formatted: '3' }),
+    ).toBe('Toplam: 3 yeni kullanıcı')
+  })
+
+  it('resolves an unknown webhook delivery status to its raw value', async () => {
+    await i18n.changeLanguage('en')
+    expect(
+      i18n.t('pages.webhooks.deliveryStatuses.dropped', { defaultValue: 'dropped' }),
+    ).toBe('dropped')
+    expect(i18n.t('pages.webhooks.deliveryStatuses.delivered')).toBe('Delivered')
+    // The subscription statuses stay lowercase, as the page has always shown.
+    expect(i18n.t('pages.webhooks.statuses.active')).toBe('active')
+  })
+
+  it('names the tenant settings group inside its own sentence', async () => {
+    await i18n.changeLanguage('en')
+    expect(
+      i18n.t('pages.tenantManagement.settings.desc', {
+        category: i18n.t('pages.tenantManagement.settings.categories.session'),
+      }),
+    ).toBe('Edit Session settings as JSON')
+
+    await i18n.changeLanguage('tr')
+    expect(
+      i18n.t('pages.tenantManagement.settings.desc', {
+        category: i18n.t('pages.tenantManagement.settings.categories.session'),
+      }),
+    ).toBe('Oturum ayarlarını JSON olarak düzenleyin')
+  })
+
+  it('pluralizes the device pagination line in both languages', async () => {
+    await i18n.changeLanguage('en')
+    expect(
+      i18n.t('pages.devices.showing', { from: 1, to: 1, total: 1, count: 1 }),
+    ).toBe('Showing 1 to 1 of 1 device')
+    expect(
+      i18n.t('pages.devices.showing', { from: 1, to: 20, total: 42, count: 42 }),
+    ).toBe('Showing 1 to 20 of 42 devices')
+
+    await i18n.changeLanguage('tr')
+    expect(
+      i18n.t('pages.devices.showing', { from: 1, to: 20, total: 42, count: 42 }),
+    ).toBe('42 cihazdan 1-20 arası gösteriliyor')
   })
 
   it('interpolates the page strings that carry values', async () => {

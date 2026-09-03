@@ -7339,6 +7339,296 @@ const en = {
         restoreFailed: 'Restore Failed',
       },
     },
+    // Usage analytics. DAU/WAU/MAU are the industry's own acronyms and stay as
+    // they are in every locale, as do HTTP methods, endpoint paths and the
+    // server's feature-category string.
+    usageAnalytics: {
+      // The heading is exactly the nav item, so it reuses `nav.items` and the
+      // two cannot drift apart.
+      subtitle: 'User engagement, feature adoption, and platform utilization',
+      resource: 'usage analytics',
+      cards: {
+        dau: 'DAU',
+        dauHint: 'Daily active',
+        wau: 'WAU',
+        wauHint: 'Weekly active',
+        mau: 'MAU',
+        mauHint: 'Monthly active',
+        totalUsers: 'Total Users',
+        totalUsersHint: 'All registered',
+        totalGroups: 'Total Groups',
+        totalGroupsHint: 'Active groups',
+        totalApps: 'Total Apps',
+        totalAppsHint: 'Registered apps',
+      },
+      adoption: {
+        title: 'Feature Adoption',
+        desc: 'Security and authentication feature usage across your user base',
+        ofUsers: '{{adopted}} of {{total}} users',
+        empty: 'No feature adoption data available',
+      },
+      // The adoption endpoint has shipped two name shapes for the same
+      // features, so both resolve here; anything else falls back to its
+      // prettified raw value.
+      features: {
+        mfa_totp: 'TOTP',
+        mfa_webauthn: 'WebAuthn',
+        passkey_login: 'Passkey',
+        magic_link: 'Magic link',
+        api_keys: 'API keys',
+        social_login: 'Social login',
+        totp: 'TOTP',
+        webauthn: 'WebAuthn',
+        passkey: 'Passkey',
+        sms: 'SMS',
+        mfa: 'MFA',
+        sso: 'SSO',
+      },
+      api: {
+        title: 'Top API Endpoints',
+        desc: 'Most-used endpoints by request volume',
+        colMethod: 'Method',
+        colPath: 'Path',
+        colRequests: 'Requests',
+        colLatency: 'Avg Latency',
+        colErrorRate: 'Error Rate',
+        latencyMs: '{{n}}ms',
+        empty: 'No API usage data available',
+      },
+      registrations: {
+        title: 'New User Registrations',
+        desc: 'Daily registration trend over the last 30 days',
+        dayTooltip_one: '{{date}}: {{count}} registration',
+        dayTooltip_other: '{{date}}: {{count}} registrations',
+        total_one: 'Total: {{formatted}} new user',
+        total_other: 'Total: {{formatted}} new users',
+        empty: 'No registration data available',
+      },
+    },
+    // Webhooks. The event names (`user.created`, `login.high_risk`, …) are the
+    // wire identifiers a subscriber matches on, so they stay raw in the picker,
+    // on the subscription card and in the delivery log — as does the endpoint
+    // URL example, which teaches the format the API accepts.
+    webhooks: {
+      // The heading is exactly the nav item, so it reuses `nav.items`.
+      subtitle: 'Manage webhook subscriptions and delivery history',
+      create: 'Create Webhook',
+      searchPlaceholder: 'Search webhooks...',
+      loading: 'Loading webhooks...',
+      resource: 'webhooks',
+      emptyTitle: 'No webhooks configured',
+      emptyHint: 'Create a webhook to receive event notifications',
+      deliveries: 'Deliveries',
+      // Subscription lifecycle, resolved by key with the raw value as fallback.
+      statuses: {
+        active: 'active',
+        disabled: 'disabled',
+      },
+      form: {
+        title: 'Create Webhook Subscription',
+        desc: 'Subscribe to events and receive HTTP notifications.',
+        name: 'Name',
+        namePlaceholder: 'My Webhook',
+        url: 'URL',
+        secret: 'Secret',
+        secretPlaceholder: 'Signing secret for payload verification',
+        events: 'Events',
+        creating: 'Creating...',
+        submit: 'Create',
+      },
+      deleteDialog: {
+        title: 'Delete Webhook',
+        desc:
+          'Are you sure you want to delete “{{name}}”? You will stop receiving notifications for this subscription. This action cannot be undone.',
+      },
+      history: {
+        title: 'Delivery History',
+        loading: 'Loading deliveries...',
+        resource: 'delivery history',
+        empty: 'No deliveries yet',
+        httpStatus: 'HTTP {{code}}',
+        attempt: 'Attempt {{n}}',
+        retry: 'Retry',
+      },
+      // Delivery lifecycle. One map for the three styled states and anything
+      // the sender adds later, which falls back to its raw value.
+      deliveryStatuses: {
+        delivered: 'Delivered',
+        failed: 'Failed',
+        pending: 'Pending',
+      },
+      toasts: {
+        created: 'Webhook subscription created',
+        createFailed: 'Failed to create webhook',
+        deleted: 'Webhook subscription deleted',
+        deleteFailed: 'Failed to delete webhook',
+        retryQueued: 'Delivery retry queued',
+        retryFailed: 'Failed to retry delivery',
+      },
+    },
+    // Tenant management. The branding fields are the tenant's own data — the
+    // login title, message and footer its end users will read — so their
+    // defaults and the live preview render them exactly as stored, never
+    // translated. Asset URLs, the sample domain and the CSS comment are format
+    // examples and stay raw, as does the “Powered by OpenIDX” product line.
+    tenantManagement: {
+      title: 'Tenant Management',
+      subtitle: 'Configure branding, settings, and domains per organization',
+      orgsResource: 'organizations',
+      organization: 'Organization',
+      selectOrg: 'Select organization',
+      noOrgSelected: 'Select an organization to manage',
+      tabs: {
+        branding: 'Branding',
+        settings: 'Settings',
+        domains: 'Domains',
+      },
+      branding: {
+        title: 'Branding',
+        desc: 'Customize the tenant appearance',
+        logoUrl: 'Logo URL',
+        faviconUrl: 'Favicon URL',
+        // Keyed by the branding field name so the label cannot drift from the
+        // colour input it sits above.
+        colors: {
+          primary_color: 'Primary Color',
+          secondary_color: 'Secondary Color',
+          background_color: 'Background Color',
+        },
+        backgroundImageUrl: 'Background Image URL',
+        loginPageTitle: 'Login Page Title',
+        portalTitle: 'Portal Title',
+        loginPageMessage: 'Login Page Message',
+        customCss: 'Custom CSS',
+        customFooter: 'Custom Footer',
+        poweredBy: 'Show “Powered by OpenIDX”',
+        saving: 'Saving...',
+        save: 'Save Branding',
+      },
+      preview: {
+        title: 'Preview',
+        logoAlt: 'Logo',
+        username: 'username',
+        password: 'password',
+        signIn: 'Sign In',
+      },
+      settings: {
+        categories: {
+          security: 'Security',
+          authentication: 'Authentication',
+          session: 'Session',
+        },
+        desc: 'Edit {{category}} settings as JSON',
+        save: 'Save {{category}}',
+      },
+      domains: {
+        title: 'Custom Domains',
+        desc: 'Manage domains for this tenant',
+        add: 'Add Domain',
+        adding: 'Adding...',
+        emptyTitle: 'No domains configured',
+        emptyHint: 'Add a custom domain to enable branded URLs',
+        colDomain: 'Domain',
+        colType: 'Type',
+        colVerified: 'Verified',
+        colPrimary: 'Primary',
+        colActions: 'Actions',
+        verified: 'Verified',
+        pending: 'Pending',
+        primary: 'Primary',
+        // One list behind the badge and the picker, so the two cannot drift.
+        types: {
+          subdomain: 'Subdomain',
+          custom: 'Custom Domain',
+        },
+        verifyTitle: 'Verify this domain?',
+        verifyDesc:
+          'This marks {{domain}} as a verified, trusted domain for this tenant. Verified domains are trusted for branded URLs and identity binding.',
+        verifyConfirm: 'Verify',
+        deleteTitle: 'Delete this domain?',
+        deleteDesc:
+          'This removes {{domain}} from the tenant. Any branded URLs relying on it will stop working.',
+        domainLabel: 'Domain',
+        typeLabel: 'Type',
+      },
+      toasts: {
+        brandingSaved: 'Branding saved',
+        brandingFailed: 'Failed to save branding',
+        settingsSaved: 'Settings saved',
+        settingsFailed: 'Failed to save settings',
+        domainAdded: 'Domain added',
+        domainAddFailed: 'Failed to add domain',
+        domainVerified: 'Domain verified',
+        verifyFailed: 'Verification failed',
+        domainRemoved: 'Domain removed',
+        domainDeleteFailed: 'Failed to delete domain',
+        tokenCopied: 'Token copied',
+      },
+    },
+    // Admin device inventory (the operator view; `myDevices` is the
+    // self-service one). Fingerprints, IP addresses and user-agent strings are
+    // server-sourced identifiers and render as sent.
+    devices: {
+      // The heading is exactly the nav item, so it reuses `nav.items`.
+      subtitle:
+        'Unified device management — trust status controls network access automatically',
+      resource: 'devices',
+      stats: {
+        total: 'Total Devices',
+        trusted: 'Trusted Devices',
+        newToday: 'New Devices Today',
+        highRiskToday: 'High-Risk Logins Today',
+      },
+      searchPlaceholder: 'Search by name, IP, user, or fingerprint...',
+      loading: 'Loading devices...',
+      emptyTitle: 'No devices found',
+      emptyHint: 'Devices will appear here when users log in',
+      colDevice: 'Device',
+      colUser: 'User',
+      colType: 'Type',
+      colIp: 'IP Address',
+      colTrust: 'Trust',
+      colZiti: 'Ziti Status',
+      colNetwork: 'Network Access',
+      colLastSeen: 'Last Seen',
+      unknownDevice: 'Unknown Device',
+      // Derived from the user-agent string, so one list drives the icon column
+      // and the badge beside it.
+      deviceTypes: {
+        mobile: 'Mobile',
+        tablet: 'Tablet',
+        desktop: 'Desktop',
+      },
+      trusted: 'Trusted',
+      untrusted: 'Untrusted',
+      // Overlay enrolment state, derived from the device's Ziti identity.
+      zitiStatuses: {
+        enrolled: 'Enrolled',
+        pending: 'Pending',
+        none: 'Not Linked',
+      },
+      networkActive: 'Active',
+      networkInactive: 'Inactive',
+      trustDevice: 'Trust Device',
+      revokeTrust: 'Revoke Trust',
+      copyFingerprint: 'Copy Fingerprint',
+      deleteDevice: 'Delete Device',
+      showing_one: 'Showing {{from}} to {{to}} of {{total}} device',
+      showing_other: 'Showing {{from}} to {{to}} of {{total}} devices',
+      removeDialog: {
+        title: 'Remove Device',
+        desc:
+          'Are you sure you want to remove this device? This will revoke trust and update network access.',
+        confirm: 'Remove',
+      },
+      toasts: {
+        trusted: 'Device trusted — network access updated',
+        trustFailed: 'Failed to trust device',
+        removed: 'Device removed — network access updated',
+        removeFailed: 'Failed to remove device',
+        fingerprintCopied: 'Fingerprint copied to clipboard',
+      },
+    },
   },
   pam: {
     remoteAppSecretHint:

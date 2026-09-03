@@ -21,7 +21,7 @@ security, access, sessions, devices, trusted browsers, notifications,
 access requests, profile — are fully bilingual; the end-user experience
 is complete in both languages). Open: P1 rollout Task 16 (operator
 action), P3.1 cut v1.28.0 (post-merge), the remaining P4 items incl.
-the 31 remaining admin page bodies and the Expo-vs-Flutter mobile pick.)
+the 27 remaining admin page bodies and the Expo-vs-Flutter mobile pick.)
 **Question this document answers:** *Is OpenIDX fully functional and well defined end to end, as experienced by the people who use it — and what are the next steps and controls to get it there?*
 
 This is the product-and-user-side companion to
@@ -762,11 +762,28 @@ all four pillars, deploy, log in, and find PAM.
    components that re-resolve on a language switch, and the Ziti analysis
    toast pluralizes both of its counts independently instead of concatenating
    "1 observations".
-   *Remaining:* 31 other admin page bodies (a measured count, not an
+   Batch 19 took Usage Analytics, Webhooks, Tenant Management and the admin
+   Devices inventory. Two of those four draw the raw/translated line at
+   something other than a protocol identifier. Webhooks keeps its event names
+   (`user.created`, `login.high_risk`) raw everywhere — picker, subscription
+   card and delivery log — because they are what a subscriber matches on, not
+   prose. And Tenant Management keeps the *tenant's own* branding copy raw:
+   the login title, message and footer an operator types here are read by that
+   tenant's end users, so the seeded defaults and the live preview render them
+   exactly as stored rather than in whatever language the operator happens to
+   be using; only the console chrome around them localizes. Four more derived
+   or backend vocabularies now resolve through the catalog off one list —
+   webhook subscription and delivery status, tenant domain kinds, the device
+   type derived from the user agent and the overlay enrolment state — and two
+   more concatenations became real plurals ("Total: 1 new user", "Showing 1 to
+   1 of 1 device"), with the registration total keeping its locale-formatted
+   number by passing the raw count for the plural rule and the formatted
+   string for the sentence.
+   *Remaining:* 27 other admin page bodies (a measured count, not an
    estimate: pages under `src/pages` with no `useTranslation`) — mechanical,
    batch by batch, against this pattern. The largest of them are
-   `usage-analytics.tsx` (442 lines), `webhooks.tsx` (421),
-   `tenant-management.tsx` (420) and `devices.tsx` (392).
+   `ai-agents.tsx` (390 lines), `ziti-discovery.tsx` (379),
+   `network-topology.tsx` (371) and `predictive-analytics.tsx` (349).
 2. Accessibility pass to a VPAT (needs real assistive-technology testing,
    not just an automated axe sweep).
 3. Separate/hardened end-user portal bundle.
