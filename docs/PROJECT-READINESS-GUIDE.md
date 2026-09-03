@@ -1003,16 +1003,67 @@ all four pillars, deploy, log in, and find PAM.
    deliberately: `text-red-600` appears in 70 files but passes AA on white,
    so only the measured red-on-red-50 pairing changed rather than 70 files of
    unmeasured churn. Re-measured after the fix: **0 failures across all ten
-   route × scheme combinations.** Still unmeasured: contrast on the
-   authenticated surfaces (they need a running backend to render), and the
-   whole keyboard/focus/screen-reader class.
+   route × scheme combinations.** Still unmeasured at that point: contrast on
+   the authenticated surfaces, and the whole keyboard/focus/screen-reader
+   class. The first of those two is now closed — see 1d.
+
+1d. ✅ **The authenticated surfaces measured too — the "needs a running
+   backend" caveat was wrong.** 1c left contrast on the signed-in pages
+   unmeasured on the grounds that they need a backend. They do not: the
+   console's auth is entirely client-side (it parses a JWT from
+   `localStorage` and checks `exp` and a non-empty `roles` claim — no
+   signature check in the browser), so a well-formed unsigned token plus a
+   path-aware Playwright route stub renders every one of them with no server
+   at all. `web/admin-console/scripts/contrast-audit.mjs` does that over
+   **36 routes × 2 colour schemes** — the 12 end-user surfaces and 24 admin
+   pages. The stub returns *populated* data on purpose: an empty list renders
+   an empty state, and an empty state has none of the badges, status pills
+   and table rows contrast bugs live in. The first version of the probe
+   returned 0 violations on every route and was **wrong** — the pages were
+   rendering blank because one stub had the wrong shape. It now reports each
+   route's character count and axe pass count and fails on a blank page, for
+   exactly that reason. **27 real failures, six root causes:** (a) the view
+   switcher's active pill paired the theme-flipping `bg-background` with a
+   fixed `text-blue-700` — 2.99:1 on dark, on *every* page that shows it;
+   (b) two light tints (`bg-blue-50/50` on unread notifications,
+   `bg-green-50/30` on the My Devices network card) had no dark variant, so
+   they composited to mid-grey over the dark background and took the muted
+   text inside them to 1.56:1 — the audit dashboard already had the
+   `dark:bg-*-950/20` pairing they were missing; (c) the security-score
+   number was `text-yellow-600`, 2.94:1, under the 3:1 that 48px bold still
+   needs; (d) the "expires soon" hint was `text-orange-600`, and no single
+   orange clears AA in both themes (600 is 3.56 light, 700 is 3.86 dark), so
+   it took a dark variant; (e) `--primary` as *text* on a `--muted` strip was
+   3.98:1 in dark — raising the dark token from 59.8% to 64% lightness fixes
+   that at 4.60:1 **and** improves the primary button, whose near-black label
+   goes 4.85 → 5.61:1; (f) the device-code input set no colours of its own,
+   so it kept the browser's default white box while its text came from the
+   theme — **1.05:1 in dark mode, on the one screen a person opens on a phone
+   because a television told them to.** Re-measured: **0 violations across
+   all 72 route × scheme combinations, 0 blank pages.** Scope discipline
+   again: a third `bg-blue-50/50` on the Ziti network page looked like the
+   same bug and was left alone because measuring it showed it passing.
+
+1e. ✅ **A token-level contrast guard that runs in CI, with no browser.**
+   The browser audit needs a build and a preview server, so it is a
+   pre-release tool, not a gate — and it can only judge what a route
+   actually paints. `src/test/design-token-contrast.test.ts` closes both
+   gaps for the token layer: it parses the HSL custom properties out of
+   `index.css` and asserts the 14 foreground/surface pairs the components
+   render, in both themes, at AA. It found a defect **no page sweep had
+   reached**: light `--destructive-foreground` on `--destructive` was
+   **3.59:1** — the label of every Delete / Revoke / Terminate button in the
+   console, invisible to the sweep because those buttons live inside confirm
+   dialogs. Dropping the token to 48% lightness gives 4.64:1 on the button
+   and 4.86:1 for `text-destructive` on a card, same hue. The guard is
+   red-proofed against the three real regressions it exists to catch (it
+   reproduces 3.59:1, 3.97:1 and the previous increment's 4.34:1 exactly),
+   and pins the contrast maths against black-on-white = 21:1.
 2. Accessibility audit to a VPAT with real assistive technology — keyboard
-   order, focus management, screen-reader announcement — plus contrast on the
-   authenticated surfaces, which need a running backend to render. Done and
-   gated already: the axe sweep over the 13 non-admin surfaces
-   (`src/test/a11y.test.tsx`, WCAG 2.1 A/AA), and the browser contrast pass
-   over the five pre-login routes in both colour schemes (23 failures found,
-   3 root causes fixed, re-measured at 0).
+   order, focus management, screen-reader announcement. These are not
+   covered by axe in *any* environment and need a person with a keyboard and
+   a screen reader; nothing automated substitutes. Contrast is no longer on
+   this list: see 1c–1e.
 3. Separate/hardened end-user portal bundle.
 4. Mobile app decision (Expo vs Flutter) executed — maintainer's call.
 5. The existing roadmap epics (outbound SCIM, HR-driven JML, per-org

@@ -191,7 +191,12 @@ export function DeviceAuthorizationPage() {
                   {t('pages.deviceAuthorization.codeLabel')}
                 </label>
                 {/* The placeholder is a sample of the shape a code takes,
-                    not prose, so it stays as the device shows it. */}
+                    not prose, so it stays as the device shows it.
+                    This input sets no background or border colour of its own,
+                    so the browser's default white box stayed while the text
+                    came from the theme: 1.05:1 in dark mode -- you could not
+                    see the code you were typing. It now carries the same
+                    bg-transparent/border-input treatment as the shared Input. */}
                 <input
                   id="user_code"
                   name="user_code"
@@ -202,7 +207,7 @@ export function DeviceAuthorizationPage() {
                   placeholder="ACDE-FGHJ"
                   value={code}
                   onChange={(e) => setCode(e.target.value)}
-                  className="w-full rounded-md border px-3 py-2 text-center font-mono text-2xl tracking-widest uppercase"
+                  className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-center font-mono text-2xl tracking-widest uppercase placeholder:text-muted-foreground"
                 />
                 <p className="text-xs text-muted-foreground">
                   {t('pages.deviceAuthorization.codeHint')}

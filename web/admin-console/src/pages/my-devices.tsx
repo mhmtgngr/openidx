@@ -253,9 +253,18 @@ export function MyDevicesPage() {
 
       {/* Network access status — plain language. The underlying overlay identity
           is an implementation detail; users care whether this device can reach
-          internal systems directly, and what to do if it can't. */}
+          internal systems directly, and what to do if it can't.
+          Both tints below need a dark variant: without one they composite to
+          mid-grey over the dark background, and the muted line inside this
+          card measured 2.19:1 there. */}
       {zitiIdentity && (
-        <Card className={zitiIdentity.linked ? 'border-green-200 bg-green-50/30' : 'border-amber-200 bg-amber-50/30'}>
+        <Card
+          className={
+            zitiIdentity.linked
+              ? 'border-green-200 bg-green-50/30 dark:border-green-800 dark:bg-green-950/20'
+              : 'border-amber-200 bg-amber-50/30 dark:border-amber-800 dark:bg-amber-950/20'
+          }
+        >
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-2 text-base">
               <Network className="h-5 w-5 text-primary" />

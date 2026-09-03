@@ -104,7 +104,10 @@ function ViewModeSwitcher({ level }: { level: number }) {
           onClick={() => setViewMode(option.mode)}
           className={`flex-1 rounded-md px-2 py-1 text-xs font-medium transition-colors ${
             viewMode === option.mode
-              ? 'bg-background text-blue-700 shadow-sm'
+              ? // bg-background flips with the theme but blue-700 did not:
+                // 2.99:1 on the dark background, on every page that shows
+                // this switcher. blue-300 is the repo's dark step for it.
+                'bg-background text-blue-700 dark:text-blue-300 shadow-sm'
               : 'text-muted-foreground hover:text-foreground'
           }`}
           aria-pressed={viewMode === option.mode}

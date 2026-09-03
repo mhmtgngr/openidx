@@ -424,7 +424,7 @@ export function ZitiNetworkPage() {
                     {t('pages.zitiNetwork.connected')}
                   </span>
                 ) : (
-                  <span className="flex items-center gap-1.5 text-red-500">
+                  <span className="flex items-center gap-1.5 text-red-700 dark:text-red-400">
                     <span className="h-2 w-2 rounded-full bg-red-500" />
                     {t('pages.zitiNetwork.disconnected')}
                   </span>

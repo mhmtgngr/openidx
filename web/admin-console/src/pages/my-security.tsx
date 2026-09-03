@@ -48,7 +48,9 @@ interface SecurityInsights {
 
 const levelStyles: Record<string, { badge: string; ring: string }> = {
   low: { badge: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200', ring: 'text-green-600' },
-  medium: { badge: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200', ring: 'text-yellow-600' },
+  // ring yellow-700, not -600: the score is 48px bold, so AA still asks 3:1,
+  // and yellow-600 measured 2.94:1 on white. -700 is 4.92 light / 4.06 dark.
+  medium: { badge: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200', ring: 'text-yellow-700' },
   high: { badge: 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200', ring: 'text-orange-600' },
   critical: { badge: 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200', ring: 'text-red-600' },
 }

@@ -263,7 +263,13 @@ export function NotificationCenterPage() {
                   <div
                     key={notification.id}
                     className={`flex items-start gap-4 p-4 rounded-lg border transition-colors ${
-                      notification.read ? 'bg-background' : 'bg-blue-50/50 border-blue-200'
+                      notification.read
+                        ? 'bg-background'
+                        : // A light tint with no dark variant composites to
+                          // mid-grey over the dark background: body text fell
+                          // to 1.56:1 there. Same pairing the audit dashboard
+                          // already uses.
+                          'bg-blue-50/50 border-blue-200 dark:bg-blue-950/20 dark:border-blue-800'
                     }`}
                   >
                     {/* Unread indicator */}

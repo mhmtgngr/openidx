@@ -58,3 +58,31 @@ The public-facing pages (landing) state **verifiable facts only** — no
 invented SLAs, trials, pricing, latency figures, or adoption numbers. A
 regression test (`src/pages/landing.test.tsx`, "makes no claims a
 self-hosted OSS project cannot keep") pins this.
+
+## Accessibility
+
+Three checks cover three different things, because no single one of them can
+cover the others:
+
+| Check | Runs | Covers | Cannot cover |
+| --- | --- | --- | --- |
+| `src/test/a11y.test.tsx` | CI (vitest/jsdom) | The axe WCAG 2.1 A/AA rule set over the 13 surfaces a non-admin reaches | Colour contrast — jsdom has no layout or paint, so the rule is disabled there rather than left to fail silently |
+| `src/test/design-token-contrast.test.ts` | CI (vitest) | Every design-token pair the components render, in **both** themes, straight out of `index.css` | Pairings built from Tailwind palette utilities, and tinted surfaces that composite per theme |
+| `scripts/contrast-audit.mjs` | By hand | axe's `color-contrast` over 36 routes × 2 colour schemes in real Chromium, with a stubbed API so authenticated pages render | Only what a route actually paints — a control inside an unopened dialog is never measured |
+
+Running the browser audit:
+
+```bash
+npm run build
+npx vite preview --port 4173 &
+node scripts/contrast-audit.mjs                  # all routes
+ROUTES="my-security vault" node scripts/contrast-audit.mjs
+```
+
+It exits non-zero on any violation **or** on any route that renders blank —
+a page that rendered nothing reports zero violations, which looks exactly
+like a pass, so it is called out instead of counted.
+
+None of this is a VPAT. Keyboard order, focus management on route change and
+dialog close, and screen-reader announcement are not covered by axe in any
+environment and still need a person with a keyboard and a screen reader.

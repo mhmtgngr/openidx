@@ -318,7 +318,7 @@ export function AccessRequestsPage() {
                         <TableCell>
                           <span className={`px-2 py-1 rounded-full text-xs font-medium ${statusBadge(r.status)}`}>{r.status}</span>
                           {r.expires_at && r.status !== 'expired' && (
-                            <span className="ml-1 inline-flex items-center gap-0.5 text-xs text-orange-600" title={t('pages.accessRequests.expiresTitle', { date: new Date(r.expires_at).toLocaleString() })}>
+                            <span className="ml-1 inline-flex items-center gap-0.5 text-xs text-orange-700 dark:text-orange-300" title={t('pages.accessRequests.expiresTitle', { date: new Date(r.expires_at).toLocaleString() })}>
                               <Timer className="h-3 w-3" />{new Date(r.expires_at).toLocaleDateString()}
                             </span>
                           )}
@@ -448,7 +448,7 @@ export function AccessRequestsPage() {
                         <TableCell>
                           <span className={`px-2 py-1 rounded-full text-xs font-medium ${statusBadge(r.status)}`}>{r.status}</span>
                           {r.expires_at && r.status !== 'expired' && (
-                            <span className="ml-1 inline-flex items-center gap-0.5 text-xs text-orange-600" title={t('pages.accessRequests.expiresTitle', { date: new Date(r.expires_at).toLocaleString() })}>
+                            <span className="ml-1 inline-flex items-center gap-0.5 text-xs text-orange-700 dark:text-orange-300" title={t('pages.accessRequests.expiresTitle', { date: new Date(r.expires_at).toLocaleString() })}>
                               <Timer className="h-3 w-3" />{new Date(r.expires_at).toLocaleDateString()}
                             </span>
                           )}
