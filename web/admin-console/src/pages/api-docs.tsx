@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import SwaggerUI from 'swagger-ui-react'
 import 'swagger-ui-react/swagger-ui.css'
 import '../styles/swagger-overrides.css'
@@ -11,18 +12,19 @@ import {
 } from '../components/ui/card'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs'
 
+/** Each tab names a service; the spec file behind it is a path, not prose. */
 const API_SPECS = [
-  { id: 'identity', label: 'Identity', file: 'identity-service.yaml' },
-  { id: 'oauth', label: 'OAuth/OIDC', file: 'oauth-service.yaml' },
-  { id: 'admin', label: 'Admin API', file: 'admin-api.yaml' },
-  { id: 'access', label: 'Access', file: 'access-service.yaml' },
-  { id: 'governance', label: 'Governance', file: 'governance-service.yaml' },
-  { id: 'provisioning', label: 'SCIM', file: 'provisioning-service.yaml' },
-  { id: 'audit', label: 'Audit', file: 'audit-service.yaml' },
-  { id: 'notifications', label: 'Notifications', file: 'notifications-service.yaml' },
-  { id: 'organization', label: 'Organizations', file: 'organization-service.yaml' },
-  { id: 'portal', label: 'Portal', file: 'portal-service.yaml' },
-]
+  { id: 'identity', file: 'identity-service.yaml' },
+  { id: 'oauth', file: 'oauth-service.yaml' },
+  { id: 'admin', file: 'admin-api.yaml' },
+  { id: 'access', file: 'access-service.yaml' },
+  { id: 'governance', file: 'governance-service.yaml' },
+  { id: 'provisioning', file: 'provisioning-service.yaml' },
+  { id: 'audit', file: 'audit-service.yaml' },
+  { id: 'notifications', file: 'notifications-service.yaml' },
+  { id: 'organization', file: 'organization-service.yaml' },
+  { id: 'portal', file: 'portal-service.yaml' },
+] as const
 
 const requestInterceptor = (req: Record<string, any>) => {
   const token = localStorage.getItem('token')
@@ -33,19 +35,20 @@ const requestInterceptor = (req: Record<string, any>) => {
 }
 
 export function ApiDocsPage() {
+  const { t } = useTranslation()
   const [activeSpec, setActiveSpec] = useState('identity')
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">API Documentation</h1>
+        <h1 className="text-2xl font-bold">{t('pages.apiDocs.title')}</h1>
       </div>
 
       <Card>
         <CardHeader>
-          <CardTitle>Interactive API Reference</CardTitle>
+          <CardTitle>{t('pages.apiDocs.cardTitle')}</CardTitle>
           <CardDescription>
-            Explore and test OpenIDX APIs. Your authentication token is automatically included in requests.
+            {t('pages.apiDocs.cardDesc')}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -53,7 +56,7 @@ export function ApiDocsPage() {
             <TabsList className="flex flex-wrap gap-1 h-auto mb-4">
               {API_SPECS.map((spec) => (
                 <TabsTrigger key={spec.id} value={spec.id} className="text-xs">
-                  {spec.label}
+                  {t(`pages.apiDocs.specs.${spec.id}`)}
                 </TabsTrigger>
               ))}
             </TabsList>

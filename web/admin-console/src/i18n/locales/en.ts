@@ -8750,6 +8750,131 @@ const en = {
       scanHint: 'Scan this from inside the OpenIDX app.',
       waiting: 'Waiting for this device to connect…',
     },
+    // Password reset (the link from the email). Server-composed strings — the
+    // API's own error and each password-policy violation — render as sent.
+    resetPassword: {
+      title: 'Set a new password',
+      invalidToken: 'Invalid or missing reset token.',
+      backToLogin: 'Back to login',
+      mismatch: 'Passwords do not match',
+      tooShort: 'Password must be at least 8 characters',
+      violationsIntro: 'Password does not meet the requirements:',
+      failed: 'Failed to reset password. The link may be expired.',
+      offline: 'Unable to connect to the server. Please try again.',
+      success:
+        'Your password has been reset successfully. You can now sign in with your new password.',
+      goToLogin: 'Go to Login',
+      newPassword: 'New Password',
+      newPasswordPlaceholder: 'Enter new password',
+      confirmPassword: 'Confirm Password',
+      confirmPasswordPlaceholder: 'Confirm new password',
+      submit: 'Reset Password',
+      submitting: 'Resetting...',
+    },
+    // Forgotten password. The confirmation is deliberately the same whether or
+    // not the address exists, so the page cannot be used to enumerate accounts
+    // — keep that true in every translation.
+    forgotPassword: {
+      title: 'Reset your password',
+      sent:
+        'If an account with that email exists, a password reset link has been sent. Check your email or server logs.',
+      backToLogin: 'Back to login',
+      failed: 'Something went wrong. Please try again.',
+      offline: 'Unable to connect to the server. Please try again.',
+      email: 'Email Address',
+      emailPlaceholder: 'Enter your email address',
+      submit: 'Send Reset Link',
+      submitting: 'Sending...',
+    },
+    // The verification hop a magic-link click lands on before the OAuth service
+    // takes over.
+    magicLinkVerify: {
+      verifying: 'Verifying your sign-in link...',
+    },
+    // Per-event notification channel matrix. The event keys and channel keys
+    // are the notification service's own wire values; the label and the
+    // sentence under it are this page's.
+    notificationPreferences: {
+      title: 'Notification Preferences',
+      subtitle: 'Choose how you want to be notified',
+      save: 'Save Preferences',
+      saved: 'Preferences saved',
+      saveFailed: 'Failed to save preferences',
+      resource: 'notification preferences',
+      channelsTitle: 'Notification Channels',
+      colEvent: 'Event Type',
+      channels: {
+        in_app: 'In-App',
+        email: 'Email',
+      },
+      events: {
+        access_request: 'Access Requests',
+        security_alert: 'Security Alerts',
+        session_revoked: 'Session Revoked',
+        review_assigned: 'Review Assigned',
+        group_request: 'Group Requests',
+        password_expiry: 'Password Expiry',
+        mfa_change: 'MFA Changes',
+      },
+      eventHints: {
+        access_request: 'When your access requests are approved or denied',
+        security_alert: 'Suspicious login attempts or security events',
+        session_revoked: 'When an admin revokes your session',
+        review_assigned: 'When you are assigned an access review',
+        group_request: 'Updates on your group join requests',
+        password_expiry: 'Reminders before your password expires',
+        mfa_change: 'Changes to your multi-factor authentication',
+      },
+    },
+    // The chrome-less window one PAM session runs in. The connection's own
+    // title comes from the launch that opened this window.
+    pamSessionWindow: {
+      defaultTitle: 'Session',
+      expiredHeading: 'This session link has expired',
+      expiredBody:
+        'Launch it again from the Connections console to start a new session.',
+      phases: {
+        active: 'connected',
+        loading: 'connecting',
+        ended: 'ended',
+        failed: 'failed',
+      },
+      disconnect: 'Disconnect',
+      endedHeading: 'Session ended',
+      endedBody:
+        'The remote session was closed. Launch it again from the console to start a new session.',
+      failedHeading: "Couldn't connect to {{target}}",
+      failedBody:
+        'The remote session could not be established. This may be temporary, or you may not have access to the target.',
+      closeWindow: 'Close window',
+      tryAgain: 'Try again',
+    },
+    // The remote-support relay in its own window.
+    remoteSupportPopout: {
+      missingParams: 'Missing session parameters.',
+      footnote:
+        'Pop-out viewer · session {{session}} · closing this window stops viewing but leaves the session running (end it from the console).',
+    },
+    // The Swagger frame over the published OpenAPI specs. Each tab names a
+    // service; the spec file behind it is a path and stays raw.
+    apiDocs: {
+      title: 'API Documentation',
+      cardTitle: 'Interactive API Reference',
+      cardDesc:
+        'Explore and test OpenIDX APIs. Your authentication token is automatically included in requests.',
+      specs: {
+        identity: 'Identity',
+        oauth: 'OAuth/OIDC',
+        admin: 'Admin API',
+        access: 'Access',
+        governance: 'Governance',
+        provisioning: 'SCIM',
+        audit: 'Audit',
+        notifications: 'Notifications',
+        organization: 'Organizations',
+        portal: 'Portal',
+      },
+    },
   },
   pam: {
     remoteAppSecretHint:

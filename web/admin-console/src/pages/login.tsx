@@ -13,50 +13,12 @@ import { getProviderIcon } from '../components/icons/social-providers'
 import { decodeCredentialRequestOptions, serializeAssertionResponse, type PublicKeyCredentialRequestOptionsJSON } from '../lib/webauthn'
 import { QRCodeSVG } from 'qrcode.react'
 import { LanguageSwitcher } from '../components/language-switcher'
+import { AuthCardFooter, PoweredBy } from '../components/auth-card-footer'
 
 interface MFAOption {
   method: string
   label: string
   icon: React.ReactNode
-}
-
-// Card footer: real destinations only (the docs site and the security
-// policy) — the old Privacy/Terms/Help trio rendered link-styled text that
-// went nowhere and named pages this project does not have.
-function LoginCardFooter() {
-  const { t } = useTranslation()
-  return (
-    <div className="px-6 py-4 bg-muted border-t border-border rounded-b-lg">
-      <div className="flex items-center justify-center gap-4 text-xs text-muted-foreground">
-        <a
-          href="https://mhmtgngr.github.io/openidx"
-          target="_blank"
-          rel="noreferrer"
-          className="hover:text-foreground"
-        >
-          {t('landing.nav.documentation')}
-        </a>
-        <span>•</span>
-        <a
-          href="https://github.com/mhmtgngr/openidx/blob/main/SECURITY.md"
-          target="_blank"
-          rel="noreferrer"
-          className="hover:text-foreground"
-        >
-          {t('login.footer.security')}
-        </a>
-      </div>
-    </div>
-  )
-}
-
-function PoweredBy() {
-  const { t } = useTranslation()
-  return (
-    <p className="text-sm text-muted-foreground">
-      {t('login.footer.poweredBy')} <span className="font-semibold text-foreground">OpenIDX</span>
-    </p>
-  )
 }
 
 export function LoginPage() {
@@ -919,7 +881,7 @@ export function LoginPage() {
             </Button>
           </CardContent>
 
-          <LoginCardFooter />
+          <AuthCardFooter />
         </Card>
       </div>
     )
@@ -1150,7 +1112,7 @@ export function LoginPage() {
             </div>
           </CardContent>
 
-          <LoginCardFooter />
+          <AuthCardFooter />
         </Card>
 
         <div className="absolute bottom-4 text-center w-full">
@@ -1349,7 +1311,7 @@ export function LoginPage() {
             </div>
           </CardContent>
 
-          <LoginCardFooter />
+          <AuthCardFooter />
         </Card>
 
         <div className="absolute bottom-4 text-center w-full">
@@ -1456,7 +1418,7 @@ export function LoginPage() {
           </div>
         </CardContent>
 
-        <LoginCardFooter />
+        <AuthCardFooter />
       </Card>
 
       {/* Concurrent Session Limit Dialog */}

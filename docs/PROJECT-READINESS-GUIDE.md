@@ -21,7 +21,7 @@ security, access, sessions, devices, trusted browsers, notifications,
 access requests, profile — are fully bilingual; the end-user experience
 is complete in both languages). Open: P1 rollout Task 16 (operator
 action), P3.1 cut v1.28.0 (post-merge), the remaining P4 items incl.
-the 7 remaining page bodies and the Expo-vs-Flutter mobile pick.)
+the accessibility/VPAT pass, the separate end-user bundle and the Expo-vs-Flutter mobile pick — every console page body is now bilingual.)
 **Question this document answers:** *Is OpenIDX fully functional and well defined end to end, as experienced by the people who use it — and what are the next steps and controls to get it there?*
 
 This is the product-and-user-side companion to
@@ -881,11 +881,22 @@ all four pillars, deploy, log in, and find PAM.
    operating-system names, the enrolment code, its deep link and the QR that
    encodes it raw, with the "tap **Open in app**" sentence moved onto `Trans`
    so the bolded phrase survives translation.
-   *Remaining:* 7 page bodies (a measured count, not an estimate: pages under
-   `src/pages` with no `useTranslation`), and they are no longer admin screens:
-   the pre-login flows (password reset, forgotten password, magic-link
-   verification), notification preferences, the PAM session and remote-support
-   pop-out windows, and the API-docs frame.
+   Batch 25 finished the surface: the pre-login flows (password reset,
+   forgotten password, magic-link verification), notification preferences, the
+   PAM session and remote-support pop-out windows, and the API-docs frame.
+   Two of those carried the same defect the login card was fixed for in P4.1b
+   — a Privacy / Terms / Help footer that was link-styled text with no
+   destinations, naming pages this project does not have. Translating it would
+   have shipped the same lie in a second language, so the login card's footer
+   became a shared component (`components/auth-card-footer.tsx`) and both
+   password pages now render the real Documentation and Security links.
+   **Every page body under `src/pages` now resolves through the catalogs —
+   0 remaining, and a test enumerates the directory and fails if a page ever
+   ships without `useTranslation` again.**
+   *Still open in P4:* accessibility to a VPAT, the separate hardened end-user
+   portal bundle, and the Expo-vs-Flutter mobile decision. The catalogs
+   themselves keep growing with the product; the framework guarantees a missing
+   translation fails `npm run type-check` rather than reaching a user.
 2. Accessibility pass to a VPAT (needs real assistive-technology testing,
    not just an automated axe sweep).
 3. Separate/hardened end-user portal bundle.

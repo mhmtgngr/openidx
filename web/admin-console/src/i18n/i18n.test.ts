@@ -1,3 +1,5 @@
+import { readdirSync, readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { describe, it, expect, afterEach } from 'vitest'
 import i18n, { supportedLanguages } from './index'
 
@@ -692,6 +694,37 @@ describe('i18n', () => {
       ...['Support', 'Collaboration', 'Monitoring', 'IT', 'Other'].map(
         (k) => `pages.quickLinks.categories.${k}`,
       ),
+      // notification-preferences: one row per event, one column per channel.
+      ...[
+        'access_request',
+        'security_alert',
+        'session_revoked',
+        'review_assigned',
+        'group_request',
+        'password_expiry',
+        'mfa_change',
+      ].flatMap((k) => [
+        `pages.notificationPreferences.events.${k}`,
+        `pages.notificationPreferences.eventHints.${k}`,
+      ]),
+      ...['in_app', 'email'].map((k) => `pages.notificationPreferences.channels.${k}`),
+      // pam-session-window: the phase the frame monitor reports.
+      ...['active', 'loading', 'ended', 'failed'].map(
+        (k) => `pages.pamSessionWindow.phases.${k}`,
+      ),
+      // api-docs: one tab per published spec.
+      ...[
+        'identity',
+        'oauth',
+        'admin',
+        'access',
+        'governance',
+        'provisioning',
+        'audit',
+        'notifications',
+        'organization',
+        'portal',
+      ].map((k) => `pages.apiDocs.specs.${k}`),
     ]
     for (const lang of supportedLanguages) {
       for (const key of mapKeys) {
@@ -1212,6 +1245,24 @@ describe('i18n', () => {
     expect(
       i18n.t('pages.auditArchival.archives.events', { count: 1, formatted: '1' }),
     ).toBe('1 event')
+  })
+
+  // The whole point of the extraction: no page may reach users with its copy
+  // frozen in one language. A page added later that forgets `useTranslation`
+  // fails here rather than in review — and a page that genuinely has no copy of
+  // its own has to say so out loud, in this list, with a reason.
+  it('resolves every page body through the catalogs', () => {
+    // vitest runs with the package root as its working directory.
+    const pagesDir = resolve(process.cwd(), 'src/pages')
+    const pages = readdirSync(pagesDir).filter(
+      (f) => f.endsWith('.tsx') && !f.endsWith('.test.tsx'),
+    )
+    // Sanity: the glob must actually be finding the pages.
+    expect(pages.length).toBeGreaterThan(90)
+    const untranslated = pages.filter(
+      (f) => !readFileSync(`${pagesDir}/${f}`, 'utf8').includes('useTranslation'),
+    )
+    expect(untranslated).toEqual([])
   })
 
   it('builds the assignment-report loss line from two independent plurals', async () => {

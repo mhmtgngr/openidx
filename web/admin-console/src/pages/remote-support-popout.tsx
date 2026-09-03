@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { baseURL } from '../lib/api'
 import { RelayRenderer } from '../components/remote-support/relay-renderer'
 
@@ -15,6 +16,7 @@ import { RelayRenderer } from '../components/remote-support/relay-renderer'
  * Query params: ?session=<id>&ws=<wsPath>&mode=<interactive|view>
  */
 export function RemoteSupportPopout() {
+  const { t } = useTranslation()
   const [params] = useSearchParams()
   const wsPath = params.get('ws') || ''
   const mode = (params.get('mode') === 'view' ? 'view' : 'interactive') as
@@ -30,7 +32,7 @@ export function RemoteSupportPopout() {
   if (!wsUrl) {
     return (
       <div className="flex h-screen items-center justify-center bg-black text-white/80">
-        Missing session parameters.
+        {t('pages.remoteSupportPopout.missingParams')}
       </div>
     )
   }
@@ -49,8 +51,9 @@ export function RemoteSupportPopout() {
         }}
       />
       <p className="mt-2 text-center text-xs text-white/50">
-        Pop-out viewer · session {sessionId.slice(0, 8)} · closing this window
-        stops viewing but leaves the session running (end it from the console).
+        {t('pages.remoteSupportPopout.footnote', {
+          session: sessionId.slice(0, 8),
+        })}
       </p>
     </div>
   )
