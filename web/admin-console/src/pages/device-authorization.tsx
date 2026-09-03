@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { Monitor, CheckCircle2, XCircle, AlertTriangle, Clock } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card'
@@ -56,6 +57,7 @@ function describeScopes(scope: string): string[] {
 }
 
 export function DeviceAuthorizationPage() {
+  const { t } = useTranslation()
   const [searchParams] = useSearchParams()
   // verification_uri_complete puts the code in the query string so a device
   // that can render a QR code spares the user the typing entirely.
@@ -87,14 +89,14 @@ export function DeviceAuthorizationPage() {
         // make.
         setLookupError(
           res.status === 404
-            ? 'That code is not valid or has expired. Check the code on your device, or start again there.'
-            : 'Could not check that code. Please try again.',
+            ? t('pages.deviceAuthorization.lookupNotFound')
+            : t('pages.deviceAuthorization.lookupFailed'),
         )
         return
       }
       setInfo((await res.json()) as DeviceCodeInfo)
     } catch {
-      setLookupError('Could not check that code. Please try again.')
+      setLookupError(t('pages.deviceAuthorization.lookupFailed'))
     } finally {
       setLooking(false)
     }
@@ -123,14 +125,14 @@ export function DeviceAuthorizationPage() {
       if (!res.ok) {
         setDecideError(
           res.status === 404
-            ? 'That code expired or was already used while you were deciding. Start again on your device.'
-            : 'Could not record your decision. Please try again.',
+            ? t('pages.deviceAuthorization.decideExpired')
+            : t('pages.deviceAuthorization.decideFailed'),
         )
         return
       }
       setOutcome(approve ? 'approved' : 'denied')
     } catch {
-      setDecideError('Could not record your decision. Please try again.')
+      setDecideError(t('pages.deviceAuthorization.decideFailed'))
     } finally {
       setDeciding(false)
     }
@@ -147,12 +149,14 @@ export function DeviceAuthorizationPage() {
               ) : (
                 <XCircle className="h-5 w-5 text-red-600" />
               )}
-              {outcome === 'approved' ? 'Device connected' : 'Request denied'}
+              {outcome === 'approved'
+                ? t('pages.deviceAuthorization.approvedTitle')
+                : t('pages.deviceAuthorization.deniedTitle')}
             </CardTitle>
             <CardDescription>
               {outcome === 'approved'
-                ? 'You can return to your device — it should continue on its own within a few seconds.'
-                : 'The device was not given access. You can close this page.'}
+                ? t('pages.deviceAuthorization.approvedBody')
+                : t('pages.deviceAuthorization.deniedBody')}
             </CardDescription>
           </CardHeader>
         </Card>
@@ -166,10 +170,10 @@ export function DeviceAuthorizationPage() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Monitor className="h-5 w-5" />
-            Connect a device
+            {t('pages.deviceAuthorization.title')}
           </CardTitle>
           <CardDescription>
-            Enter the code shown on your TV, terminal or other device.
+            {t('pages.deviceAuthorization.subtitle')}
           </CardDescription>
         </CardHeader>
 
@@ -184,8 +188,10 @@ export function DeviceAuthorizationPage() {
             >
               <div className="space-y-2">
                 <label htmlFor="user_code" className="text-sm font-medium">
-                  Device code
+                  {t('pages.deviceAuthorization.codeLabel')}
                 </label>
+                {/* The placeholder is a sample of the shape a code takes,
+                    not prose, so it stays as the device shows it. */}
                 <input
                   id="user_code"
                   name="user_code"
@@ -199,7 +205,7 @@ export function DeviceAuthorizationPage() {
                   className="w-full rounded-md border px-3 py-2 text-center font-mono text-2xl tracking-widest uppercase"
                 />
                 <p className="text-xs text-muted-foreground">
-                  Dashes, spaces and lower case are all fine.
+                  {t('pages.deviceAuthorization.codeHint')}
                 </p>
               </div>
 
@@ -211,7 +217,7 @@ export function DeviceAuthorizationPage() {
               )}
 
               <Button type="submit" disabled={!complete || looking} className="w-full">
-                {looking ? <LoadingSpinner /> : 'Continue'}
+                {looking ? <LoadingSpinner /> : t('pages.deviceAuthorization.continue')}
               </Button>
             </form>
           )}
@@ -219,20 +225,26 @@ export function DeviceAuthorizationPage() {
           {info && (
             <div className="space-y-6">
               <div className="rounded-md border p-4">
-                <p className="text-sm text-muted-foreground">You are about to give</p>
+                <p className="text-sm text-muted-foreground">
+                  {t('pages.deviceAuthorization.aboutToGive')}
+                </p>
+                {/* The client's own registered name. */}
                 <p className="mt-1 text-lg font-semibold">{info.client_name}</p>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  access to your account.
+                  {t('pages.deviceAuthorization.accessToAccount')}
                 </p>
 
                 <div className="mt-4 flex items-center gap-2 text-sm">
-                  <span className="text-muted-foreground">Code</span>
+                  <span className="text-muted-foreground">{t('pages.deviceAuthorization.code')}</span>
                   <code className="font-mono tracking-widest">{info.user_code}</code>
                 </div>
 
                 {describeScopes(info.scope).length > 0 && (
                   <div className="mt-4">
-                    <p className="text-sm text-muted-foreground">It is asking for</p>
+                    <p className="text-sm text-muted-foreground">
+                      {t('pages.deviceAuthorization.asking')}
+                    </p>
+                    {/* OAuth scope names, as the client requested them. */}
                     <div className="mt-2 flex flex-wrap gap-2">
                       {describeScopes(info.scope).map((s) => (
                         <Badge key={s} variant="secondary">
@@ -246,18 +258,16 @@ export function DeviceAuthorizationPage() {
                 {info.expires_in > 0 && (
                   <p className="mt-4 flex items-center gap-1.5 text-xs text-muted-foreground">
                     <Clock className="h-3.5 w-3.5" />
-                    Expires in about {Math.max(1, Math.round(info.expires_in / 60))} minute
-                    {Math.round(info.expires_in / 60) === 1 ? '' : 's'}
+                    {t('pages.deviceAuthorization.expiresIn', {
+                      count: Math.max(1, Math.round(info.expires_in / 60)),
+                    })}
                   </p>
                 )}
               </div>
 
               <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                <span>
-                  Only continue if you started this on the device yourself. If someone
-                  asked you to enter a code you did not request, deny it.
-                </span>
+                <span>{t('pages.deviceAuthorization.warning')}</span>
               </div>
 
               {decideError && (
@@ -274,10 +284,10 @@ export function DeviceAuthorizationPage() {
                   disabled={deciding}
                   onClick={() => void decide(false)}
                 >
-                  Deny
+                  {t('pages.deviceAuthorization.deny')}
                 </Button>
                 <Button className="flex-1" disabled={deciding} onClick={() => void decide(true)}>
-                  {deciding ? <LoadingSpinner /> : 'Allow'}
+                  {deciding ? <LoadingSpinner /> : t('pages.deviceAuthorization.allow')}
                 </Button>
               </div>
             </div>

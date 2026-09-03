@@ -663,6 +663,26 @@ describe('i18n', () => {
       ...['authentication', 'authorization', 'accounts', 'compliance'].map(
         (k) => `pages.ispm.categories.${k}`,
       ),
+      // ai-recommendations: status and category in both casings, plus the
+      // impact/effort scale the two badges share.
+      ...['pending', 'accepted', 'applied', 'dismissed'].flatMap((k) => [
+        `pages.aiRecommendations.statuses.${k}`,
+        `pages.aiRecommendations.statusLabels.${k}`,
+      ]),
+      ...['security', 'compliance', 'governance', 'optimization'].flatMap((k) => [
+        `pages.aiRecommendations.categories.${k}`,
+        `pages.aiRecommendations.categoryOptions.${k}`,
+      ]),
+      ...['high', 'medium', 'low'].map((k) => `pages.aiRecommendations.levels.${k}`),
+      // email-templates: the mail service's own template categories.
+      ...['authentication', 'lifecycle', 'general'].map(
+        (k) => `pages.emailTemplates.categories.${k}`,
+      ),
+      // error-catalog: the registry's categories, badge and filter casings.
+      ...['auth', 'resource', 'validation', 'system'].flatMap((k) => [
+        `pages.errorCatalog.categories.${k}`,
+        `pages.errorCatalog.categoryOptions.${k}`,
+      ]),
     ]
     for (const lang of supportedLanguages) {
       for (const key of mapKeys) {
@@ -1183,6 +1203,33 @@ describe('i18n', () => {
     expect(
       i18n.t('pages.auditArchival.archives.events', { count: 1, formatted: '1' }),
     ).toBe('1 event')
+  })
+
+  it('pluralizes the device-code expiry instead of appending an s', async () => {
+    // The page used to render "about 1 minutes" whenever the remaining time
+    // rounded to zero, because the clamp and the plural test disagreed.
+    await i18n.changeLanguage('en')
+    expect(i18n.t('pages.deviceAuthorization.expiresIn', { count: 1 })).toBe(
+      'Expires in about 1 minute',
+    )
+    expect(i18n.t('pages.deviceAuthorization.expiresIn', { count: 5 })).toBe(
+      'Expires in about 5 minutes',
+    )
+  })
+
+  it('pluralizes a recommendation affected-entity count around its wire type', async () => {
+    await i18n.changeLanguage('en')
+    expect(
+      i18n.t('pages.aiRecommendations.entityCount', { count: 1, type: 'user' }),
+    ).toBe('1 user')
+    expect(
+      i18n.t('pages.aiRecommendations.entityCount', { count: 4, type: 'user' }),
+    ).toBe('4 users')
+    // Turkish does not pluralize the noun after a number.
+    await i18n.changeLanguage('tr')
+    expect(
+      i18n.t('pages.aiRecommendations.entityCount', { count: 4, type: 'user' }),
+    ).toBe('4 user')
   })
 
   it('puts the compliance weight percent where each locale wants it', async () => {

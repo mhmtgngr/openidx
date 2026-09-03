@@ -8373,6 +8373,183 @@ const en = {
         disabled: 'Disabled',
       },
     },
+    // AI recommendations. Everything the engine writes renders as sent: each
+    // recommendation's title, description, its own type name and the reason a
+    // dismissal was recorded with. The status and category are the service's
+    // own vocabularies, and both are rendered in two shapes — the status title
+    // case in the stat cards and the filter but lowercase inside the empty
+    // sentence, the category lowercase on a row (the row capitalizes it in CSS)
+    // and title case in the filter — so each casing has its own map off one
+    // wire list, and a category the engine adds later still reads as itself.
+    aiRecommendations: {
+      title: 'AI Recommendations',
+      subtitle: 'Intelligent suggestions to improve your security posture',
+      resource: 'AI recommendations',
+      generate: 'Generate Recommendations',
+      generating: 'Analyzing...',
+      statuses: {
+        pending: 'pending',
+        accepted: 'accepted',
+        applied: 'applied',
+        dismissed: 'dismissed',
+      },
+      statusLabels: {
+        pending: 'Pending',
+        accepted: 'Accepted',
+        applied: 'Applied',
+        dismissed: 'Dismissed',
+      },
+      categories: {
+        security: 'security',
+        compliance: 'compliance',
+        governance: 'governance',
+        optimization: 'optimization',
+      },
+      categoryOptions: {
+        security: 'Security',
+        compliance: 'Compliance',
+        governance: 'Governance',
+        optimization: 'Optimization',
+      },
+      acceptanceRate: 'Acceptance Rate',
+      pendingByCategory: 'Pending by Category',
+      allStatuses: 'All',
+      allCategories: 'All Categories',
+      impact: 'Impact: {{level}}',
+      effort: 'Effort: {{level}}',
+      levels: {
+        high: 'high',
+        medium: 'medium',
+        low: 'low',
+      },
+      entityCount_one: '{{count}} {{type}}',
+      entityCount_other: '{{count}} {{type}}s',
+      moreEntities: '+{{n}} more',
+      appliedOn: 'Applied on {{date}}',
+      dismissedReason: 'Dismissed: {{reason}}',
+      apply: 'Apply',
+      applyHint: 'Apply this recommendation',
+      accept: 'Accept',
+      dismiss: 'Dismiss',
+      empty: 'No recommendations',
+      emptyFiltered: 'No {{status}} recommendations',
+      emptyHint: 'Click "{{action}}" to analyze your environment',
+    },
+    // Device authorization (RFC 8628) — the page a person opens on their phone
+    // after a TV app, CLI or kiosk shows them a code. This is an end-user
+    // screen, so every sentence localizes; what stays raw is the user code the
+    // device displays, the OAuth scopes the client actually asked for, the
+    // client's own name, and the sample code that teaches the shape the field
+    // accepts. The two lookup failures deliberately read the same for "no such
+    // code" and "expired", so the page cannot be used to probe which codes
+    // exist — keep that true in every translation.
+    deviceAuthorization: {
+      title: 'Connect a device',
+      subtitle: 'Enter the code shown on your TV, terminal or other device.',
+      codeLabel: 'Device code',
+      codeHint: 'Dashes, spaces and lower case are all fine.',
+      continue: 'Continue',
+      lookupNotFound:
+        'That code is not valid or has expired. Check the code on your device, or start again there.',
+      lookupFailed: 'Could not check that code. Please try again.',
+      decideExpired:
+        'That code expired or was already used while you were deciding. Start again on your device.',
+      decideFailed: 'Could not record your decision. Please try again.',
+      aboutToGive: 'You are about to give',
+      accessToAccount: 'access to your account.',
+      code: 'Code',
+      asking: 'It is asking for',
+      expiresIn_one: 'Expires in about {{count}} minute',
+      expiresIn_other: 'Expires in about {{count}} minutes',
+      warning:
+        'Only continue if you started this on the device yourself. If someone asked you to enter a code you did not request, deny it.',
+      deny: 'Deny',
+      allow: 'Allow',
+      approvedTitle: 'Device connected',
+      approvedBody:
+        'You can return to your device — it should continue on its own within a few seconds.',
+      deniedTitle: 'Request denied',
+      deniedBody: 'The device was not given access. You can close this page.',
+    },
+    // Email templates. A template's name, slug, subject and bodies are the
+    // deployment's own content and render as stored, as does the {{.Variable}}
+    // syntax the badges insert — that is Go template syntax the mail renderer
+    // parses, not prose. The category groups the list and is the mail service's
+    // own vocabulary, resolved with the raw value as the fallback.
+    emailTemplates: {
+      // The heading is exactly the nav item, so it reuses `nav.items`.
+      subtitle: 'Customize email notifications sent to users',
+      resource: 'email templates',
+      brandingToggle: 'Branding Settings',
+      brandingHide: 'Hide Branding',
+      categories: {
+        authentication: 'Authentication',
+        lifecycle: 'Lifecycle',
+        general: 'General',
+      },
+      branding: {
+        title: 'Email Branding',
+        logoUrl: 'Logo URL',
+        headerText: 'Header Text',
+        primaryColor: 'Primary Color',
+        accentColor: 'Accent Color',
+        footerText: 'Footer Text',
+        save: 'Save Branding',
+        saving: 'Saving...',
+      },
+      list: {
+        title: 'Templates',
+        active: 'Active',
+        disabled: 'Disabled',
+      },
+      editor: {
+        edit: 'Edit: {{name}}',
+        none: 'Select a template to edit',
+        preview: 'Preview',
+        reset: 'Reset',
+        save: 'Save',
+        saving: 'Saving...',
+        subject: 'Subject',
+        variables: 'Available Variables',
+        htmlBody: 'HTML Body',
+        textBody: 'Plain Text Body',
+        previewLabel: 'Preview',
+        empty: 'Select a template from the left to edit',
+      },
+    },
+    // Error catalog. Every code, HTTP status, description and resolution comes
+    // from the services' own registry and renders as sent — an operator matches
+    // those against a log line or quotes them in a ticket. The category is the
+    // registry's vocabulary and appears in two shapes: lowercase on a row badge
+    // and title case in the filter, both off one wire list.
+    errorCatalog: {
+      // The heading is exactly the nav item, so it reuses `nav.items`.
+      subtitle: 'Reference of all error codes, descriptions, and resolution hints',
+      resource: 'the error catalog',
+      searchPlaceholder: 'Search by error code or description...',
+      allCategories: 'All Categories',
+      categories: {
+        auth: 'auth',
+        resource: 'resource',
+        validation: 'validation',
+        system: 'system',
+      },
+      categoryOptions: {
+        auth: 'Authentication',
+        resource: 'Resource',
+        validation: 'Validation',
+        system: 'System',
+      },
+      shown: '{{shown}} of {{total}} error codes shown',
+      loading: 'Loading error catalog...',
+      empty: 'No error codes match your search.',
+      colCode: 'Error Code',
+      colStatus: 'HTTP Status',
+      colCategory: 'Category',
+      colDescription: 'Description',
+      resolution: 'Resolution',
+      copied: 'Error code "{{code}}" copied to clipboard.',
+    },
   },
   pam: {
     remoteAppSecretHint:

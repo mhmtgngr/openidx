@@ -21,7 +21,7 @@ security, access, sessions, devices, trusted browsers, notifications,
 access requests, profile — are fully bilingual; the end-user experience
 is complete in both languages). Open: P1 rollout Task 16 (operator
 action), P3.1 cut v1.28.0 (post-merge), the remaining P4 items incl.
-the 15 remaining admin page bodies and the Expo-vs-Flutter mobile pick.)
+the 11 remaining page bodies and the Expo-vs-Flutter mobile pick.)
 **Question this document answers:** *Is OpenIDX fully functional and well defined end to end, as experienced by the people who use it — and what are the next steps and controls to get it there?*
 
 This is the product-and-user-side companion to
@@ -842,11 +842,32 @@ all four pillars, deploy, log in, and find PAM.
    operator who clicked. One latent bug surfaced on the way: the ISPM trend
    chart named its map variable `t`, which would have shadowed the translate
    function; it is now `point`.
-   *Remaining:* 15 other admin page bodies (a measured count, not an
-   estimate: pages under `src/pages` with no `useTranslation`) — mechanical,
-   batch by batch, against this pattern. The largest of them are
-   `ai-recommendations.tsx` (292 lines), `device-authorization.tsx` (289),
-   `email-templates.tsx` (276) and `error-catalog.tsx` (272).
+   Batch 23 took AI Recommendations, Device Authorization, Email Templates and
+   the Error Catalog. One of those four is not an admin screen at all: Device
+   Authorization (RFC 8628) is the page a person opens on their phone after a
+   TV app, CLI or kiosk shows them a code, so every sentence on it now
+   localizes — including the two failure messages that deliberately read the
+   same for "no such code" and "expired" so the page cannot be used to probe
+   which codes exist, a property the Turkish wording keeps. It also had a
+   latent English bug: when the remaining time rounded to zero the page said
+   "Expires in about 1 minutes", because the clamp and the plural test
+   disagreed; it is one plural key now, with a test. Two more `t`-shadowing
+   traps were removed on the way — Email Templates named every template `t` —
+   and its module-level category map, the error registry's categories and the
+   recommendation engine's statuses and categories all moved onto one wire list
+   apiece, each rendered in whichever casing its place needs. What stays raw is
+   what a person matches or copies: each recommendation's title, description
+   and engine-assigned type; every error code, HTTP status, description and
+   resolution; the template's own subject and bodies and the `{{.Variable}}` Go
+   template syntax its badges insert; the OAuth scopes a device asked for; and
+   the sample code, sample URL and product name that teach a field's shape.
+   *Remaining:* 11 other page bodies (a measured count, not an estimate:
+   pages under `src/pages` with no `useTranslation`) — mechanical, batch by
+   batch, against this pattern. The largest of them are
+   `assignment-report.tsx` (265 lines), `quick-links-admin.tsx` (237),
+   `pam-dashboard.tsx` (232) and `add-device.tsx` (216); the tail includes the
+   pre-login flows (password reset, forgotten password, magic-link
+   verification), which are end-user screens rather than admin ones.
 2. Accessibility pass to a VPAT (needs real assistive-technology testing,
    not just an automated axe sweep).
 3. Separate/hardened end-user portal bundle.

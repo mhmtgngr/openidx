@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { api } from '../lib/api'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
@@ -32,6 +33,20 @@ interface RecommendationStats {
   total_accepted: number
 }
 
+/**
+ * The statuses and categories the recommendation engine assigns. Each is
+ * rendered in two shapes — title case in the filter and the stat cards,
+ * lowercase inside a sentence or on a row — and both shapes resolve off
+ * these lists, so the two cannot come to name different sets.
+ */
+const RECOMMENDATION_STATUSES = ['pending', 'accepted', 'applied', 'dismissed'] as const
+const RECOMMENDATION_CATEGORIES = [
+  'security',
+  'compliance',
+  'governance',
+  'optimization',
+] as const
+
 const impactColors: Record<string, string> = {
   high: 'bg-red-100 text-red-800',
   medium: 'bg-yellow-100 text-yellow-800',
@@ -53,6 +68,7 @@ const categoryIcons: Record<string, React.ReactNode> = {
 
 export function AIRecommendationsPage() {
   const queryClient = useQueryClient()
+  const { t } = useTranslation()
   const [categoryFilter, setCategoryFilter] = useState<string>('')
   const [statusFilter, setStatusFilter] = useState<string>('pending')
 
@@ -115,6 +131,9 @@ export function AIRecommendationsPage() {
   })
 
   const dismissMutation = useMutation({
+    // The reason is stored on the recommendation for whoever reviews it
+    // later, so it is sent as written rather than in the operator's
+    // current language.
     mutationFn: (id: string) => api.post(`/api/v1/recommendations/${id}/dismiss`, { reason: 'Not applicable' }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['ai-recommendations'] })
@@ -135,7 +154,7 @@ export function AIRecommendationsPage() {
   }
 
   if (isError) {
-    return <QueryError error={error} resource="AI recommendations" />
+    return <QueryError error={error} resource={t('pages.aiRecommendations.resource')} />
   }
 
   const recs = recsData?.data || []
@@ -144,12 +163,14 @@ export function AIRecommendationsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">AI Recommendations</h1>
-          <p className="text-muted-foreground">Intelligent suggestions to improve your security posture</p>
+          <h1 className="text-2xl font-bold">{t('pages.aiRecommendations.title')}</h1>
+          <p className="text-muted-foreground">{t('pages.aiRecommendations.subtitle')}</p>
         </div>
         <Button onClick={() => generateMutation.mutate()} disabled={generateMutation.isPending}>
           <Sparkles className={`h-4 w-4 mr-2 ${generateMutation.isPending ? 'animate-pulse' : ''}`} />
-          {generateMutation.isPending ? 'Analyzing...' : 'Generate Recommendations'}
+          {generateMutation.isPending
+            ? t('pages.aiRecommendations.generating')
+            : t('pages.aiRecommendations.generate')}
         </Button>
       </div>
 
@@ -159,27 +180,37 @@ export function AIRecommendationsPage() {
           <Card><CardContent className="pt-4 text-center">
             <Lightbulb className="h-5 w-5 mx-auto mb-1 text-yellow-600" />
             <p className="text-2xl font-bold">{stats.by_status?.pending || 0}</p>
-            <p className="text-xs text-muted-foreground">Pending</p>
+            <p className="text-xs text-muted-foreground">
+              {t('pages.aiRecommendations.statusLabels.pending')}
+            </p>
           </CardContent></Card>
           <Card><CardContent className="pt-4 text-center">
             <Check className="h-5 w-5 mx-auto mb-1 text-green-600" />
             <p className="text-2xl font-bold">{stats.total_accepted}</p>
-            <p className="text-xs text-muted-foreground">Accepted</p>
+            <p className="text-xs text-muted-foreground">
+              {t('pages.aiRecommendations.statusLabels.accepted')}
+            </p>
           </CardContent></Card>
           <Card><CardContent className="pt-4 text-center">
             <Zap className="h-5 w-5 mx-auto mb-1 text-primary" />
             <p className="text-2xl font-bold">{stats.by_status?.applied || 0}</p>
-            <p className="text-xs text-muted-foreground">Applied</p>
+            <p className="text-xs text-muted-foreground">
+              {t('pages.aiRecommendations.statusLabels.applied')}
+            </p>
           </CardContent></Card>
           <Card><CardContent className="pt-4 text-center">
             <X className="h-5 w-5 mx-auto mb-1 text-muted-foreground" />
             <p className="text-2xl font-bold">{stats.by_status?.dismissed || 0}</p>
-            <p className="text-xs text-muted-foreground">Dismissed</p>
+            <p className="text-xs text-muted-foreground">
+              {t('pages.aiRecommendations.statusLabels.dismissed')}
+            </p>
           </CardContent></Card>
           <Card><CardContent className="pt-4 text-center">
             <BarChart3 className="h-5 w-5 mx-auto mb-1 text-purple-600" />
             <p className="text-2xl font-bold">{typeof stats.acceptance_rate === 'number' ? stats.acceptance_rate.toFixed(0) : 0}%</p>
-            <p className="text-xs text-muted-foreground">Acceptance Rate</p>
+            <p className="text-xs text-muted-foreground">
+              {t('pages.aiRecommendations.acceptanceRate')}
+            </p>
           </CardContent></Card>
         </div>
       )}
@@ -187,13 +218,17 @@ export function AIRecommendationsPage() {
       {/* Category distribution */}
       {stats?.pending_by_category && Object.keys(stats.pending_by_category).length > 0 && (
         <Card>
-          <CardHeader><CardTitle className="text-base">Pending by Category</CardTitle></CardHeader>
+          <CardHeader>
+            <CardTitle className="text-base">{t('pages.aiRecommendations.pendingByCategory')}</CardTitle>
+          </CardHeader>
           <CardContent>
             <div className="flex gap-4">
               {Object.entries(stats.pending_by_category).map(([cat, count]) => (
                 <div key={cat} className="flex items-center gap-2 bg-muted rounded-lg px-4 py-2">
                   {categoryIcons[cat] || <Bot className="h-4 w-4" />}
-                  <span className="capitalize font-medium">{cat}</span>
+                  <span className="capitalize font-medium">
+                    {t(`pages.aiRecommendations.categories.${cat}`, { defaultValue: cat })}
+                  </span>
                   <Badge variant="secondary">{count}</Badge>
                 </div>
               ))}
@@ -206,19 +241,21 @@ export function AIRecommendationsPage() {
       <div className="flex gap-3">
         <select className="border rounded px-3 py-2 text-sm" value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}>
-          <option value="pending">Pending</option>
-          <option value="accepted">Accepted</option>
-          <option value="applied">Applied</option>
-          <option value="dismissed">Dismissed</option>
-          <option value="">All</option>
+          {RECOMMENDATION_STATUSES.map((s) => (
+            <option key={s} value={s}>
+              {t(`pages.aiRecommendations.statusLabels.${s}`)}
+            </option>
+          ))}
+          <option value="">{t('pages.aiRecommendations.allStatuses')}</option>
         </select>
         <select className="border rounded px-3 py-2 text-sm" value={categoryFilter}
           onChange={(e) => setCategoryFilter(e.target.value)}>
-          <option value="">All Categories</option>
-          <option value="security">Security</option>
-          <option value="compliance">Compliance</option>
-          <option value="governance">Governance</option>
-          <option value="optimization">Optimization</option>
+          <option value="">{t('pages.aiRecommendations.allCategories')}</option>
+          {RECOMMENDATION_CATEGORIES.map((c) => (
+            <option key={c} value={c}>
+              {t(`pages.aiRecommendations.categoryOptions.${c}`)}
+            </option>
+          ))}
         </select>
       </div>
 
@@ -231,11 +268,29 @@ export function AIRecommendationsPage() {
                 <div className="flex-1">
                   <div className="flex items-center gap-2 mb-2">
                     {categoryIcons[rec.category] || <Lightbulb className="h-4 w-4" />}
-                    <span className="capitalize text-sm font-medium text-muted-foreground">{rec.category}</span>
-                    <Badge className={impactColors[rec.impact] || ''}>Impact: {rec.impact}</Badge>
-                    <Badge className={effortColors[rec.effort] || ''}>Effort: {rec.effort}</Badge>
+                    <span className="capitalize text-sm font-medium text-muted-foreground">
+                      {t(`pages.aiRecommendations.categories.${rec.category}`, {
+                        defaultValue: rec.category,
+                      })}
+                    </span>
+                    <Badge className={impactColors[rec.impact] || ''}>
+                      {t('pages.aiRecommendations.impact', {
+                        level: t(`pages.aiRecommendations.levels.${rec.impact}`, {
+                          defaultValue: rec.impact,
+                        }),
+                      })}
+                    </Badge>
+                    <Badge className={effortColors[rec.effort] || ''}>
+                      {t('pages.aiRecommendations.effort', {
+                        level: t(`pages.aiRecommendations.levels.${rec.effort}`, {
+                          defaultValue: rec.effort,
+                        }),
+                      })}
+                    </Badge>
+                    {/* The type is the engine's own name for the rule. */}
                     <Badge variant="outline">{rec.recommendation_type.replace(/_/g, ' ')}</Badge>
                   </div>
+                  {/* Title and description are written by the engine. */}
                   <h3 className="font-medium">{rec.title}</h3>
                   <p className="text-sm text-muted-foreground mt-1">{rec.description}</p>
 
@@ -243,32 +298,63 @@ export function AIRecommendationsPage() {
                     <div className="mt-2 flex flex-wrap gap-1">
                       {rec.affected_entities.slice(0, 5).map((e, i) => (
                         <Badge key={i} variant="outline" className="text-xs">
-                          {e.name || `${e.count || 0} ${e.type}s`}
+                          {e.name ||
+                            t('pages.aiRecommendations.entityCount', {
+                              count: e.count || 0,
+                              type: e.type,
+                            })}
                         </Badge>
                       ))}
                       {rec.affected_entities.length > 5 && (
-                        <Badge variant="outline" className="text-xs">+{rec.affected_entities.length - 5} more</Badge>
+                        <Badge variant="outline" className="text-xs">
+                          {t('pages.aiRecommendations.moreEntities', {
+                            n: rec.affected_entities.length - 5,
+                          })}
+                        </Badge>
                       )}
                     </div>
                   )}
 
                   {rec.applied_at && (
-                    <p className="text-xs text-green-600 mt-2">Applied on {new Date(rec.applied_at).toLocaleDateString()}</p>
+                    <p className="text-xs text-green-600 mt-2">
+                      {t('pages.aiRecommendations.appliedOn', {
+                        date: new Date(rec.applied_at).toLocaleDateString(),
+                      })}
+                    </p>
                   )}
                   {rec.dismissed_reason && (
-                    <p className="text-xs text-muted-foreground mt-2">Dismissed: {rec.dismissed_reason}</p>
+                    <p className="text-xs text-muted-foreground mt-2">
+                      {t('pages.aiRecommendations.dismissedReason', {
+                        reason: rec.dismissed_reason,
+                      })}
+                    </p>
                   )}
                 </div>
 
                 {rec.status === 'pending' && (
                   <div className="flex gap-2 ml-4">
-                    <Button size="sm" onClick={() => applyMutation.mutate(rec.id)} title="Apply this recommendation">
-                      <Zap className="h-3 w-3 mr-1" />Apply
+                    <Button
+                      size="sm"
+                      onClick={() => applyMutation.mutate(rec.id)}
+                      title={t('pages.aiRecommendations.applyHint')}
+                    >
+                      <Zap className="h-3 w-3 mr-1" />
+                      {t('pages.aiRecommendations.apply')}
                     </Button>
-                    <Button size="sm" variant="outline" onClick={() => acceptMutation.mutate(rec.id)} title="Accept">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => acceptMutation.mutate(rec.id)}
+                      title={t('pages.aiRecommendations.accept')}
+                    >
                       <Check className="h-3 w-3" />
                     </Button>
-                    <Button size="sm" variant="ghost" onClick={() => dismissMutation.mutate(rec.id)} title="Dismiss">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => dismissMutation.mutate(rec.id)}
+                      title={t('pages.aiRecommendations.dismiss')}
+                    >
                       <X className="h-3 w-3" />
                     </Button>
                   </div>
@@ -281,8 +367,20 @@ export function AIRecommendationsPage() {
           <Card>
             <CardContent className="py-12 text-center text-muted-foreground">
               <Sparkles className="h-12 w-12 mx-auto mb-3 text-muted-foreground" />
-              <p className="font-medium">No {statusFilter || ''} recommendations</p>
-              <p className="text-sm mt-1">Click "Generate Recommendations" to analyze your environment</p>
+              <p className="font-medium">
+                {statusFilter
+                  ? t('pages.aiRecommendations.emptyFiltered', {
+                      status: t(`pages.aiRecommendations.statuses.${statusFilter}`, {
+                        defaultValue: statusFilter,
+                      }),
+                    })
+                  : t('pages.aiRecommendations.empty')}
+              </p>
+              <p className="text-sm mt-1">
+                {t('pages.aiRecommendations.emptyHint', {
+                  action: t('pages.aiRecommendations.generate'),
+                })}
+              </p>
             </CardContent>
           </Card>
         )}

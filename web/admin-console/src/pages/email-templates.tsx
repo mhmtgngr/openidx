@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { api } from '../lib/api'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
@@ -33,14 +34,9 @@ interface EmailBranding {
   footer_text: string
 }
 
-const categoryLabels: Record<string, string> = {
-  authentication: 'Authentication',
-  lifecycle: 'Lifecycle',
-  general: 'General',
-}
-
 export function EmailTemplatesPage() {
   const queryClient = useQueryClient()
+  const { t } = useTranslation()
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [editSubject, setEditSubject] = useState('')
   const [editHtml, setEditHtml] = useState('')
@@ -87,11 +83,11 @@ export function EmailTemplatesPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['email-branding'] }),
   })
 
-  const handleSelectTemplate = (t: EmailTemplate) => {
-    setSelectedId(t.id)
-    setEditSubject(t.subject)
-    setEditHtml(t.html_body)
-    setEditText(t.text_body || '')
+  const handleSelectTemplate = (tmpl: EmailTemplate) => {
+    setSelectedId(tmpl.id)
+    setEditSubject(tmpl.subject)
+    setEditHtml(tmpl.html_body)
+    setEditText(tmpl.text_body || '')
     setPreviewHtml('')
   }
 
@@ -107,49 +103,65 @@ export function EmailTemplatesPage() {
   }
 
   if (isLoading) return <div className="flex justify-center py-12"><LoadingSpinner size="lg" /></div>
-  if (isError) return <QueryError error={error} resource="email templates" />
+  if (isError) return <QueryError error={error} resource={t('pages.emailTemplates.resource')} />
 
   const templates = templatesData?.data || []
-  const selectedTemplate = templates.find(t => t.id === selectedId)
+  const selectedTemplate = templates.find(tmpl => tmpl.id === selectedId)
 
   // Group by category
   const grouped: Record<string, EmailTemplate[]> = {}
-  templates.forEach(t => {
-    const cat = t.category || 'general'
+  templates.forEach(tmpl => {
+    const cat = tmpl.category || 'general'
     if (!grouped[cat]) grouped[cat] = []
-    grouped[cat].push(t)
+    grouped[cat].push(tmpl)
   })
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Email Templates</h1>
-          <p className="text-muted-foreground">Customize email notifications sent to users</p>
+          <h1 className="text-2xl font-bold">{t('nav.items.emailTemplates')}</h1>
+          <p className="text-muted-foreground">{t('pages.emailTemplates.subtitle')}</p>
         </div>
         <Button variant="outline" onClick={() => setShowBranding(!showBranding)}>
-          <Palette className="h-4 w-4 mr-2" />{showBranding ? 'Hide Branding' : 'Branding Settings'}
+          <Palette className="h-4 w-4 mr-2" />
+          {showBranding
+            ? t('pages.emailTemplates.brandingHide')
+            : t('pages.emailTemplates.brandingToggle')}
         </Button>
       </div>
 
       {/* Branding Settings */}
       {showBranding && (
         <Card>
-          <CardHeader><CardTitle className="flex items-center gap-2"><Palette className="h-5 w-5" />Email Branding</CardTitle></CardHeader>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Palette className="h-5 w-5" />
+              {t('pages.emailTemplates.branding.title')}
+            </CardTitle>
+          </CardHeader>
           <CardContent className="space-y-4">
+            {/* The two placeholders below are samples of what goes in the
+                field — a URL and the product name — so they stay as they are. */}
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="text-sm font-medium">Logo URL</label>
+                <label className="text-sm font-medium">
+                  {t('pages.emailTemplates.branding.logoUrl')}
+                </label>
                 <input className="w-full border rounded px-3 py-2 mt-1 text-sm" placeholder="https://example.com/logo.png"
                   value={branding.logo_url} onChange={e => setBranding({ ...branding, logo_url: e.target.value })} />
               </div>
               <div>
-                <label className="text-sm font-medium">Header Text</label>
+                <label className="text-sm font-medium">
+                  {t('pages.emailTemplates.branding.headerText')}
+                </label>
                 <input className="w-full border rounded px-3 py-2 mt-1 text-sm" placeholder="OpenIDX"
                   value={branding.header_text} onChange={e => setBranding({ ...branding, header_text: e.target.value })} />
               </div>
               <div>
-                <label className="text-sm font-medium">Primary Color</label>
+                <label className="text-sm font-medium">
+                  {t('pages.emailTemplates.branding.primaryColor')}
+                </label>
                 <div className="flex gap-2 mt-1">
                   <input type="color" value={branding.primary_color} onChange={e => setBranding({ ...branding, primary_color: e.target.value })} />
                   <input className="flex-1 border rounded px-3 py-2 text-sm" value={branding.primary_color}
@@ -157,7 +169,9 @@ export function EmailTemplatesPage() {
                 </div>
               </div>
               <div>
-                <label className="text-sm font-medium">Accent Color</label>
+                <label className="text-sm font-medium">
+                  {t('pages.emailTemplates.branding.accentColor')}
+                </label>
                 <div className="flex gap-2 mt-1">
                   <input type="color" value={branding.accent_color} onChange={e => setBranding({ ...branding, accent_color: e.target.value })} />
                   <input className="flex-1 border rounded px-3 py-2 text-sm" value={branding.accent_color}
@@ -166,12 +180,17 @@ export function EmailTemplatesPage() {
               </div>
             </div>
             <div>
-              <label className="text-sm font-medium">Footer Text</label>
+              <label className="text-sm font-medium">
+                {t('pages.emailTemplates.branding.footerText')}
+              </label>
               <textarea className="w-full border rounded px-3 py-2 mt-1 text-sm h-16"
                 value={branding.footer_text} onChange={e => setBranding({ ...branding, footer_text: e.target.value })} />
             </div>
             <Button onClick={() => brandingMutation.mutate(branding)} disabled={brandingMutation.isPending}>
-              <Save className="h-4 w-4 mr-2" />{brandingMutation.isPending ? 'Saving...' : 'Save Branding'}
+              <Save className="h-4 w-4 mr-2" />
+              {brandingMutation.isPending
+                ? t('pages.emailTemplates.branding.saving')
+                : t('pages.emailTemplates.branding.save')}
             </Button>
           </CardContent>
         </Card>
@@ -180,21 +199,33 @@ export function EmailTemplatesPage() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Template List */}
         <Card className="lg:col-span-1">
-          <CardHeader><CardTitle className="flex items-center gap-2"><Mail className="h-5 w-5" />Templates</CardTitle></CardHeader>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Mail className="h-5 w-5" />
+              {t('pages.emailTemplates.list.title')}
+            </CardTitle>
+          </CardHeader>
           <CardContent>
             {Object.entries(grouped).map(([cat, tmpls]) => (
               <div key={cat} className="mb-4">
-                <p className="text-xs font-semibold text-muted-foreground uppercase mb-2">{categoryLabels[cat] || cat}</p>
+                <p className="text-xs font-semibold text-muted-foreground uppercase mb-2">
+                  {t(`pages.emailTemplates.categories.${cat}`, { defaultValue: cat })}
+                </p>
                 <div className="space-y-1">
-                  {tmpls.map(t => (
-                    <div key={t.id}
-                      className={`p-2 rounded cursor-pointer text-sm ${selectedId === t.id ? 'bg-blue-50 border border-blue-200' : 'hover:bg-muted'}`}
-                      onClick={() => handleSelectTemplate(t)}>
+                  {tmpls.map(tmpl => (
+                    <div key={tmpl.id}
+                      className={`p-2 rounded cursor-pointer text-sm ${selectedId === tmpl.id ? 'bg-blue-50 border border-blue-200' : 'hover:bg-muted'}`}
+                      onClick={() => handleSelectTemplate(tmpl)}>
                       <div className="flex items-center justify-between">
-                        <span className="font-medium">{t.name}</span>
-                        <Badge variant={t.enabled ? 'default' : 'secondary'} className="text-xs">{t.enabled ? 'Active' : 'Disabled'}</Badge>
+                        {/* The template's own name and slug. */}
+                        <span className="font-medium">{tmpl.name}</span>
+                        <Badge variant={tmpl.enabled ? 'default' : 'secondary'} className="text-xs">
+                          {tmpl.enabled
+                            ? t('pages.emailTemplates.list.active')
+                            : t('pages.emailTemplates.list.disabled')}
+                        </Badge>
                       </div>
-                      <p className="text-xs text-muted-foreground">{t.slug}</p>
+                      <p className="text-xs text-muted-foreground">{tmpl.slug}</p>
                     </div>
                   ))}
                 </div>
@@ -207,13 +238,26 @@ export function EmailTemplatesPage() {
         <Card className="lg:col-span-2">
           <CardHeader>
             <CardTitle className="flex items-center justify-between">
-              <span>{selectedTemplate ? `Edit: ${selectedTemplate.name}` : 'Select a template to edit'}</span>
+              <span>
+                {selectedTemplate
+                  ? t('pages.emailTemplates.editor.edit', { name: selectedTemplate.name })
+                  : t('pages.emailTemplates.editor.none')}
+              </span>
               {selectedTemplate && (
                 <div className="flex gap-2">
-                  <Button size="sm" variant="outline" onClick={handlePreview}><Eye className="h-3 w-3 mr-1" />Preview</Button>
-                  <Button size="sm" variant="outline" onClick={() => resetMutation.mutate(selectedId!)}><RotateCcw className="h-3 w-3 mr-1" />Reset</Button>
+                  <Button size="sm" variant="outline" onClick={handlePreview}>
+                    <Eye className="h-3 w-3 mr-1" />
+                    {t('pages.emailTemplates.editor.preview')}
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => resetMutation.mutate(selectedId!)}>
+                    <RotateCcw className="h-3 w-3 mr-1" />
+                    {t('pages.emailTemplates.editor.reset')}
+                  </Button>
                   <Button size="sm" onClick={handleSave} disabled={updateMutation.isPending}>
-                    <Save className="h-3 w-3 mr-1" />{updateMutation.isPending ? 'Saving...' : 'Save'}
+                    <Save className="h-3 w-3 mr-1" />
+                    {updateMutation.isPending
+                      ? t('pages.emailTemplates.editor.saving')
+                      : t('pages.emailTemplates.editor.save')}
                   </Button>
                 </div>
               )}
@@ -223,14 +267,19 @@ export function EmailTemplatesPage() {
             {selectedTemplate ? (
               <div className="space-y-4">
                 <div>
-                  <label className="text-sm font-medium">Subject</label>
+                  <label className="text-sm font-medium">
+                    {t('pages.emailTemplates.editor.subject')}
+                  </label>
                   <input className="w-full border rounded px-3 py-2 mt-1 text-sm"
                     value={editSubject} onChange={e => setEditSubject(e.target.value)} />
                 </div>
 
                 {selectedTemplate.variables?.length > 0 && (
                   <div>
-                    <label className="text-sm font-medium">Available Variables</label>
+                    <label className="text-sm font-medium">
+                      {t('pages.emailTemplates.editor.variables')}
+                    </label>
+                    {/* Go template syntax the mail renderer parses. */}
                     <div className="flex flex-wrap gap-1 mt-1">
                       {selectedTemplate.variables.map(v => (
                         <Badge key={v} variant="outline" className="text-xs cursor-pointer hover:bg-blue-50"
@@ -243,13 +292,17 @@ export function EmailTemplatesPage() {
                 )}
 
                 <div>
-                  <label className="text-sm font-medium">HTML Body</label>
+                  <label className="text-sm font-medium">
+                    {t('pages.emailTemplates.editor.htmlBody')}
+                  </label>
                   <textarea className="w-full border rounded px-3 py-2 mt-1 text-sm font-mono h-48"
                     value={editHtml} onChange={e => setEditHtml(e.target.value)} />
                 </div>
 
                 <div>
-                  <label className="text-sm font-medium">Plain Text Body</label>
+                  <label className="text-sm font-medium">
+                    {t('pages.emailTemplates.editor.textBody')}
+                  </label>
                   <textarea className="w-full border rounded px-3 py-2 mt-1 text-sm font-mono h-24"
                     value={editText} onChange={e => setEditText(e.target.value)} />
                 </div>
@@ -257,7 +310,9 @@ export function EmailTemplatesPage() {
                 {/* Preview */}
                 {previewHtml && (
                   <div>
-                    <label className="text-sm font-medium">Preview</label>
+                    <label className="text-sm font-medium">
+                      {t('pages.emailTemplates.editor.previewLabel')}
+                    </label>
                     <div className="border rounded p-4 mt-1 bg-background" dangerouslySetInnerHTML={{ __html: previewHtml }} />
                   </div>
                 )}
@@ -265,7 +320,7 @@ export function EmailTemplatesPage() {
             ) : (
               <div className="py-12 text-center text-muted-foreground">
                 <Mail className="h-12 w-12 mx-auto mb-3 text-muted-foreground" />
-                <p>Select a template from the left to edit</p>
+                <p>{t('pages.emailTemplates.editor.empty')}</p>
               </div>
             )}
           </CardContent>
