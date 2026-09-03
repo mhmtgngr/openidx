@@ -714,11 +714,27 @@ all four pillars, deploy, log in, and find PAM.
    drift apart. What stays raw is what would break if translated: protocol
    acronyms, and the sample values that teach a format (`10.0.0.5`,
    `admin@company.com`, attribute lists like `#engineering, #vpn-users`).
-   *Remaining:* 43 other admin page bodies (a measured count, not an
+   *And the four largest pages that were left:* Notification Administration
+   (routing rules, broadcasts, delivery stats), Access 360 (the page that
+   correlates one user across all three pillars), the OAuth Playground and
+   Lifecycle Workflows. This pass is where the "backend vocabulary resolves
+   *through* the catalog" rule paid off four times over: delivery channels
+   and broadcast statuses, agent compliance statuses, and the lifecycle
+   service's event / trigger / action / execution vocabularies all resolve by
+   key with a raw fallback, each driving its filter, its badge and its form
+   select off one list so the three cannot drift apart. Two module-level maps
+   that had frozen English at import time — `deviceSourceLabel` and
+   `actionTypeLabels` — now return catalog keys resolved at render. And the
+   OAuth Playground draws the other line: the protocol's own parameter names
+   (`code_verifier`, `code_challenge`, `state`, `access_token`) and endpoint
+   paths stay untranslated, because they are the wire identifiers a developer
+   types, not prose. Access 360's English is pinned by its own page test, so
+   every extracted value stayed byte-identical and that test passes unchanged.
+   *Remaining:* 39 other admin page bodies (a measured count, not an
    estimate: pages under `src/pages` with no `useTranslation`) — mechanical,
    batch by batch, against this pattern. The largest of them are
-   `notification-admin.tsx` (745 lines), `user-access-360.tsx` (730),
-   `oauth-playground.tsx` (695) and `lifecycle-workflows.tsx` (631).
+   `delegations.tsx` (577 lines), `api-explorer.tsx` (565),
+   `certificates.tsx` (543) and `system-health.tsx` (533).
 2. Accessibility pass to a VPAT (needs real assistive-technology testing,
    not just an automated axe sweep).
 3. Separate/hardened end-user portal bundle.

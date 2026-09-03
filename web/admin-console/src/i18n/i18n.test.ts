@@ -455,6 +455,26 @@ describe('i18n', () => {
       ...['compliant', 'non_compliant', 'grace_period', 'unknown'].map(
         (k) => `pages.userAccess360.devices.complianceStatuses.${k}`,
       ),
+      // lifecycle-workflows: the four vocabularies the lifecycle service owns,
+      // each driving a filter, a badge and a form select off one list.
+      ...['onboard', 'transfer', 'offboard', 'leave', 'return'].map(
+        (k) => `pages.lifecycleWorkflows.events.${k}`,
+      ),
+      ...['manual', 'scheduled', 'webhook'].map(
+        (k) => `pages.lifecycleWorkflows.triggers.${k}`,
+      ),
+      ...[
+        'assign_role',
+        'remove_role',
+        'assign_group',
+        'remove_group',
+        'enable_user',
+        'disable_user',
+        'revoke_sessions',
+      ].map((k) => `pages.lifecycleWorkflows.actionTypes.${k}`),
+      ...['pending', 'in_progress', 'completed', 'failed', 'rejected'].map(
+        (k) => `pages.lifecycleWorkflows.executionStatuses.${k}`,
+      ),
     ]
     for (const lang of supportedLanguages) {
       for (const key of mapKeys) {
@@ -587,6 +607,28 @@ describe('i18n', () => {
     expect(
       i18n.t('pages.notificationAdmin.stats.channelCount', { n: 1, percentage: 3 }),
     ).toBe('1 (%3)')
+  })
+
+  it('resolves an unknown lifecycle action type to its raw value', async () => {
+    // The workflow's action list comes back from the server; an action the
+    // lifecycle service adds later still reads as itself in the row badge,
+    // the builder and the execute dialog.
+    await i18n.changeLanguage('tr')
+    expect(i18n.t('pages.lifecycleWorkflows.actionTypes.assign_role')).toBe('Rol Ata')
+    expect(
+      i18n.t('pages.lifecycleWorkflows.actionTypes.reset_password', {
+        defaultValue: 'reset_password',
+      }),
+    ).toBe('reset_password')
+  })
+
+  it('keeps the OAuth playground protocol parameter names untranslated', async () => {
+    // code_verifier and friends are the wire identifiers a developer types;
+    // only the prose around them localizes.
+    await i18n.changeLanguage('tr')
+    expect(i18n.t('pages.oauthPlayground.jwt.useAccessToken')).toContain('access_token')
+    expect(i18n.t('pages.oauthPlayground.step1.desc')).toContain('code_verifier')
+    expect(i18n.t('pages.oauthPlayground.step4.call')).toContain('/oauth/userinfo')
   })
 
   it('pluralizes the Access 360 dial-policy line in both languages', async () => {
