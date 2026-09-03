@@ -95,7 +95,53 @@ jobs:
       # Multi-arch (amd64+arm64) on push so the published manifest serves both
       # platforms from one tag. On PRs build a single arch and load it locally
       # so Trivy can scan it without publishing.
+      #
+      # THE ATTEMPT IS SPELLED TWICE ON PURPOSE. Docker Hub answers the HEAD
+      # for a base-image manifest with a 502 often enough to have turned this
+      # workflow red on a commit that touched no Dockerfile: the job died in
+      # 19 seconds at "load metadata for docker.io/library/alpine:3.24",
+      # before a single layer was built, while the other nine matrix legs
+      # pulled the same images fine. GitHub Actions has no step-level retry
+      # and build-push-action has no retry input, so the first attempt is
+      # allowed to fail and the second runs only if it did. A real Dockerfile
+      # error fails both and the job still ends red -- one outage buys a
+      # second try, never a green.
+      #
+      # The two `with:` blocks MUST stay byte-identical, or the retry would
+      # build something the first attempt never tried. That is not left to
+      # discipline: scripts/check-docker-retry-drift.sh fails CI if they
+      # diverge.
       - name: Build and push
+        id: build
+        continue-on-error: true
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          target: ${{ matrix.target }}
+          # Stamp the binary version: the release tag on tag builds, otherwise
+          # the commit SHA. Surfaces in each service's /health response.
+          build-args: |
+            VERSION=${{ github.ref_type == 'tag' && github.ref_name || github.sha }}
+          platforms: ${{ github.event_name == 'pull_request' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
+          push: ${{ github.event_name != 'pull_request' }}
+          load: ${{ github.event_name == 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,scope=${{ matrix.service }},mode=max
+          provenance: ${{ github.event_name != 'pull_request' }}
+          sbom: ${{ github.event_name != 'pull_request' }}
+
+      # Long enough for a registry to finish rolling whatever it was rolling,
+      # short enough that a genuinely broken build is still red inside a
+      # minute of when it would have been.
+      - name: Let the registry settle before retrying
+        if: steps.build.outcome == 'failure'
+        run: sleep 30
+
+      - name: Build and push (retry)
+        if: steps.build.outcome == 'failure'
         uses: docker/build-push-action@v6
         with:
           context: .

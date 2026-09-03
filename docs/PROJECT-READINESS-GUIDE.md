@@ -399,6 +399,25 @@ All six items landed with this guide (commits on
      prerequisite for a *future* 1.26 move rather than a security fix.
 6. ✅ **Grafana admin/admin fallback removed; dev-kube generates real
    secrets** (B5).
+7. ✅ **CI stops going red on other people's outages.** `build
+   (identity-service)` failed on a commit that touched no Dockerfile:
+   Docker Hub answered the HEAD for `library/alpine/manifests/3.24` with a
+   **502**, so BuildKit died in 19 seconds at metadata resolution, before a
+   layer was built — while the other nine matrix legs pulled the same two
+   images successfully on the same commit. `helm dependency build` has the
+   same shape against the bitnami CDN. Neither is a defect in this tree, and
+   a red tick that means "someone else's registry was rolling" trains people
+   to ignore red ticks, which is the expensive failure. So: the Docker build
+   is spelled twice — the first attempt may fail, the second runs only if it
+   did, 30s later — and the chart-dependency fetch goes through
+   `scripts/ci-retry.sh` (3 attempts, exponential backoff). **Neither can
+   hide a real failure:** the retry wrapper exits with the command's own
+   status once the attempts are spent, and a broken Dockerfile fails both
+   attempts. Both properties are gated, not trusted — `ci-retry.test.sh`
+   proves rc 7 still comes out as rc 7, and `check-docker-retry-drift.sh`
+   fails CI if the two build blocks ever stop being identical (a drifted
+   retry would build, and on a push publish, an image the first attempt
+   never tried).
 
 *Exit test (run it):* a new operator with only the README reaches a
 logged-in, rotated-admin console; `security-scan.yml` goes red on a

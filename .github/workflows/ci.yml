@@ -65,6 +65,27 @@ jobs:
       - name: Scan shell scripts
         run: bash scripts/check-shell-prose.sh
 
+  # Two CI jobs used to go red on other people's outages -- a Docker Hub 502
+  # on a base-image manifest, a reset connection to the chart CDN -- on
+  # commits that changed nothing related. Both now retry, and both retries
+  # are load-bearing enough to need guarding: a retry wrapper that swallows
+  # the final exit code turns every red into a slow green, and a duplicated
+  # build block that drifts makes the second attempt build something the
+  # first never tried. Neither failure would be visible in a passing run,
+  # which is exactly why they are gates.
+  ci-resilience-guards:
+    name: Retries can still go red
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Verify the retry wrapper preserves failure
+        run: bash scripts/ci-retry.test.sh
+      - name: Verify the drift guard works
+        run: bash scripts/check-docker-retry-drift.test.sh
+      - name: Both Docker build attempts must stay identical
+        run: bash scripts/check-docker-retry-drift.sh
+
   ui-safety-guards:
     name: UI safety guards
     runs-on: ubuntu-latest

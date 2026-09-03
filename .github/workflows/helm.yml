@@ -30,11 +30,16 @@ jobs:
         with:
           version: v3.14.4
 
+      # Both the repo index and the subchart archives come from a CDN that
+      # resets the connection often enough to have turned this job red on
+      # commits that touched no chart. Retrying is not papering over a bug:
+      # nothing in this repository can make someone else's CDN answer, and
+      # ci-retry.sh still exits with helm's own status once it gives up.
       - name: Add chart repos
-        run: helm repo add bitnami https://charts.bitnami.com/bitnami
+        run: bash scripts/ci-retry.sh 3 5 -- helm repo add bitnami https://charts.bitnami.com/bitnami
 
       - name: Build chart dependencies
-        run: helm dependency build "$CHART"
+        run: bash scripts/ci-retry.sh 3 5 -- helm dependency build "$CHART"
 
       - name: Lint
         run: helm lint "$CHART"

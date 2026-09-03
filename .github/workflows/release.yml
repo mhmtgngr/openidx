@@ -131,10 +131,14 @@ jobs:
         with:
           version: v3.14.4
 
+      # Same CDN flakiness as the Helm Chart workflow, and it matters more
+      # here: this runs on a tag, so a reset connection means a release that
+      # ships images but no chart. ci-retry.sh still surfaces helm's exit
+      # status once the attempts are spent.
       - name: Build chart dependencies
         run: |
-          helm repo add bitnami https://charts.bitnami.com/bitnami
-          helm dependency build "$CHART"
+          bash scripts/ci-retry.sh 3 5 -- helm repo add bitnami https://charts.bitnami.com/bitnami
+          bash scripts/ci-retry.sh 3 5 -- helm dependency build "$CHART"
 
       # The committed Chart.yaml carries a development version; a release pins
       # chart version = product version (v1.28.0 → chart 1.28.0), so each tag
