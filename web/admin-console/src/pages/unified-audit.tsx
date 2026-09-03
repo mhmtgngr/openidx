@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import { RefreshCw, Shield, Globe, Monitor, Server, ChevronLeft, ChevronRight } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -62,6 +63,8 @@ const SourceIcon = ({ source }: { source: string }) => {
   }
 }
 
+/** The source is a product name (OpenIDX, Ziti, Guacamole), so it is shown
+ *  exactly as the feed reports it. */
 const SourceBadge = ({ source }: { source: string }) => {
   const colors: Record<string, string> = {
     openidx: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200',
@@ -77,6 +80,7 @@ const SourceBadge = ({ source }: { source: string }) => {
 }
 
 export function UnifiedAuditPage() {
+  const { t } = useTranslation()
   const [page, setPage] = useState(0)
   const [source, setSource] = useState<string>('all')
   const [eventType, setEventType] = useState<string>('')
@@ -115,21 +119,21 @@ export function UnifiedAuditPage() {
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-3xl font-bold">Unified Audit Log</h1>
+          <h1 className="text-3xl font-bold">{t('pages.unifiedAudit.title')}</h1>
           <p className="text-muted-foreground mt-1">
-            Combined events from OpenIDX, Ziti, and Guacamole
+            {t('pages.unifiedAudit.subtitle')}
           </p>
         </div>
         <Button variant="outline" onClick={() => refetch()}>
           <RefreshCw className="h-4 w-4 mr-2" />
-          Refresh
+          {t('common.refresh')}
         </Button>
       </div>
 
       <RelatedLinks
         links={[
-          { to: '/audit-logs', label: 'Audit Logs' },
-          { to: '/admin-audit-log', label: 'Admin Audit Log' },
+          { to: '/audit-logs', label: t('nav.items.auditLogs') },
+          { to: '/admin-audit-log', label: t('nav.items.adminAuditLog') },
         ]}
       />
 
@@ -137,7 +141,7 @@ export function UnifiedAuditPage() {
       <div className="grid gap-4 md:grid-cols-4">
         <Card>
           <CardHeader className="pb-2">
-            <CardDescription>Total (24h)</CardDescription>
+            <CardDescription>{t('pages.unifiedAudit.total24h')}</CardDescription>
             <CardTitle className="text-2xl">{summary?.total_last_24h || 0}</CardTitle>
           </CardHeader>
         </Card>
@@ -161,10 +165,11 @@ export function UnifiedAuditPage() {
             <div className="flex-1 min-w-[200px]">
               <Select value={source} onValueChange={setSource}>
                 <SelectTrigger>
-                  <SelectValue placeholder="All Sources" />
+                  <SelectValue placeholder={t('pages.unifiedAudit.allSources')} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All Sources</SelectItem>
+                  <SelectItem value="all">{t('pages.unifiedAudit.allSources')}</SelectItem>
+                  {/* The three sources are product names. */}
                   <SelectItem value="openidx">OpenIDX</SelectItem>
                   <SelectItem value="ziti">Ziti</SelectItem>
                   <SelectItem value="guacamole">Guacamole</SelectItem>
@@ -173,7 +178,7 @@ export function UnifiedAuditPage() {
             </div>
             <div className="flex-1 min-w-[200px]">
               <Input
-                placeholder="Filter by event type..."
+                placeholder={t('pages.unifiedAudit.eventTypePlaceholder')}
                 value={eventType}
                 onChange={(e) => setEventType(e.target.value)}
                 className="w-full"
@@ -191,18 +196,34 @@ export function UnifiedAuditPage() {
               <LoadingSpinner />
             </div>
           ) : isError ? (
-            <div className="p-4"><QueryError error={error} resource="audit events" /></div>
+            <div className="p-4">
+              <QueryError error={error} resource={t('pages.unifiedAudit.resource')} />
+            </div>
           ) : (
             <Table>
                 <TableHeader className="bg-muted">
                   <TableRow>
-                    <TableHead className="text-left p-4 font-medium">Timestamp</TableHead>
-                    <TableHead className="text-left p-4 font-medium">Source</TableHead>
-                    <TableHead className="text-left p-4 font-medium">Event</TableHead>
-                    <TableHead className="text-left p-4 font-medium">Service</TableHead>
-                    <TableHead className="text-left p-4 font-medium">User</TableHead>
-                    <TableHead className="text-left p-4 font-medium">IP</TableHead>
-                    <TableHead className="text-left p-4 font-medium">Details</TableHead>
+                    <TableHead className="text-left p-4 font-medium">
+                      {t('pages.unifiedAudit.colTimestamp')}
+                    </TableHead>
+                    <TableHead className="text-left p-4 font-medium">
+                      {t('pages.unifiedAudit.colSource')}
+                    </TableHead>
+                    <TableHead className="text-left p-4 font-medium">
+                      {t('pages.unifiedAudit.colEvent')}
+                    </TableHead>
+                    <TableHead className="text-left p-4 font-medium">
+                      {t('pages.unifiedAudit.colService')}
+                    </TableHead>
+                    <TableHead className="text-left p-4 font-medium">
+                      {t('pages.unifiedAudit.colUser')}
+                    </TableHead>
+                    <TableHead className="text-left p-4 font-medium">
+                      {t('pages.unifiedAudit.colIp')}
+                    </TableHead>
+                    <TableHead className="text-left p-4 font-medium">
+                      {t('pages.unifiedAudit.colDetails')}
+                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody className="divide-y">
@@ -218,6 +239,7 @@ export function UnifiedAuditPage() {
                       <TableCell className="p-4">
                         <SourceBadge source={event.source} />
                       </TableCell>
+                      {/* The event type is the raw value the filter matches. */}
                       <TableCell className="p-4">
                         <span className="font-medium">{event.event_type}</span>
                       </TableCell>
@@ -239,7 +261,7 @@ export function UnifiedAuditPage() {
                             setSelectedEvent(event)
                           }}
                         >
-                          View
+                          {t('pages.unifiedAudit.view')}
                         </Button>
                       </TableCell>
                     </TableRow>
@@ -247,7 +269,7 @@ export function UnifiedAuditPage() {
                   {(!data?.events || data.events.length === 0) && (
                     <TableRow>
                       <TableCell colSpan={7} className="p-8 text-center text-muted-foreground">
-                        No audit events found
+                        {t('pages.unifiedAudit.empty')}
                       </TableCell>
                     </TableRow>
                   )}
@@ -260,7 +282,12 @@ export function UnifiedAuditPage() {
       {/* Pagination */}
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">
-          Showing {page * pageSize + 1} - {Math.min((page + 1) * pageSize, data?.total || 0)} of {data?.total || 0} events
+          {t('pages.unifiedAudit.showing', {
+            from: page * pageSize + 1,
+            to: Math.min((page + 1) * pageSize, data?.total || 0),
+            total: data?.total || 0,
+            count: data?.total || 0,
+          })}
         </p>
         <div className="flex gap-2">
           <Button
@@ -270,7 +297,7 @@ export function UnifiedAuditPage() {
             disabled={page === 0}
           >
             <ChevronLeft className="h-4 w-4 mr-1" />
-            Previous
+            {t('common.pagination.previous')}
           </Button>
           <Button
             variant="outline"
@@ -278,7 +305,7 @@ export function UnifiedAuditPage() {
             onClick={() => setPage(p => p + 1)}
             disabled={page >= totalPages - 1}
           >
-            Next
+            {t('common.pagination.next')}
             <ChevronRight className="h-4 w-4 ml-1" />
           </Button>
         </div>
@@ -288,7 +315,7 @@ export function UnifiedAuditPage() {
       <Dialog open={!!selectedEvent} onOpenChange={(open) => !open && setSelectedEvent(null)}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Event Details</DialogTitle>
+            <DialogTitle>{t('pages.unifiedAudit.detail.title')}</DialogTitle>
             <DialogDescription>
               {selectedEvent?.event_type} · {selectedEvent?.source}
             </DialogDescription>
@@ -296,27 +323,35 @@ export function UnifiedAuditPage() {
           {selectedEvent && (
             <div className="space-y-4">
               <dl className="grid grid-cols-3 gap-x-4 gap-y-2 text-sm">
-                <dt className="text-muted-foreground">Timestamp</dt>
+                <dt className="text-muted-foreground">
+                  {t('pages.unifiedAudit.detail.timestamp')}
+                </dt>
                 <dd className="col-span-2 font-mono">{new Date(selectedEvent.created_at).toLocaleString()}</dd>
-                <dt className="text-muted-foreground">Source</dt>
+                <dt className="text-muted-foreground">{t('pages.unifiedAudit.detail.source')}</dt>
                 <dd className="col-span-2 capitalize">{selectedEvent.source}</dd>
-                <dt className="text-muted-foreground">Event Type</dt>
+                <dt className="text-muted-foreground">
+                  {t('pages.unifiedAudit.detail.eventType')}
+                </dt>
                 <dd className="col-span-2 font-medium">{selectedEvent.event_type}</dd>
-                <dt className="text-muted-foreground">Service</dt>
+                <dt className="text-muted-foreground">{t('pages.unifiedAudit.detail.service')}</dt>
                 <dd className="col-span-2">{selectedEvent.route_name || selectedEvent.route_id || '-'}</dd>
-                <dt className="text-muted-foreground">User</dt>
+                <dt className="text-muted-foreground">{t('pages.unifiedAudit.detail.user')}</dt>
                 <dd className="col-span-2">{selectedEvent.user_email || selectedEvent.user_id || '-'}</dd>
-                <dt className="text-muted-foreground">IP</dt>
+                <dt className="text-muted-foreground">{t('pages.unifiedAudit.detail.ip')}</dt>
                 <dd className="col-span-2 font-mono">{selectedEvent.actor_ip || '-'}</dd>
               </dl>
               <div>
-                <p className="mb-1 text-sm font-medium text-muted-foreground">Details</p>
+                <p className="mb-1 text-sm font-medium text-muted-foreground">
+                  {t('pages.unifiedAudit.detail.details')}
+                </p>
                 {selectedEvent.details && Object.keys(selectedEvent.details).length > 0 ? (
                   <pre className="max-h-80 overflow-auto rounded-md bg-muted p-3 text-xs">
                     {JSON.stringify(selectedEvent.details, null, 2)}
                   </pre>
                 ) : (
-                  <p className="text-sm text-muted-foreground">No additional details.</p>
+                  <p className="text-sm text-muted-foreground">
+                    {t('pages.unifiedAudit.detail.noDetails')}
+                  </p>
                 )}
               </div>
             </div>

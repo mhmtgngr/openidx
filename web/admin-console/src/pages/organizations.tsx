@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import { Building2, Plus, Users, Pencil, Trash2 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
@@ -31,6 +32,14 @@ interface Organization {
   updated_at: string
 }
 
+/**
+ * The plan and the member role each render lowercase on a badge and title
+ * case in a form select. Each shape has its own catalog map, both keyed off
+ * the list below so the two cannot come to offer different members.
+ */
+const PLANS = ['free', 'team', 'enterprise'] as const
+const MEMBER_ROLES = ['member', 'admin', 'owner'] as const
+
 interface OrgMember {
   id: string
   organization_id: string
@@ -44,6 +53,7 @@ interface OrgMember {
 export function OrganizationsPage() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const { t } = useTranslation()
   const [createOpen, setCreateOpen] = useState(false)
   const [editOrg, setEditOrg] = useState<Organization | null>(null)
   const [membersOrg, setMembersOrg] = useState<Organization | null>(null)
@@ -73,10 +83,14 @@ export function OrganizationsPage() {
     mutationFn: (body: Record<string, unknown>) => api.post('/api/v1/organizations', body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['organizations'] })
-      toast({ title: 'Organization created' })
+      toast({ title: t('pages.organizations.toasts.created') })
       setCreateOpen(false)
     },
-    onError: () => toast({ title: 'Failed to create organization', variant: 'destructive' }),
+    onError: () =>
+      toast({
+        title: t('pages.organizations.toasts.createFailed'),
+        variant: 'destructive',
+      }),
   })
 
   const updateMutation = useMutation({
@@ -84,10 +98,14 @@ export function OrganizationsPage() {
       api.put(`/api/v1/organizations/${id}`, body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['organizations'] })
-      toast({ title: 'Organization updated' })
+      toast({ title: t('pages.organizations.toasts.updated') })
       setEditOrg(null)
     },
-    onError: () => toast({ title: 'Failed to update organization', variant: 'destructive' }),
+    onError: () =>
+      toast({
+        title: t('pages.organizations.toasts.updateFailed'),
+        variant: 'destructive',
+      }),
   })
 
   const addMemberMutation = useMutation({
@@ -96,10 +114,14 @@ export function OrganizationsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['org-members', membersOrg?.id] })
       queryClient.invalidateQueries({ queryKey: ['organizations'] })
-      toast({ title: 'Member added' })
+      toast({ title: t('pages.organizations.toasts.memberAdded') })
       setAddMemberOpen(false)
     },
-    onError: () => toast({ title: 'Failed to add member', variant: 'destructive' }),
+    onError: () =>
+      toast({
+        title: t('pages.organizations.toasts.memberAddFailed'),
+        variant: 'destructive',
+      }),
   })
 
   const removeMemberMutation = useMutation({
@@ -108,7 +130,7 @@ export function OrganizationsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['org-members', membersOrg?.id] })
       queryClient.invalidateQueries({ queryKey: ['organizations'] })
-      toast({ title: 'Member removed' })
+      toast({ title: t('pages.organizations.toasts.memberRemoved') })
     },
   })
 
@@ -144,44 +166,64 @@ export function OrganizationsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Organizations</h1>
-          <p className="text-muted-foreground">Manage multi-tenant organizations</p>
+          <h1 className="text-3xl font-bold tracking-tight">{t('nav.items.organizations')}</h1>
+          <p className="text-muted-foreground">{t('pages.organizations.subtitle')}</p>
         </div>
-        <Button onClick={openCreate}><Plus className="mr-2 h-4 w-4" />Create Organization</Button>
+        <Button onClick={openCreate}>
+          <Plus className="mr-2 h-4 w-4" />
+          {t('pages.organizations.create')}
+        </Button>
       </div>
 
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2"><Building2 className="h-5 w-5" />All Organizations</CardTitle>
+          <CardTitle className="flex items-center gap-2"><Building2 className="h-5 w-5" />
+            {t('pages.organizations.listTitle')}
+          </CardTitle>
         </CardHeader>
         <CardContent>
           {isLoading ? (
             <div className="flex flex-col items-center justify-center py-12">
               <LoadingSpinner size="lg" />
-              <p className="mt-4 text-sm text-muted-foreground">Loading organizations...</p>
+              <p className="mt-4 text-sm text-muted-foreground">
+                {t('pages.organizations.loading')}
+              </p>
             </div>
           ) : isError ? (
-            <QueryError error={error} resource="organizations" />
+            <QueryError error={error} resource={t('pages.organizations.resource')} />
           ) : orgs.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
               <Building2 className="h-12 w-12 text-muted-foreground/40 mb-3" />
-              <p className="font-medium">No organizations found</p>
-              <p className="text-sm">Create an organization to enable multi-tenancy</p>
+              <p className="font-medium">{t('pages.organizations.emptyTitle')}</p>
+              <p className="text-sm">{t('pages.organizations.emptyHint')}</p>
             </div>
           ) : (
             <Table>
               <TableHeader><TableRow>
-                <TableHead>Name</TableHead><TableHead>Slug</TableHead><TableHead>Plan</TableHead>
-                <TableHead>Status</TableHead><TableHead>Members</TableHead><TableHead>Created</TableHead><TableHead>Actions</TableHead>
+                <TableHead>{t('pages.organizations.colName')}</TableHead>
+                <TableHead>{t('pages.organizations.colSlug')}</TableHead>
+                <TableHead>{t('pages.organizations.colPlan')}</TableHead>
+                <TableHead>{t('pages.organizations.colStatus')}</TableHead>
+                <TableHead>{t('pages.organizations.colMembers')}</TableHead>
+                <TableHead>{t('pages.organizations.colCreated')}</TableHead>
+                <TableHead>{t('pages.organizations.colActions')}</TableHead>
               </TableRow></TableHeader>
               <TableBody>
                 {orgs.map(org => (
                   <TableRow key={org.id}>
                     <TableCell className="font-medium">{org.name}</TableCell>
                     <TableCell className="text-muted-foreground">/{org.slug}</TableCell>
-                    <TableCell><Badge variant={planColor(org.plan) as 'default' | 'secondary' | 'outline'}>{org.plan}</Badge></TableCell>
                     <TableCell>
-                      <Badge variant={org.status === 'active' ? 'default' : 'secondary'}>{org.status}</Badge>
+                      <Badge variant={planColor(org.plan) as 'default' | 'secondary' | 'outline'}>
+                        {t(`pages.organizations.plans.${org.plan}`, { defaultValue: org.plan })}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant={org.status === 'active' ? 'default' : 'secondary'}>
+                        {t(`pages.organizations.statuses.${org.status}`, {
+                          defaultValue: org.status,
+                        })}
+                      </Badge>
                     </TableCell>
                     <TableCell>
                       <button className="flex items-center gap-1 text-primary hover:underline" onClick={() => setMembersOrg(org)}>
@@ -210,44 +252,59 @@ export function OrganizationsPage() {
       {/* Create/Edit Dialog */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent className="max-w-lg">
-          <DialogHeader><DialogTitle>{editOrg ? 'Edit Organization' : 'Create Organization'}</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>
+              {editOrg
+                ? t('pages.organizations.form.editTitle')
+                : t('pages.organizations.form.createTitle')}
+            </DialogTitle>
+          </DialogHeader>
           <div className="space-y-4">
             <div>
-              <label className="text-sm font-medium">Name</label>
-              <Input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Organization name" />
+              <label className="text-sm font-medium">{t('pages.organizations.form.name')}</label>
+              <Input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder={t('pages.organizations.form.namePlaceholder')} />
             </div>
             {!editOrg && (
               <div>
-                <label className="text-sm font-medium">Slug</label>
+                <label className="text-sm font-medium">{t('pages.organizations.form.slug')}</label>
+                {/* The example teaches the characters the field accepts. */}
                 <Input value={form.slug} onChange={e => setForm(f => ({ ...f, slug: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '') }))} placeholder="org-slug" />
               </div>
             )}
             <div>
-              <label className="text-sm font-medium">Plan</label>
+              <label className="text-sm font-medium">{t('pages.organizations.form.plan')}</label>
               <Select value={form.plan} onValueChange={v => setForm(f => ({ ...f, plan: v }))}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="free">Free</SelectItem>
-                  <SelectItem value="team">Team</SelectItem>
-                  <SelectItem value="enterprise">Enterprise</SelectItem>
+                  {PLANS.map(plan => (
+                    <SelectItem key={plan} value={plan}>
+                      {t(`pages.organizations.form.planOptions.${plan}`)}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="text-sm font-medium">Max Users</label>
+                <label className="text-sm font-medium">{t('pages.organizations.form.maxUsers')}</label>
                 <Input type="number" value={form.max_users} onChange={e => setForm(f => ({ ...f, max_users: parseInt(e.target.value) || 10 }))} />
               </div>
               <div>
-                <label className="text-sm font-medium">Max Applications</label>
+                <label className="text-sm font-medium">
+                  {t('pages.organizations.form.maxApplications')}
+                </label>
                 <Input type="number" value={form.max_applications} onChange={e => setForm(f => ({ ...f, max_applications: parseInt(e.target.value) || 5 }))} />
               </div>
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
+            <Button variant="outline" onClick={() => setCreateOpen(false)}>
+              {t('common.cancel')}
+            </Button>
             <Button disabled={!form.name || createMutation.isPending || updateMutation.isPending} onClick={handleSave}>
-              {editOrg ? 'Update' : 'Create'}
+              {editOrg
+                ? t('pages.organizations.form.update')
+                : t('pages.organizations.form.submit')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -257,24 +314,37 @@ export function OrganizationsPage() {
       <Dialog open={!!membersOrg} onOpenChange={open => { if (!open) setMembersOrg(null) }}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Members — {membersOrg?.name}</DialogTitle>
+            <DialogTitle>
+              {t('pages.organizations.members.title', { org: membersOrg?.name ?? '' })}
+            </DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div className="flex justify-end">
               <Button size="sm" onClick={() => { setMemberForm({ user_id: '', role: 'member' }); setAddMemberOpen(true) }}>
-                <Plus className="mr-2 h-4 w-4" />Add Member
+                <Plus className="mr-2 h-4 w-4" />
+                {t('pages.organizations.members.add')}
               </Button>
             </div>
             <Table>
               <TableHeader><TableRow>
-                <TableHead>Name</TableHead><TableHead>Email</TableHead><TableHead>Role</TableHead><TableHead>Joined</TableHead><TableHead>Actions</TableHead>
+                <TableHead>{t('pages.organizations.members.colName')}</TableHead>
+                <TableHead>{t('pages.organizations.members.colEmail')}</TableHead>
+                <TableHead>{t('pages.organizations.members.colRole')}</TableHead>
+                <TableHead>{t('pages.organizations.members.colJoined')}</TableHead>
+                <TableHead>{t('pages.organizations.members.colActions')}</TableHead>
               </TableRow></TableHeader>
               <TableBody>
                 {members.map(m => (
                   <TableRow key={m.id}>
                     <TableCell>{m.user_name}</TableCell>
                     <TableCell>{m.user_email}</TableCell>
-                    <TableCell><Badge variant={m.role === 'owner' ? 'default' : 'outline'}>{m.role}</Badge></TableCell>
+                    <TableCell>
+                      <Badge variant={m.role === 'owner' ? 'default' : 'outline'}>
+                        {t(`pages.organizations.members.roles.${m.role}`, {
+                          defaultValue: m.role,
+                        })}
+                      </Badge>
+                    </TableCell>
                     <TableCell>{new Date(m.joined_at).toLocaleDateString()}</TableCell>
                     <TableCell>
                       {m.role !== 'owner' && (
@@ -294,28 +364,34 @@ export function OrganizationsPage() {
       {/* Add Member Dialog */}
       <Dialog open={addMemberOpen} onOpenChange={setAddMemberOpen}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Add Member</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>{t('pages.organizations.members.addTitle')}</DialogTitle>
+          </DialogHeader>
           <div className="space-y-4">
             <div>
-              <label className="text-sm font-medium">User ID</label>
-              <Input value={memberForm.user_id} onChange={e => setMemberForm(f => ({ ...f, user_id: e.target.value }))} placeholder="User UUID" />
+              <label className="text-sm font-medium">{t('pages.organizations.members.userId')}</label>
+              <Input value={memberForm.user_id} onChange={e => setMemberForm(f => ({ ...f, user_id: e.target.value }))} placeholder={t('pages.organizations.members.userIdPlaceholder')} />
             </div>
             <div>
-              <label className="text-sm font-medium">Role</label>
+              <label className="text-sm font-medium">{t('pages.organizations.members.role')}</label>
               <Select value={memberForm.role} onValueChange={v => setMemberForm(f => ({ ...f, role: v }))}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="member">Member</SelectItem>
-                  <SelectItem value="admin">Admin</SelectItem>
-                  <SelectItem value="owner">Owner</SelectItem>
+                  {MEMBER_ROLES.map(role => (
+                    <SelectItem key={role} value={role}>
+                      {t(`pages.organizations.members.roleOptions.${role}`)}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setAddMemberOpen(false)}>Cancel</Button>
+            <Button variant="outline" onClick={() => setAddMemberOpen(false)}>
+              {t('common.cancel')}
+            </Button>
             <Button disabled={!memberForm.user_id} onClick={() => membersOrg && addMemberMutation.mutate({ orgId: membersOrg.id, body: memberForm })}>
-              Add
+              {t('pages.organizations.members.submit')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -325,18 +401,20 @@ export function OrganizationsPage() {
       <AlertDialog open={!!deleteTarget} onOpenChange={open => !open && setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete Organization</AlertDialogTitle>
+            <AlertDialogTitle>{t('pages.organizations.deleteDialog.title')}</AlertDialogTitle>
             <AlertDialogDescription>
-              Delete &quot;{deleteTarget?.name}&quot;? This will remove all members and cannot be undone.
+              {t('pages.organizations.deleteDialog.desc', {
+                name: deleteTarget?.name ?? '',
+              })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction onClick={() => deleteTarget && api.delete(`/api/v1/organizations/${deleteTarget.id}`).then(() => {
               queryClient.invalidateQueries({ queryKey: ['organizations'] })
-              toast({ title: 'Organization deleted' })
+              toast({ title: t('pages.organizations.toasts.deleted') })
               setDeleteTarget(null)
-            })}>Delete</AlertDialogAction>
+            })}>{t('common.delete')}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

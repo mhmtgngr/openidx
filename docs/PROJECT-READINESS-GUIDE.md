@@ -21,7 +21,7 @@ security, access, sessions, devices, trusted browsers, notifications,
 access requests, profile — are fully bilingual; the end-user experience
 is complete in both languages). Open: P1 rollout Task 16 (operator
 action), P3.1 cut v1.28.0 (post-merge), the remaining P4 items incl.
-the 23 remaining admin page bodies and the Expo-vs-Flutter mobile pick.)
+the 19 remaining admin page bodies and the Expo-vs-Flutter mobile pick.)
 **Question this document answers:** *Is OpenIDX fully functional and well defined end to end, as experienced by the people who use it — and what are the next steps and controls to get it there?*
 
 This is the product-and-user-side companion to
@@ -797,11 +797,29 @@ all four pillars, deploy, log in, and find PAM.
    credential key prefix, Ziti protocol names and host:port pairs, the
    URL-path example, the controller's policy names and types, and the
    forecaster's own peak-weekday string.
-   *Remaining:* 23 other admin page bodies (a measured count, not an
+   Batch 21 took Organizations, Audit Archival, the Privacy Dashboard and the
+   Unified Audit Log. The Privacy Dashboard is where the "one lookup" rule
+   showed its value from the other direction: its DSAR status and request-type
+   vocabularies already existed under `consentManagement` for the page it links
+   to, so instead of copying them it now reads from there — one map, two pages,
+   no way for the summary and the detail view to disagree. Its
+   `getStatusBadge` helper became a component so the label re-resolves on a
+   language switch, and one more `en-US`-pinned date now follows the browser
+   locale. The retention sentence on Audit Archival is built from a plural and
+   its own clause key ("Retain for 90 days (archive before delete)"), so each
+   locale punctuates the parenthetical itself and the whole line lands in one
+   text node instead of three siblings. What stays raw is what two pages would
+   otherwise disagree about or what the UI itself matches on: the consent type
+   (a free-form key Consent Management also renders raw), the unified feed's
+   event type (the filter above the table matches the raw wire value, so a
+   translated label would name something the filter cannot find), the three
+   audit sources (product names), byte-size unit symbols, and the `org-slug`
+   example that teaches the characters the field accepts.
+   *Remaining:* 19 other admin page bodies (a measured count, not an
    estimate: pages under `src/pages` with no `useTranslation`) — mechanical,
    batch by batch, against this pattern. The largest of them are
-   `organizations.tsx` (345 lines), `audit-archival.tsx` (345),
-   `privacy-dashboard.tsx` (332) and `unified-audit.tsx` (328).
+   `compliance-dashboard.tsx` (321 lines), `lifecycle-policies.tsx` (313),
+   `ai-identity-intelligence.tsx` (307) and `ispm-dashboard.tsx` (297).
 2. Accessibility pass to a VPAT (needs real assistive-technology testing,
    not just an automated axe sweep).
 3. Separate/hardened end-user portal bundle.

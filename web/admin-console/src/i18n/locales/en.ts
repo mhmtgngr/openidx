@@ -7892,6 +7892,243 @@ const en = {
         projected90: '90-Day Projected',
       },
     },
+    // Organizations. The slug renders as the URL segment it is, and the
+    // `org-slug` example teaches the characters the field accepts. The plan and
+    // the member role each appear lowercase on a badge and title case in a
+    // form select, so each shape has its own map keyed off one wire-value list.
+    organizations: {
+      // The heading is exactly the nav item, so it reuses `nav.items`.
+      subtitle: 'Manage multi-tenant organizations',
+      create: 'Create Organization',
+      listTitle: 'All Organizations',
+      loading: 'Loading organizations...',
+      resource: 'organizations',
+      emptyTitle: 'No organizations found',
+      emptyHint: 'Create an organization to enable multi-tenancy',
+      colName: 'Name',
+      colSlug: 'Slug',
+      colPlan: 'Plan',
+      colStatus: 'Status',
+      colMembers: 'Members',
+      colCreated: 'Created',
+      colActions: 'Actions',
+      plans: {
+        free: 'free',
+        team: 'team',
+        enterprise: 'enterprise',
+      },
+      statuses: {
+        active: 'active',
+        suspended: 'suspended',
+      },
+      form: {
+        createTitle: 'Create Organization',
+        editTitle: 'Edit Organization',
+        name: 'Name',
+        namePlaceholder: 'Organization name',
+        slug: 'Slug',
+        plan: 'Plan',
+        maxUsers: 'Max Users',
+        maxApplications: 'Max Applications',
+        update: 'Update',
+        submit: 'Create',
+        planOptions: {
+          free: 'Free',
+          team: 'Team',
+          enterprise: 'Enterprise',
+        },
+      },
+      members: {
+        title: 'Members — {{org}}',
+        add: 'Add Member',
+        colName: 'Name',
+        colEmail: 'Email',
+        colRole: 'Role',
+        colJoined: 'Joined',
+        colActions: 'Actions',
+        addTitle: 'Add Member',
+        userId: 'User ID',
+        userIdPlaceholder: 'User UUID',
+        role: 'Role',
+        submit: 'Add',
+        roles: {
+          member: 'member',
+          admin: 'admin',
+          owner: 'owner',
+        },
+        roleOptions: {
+          member: 'Member',
+          admin: 'Admin',
+          owner: 'Owner',
+        },
+      },
+      deleteDialog: {
+        title: 'Delete Organization',
+        desc: 'Delete “{{name}}”? This will remove all members and cannot be undone.',
+      },
+      toasts: {
+        created: 'Organization created',
+        createFailed: 'Failed to create organization',
+        updated: 'Organization updated',
+        updateFailed: 'Failed to update organization',
+        deleted: 'Organization deleted',
+        memberAdded: 'Member added',
+        memberAddFailed: 'Failed to add member',
+        memberRemoved: 'Member removed',
+      },
+    },
+    // Audit archival. Byte-size units (B/KB/MB/GB) are unit symbols and stay
+    // raw. The event category appears as its wire value on the policy badge and
+    // as a sentence-case label in the form select, so each shape has its own map
+    // keyed off one list.
+    auditArchival: {
+      title: 'Audit Archival & Retention',
+      subtitle: 'Manage audit event lifecycle, retention policies, and archives',
+      resource: 'audit archives',
+      stats: {
+        policies: 'Retention Policies',
+        archivedEvents: 'Archived Events',
+        storage: 'Archive Storage',
+      },
+      tabs: {
+        retention: 'Retention Policies',
+        archives: 'Archives',
+      },
+      // The audit service's event categories.
+      eventCategories: {
+        all: 'all',
+        authentication: 'authentication',
+        authorization: 'authorization',
+        user_management: 'user management',
+        configuration: 'configuration',
+        data_access: 'data access',
+      },
+      retention: {
+        newPolicy: 'New Policy',
+        formTitle: 'New Retention Policy',
+        name: 'Name',
+        category: 'Event Category',
+        days: 'Retention Days',
+        archiveBefore: 'Archive events before deletion',
+        creating: 'Creating...',
+        submit: 'Create Policy',
+        enabled: 'Enabled',
+        disabled: 'Disabled',
+        enable: 'Enable',
+        disable: 'Disable',
+        retain_one: 'Retain for {{count}} day {{clause}}',
+        retain_other: 'Retain for {{count}} days {{clause}}',
+        clauseArchive: '(archive before delete)',
+        clauseNoArchive: '(no archive)',
+        empty: 'No retention policies configured',
+        deleteTitle: 'Delete this retention policy?',
+        deleteDesc:
+          'This removes the retention policy {{name}}. Audit events in the {{category}} category will no longer be governed by it.',
+        categoryOptions: {
+          all: 'All Categories',
+          authentication: 'Authentication',
+          authorization: 'Authorization',
+          user_management: 'User Management',
+          configuration: 'Configuration',
+          data_access: 'Data Access',
+        },
+      },
+      archives: {
+        create: 'Create Archive',
+        name: 'Archive Name',
+        startDate: 'Start Date',
+        endDate: 'End Date',
+        creating: 'Creating...',
+        events_one: '{{formatted}} event',
+        events_other: '{{formatted}} events',
+        empty: 'No archives created yet',
+        restore: 'Restore',
+        restoreTitle: 'Restore this archive?',
+        restoreDesc:
+          'This re-ingests the archived audit events back into the live audit store. Depending on the archive size this can take a while and add load to the system.',
+        // The archive job's lifecycle.
+        statuses: {
+          completed: 'completed',
+          creating: 'creating',
+          failed: 'failed',
+        },
+      },
+    },
+    // Privacy dashboard. The DSAR status and request-type vocabularies are the
+    // privacy service's own and already live under `consentManagement`, so this
+    // page resolves through those rather than keeping a second copy that could
+    // drift from the page it links to. The consent type is a free-form string
+    // both pages render raw.
+    privacyDashboard: {
+      // The heading is exactly the nav item, so it reuses `nav.items`.
+      subtitle: 'GDPR compliance overview and data subject request management',
+      loading: 'Loading privacy dashboard...',
+      resource: 'the privacy dashboard',
+      cards: {
+        consents: 'Total Consents',
+        activeDsars: 'Active DSARs',
+        overdueDsars: 'Overdue DSARs',
+        assessments: 'Impact Assessments',
+      },
+      quickActions: {
+        title: 'Quick Actions',
+        viewDsars: 'View All DSARs',
+        manageConsents: 'Manage Consents',
+        retention: 'Retention Policies',
+      },
+      breakdown: {
+        title: 'Consent Breakdown',
+        empty: 'No consent data available',
+        colType: 'Consent Type',
+        colGranted: 'Granted',
+        colRevoked: 'Revoked',
+        colRate: 'Rate',
+      },
+      recent: {
+        title: 'Recent Data Subject Access Requests',
+        viewAll: 'View All',
+        empty: 'No recent DSARs',
+        colType: 'Type',
+        colUser: 'User',
+        colStatus: 'Status',
+        colCreated: 'Created',
+      },
+    },
+    // Unified audit log. The three sources are product names (OpenIDX, Ziti,
+    // Guacamole) and stay raw. So does the event type: this feed merges three
+    // services' vocabularies, and the filter above the table matches the raw
+    // wire value, so showing a translated label would name something the filter
+    // cannot find.
+    unifiedAudit: {
+      title: 'Unified Audit Log',
+      subtitle: 'Combined events from OpenIDX, Ziti, and Guacamole',
+      resource: 'audit events',
+      total24h: 'Total (24h)',
+      allSources: 'All Sources',
+      eventTypePlaceholder: 'Filter by event type...',
+      colTimestamp: 'Timestamp',
+      colSource: 'Source',
+      colEvent: 'Event',
+      colService: 'Service',
+      colUser: 'User',
+      colIp: 'IP',
+      colDetails: 'Details',
+      view: 'View',
+      empty: 'No audit events found',
+      showing_one: 'Showing {{from}} - {{to}} of {{total}} event',
+      showing_other: 'Showing {{from}} - {{to}} of {{total}} events',
+      detail: {
+        title: 'Event Details',
+        timestamp: 'Timestamp',
+        source: 'Source',
+        eventType: 'Event Type',
+        service: 'Service',
+        user: 'User',
+        ip: 'IP',
+        details: 'Details',
+        noDetails: 'No additional details.',
+      },
+    },
   },
   pam: {
     remoteAppSecretHint:

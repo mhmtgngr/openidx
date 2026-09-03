@@ -595,6 +595,33 @@ describe('i18n', () => {
       ...['increasing', 'decreasing', 'stable', 'insufficient_data'].map(
         (k) => `pages.predictiveAnalytics.trends.${k}`,
       ),
+      // organizations: the plan and the member role, each rendered lowercase on
+      // a badge and title case in a form select.
+      ...['free', 'team', 'enterprise'].flatMap((k) => [
+        `pages.organizations.plans.${k}`,
+        `pages.organizations.form.planOptions.${k}`,
+      ]),
+      ...['active', 'suspended'].map((k) => `pages.organizations.statuses.${k}`),
+      ...['member', 'admin', 'owner'].flatMap((k) => [
+        `pages.organizations.members.roles.${k}`,
+        `pages.organizations.members.roleOptions.${k}`,
+      ]),
+      // audit-archival: the audit service's event categories (badge and form
+      // select) and the archive job's lifecycle.
+      ...[
+        'all',
+        'authentication',
+        'authorization',
+        'user_management',
+        'configuration',
+        'data_access',
+      ].flatMap((k) => [
+        `pages.auditArchival.eventCategories.${k}`,
+        `pages.auditArchival.retention.categoryOptions.${k}`,
+      ]),
+      ...['completed', 'creating', 'failed'].map(
+        (k) => `pages.auditArchival.archives.statuses.${k}`,
+      ),
     ]
     for (const lang of supportedLanguages) {
       for (const key of mapKeys) {
@@ -1064,6 +1091,67 @@ describe('i18n', () => {
     expect(i18n.t('pages.predictiveAnalytics.trends.insufficient_data')).toBe(
       'Insufficient data',
     )
+  })
+
+  it('renders the organization plan in both the badge and the form casing', async () => {
+    await i18n.changeLanguage('en')
+    expect(i18n.t('pages.organizations.plans.enterprise')).toBe('enterprise')
+    expect(i18n.t('pages.organizations.form.planOptions.enterprise')).toBe('Enterprise')
+    expect(i18n.t('pages.organizations.members.roles.owner')).toBe('owner')
+    expect(i18n.t('pages.organizations.members.roleOptions.owner')).toBe('Owner')
+    // A plan the billing side adds later still reads as itself.
+    expect(i18n.t('pages.organizations.plans.trial', { defaultValue: 'trial' })).toBe(
+      'trial',
+    )
+  })
+
+  it('builds the retention sentence from a plural and its own clause', async () => {
+    // The archive clause is a separate key so each locale can punctuate it, and
+    // the whole line lands in one text node rather than three siblings.
+    await i18n.changeLanguage('en')
+    expect(
+      i18n.t('pages.auditArchival.retention.retain', {
+        count: 90,
+        clause: i18n.t('pages.auditArchival.retention.clauseArchive'),
+      }),
+    ).toBe('Retain for 90 days (archive before delete)')
+    expect(
+      i18n.t('pages.auditArchival.retention.retain', {
+        count: 1,
+        clause: i18n.t('pages.auditArchival.retention.clauseNoArchive'),
+      }),
+    ).toBe('Retain for 1 day (no archive)')
+
+    await i18n.changeLanguage('tr')
+    expect(
+      i18n.t('pages.auditArchival.retention.retain', {
+        count: 90,
+        clause: i18n.t('pages.auditArchival.retention.clauseArchive'),
+      }),
+    ).toBe('90 gün sakla (silmeden önce arşivle)')
+  })
+
+  it('pluralizes the archive event count while keeping its formatted number', async () => {
+    await i18n.changeLanguage('en')
+    expect(
+      i18n.t('pages.auditArchival.archives.events', {
+        count: 12345,
+        formatted: (12345).toLocaleString('en-US'),
+      }),
+    ).toBe('12,345 events')
+    expect(
+      i18n.t('pages.auditArchival.archives.events', { count: 1, formatted: '1' }),
+    ).toBe('1 event')
+  })
+
+  it('pluralizes the unified audit pagination line', async () => {
+    await i18n.changeLanguage('en')
+    expect(
+      i18n.t('pages.unifiedAudit.showing', { from: 1, to: 1, total: 1, count: 1 }),
+    ).toBe('Showing 1 - 1 of 1 event')
+    expect(
+      i18n.t('pages.unifiedAudit.showing', { from: 1, to: 50, total: 1532, count: 1532 }),
+    ).toBe('Showing 1 - 50 of 1532 events')
   })
 
   it('interpolates the page strings that carry values', async () => {

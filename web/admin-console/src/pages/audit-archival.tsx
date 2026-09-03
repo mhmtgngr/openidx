@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import { useState } from 'react'
 import { api } from '../lib/api'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
@@ -35,12 +36,27 @@ interface AuditArchive {
   created_at: string
 }
 
+/**
+ * The audit service's event categories. The policy badge shows the wire
+ * value and the form select a sentence-case label, so each has its own
+ * catalog map keyed off this list.
+ */
+const EVENT_CATEGORIES = [
+  'all',
+  'authentication',
+  'authorization',
+  'user_management',
+  'configuration',
+  'data_access',
+] as const
+
 const statusColors: Record<string, string> = {
   completed: 'bg-green-100 text-green-800',
   creating: 'bg-blue-100 text-blue-800',
   failed: 'bg-red-100 text-red-800',
 }
 
+/** Byte-size units are symbols, so they read the same in every locale. */
 function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 B'
   const k = 1024
@@ -51,6 +67,7 @@ function formatBytes(bytes: number): string {
 
 export function AuditArchivalPage() {
   const queryClient = useQueryClient()
+  const { t } = useTranslation()
   const [activeTab, setActiveTab] = useState<'retention' | 'archives'>('retention')
 
   // Retention form state
@@ -132,7 +149,7 @@ export function AuditArchivalPage() {
 
   const isLoading = retLoading || arcLoading
   if (isLoading) return <div className="flex justify-center py-12"><LoadingSpinner size="lg" /></div>
-  if (arcError) return <QueryError error={arcErrorObj} resource="audit archives" />
+  if (arcError) return <QueryError error={arcErrorObj} resource={t('pages.auditArchival.resource')} />
 
   const retentionPolicies = retentionData?.data || []
   const archives = archivesData?.data || []
@@ -143,8 +160,8 @@ export function AuditArchivalPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold">Audit Archival & Retention</h1>
-        <p className="text-muted-foreground">Manage audit event lifecycle, retention policies, and archives</p>
+        <h1 className="text-2xl font-bold">{t('pages.auditArchival.title')}</h1>
+        <p className="text-muted-foreground">{t('pages.auditArchival.subtitle')}</p>
       </div>
 
       {/* Summary Cards */}
@@ -152,26 +169,36 @@ export function AuditArchivalPage() {
         <Card><CardContent className="pt-4 text-center">
           <Database className="h-5 w-5 mx-auto mb-1 text-primary" />
           <p className="text-2xl font-bold">{retentionPolicies.length}</p>
-          <p className="text-xs text-muted-foreground">Retention Policies</p>
+          <p className="text-xs text-muted-foreground">
+            {t('pages.auditArchival.stats.policies')}
+          </p>
         </CardContent></Card>
         <Card><CardContent className="pt-4 text-center">
           <Archive className="h-5 w-5 mx-auto mb-1 text-green-600" />
           <p className="text-2xl font-bold">{totalArchivedEvents.toLocaleString()}</p>
-          <p className="text-xs text-muted-foreground">Archived Events</p>
+          <p className="text-xs text-muted-foreground">
+            {t('pages.auditArchival.stats.archivedEvents')}
+          </p>
         </CardContent></Card>
         <Card><CardContent className="pt-4 text-center">
           <Shield className="h-5 w-5 mx-auto mb-1 text-purple-600" />
           <p className="text-2xl font-bold">{formatBytes(totalArchiveSize)}</p>
-          <p className="text-xs text-muted-foreground">Archive Storage</p>
+          <p className="text-xs text-muted-foreground">
+            {t('pages.auditArchival.stats.storage')}
+          </p>
         </CardContent></Card>
       </div>
 
       {/* Tab Navigation */}
       <div className="flex gap-2 border-b">
         <button className={`px-4 py-2 text-sm font-medium border-b-2 ${activeTab === 'retention' ? 'border-blue-500 text-primary' : 'border-transparent text-muted-foreground'}`}
-          onClick={() => setActiveTab('retention')}>Retention Policies</button>
+          onClick={() => setActiveTab('retention')}>
+          {t('pages.auditArchival.tabs.retention')}
+        </button>
         <button className={`px-4 py-2 text-sm font-medium border-b-2 ${activeTab === 'archives' ? 'border-blue-500 text-primary' : 'border-transparent text-muted-foreground'}`}
-          onClick={() => setActiveTab('archives')}>Archives</button>
+          onClick={() => setActiveTab('archives')}>
+          {t('pages.auditArchival.tabs.archives')}
+        </button>
       </div>
 
       {/* Retention Policies Tab */}
@@ -179,42 +206,56 @@ export function AuditArchivalPage() {
         <>
           <div className="flex justify-end">
             <Button onClick={() => setShowCreateRetention(!showCreateRetention)}>
-              <Plus className="h-4 w-4 mr-2" />{showCreateRetention ? 'Cancel' : 'New Policy'}
+              <Plus className="h-4 w-4 mr-2" />
+              {showCreateRetention
+                ? t('common.cancel')
+                : t('pages.auditArchival.retention.newPolicy')}
             </Button>
           </div>
 
           {showCreateRetention && (
             <Card>
-              <CardHeader><CardTitle>New Retention Policy</CardTitle></CardHeader>
+              <CardHeader>
+                <CardTitle>{t('pages.auditArchival.retention.formTitle')}</CardTitle>
+              </CardHeader>
               <CardContent className="space-y-4">
                 <div className="grid grid-cols-3 gap-4">
                   <div>
-                    <label className="text-sm font-medium">Name</label>
+                    <label className="text-sm font-medium">
+                      {t('pages.auditArchival.retention.name')}
+                    </label>
                     <input className="w-full border rounded px-3 py-2 mt-1 text-sm" value={retName} onChange={e => setRetName(e.target.value)} />
                   </div>
                   <div>
-                    <label className="text-sm font-medium">Event Category</label>
+                    <label className="text-sm font-medium">
+                      {t('pages.auditArchival.retention.category')}
+                    </label>
                     <select className="w-full border rounded px-3 py-2 mt-1 text-sm" value={retCategory} onChange={e => setRetCategory(e.target.value)}>
-                      <option value="all">All Categories</option>
-                      <option value="authentication">Authentication</option>
-                      <option value="authorization">Authorization</option>
-                      <option value="user_management">User Management</option>
-                      <option value="configuration">Configuration</option>
-                      <option value="data_access">Data Access</option>
+                      {EVENT_CATEGORIES.map(category => (
+                        <option key={category} value={category}>
+                          {t(`pages.auditArchival.retention.categoryOptions.${category}`)}
+                        </option>
+                      ))}
                     </select>
                   </div>
                   <div>
-                    <label className="text-sm font-medium">Retention Days</label>
+                    <label className="text-sm font-medium">
+                      {t('pages.auditArchival.retention.days')}
+                    </label>
                     <input type="number" className="w-full border rounded px-3 py-2 mt-1 text-sm" value={retDays} onChange={e => setRetDays(Number(e.target.value))} />
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
                   <input type="checkbox" id="archiveEnabled" checked={retArchive} onChange={e => setRetArchive(e.target.checked)} />
-                  <label htmlFor="archiveEnabled" className="text-sm">Archive events before deletion</label>
+                  <label htmlFor="archiveEnabled" className="text-sm">
+                    {t('pages.auditArchival.retention.archiveBefore')}
+                  </label>
                 </div>
                 <Button onClick={() => createRetentionMutation.mutate({ name: retName, event_category: retCategory, retention_days: retDays, archive_enabled: retArchive })}
                   disabled={!retName || createRetentionMutation.isPending}>
-                  {createRetentionMutation.isPending ? 'Creating...' : 'Create Policy'}
+                  {createRetentionMutation.isPending
+                    ? t('pages.auditArchival.retention.creating')
+                    : t('pages.auditArchival.retention.submit')}
                 </Button>
               </CardContent>
             </Card>
@@ -228,22 +269,40 @@ export function AuditArchivalPage() {
                     <div>
                       <div className="flex items-center gap-2">
                         <p className="font-medium text-sm">{p.name}</p>
-                        <Badge variant="outline">{p.event_category}</Badge>
-                        <Badge variant={p.enabled ? 'default' : 'secondary'}>{p.enabled ? 'Enabled' : 'Disabled'}</Badge>
+                        <Badge variant="outline">
+                          {t(`pages.auditArchival.eventCategories.${p.event_category}`, {
+                            defaultValue: p.event_category.replace(/_/g, ' '),
+                          })}
+                        </Badge>
+                        <Badge variant={p.enabled ? 'default' : 'secondary'}>
+                          {p.enabled
+                            ? t('pages.auditArchival.retention.enabled')
+                            : t('pages.auditArchival.retention.disabled')}
+                        </Badge>
                       </div>
                       <p className="text-xs text-muted-foreground mt-0.5">
-                        Retain for {p.retention_days} days {p.archive_enabled ? '(archive before delete)' : '(no archive)'}
+                        {t('pages.auditArchival.retention.retain', {
+                          count: p.retention_days,
+                          clause: p.archive_enabled
+                            ? t('pages.auditArchival.retention.clauseArchive')
+                            : t('pages.auditArchival.retention.clauseNoArchive'),
+                        })}
                       </p>
                     </div>
                     <div className="flex gap-2">
                       <Button size="sm" variant="outline" onClick={() => toggleRetentionMutation.mutate({ id: p.id, enabled: !p.enabled })}>
-                        {p.enabled ? 'Disable' : 'Enable'}
+                        {p.enabled
+                          ? t('pages.auditArchival.retention.disable')
+                          : t('pages.auditArchival.retention.enable')}
                       </Button>
                       <ConfirmAction
-                        title="Delete this retention policy?"
-                        description={`This removes the retention policy ${p.name}. Audit events in the ${p.event_category} category will no longer be governed by it.`}
+                        title={t('pages.auditArchival.retention.deleteTitle')}
+                        description={t('pages.auditArchival.retention.deleteDesc', {
+                          name: p.name,
+                          category: p.event_category,
+                        })}
                         destructive
-                        confirmLabel="Delete"
+                        confirmLabel={t('common.delete')}
                         onConfirm={() => deleteRetentionMutation.mutateAsync(p.id)}
                       >
                         {(open) => (
@@ -255,7 +314,11 @@ export function AuditArchivalPage() {
                     </div>
                   </div>
                 ))}
-                {retentionPolicies.length === 0 && <p className="py-8 text-center text-muted-foreground">No retention policies configured</p>}
+                {retentionPolicies.length === 0 && (
+                  <p className="py-8 text-center text-muted-foreground">
+                    {t('pages.auditArchival.retention.empty')}
+                  </p>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -267,25 +330,36 @@ export function AuditArchivalPage() {
         <>
           <div className="flex justify-end">
             <Button onClick={() => setShowCreateArchive(!showCreateArchive)}>
-              <Plus className="h-4 w-4 mr-2" />{showCreateArchive ? 'Cancel' : 'Create Archive'}
+              <Plus className="h-4 w-4 mr-2" />
+              {showCreateArchive
+                ? t('common.cancel')
+                : t('pages.auditArchival.archives.create')}
             </Button>
           </div>
 
           {showCreateArchive && (
             <Card>
-              <CardHeader><CardTitle>Create Archive</CardTitle></CardHeader>
+              <CardHeader>
+                <CardTitle>{t('pages.auditArchival.archives.create')}</CardTitle>
+              </CardHeader>
               <CardContent className="space-y-4">
                 <div className="grid grid-cols-3 gap-4">
                   <div>
-                    <label className="text-sm font-medium">Archive Name</label>
+                    <label className="text-sm font-medium">
+                      {t('pages.auditArchival.archives.name')}
+                    </label>
                     <input className="w-full border rounded px-3 py-2 mt-1 text-sm" value={arcName} onChange={e => setArcName(e.target.value)} />
                   </div>
                   <div>
-                    <label className="text-sm font-medium">Start Date</label>
+                    <label className="text-sm font-medium">
+                      {t('pages.auditArchival.archives.startDate')}
+                    </label>
                     <input type="datetime-local" className="w-full border rounded px-3 py-2 mt-1 text-sm" value={arcStart} onChange={e => setArcStart(e.target.value)} />
                   </div>
                   <div>
-                    <label className="text-sm font-medium">End Date</label>
+                    <label className="text-sm font-medium">
+                      {t('pages.auditArchival.archives.endDate')}
+                    </label>
                     <input type="datetime-local" className="w-full border rounded px-3 py-2 mt-1 text-sm" value={arcEnd} onChange={e => setArcEnd(e.target.value)} />
                   </div>
                 </div>
@@ -294,7 +368,9 @@ export function AuditArchivalPage() {
                   date_range_start: new Date(arcStart).toISOString(),
                   date_range_end: new Date(arcEnd).toISOString(),
                 })} disabled={!arcName || !arcStart || !arcEnd || createArchiveMutation.isPending}>
-                  {createArchiveMutation.isPending ? 'Creating...' : 'Create Archive'}
+                  {createArchiveMutation.isPending
+                    ? t('pages.auditArchival.archives.creating')
+                    : t('pages.auditArchival.archives.create')}
                 </Button>
               </CardContent>
             </Card>
@@ -308,25 +384,35 @@ export function AuditArchivalPage() {
                     <div>
                       <div className="flex items-center gap-2">
                         <p className="font-medium text-sm">{a.name}</p>
-                        <Badge className={statusColors[a.status] || ''}>{a.status}</Badge>
+                        <Badge className={statusColors[a.status] || ''}>
+                          {t(`pages.auditArchival.archives.statuses.${a.status}`, {
+                            defaultValue: a.status,
+                          })}
+                        </Badge>
                       </div>
                       <div className="flex gap-3 text-xs text-muted-foreground mt-0.5">
                         {a.date_range_start && <span>{new Date(a.date_range_start).toLocaleDateString()} - {a.date_range_end ? new Date(a.date_range_end).toLocaleDateString() : ''}</span>}
-                        <span>{a.event_count.toLocaleString()} events</span>
+                        <span>
+                          {t('pages.auditArchival.archives.events', {
+                            count: a.event_count,
+                            formatted: a.event_count.toLocaleString(),
+                          })}
+                        </span>
                         <span>{formatBytes(a.file_size)}</span>
                       </div>
                     </div>
                     <div className="flex gap-2">
                       {a.status === 'completed' && (
                         <ConfirmAction
-                          title="Restore this archive?"
-                          description="This re-ingests the archived audit events back into the live audit store. Depending on the archive size this can take a while and add load to the system."
-                          confirmLabel="Restore"
+                          title={t('pages.auditArchival.archives.restoreTitle')}
+                          description={t('pages.auditArchival.archives.restoreDesc')}
+                          confirmLabel={t('pages.auditArchival.archives.restore')}
                           onConfirm={() => restoreMutation.mutateAsync(a.id)}
                         >
                           {(open) => (
                             <Button size="sm" variant="outline" onClick={open} disabled={restoreMutation.isPending}>
-                              <RotateCcw className="h-3 w-3 mr-1" />Restore
+                              <RotateCcw className="h-3 w-3 mr-1" />
+                              {t('pages.auditArchival.archives.restore')}
                             </Button>
                           )}
                         </ConfirmAction>
@@ -334,7 +420,11 @@ export function AuditArchivalPage() {
                     </div>
                   </div>
                 ))}
-                {archives.length === 0 && <p className="py-8 text-center text-muted-foreground">No archives created yet</p>}
+                {archives.length === 0 && (
+                  <p className="py-8 text-center text-muted-foreground">
+                    {t('pages.auditArchival.archives.empty')}
+                  </p>
+                )}
               </div>
             </CardContent>
           </Card>
