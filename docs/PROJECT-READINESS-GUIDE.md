@@ -2022,6 +2022,57 @@ aggregates that workflow's jobs and cannot reach across workflows, so
 rule names them. That gap is exactly how Semgrep stayed red for five
 commits without anyone noticing.
 
+### P7.4 — The security core, named by a test
+
+The audit listed the handlers and functions that no test in the repository
+mentioned by name. Writing the first of them found a control that has never
+worked.
+
+1. ✅ **MFA bypass codes never verified.** `VerifyBypassCode` opens a
+   transaction, `SELECT … FOR UPDATE`s the user's active codes, and then —
+   inside `for rows.Next()`, with the rows still open — issues the `UPDATE`
+   that spends the matched code. A pgx transaction is pinned to one connection
+   and allows one query on it at a time, so that `Exec` came back
+   **`conn busy`** and the function returned `(false, err)`. For every code,
+   valid or not. The caller reads that as "wrong code", so the break-glass
+   credential an administrator issues to get a locked-out user past MFA simply
+   did not work, and nothing said so. It now drains and closes the rows before
+   any write — the shape `ValidateBackupCode` already used — and the
+   `FOR UPDATE` locks still hold until the transaction ends, so the race the
+   transaction exists to prevent is unaffected. A scan of every
+   `Query`-then-`Exec` pair in `internal/` and `cmd/` found no second instance:
+   the two candidates are a pool (separate connections) and a loop that closes
+   its rows first.
+   `mfa_bypass_verify_test.go` covers the lifecycle: a single-use code spends
+   once and is refused the second time, `max_uses` is honoured to the last use,
+   an expired code is refused *and* marked expired, one user's code does not
+   work for another, a revoked code is dead, revoking twice fails rather than
+   overwriting who revoked it, and `RevokeAllBypassCodes` takes only the active
+   codes — leaving a spent code's history alone — and writes no audit entry
+   when there was nothing to revoke.
+2. ✅ **The token endpoint and the revocation endpoint.** `handleToken`'s
+   dispatch table is pinned per grant: the assertion is not that a grant
+   succeeds (that needs a database) but that it is *recognised*, because a
+   grant that falls through to the default arm is refused as
+   `unsupported_grant_type` — indistinguishable from one the product never
+   implemented, which is how a grant gets dropped in a refactor with nothing
+   going red. `handleRevoke` is unauthenticated by design and always answers
+   200 (a 4xx would let a caller probe which tokens exist), so the only thing
+   between it and an attacker writing arbitrary Redis keys is the signature
+   check before the blacklist write: a token this service signed is
+   blacklisted, one signed by another key is not, garbage and `alg=none` are
+   not, an already-expired token is not, and `token_type_hint` is treated as
+   the hint RFC 7009 says it is.
+3. ☐ Remaining from the audit's list: the interactive MFA step-up handlers
+   (`handleMFAVerify`, `handleMFASendOTP`, the `/authorize/mfa*` family),
+   hardware-token verify/assign/revoke, vault `handleReveal`/`handleCheckouts`
+   and `handlePamRevealEntry`, `RunSoDSweep`, `handleApproveRequest`,
+   `handleUserKillSwitch`, and the Guacamole session handlers.
+
+   `internal/identity`'s DB harness now also accepts
+   `OPENIDX_TEST_DATABASE_URL`, so these can be written and run on a machine
+   with Postgres and no Docker daemon; CI keeps using throwaway containers.
+
 ### P7 — One console, one client
 
 0. ✅ **The three console items the P7 audit left open.**

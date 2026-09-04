@@ -173,38 +173,62 @@ func (s *Service) VerifyBypassCode(ctx context.Context, userID, code, ipAddress,
 	if err != nil {
 		return false, err
 	}
-	defer rows.Close()
 
+	// Drain and CLOSE before issuing any write.
+	//
+	// A pgx transaction is pinned to one connection and allows one query on it
+	// at a time, so an Exec inside this loop came back "conn busy" and the
+	// function returned (false, err) -- for every code, valid or not. Nothing
+	// noticed, because the caller reads that as "wrong code": the break-glass
+	// credential simply never worked. The rows stay locked by FOR UPDATE until
+	// the transaction ends, so collecting first costs nothing.
+	type candidate struct {
+		id         string
+		codeHash   string
+		validUntil time.Time
+		maxUses    int
+		useCount   int
+	}
+	var candidates []candidate
 	for rows.Next() {
-		var bypassID, codeHash string
-		var validUntil time.Time
-		var maxUses, useCount int
-
-		if err := rows.Scan(&bypassID, &codeHash, &validUntil, &maxUses, &useCount); err != nil {
-			continue
+		var c candidate
+		if err := rows.Scan(&c.id, &c.codeHash, &c.validUntil, &c.maxUses, &c.useCount); err != nil {
+			rows.Close()
+			return false, err
 		}
+		candidates = append(candidates, c)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
 
+	for _, c := range candidates {
 		// Check expiration
-		if time.Now().After(validUntil) {
-			tx.Exec(ctx, "UPDATE mfa_bypass_codes SET status = 'expired' WHERE id = $1", bypassID)
+		if time.Now().After(c.validUntil) {
+			if _, err := tx.Exec(ctx, "UPDATE mfa_bypass_codes SET status = 'expired' WHERE id = $1", c.id); err != nil {
+				return false, err
+			}
 			continue
 		}
 
 		// Check max uses
-		if maxUses > 0 && useCount >= maxUses {
-			tx.Exec(ctx, "UPDATE mfa_bypass_codes SET status = 'used' WHERE id = $1", bypassID)
+		if c.maxUses > 0 && c.useCount >= c.maxUses {
+			if _, err := tx.Exec(ctx, "UPDATE mfa_bypass_codes SET status = 'used' WHERE id = $1", c.id); err != nil {
+				return false, err
+			}
 			continue
 		}
 
 		// Verify code
-		if err := bcrypt.CompareHashAndPassword([]byte(codeHash), []byte(code)); err != nil {
+		if err := bcrypt.CompareHashAndPassword([]byte(c.codeHash), []byte(code)); err != nil {
 			continue // Try next code
 		}
 
 		// Code is valid - update usage atomically within the transaction
-		newUseCount := useCount + 1
+		newUseCount := c.useCount + 1
 		newStatus := "active"
-		if maxUses > 0 && newUseCount >= maxUses {
+		if c.maxUses > 0 && newUseCount >= c.maxUses {
 			newStatus = "used"
 		}
 
@@ -212,14 +236,11 @@ func (s *Service) VerifyBypassCode(ctx context.Context, userID, code, ipAddress,
 			`UPDATE mfa_bypass_codes
 			SET use_count = $1, status = $2, used_at = NOW(), used_from_ip = $3
 			WHERE id = $4`,
-			newUseCount, newStatus, ipAddress, bypassID,
+			newUseCount, newStatus, ipAddress, c.id,
 		)
 		if err != nil {
 			return false, err
 		}
-
-		// Close rows before committing
-		rows.Close()
 
 		// Commit the transaction
 		if err := tx.Commit(ctx); err != nil {
@@ -227,7 +248,7 @@ func (s *Service) VerifyBypassCode(ctx context.Context, userID, code, ipAddress,
 		}
 
 		// Log audit (outside transaction - best effort)
-		s.logBypassAudit(ctx, bypassID, userID, "used", nil, ipAddress, userAgent, nil)
+		s.logBypassAudit(ctx, c.id, userID, "used", nil, ipAddress, userAgent, nil)
 
 		return true, nil
 	}
