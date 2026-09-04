@@ -8658,6 +8658,8 @@ const tr: typeof en = {
         'İşletim sisteminiz için OpenIDX istemcisini kurun, ardından aşağıdan devam edin.',
       download: '{{os}} için indir',
       installerFromAdmin: '{{os}} için kurulum dosyasını yöneticiniz sağlar.',
+      installerNoBuild:
+        'OpenIDX henüz {{os}} için bir istemci yayınlamıyor. Android veya bir masaüstü platformdan kaydolun — cihaz kaydı her iki durumda da aynıdır.',
       step3: '3. Bu cihazı bağlayın',
       generate: 'Bağlantı kodu üret',
       startFailed: 'Başlatılamadı',

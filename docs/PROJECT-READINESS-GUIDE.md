@@ -1811,10 +1811,45 @@ policy answers 403 + audit on `/oauth/authorize`.
    `.github/dependabot.yml`. `scripts/check-codeowners.sh` now rejects `!`
    patterns, rules for paths that do not exist, and patterns with no owner
    (which silently disown the subtree they match).
-7. ☐ **Agent downloads derived, not written** — the agent release builds
-   Linux deb/rpm with the existing `agent/Makefile` nfpm target and
-   publishes `agent-manifest.json`; `pages/add-device.tsx` renders only
-   what the manifest lists.
+7. ✅ **Agent downloads derived, not written** — *shipped*, and the
+   packaging target had never worked. `agent/Makefile`'s `package-linux`
+   has existed since the packaging files landed — nfpm config, postinstall,
+   systemd unit, desktop entry — and no workflow ran it, so the only agent
+   this project has ever published is the Windows MSI and an Android debug
+   APK, while the end-user wizard offers five platforms. Running it for the
+   first time failed on every invocation:
+
+   ```
+   glob failed: ./dist/openidx-agent-linux-${ARCH}: no matching files
+   ```
+
+   nfpm expands environment variables in a known set of top-level fields
+   (`name`, `arch`, `version`, `maintainer`, …) and **not** inside
+   `contents`, so the src path was taken literally. The Makefile now stages
+   the arch-specific binary to a fixed path before calling nfpm, and
+   `nfpm.yaml` says why. Verified locally with nfpm 2.41.3: four packages,
+   `.deb` and `.rpm` × amd64 and arm64, and the arm64 `.deb` carries an
+   `ELF aarch64` binary under `Architecture: arm64`.
+
+   A new `package (deb + rpm)` job builds them on every PR touching
+   `agent/**` and **asserts there are four** — a count, not a "did nfpm
+   exit 0", because that is what a partial build looks like. On an
+   `agent-v*` tag they arrive at the publish step as an artifact, so one
+   release carries the MSI, `latest.json`, the install script and all four
+   packages rather than two jobs racing to create it.
+
+   The console half was already manifest-driven — a platform with no entry
+   gets no download button — but its copy said the installer "is provided by
+   your administrator" for **every** platform, including the two nobody has:
+   there is no macOS installer target at all, and iOS builds in CI and is
+   never distributed. Those two now say that, in both catalogs; the moment a
+   build exists and lands in the downloads directory the button appears and
+   the copy stops being reached.
+
+   `AGENT_DOWNLOADS_DIR` was documented nowhere — not in `.env.example`, not
+   on the docs site — for a directory that decides what an end user is
+   offered. Both now carry it, with the `gh release download` recipe that
+   populates it.
 
 *Exit test:* every new job green on the PR; DoD items 1, 2, 4 and 6 point
 at a job.

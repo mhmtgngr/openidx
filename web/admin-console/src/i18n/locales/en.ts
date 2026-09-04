@@ -8912,6 +8912,8 @@ const en = {
         'Install the OpenIDX client for your operating system, then continue below.',
       download: 'Download for {{os}}',
       installerFromAdmin: 'Installer for {{os}} is provided by your administrator.',
+      installerNoBuild:
+        'OpenIDX does not publish an {{os}} client yet. Enrol from Android or a desktop platform — the device record is the same either way.',
       step3: '3. Connect this device',
       generate: 'Generate connect code',
       startFailed: 'Could not start',

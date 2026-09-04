@@ -153,6 +153,37 @@ redis://[:password@]host:port[/db]
 | `TRACING_ENDPOINT` | string | - | Jaeger endpoint |
 | `HEALTH_CHECK_ENABLED` | bool | `true` | Enable health checks |
 
+### Endpoint Agent Downloads
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `AGENT_DOWNLOADS_DIR` | string | `deployments/downloads` | Directory of per-OS agent installers served at `/downloads/<file>` |
+
+`GET /downloads/agent-manifest.json` lists what that directory actually holds,
+one entry per platform with a URL and a SHA-256. The end-user **Add a device**
+wizard reads it: a platform with an entry gets a download button, a platform
+without one is told the installer comes from its administrator. Nothing is
+advertised that is not on disk.
+
+The extension decides the platform — `.msi`/`.exe` → Windows, `.pkg`/`.dmg` →
+macOS, `.deb`/`.rpm` → Linux, `.apk` → Android — so populating it is a copy:
+
+```bash
+# Every artifact from an agent release, into the directory the service serves.
+TAG=agent-v1.2.0
+mkdir -p /var/lib/openidx/downloads
+gh release download "$TAG" --repo <owner>/<repo> \
+  --pattern 'OpenIDX-*.msi' --pattern '*.deb' --pattern '*.rpm' \
+  --dir /var/lib/openidx/downloads
+
+# Point access-service at it.
+export AGENT_DOWNLOADS_DIR=/var/lib/openidx/downloads
+```
+
+The `agent-v*` release publishes the Windows MSI plus `.deb` and `.rpm` for
+amd64 and arm64. There is no macOS or iOS client to download; the wizard says
+so rather than sending users to ask for one.
+
 ## Configuration File Format
 
 OpenIDX also supports configuration via YAML files placed in `/etc/openidx/` or specified with `--config` flag.

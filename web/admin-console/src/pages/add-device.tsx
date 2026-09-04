@@ -22,6 +22,16 @@ const OSES: { key: OSKey; label: string; icon: typeof Laptop }[] = [
   { key: 'ios', label: 'iPhone / iPad', icon: Apple },
 ]
 
+/**
+ * Platforms with no published client. iOS builds in CI but is never
+ * distributed (no Apple credentials), and there is no macOS installer target at
+ * all -- `agent/Makefile` cross-compiles a darwin binary, nothing packages it.
+ * A manifest entry still wins: the day a build exists and lands in
+ * AGENT_DOWNLOADS_DIR, the download button appears and this copy stops being
+ * reached.
+ */
+const NO_PUBLISHED_CLIENT = new Set<OSKey>(['ios', 'macos'])
+
 function detectOS(): OSKey {
   const ua = navigator.userAgent.toLowerCase()
   if (/android/.test(ua)) return 'android'
@@ -154,9 +164,18 @@ export function AddDevicePage() {
             </Button>
           ) : (
             <p className="text-sm text-muted-foreground">
-              {t('pages.addDevice.installerFromAdmin', {
-                os: OSES.find((o) => o.key === os)?.label,
-              })}
+              {/* Two different truths. Windows, Linux and Android are built and
+                  released (agent-v* publishes the MSI, the deb/rpm pair and the
+                  APK) -- if there is no download button, this deployment has
+                  not put them in AGENT_DOWNLOADS_DIR. iOS and macOS have no
+                  published client at all, so telling the user to ask an
+                  administrator for one sends them after something nobody has. */}
+              {t(
+                NO_PUBLISHED_CLIENT.has(os)
+                  ? 'pages.addDevice.installerNoBuild'
+                  : 'pages.addDevice.installerFromAdmin',
+                { os: OSES.find((o) => o.key === os)?.label }
+              )}
             </p>
           )}
         </CardContent>

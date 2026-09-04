@@ -1,9 +1,15 @@
-name: Windows Client Build
+name: Agent Build & Release
 
-# Builds the OpenIDX Windows client (.exe) and packages the MSI. The box/CI
-# Linux runners can't build the MSI, so the packaging job runs on windows-latest
-# (WiX v5 via `dotnet tool install`). A fast Linux job cross-builds the .exe as
-# a smoke check on every relevant push/PR.
+# Builds and packages the OpenIDX endpoint agent for every platform this
+# project actually ships:
+#   - Windows .exe + MSI, on windows-latest (WiX v5 via `dotnet tool install`;
+#     Linux runners cannot build an MSI).
+#   - Linux .deb + .rpm for amd64 and arm64, via nfpm.
+# A fast Linux job cross-builds the .exe as a smoke check on every relevant
+# push/PR. On an `agent-v*` tag all of it lands in one GitHub Release.
+#
+# The job names are the check names branch protection references, so they are
+# stable even though the workflow's own name has changed.
 
 on:
   push:
@@ -49,11 +55,78 @@ jobs:
           GOOS=windows GOARCH=amd64 go build ./...
           go test ./internal/... 2>&1 | tail -20
 
+  # Linux packages. agent/Makefile has had a `package-linux` target since the
+  # packaging files landed -- nfpm config, postinstall, systemd unit, desktop
+  # entry -- and nothing ever ran it, so the only agent this project has ever
+  # published is the Windows MSI (plus an Android debug APK). Meanwhile the
+  # end-user "Add a device" wizard offers five platforms. Building them here is
+  # what lets an operator drop real .deb/.rpm files into AGENT_DOWNLOADS_DIR,
+  # which is what makes /downloads/agent-manifest.json advertise Linux and the
+  # wizard show a download button rather than "ask your administrator".
+  linux-packages:
+    name: package (deb + rpm)
+    runs-on: ubuntu-latest
+    needs: smoke-crosscompile
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache-dependency-path: agent/go.sum
+
+      - name: Install nfpm
+        env:
+          NFPM_VERSION: '2.41.3'
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/nfpm.tar.gz \
+            "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz"
+          tar -xzf /tmp/nfpm.tar.gz -C /tmp nfpm
+          sudo install -m 0755 /tmp/nfpm /usr/local/bin/nfpm
+          nfpm --version
+
+      - name: Resolve version
+        id: ver
+        env:
+          INPUT_VERSION: ${{ inputs.version || '0.1.0' }}
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/agent-v* ]]; then
+            echo "version=${GITHUB_REF#refs/tags/agent-v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=$INPUT_VERSION" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build packages
+        working-directory: agent
+        env:
+          AGENT_VERSION: ${{ steps.ver.outputs.version }}
+        run: make package-linux VERSION="$AGENT_VERSION"
+
+      # Four files or the job is lying about what it produced: deb and rpm for
+      # amd64 and arm64.
+      - name: Check the package set is complete
+        working-directory: agent
+        run: |
+          set -euo pipefail
+          count=$(ls dist/pkg/ | grep -Ec '\.(deb|rpm)$' || true)
+          ls -l dist/pkg/
+          if [ "$count" -ne 4 ]; then
+            echo "::error::expected 4 packages (deb+rpm x amd64+arm64), found $count"
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: openidx-agent-linux-packages
+          path: agent/dist/pkg/*
+          if-no-files-found: error
+          retention-days: 7
+
   # Real artifact: build the .exe natively + package the MSI (WiX).
   build-msi:
     name: build .exe + MSI
     runs-on: windows-latest
-    needs: smoke-crosscompile
+    needs: [smoke-crosscompile, linux-packages]
     permissions:
       contents: write # create the release + upload assets on a tag
     # Job-level env so the signing steps' `if:` can read whether a cert secret
@@ -372,14 +445,26 @@ jobs:
           Set-Content -Path dist/install-openidx-agent.ps1 -Value $src -Encoding utf8
           Write-Host "Stamped install script (server=$server ip=$serverIp)"
 
+      # One release with every artifact, rather than two jobs racing to create
+      # the same one: the Linux packages come in as an artifact and are attached
+      # here.
+      - name: Fetch the Linux packages
+        if: steps.ver.outputs.release == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: openidx-agent-linux-packages
+          path: dist/pkg
+
       - name: Publish release
         if: steps.ver.outputs.release == 'true'
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_name }}
-          name: OpenIDX Windows Client ${{ steps.ver.outputs.version }}
+          name: OpenIDX Agent ${{ steps.ver.outputs.version }}
           files: |
             dist/OpenIDX-${{ steps.ver.outputs.version }}.msi
             dist/latest.json
             dist/install-openidx-agent.ps1
+            dist/pkg/*.deb
+            dist/pkg/*.rpm
           fail_on_unmatched_files: true
