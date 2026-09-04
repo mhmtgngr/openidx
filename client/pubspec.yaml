@@ -3,7 +3,7 @@ description: OpenIDX native client (Flutter shell over the local openidx-agent e
 publish_to: "none"
 # Kept in step with the repo release tags so the installed build is
 # identifiable on-device (`adb shell dumpsys package … | grep version`).
-version: 1.33.2+13302
+version: 1.34.0+13400
 
 environment:
   sdk: ">=3.4.0 <4.0.0"

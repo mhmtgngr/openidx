@@ -119,6 +119,10 @@ jobs:
         run: bash scripts/check-required-checks.test.sh
       - name: Every CI job must be required or declared informational
         run: bash scripts/check-required-checks.sh
+      - name: Verify the version-sync guard can go red
+        run: bash scripts/check-version-sync.test.sh
+      - name: Every artifact declares the version in VERSION
+        run: bash scripts/check-version-sync.sh --enforce
 
   # The README's quick start is two commands, and nothing had ever run either
   # of them: generate-secrets.sh aborted on SIGPIPE, it omitted two variables

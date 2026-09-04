@@ -2,7 +2,7 @@ openapi: 3.0.3
 info:
   title: OpenIDX Access Service
   description: Zero Trust access proxy with route management, session control, OpenZiti network overlay, posture checks, BrowZer, Guacamole integration, and Privileged Access Management (vault-backed entries, brokered launch with credential injection, checkout controls, session moderation, SSH CA, cloud JIT, Windows app delivery).
-  version: 0.1.0
+  version: 1.34.0
   license:
     name: Apache 2.0
     url: https://www.apache.org/licenses/LICENSE-2.0

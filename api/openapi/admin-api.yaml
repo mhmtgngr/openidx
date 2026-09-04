@@ -2,7 +2,7 @@ openapi: 3.0.3
 info:
   title: OpenIDX Admin API
   description: Dashboard, system settings, application management, directory integrations, and MFA configuration.
-  version: 0.1.0
+  version: 1.34.0
   license:
     name: Apache 2.0
     url: https://www.apache.org/licenses/LICENSE-2.0

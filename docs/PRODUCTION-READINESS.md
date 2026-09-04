@@ -1,7 +1,12 @@
 # OpenIDX Production Readiness
 
 **Refreshed:** 2026-06-08 (commit `bd2faa4`, branch `main`)
-**Released version:** v1.0.0 (2026-05-22)
+**Last release:** v1.33.3 (2026-08-25) — `git ls-remote --tags origin` is the
+authority; this line said v1.0.0 for eight releases because nothing compared
+it to anything.
+**In development:** the version in [`VERSION`](../VERSION) at the repo root,
+which `scripts/check-version-sync.sh` holds the console, the Helm chart's
+appVersion, the Flutter client and all ten OpenAPI specs to.
 **Verdict:** **Ready to deploy as a hardened, self-hosted IAM/ZTNA platform — single- or multi-tenant.** Multi-tenancy (app-layer `org_id` scoping + Postgres RLS belt) landed in v1.6–v1.8; see [DEPLOYMENT.md §4b](./DEPLOYMENT.md#step-4b--multi-tenancy-and-row-level-security-v16). A handful of integration-test failures track real but narrow product gaps (documented in §6) — they do not block a production install, but the affected flows should be exercised manually until follow-up PRs land.
 
 ---

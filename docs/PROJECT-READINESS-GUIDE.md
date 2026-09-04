@@ -2139,9 +2139,37 @@ commits without anyone noticing.
    so none of it comes back.
 2. ☐ **CHANGELOG** advanced through v1.28.0…v1.33.3 by tag date, this
    branch under `[Unreleased]`, compare links repaired.
-3. ☐ **Versions aligned** to 1.34.0 (`package.json`, `Chart.yaml
-   appVersion`, `pubspec.yaml`, `PRODUCTION-READINESS.md`, the OpenAPI
-   `version:` fields) with a version-sync guard.
+3. ✅ **One version, and something that keeps it.** The tree carried five
+   answers to "what version is this?" and none of them was wrong on purpose:
+   the console said 1.27.0, the Helm chart's `appVersion` said 0.1.0, the
+   Flutter client said 1.33.2, all ten OpenAPI specs said 0.1.0, and the last
+   actual release was v1.33.3. Each moved on its own because nothing compared
+   them — and this is a product whose users are told to verify signatures
+   against a release number.
+
+   `VERSION` at the repo root is now the single answer (1.34.0), and
+   `scripts/check-version-sync.sh` holds the console, the chart's
+   `appVersion`, the Flutter client's semver and all ten specs to it. It runs
+   in the `GitHub config is runnable` job with its self-test, whose eight
+   cases include each way the tree actually drifted. Two things are
+   deliberately *not* compared, and the self-test pins that too: the chart's
+   own `version:`, which by Helm convention moves when the templates change
+   rather than when the app does, and the Flutter build number after the `+`.
+
+   `PRODUCTION-READINESS.md` had said "Released version: v1.0.0" for eight
+   releases; it now names v1.33.3 as the last release and points at `VERSION`
+   for what is being built.
+
+   **Correction to the audit.** It listed
+   `notifications-service.yaml`, `organization-service.yaml` and
+   `portal-service.yaml` as specs for services that do not exist, on the
+   evidence that no `cmd/` directory matches. Every path in all three is
+   registered by a running process: `internal/organization` is mounted by
+   governance-service, oauth-service and access-service; `internal/portal` and
+   `internal/notifications` by identity-service (and notifications by
+   admin-api too). "No `cmd/`" means "not its own binary", not "not served".
+   Each spec now says which processes serve it, so the next reader does not
+   have to re-derive it.
 4. ☐ **`docs/evidence/`** — for each §5 control, the CI artifact that
    proves it or the operator command and where to file the result.
 
