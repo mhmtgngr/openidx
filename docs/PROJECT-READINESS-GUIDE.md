@@ -2063,11 +2063,30 @@ worked.
    blacklisted, one signed by another key is not, garbage and `alg=none` are
    not, an already-expired token is not, and `token_type_hint` is treated as
    the hint RFC 7009 says it is.
-3. ☐ Remaining from the audit's list: the interactive MFA step-up handlers
+3. ✅ **The vault's reveal path.** `handleReveal` returns the only plaintext
+   this service ever emits, and what it decides is not whether the secret
+   exists but which REFUSAL the caller gets. A 403 carrying
+   `X-Step-Up-Required` tells the console to run a second-factor challenge and
+   retry; a plain 403 means not permitted at all. Answer the first where the
+   second is true and the console offers step-up as a route past an
+   authorization denial. Covered end to end against a migrated database: no
+   reason is a 400, no grant is a plain 403 with no such header, a secret
+   flagged `require_step_up` is a 403 that says so *even for an admin* (the
+   gate is a fresh factor on the action, not a role), an unknown id is 404 and
+   not 403, the happy path returns the plaintext AND writes the checkout-ledger
+   row that makes "who saw this, when, and why" answerable, and no refusal
+   leaks the value. `handleCheckouts` returns that ledger and carries no
+   value/ciphertext field.
+
+   The vault harness migrates a real database rather than hand-rolling the
+   tables: the vault's schema is spread over several migrations and carries
+   FORCE RLS, and a test that builds its own approximation of `vault_secrets`
+   can pass against a shape production does not have.
+4. ☐ Remaining from the audit's list: the interactive MFA step-up handlers
    (`handleMFAVerify`, `handleMFASendOTP`, the `/authorize/mfa*` family),
-   hardware-token verify/assign/revoke, vault `handleReveal`/`handleCheckouts`
-   and `handlePamRevealEntry`, `RunSoDSweep`, `handleApproveRequest`,
-   `handleUserKillSwitch`, and the Guacamole session handlers.
+   hardware-token verify/assign/revoke, `handlePamRevealEntry`, `RunSoDSweep`,
+   `handleApproveRequest`, `handleUserKillSwitch`, and the Guacamole session
+   handlers.
 
    `internal/identity`'s DB harness now also accepts
    `OPENIDX_TEST_DATABASE_URL`, so these can be written and run on a machine
