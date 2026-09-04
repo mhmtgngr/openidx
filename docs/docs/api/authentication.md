@@ -72,7 +72,7 @@ Response:
 {
   "access_token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...",
   "id_token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "refresh_token": "JfRNHqeW5CHZd9xNfqYgmCj2Gp4zTGqxYuL0xH6qEaY",
+  "refresh_token": "YOUR_REFRESH_TOKEN",
   "token_type": "Bearer",
   "expires_in": 3600,
   "scope": "openid profile email"
@@ -115,7 +115,7 @@ Host: openidx.example.com
 Content-Type: application/x-www-form-urlencoded
 
 grant_type=refresh_token
-&refresh_token=JfRNHqeW5CHZd9xNfqYgmCj2Gp4zTGqxYuL0xH6qEaY
+&refresh_token=YOUR_REFRESH_TOKEN
 &client_id=s6BhdRkqt3
 ```
 

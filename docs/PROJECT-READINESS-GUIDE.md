@@ -1585,16 +1585,65 @@ policy answers 403 + audit on `/oauth/authorize`.
      as "neither module has tests yet", but Gradle's `test` task on a module
      with no test sources succeeds by itself — so it was never protecting
      against that, only against real failures.
-   - ☐ `security-scan.yml` blocks (Trivy exit 1 on CRITICAL/HIGH with
-     `ignore-unfixed`, Gitleaks/Semgrep/npm-audit without
-     `continue-on-error`, allowlists carrying a reason).
+   - ✅ **`security-scan.yml` blocks.** It also now *runs*: the `push` and
+     `pull_request` triggers were filtered to `go.mod`/`go.sum`/
+     `package.json`/`package-lock.json`, so a pull request that added a
+     hardcoded secret or an injection in Go source triggered no scan at all
+     — the gate was not merely non-blocking, it was not running. The path
+     filter is gone.
+     - **Trivy** — `TRIVY_EXIT_CODE` `0` → `1` (the comment read "Don't
+       fail on nightly scans"; going red is what a nightly scan is for), on
+       all three scans (image, Go filesystem, npm), with
+       `ignore-unfixed: true`: a CRITICAL with no upstream patch is not
+       something a PR can act on, and a gate that demands the impossible
+       gets switched off. Unfixed findings still reach the Security tab.
+     - **npm audit** — `npm audit --audit-level=high || true` *inside* a
+       step with `continue-on-error`: two swallows on one command. Both
+       gone; the JSON report is still written and uploaded first, so a
+       failing run carries its evidence. (Verified: 0 vulnerabilities on
+       this tree today.)
+     - **Gitleaks** — the licensed `gitleaks-action` is replaced by the
+       pinned binary. The action wants `GITLEAKS_LICENSE` on org repos and
+       can hard-fail without one, which is *why* the step carried
+       `continue-on-error` — and a secret scanner that cannot fail the run
+       writes leaks into a summary nobody reads. Turning it on surfaced
+       **75 findings, every one triaged by hand and none a live
+       credential**: documentation placeholders, the repository's canonical
+       test key, RFC 6455/6749/6238 example values, and header names that
+       tokenise like base64. `.gitleaks.toml` allowlists them **by value or
+       by shape with a reason**, never by fingerprint (which stops matching
+       the moment a line moves) and never by blanket path (a real secret
+       pasted into `docs/` must still be caught). One doc was edited rather
+       than allowlisted: `docs/docs/api/authentication.md` printed a
+       realistic 43-character refresh token, now `YOUR_REFRESH_TOKEN`.
+       Scope is the working tree, not history: a PR can only fix what it
+       contains, and purging a rotated secret from history is incident
+       response, not a merge gate. An allowlist can be widened until the
+       gate is green and blind, and nothing about a green run tells the two
+       apart — so the job plants three credentials of shapes that must
+       never be allowlisted and **fails if the scanner does not find
+       them**.
+     - **Semgrep** — off the deprecated `returntocorp/semgrep-action@v1`
+       (whose flakiness was the stated reason for `continue-on-error`) onto
+       the pinned `semgrep/semgrep` container, failing on `--severity=ERROR`.
+       WARNING and INFO still reach the SARIF; blocking on all three tiers
+       on a codebase this size produces a gate nobody can clear, and a gate
+       nobody can clear is how this job acquired `continue-on-error` in the
+       first place. **Not verified locally** — semgrep could not be
+       installed in the sandbox — so the first CI run is the triage.
+     - **License compliance stays informational, and now says why**:
+       `go-licenses` classifies by heuristic and misreads vendored and
+       dual-licensed modules often enough that blocking would mean arguing
+       with the tool. Decision D2 covers the four scanners above, not this.
    - ☐ `tools/contractcheck` armed in `ci-web.yml`, and
      `api-contract.test.ts` comparing console paths against the route
      tables instead of grepping for one literal.
    - **Maintainer action:** branch protection must list the checks it
-     requires. `Required Checks` now covers all of `ci.yml`; the docs
-     `Docs build clean under --strict` job is in another workflow and has
-     to be added to the protection rule separately.
+     requires. `Required Checks` now covers all of `ci.yml`; jobs in other
+     workflows have to be added to the protection rule by name — the docs
+     `Docs build clean under --strict`, and Security Scanning's
+     `Secret Scanning (Gitleaks)`, `SAST Scan (Semgrep)`,
+     `Go Dependency Scan` and `NPM Dependency Scan`.
 6. ✅ **CODEOWNERS** — *shipped*. 212 lines naming eighteen `@openidx/*`
    teams became `* @mhmtgngr`. The repository is under a personal
    namespace and cannot have organization teams at all, so under
