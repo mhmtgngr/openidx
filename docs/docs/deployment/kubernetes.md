@@ -120,9 +120,11 @@ a plain application role does not have:
     CREATE ROLE openidx_app LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
     ```
 
-    (The bundled PostgreSQL does exactly this from
-    `postgresql.primary.initdb.scripts`, because the subchart creates `openidx`
-    without `CREATEROLE`.)
+    (With the bundled PostgreSQL a hook Job does exactly this — see
+    `migrations.roleBootstrap` — because the subchart creates `openidx`
+    without `CREATEROLE`. That Job does not render when
+    `postgresql.enabled=false`, since the chart has no superuser credential
+    for a database it does not run.)
 
 2. **Ownership of the schema.** Migrations create and alter every table, and the
    RLS belt is `FORCE`d, so the owner is subject to its own policies. The

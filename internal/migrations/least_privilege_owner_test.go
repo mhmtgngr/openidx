@@ -24,8 +24,9 @@ import (
 // `helm lint`, `helm template` and every static test in this package:
 //
 //  1. v53 creates the openidx_app runtime role, and a role without CREATEROLE
-//     cannot create a role. The chart now pre-creates it from
-//     postgresql.primary.initdb.scripts so v53's IF NOT EXISTS guard skips it.
+//     cannot create a role. The chart now pre-creates it from a superuser hook
+//     Job that runs before the migration Job
+//     (templates/db-bootstrap-job.yaml), so v53's IF NOT EXISTS guard skips it.
 //  2. The v37 RLS belt FORCEs row-level security so the table OWNER is subject
 //     to it too, and the seeds (v84's OAuth client, v138's backfill) are
 //     cross-org by definition. Migrator.applyMigration now issues
@@ -125,8 +126,8 @@ func TestMigrationsRunAsLeastPrivilegedOwner(t *testing.T) {
 		t.Fatalf("%s could create a role; it was created NOCREATEROLE", ownerRole)
 	}
 
-	// What postgresql.primary.initdb.scripts does in the chart, and what an
-	// operator on an external database has to do by hand.
+	// What the chart's db-bootstrap hook Job does, and what an operator on an
+	// external database has to do by hand.
 	if _, err := admin.Pool.Exec(ctx, `DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'openidx_app') THEN
     CREATE ROLE openidx_app LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;

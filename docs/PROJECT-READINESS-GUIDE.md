@@ -1952,7 +1952,7 @@ policy answers 403 + audit on `/oauth/authorize`.
      `secrets.postgresPassword` is the single knob and it is `required`
      rather than silently empty.
 
-   Three more surfaced only because each round of the job got further than
+   Four more surfaced only because each round of the job got further than
    the last — which is the argument for the job:
 
    - **`replicaCount: 0` was silently `2`.** `values-ci.yaml` pins every
@@ -1970,9 +1970,25 @@ policy answers 403 + audit on `/oauth/authorize`.
      Only roles with the CREATEROLE attribute may create roles."* The two
      ways out are to give the role the application connects with the
      permanent power to mint roles, or to create `openidx_app` before the
-     migration looks for it; the chart does the second, from
-     `postgresql.primary.initdb.scripts`, and v53's `IF NOT EXISTS` guard
-     then skips its own `CREATE ROLE`.
+     migration looks for it; the chart does the second, and v53's
+     `IF NOT EXISTS` guard then skips its own `CREATE ROLE`.
+   - **The first attempt at creating it did not run as anyone who could.**
+     `postgresql.primary.initdb.scripts` looked like the place for it, and
+     round four failed with the same `permission denied to create role` —
+     from inside the database container this time. Bitnami runs `.sql` init
+     scripts as `POSTGRESQL_INITSCRIPTS_USERNAME`, which defaults to
+     `$POSTGRESQL_USER`: `openidx`, the same role that cannot create a role.
+     Aiming it at the superuser means `primary.initdb.password`, which the
+     subchart renders as a plaintext env value in the StatefulSet pod spec;
+     and init scripts run only on the first boot of an empty data directory,
+     so an existing install upgrading into this chart version would never get
+     the role at all. `templates/db-bootstrap-job.yaml` replaces it: a
+     `post-install,pre-upgrade` hook at weight `-1` — strictly before the
+     migration Job — that connects as the superuser with the password from
+     the Secret the chart already creates, runs v53's `CREATE ROLE` verbatim,
+     prints what it left behind, and is gone. Bootstrap is a privileged,
+     one-time act; doing it in the open beats granting `CREATEROLE`
+     permanently to fix a one-time problem.
    - **And then the seeds were refused by the belt itself.** Behind that
      failure sat another: the belt FORCEs row-level security so the table
      *owner* is subject to it too, and a migration is cross-org by
@@ -1986,13 +2002,15 @@ policy answers 403 + audit on `/oauth/authorize`.
      now `SET LOCAL app.bypass_rls = 'on'`, transaction-scoped so it cannot
      escape onto a pooled connection.
 
-   The second and third are pinned by
+   The second and fourth are pinned by
    `internal/migrations/least_privilege_owner_test.go`, which builds that
    deployment in miniature — a `NOSUPERUSER NOCREATEROLE NOBYPASSRLS` owner,
    its own database, the full migration set — and is red without the fix at
-   exactly the migration the install would have died on. The `kind` job also
+   exactly the migration the install would have died on. The `kind` job
+   asserts the bootstrap Job succeeded, prints its output, and separately
    asserts `openidx_app` exists afterwards and is neither superuser nor
-   `BYPASSRLS`, because a v53 that silently did nothing would look identical.
+   `BYPASSRLS`, because a bootstrap that silently did nothing would look
+   identical.
 
    Why it went unnoticed: `values-prod.yaml` disables all three subcharts, so
    the reference deployment never touched them, and rendering is all CI did.

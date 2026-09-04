@@ -101,6 +101,40 @@ jobs:
           done
           echo "every service honours replicaCount 0"
 
+      # The runtime role openidx_app has to exist before migration v53 looks
+      # for it, and the migration Job's own role cannot create it. That is
+      # ordering, and ordering here is one annotation: a bootstrap hook at a
+      # lower weight than the migration hook. Helm completes a weight before
+      # starting the next, so getting these two numbers wrong is the whole
+      # install failing -- silently, in a rendered manifest that looks fine.
+      - name: The bootstrap hook runs before the migration hook
+        run: |
+          set -euo pipefail
+          render() {
+            helm template openidx "$CHART" \
+              --set secrets.postgresPassword=render-only-not-a-credential \
+              --set secrets.redisPassword=render-only-not-a-credential \
+              --set secrets.jwtSecret=render-only-not-a-credential-000000 \
+              --set secrets.encryptionKey=render-only-not-a-credential32b "$@"
+          }
+          weight() {
+            render -s "templates/$1" \
+              | sed -n 's/.*"helm\.sh\/hook-weight": *"\(-\{0,1\}[0-9]\{1,\}\)".*/\1/p'
+          }
+          boot=$(weight db-bootstrap-job.yaml)
+          migr=$(weight migrate-job.yaml)
+          echo "db-bootstrap weight=$boot, migrate weight=$migr"
+          test "$boot" -lt "$migr" || {
+            echo "the bootstrap hook must run at a lower weight than the migration hook"; exit 1; }
+
+          # An external database gets no bootstrap Job: the chart holds no
+          # superuser credential for a server it does not run, and rendering
+          # one would put a Job in the release that could only ever fail.
+          if render --set postgresql.enabled=false | grep -q 'db-bootstrap'; then
+            echo "db-bootstrap rendered with postgresql.enabled=false"; exit 1
+          fi
+          echo "bootstrap ordering holds; external-database installs skip it"
+
   kind-install:
     name: Install on kind
     runs-on: ubuntu-latest
@@ -150,6 +184,21 @@ jobs:
       - name: Load it into the cluster
         run: kind load docker-image "$TOOLS_IMAGE" --name openidx-ci
 
+      # The bootstrap hook's psql client. Side-loaded rather than left to an
+      # in-cluster pull: it is the first image the install needs, and an
+      # anonymous Docker Hub rate limit there stalls the hook, which stalls
+      # `helm --wait`, which reads as a chart failure.
+      - name: Pre-load the bootstrap psql image
+        run: |
+          set -euo pipefail
+          img=$(helm template openidx "$CHART" --values "$CHART/values-ci.yaml" \
+            -s templates/db-bootstrap-job.yaml \
+            | sed -n 's/^[[:space:]]*image:[[:space:]]*"\{0,1\}\([^"[:space:]]*\)"\{0,1\}[[:space:]]*$/\1/p' | head -1)
+          test -n "$img" || { echo "could not read the bootstrap image from the chart"; exit 1; }
+          echo "bootstrap image: $img"
+          bash scripts/ci-retry.sh 3 5 -- docker pull "$img"
+          kind load docker-image "$img" --name openidx-ci
+
       # --wait blocks on every Deployment/StatefulSet becoming Ready and on the
       # post-install migration hook Job succeeding, so a green here already
       # means the data plane came up and the schema landed.
@@ -162,6 +211,16 @@ jobs:
 
       # Each of the four claims the readiness guide makes about this chart,
       # asserted against the running cluster rather than a rendered manifest.
+      - name: The bootstrap hook Job ran before the migration and succeeded
+        run: |
+          set -euo pipefail
+          succeeded=$(kubectl -n "$NS" get job "$RELEASE-db-bootstrap" -o jsonpath='{.status.succeeded}')
+          test "${succeeded:-0}" -ge 1 || { echo "db-bootstrap Job did not succeed"; exit 1; }
+          # It prints what it left behind; a Job that silently did nothing and
+          # one that created the role have the same exit code.
+          kubectl -n "$NS" logs "job/$RELEASE-db-bootstrap" --tail=5
+          echo "db-bootstrap Job succeeded"
+
       - name: The migration hook Job ran and succeeded
         run: |
           set -euo pipefail
@@ -184,10 +243,11 @@ jobs:
       # PostgreSQL subchart creates -- not a superuser. Two migrations need
       # more than a plain role has, and both faults are invisible until an
       # install: v53 creates the openidx_app runtime role (a role without
-      # CREATEROLE cannot), and every seed after the v37 belt is refused by
-      # FORCE'd RLS unless the transaction sets app.bypass_rls. The Job
-      # succeeding above already covers the second; this covers the first,
-      # because a v53 that silently did nothing would look identical.
+      # CREATEROLE cannot, so templates/db-bootstrap-job.yaml creates it
+      # first), and every seed after the v37 belt is refused by FORCE'd RLS
+      # unless the transaction sets app.bypass_rls. The Job succeeding above
+      # already covers the second; this covers the first, because a bootstrap
+      # that silently did nothing would look identical.
       - name: The least-privileged owner got the runtime role it cannot create
         run: |
           set -euo pipefail
@@ -236,6 +296,9 @@ jobs:
           kubectl -n "$NS" get all,networkpolicy,secret 2>&1 | head -100 || true
           echo "===== pods ====="
           kubectl -n "$NS" describe pods 2>&1 | tail -200 || true
+          echo "===== db-bootstrap job ====="
+          kubectl -n "$NS" describe job "$RELEASE-db-bootstrap" 2>&1 | tail -40 || true
+          kubectl -n "$NS" logs "job/$RELEASE-db-bootstrap" --all-containers --tail=100 2>&1 || true
           echo "===== migrate job ====="
           kubectl -n "$NS" describe job "$RELEASE-migrate" 2>&1 | tail -60 || true
           kubectl -n "$NS" logs "job/$RELEASE-migrate" --all-containers --tail=200 2>&1 || true

@@ -492,6 +492,32 @@ migrations:
     limits:
       cpu: 500m
       memory: 256Mi
+  # The one thing the migrations cannot do for themselves: create the
+  # openidx_app runtime role. Migrations connect as the database OWNER, and a
+  # role without CREATEROLE cannot create a role, so v53's CREATE ROLE fails
+  # and takes the whole install with it. templates/db-bootstrap-job.yaml runs
+  # first (hook-weight -1) as the superuser and creates it; the full reasoning,
+  # including why this is not an initdb script, is in that file's header.
+  #
+  # Only renders with the bundled PostgreSQL. With an external database
+  # (postgresql.enabled=false) the migration DSN must itself be able to
+  # CREATE ROLE, or openidx_app must already exist — see
+  # docs/deployment/kubernetes.md.
+  roleBootstrap:
+    enabled: true
+    # A psql client, nothing more. Docker Official, and 16 matches the
+    # PostgreSQL the subchart pins (16.2). Override it for an air-gapped
+    # registry; any image carrying psql will do.
+    image: postgres:16-alpine
+    pullPolicy: IfNotPresent
+    backoffLimit: 3
+    resources:
+      requests:
+        cpu: 25m
+        memory: 32Mi
+      limits:
+        cpu: 250m
+        memory: 128Mi
 
 # ----- Scheduled database backups -----
 # CronJob running `backup create` from the tools image (cmd/backup: encrypted,
@@ -576,47 +602,6 @@ postgresql:
   primary:
     persistence:
       size: 20Gi
-    initdb:
-      # Migration v53 creates the openidx_app runtime role -- the
-      # NOSUPERUSER NOBYPASSRLS role the v37 RLS belt is FORCE'd against.
-      # Migrations run as the database OWNER (`openidx`), which the subchart
-      # creates as a plain LOGIN role, and a role without CREATEROLE cannot
-      # create another role:
-      #
-      #   ERROR:  permission denied to create role
-      #   DETAIL: Only roles with the CREATEROLE attribute may create roles.
-      #   CONTEXT: SQL statement "CREATE ROLE openidx_app ..."
-      #
-      # That is the whole migration Job failing, which is the whole install
-      # failing -- and it is invisible to `helm lint`, `helm template` and
-      # every unit test, because it is a privilege the statement only needs
-      # against a real server.
-      #
-      # The two ways out are to give `openidx` CREATEROLE, or to create the
-      # role before the migration looks for it. The first hands the role the
-      # APPLICATION connects with the power to mint roles, permanently, to
-      # fix a one-time bootstrap; this does the second. Bitnami runs these
-      # scripts once, as the postgres superuser, after the database and the
-      # owner role exist, and v53's `IF NOT EXISTS` then makes its own
-      # CREATE ROLE a no-op. Everything else v53 does -- GRANT CONNECT on the
-      # database, USAGE on schema public, DML on its own tables -- the owner
-      # can already do.
-      #
-      # Passwordless, exactly as v53 leaves it: nothing logs in as
-      # openidx_app until an operator sets a password out of band and points
-      # DATABASE_URL at it. An external database (postgresql.enabled=false)
-      # runs no init scripts, so there the DSN the migration Job uses must
-      # itself be able to CREATE ROLE, or openidx_app must already exist.
-      scripts:
-        01-openidx-app-role.sql: |
-          DO
-          $$
-          BEGIN
-            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'openidx_app') THEN
-              CREATE ROLE openidx_app LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
-            END IF;
-          END
-          $$;
 
 # Redis
 redis:
