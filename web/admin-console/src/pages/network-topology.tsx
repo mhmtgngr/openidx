@@ -4,8 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Search, Share2, ExternalLink } from 'lucide-react'
 import { api } from '../lib/api'
-import { QueryGate } from '../components/query-gate'
-import { TableSkeleton } from '../components/ui/skeleton'
+import { QueryGateAll } from '../components/query-gate'
 import { Input } from '../components/ui/input'
 import { Button } from '../components/ui/button'
 import { Badge } from '../components/ui/badge'
@@ -218,13 +217,22 @@ export function NetworkTopologyPage() {
       </div>
 
       {/* Main */}
-      <QueryGate query={identitiesQuery} resource={t('pages.networkTopology.resource')}>
-        {() => {
-          const anyLoading =
-            servicesQuery.isLoading || routersQuery.isLoading || policiesQuery.isLoading
-          if (anyLoading) return <TableSkeleton rows={6} cols={3} />
-          return (
-            <div className="flex flex-col gap-4 lg:flex-row">
+      {/* All five inputs, not just identities.
+          The diagram is ONE picture assembled from identities, services,
+          routers, policies and (optionally) sessions. Gating identities alone
+          meant a 403 on services, or a controller that had stopped answering,
+          fell through `?? []` and drew a clean, believable, mostly-empty
+          topology. An operator reads that as "nothing is published" when it
+          means "we could not ask" — and on a zero-trust overlay those are
+          opposite conclusions. Sessions are included only when the toggle has
+          actually requested them; a disabled query is never loading or
+          errored, so it is inert here either way. */}
+      <QueryGateAll
+        queries={[identitiesQuery, servicesQuery, routersQuery, policiesQuery, sessionsQuery]}
+        resource={t('pages.networkTopology.resource')}
+      >
+        {(
+          <div className="flex flex-col gap-4 lg:flex-row">
               <Card className="flex-1">
                 <CardContent className="p-4">
                   <TopologyGraph
@@ -243,10 +251,9 @@ export function NetworkTopologyPage() {
                   <SummaryPanel topology={topology} />
                 )}
               </div>
-            </div>
-          )
-        }}
-      </QueryGate>
+          </div>
+        )}
+      </QueryGateAll>
     </div>
   )
 }

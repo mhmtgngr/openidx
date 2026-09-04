@@ -65,18 +65,37 @@ export function DevicesPage() {
     queryFn: () => api.get<Record<string, number>>('/api/v1/risk/stats'),
   })
 
-  const syncDeviceTrust = (userId: string) => {
-    if (userId) {
-      api.post(`/api/v1/access/ziti/sync/device-trust/${userId}`).catch(() => {})
+  // Pushing the trust decision into the Ziti overlay is what actually changes
+  // what the device can reach. The DB row is written either way, so the toast
+  // used to say "trusted" whether or not the overlay ever heard about it —
+  // `.catch(() => {})` and an unconditional success. An operator would then
+  // tell the user their machine was trusted while the network still refused
+  // it, and nothing on screen said otherwise. Await it, and say which of the
+  // two happened.
+  const syncDeviceTrust = async (userId: string): Promise<boolean> => {
+    if (!userId) return true
+    try {
+      await api.post(`/api/v1/access/ziti/sync/device-trust/${userId}`)
+      return true
+    } catch {
+      return false
     }
   }
 
   const trustMutation = useMutation({
     mutationFn: (deviceId: string) => api.post<{ user_id: string }>(`/api/v1/devices/${deviceId}/trust`),
-    onSuccess: (data) => {
+    onSuccess: async (data) => {
       queryClient.invalidateQueries({ queryKey: ['devices'] })
-      if (data?.user_id) syncDeviceTrust(data.user_id)
-      toast({ title: t('pages.devices.toasts.trusted') })
+      const synced = data?.user_id ? await syncDeviceTrust(data.user_id) : true
+      toast(
+        synced
+          ? { title: t('pages.devices.toasts.trusted') }
+          : {
+              title: t('pages.devices.toasts.trustedOverlayPending'),
+              description: t('pages.devices.toasts.overlaySyncFailed'),
+              variant: 'destructive',
+            },
+      )
     },
     onError: () => {
       toast({ title: t('pages.devices.toasts.trustFailed'), variant: 'destructive' })
@@ -85,11 +104,21 @@ export function DevicesPage() {
 
   const revokeMutation = useMutation({
     mutationFn: (deviceId: string) => api.delete<{ user_id: string }>(`/api/v1/devices/${deviceId}`),
-    onSuccess: (data) => {
+    onSuccess: async (data) => {
       queryClient.invalidateQueries({ queryKey: ['devices'] })
       setDeleteDevice(null)
-      if (data?.user_id) syncDeviceTrust(data.user_id)
-      toast({ title: t('pages.devices.toasts.removed') })
+      // Same reason as trust: a removed device whose overlay grant survives is
+      // still on the network, which is the direction that matters most.
+      const synced = data?.user_id ? await syncDeviceTrust(data.user_id) : true
+      toast(
+        synced
+          ? { title: t('pages.devices.toasts.removed') }
+          : {
+              title: t('pages.devices.toasts.removedOverlayPending'),
+              description: t('pages.devices.toasts.overlaySyncFailed'),
+              variant: 'destructive',
+            },
+      )
     },
     onError: () => {
       toast({ title: t('pages.devices.toasts.removeFailed'), variant: 'destructive' })

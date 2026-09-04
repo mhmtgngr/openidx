@@ -7382,6 +7382,8 @@ const en = {
       },
     },
     deviceTrustApproval: {
+      approvedOverlayPending: 'Approved — network update pending',
+      overlaySyncFailed: 'The approval was recorded, but the Ziti overlay did not accept the change. Network access is not granted until the sync succeeds.',
       selectRequest: 'Select request for {{device}}',
       title: 'Device Trust Approval',
       subtitle: 'Review and approve device trust requests',
@@ -7929,6 +7931,9 @@ const en = {
         confirm: 'Remove',
       },
       toasts: {
+        trustedOverlayPending: 'Trusted — network update pending',
+        removedOverlayPending: 'Removed — network update pending',
+        overlaySyncFailed: 'The record was saved, but the Ziti overlay did not accept the change. Network access is unchanged until the sync succeeds.',
         trusted: 'Device trusted — network access updated',
         trustFailed: 'Failed to trust device',
         removed: 'Device removed — network access updated',

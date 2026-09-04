@@ -1985,11 +1985,70 @@ commits without anyone noticing.
    `pages/login-session.test.tsx` was on the audit's dead list and is **not**
    dead: it imports `./login` and holds three live tests of the
    already-authenticated path. It stays.
-2. ☐ **Console controls that were not true** — idle timeout wired into the
-   layout from the session policy; device-trust sync awaited with a
-   warning on failure; all five topology queries gated and the
-   query-coverage guard counting per `useQuery`; `AdminRoute` on
-   `hasMinRole` with a route/role matrix test.
+2. ✅ **Console controls that were not true.** Four, each a control that
+   rendered without doing what it said.
+
+   **The idle lock had no importers.** The server has enforced an idle
+   timeout for a while (`internal/oauth/session_policy.go`,
+   `session_worker.go`) — a session past its window is revoked and the next
+   request fails. What was missing was the half the user experiences: an
+   unattended console stayed on screen showing whatever the last page had
+   loaded, until someone touched it and got an abrupt 401.
+   `hooks/use-idle-timeout.ts` and `components/idle-timeout-dialog.tsx` were
+   both written for exactly this and imported by nothing. `layout.tsx` now
+   mounts them, and the value comes from the server rather than a constant:
+   `GET /oauth/session-info` returns the effective policy for *this* token
+   (global settings plus any per-application override), so raising the
+   timeout in Settings moves the lock. That endpoint existed and the console
+   had never called it; it is readable by any authenticated user, unlike
+   `/api/v1/settings`, which matters because this layout wraps the end-user
+   pages too. A failed fetch leaves the timeout at 0 — the policy's own
+   encoding of "off" — so a hiccup cannot lock anyone out of a working
+   console.
+
+   **Device trust reported an outcome it never observed.** `devices.tsx`
+   (trust and revoke) and `device-trust-approval.tsx` (approve) each wrote
+   the DB row, fired the Ziti overlay sync with `.catch(() => {})`, and
+   toasted success unconditionally. The row is what the console shows; the
+   overlay is what the network obeys. So an operator could be told a device
+   was trusted — or *removed* — while the overlay still said otherwise, and
+   nothing on screen disagreed. All three now await the sync and, on
+   failure, say which of the two happened.
+
+   **The topology drew a picture out of one gated query and four ungated
+   ones.** `network-topology.tsx` assembles ONE diagram from identities,
+   services, routers, policies and (optionally) sessions; only identities was
+   wrapped in `QueryGate`, so a 403 on services or a controller that had
+   stopped answering fell through `?? []` and rendered a clean, believable,
+   mostly-empty overlay. On a zero-trust network "nothing is published" and
+   "we could not ask" are opposite conclusions. A new `QueryGateAll` fails
+   the whole view if any input failed, and all five go through it.
+
+   **The guard that should have caught that was file-granular.**
+   `check-query-error-coverage.sh` asked only whether `QueryGate` appeared
+   *anywhere* in a file, which network-topology satisfied with five queries
+   and one gate. It now also requires every `const fooQuery = useQuery(...)`
+   to appear inside a `query=`/`queries=` prop. Stated rather than implied:
+   this sees only queries bound to a named const — the shape a page uses when
+   it means to gate one — and `const { data } = useQuery(...)` stays covered
+   by the file rule alone. Four pages are on a pinned, shrink-only register
+   with a reason each (`ops-cockpit` has eleven independent subsystem cards,
+   where an all-or-nothing gate would blank the cockpit because one subsystem
+   is down — it needs a gate per card). The register can only shrink: an
+   entry that is fully gated, or whose page is gone, fails as a stale entry.
+   Nine self-test cases, including the one that made the rule necessary.
+
+   **`AdminRoute` locked out the most privileged role in the product.** It
+   asked `hasRole('admin')`, and `lib/auth.tsx` implements that as
+   `roles.includes(role)` — a literal membership test, not a hierarchy one.
+   The backend issues tokens carrying `["super_admin"]` and nothing else
+   (`internal/auth/context_test.go` pins it), which does not contain the
+   string `"admin"`, so super-admins were redirected away from Vault Secrets,
+   the PAM dashboard and Rotation Policies. It now uses `hasMinRole`, the
+   same hierarchy the backend uses. `App.admin-route.test.tsx` renders the
+   guard across the whole role matrix — super_admin and admin in; operator,
+   auditor, user, compliance_reader, an unknown role and an empty token out —
+   and is red against the predicate it replaced.
 3. ☐ **Dead console code out** (~1,300 LOC incl. `mfa-setup-wizard.tsx`),
    duplicate proxy-route toggles collapsed, tests for the untested
    security pages (`add-device`, `remote-support-popout`, `lib/webauthn`,

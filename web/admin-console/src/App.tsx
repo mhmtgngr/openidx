@@ -113,6 +113,7 @@ import {
   WindowsApps,
 } from '@/pages'
 import { useAppStore } from '@/lib/store'
+import { hasMinRole } from '@/lib/roles'
 import { useAuth } from '@/lib/auth'
 
 // ProtectedRoute wrapper component that checks authentication before rendering
@@ -147,10 +148,23 @@ function ProtectedRoute({ children }: ProtectedRouteProps) {
 // AdminRoute wrapper for pages that must never render for non-admins.
 // The backend still enforces authorization (403) — this guard just keeps
 // admin-only consoles from mounting client-side for regular users.
-function AdminRoute({ children }: ProtectedRouteProps) {
-  const { hasRole } = useAuth()
+//
+// It used to ask `hasRole('admin')`, which is a literal membership test
+// (lib/auth.tsx: `roles.includes(role)`), not a hierarchy one. A token
+// carrying `["super_admin"]` and nothing else — which the backend issues and
+// internal/auth/context_test.go pins — does not include the string "admin",
+// so the highest-privileged operator in the product was redirected away from
+// Vault Secrets, the PAM dashboard and Rotation Policies. `hasMinRole` reads
+// the same hierarchy the backend uses (super_admin 4 > admin 3 > operator 2 >
+// auditor 1 > user 0), so a super-admin passes an admin gate by being above
+// it rather than by happening to carry the same word.
+//
+// Exported for App.admin-route.test.tsx: a guard that decides who reaches
+// the credential vault deserves a test that renders it, not a grep.
+export function AdminRoute({ children }: ProtectedRouteProps) {
+  const { user } = useAuth()
 
-  if (!hasRole('admin')) {
+  if (!hasMinRole(user?.roles, 'admin')) {
     return <Navigate to="/dashboard" replace />
   }
 

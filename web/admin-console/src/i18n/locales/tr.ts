@@ -7308,6 +7308,8 @@ const tr: typeof en = {
       },
     },
     deviceTrustApproval: {
+      approvedOverlayPending: 'Onaylandı — ağ güncellemesi bekliyor',
+      overlaySyncFailed: 'Onay kaydedildi ancak Ziti örtü ağı değişikliği kabul etmedi. Eşitleme başarılı olana kadar ağ erişimi verilmez.',
       selectRequest: '{{device}} için isteği seç',
       title: 'Cihaz Güveni Onayı',
       subtitle: 'Cihaz güven taleplerini inceleyin ve onaylayın',
@@ -7804,6 +7806,9 @@ const tr: typeof en = {
         confirm: 'Kaldır',
       },
       toasts: {
+        trustedOverlayPending: 'Güvenilir — ağ güncellemesi bekliyor',
+        removedOverlayPending: 'Kaldırıldı — ağ güncellemesi bekliyor',
+        overlaySyncFailed: 'Kayıt saklandı ancak Ziti örtü ağı değişikliği kabul etmedi. Eşitleme başarılı olana kadar ağ erişimi değişmez.',
         trusted: 'Cihaza güvenildi — ağ erişimi güncellendi',
         trustFailed: 'Cihaza güvenilemedi',
         removed: 'Cihaz kaldırıldı — ağ erişimi güncellendi',

@@ -10,7 +10,7 @@ import {
   Search,
   X,
 } from 'lucide-react'
-import { useState, Suspense } from 'react'
+import { useCallback, useState, Suspense } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { useAuth } from '../lib/auth'
@@ -25,6 +25,8 @@ import { TenantSelector } from './tenant-selector'
 import { ThemeToggle } from './theme-toggle'
 import { Breadcrumbs } from './breadcrumbs'
 import { ErrorBoundary } from './error-boundary'
+import { IdleTimeoutDialog } from './idle-timeout-dialog'
+import { useIdleTimeout } from '../hooks/use-idle-timeout'
 import { LoadingSpinner } from './ui/loading-spinner'
 import { Badge } from './ui/badge'
 import { Button } from './ui/button'
@@ -150,6 +152,44 @@ export function Layout() {
     .map((n) => n[0])
     .join('')
     .toUpperCase() || 'U'
+
+  // Client-side idle lock.
+  //
+  // The server has enforced an idle timeout for a while (internal/oauth/
+  // session_policy.go, session_worker.go): a session past its idle window is
+  // revoked, and the next request fails. What was missing is the half the
+  // user experiences — an unattended console stayed on screen, showing
+  // whatever the last page had loaded, until someone touched it and got an
+  // abrupt 401. The hook and the dialog were both written for this and had
+  // zero importers.
+  //
+  // The value comes from the server, not a constant: GET /oauth/session-info
+  // returns the effective policy for THIS token (global settings plus any
+  // per-application override), so raising the timeout in Settings moves the
+  // lock. It is also readable by any authenticated user, unlike
+  // /api/v1/settings, which matters because this layout wraps the end-user
+  // pages too.
+  const { data: sessionPolicy } = useQuery({
+    queryKey: ['session-info'],
+    queryFn: () => api.get<{ idle_timeout: number; absolute_timeout: number }>('/oauth/session-info'),
+    // A failure here must not lock anyone out of a working console, so the
+    // hook stays disabled until a real value arrives.
+    retry: false,
+    staleTime: 5 * 60 * 1000,
+  })
+
+  // 0 disables the lock, which is the policy's own encoding of "off" and the
+  // right behaviour while the value is still unknown.
+  const idleTimeout = sessionPolicy?.idle_timeout ?? 0
+  const onIdle = useCallback(() => { logout() }, [logout])
+  const { isWarning, remainingTime, resetTimer } = useIdleTimeout({
+    idleTimeout,
+    // Warn for the last minute, or the last fifth of a short window — a
+    // five-minute warning on a four-minute timeout would never not be showing.
+    warningTime: Math.max(30, Math.min(60, Math.floor(idleTimeout / 5))),
+    enabled: idleTimeout > 0,
+    onIdle,
+  })
 
   return (
     <div className="flex h-screen bg-muted">
@@ -369,6 +409,13 @@ export function Layout() {
 
       {/* Global ⌘K / Ctrl-K jump-to-page palette (role-filtered). */}
       <CommandPalette />
+
+      <IdleTimeoutDialog
+        open={isWarning}
+        remainingTime={remainingTime}
+        onKeepAlive={resetTimer}
+        onSignOut={logout}
+      />
     </div>
   )
 }

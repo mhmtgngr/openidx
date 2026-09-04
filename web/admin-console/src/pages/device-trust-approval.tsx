@@ -105,14 +105,32 @@ export function DeviceTrustApprovalPage() {
   const approveMutation = useMutation({
     mutationFn: ({ requestId, notes }: { requestId: string; notes: string }) =>
       api.post(`/api/v1/identity/device-trust-requests/${requestId}/approve`, { notes }),
-    onSuccess: () => {
+    onSuccess: async () => {
       queryClient.invalidateQueries({ queryKey: ['device-trust-requests'] })
       queryClient.invalidateQueries({ queryKey: ['device-trust-pending-count'] })
-      // Sync Ziti attributes so network access is granted immediately
+      // The approval row lands regardless; the overlay sync is what actually
+      // grants network access. Swallowing its failure and reporting success
+      // told the approver the device was on the network when it was not.
+      let synced = true
       if (selectedRequest?.user_id) {
-        api.post(`/api/v1/access/ziti/sync/device-trust/${selectedRequest.user_id}`).catch(() => {})
+        try {
+          await api.post(`/api/v1/access/ziti/sync/device-trust/${selectedRequest.user_id}`)
+        } catch {
+          synced = false
+        }
       }
-      toast({ title: t('pages.deviceTrustApproval.approved'), description: t('pages.deviceTrustApproval.approvedDesc') })
+      toast(
+        synced
+          ? {
+              title: t('pages.deviceTrustApproval.approved'),
+              description: t('pages.deviceTrustApproval.approvedDesc'),
+            }
+          : {
+              title: t('pages.deviceTrustApproval.approvedOverlayPending'),
+              description: t('pages.deviceTrustApproval.overlaySyncFailed'),
+              variant: 'destructive',
+            },
+      )
       setReviewDialog(false)
     }
   })
