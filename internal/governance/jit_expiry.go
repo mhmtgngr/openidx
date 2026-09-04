@@ -10,6 +10,8 @@ import (
 
 	"github.com/openidx/openidx/internal/common/leader"
 	"github.com/openidx/openidx/internal/common/orgctx"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 // StartJITExpirationChecker runs a background goroutine that periodically
@@ -68,7 +70,7 @@ func (s *Service) revokeExpiredJITAccess(ctx context.Context) {
 				`UPDATE credential_rotation_policies SET next_run_at = NOW()
 				 WHERE secret_id = $1 AND rotate_on_checkout = true`, resourceID); err != nil {
 				s.logger.Warn("vault_credential rotate-on-return bump failed",
-					zap.String("secret_id", sanitizeForLog(resourceID)), zap.Error(err))
+					zap.String("secret_id", logsafe.Clean(resourceID)), zap.Error(err))
 			}
 			// Specific audit event for vault credential checkout expiry.
 			credExpDetails, _ := json.Marshal(map[string]string{
@@ -81,7 +83,7 @@ func (s *Service) revokeExpiredJITAccess(ctx context.Context) {
 				 VALUES (gen_random_uuid(), 'access', 'provisioning', 'jit_credential.checkout_expired', 'success', $1, '0.0.0.0', $2, 'vault_credential', $3, NOW(), $4)`,
 				requesterID, resourceID, string(credExpDetails), orgID); err != nil {
 				s.logger.Warn("Failed to write jit_credential.checkout_expired audit event",
-					zap.String("request_id", sanitizeForLog(id)), zap.Error(err))
+					zap.String("request_id", logsafe.Clean(id)), zap.Error(err))
 			}
 		} else if resourceType == "network_service" {
 			// JIT network grant expiry (Wave B1): remove the time-bound Ziti
@@ -95,9 +97,9 @@ func (s *Service) revokeExpiredJITAccess(ctx context.Context) {
 			// a false 'success' for access that still exists — it is retried on
 			// the next tick, surfacing the unmapped type instead of hiding it.
 			s.logger.Error("Failed to revoke expired JIT access",
-				zap.String("request_id", sanitizeForLog(id)),
-				zap.String("user_id", sanitizeForLog(requesterID)),
-				zap.String("resource_type", sanitizeForLog(resourceType)),
+				zap.String("request_id", logsafe.Clean(id)),
+				zap.String("user_id", logsafe.Clean(requesterID)),
+				zap.String("resource_type", logsafe.Clean(resourceType)),
 				zap.Error(err))
 			continue
 		}

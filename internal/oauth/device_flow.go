@@ -16,6 +16,8 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 // RFC 8628 — OAuth 2.0 Device Authorization Grant.
@@ -80,9 +82,6 @@ type deviceCodeRecord struct {
 // cannot tell a forged line from a real one. Mirrors the helper of the same name
 // in internal/identity; it is duplicated rather than shared because a one-line
 // string filter is not worth a package dependency between two services.
-func scrubLogValue(s string) string {
-	return strings.ReplaceAll(strings.ReplaceAll(s, "\n", ""), "\r", "")
-}
 
 // hashDeviceCode returns the stored form of a device_code.
 func hashDeviceCode(code string) string {
@@ -252,7 +251,7 @@ func (s *Service) handleDeviceAuthorization(c *gin.Context) {
 	verificationURI := s.deviceVerificationURI(org)
 
 	s.logger.Info("device authorization issued",
-		zap.String("client_id", scrubLogValue(clientID)), zap.String("org_id", org.ID))
+		zap.String("client_id", logsafe.Clean(clientID)), zap.String("org_id", org.ID))
 
 	c.JSON(200, gin.H{
 		"device_code":      deviceCode,
@@ -428,7 +427,7 @@ func (s *Service) handleDeviceCodeGrant(c *gin.Context) {
 	}
 
 	s.logger.Info("device grant redeemed",
-		zap.String("client_id", scrubLogValue(clientID)), zap.String("user_id", scrubLogValue(claimedUser)))
+		zap.String("client_id", logsafe.Clean(clientID)), zap.String("user_id", logsafe.Clean(claimedUser)))
 	c.JSON(200, resp)
 }
 

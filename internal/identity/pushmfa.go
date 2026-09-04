@@ -17,6 +17,8 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 // PushMFADevice represents a registered push notification device
@@ -339,7 +341,7 @@ func (s *Service) VerifyPushMFAChallenge(ctx context.Context, response *PushMFAC
 		s.logger.Warn("Push MFA challenge reported as suspicious by user",
 			zap.String("challenge_id", challenge.ID),
 			zap.String("user_id", challenge.UserID),
-			zap.String("ip_address", scrubLogValue(challenge.IPAddress)),
+			zap.String("ip_address", logsafe.Clean(challenge.IPAddress)),
 			zap.String("location", challenge.Location))
 	}
 

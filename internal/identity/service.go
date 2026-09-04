@@ -40,6 +40,8 @@ import (
 	"github.com/openidx/openidx/internal/common/pwhash"
 	"github.com/openidx/openidx/internal/common/secretcrypt"
 	"github.com/openidx/openidx/internal/risk"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 // Use the min function from pushmfa.go
@@ -786,9 +788,6 @@ const revokedSessionTTL = 30 * 24 * time.Hour
 // query recognizes, so flows through this helper are provably cut. Behavior is
 // identical; only the shape matters. Mirrors the helper of the same name in
 // internal/access and internal/provisioning.
-func scrubLogValue(s string) string {
-	return strings.ReplaceAll(strings.ReplaceAll(s, "\n", ""), "\r", "")
-}
 
 // deprovisionUser revokes everything that keeps a user's access alive after
 // they are disabled or deleted: active sessions (marked revoked + a Redis
@@ -805,7 +804,7 @@ func scrubLogValue(s string) string {
 func (s *Service) deprovisionUser(ctx context.Context, userID, orgID string, hardDelete bool) {
 	// One scoped logger with the (scrubbed) user id, so the per-step warnings
 	// below never re-embed caller-supplied input directly.
-	log := s.logger.With(zap.String("user_id", scrubLogValue(userID)))
+	log := s.logger.With(zap.String("user_id", logsafe.Clean(userID)))
 
 	// No database configured (unit tests, or a service without a pool): there is
 	// nothing to revoke. deprovision is best-effort, so skip rather than
@@ -1630,7 +1629,7 @@ const (
 )
 
 func (s *Service) recordFailedLogin(ctx context.Context, query, subject string) error {
-	s.logger.Info("Recording failed login", zap.String("subject", scrubLogValue(subject)))
+	s.logger.Info("Recording failed login", zap.String("subject", logsafe.Clean(subject)))
 
 	org, err := orgctx.From(ctx)
 	if err != nil {
@@ -1648,7 +1647,7 @@ func (s *Service) recordFailedLogin(ctx context.Context, query, subject string) 
 
 	if lockedUntil != nil && failures >= maxFailures {
 		s.logger.Warn("Account locked due to failed login attempts",
-			zap.String("subject", scrubLogValue(subject)), zap.Int("failures", failures))
+			zap.String("subject", logsafe.Clean(subject)), zap.Int("failures", failures))
 	}
 	return nil
 }
@@ -1874,7 +1873,7 @@ func (s *Service) AuthenticateUser(ctx context.Context, username, password strin
 		// signal worth seeing.
 		s.logAuditEvent(ctx, "identity", "authentication", "user.login_denied", "failure",
 			userID, userID, "user", map[string]interface{}{
-				"username": scrubLogValue(username),
+				"username": logsafe.Clean(username),
 				"reason":   "account_disabled",
 			})
 		return nil, ErrAccountDisabled
@@ -1885,7 +1884,7 @@ func (s *Service) AuthenticateUser(ctx context.Context, username, password strin
 		s.logger.Warn("Login attempt on locked account", zap.String("username", username))
 		s.logAuditEvent(ctx, "identity", "authentication", "user.login_denied", "failure",
 			userID, userID, "user", map[string]interface{}{
-				"username":     scrubLogValue(username),
+				"username":     logsafe.Clean(username),
 				"reason":       "account_locked",
 				"locked_until": lockedUntil.UTC().Format(time.RFC3339),
 			})
@@ -1921,13 +1920,13 @@ func (s *Service) AuthenticateUser(ctx context.Context, username, password strin
 			// password. Logging it as a failed login would bury it in noise, so
 			// it is recorded distinctly — the login still fails closed.
 			s.logger.Error("Stored password hash is unreadable",
-				zap.String("user_id", scrubLogValue(userID)), zap.Error(verr))
+				zap.String("user_id", logsafe.Clean(userID)), zap.Error(verr))
 			s.onFailedLogin(ctx, userID, username, "unreadable_hash")
 			return nil, ErrInvalidCredentials
 		}
 		if !ok {
 			s.onFailedLogin(ctx, userID, username, "bad_password")
-			s.logger.Debug("Invalid password", zap.String("username", scrubLogValue(username)))
+			s.logger.Debug("Invalid password", zap.String("username", logsafe.Clean(username)))
 			return nil, ErrInvalidCredentials
 		}
 		if needsRehash {
@@ -1952,7 +1951,7 @@ func (s *Service) AuthenticateUser(ctx context.Context, username, password strin
 
 	s.logAuditEvent(ctx, "identity", "authentication", "user.login_succeeded", "success",
 		userID, userID, "user", map[string]interface{}{
-			"username": scrubLogValue(username),
+			"username": logsafe.Clean(username),
 		})
 
 	// Return full user object
@@ -1972,7 +1971,7 @@ func (s *Service) upgradePasswordHash(ctx context.Context, userID, orgID, passwo
 	next, err := pwhash.Hash(password)
 	if err != nil {
 		s.logger.Warn("Could not re-hash password for upgrade",
-			zap.String("user_id", scrubLogValue(userID)), zap.Error(err))
+			zap.String("user_id", logsafe.Clean(userID)), zap.Error(err))
 		return
 	}
 	// Compare-and-swap on the exact hash we just verified. If the password was
@@ -1988,7 +1987,7 @@ func (s *Service) upgradePasswordHash(ctx context.Context, userID, orgID, passwo
 		WHERE id = $1 AND org_id = $3 AND password_hash = $4
 	`, userID, next, orgID, verifiedHash); err != nil {
 		s.logger.Warn("Could not store upgraded password hash",
-			zap.String("user_id", scrubLogValue(userID)), zap.Error(err))
+			zap.String("user_id", logsafe.Clean(userID)), zap.Error(err))
 	}
 }
 
@@ -2004,11 +2003,11 @@ func (s *Service) upgradePasswordHash(ctx context.Context, userID, orgID, passwo
 func (s *Service) onFailedLogin(ctx context.Context, userID, username, reason string) {
 	if err := s.recordFailedLoginForUser(ctx, userID); err != nil {
 		s.logger.Error("Failed to record failed login",
-			zap.String("user_id", scrubLogValue(userID)), zap.Error(err))
+			zap.String("user_id", logsafe.Clean(userID)), zap.Error(err))
 	}
 	s.logAuditEvent(ctx, "identity", "authentication", "user.login_failed", "failure",
 		userID, userID, "user", map[string]interface{}{
-			"username": scrubLogValue(username),
+			"username": logsafe.Clean(username),
 			"reason":   reason,
 		})
 }
@@ -2164,7 +2163,7 @@ func (s *Service) EnrollTOTP(ctx context.Context, userID, secret, verificationCo
 
 // VerifyTOTP verifies a TOTP code for a user
 func (s *Service) VerifyTOTP(ctx context.Context, userID, code string) (bool, error) {
-	s.logger.Debug("Verifying TOTP code", zap.String("user_id", scrubLogValue(userID)))
+	s.logger.Debug("Verifying TOTP code", zap.String("user_id", logsafe.Clean(userID)))
 
 	org, err := orgctx.From(ctx)
 	if err != nil {
@@ -2195,7 +2194,7 @@ func (s *Service) VerifyTOTP(ctx context.Context, userID, code string) (bool, er
 	// the guess was right.
 	if lockedUntil != nil && time.Now().Before(*lockedUntil) {
 		s.logger.Warn("TOTP verification refused: locked out",
-			zap.String("user_id", scrubLogValue(userID)),
+			zap.String("user_id", logsafe.Clean(userID)),
 			zap.Time("locked_until", *lockedUntil))
 		return false, ErrTOTPLockedOut
 	}
@@ -2268,13 +2267,13 @@ func (s *Service) recordFailedTOTP(ctx context.Context, userID, orgID string) {
 	`, userID, orgID, totpMaxAttempts, totpLockoutDuration.String()).Scan(&attempts, &lockedUntil)
 	if err != nil {
 		s.logger.Error("Failed to record TOTP failure; throttling may not be enforced",
-			zap.String("user_id", scrubLogValue(userID)), zap.Error(err))
+			zap.String("user_id", logsafe.Clean(userID)), zap.Error(err))
 		return
 	}
 
 	if lockedUntil != nil && attempts >= totpMaxAttempts {
 		s.logger.Warn("TOTP locked after repeated failures",
-			zap.String("user_id", scrubLogValue(userID)),
+			zap.String("user_id", logsafe.Clean(userID)),
 			zap.Int("attempts", attempts))
 	}
 }
@@ -2423,7 +2422,7 @@ func (s *Service) GenerateBackupCodes(ctx context.Context, userID string, count 
 // in a separate statement, so two requests presenting the same code could both
 // find it unused and both be accepted — a single-use credential honored twice.
 func (s *Service) ValidateBackupCode(ctx context.Context, userID, code string) (bool, error) {
-	s.logger.Info("Validating backup code", zap.String("user_id", scrubLogValue(userID)))
+	s.logger.Info("Validating backup code", zap.String("user_id", logsafe.Clean(userID)))
 
 	org, err := orgctx.From(ctx)
 	if err != nil {
@@ -4857,7 +4856,7 @@ func (s *Service) handleChangePassword(c *gin.Context) {
 	if ok, _, verr := pwhash.Verify(passwordHash, req.CurrentPassword); verr != nil || !ok {
 		if verr != nil {
 			s.logger.Error("Stored password hash is unreadable",
-				zap.String("user_id", scrubLogValue(userID)), zap.Error(verr))
+				zap.String("user_id", logsafe.Clean(userID)), zap.Error(verr))
 		}
 		c.JSON(400, gin.H{"error": "current password is incorrect"})
 		return
@@ -5181,7 +5180,7 @@ func (s *Service) handleForgotPassword(c *gin.Context) {
 	// it to the application log hands anyone with log access (or anything that
 	// ships logs onward) the ability to take over the account. Log only that a
 	// reset was requested, for rate-limit/abuse investigation.
-	s.logger.Info("Password reset token created", zap.String("email", scrubLogValue(req.Email)))
+	s.logger.Info("Password reset token created", zap.String("email", logsafe.Clean(req.Email)))
 
 	// Send password reset email
 	if s.emailService != nil {
@@ -5274,7 +5273,7 @@ func (s *Service) handleResetPassword(c *gin.Context) {
 
 	if err := tx.Commit(ctx); err != nil {
 		s.logger.Error("failed to commit password reset",
-			zap.String("user_id", scrubLogValue(userID)), zap.Error(err))
+			zap.String("user_id", logsafe.Clean(userID)), zap.Error(err))
 		c.JSON(500, gin.H{"error": "Failed to update password"})
 		return
 	}
@@ -5714,7 +5713,7 @@ func (s *Service) handleVerifyEmail(c *gin.Context) {
 		// single-use credential in the log — the same mistake that was fixed on
 		// the password-reset path.
 		s.logger.Error("failed to mark verification token as used",
-			zap.String("user_id", scrubLogValue(userID)), zap.Error(err))
+			zap.String("user_id", logsafe.Clean(userID)), zap.Error(err))
 	}
 
 	c.JSON(200, gin.H{"message": "Email verified successfully"})

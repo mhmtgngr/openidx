@@ -26,6 +26,8 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 // AccessMapUser is the identity header of the access map.
@@ -172,7 +174,7 @@ func (s *Service) handleUserAccessMap(c *gin.Context) {
 			return
 		}
 		s.logger.Error("handleUserAccessMap: aggregation failed",
-			zap.String("user_id", scrubLogValue(userID)), zap.Error(err))
+			zap.String("user_id", logsafe.Clean(userID)), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to build access map"})
 		return
 	}

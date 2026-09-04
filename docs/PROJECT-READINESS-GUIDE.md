@@ -1509,6 +1509,32 @@ policy answers 403 + audit on `/oauth/authorize`.
 
 ### P6 — A Definition of Done that CI proves
 
+0a. ✅ **CodeQL's log-injection findings, and the ten copies behind them** —
+   *shipped*. CodeQL flagged eleven "log entries created from user input" sites
+   in the assignment- and ABAC-decision recorders added by P5. The values are
+   `client_id` straight off a query parameter and ids read back from a session,
+   logged as `zap.String`. Under zap's JSON encoder a newline is escaped and no
+   line can be forged; under its **console** encoder — which is what a
+   development or staging deployment runs — it is not, so an attacker-chosen
+   `client_id` can write a second line and put anything in it. Unbounded length
+   is the other half: a megabyte of `client_id` in every warning fills a disk
+   and buries the entry it is attached to.
+   Looking for a helper to reuse found **ten**, in two naming families and with
+   two different behaviours: `sanitizeForLog` / `sanitizeLogValue` in oauth,
+   governance, access, admin and credentials, and `scrubLogValue` in access,
+   admin, identity, oauth and provisioning. Nine stripped only CR and LF; one
+   stripped every control character; none bounded length. A security-relevant
+   function with ten implementations is one nobody can reason about, and the
+   weakest copy decides what an attacker can do.
+   All ten are replaced by `internal/common/logsafe`, which strips every C0
+   control, DEL, the C1 range and invalid UTF-8, and caps the value at 256 bytes
+   with a visible truncation marker (so two identifiers sharing a prefix cannot
+   read as the same value). `logsafe.String` is the zap field constructor for
+   anything that arrived from outside. A test proves each property, and a second
+   test AST-walks the tree for a package-local re-implementation by name — it is
+   the check that found the second family of five, which a grep for the first
+   name had missed.
+
 0. ✅ **A workflow CI cannot parse removes itself from CI** — *shipped*.
    `.github/workflows/client-desktop-build.yml` carried `run: echo "TODO:
    ..."` since #814 — a plain YAML scalar containing `": "`, which is not

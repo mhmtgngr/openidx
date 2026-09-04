@@ -23,15 +23,12 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 // sanitizeForLog strips CR/LF from user-supplied values before they are written
 // to logs, preventing forged or split log entries (CWE-117 log injection).
-func sanitizeForLog(s string) string {
-	s = strings.ReplaceAll(s, "\n", "")
-	s = strings.ReplaceAll(s, "\r", "")
-	return s
-}
 
 // Baseline maturity gates: an identity's baseline only produces anomalies once
 // it has enough history to be meaningful, otherwise every new identity would
@@ -992,7 +989,7 @@ func (zm *ZitiManager) QuarantineZitiIdentity(ctx context.Context, zitiID, reaso
 
 	terminated := zm.terminateIdentitySessions(ctx, zitiID)
 	zm.logger.Info("ziti ai: identity quarantined",
-		zap.String("identity_id", sanitizeForLog(zitiID)), zap.Int("sessions_terminated", terminated))
+		zap.String("identity_id", logsafe.Clean(zitiID)), zap.Int("sessions_terminated", terminated))
 	return terminated, nil
 }
 

@@ -23,6 +23,8 @@ import (
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/orgctx"
 	"github.com/openidx/openidx/internal/common/pushenroll"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 // AgentAPIHandler handles HTTP endpoints for agent communication.
@@ -1040,7 +1042,7 @@ func (h *AgentAPIHandler) applyPostureDeviceTrust(ctx context.Context, agentID, 
 	attrs, err := h.zm.GetIdentityRoleAttributes(rctx, zitiID)
 	if err != nil {
 		h.logger.Debug("posture tier: read identity attributes failed",
-			zap.String("ziti_id", sanitizeForLog(zitiID)), zap.Error(err))
+			zap.String("ziti_id", logsafe.Clean(zitiID)), zap.Error(err))
 		return
 	}
 	next, changed := deviceTrustAttrs(attrs, wantTrusted)
@@ -1051,7 +1053,7 @@ func (h *AgentAPIHandler) applyPostureDeviceTrust(ctx context.Context, agentID, 
 	if mode == "observe" {
 		h.logger.Info("posture tier (observe): would change device-trust",
 			zap.String("agent_id", agentID),
-			zap.String("ziti_id", sanitizeForLog(zitiID)),
+			zap.String("ziti_id", logsafe.Clean(zitiID)),
 			zap.Bool("grant", wantTrusted),
 			zap.String("compliance", complianceStatus))
 		return
@@ -1059,12 +1061,12 @@ func (h *AgentAPIHandler) applyPostureDeviceTrust(ctx context.Context, agentID, 
 
 	if err := h.zm.PatchIdentityRoleAttributes(rctx, zitiID, next); err != nil {
 		h.logger.Warn("posture tier: patch identity attributes failed",
-			zap.String("ziti_id", sanitizeForLog(zitiID)), zap.Error(err))
+			zap.String("ziti_id", logsafe.Clean(zitiID)), zap.Error(err))
 		return
 	}
 	h.logger.Info("posture tier: device-trust updated",
 		zap.String("agent_id", agentID),
-		zap.String("ziti_id", sanitizeForLog(zitiID)),
+		zap.String("ziti_id", logsafe.Clean(zitiID)),
 		zap.Bool("granted", wantTrusted),
 		zap.String("compliance", complianceStatus))
 }
@@ -1720,7 +1722,7 @@ func (h *AgentAPIHandler) HandleAgentPosture(c *gin.Context) {
 		 WHERE agent_id = $1
 		 ORDER BY check_type, reported_at DESC`, agentID)
 	if err != nil {
-		h.logger.Warn("HandleAgentPosture: query failed", zap.String("agent_id", sanitizeForLog(agentID)), zap.Error(err))
+		h.logger.Warn("HandleAgentPosture: query failed", zap.String("agent_id", logsafe.Clean(agentID)), zap.Error(err))
 		c.JSON(http.StatusOK, resp)
 		return
 	}

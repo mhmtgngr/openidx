@@ -8,6 +8,8 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/appaccess"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 // recordAssignmentDecision durably records one /oauth/authorize assignment-gate
@@ -36,10 +38,10 @@ func (s *Service) recordAssignmentDecision(ctx context.Context, userID, clientID
 
 	if s.db == nil || s.db.Pool == nil {
 		s.logger.Warn("assignment decision not recorded: no database handle",
-			zap.String("event_type", eventType),
-			zap.String("user_id", userID),
-			zap.String("client_id", clientID),
-			zap.String("application_id", appID),
+			logsafe.String("event_type", eventType),
+			logsafe.String("user_id", userID),
+			logsafe.String("client_id", clientID),
+			logsafe.String("application_id", appID),
 			zap.Bool("enforced", enforced))
 		return
 	}
@@ -47,9 +49,9 @@ func (s *Service) recordAssignmentDecision(ctx context.Context, userID, clientID
 	detailsJSON, err := json.Marshal(details)
 	if err != nil {
 		s.logger.Warn("assignment decision not recorded: details would not marshal",
-			zap.String("event_type", eventType),
-			zap.String("user_id", userID),
-			zap.String("application_id", appID),
+			logsafe.String("event_type", eventType),
+			logsafe.String("user_id", userID),
+			logsafe.String("application_id", appID),
 			zap.Error(err))
 		return
 	}
@@ -65,10 +67,10 @@ func (s *Service) recordAssignmentDecision(ctx context.Context, userID, clientID
 		VALUES ($1, $2, $3, NULL, $4, $5, $6, NOW())
 	`, uuid.New().String(), appaccess.SourceOIDC, eventType, userIDPtr, actorIP, detailsJSON); err != nil {
 		s.logger.Warn("assignment decision not recorded: unified audit write failed",
-			zap.String("event_type", eventType),
-			zap.String("user_id", userID),
-			zap.String("client_id", clientID),
-			zap.String("application_id", appID),
+			logsafe.String("event_type", eventType),
+			logsafe.String("user_id", userID),
+			logsafe.String("client_id", clientID),
+			logsafe.String("application_id", appID),
 			zap.Bool("enforced", enforced),
 			zap.Error(err))
 	}
@@ -86,16 +88,16 @@ func (s *Service) recordABACDecision(ctx context.Context, userID, clientID, appI
 
 	if s.db == nil || s.db.Pool == nil {
 		s.logger.Warn("abac decision not recorded: no database handle",
-			zap.String("event_type", eventType),
-			zap.String("user_id", userID),
-			zap.String("client_id", clientID))
+			logsafe.String("event_type", eventType),
+			logsafe.String("user_id", userID),
+			logsafe.String("client_id", clientID))
 		return
 	}
 
 	detailsJSON, err := json.Marshal(details)
 	if err != nil {
 		s.logger.Warn("abac decision not recorded: details would not marshal",
-			zap.String("event_type", eventType), zap.Error(err))
+			logsafe.String("event_type", eventType), zap.Error(err))
 		return
 	}
 
@@ -110,9 +112,9 @@ func (s *Service) recordABACDecision(ctx context.Context, userID, clientID, appI
 		VALUES ($1, $2, $3, NULL, $4, $5, $6, NOW())
 	`, uuid.New().String(), appaccess.SourceOIDC, eventType, userIDPtr, actorIP, detailsJSON); err != nil {
 		s.logger.Warn("abac decision not recorded: unified audit write failed",
-			zap.String("event_type", eventType),
-			zap.String("user_id", userID),
-			zap.String("client_id", clientID),
+			logsafe.String("event_type", eventType),
+			logsafe.String("user_id", userID),
+			logsafe.String("client_id", clientID),
 			zap.Bool("enforced", enforced),
 			zap.Error(err))
 	}

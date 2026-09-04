@@ -4,13 +4,14 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 // scrubLogValue strips CR/LF so a request-supplied value cannot forge extra
@@ -18,9 +19,6 @@ import (
 // go/log-injection query recognizes, so flows through this helper are provably
 // cut. Mirrors the helper of the same name in internal/identity,
 // internal/access and internal/provisioning.
-func scrubLogValue(s string) string {
-	return strings.ReplaceAll(strings.ReplaceAll(s, "\n", ""), "\r", "")
-}
 
 // revokedSessionMarkerTTL is how long a revoked-session marker lives in
 // Redis. Same reasoning as the identity service's deprovision path: the
@@ -50,7 +48,7 @@ func (s *Service) publishSessionRevocations(ctx context.Context, sessionIDs []st
 	for _, id := range sessionIDs {
 		if err := s.redis.Client.Set(ctx, "revoked_session:"+id, "1", revokedSessionMarkerTTL).Err(); err != nil {
 			s.logger.Warn("failed to publish revoked-session marker",
-				zap.String("session_id", scrubLogValue(id)), zap.Error(err))
+				zap.String("session_id", logsafe.Clean(id)), zap.Error(err))
 			warnings = append(warnings, "revocation marker not published for session "+id+": its refresh tokens remain usable until they expire")
 		}
 	}
@@ -207,7 +205,7 @@ func (s *Service) handleAdminRevokeSession(c *gin.Context) {
 		WHERE id = $3 AND org_id = $4
 	`, adminID, body.Reason, sessionID, org.ID)
 	if err != nil {
-		s.logger.Error("Failed to revoke session", zap.Error(err), zap.String("session_id", scrubLogValue(sessionID)))
+		s.logger.Error("Failed to revoke session", zap.Error(err), zap.String("session_id", logsafe.Clean(sessionID)))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to revoke session"})
 		return
 	}
@@ -219,7 +217,7 @@ func (s *Service) handleAdminRevokeSession(c *gin.Context) {
 
 	warnings := s.publishSessionRevocations(ctx, []string{sessionID})
 
-	s.logger.Info("Session revoked by admin", zap.String("session_id", scrubLogValue(sessionID)), zap.String("admin_id", adminID))
+	s.logger.Info("Session revoked by admin", zap.String("session_id", logsafe.Clean(sessionID)), zap.String("admin_id", adminID))
 	resp := gin.H{"message": "Session revoked successfully"}
 	if len(warnings) > 0 {
 		resp["warnings"] = warnings
@@ -259,7 +257,7 @@ func (s *Service) handleAdminRevokeAllUserSessions(c *gin.Context) {
 		RETURNING id
 	`, adminID, body.Reason, userID, org.ID)
 	if err != nil {
-		s.logger.Error("Failed to revoke user sessions", zap.Error(err), zap.String("user_id", scrubLogValue(userID)))
+		s.logger.Error("Failed to revoke user sessions", zap.Error(err), zap.String("user_id", logsafe.Clean(userID)))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to revoke user sessions"})
 		return
 	}
@@ -277,13 +275,13 @@ func (s *Service) handleAdminRevokeAllUserSessions(c *gin.Context) {
 	if rowsErr != nil {
 		// The UPDATE itself committed; what failed is reading back the ids, so
 		// some markers may be missing. Say so rather than reporting clean.
-		s.logger.Warn("revoked-session id read-back incomplete", zap.Error(rowsErr), zap.String("user_id", scrubLogValue(userID)))
+		s.logger.Warn("revoked-session id read-back incomplete", zap.Error(rowsErr), zap.String("user_id", logsafe.Clean(userID)))
 		warnings = append(warnings, "some revoked sessions could not be read back; their refresh tokens may remain usable until they expire")
 	}
 
 	count := int64(len(sessionIDs))
 	s.logger.Info("All user sessions revoked by admin",
-		zap.String("user_id", scrubLogValue(userID)),
+		zap.String("user_id", logsafe.Clean(userID)),
 		zap.String("admin_id", adminID),
 		zap.Int64("count", count),
 	)

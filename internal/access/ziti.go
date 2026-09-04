@@ -31,6 +31,8 @@ import (
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/orgctx"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 // ZitiManager handles OpenZiti SDK integration and management API communication
@@ -193,7 +195,7 @@ func NewZitiManager(cfg *config.Config, db *database.PostgresDB, logger *zap.Log
 	if pool.Size() > 1 {
 		urls := make([]string, 0, pool.Size())
 		for _, ep := range pool.Snapshot() {
-			urls = append(urls, scrubLogValue(ep.URL))
+			urls = append(urls, logsafe.Clean(ep.URL))
 		}
 		zm.logger.Info("Ziti controller HA endpoint pool configured", zap.Strings("endpoints", urls))
 	}
@@ -848,7 +850,7 @@ func (zm *ZitiManager) authenticate() error {
 			}
 			tried[next] = true
 			zm.logger.Warn("Ziti controller auth failed; failing over",
-				zap.String("from", scrubLogValue(base)), zap.String("to", scrubLogValue(next)), zap.Error(err))
+				zap.String("from", logsafe.Clean(base)), zap.String("to", logsafe.Clean(next)), zap.Error(err))
 			base = next
 			if err = zm.authenticateAt(base); err == nil {
 				zm.pool.MarkUp(base)
@@ -2144,7 +2146,7 @@ func (zm *ZitiManager) mgmtRequest(method, path string, body []byte) ([]byte, in
 		next, changed := zm.pool.MarkDown(base)
 		if changed {
 			zm.logger.Warn("Ziti controller unreachable; failing over",
-				zap.String("from", scrubLogValue(base)), zap.String("to", scrubLogValue(next)),
+				zap.String("from", logsafe.Clean(base)), zap.String("to", logsafe.Clean(next)),
 				zap.Int("status", status), zap.Error(err))
 			if authErr := zm.authenticateAt(next); authErr == nil {
 				respBody, status, err = zm.mgmtRequestAt(next, method, path, body)

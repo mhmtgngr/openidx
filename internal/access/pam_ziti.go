@@ -27,6 +27,8 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 const (
@@ -276,7 +278,7 @@ func (s *Service) handlePamEnableZiti(c *gin.Context) {
 	serviceName := pamZitiServiceName(entryID)
 	if err := s.provisionEntryZitiService(ctx, zm, serviceName, hostname, port, port2); err != nil {
 		s.logger.Error("handlePamEnableZiti: provisioning failed",
-			zap.String("entry_id", scrubLogValue(entryID)), zap.Error(err))
+			zap.String("entry_id", logsafe.Clean(entryID)), zap.Error(err))
 		// Best-effort rollback of any partial provisioning.
 		_ = zm.TeardownZitiServiceByName(ctx, serviceName)
 		c.JSON(http.StatusBadGateway, gin.H{"error": "failed to provision overlay service"})
@@ -337,11 +339,11 @@ func (s *Service) handlePamDisableZiti(c *gin.Context) {
 		if zm := s.ziti(); zm != nil {
 			if err := zm.TeardownZitiServiceByName(ctx, serviceName); err != nil {
 				s.logger.Warn("handlePamDisableZiti: teardown failed (continuing)",
-					zap.String("service", scrubLogValue(serviceName)), zap.Error(err))
+					zap.String("service", logsafe.Clean(serviceName)), zap.Error(err))
 			}
 		} else {
 			s.logger.Warn("handlePamDisableZiti: Ziti unavailable; reverting DB only, overlay service may linger",
-				zap.String("service", scrubLogValue(serviceName)))
+				zap.String("service", logsafe.Clean(serviceName)))
 		}
 	}
 

@@ -24,6 +24,8 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 // verifyAgentToken checks an agent's X-Auth-Token against the stored
@@ -100,7 +102,7 @@ func (s *Service) handleAgentWindowsAppReport(c *gin.Context) {
 	s.upsertHostState(rctx, orgID, hostEntryID, &report)
 
 	s.logger.Info("windows app discovery report accepted",
-		zap.String("agent_id", scrubLogValue(agentID)),
+		zap.String("agent_id", logsafe.Clean(agentID)),
 		zap.String("host_entry_id", hostEntryID),
 		zap.Int("apps_created", created),
 		zap.Int("apps_updated", updated))

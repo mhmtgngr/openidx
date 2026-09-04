@@ -9,6 +9,8 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 // MyZitiService is one zero-trust (OpenZiti) service the calling user can reach,
@@ -55,7 +57,7 @@ func (s *Service) handleMyZitiServices(c *gin.Context) {
 	resp, err := s.myZitiServices(c.Request.Context(), org.ID, userID)
 	if err != nil {
 		s.logger.Error("my/ziti/services: aggregation failed",
-			zap.String("user_id", scrubLogValue(userID)), zap.Error(err))
+			zap.String("user_id", logsafe.Clean(userID)), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load zero-trust apps"})
 		return
 	}

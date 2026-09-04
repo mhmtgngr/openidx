@@ -9,6 +9,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 // ============================================================
@@ -247,7 +249,7 @@ func (s *Service) HandleSCIMReplaceUser(c *gin.Context) {
 	ctx := ContextWithActorID(c.Request.Context(), actorID)
 
 	if err := s.UpdateUser(ctx, user); err != nil {
-		s.logger.Error("Failed to update SCIM user", zap.String("user_id", scrubLogValue(userID)), zap.Error(err))
+		s.logger.Error("Failed to update SCIM user", zap.String("user_id", logsafe.Clean(userID)), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, SCIMErrorInternal("Failed to update user"))
 		return
 	}
@@ -311,7 +313,7 @@ func (s *Service) HandleSCIMPatchUser(c *gin.Context) {
 	ctx := ContextWithActorID(c.Request.Context(), actorID)
 
 	if err := s.UpdateUser(ctx, user); err != nil {
-		s.logger.Error("Failed to apply SCIM patch", zap.String("user_id", scrubLogValue(userID)), zap.Error(err))
+		s.logger.Error("Failed to apply SCIM patch", zap.String("user_id", logsafe.Clean(userID)), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, SCIMErrorInternal("Failed to update user"))
 		return
 	}
@@ -345,7 +347,7 @@ func (s *Service) HandleSCIMDeleteUser(c *gin.Context) {
 	ctx := ContextWithActorID(c.Request.Context(), actorID)
 
 	if err := s.DeleteUser(ctx, userID); err != nil {
-		s.logger.Error("Failed to delete SCIM user", zap.String("user_id", scrubLogValue(userID)), zap.Error(err))
+		s.logger.Error("Failed to delete SCIM user", zap.String("user_id", logsafe.Clean(userID)), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, SCIMErrorInternal("Failed to delete user"))
 		return
 	}
@@ -457,7 +459,7 @@ func (s *Service) HandleSCIMCreateGroup(c *gin.Context) {
 
 	if err := s.CreateGroup(ctx, group); err != nil {
 		s.logger.Error("Failed to create SCIM group",
-			zap.String("display_name", scrubLogValue(scimGroup.DisplayName)),
+			zap.String("display_name", logsafe.Clean(scimGroup.DisplayName)),
 			zap.Error(err))
 		c.JSON(http.StatusInternalServerError, SCIMErrorInternal("Failed to create group"))
 		return
@@ -469,7 +471,7 @@ func (s *Service) HandleSCIMCreateGroup(c *gin.Context) {
 	if err := s.syncGroupMembers(ctx, group.ID, nil, group.Members); err != nil {
 		status, scimType := scimMemberErrorStatus(err)
 		s.logger.Warn("Failed to add members to new SCIM group",
-			zap.String("group_id", scrubLogValue(group.ID)), zap.Error(err))
+			zap.String("group_id", logsafe.Clean(group.ID)), zap.Error(err))
 		c.JSON(status, SCIMErrorFromAppError(status, scimType, fmt.Sprintf("Failed to add members: %s", err)))
 		return
 	}
@@ -501,7 +503,7 @@ func (s *Service) HandleSCIMGetGroup(c *gin.Context) {
 	// every group as empty, which reads to Okta and Entra as "the roster was
 	// deleted out from under us" and triggers a full re-push each sync.
 	if err := s.loadGroupMembers(c.Request.Context(), group); err != nil {
-		s.logger.Error("Failed to load group members", zap.String("group_id", scrubLogValue(groupID)), zap.Error(err))
+		s.logger.Error("Failed to load group members", zap.String("group_id", logsafe.Clean(groupID)), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, SCIMErrorInternal("Failed to retrieve group members"))
 		return
 	}
@@ -555,7 +557,7 @@ func (s *Service) HandleSCIMReplaceGroup(c *gin.Context) {
 	ctx := ContextWithActorID(c.Request.Context(), actorID)
 
 	if err := s.UpdateGroup(ctx, group); err != nil {
-		s.logger.Error("Failed to update SCIM group", zap.String("group_id", scrubLogValue(groupID)), zap.Error(err))
+		s.logger.Error("Failed to update SCIM group", zap.String("group_id", logsafe.Clean(groupID)), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, SCIMErrorInternal("Failed to update group"))
 		return
 	}
@@ -563,13 +565,13 @@ func (s *Service) HandleSCIMReplaceGroup(c *gin.Context) {
 	// PUT replaces the resource, members included (RFC 7644 §3.5.1), so the
 	// roster in the body is authoritative: anyone absent from it is removed.
 	if err := s.loadGroupMembers(c.Request.Context(), existing); err != nil {
-		s.logger.Error("Failed to load group members", zap.String("group_id", scrubLogValue(groupID)), zap.Error(err))
+		s.logger.Error("Failed to load group members", zap.String("group_id", logsafe.Clean(groupID)), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, SCIMErrorInternal("Failed to retrieve group members"))
 		return
 	}
 	if err := s.syncGroupMembers(ctx, groupID, existing.Members, group.Members); err != nil {
 		status, scimType := scimMemberErrorStatus(err)
-		s.logger.Warn("Failed to sync SCIM group members", zap.String("group_id", scrubLogValue(groupID)), zap.Error(err))
+		s.logger.Warn("Failed to sync SCIM group members", zap.String("group_id", logsafe.Clean(groupID)), zap.Error(err))
 		c.JSON(status, SCIMErrorFromAppError(status, scimType, fmt.Sprintf("Failed to update members: %s", err)))
 		return
 	}
@@ -623,7 +625,7 @@ func (s *Service) HandleSCIMPatchGroup(c *gin.Context) {
 	// to an empty Members slice: `add` appends to nothing and is discarded,
 	// and a filtered `remove` finds no target.
 	if err := s.loadGroupMembers(c.Request.Context(), group); err != nil {
-		s.logger.Error("Failed to load group members", zap.String("group_id", scrubLogValue(groupID)), zap.Error(err))
+		s.logger.Error("Failed to load group members", zap.String("group_id", logsafe.Clean(groupID)), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, SCIMErrorInternal("Failed to retrieve group members"))
 		return
 	}
@@ -642,7 +644,7 @@ func (s *Service) HandleSCIMPatchGroup(c *gin.Context) {
 	ctx := ContextWithActorID(c.Request.Context(), actorID)
 
 	if err := s.UpdateGroup(ctx, group); err != nil {
-		s.logger.Error("Failed to apply SCIM patch", zap.String("group_id", scrubLogValue(groupID)), zap.Error(err))
+		s.logger.Error("Failed to apply SCIM patch", zap.String("group_id", logsafe.Clean(groupID)), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, SCIMErrorInternal("Failed to update group"))
 		return
 	}
@@ -652,7 +654,7 @@ func (s *Service) HandleSCIMPatchGroup(c *gin.Context) {
 	// reporting a membership that does not exist.
 	if err := s.syncGroupMembers(ctx, groupID, before, group.Members); err != nil {
 		status, scimType := scimMemberErrorStatus(err)
-		s.logger.Warn("Failed to sync SCIM group members", zap.String("group_id", scrubLogValue(groupID)), zap.Error(err))
+		s.logger.Warn("Failed to sync SCIM group members", zap.String("group_id", logsafe.Clean(groupID)), zap.Error(err))
 		c.JSON(status, SCIMErrorFromAppError(status, scimType, fmt.Sprintf("Failed to update members: %s", err)))
 		return
 	}
@@ -685,7 +687,7 @@ func (s *Service) HandleSCIMDeleteGroup(c *gin.Context) {
 	ctx := ContextWithActorID(c.Request.Context(), actorID)
 
 	if err := s.DeleteGroup(ctx, groupID); err != nil {
-		s.logger.Error("Failed to delete SCIM group", zap.String("group_id", scrubLogValue(groupID)), zap.Error(err))
+		s.logger.Error("Failed to delete SCIM group", zap.String("group_id", logsafe.Clean(groupID)), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, SCIMErrorInternal("Failed to delete group"))
 		return
 	}

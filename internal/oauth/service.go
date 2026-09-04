@@ -41,6 +41,8 @@ import (
 	"github.com/openidx/openidx/internal/identity"
 	"github.com/openidx/openidx/internal/risk"
 	"github.com/openidx/openidx/internal/signingkeys"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 // OAuthClient represents an OAuth 2.0 client application
@@ -704,10 +706,10 @@ func (s *Service) handleRefreshTokenReuse(ctx context.Context, token *RefreshTok
 	}
 
 	s.logger.Warn("SECURITY: refresh token reuse detected — token family revoked",
-		zap.String("client_id", sanitizeForLog(clientID)),
-		zap.String("user_id", sanitizeForLog(token.UserID)),
-		zap.String("family_id", sanitizeForLog(token.FamilyID)),
-		zap.String("session_id", sanitizeForLog(token.SessionID)),
+		zap.String("client_id", logsafe.Clean(clientID)),
+		zap.String("user_id", logsafe.Clean(token.UserID)),
+		zap.String("family_id", logsafe.Clean(token.FamilyID)),
+		zap.String("session_id", logsafe.Clean(token.SessionID)),
 		zap.Int64("tokens_revoked", revoked),
 		zap.Timep("rotated_at", token.UsedAt))
 
@@ -3306,7 +3308,7 @@ func (s *Service) handleRefreshTokenGrant(c *gin.Context) {
 			// it is scrubbed of CR/LF before logging — otherwise it can forge
 			// or split log lines (CWE-117).
 			s.logger.Error("failed to mark refresh token rotated",
-				zap.String("client_id", sanitizeForLog(clientID)), zap.Error(err))
+				zap.String("client_id", logsafe.Clean(clientID)), zap.Error(err))
 			writeServerOrUnavailable(c, err)
 			return
 		}
@@ -3334,8 +3336,8 @@ func (s *Service) handleRefreshTokenGrant(c *gin.Context) {
 			FamilyID: token.FamilyID,
 		}); err != nil {
 			s.logger.Error("failed to persist rotated refresh token",
-				zap.String("client_id", sanitizeForLog(clientID)),
-				zap.String("user_id", sanitizeForLog(token.UserID)),
+				zap.String("client_id", logsafe.Clean(clientID)),
+				zap.String("user_id", logsafe.Clean(token.UserID)),
 				zap.Error(err))
 		} else {
 			response.RefreshToken = newRefresh
@@ -4077,7 +4079,7 @@ func (s *Service) handleLogout(c *gin.Context) {
 			return
 		}
 		s.logger.Warn("refusing unregistered post_logout_redirect_uri",
-			zap.String("client_id", sanitizeForLog(hintClientID)))
+			zap.String("client_id", logsafe.Clean(hintClientID)))
 		c.JSON(400, gin.H{
 			"error":             "invalid_request",
 			"error_description": "post_logout_redirect_uri is not registered for the client identified by id_token_hint",
@@ -4289,7 +4291,7 @@ func (s *Service) abacGateAllows(c *gin.Context, userID, clientID, appID string)
 	attrs, err := abac.SubjectAttributes(ctx, s.db, userID, org.ID)
 	if err != nil {
 		s.logger.Warn("abac gate: subject attributes unavailable",
-			zap.String("user_id", userID), zap.Error(err))
+			logsafe.String("user_id", userID), zap.Error(err))
 	}
 
 	allow, wouldDeny, res := abac.Gate(ctx, s.db, org.ID, mode, abac.EvaluationRequest{
@@ -4302,10 +4304,10 @@ func (s *Service) abacGateAllows(c *gin.Context, userID, clientID, appID string)
 	}
 	if !allow {
 		s.logger.Info("abac gate denied authorization",
-			zap.String("user_id", userID),
-			zap.String("client_id", clientID),
-			zap.String("application_id", appID),
-			zap.String("policy_id", res.PolicyID))
+			logsafe.String("user_id", userID),
+			logsafe.String("client_id", clientID),
+			logsafe.String("application_id", appID),
+			logsafe.String("policy_id", res.PolicyID))
 		c.JSON(403, gin.H{"error": "access_denied", "error_description": res.Reason})
 		return false
 	}

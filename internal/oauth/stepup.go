@@ -18,6 +18,8 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/identity"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 // handleStepUpChallenge creates a step-up challenge for mid-session re-authentication.
@@ -86,7 +88,7 @@ func (s *Service) handleStepUpChallenge(c *gin.Context) {
 		enrolled, mErr := s.identityService.GetUserMFAMethods(ctx, userID)
 		if mErr != nil {
 			s.logger.Warn("Failed to look up MFA methods for step-up",
-				zap.String("user_id", sanitizeForLog(userID)),
+				zap.String("user_id", logsafe.Clean(userID)),
 				zap.Error(mErr),
 			)
 		} else {
@@ -240,12 +242,12 @@ func (s *Service) handleStepUpVerify(c *gin.Context) {
 		// cannot forge or split log entries (CWE-117 log injection).
 		errMsg := ""
 		if verifyErr != nil {
-			errMsg = sanitizeForLog(verifyErr.Error())
+			errMsg = logsafe.Clean(verifyErr.Error())
 		}
 		s.logger.Warn("Step-up verification failed",
-			zap.String("user_id", sanitizeForLog(userID)),
-			zap.String("challenge_id", sanitizeForLog(req.ChallengeID)),
-			zap.String("method", sanitizeForLog(req.Method)),
+			zap.String("user_id", logsafe.Clean(userID)),
+			zap.String("challenge_id", logsafe.Clean(req.ChallengeID)),
+			zap.String("method", logsafe.Clean(req.Method)),
 			zap.String("error", errMsg),
 		)
 		go func() {
@@ -380,11 +382,6 @@ func (s *Service) handleStepUpStatus(c *gin.Context) {
 
 // sanitizeForLog strips CR/LF from user-supplied values before they are written
 // to logs, preventing forged or split log entries (CWE-117 log injection).
-func sanitizeForLog(s string) string {
-	s = strings.ReplaceAll(s, "\n", "")
-	s = strings.ReplaceAll(s, "\r", "")
-	return s
-}
 
 // verifyStepUpFactor verifies an MFA factor for step-up authentication using the
 // same verifiers as the primary login MFA flow (handleMFAVerify). It returns true

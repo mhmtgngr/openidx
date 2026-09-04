@@ -26,6 +26,8 @@ import (
 
 	"github.com/openidx/openidx/internal/common/orgctx"
 	"github.com/openidx/openidx/internal/vault"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 // ---- Entry-type catalog (RDM parity) ----
@@ -1002,7 +1004,7 @@ func (s *Service) handlePamDeleteEntry(c *gin.Context) {
 		if zm := s.ziti(); zm != nil {
 			if err := zm.TeardownZitiServiceByName(ctx, zitiServiceName); err != nil {
 				s.logger.Warn("handlePamDeleteEntry: ziti service teardown failed",
-					zap.String("service", scrubLogValue(zitiServiceName)), zap.Error(err))
+					zap.String("service", logsafe.Clean(zitiServiceName)), zap.Error(err))
 			}
 		}
 	}

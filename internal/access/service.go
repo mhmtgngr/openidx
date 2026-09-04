@@ -32,6 +32,8 @@ import (
 	"github.com/openidx/openidx/internal/common/orgctx"
 	"github.com/openidx/openidx/internal/common/secretcrypt"
 	"github.com/openidx/openidx/internal/vault"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 // ProxyRoute represents a configured proxy route
@@ -3408,7 +3410,7 @@ func (s *Service) abacGateAllows(c *gin.Context, route *ProxyRoute, userID, orgI
 	attrs, err := abac.SubjectAttributes(ctx, s.db, userID, orgID)
 	if err != nil {
 		s.logger.Warn("abac gate: subject attributes unavailable",
-			zap.String("user_id", userID), zap.Error(err))
+			logsafe.String("user_id", userID), zap.Error(err))
 	}
 
 	allow, wouldDeny, res := abac.Gate(ctx, s.db, orgID, mode, abac.EvaluationRequest{
@@ -3421,9 +3423,9 @@ func (s *Service) abacGateAllows(c *gin.Context, route *ProxyRoute, userID, orgI
 	}
 	if !allow {
 		s.logger.Info("abac gate denied proxy request",
-			zap.String("user_id", userID),
-			zap.String("application_id", appID),
-			zap.String("policy_id", res.PolicyID))
+			logsafe.String("user_id", userID),
+			logsafe.String("application_id", appID),
+			logsafe.String("policy_id", res.PolicyID))
 		c.JSON(http.StatusForbidden, gin.H{"error": "denied by policy", "reason": res.Reason})
 		return false
 	}
@@ -3445,18 +3447,18 @@ func (s *Service) recordABACDecision(ctx context.Context, route *ProxyRoute, use
 
 	if s.auditService == nil {
 		s.logger.Warn("abac decision not recorded: unified audit service unavailable",
-			zap.String("event_type", eventType),
-			zap.String("user_id", userID),
-			zap.String("application_id", appID),
+			logsafe.String("event_type", eventType),
+			logsafe.String("user_id", userID),
+			logsafe.String("application_id", appID),
 			zap.Bool("enforced", enforced))
 		return
 	}
 	if err := s.auditService.RecordEvent(ctx, appaccess.SourceProxy, eventType,
 		routeID, userID, actorIP, details); err != nil {
 		s.logger.Warn("abac decision not recorded: unified audit write failed",
-			zap.String("event_type", eventType),
-			zap.String("user_id", userID),
-			zap.String("application_id", appID),
+			logsafe.String("event_type", eventType),
+			logsafe.String("user_id", userID),
+			logsafe.String("application_id", appID),
 			zap.Bool("enforced", enforced),
 			zap.Error(err))
 	}

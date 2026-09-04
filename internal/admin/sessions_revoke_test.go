@@ -10,6 +10,8 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/database"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 // TestPublishSessionRevocationsWritesMarkers pins the fix for the inert admin
@@ -86,10 +88,10 @@ func TestPublishSessionRevocationsReportsFailures(t *testing.T) {
 // must not forge extra log lines.
 func TestScrubLogValueCutsCRLF(t *testing.T) {
 	in := "abc\r\nFAKE level=info msg=owned\rdef\n"
-	if got := scrubLogValue(in); got != "abcFAKE level=info msg=owneddef" {
-		t.Errorf("scrubLogValue(%q) = %q; CR/LF must be removed entirely", in, got)
+	if got := logsafe.Clean(in); got != "abcFAKE level=info msg=owneddef" {
+		t.Errorf("logsafe.Clean(%q) = %q; CR/LF must be removed entirely", in, got)
 	}
-	if got := scrubLogValue("plain-uuid"); got != "plain-uuid" {
+	if got := logsafe.Clean("plain-uuid"); got != "plain-uuid" {
 		t.Errorf("clean values must pass through unchanged, got %q", got)
 	}
 }
