@@ -95,6 +95,15 @@ jobs:
         with:
           version: v3.14.4
 
+      # Before the guard, not after: the guard renders the chart, and rendering
+      # a chart whose subcharts have not been fetched fails with "missing in
+      # charts/ directory" — which is how this job went red on its first run.
+      - name: Add chart repos
+        run: bash scripts/ci-retry.sh 3 5 -- helm repo add bitnami https://charts.bitnami.com/bitnami
+
+      - name: Build chart dependencies
+        run: bash scripts/ci-retry.sh 3 5 -- helm dependency build "$CHART"
+
       # Cheap and static: catches the two ways this chart has named images that
       # do not exist, before spending a cluster on finding out.
       - name: Chart images resolve
@@ -104,6 +113,7 @@ jobs:
         run: bash scripts/check-chart-images.test.sh
 
       - name: Create kind cluster
+        id: kind
         uses: helm/kind-action@v1
         with:
           cluster_name: openidx-ci
@@ -117,12 +127,6 @@ jobs:
 
       - name: Load it into the cluster
         run: kind load docker-image "$TOOLS_IMAGE" --name openidx-ci
-
-      - name: Add chart repos
-        run: bash scripts/ci-retry.sh 3 5 -- helm repo add bitnami https://charts.bitnami.com/bitnami
-
-      - name: Build chart dependencies
-        run: bash scripts/ci-retry.sh 3 5 -- helm dependency build "$CHART"
 
       # --wait blocks on every Deployment/StatefulSet becoming Ready and on the
       # post-install migration hook Job succeeding, so a green here already
@@ -186,7 +190,7 @@ jobs:
       # A first red round should say what broke, not require a second push to
       # find out.
       - name: Diagnose
-        if: failure()
+        if: failure() && steps.kind.conclusion == 'success'
         run: |
           kubectl -n "$NS" get all,networkpolicy,secret 2>&1 | head -100 || true
           echo "===== pods ====="
