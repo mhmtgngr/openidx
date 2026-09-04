@@ -2112,11 +2112,34 @@ worked.
    no business knowing; and kill-switching your own account is refused, because
    locking yourself out of the console mid-incident is not a recoverable
    mistake and the action looks harmless enough to try.
-5. ☐ Remaining from the audit's list: the interactive MFA step-up handlers
-   (`handleMFAVerify`, `handleMFASendOTP`, the `/authorize/mfa*` family),
-   hardware-token verify/assign/revoke, `handlePamRevealEntry`, `RunSoDSweep`,
-   `handleApproveRequest`, `handleUserKillSwitch`, and the Guacamole session
-   handlers.
+5. ✅ **Three no-ops and two switches that were never read.** The audit's
+   delete list, finished.
+   - `middleware.RateLimitConfigFromEnv` documented three environment
+     variables in its own comment and read none of them (*"This is a
+     placeholder for env-based configuration"*); it had no caller.
+     `gateway/middleware.WithCorrelationID` returned its own argument
+     unchanged; it had no caller either. Both deleted, with a stale
+     "Migration 011-029 would be similarly defined... For brevity" note in
+     `migrations/sql.go` that had outlived 128 further migrations.
+   - **`ENABLE_MFA` and `ENABLE_AUDIT_LOGGING`.** Bound to struct fields,
+     defaulted to `true`, and shipped in `configs/audit-service.yaml` — and no
+     line of this codebase ever read either. `ENABLE_MFA=false` got you MFA.
+     That is the display-without-enforcement class in its quietest form: not a
+     button that lies, a *setting* that lies, to whoever reads the config file
+     to find out what this deployment does.
+   - Deleting the fields alone would have removed the evidence and left the
+     operator's belief intact, so `internal/common/config/retired.go` carries
+     the three retired names (`OAUTH_LOGIN_UI` too) with what became of each,
+     and `ValidateProductionConfig` logs any that are still set — **in every
+     environment**, because development is where someone tries a switch and
+     needs to hear that it does nothing. Two tests keep a retired setting from
+     coming back by the routes these left by: a viper default or
+     `mapstructure` binding in `config.go`, and a line in any shipped
+     `configs/*.yaml`. Both shown red against a restored `enable_mfa`.
+6. ☐ Remaining from the audit's list: the interactive MFA step-up handlers
+   (`handleMFAVerify`, `handleMFASendOTP`), hardware-token
+   verify/assign/revoke, `handlePamRevealEntry`, `RunSoDSweep`,
+   `handleApproveRequest`, and the Guacamole session handlers.
 
    `internal/identity`'s DB harness now also accepts
    `OPENIDX_TEST_DATABASE_URL`, so these can be written and run on a machine

@@ -614,10 +614,6 @@ DELETE FROM groups WHERE id LIKE '10000000-0000-0000-0000-000000000%';
 DELETE FROM roles WHERE id LIKE '60000000-0000-0000-0000-000000000%';
 DELETE FROM users WHERE id LIKE '00000000-0000-0000-0000-000000000%';`
 
-	// Migration 011-029 would be similarly defined...
-	// For brevity, I'm including a placeholder for the rest
-	// In production, these would be auto-generated from the migration files
-
 	identityProvidersUp = `-- Migration 011: External Identity Providers
 CREATE TABLE IF NOT EXISTS identity_providers (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

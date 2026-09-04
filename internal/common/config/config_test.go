@@ -1075,8 +1075,6 @@ func TestConfigDefaults(t *testing.T) {
 	// Check default values
 	assert.Equal(t, "development", cfg.Environment)
 	assert.Equal(t, "info", cfg.LogLevel)
-	assert.True(t, cfg.EnableMFA)
-	assert.True(t, cfg.EnableAuditLogging)
 	assert.True(t, cfg.EnableRateLimit)
 	assert.Equal(t, 100, cfg.RateLimitRequests)
 	assert.Equal(t, 60, cfg.RateLimitWindow)

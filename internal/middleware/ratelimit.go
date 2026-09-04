@@ -38,16 +38,6 @@ func DefaultRateLimitConfig() RateLimitConfig {
 	}
 }
 
-// RateLimitConfigFromEnv creates rate limit config from environment variables
-// Env vars: RATE_LIMIT_IP_REQUESTS, RATE_LIMIT_USER_REQUESTS, RATE_LIMIT_WINDOW_SECONDS
-func RateLimitConfigFromEnv() RateLimitConfig {
-	cfg := DefaultRateLimitConfig()
-
-	// Can be overridden by env vars if needed
-	// This is a placeholder for env-based configuration
-	return cfg
-}
-
 // rateLimitKey represents the JSON structure stored in Redis for sliding window
 type rateLimitKey struct {
 	Timestamps []int64 `json:"ts"`

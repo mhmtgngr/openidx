@@ -70,10 +70,13 @@ type Config struct {
 	EncryptionKey      string `mapstructure:"encryption_key"`
 	CORSAllowedOrigins string `mapstructure:"cors_allowed_origins"`
 
-	// Feature flags
-	EnableMFA          bool `mapstructure:"enable_mfa"`
-	EnableAuditLogging bool `mapstructure:"enable_audit_logging"`
-	EnableRateLimit    bool `mapstructure:"enable_rate_limit"`
+	// EnableRateLimit turns the per-service rate limiter on. It is the only
+	// survivor of a "Feature flags" block that also carried EnableMFA and
+	// EnableAuditLogging: both were bound, defaulted and shipped in
+	// configs/audit-service.yaml, and no line of this codebase ever read
+	// either one. An operator who set ENABLE_MFA=false got MFA. See
+	// retiredSettings below, which now says so out loud.
+	EnableRateLimit bool `mapstructure:"enable_rate_limit"`
 
 	// Rate limiting
 	RateLimitRequests     int  `mapstructure:"rate_limit_requests"`
@@ -802,8 +805,6 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("enable_opa_authz", false)
 
 	// Feature flag defaults
-	v.SetDefault("enable_mfa", true)
-	v.SetDefault("enable_audit_logging", true)
 	v.SetDefault("enable_rate_limit", true)
 
 	// Rate limiting defaults
