@@ -2082,7 +2082,19 @@ worked.
    tables: the vault's schema is spread over several migrations and carries
    FORCE RLS, and a test that builds its own approximation of `vault_secrets`
    can pass against a shape production does not have.
-4. ☐ Remaining from the audit's list: the interactive MFA step-up handlers
+4. ✅ **The kill switch's guards.** `handleUserKillSwitch` severs a user's
+   live access across all three pillars and, with `disable_user`, disables the
+   account and deletes the overlay identity. Three checks stand in front of all
+   of it, and the existing tests exercised `executeKillSwitch` — the pillar
+   work — not the handler. Now pinned: no organization context is a 403 (the
+   request cannot say which tenant it acts for, and the user lookup would then
+   be unscoped); a user in ANOTHER organization answers exactly what a
+   non-existent user answers, byte for byte, and their account is untouched —
+   anything else confirms the existence of an account to an administrator with
+   no business knowing; and kill-switching your own account is refused, because
+   locking yourself out of the console mid-incident is not a recoverable
+   mistake and the action looks harmless enough to try.
+5. ☐ Remaining from the audit's list: the interactive MFA step-up handlers
    (`handleMFAVerify`, `handleMFASendOTP`, the `/authorize/mfa*` family),
    hardware-token verify/assign/revoke, `handlePamRevealEntry`, `RunSoDSweep`,
    `handleApproveRequest`, `handleUserKillSwitch`, and the Guacamole session
