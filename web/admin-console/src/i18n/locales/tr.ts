@@ -8333,6 +8333,7 @@ const tr: typeof en = {
         title: 'Duruş Kontrol Kuralları ({{n}})',
         enabled: 'Etkin',
         disabled: 'Devre dışı',
+        notImplemented: 'Bu sürümde kullanılamıyor',
       },
     },
     aiRecommendations: {

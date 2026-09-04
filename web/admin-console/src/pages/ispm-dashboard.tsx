@@ -45,6 +45,13 @@ interface PostureRule {
   enabled: boolean
   severity: string
   thresholds: Record<string, number>
+  /**
+   * Whether the scan engine has code for this check_type. A rule row can
+   * exist for a check that never runs (the pre-v138 seed shipped six), and
+   * rendering that as Enabled/Disabled would put a live-looking toggle on
+   * something the scan ignores.
+   */
+  implemented: boolean
 }
 
 /**
@@ -337,9 +344,15 @@ export function ISPMDashboardPage() {
                   </div>
                   <p className="text-xs text-muted-foreground">{r.description}</p>
                 </div>
-                <Badge variant={r.enabled ? 'default' : 'secondary'}>
-                  {r.enabled ? t('pages.ispm.rules.enabled') : t('pages.ispm.rules.disabled')}
-                </Badge>
+                {r.implemented ? (
+                  <Badge variant={r.enabled ? 'default' : 'secondary'}>
+                    {r.enabled ? t('pages.ispm.rules.enabled') : t('pages.ispm.rules.disabled')}
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="text-muted-foreground">
+                    {t('pages.ispm.rules.notImplemented')}
+                  </Badge>
+                )}
               </div>
             ))}
           </div>

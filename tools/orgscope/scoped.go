@@ -114,4 +114,17 @@ var scopedTables = map[string]bool{
 	"pam_entry_favorites":       true,
 	"pam_entry_access_requests": true,
 	"pam_entry_sessions":        true,
+
+	// v138 — ISPM + AI tenant isolation. These were created (v42/v43/v54)
+	// without org_id and were therefore invisible to this lint, which is
+	// exactly how internal/admin came to read and mutate them across tenants.
+	"ispm_rules":             true,
+	"ispm_findings":          true,
+	"ispm_scores":            true,
+	"ai_agents":              true,
+	"ai_agent_credentials":   true,
+	"ai_agent_permissions":   true,
+	"ai_agent_activity":      true,
+	"ai_recommendations":     true,
+	"recommendation_history": true,
 }

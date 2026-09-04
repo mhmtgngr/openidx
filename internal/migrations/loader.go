@@ -971,5 +971,12 @@ func allMigrations() []*Migration {
 			UpSQL:       applicationRequireAssignmentUp,
 			DownSQL:     applicationRequireAssignmentDown,
 		},
+		{
+			Version:     138,
+			Name:        "ispm_ai_org_isolation",
+			Description: "Add org_id + FORCE RLS to ispm_rules/ispm_findings/ispm_scores (v54), ai_agents + ai_agent_credentials/permissions/activity (v42/v43) and ai_recommendations + recommendation_history (v43). They had no org_id and internal/admin read/wrote them by bare id — any tenant admin could read, dismiss, remediate and delete every other tenant's posture findings, disable every tenant's posture rules, and enumerate/modify/delete every tenant's AI agents and recommendations from the console. Install-wide unique keys become per-tenant: ispm_rules(org_id, check_type), ai_agents(org_id, name), ispm_scores(org_id, snapshot_date) — the last one also stops one tenant's daily posture score overwriting another's. Pre-existing rows are attributed to the oldest org (children follow their parent); no column DEFAULT, so a rolled-back binary fails loudly instead of mis-tenanting.",
+			UpSQL:       ispmAIOrgIsolationUp,
+			DownSQL:     ispmAIOrgIsolationDown,
+		},
 	}
 }

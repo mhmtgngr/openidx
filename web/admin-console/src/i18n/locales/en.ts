@@ -8535,6 +8535,7 @@ const en = {
         title: 'Posture Check Rules ({{n}})',
         enabled: 'Enabled',
         disabled: 'Disabled',
+        notImplemented: 'Not available in this version',
       },
     },
     // AI recommendations. Everything the engine writes renders as sent: each

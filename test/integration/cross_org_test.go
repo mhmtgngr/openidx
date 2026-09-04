@@ -89,6 +89,11 @@ END $$;`, roleName, roleName, rolePass, roleName, rolePass))
 		`GRANT SELECT ON attestation_items TO ` + roleName,
 		`GRANT SELECT ON jit_grants TO ` + roleName,
 		`GRANT SELECT ON request_approval_chains TO ` + roleName,
+		// v138 — ISPM + AI tenant isolation
+		`GRANT SELECT ON ispm_findings TO ` + roleName,
+		`GRANT SELECT ON ispm_rules TO ` + roleName,
+		`GRANT SELECT ON ai_agents TO ` + roleName,
+		`GRANT SELECT ON ai_recommendations TO ` + roleName,
 	} {
 		_, err := admin.Exec(ctx, stmt)
 		require.NoError(t, err, "grant to RLS test role: %s", stmt)
@@ -409,6 +414,14 @@ func TestRLSBeltTables(t *testing.T) {
 		{"oauth_clients", `INSERT INTO oauth_clients (client_id, name, type, org_id) VALUES ('tbelt-oc-` + suffix + `','tbelt client','confidential',$1)`},
 		{"audit_events", `INSERT INTO audit_events (event_type, category, action, outcome, org_id) VALUES ('tbelt','test','probe','success',$1)`},
 		{"attestation_campaigns", `INSERT INTO attestation_campaigns (name, campaign_type, org_id) VALUES ('tbelt-att-` + suffix + `','role_certification',$1)`},
+		// v138 — the tables internal/admin used to read and mutate across
+		// tenants by bare id. The belt is what stops a query that forgets its
+		// org predicate from seeing another tenant's posture findings, rules,
+		// AI agents or recommendations.
+		{"ispm_findings", `INSERT INTO ispm_findings (check_type, severity, category, title, org_id) VALUES ('tbelt','low','accounts','tbelt finding',$1)`},
+		{"ispm_rules", `INSERT INTO ispm_rules (name, category, check_type, org_id) VALUES ('tbelt rule','accounts','tbelt-` + suffix + `',$1)`},
+		{"ai_agents", `INSERT INTO ai_agents (name, org_id) VALUES ('tbelt-agent-` + suffix + `',$1)`},
+		{"ai_recommendations", `INSERT INTO ai_recommendations (recommendation_type, category, title, org_id) VALUES ('tbelt','security','tbelt rec',$1)`},
 	}
 
 	for _, c := range cases {

@@ -118,19 +118,12 @@ INSERT INTO risk_policies (id, name, description, priority, conditions, actions)
 )
 ON CONFLICT (id) DO NOTHING;
 
--- ISPM rules
-INSERT INTO ispm_rules (id, name, description, category, check_type, severity, thresholds) VALUES
-('a0000000-0000-0000-0000-000000000001', 'MFA Adoption Check', 'Detects users without MFA enabled', 'authentication', 'mfa_adoption', 'high', '{"min_adoption_pct": 90}'),
-('a0000000-0000-0000-0000-000000000002', 'Stale Account Detection', 'Finds users not logged in for extended period', 'accounts', 'stale_accounts', 'medium', '{"inactive_days": 90}'),
-('a0000000-0000-0000-0000-000000000003', 'Over-Privileged Users', 'Detects admin users who rarely use admin features', 'authorization', 'over_privileged', 'high', '{"unused_days": 30}'),
-('a0000000-0000-0000-0000-000000000004', 'Weak Password Detection', 'Finds accounts with passwords older than policy', 'authentication', 'weak_passwords', 'medium', '{"max_age_days": 90}'),
-('a0000000-0000-0000-0000-000000000005', 'Orphaned Permissions', 'Permissions for disabled users or deleted groups', 'authorization', 'orphaned_permissions', 'medium', '{}'),
-('a0000000-0000-0000-0000-000000000006', 'Shadow Admin Detection', 'Users with admin-equivalent access without admin role', 'authorization', 'shadow_admin', 'critical', '{}'),
-('a0000000-0000-0000-0000-000000000007', 'Shared Account Detection', 'Accounts with concurrent sessions from different IPs', 'accounts', 'shared_accounts', 'high', '{"max_concurrent_ips": 2}'),
-('a0000000-0000-0000-0000-000000000008', 'Dormant Permissions', 'Granted permissions unused for extended period', 'authorization', 'dormant_permissions', 'low', '{"unused_days": 30}'),
-('a0000000-0000-0000-0000-000000000009', 'Policy Gap Detection', 'Applications without conditional access policies', 'compliance', 'policy_gaps', 'medium', '{}'),
-('a0000000-0000-0000-0000-00000000000a', 'MFA Bypass Risk', 'Users with only weak MFA methods (SMS/email)', 'authentication', 'mfa_bypass_risk', 'high', '{}')
-ON CONFLICT DO NOTHING;
+-- ISPM rules: NOT seeded here any more. ispm_rules is per-tenant since
+-- migration v138 (org_id NOT NULL, FORCE RLS), so a single install-wide seed row
+-- cannot belong to every organization. The admin service seeds each org's rule
+-- set on first use from the checks the scan engine actually implements
+-- (internal/admin/ispm.go, postureCheckDefs / ensureDefaultRules). The old seed
+-- listed ten rules of which six had no check behind them; those are gone with it.
 
 -- Lifecycle policies
 INSERT INTO lifecycle_policies (id, name, description, policy_type, conditions, actions, enabled, schedule) VALUES

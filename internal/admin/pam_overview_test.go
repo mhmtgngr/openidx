@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 
@@ -16,10 +17,30 @@ import (
 
 // setupPAMTestDB creates a throwaway PostgreSQL container (same pattern as the
 // internal/access test harness) and migrates it to latest.
+//
+// OPENIDX_TEST_DATABASE_URL, when set, points the harness at an existing
+// server instead of starting a container — for a workstation or sandbox that
+// has Postgres but no Docker daemon. Every test here seeds its own
+// organizations and addresses rows by them, so a shared database is safe;
+// the schema is migrated to latest on every call (idempotent, fast when
+// already current).
 func setupPAMTestDB(t *testing.T) (*database.PostgresDB, func()) {
 	t.Helper()
 
 	ctx := context.Background()
+
+	if url := os.Getenv("OPENIDX_TEST_DATABASE_URL"); url != "" {
+		db, err := database.NewPostgres(url)
+		if err != nil {
+			t.Skipf("OPENIDX_TEST_DATABASE_URL set but unreachable: %v", err)
+			return nil, func() {}
+		}
+		if err := migrations.NewMigrator(db.Pool, zap.NewNop()).MigrateTo(ctx, -1); err != nil {
+			db.Close()
+			t.Fatalf("migrate to latest: %v", err)
+		}
+		return db, func() { db.Close() }
+	}
 
 	req := testcontainers.ContainerRequest{
 		Image:        "postgres:16-alpine",
