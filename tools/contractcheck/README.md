@@ -35,17 +35,39 @@ generic) is counted under "skipped" so coverage is honest.
 # List every extracted frontend GET contract (no network):
 go run ./tools/contractcheck
 
-# Diff those contracts against a live deployment (exit 1 on any mismatch):
+# Diff those contracts against a live deployment behind its edge router
+# (exit 1 on any mismatch):
 #   token file default: /tmp/admintoken.txt   base default: https://openidx.tdv.org
 go run ./tools/contractcheck -probe -token-file /tmp/admintoken.txt
 
-# JSON output for CI:
+# Diff them against services started directly, with no edge router in front
+# (this is what CI does):
+go run ./tools/contractcheck -probe -local -token-file /tmp/smoke-admin-token
+
+# JSON output:
 go run ./tools/contractcheck -probe -json
 ```
 
-Mint an admin token with `tools/minttok` first (see repo notes). Exit code is
-non-zero when `-probe` finds a missing-key mismatch, so once the known set is
-clean this can gate CI.
+### `-local`: why a single base URL is not enough
+
+The console talks to one origin; nginx sends `/api/v1/` to APISIX, and APISIX
+forwards each prefix to a different service — with `/api/*` as a catch-all to
+admin-api, which is how `/api/v1/ispm/...`, `/api/v1/privacy/...` and the rest
+resolve without a rule of their own.
+
+CI has no edge router: the eight services are started on their own ports. Probing
+one of them as `-base` answers **404 for every path that service does not own** —
+54 of 76 endpoints, reported as "unverified", which reads like coverage and is
+really a wall of misses. `-local` routes each path to the service the edge would
+forward it to, using the same prefix map (`edge.go`, pinned against
+`deployments/apisix-edge/seed-edge-routes.sh` by `edge_test.go`).
+
+## In CI
+
+The `smoke` job in `.github/workflows/ci.yml` starts the stack, runs
+`scripts/smoke-test.sh` (which mints an admin token to `SMOKE_TOKEN_OUT`), then
+runs this tool with `-probe -local`. Exit code is the gate: a missing-key
+mismatch fails the build.
 
 ## Limitations
 
@@ -55,3 +77,8 @@ clean this can gate CI.
   (non-200), not as mismatches.
 - Field-level type drift inside a present key is not detected; add a generated
   type layer (OpenAPI from the Go structs) to kill that class permanently.
+- Shapes are compared against **the probed deployment's configuration**. A
+  handler that answers a short shape when a feature is off (as
+  `/api/v1/access/ziti/status` does with no Ziti configured) will report keys as
+  missing even though the enabled shape carries them — declare those keys
+  optional in the frontend, which is what the wire actually promises.

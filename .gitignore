@@ -21,6 +21,11 @@ bin/
 /oauth-service
 /provisioning-service
 
+# Compiled tool binaries (root level). `go build ./tools/<name>` drops the
+# binary in the working directory, not next to its package.
+/contractcheck
+/orgscope
+
 # Go test binaries
 *.test
 

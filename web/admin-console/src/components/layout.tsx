@@ -44,7 +44,12 @@ function ZitiStatusIndicator() {
   const navigate = useNavigate()
   const { data: zitiStatus } = useQuery({
     queryKey: ['ziti-status-header'],
-    queryFn: () => api.get<{ enabled: boolean; controller_reachable?: boolean; services_count: number; identities_count: number }>('/api/v1/access/ziti/status'),
+    // Counts and controller state are only in the ENABLED shape: with no Ziti
+    // configured the handler answers {enabled:false, message, sdk_ready,
+    // console_url} and nothing else (internal/access/ziti_handlers.go). The
+    // indicator returns null in that case, so declaring them required was a
+    // type that did not describe the wire.
+    queryFn: () => api.get<{ enabled: boolean; controller_reachable?: boolean; services_count?: number; identities_count?: number }>('/api/v1/access/ziti/status'),
     refetchInterval: 30000,
   })
   const { data: browzerStatus } = useQuery({

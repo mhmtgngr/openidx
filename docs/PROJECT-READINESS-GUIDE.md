@@ -1606,7 +1606,7 @@ policy answers 403 + audit on `/oauth/authorize`.
 4. ☐ **Helm install proof** — a `kind` job runs `make helm-install --wait`
    and asserts the migration Job completed, OPA is ready, the backup
    CronJob and NetworkPolicies exist.
-5. ◐ **Gates that gate (D2)** — four of six landed.
+5. ✅ **Gates that gate (D2)** — *shipped*, all six.
    - ✅ **`docs.yml` validates on pull requests.** Its `validate` job
      carried `if: github.event_name == 'pull_request'` and the workflow had
      no `pull_request` trigger — dead code, so `mkdocs build --strict`,
@@ -1686,9 +1686,46 @@ policy answers 403 + audit on `/oauth/authorize`.
        `go-licenses` classifies by heuristic and misreads vendored and
        dual-licensed modules often enough that blocking would mean arguing
        with the tool. Decision D2 covers the four scanners above, not this.
-   - ☐ `tools/contractcheck` armed in `ci-web.yml`, and
-     `api-contract.test.ts` comparing console paths against the route
-     tables instead of grepping for one literal.
+   - ✅ **`tools/contractcheck` armed** — in the `smoke` job, not
+     `ci-web.yml`, because it needs a running stack and that is where one
+     exists. The tool extracts, from every `api.get<{...}>()` site, the
+     response keys the console is going to read, and diffs them against
+     what the services actually return: a key the backend stopped sending
+     renders `undefined`/`NaN` while every request answers 200, which no
+     status code and no type-check catches. `scripts/smoke-test.sh` writes
+     the admin token it already mints to `SMOKE_TOKEN_OUT` (owner-only, and
+     only when asked) so the probe reuses it.
+     The first run needed a fix in the tool itself. Probed against a single
+     base URL — the Go `gateway-service`, which the smoke job already uses
+     — **54 of 76 endpoints answered 404** and were filed as "unverified",
+     which reads like coverage and is a wall of misses: the console's front
+     door is APISIX (nginx sends `/api/v1/` to it), whose `/api/*` catch-all
+     carries `/api/v1/ispm/…`, `/api/v1/privacy/…` and the rest to
+     admin-api, while `gateway-service` registers six prefixes and no
+     catch-all. So `-local` routes each path to the service the edge would
+     forward it to, from a prefix map that `edge_test.go` pins against
+     `deployments/apisix-edge/seed-edge-routes.sh` itself — with a red case
+     proving the pin can still fail.
+     Routed correctly: **74 OK, 1 mismatch, 2 unverified** (Guacamole, 503
+     with no broker configured — correctly not counted as a shape failure).
+     The mismatch was `layout.tsx` declaring `services_count` and
+     `identities_count` as required on `/api/v1/access/ziti/status`; the
+     handler only returns them in the *enabled* shape, and the indicator
+     returns null when Ziti is off — so the type, not the code, was wrong.
+     Now optional; the gate is green and blocking.
+   - ✅ **`api-contract.test.ts` says something true.** Its premise —
+     "there is NO `/api/v1/admin/*` prefix, and neither APISIX nor the
+     gateway rewrites one in" — was false: `cmd/gateway-service/main.go`
+     registers `router.Group("/api/v1/admin")` and proxies it verbatim.
+     The test's *conclusion* holds (measured on a running stack:
+     `/api/v1/social-providers` → 200, `/api/v1/admin/social-providers` →
+     404, through the gateway and direct), but a reader who greps, finds
+     the group, and concludes the test is stale would delete the one thing
+     standing between the console and a batch of 404s. The comment now
+     states what each router does and cites both. Comparing every console
+     path against the route tables is the wider job; response *shapes*,
+     the failure that grep cannot see, are now covered by contractcheck
+     above.
    - **Maintainer action:** branch protection must list the checks it
      requires. `Required Checks` now covers all of `ci.yml`; jobs in other
      workflows have to be added to the protection rule by name — the docs

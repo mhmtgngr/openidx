@@ -134,6 +134,11 @@ func main() {
 		tokenF   = flag.String("token-file", "/tmp/admintoken.txt", "file containing a bearer token")
 		insecure = flag.Bool("insecure", true, "skip TLS verification when probing")
 		jsonOut  = flag.Bool("json", false, "emit findings as JSON")
+		local    = flag.Bool("local", false,
+			"probe each service directly on its documented localhost port, routing by the same\n"+
+				"prefix map the edge router uses (see edge.go). Use where there is no edge router,\n"+
+				"such as CI: -base alone answers 404 for every prefix that base does not own.")
+		localHost = flag.String("local-host", "localhost", "host for -local probing")
 	)
 	flag.Parse()
 
@@ -155,7 +160,11 @@ func main() {
 	}
 	token := strings.TrimSpace(string(tokenBytes))
 
-	findings := probeAll(calls, *baseURL, token, *insecure)
+	var bases map[string]string
+	if *local {
+		bases = localBases(*localHost)
+	}
+	findings := probeAll(calls, *baseURL, bases, token, *insecure)
 	os.Exit(reportProbe(calls, skipped, findings, *jsonOut))
 }
 
@@ -220,7 +229,10 @@ type probeFinding struct {
 	Line         int      `json:"line"`
 }
 
-func probeAll(calls []declaredCall, base, token string, insecure bool) []probeFinding {
+// probeAll probes every distinct declared path. When bases is non-nil each path
+// is sent to the service the edge router would forward it to; otherwise every
+// path goes to base.
+func probeAll(calls []declaredCall, base string, bases map[string]string, token string, insecure bool) []probeFinding {
 	client := &http.Client{Timeout: 15 * time.Second}
 	if insecure {
 		client.Transport = &http.Transport{
@@ -236,7 +248,27 @@ func probeAll(calls []declaredCall, base, token string, insecure bool) []probeFi
 			continue
 		}
 		seen[c.Path] = true
-		f := probeOne(client, base, token, c)
+		target := base
+		if bases != nil {
+			svc := serviceForPath(c.Path)
+			if svc == "" {
+				findings = append(findings, probeFinding{
+					Path: c.Path, DeclaredKeys: c.Keys, File: c.File, Line: c.Line,
+					Note: "no edge route forwards this path to any service",
+				})
+				continue
+			}
+			b, ok := bases[svc]
+			if !ok {
+				findings = append(findings, probeFinding{
+					Path: c.Path, DeclaredKeys: c.Keys, File: c.File, Line: c.Line,
+					Note: "edge route names service " + svc + ", which has no base URL",
+				})
+				continue
+			}
+			target = b
+		}
+		f := probeOne(client, target, token, c)
 		findings = append(findings, f)
 	}
 	return findings

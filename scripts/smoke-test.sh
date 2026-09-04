@@ -16,6 +16,11 @@ FAIL=0
 GATEWAY_URL="${GATEWAY_URL:-http://localhost:8088}"
 OAUTH_URL="${OAUTH_URL:-http://localhost:8006}"
 TIMEOUT="${TIMEOUT:-120}"
+# Optional: where to write the admin access token this run mints, so a caller
+# can reuse it instead of driving the PKCE login a second time (CI hands it to
+# tools/contractcheck). Unset by default -- a token on disk is a credential, so
+# it is written only when asked for, with owner-only permissions.
+SMOKE_TOKEN_OUT="${SMOKE_TOKEN_OUT:-}"
 
 pass() { echo -e "  ${GREEN}PASS${NC} $1"; PASS=$((PASS + 1)); }
 fail() { echo -e "  ${RED}FAIL${NC} $1: $2"; FAIL=$((FAIL + 1)); }
@@ -131,6 +136,9 @@ if [ -n "$LOGIN_SESSION" ]; then
 
     if [ -n "$ADMIN_TOKEN" ]; then
         pass "Admin login through /oauth/login + PKCE code exchange"
+        if [ -n "$SMOKE_TOKEN_OUT" ]; then
+            ( umask 077; printf '%s' "$ADMIN_TOKEN" > "$SMOKE_TOKEN_OUT" )
+        fi
     else
         fail "Admin login" "no access_token; login said: $(printf '%s' "$LOGIN_RESPONSE" | head -c 200)"
     fi

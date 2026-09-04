@@ -48,17 +48,18 @@ jobs:
         uses: actions/checkout@v4
 
       # Linux desktop toolchain required by `flutter build linux`. GTK + ninja +
-      # clang are the SDK's own baseline; libsecret and jsoncpp are what the
-      # plugins pull in -- flutter_secure_storage_linux's CMakeLists does
-      # `pkg_check_modules(REQUIRED libsecret-1>=0.18.4)` and `jsoncpp`, and
-      # without the -dev packages CMake stops at "The following required
-      # packages were not found" before a single object is compiled.
+      # clang are the SDK's own baseline; the rest are what the plugins declare
+      # REQUIRED in their CMakeLists, each of which stops the configure step
+      # dead at "The following required packages were not found" before a single
+      # object is compiled:
+      #   libsecret-1-dev + libjsoncpp-dev -> flutter_secure_storage_linux
+      #   libayatana-appindicator3-dev     -> tray_manager (the system tray)
       - name: Install Linux desktop build deps
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
           sudo apt-get install -y ninja-build libgtk-3-dev clang cmake pkg-config \
-            libsecret-1-dev libjsoncpp-dev
+            libsecret-1-dev libjsoncpp-dev libayatana-appindicator3-dev
         working-directory: ${{ github.workspace }}
 
       - name: Set up Flutter
@@ -97,6 +98,14 @@ jobs:
           echo "TODO: fetch + stage openidx-agent sidecar for ${{ matrix.platform }}"
 
       - name: Build
+        env:
+          # local_auth_windows still includes <experimental/coroutine>, which
+          # MSVC 14.51's STL turns into a hard error (C2338 / STL1011) telling
+          # you to define this macro "to suppress this error for now". It is a
+          # third-party plugin header, so there is nothing to fix in this tree;
+          # cl.exe picks up extra flags from CL, and the variable is empty on
+          # the other two runners, so this is Windows-only without an `if:`.
+          CL: ${{ matrix.os == 'windows-latest' && '/D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS' || '' }}
         run: flutter build ${{ matrix.build_target }} --release
 
       # Success only. Under `if: always()` a failed configure still matched the

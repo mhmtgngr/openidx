@@ -1137,7 +1137,20 @@ jobs:
         env:
           GATEWAY_URL: http://localhost:8008
           OAUTH_URL: http://localhost:8006
+          SMOKE_TOKEN_OUT: /tmp/smoke-admin-token
         run: make smoke-test
+
+      # The console declares, at each api.get<{...}>() site, the response keys
+      # it is going to read. tools/contractcheck diffs those declarations
+      # against what the running services actually return: a key the backend
+      # stopped sending is a page that renders undefined/NaN with every request
+      # answering 200, which no status code and no type-check can catch.
+      #
+      # -local because CI has no edge router: the tool routes each path to the
+      # service APISIX would forward it to. Against one base URL instead, 54 of
+      # 76 endpoints answer 404 and the run reports a wall of "unverified".
+      - name: Frontend/backend response shapes agree
+        run: go run ./tools/contractcheck -probe -local -token-file /tmp/smoke-admin-token
 
       - name: Service logs
         if: always()
