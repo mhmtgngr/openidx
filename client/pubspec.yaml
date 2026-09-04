@@ -46,12 +46,11 @@ dependencies:
   # HMAC-SHA1/256/512 for the RFC 6238 TOTP helper + PKCE code_challenge.
   crypto: ^3.0.3
 
-  # Push-MFA delivery over FCM (Android/Web) / APNs (iOS). Inert until a Firebase
-  # project is configured (google-services.json / GoogleService-Info.plist): the
-  # app guards Firebase.initializeApp() and degrades to the ntfy transport, so
-  # these deps never block the build. See docs/mobile/firebase-fcm-setup.md.
-  firebase_core: ^3.6.0
-  firebase_messaging: ^15.1.3
+  # Push-MFA delivery is the self-hosted ntfy topic the app already subscribes
+  # to -- no Firebase SDK, so no client-side Google dependency and no
+  # google-services.json to provision. The server keeps a real FCM HTTP v1 /
+  # APNs sender (internal/identity/pushmfa_providers.go) for operators who want
+  # it; re-adding the client half is documented in docs/mobile/push-mfa-delivery.md.
 
   # Camera QR scanner for enrollment (point the phone at the console's QR).
   mobile_scanner: ^5.2.3

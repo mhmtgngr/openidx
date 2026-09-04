@@ -105,8 +105,3 @@ regexes = [
   '''eyJhbGciOiJub25lIn0\.''',
 ]
 
-[[allowlists]]
-description = "Firebase mobile configuration for project openidx-14ce9. Firebase apiKey values are public project identifiers, not credentials — access is governed by Security Rules and App Check, and Google documents them as safe to ship in a client. Scheduled for deletion regardless: the ratified push decision is ntfy, and this file goes with it (readiness guide P7.5)."
-paths = [
-  '''client/lib/firebase_options\.dart''',
-]

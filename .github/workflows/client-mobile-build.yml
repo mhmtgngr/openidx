@@ -188,9 +188,9 @@ jobs:
   # ---------------------------------------------------------------------------
   build-ios:
     needs: gomobile-ios
-    # macos-15 ships Xcode 16 / Swift 6, required by the firebase-ios-sdk pulled
-    # in by firebase_messaging (uses `sending`, AccessLevelOnImport). macos-14
-    # (Xcode 15) fails to compile it.
+    # macos-15 (Xcode 16). The original reason was firebase-ios-sdk needing
+    # Swift 6; that dependency is gone (push-MFA delivers over ntfy), but the
+    # runner stays current rather than pinned backwards to macos-14.
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4

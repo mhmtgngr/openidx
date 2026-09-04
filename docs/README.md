@@ -69,14 +69,15 @@ ZTNA: [PUBLISHING_A_SERVICE.md](./PUBLISHING_A_SERVICE.md),
 [browzer-public-vhost-generator.md](./browzer-public-vhost-generator.md).
 Posture/EDR: [EDR_MDM_POSTURE.md](./EDR_MDM_POSTURE.md),
 [WAZUH_EDR_INTEGRATION.md](./WAZUH_EDR_INTEGRATION.md).
-Notifications: [NTFY_PUSH_NOTIFICATIONS.md](./NTFY_PUSH_NOTIFICATIONS.md).
+Notifications: [NTFY_PUSH_NOTIFICATIONS.md](./NTFY_PUSH_NOTIFICATIONS.md),
+[mobile/push-mfa-delivery.md](./mobile/push-mfa-delivery.md) (how push-MFA
+prompts reach the phone, and why there is no Firebase SDK in the client).
 Mobile: the client is the Flutter app in [`client/`](../client), over the same
 Go engine as the desktop agent. The API contracts below are still current; their
 file references point at the deleted Expo prototype and are being retargeted:
 [mobile-authenticator-developer-guide.md](./mobile-authenticator-developer-guide.md),
 [mobile-openziti-integration-guide.md](./mobile-openziti-integration-guide.md),
-[mobile-mfa-and-ziti-posture-access.md](./mobile-mfa-and-ziti-posture-access.md),
-[mobile/firebase-fcm-setup.md](./mobile/firebase-fcm-setup.md).
+[mobile-mfa-and-ziti-posture-access.md](./mobile-mfa-and-ziti-posture-access.md).
 API: [../api/openapi/](../api/openapi/) — per-service OpenAPI specs,
 including the full `/pam/*` surface in `access-service.yaml`
 ([api/](./api/) here is the Swagger-UI viewer for them).

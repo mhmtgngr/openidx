@@ -1749,11 +1749,21 @@ at a job.
    index updated. The three mobile documents that carry **API contracts** are
    kept and now open with a banner saying the Expo app is deleted, the client
    is Flutter, and their `mobile/src/...` pointers are historical.
-   Still to do, with the Flutter work: release keystore from CI secrets, ntfy
-   push (the throwing Firebase stub removed — it also carries a live Firebase
-   project id), backup-codes / passkeys / TOTP screens ported, iOS built as an
-   artifact until Apple credentials exist, and those three documents retargeted
-   at `client/` file paths rather than merely bannered.
+   The **push half is now done**: `firebase_core` / `firebase_messaging`,
+   `lib/firebase_options.dart` (which carried a live Firebase project id) and
+   `lib/mobile/firebase_push.dart` are deleted, and the client's only transport
+   is the self-hosted ntfy topic — a `ntfy:<stable-id>` device token the server
+   now recognises and skips the provider hop for, instead of failing an FCM
+   send on every challenge. It was also load-bearing for CI: the Firebase C++
+   SDK's `cmake_minimum_required(VERSION 3.1)` is rejected by CMake 4, so the
+   Windows desktop build could not configure at all while it was a dependency.
+   `docs/mobile/firebase-fcm-setup.md` ("how to turn Firebase on") became
+   `docs/mobile/push-mfa-delivery.md` (what ships, and what re-adding a
+   provider would cost).
+   Still to do, with the Flutter work: release keystore from CI secrets,
+   backup-codes / passkeys / TOTP screens ported, iOS built as an artifact
+   until Apple credentials exist, and those three documents retargeted at
+   `client/` file paths rather than merely bannered.
 
 ### P8 — Docs and the release
 
