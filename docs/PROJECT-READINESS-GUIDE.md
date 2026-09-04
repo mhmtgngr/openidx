@@ -1851,6 +1851,32 @@ policy answers 403 + audit on `/oauth/authorize`.
    offered. Both now carry it, with the `gh release download` recipe that
    populates it.
 
+8. ✅ **`/oauth/authorize` validates the scope it is asked for** — found by
+   P6.1, not by review. `TestInvalidScopes` has asserted since it was
+   written that an unregistered scope comes back as an error, but the
+   assertion sat inside `if location != ""` — and while `/authorize`
+   rendered a login page there was no `Location`, so it never ran. Deleting
+   that page gave every request a `Location`, the assertion became real, and
+   it went red: **`/authorize` never checked scope at all.**
+   `scopeAllowedForClient` had guarded the token endpoint and the device
+   flow for a while; `/authorize` called neither, so a request for a scope
+   the client is not registered for was carried to a login screen and only
+   refused after credentials had been spent on it. It now fails at
+   `/authorize`, reported to the **client** — a redirect to its registered
+   `redirect_uri` with `error=invalid_scope`, `error_description` and the
+   request's `state`, per RFC 6749 §4.1.2.1 — rather than to a user who
+   cannot act on it. Errors before `redirect_uri` is validated stay in-band,
+   because redirecting one to an unvalidated URI is an open redirect. Pinned
+   by unit tests on the redirect shape (state echoed, absent state not
+   invented, the client's own query preserved, an unparseable URI answered
+   400) and by the integration assertion that is finally live; the OpenAPI
+   spec documents both meanings of the 302.
+   **`response_type` is the same shape and is not fixed here:**
+   `validateResponseType` exists and `/authorize` does not call it either.
+   Every browser client seeded today registers `["code"]`, so it is not
+   reachable as a defect, and widening this PR to a second unenforced
+   validator on a hunch is not the trade. It goes in P7.4.
+
 *Exit test:* every new job green on the PR; DoD items 1, 2, 4 and 6 point
 at a job.
 
@@ -1871,7 +1897,8 @@ at a job.
    duplicate proxy-route toggles collapsed, tests for the untested
    security pages (`add-device`, `remote-support-popout`, `lib/webauthn`,
    `api/mfa`), the `tr` catalog lazy-loaded.
-4. ☐ **Backend hygiene** — `internal/feature/`, `internal/oauth/store.go`,
+4. ☐ **Backend hygiene** — `/authorize` calling `validateResponseType`
+   (the twin of the scope gap P6.8 closed), `internal/feature/`, `internal/oauth/store.go`,
    the empty gateway loggers, the env reader that reads no env, the two
    unbound config flags deleted; tests that name the security core
    (`handleToken`, refresh, revoke, the MFA step-up handlers, backup/bypass

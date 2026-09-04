@@ -1612,6 +1612,26 @@ func (s *Service) handleAuthorize(c *gin.Context) {
 		return
 	}
 
+	// Scope, checked HERE and not after the user has typed a password.
+	//
+	// scopeAllowedForClient has guarded the token endpoint and the device flow
+	// for a while; /authorize called neither, so a request for a scope the
+	// client is not registered for was carried all the way to a login screen,
+	// and only rejected once credentials had been spent on it. The integration
+	// suite has asserted this since it was written — but only inside
+	// `if location != ""`, and while /authorize rendered a login page there was
+	// no Location, so the assertion never ran. Deleting that page made it real
+	// and it went red immediately.
+	//
+	// RFC 6749 §4.1.2.1: once redirect_uri is validated, request errors go back
+	// to the CLIENT as a redirect, not to the user as a page they cannot act
+	// on. state is echoed so the client can correlate the failure.
+	if !scopeAllowedForClient(client, oauthParams["scope"]) {
+		s.redirectAuthorizeError(c, oauthParams["redirect_uri"], oauthParams["state"],
+			ErrorInvalidScope, "one or more requested scopes are not registered for this client")
+		return
+	}
+
 	paramsJSON, _ := json.Marshal(oauthParams)
 	s.redis.Client.Set(c.Request.Context(), "login_session:"+loginSession, string(paramsJSON), 10*time.Minute)
 
@@ -1626,6 +1646,27 @@ func (s *Service) handleAuthorize(c *gin.Context) {
 		return
 	}
 	c.Redirect(302, target)
+}
+
+// redirectAuthorizeError sends an /authorize failure back to the client's
+// registered redirect_uri as RFC 6749 §4.1.2.1 requires, rather than rendering
+// it for a user who cannot fix it. Only ever called AFTER redirect_uri has been
+// validated against the client — reporting an error to an unvalidated
+// redirect_uri is an open redirect.
+func (s *Service) redirectAuthorizeError(c *gin.Context, redirectURI, state, code, description string) {
+	u, err := url.Parse(redirectURI)
+	if err != nil {
+		c.JSON(400, gin.H{"error": code, "error_description": description})
+		return
+	}
+	q := u.Query()
+	q.Set("error", code)
+	q.Set("error_description", description)
+	if state != "" {
+		q.Set("state", state)
+	}
+	u.RawQuery = q.Encode()
+	c.Redirect(302, u.String())
 }
 
 // loginURL is where a browser is sent to sign in: OAUTH_LOGIN_URL when set,

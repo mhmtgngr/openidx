@@ -151,18 +151,34 @@ paths:
       responses:
         '302':
           description: >-
-            Redirect to the login UI (OAUTH_LOGIN_URL, default
+            Two different redirects, and the `Location` says which.
+
+
+            **Success** — the login UI (OAUTH_LOGIN_URL, default
             `<issuer>/login`) with a `login_session` query parameter. Every
             client gets this, public and confidential alike; the server used to
             render its own login form for public clients and no longer does.
+
+
+            **Request error** — the client's registered `redirect_uri`, with
+            `error`, `error_description` and the request's `state`, per RFC 6749
+            §4.1.2.1. `invalid_scope` is returned when a requested scope is not
+            registered for the client; it is checked here rather than after the
+            user has entered a password on a request that could never succeed.
           headers:
             Location:
-              description: The login UI, carrying `?login_session=...`
+              description: >-
+                The login UI carrying `?login_session=...`, or the client's
+                `redirect_uri` carrying `?error=...&error_description=...`.
               schema:
                 type: string
                 format: uri
         '400':
-          description: Invalid request
+          description: >-
+            Invalid request that cannot be reported to the client:
+            `client_id` missing or unknown, or a `redirect_uri` that is not
+            registered. Redirecting an error to an unvalidated `redirect_uri`
+            would be an open redirect, so these are answered in-band.
     post:
       tags: [Authorization]
       summary: Authorization consent
