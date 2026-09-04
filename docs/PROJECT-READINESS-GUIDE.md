@@ -1546,9 +1546,34 @@ policy answers 403 + audit on `/oauth/authorize`.
    `unified_audit_events` as `access.assignment.denied`, that assigning the
    user makes the same flow issue a code, and that the seven deleted routes
    answer 404 on the running service.
-2. ☐ **Smoke test in CI** — `docker compose up` (a CI override with
-   `ZITI_ENABLED=false` and an explicit service list) → `make smoke-test`.
-   The DoD §6.1 exit test, run on every PR.
+2. ✅ **Smoke test in CI** — *shipped*, and it found two dead assertions on
+   its first run.
+   `scripts/smoke-test.sh` had existed for months wired to a Makefile target
+   and to no workflow, believed to need a Docker daemon. It does not: what it
+   needs is the eight services listening, and `go build` + background
+   processes is the harness `test-integration` already uses for two of them.
+   The new `smoke` job brings up Postgres and Redis, migrates, builds all
+   eight services and the console, serves the console bundle, waits for
+   `/health` on nine ports and runs `make smoke-test`. Elasticsearch is
+   deliberately absent (audit-service starts and answers without it); Ziti,
+   BrowZer and continuous verification are off, none being reachable from a
+   runner.
+   Running it for the first time proved two of its assertions had been
+   impossible for months:
+   - **Phase 3 authenticated with a `client_credentials` token and expected
+     to list users.** That token carries no roles, and the admin API has been
+     deny-by-default since #79, so the answer is 403 — the script would have
+     failed the day anyone ran it. It now asserts the *refusal* (a machine
+     token reaching an admin endpoint would be the defect), and does the admin
+     work with a real login: `/oauth/authorize` → the one login UI →
+     `POST /oauth/login` → PKCE code exchange, which is J1 end to end and the
+     first automated coverage of that path outside the integration suite.
+     A percent-decoding step is required on the way — the `login_session` in
+     the `Location` header is URL-encoded, and the raw value does not match
+     the Redis key.
+   - **Phase 4 checked a console nobody was serving.**
+   Verified locally against a real stack before the job was written:
+   **17 checks, 17 passed.**
 3. ☐ **Playwright in CI** — the mocked specs against `vite preview`, the
    backend-dependent ones inside the smoke job; port/README drift fixed;
    stale specs fixed or deleted, never skipped.
