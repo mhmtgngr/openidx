@@ -8530,6 +8530,9 @@ const en = {
         remediate: 'Auto-remediate',
         dismiss: 'Dismiss',
         empty: 'No open findings - your posture looks great!',
+        remediatedTitle: 'Finding remediated',
+        stillOpenTitle: 'Finding still open',
+        remediateFailed: 'Remediation failed',
       },
       rules: {
         title: 'Posture Check Rules ({{n}})',
@@ -8547,6 +8550,10 @@ const en = {
     // and title case in the filter — so each casing has its own map off one
     // wire list, and a category the engine adds later still reads as itself.
     aiRecommendations: {
+      toast: {
+        applied: 'Recommendation applied',
+        notApplied: 'Nothing was applied',
+      },
       statusFilterLabel: 'Filter by status',
       categoryFilterLabel: 'Filter by category',
       title: 'AI Recommendations',

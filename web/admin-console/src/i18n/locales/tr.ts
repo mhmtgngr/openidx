@@ -8327,6 +8327,9 @@ const tr: typeof en = {
         affected: 'Etkilenen: <0>{{name}}</0> ({{type}})',
         remediate: 'Otomatik düzelt',
         dismiss: 'Yoksay',
+        remediatedTitle: 'Bulgu giderildi',
+        stillOpenTitle: 'Bulgu hâlâ açık',
+        remediateFailed: 'Düzeltme başarısız',
         empty: 'Açık bulgu yok - duruşunuz harika görünüyor!',
       },
       rules: {
@@ -8337,6 +8340,10 @@ const tr: typeof en = {
       },
     },
     aiRecommendations: {
+      toast: {
+        applied: 'Öneri uygulandı',
+        notApplied: 'Hiçbir şey uygulanmadı',
+      },
       statusFilterLabel: 'Duruma göre filtrele',
       categoryFilterLabel: 'Kategoriye göre filtrele',
       title: 'Yapay Zekâ Önerileri',

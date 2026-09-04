@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Trans, useTranslation } from 'react-i18next'
 import { api } from '../lib/api'
+import { useToast } from '../hooks/use-toast'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
 import { Button } from '../components/ui/button'
@@ -105,6 +106,7 @@ function CategoryScore({ name, score }: { name: string; score: number }) {
 
 export function ISPMDashboardPage() {
   const queryClient = useQueryClient()
+  const { toast } = useToast()
   const { t } = useTranslation()
 
   const { data: score, isLoading, isError, error } = useQuery<PostureScore>({
@@ -145,11 +147,29 @@ export function ISPMDashboardPage() {
     },
   })
 
+  // The server answers with what it actually did, and only a real state
+  // change resolves the finding. Surfacing that verbatim is the point: this
+  // button used to mark every finding remediated and lower the open count
+  // whether or not anything happened, so "remediated" on screen meant nothing.
   const remediateMutation = useMutation({
-    mutationFn: (id: string) => api.post(`/api/v1/ispm/findings/${id}/remediate`, {}),
-    onSuccess: () => {
+    mutationFn: (id: string) =>
+      api.post<{ message: string; resolved: boolean }>(`/api/v1/ispm/findings/${id}/remediate`, {}),
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['ispm-findings'] })
       queryClient.invalidateQueries({ queryKey: ['ispm-score'] })
+      toast({
+        title: data.resolved
+          ? t('pages.ispm.findings.remediatedTitle')
+          : t('pages.ispm.findings.stillOpenTitle'),
+        description: data.message,
+      })
+    },
+    onError: (err: Error) => {
+      toast({
+        title: t('pages.ispm.findings.remediateFailed'),
+        description: err.message,
+        variant: 'destructive',
+      })
     },
   })
 

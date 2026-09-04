@@ -14,6 +14,17 @@ import (
 // It extracts JWT claims set by upstream auth middleware (user_id, roles, groups,
 // tenant_id) and queries OPA for an allow/deny decision.
 //
+// A request proceeds only when the policy says allow AND raises no deny. That
+// second half used to be missing: the middleware read decision.Allow and used
+// decision.Deny as log decoration, so authz.rego's cross-tenant-access and
+// separation-of-duties rules -- the two things in the policy that exist purely
+// to refuse a request an allow rule would otherwise permit -- never refused
+// anything. The policy's own final_allow rule says `allow; count(deny) == 0`,
+// and nothing queried it: the client asks for /v1/data/openidx/authz, which
+// returns the whole document. Enforcing it here rather than switching the
+// query keeps a deployment shipping an older policy (one with no final_allow
+// rule) safe by the same reading.
+//
 // If OPA is unreachable and devMode is true, requests are allowed through.
 // In production (devMode=false), unreachable OPA results in 403.
 func OPAAuthz(client *opa.Client, logger *zap.Logger, devMode bool) gin.HandlerFunc {
@@ -69,11 +80,13 @@ func OPAAuthz(client *opa.Client, logger *zap.Logger, devMode bool) gin.HandlerF
 			return
 		}
 
-		if !decision.Allow {
+		// Deny overrides allow, matching the policy's own final_allow rule.
+		if !decision.Allow || len(decision.Deny) > 0 {
 			logger.Info("OPA denied request",
 				zap.String("path", c.Request.URL.Path),
 				zap.String("method", c.Request.Method),
 				zap.String("user_id", uid),
+				zap.Bool("allow", decision.Allow),
 				zap.Strings("deny_reasons", decision.Deny),
 			)
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{

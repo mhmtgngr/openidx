@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api } from '../lib/api'
+import { useToast } from '../hooks/use-toast'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
 import { Button } from '../components/ui/button'
@@ -68,6 +69,7 @@ const categoryIcons: Record<string, React.ReactNode> = {
 
 export function AIRecommendationsPage() {
   const queryClient = useQueryClient()
+  const { toast } = useToast()
   const { t } = useTranslation()
   const [categoryFilter, setCategoryFilter] = useState<string>('')
   const [statusFilter, setStatusFilter] = useState<string>('pending')
@@ -141,11 +143,24 @@ export function AIRecommendationsPage() {
     },
   })
 
+  // Only two recommendation types have an action behind them; the rest answer
+  // 501 with what a human has to do instead. Both halves are shown, because
+  // this button used to report "Stale accounts have been disabled" and mark
+  // the row applied while disabling nobody.
   const applyMutation = useMutation({
-    mutationFn: (id: string) => api.post(`/api/v1/recommendations/${id}/apply`, {}),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['ai-recommendations'] })
-      queryClient.invalidateQueries({ queryKey: ['ai-recommendations-stats'] })
+    mutationFn: (id: string) =>
+      api.post<{ message: string; applied: boolean }>(`/api/v1/recommendations/${id}/apply`, {}),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['recommendations'] })
+      queryClient.invalidateQueries({ queryKey: ['recommendation-stats'] })
+      toast({ title: t('pages.aiRecommendations.toast.applied'), description: data.message })
+    },
+    onError: (err: Error) => {
+      toast({
+        title: t('pages.aiRecommendations.toast.notApplied'),
+        description: err.message,
+        variant: 'destructive',
+      })
     },
   })
 

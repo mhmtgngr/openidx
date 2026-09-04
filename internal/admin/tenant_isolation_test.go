@@ -60,8 +60,11 @@ func newTenantFixture(t *testing.T) (*tenantFixture, func()) {
 	f.orgB = f.seedOrg("ti-b-" + suffix)
 	return f, func() {
 		// ON DELETE CASCADE on every v138 FK takes the ISPM/AI rows with the
-		// orgs; users are RESTRICT (fk_users_org) and go first.
-		f.exec("DELETE FROM users WHERE org_id IN ($1, $2)", f.orgA, f.orgB)
+		// orgs. The v36 belt tables are RESTRICT (fk_<t>_org), so anything a
+		// test wrote into one has to go first, children before parents.
+		for _, tbl := range []string{"notifications", "user_sessions", "users"} {
+			f.exec("DELETE FROM "+tbl+" WHERE org_id IN ($1, $2)", f.orgA, f.orgB)
+		}
 		f.exec("DELETE FROM organizations WHERE id IN ($1, $2)", f.orgA, f.orgB)
 		cleanup()
 	}

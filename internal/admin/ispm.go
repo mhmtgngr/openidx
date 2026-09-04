@@ -451,6 +451,17 @@ func (s *Service) handleDismissPostureFinding(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "finding dismissed"})
 }
 
+// remediationOutcome is what a remediation actually did. resolved is the only
+// thing that may move a finding out of 'open': the posture score counts open
+// findings, so marking a finding resolved is the same as raising the score,
+// and doing that for an action that changed nothing is how a dashboard comes
+// to report a posture the install does not have.
+type remediationOutcome struct {
+	Action   string `json:"action"`
+	Message  string `json:"message"`
+	Resolved bool   `json:"resolved"`
+}
+
 func (s *Service) handleRemediatePostureFinding(c *gin.Context) {
 	if !requireAdmin(c) {
 		return
@@ -462,7 +473,6 @@ func (s *Service) handleRemediatePostureFinding(c *gin.Context) {
 	ctx := c.Request.Context()
 	id := c.Param("id")
 
-	// Get the finding to determine remediation
 	var checkType, entityType, entityID string
 	err := s.db.Pool.QueryRow(ctx, `
 		SELECT check_type, COALESCE(affected_entity_type, ''), COALESCE(affected_entity_id, '')
@@ -472,36 +482,119 @@ func (s *Service) handleRemediatePostureFinding(c *gin.Context) {
 		return
 	}
 
-	// Apply remediation based on check type
-	remediationResult := map[string]interface{}{"check_type": checkType, "entity_type": entityType, "entity_id": entityID}
+	out := s.remediateFinding(ctx, org.ID, checkType, entityType, entityID)
 
-	switch checkType {
-	case "stale_accounts":
-		if entityType == "user" && entityID != "" {
-			s.db.Pool.Exec(ctx, "UPDATE users SET enabled = false, updated_at = NOW() WHERE id = $1 AND org_id = $2", entityID, org.ID)
-			remediationResult["action"] = "account_disabled"
+	details := map[string]interface{}{
+		"check_type":   checkType,
+		"entity_type":  entityType,
+		"entity_id":    entityID,
+		"action":       out.Action,
+		"message":      out.Message,
+		"resolved":     out.Resolved,
+		"attempted_at": time.Now().UTC(),
+	}
+	detailsJSON, _ := json.Marshal(details)
+
+	if out.Resolved {
+		if _, err := s.db.Pool.Exec(ctx, `
+			UPDATE ispm_findings SET status = 'remediated', remediated_at = NOW(), remediation_details = $1
+			WHERE id = $2 AND org_id = $3`, detailsJSON, id, org.ID); err != nil {
+			s.logger.Error("failed to record ISPM remediation", zap.Error(err))
 		}
-	case "mfa_adoption":
-		remediationResult["action"] = "notification_sent"
-		remediationResult["message"] = "MFA enrollment reminder would be sent to user"
-	case "over_privileged":
-		remediationResult["action"] = "flagged_for_review"
-		remediationResult["message"] = "User flagged for access review"
-	case "shared_accounts":
-		if entityType == "user" && entityID != "" {
-			s.db.Pool.Exec(ctx, "DELETE FROM user_sessions WHERE user_id = $1 AND org_id = $2", entityID, org.ID)
-			remediationResult["action"] = "sessions_revoked"
+	} else {
+		// The attempt is recorded, the finding stays OPEN. It leaves 'open'
+		// when a scan observes the underlying condition is gone -- not when
+		// somebody presses a button.
+		if _, err := s.db.Pool.Exec(ctx, `
+			UPDATE ispm_findings SET remediation_details = $1
+			WHERE id = $2 AND org_id = $3`, detailsJSON, id, org.ID); err != nil {
+			s.logger.Error("failed to record ISPM remediation attempt", zap.Error(err))
 		}
-	default:
-		remediationResult["action"] = "manual_review_required"
 	}
 
-	detailsJSON, _ := json.Marshal(remediationResult)
-	s.db.Pool.Exec(ctx, `
-		UPDATE ispm_findings SET status = 'remediated', remediated_at = NOW(), remediation_details = $1
-		WHERE id = $2 AND org_id = $3`, detailsJSON, id, org.ID)
+	c.JSON(http.StatusOK, gin.H{
+		"message":  out.Message,
+		"resolved": out.Resolved,
+		"result":   out,
+	})
+}
 
-	c.JSON(http.StatusOK, gin.H{"message": "remediation applied", "result": remediationResult})
+// remediateFinding performs the action a check's remediation means, and says
+// truthfully whether the finding is resolved by it.
+//
+// Two of these used to return a string and nothing else -- mfa_adoption
+// answered "MFA enrollment reminder WOULD be sent to user" and over_privileged
+// answered "flagged for review" -- and the caller then marked the finding
+// remediated regardless, which lowered the open-finding count and raised the
+// posture score for work nobody had done. mfa_adoption now really writes the
+// notification; the rest say plainly that a human has to act, and leave the
+// finding open.
+func (s *Service) remediateFinding(ctx context.Context, orgID, checkType, entityType, entityID string) remediationOutcome {
+	switch checkType {
+	case "stale_accounts":
+		if entityType != "user" || entityID == "" {
+			return remediationOutcome{Action: "manual_review_required", Message: "the finding names no user to disable", Resolved: false}
+		}
+		tag, err := s.db.Pool.Exec(ctx,
+			"UPDATE users SET enabled = false, updated_at = NOW() WHERE id = $1 AND org_id = $2 AND enabled = true", entityID, orgID)
+		if err != nil {
+			s.logger.Error("ISPM remediation: disable account failed", zap.Error(err))
+			return remediationOutcome{Action: "failed", Message: "could not disable the account", Resolved: false}
+		}
+		if tag.RowsAffected() == 0 {
+			return remediationOutcome{Action: "already_disabled", Message: "the account was already disabled", Resolved: true}
+		}
+		return remediationOutcome{Action: "account_disabled", Message: "the account has been disabled", Resolved: true}
+
+	case "shared_accounts":
+		if entityType != "user" || entityID == "" {
+			return remediationOutcome{Action: "manual_review_required", Message: "the finding names no user whose sessions to revoke", Resolved: false}
+		}
+		tag, err := s.db.Pool.Exec(ctx, "DELETE FROM user_sessions WHERE user_id = $1 AND org_id = $2", entityID, orgID)
+		if err != nil {
+			s.logger.Error("ISPM remediation: revoke sessions failed", zap.Error(err))
+			return remediationOutcome{Action: "failed", Message: "could not revoke the sessions", Resolved: false}
+		}
+		return remediationOutcome{
+			Action:   "sessions_revoked",
+			Message:  fmt.Sprintf("%d session(s) revoked", tag.RowsAffected()),
+			Resolved: true,
+		}
+
+	case "mfa_adoption":
+		if entityType != "user" || entityID == "" {
+			return remediationOutcome{Action: "manual_review_required", Message: "the finding names no user to remind", Resolved: false}
+		}
+		// A real notification row, on the same table and shape the broadcast
+		// and device-trust paths use (internal/admin/notification_management.go,
+		// internal/identity/device_trust_approval.go).
+		_, err := s.db.Pool.Exec(ctx, `
+			INSERT INTO notifications (user_id, channel, type, title, body, metadata, org_id)
+			SELECT id, 'in_app', 'security', $2, $3, jsonb_build_object('source', 'ispm', 'check_type', 'mfa_adoption'), org_id
+			FROM users WHERE id = $1 AND org_id = $4`,
+			entityID,
+			"Set up multi-factor authentication",
+			"Your account has no second factor. Add one from Security settings to keep access to your applications.",
+			orgID)
+		if err != nil {
+			s.logger.Error("ISPM remediation: MFA reminder failed", zap.Error(err))
+			return remediationOutcome{Action: "failed", Message: "could not queue the MFA reminder", Resolved: false}
+		}
+		// The reminder is sent; the user still has no MFA. The finding stays
+		// open until a scan sees a factor enrolled.
+		return remediationOutcome{
+			Action:   "reminder_sent",
+			Message:  "an MFA enrolment reminder was sent; the finding stays open until the next scan sees a factor enrolled",
+			Resolved: false,
+		}
+
+	default:
+		return remediationOutcome{
+			Action:   "manual_review_required",
+			Message:  fmt.Sprintf("no automatic remediation exists for %q; the finding stays open until it is fixed or dismissed", checkType),
+			Resolved: false,
+		}
+	}
 }
 
 func (s *Service) handleGetPostureTrends(c *gin.Context) {

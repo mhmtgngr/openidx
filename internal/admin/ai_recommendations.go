@@ -205,6 +205,15 @@ func (s *Service) handleDismissRecommendation(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "recommendation dismissed"})
 }
 
+// applyOutcome is what applying a recommendation actually did. Applied is the
+// only thing that may move the row to status='applied'.
+type applyOutcome struct {
+	Action  string `json:"action"`
+	Message string `json:"message"`
+	Count   int    `json:"count,omitempty"`
+	Applied bool   `json:"applied"`
+}
+
 func (s *Service) handleApplyRecommendation(c *gin.Context) {
 	if !requireAdmin(c) {
 		return
@@ -220,40 +229,141 @@ func (s *Service) handleApplyRecommendation(c *gin.Context) {
 
 	var r Recommendation
 	err := s.db.Pool.QueryRow(ctx, `
-		SELECT id, recommendation_type, suggested_action FROM ai_recommendations WHERE id = $1 AND org_id = $2 AND status IN ('pending', 'accepted')`, id, org.ID,
-	).Scan(&r.ID, &r.RecommendationType, &r.SuggestedAction)
+		SELECT id, recommendation_type, affected_entities FROM ai_recommendations
+		WHERE id = $1 AND org_id = $2 AND status IN ('pending', 'accepted')`, id, org.ID,
+	).Scan(&r.ID, &r.RecommendationType, &r.AffectedEntities)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "recommendation not found or already resolved"})
 		return
 	}
 
-	// Apply based on type
-	result := map[string]interface{}{"type": r.RecommendationType}
-	switch r.RecommendationType {
-	case "permission_right_sizing":
-		result["action"] = "permissions_flagged_for_review"
-		result["message"] = "Affected permissions have been flagged for the next access review cycle"
-	case "mfa_enrollment":
-		result["action"] = "mfa_reminders_queued"
-		result["message"] = "MFA enrollment reminders have been queued for affected users"
-	case "stale_account_cleanup":
-		result["action"] = "accounts_disabled"
-		result["message"] = "Stale accounts have been disabled pending review"
-	case "policy_tightening":
-		result["action"] = "policy_draft_created"
-		result["message"] = "A draft policy has been created for review"
-	default:
-		result["action"] = "manual_review_required"
-		result["message"] = "This recommendation requires manual implementation"
+	out := s.applyRecommendation(ctx, org.ID, r)
+
+	if !out.Applied {
+		// Nothing changed, so the row does not move. Saying "applied" here is
+		// what this endpoint used to do for all four of its cases: it reported
+		// "Stale accounts have been disabled pending review" and set
+		// status='applied' while disabling nobody, which left the console
+		// showing a resolved recommendation over an unchanged install.
+		c.JSON(http.StatusNotImplemented, gin.H{
+			"error":   out.Message,
+			"action":  out.Action,
+			"applied": false,
+		})
+		return
 	}
 
-	s.db.Pool.Exec(ctx, `
+	if _, err := s.db.Pool.Exec(ctx, `
 		UPDATE ai_recommendations SET status = 'applied', applied_at = NOW(), applied_by = $1, updated_at = NOW()
-		WHERE id = $2 AND org_id = $3`, uid, id, org.ID)
-	s.db.Pool.Exec(ctx, `INSERT INTO recommendation_history (org_id, recommendation_id, previous_status, new_status, changed_by)
-		VALUES ($1, $2, 'accepted', 'applied', $3)`, org.ID, id, uid)
+		WHERE id = $2 AND org_id = $3`, uid, id, org.ID); err != nil {
+		s.logger.Error("failed to mark recommendation applied", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "the action was performed but could not be recorded"})
+		return
+	}
+	s.db.Pool.Exec(ctx, `INSERT INTO recommendation_history (org_id, recommendation_id, previous_status, new_status, changed_by, reason)
+		VALUES ($1, $2, 'accepted', 'applied', $3, $4)`, org.ID, id, uid, out.Message)
 
-	c.JSON(http.StatusOK, gin.H{"message": "recommendation applied", "result": result})
+	c.JSON(http.StatusOK, gin.H{"message": out.Message, "applied": true, "result": out})
+}
+
+// applyRecommendation performs the action a recommendation type means, and
+// says truthfully whether anything happened.
+//
+// Only two of the six types have a primitive behind them. The other four
+// return Applied=false and the handler answers 501 with the reason, rather
+// than the previous behaviour of composing a sentence in the past tense
+// ("Affected permissions have been flagged for the next access review cycle")
+// and writing status='applied' over an install where nothing had changed.
+func (s *Service) applyRecommendation(ctx context.Context, orgID string, r Recommendation) applyOutcome {
+	switch r.RecommendationType {
+	case "mfa_enrollment":
+		ids := affectedUserIDs(r.AffectedEntities)
+		if len(ids) == 0 {
+			return applyOutcome{Action: "no_targets", Message: "the recommendation names no users to remind"}
+		}
+		tag, err := s.db.Pool.Exec(ctx, `
+			INSERT INTO notifications (user_id, channel, type, title, body, metadata, org_id)
+			SELECT id, 'in_app', 'security', $2, $3, jsonb_build_object('source', 'ai_recommendation'), org_id
+			FROM users WHERE id = ANY($1::uuid[]) AND org_id = $4 AND enabled = true`,
+			ids,
+			"Set up multi-factor authentication",
+			"Your account has no second factor. Add one from Security settings to keep access to your applications.",
+			orgID)
+		if err != nil {
+			s.logger.Error("apply recommendation: MFA reminders failed", zap.Error(err))
+			return applyOutcome{Action: "failed", Message: "could not queue the MFA reminders"}
+		}
+		return applyOutcome{
+			Action:  "mfa_reminders_sent",
+			Message: fmt.Sprintf("%d MFA enrolment reminder(s) sent", tag.RowsAffected()),
+			Count:   int(tag.RowsAffected()),
+			Applied: true,
+		}
+
+	case "stale_account_cleanup":
+		// The generator stores a count rather than ids for this type, so the
+		// set is recomputed here with the same predicate. That also means an
+		// account that has logged in since the recommendation was raised is
+		// no longer disabled by applying it.
+		tag, err := s.db.Pool.Exec(ctx, `
+			UPDATE users SET enabled = false, updated_at = NOW()
+			WHERE org_id = $1 AND enabled = true
+			AND (last_login_at IS NULL OR last_login_at < NOW() - INTERVAL '90 days')`, orgID)
+		if err != nil {
+			s.logger.Error("apply recommendation: stale account cleanup failed", zap.Error(err))
+			return applyOutcome{Action: "failed", Message: "could not disable the stale accounts"}
+		}
+		return applyOutcome{
+			Action:  "accounts_disabled",
+			Message: fmt.Sprintf("%d stale account(s) disabled", tag.RowsAffected()),
+			Count:   int(tag.RowsAffected()),
+			Applied: true,
+		}
+
+	case "permission_right_sizing":
+		return applyOutcome{
+			Action: "manual_action_required",
+			Message: "applying this automatically is not implemented: downgrading a role is a governance " +
+				"decision. Use Roles to change the assignment, or open an access review for the named users.",
+		}
+	case "policy_tightening":
+		return applyOutcome{
+			Action: "manual_action_required",
+			Message: "applying this automatically is not implemented: no policy is created from a " +
+				"recommendation. Create the conditional access policy on the Access Policies page.",
+		}
+	case "agent_permission_scoping":
+		return applyOutcome{
+			Action: "manual_action_required",
+			Message: "applying this automatically is not implemented: reducing an agent's scope removes " +
+				"permissions it may still use. Adjust them on the AI Agents page.",
+		}
+	default:
+		return applyOutcome{
+			Action:  "manual_action_required",
+			Message: fmt.Sprintf("no automatic action exists for %q", r.RecommendationType),
+		}
+	}
+}
+
+// affectedUserIDs pulls the user ids out of a recommendation's
+// affected_entities array, ignoring the {"type":"summary","count":N} shape the
+// aggregate recommendations use.
+func affectedUserIDs(raw json.RawMessage) []string {
+	var entities []struct {
+		Type string `json:"type"`
+		ID   string `json:"id"`
+	}
+	if err := json.Unmarshal(raw, &entities); err != nil {
+		return nil
+	}
+	var out []string
+	for _, e := range entities {
+		if e.Type == "user" && e.ID != "" {
+			out = append(out, e.ID)
+		}
+	}
+	return out
 }
 
 func (s *Service) handleGenerateRecommendations(c *gin.Context) {
