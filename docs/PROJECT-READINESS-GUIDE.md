@@ -20,8 +20,18 @@ with bilingual search, and **every end-user page** — dashboard, portal,
 security, access, sessions, devices, trusted browsers, notifications,
 access requests, profile — are fully bilingual; the end-user experience
 is complete in both languages). Open: P1 rollout Task 16 (operator
-action), P3.1 cut v1.28.0 (post-merge), the remaining P4 items incl.
-the browser-based accessibility audit behind a VPAT, the separate end-user bundle and the Expo-vs-Flutter mobile pick — every console page body is now bilingual, and the automatable half of accessibility is gated.)
+action), the remaining P4 items incl.
+the browser-based accessibility audit behind a VPAT and the separate end-user bundle — every console page body is now bilingual, and the automatable half of accessibility is gated.)
+
+**Re-review 2026-09-04.** A second full audit (backend, console/mobile/agent,
+release/ops/docs — every load-bearing claim re-read in the code) found the
+next layer of the same defect class this guide was written for, plus one
+error of its own: the release premise. `git ls-remote --tags` shows
+**v1.28.0 … v1.33.3** were cut (the audit clone was shallow with no tags),
+so "cut v1.28.0" below is struck and the next tag is **v1.34.0**. The
+completion program is §4 **P5–P8**, preceded by the maintainer's ratified
+decisions; §6 now carries a scorecard that names the CI job or test that
+proves each Definition-of-Done item.
 **Question this document answers:** *Is OpenIDX fully functional and well defined end to end, as experienced by the people who use it — and what are the next steps and controls to get it there?*
 
 This is the product-and-user-side companion to
@@ -114,8 +124,9 @@ explains the four pillars together today (see §3.3).
 domains, 1,463 HTTP routes, 137 migrations, 514 test files (~118k test
 lines), 8 services with a fail-closed production startup gate. The admin
 console's ~107 pages are **all wired to real APIs — zero mocked pages**
-(verified by sweep; there is even a CI contract test that fails on
-endpoint drift). Core crypto is right: Argon2id passwords with
+(verified by sweep — 552 distinct console calls, 0 unmatched against the
+1,064 backend route registrations; the CI "contract test" itself is one
+string match and is replaced in P6). Core crypto is right: Argon2id passwords with
 rehash-on-verify (`internal/common/pwhash/pwhash.go`), RS256 pinned with
 type assertions everywhere, AES-256-GCM envelope encryption with KEK
 rotation and a `cmd/rekey` tool, FORCE row-level security with a
@@ -126,10 +137,10 @@ merge-blocking tenant linter (`tools/orgscope`).
 
 | Symptom | Examples |
 |---|---|
-| Controls that display but don't enforce | All fixed on this branch except the flag flip: admin "revoke session" was inert (§3.1-A1), the IP threat list was ignored by login risk scoring (A2), voice MFA displayed over a no-op backend (A3), SAML SLO never notified SPs (A4), SMS/email OTP reported "sent" while logging the plaintext codes (A5). Remaining: assignment isn't a grant until the rollout flips (§1.1) |
+| Controls that display but don't enforce | All fixed on this branch except the flag flip: admin "revoke session" was inert (§3.1-A1), the IP threat list was ignored by login risk scoring (A2), voice MFA displayed over a no-op backend (A3), SAML SLO never notified SPs (A4), SMS/email OTP reported "sent" while logging the plaintext codes (A5). Remaining: assignment isn't a grant until the rollout flips (§1.1). **Found 2026-09-04 (P5):** ABAC policies enforce nothing (their only consumer is the page's own "test" button), OPA `deny` is computed and discarded, AI-recommendation "Apply" and ISPM "Remediate" report success without acting, ISPM rule toggles change nothing the scan reads, `SMS_PROVIDER=mock` defeats the 501 gate A5 built, and three table families (`ispm_*`, `ai_agents*`, `ai_recommendations`) have no `org_id` at all — cross-tenant read *and* mutation from the console |
 | First contact fails | Fixed on this branch: the getting-started doc left a new user unable to log in, and the README quick start referenced files that don't exist. Also fixed: `helm install` now bootstraps its own schema (migration hook Job) |
 | The trust story contradicts itself | `SECURITY.md` still says "multi-tenant SaaS isolation is not implemented" while README and SECURITY-TENANCY.md (correctly) say the opposite; the published docs site describes a Keycloak-based product with **no PAM or ZTNA sections at all** |
-| Shipped but unreleased | Last release v1.27.0 (2026-07-13); ~7 weeks of major work — including security fixes — sits in `[Unreleased]` |
+| Shipped but unreleased | **Corrected 2026-09-04:** the last release is **v1.33.3 (2026-08-25)**, eight releases after the v1.27.0 this guide first cited (the audit clone was shallow and had no tags). What is unreleased is this branch. What is *wrong* is the release hygiene: `CHANGELOG.md` was never advanced through those eight releases (359 already-shipped lines under `[Unreleased]`, none of this branch's), four version pins disagree, and no cut release is signed — P8 |
 
 None of this is scaffolding rot. It is a codebase maturing faster than its
 enforcement wiring, docs, and release process. That gap is closable with
@@ -152,7 +163,7 @@ caveats · ❌ broken/missing.
 | J5 | **Privileged access** — request → approve → checkout/brokered session → recording → review (engineer + auditor) | ✅❌ | Functionally the strongest pillar: vault with rotation, Guacamole + in-browser wasm-SSH, recordings with encryption/retention/legal hold, break-glass. But **zero user-facing PAM documentation and zero OpenAPI coverage** of `/pam/*` — a headline pillar that is invisible to evaluators and undocumented for users. |
 | J6 | **Governance loop** — access request → approval → certification campaign → revoke propagates (manager/auditor) | ✅ | Requests, multi-step approvals, campaigns, SoD (fail-closed), JIT expiry all wired; application fulfillment gap was closed (`internal/governance/workflows.go`). |
 | J7 | **Leaver / incident** — disable or kill-switch a user → everything severed (admin) | ✅⚠️ | The strong path: deprovision + lifecycle sweep + Ziti sweep sever IAM/PAM/network in ≤30 s; kill switch is synchronous and honest about partial failures. The broken path: **the admin console's per-session "Revoke" is cosmetic** — see A1 below. |
-| J8 | **Operate** — monitor → audit → back up → restore → upgrade (operator) | ⚠️ | Compose-prod path, backup CLI with *automated restore verification*, DR/HA drills (`make dr-game-day`, `ha-drill`) are genuinely good. *Fixed on this branch:* the security workflow's nightly gate and govulncheck now actually fail on findings. Remaining caveats: Helm chart can't stand alone; release binaries unsigned; release cadence stalled (cut v1.28.0 — P3). |
+| J8 | **Operate** — monitor → audit → back up → restore → upgrade (operator) | ⚠️ | Compose-prod path, backup CLI with *automated restore verification*, DR/HA drills (`make dr-game-day`, `ha-drill`) are genuinely good. *Fixed on this branch:* the security workflow's nightly gate and govulncheck now actually fail on findings. Remaining caveats: the Helm path is proven by lint/template only (an install proof lands in P6); no *cut* release is signed yet (cosign exists only on this branch — v1.34.0 will be the first); CHANGELOG and version pins are eight releases behind (P8). |
 
 ### 3.1 The specific defects behind the ⚠️s (verified, with fixes)
 
@@ -245,7 +256,10 @@ product; either wire them or remove them from the UI.
   and `install.cmd` (an unrelated CLI bootstrap script) deleted.
 - **B4 — `helm install` yields a non-working deployment** — ✅ *fixed on
   this branch*: as audited there was no migration Job/hook (docs claimed
-  `AUTO_MIGRATE=true`, which exists nowhere), `opa.enabled` was inert with
+  `AUTO_MIGRATE=true` did it — the flag does exist,
+  `internal/common/config/config.go:480`, honoured by
+  `cmd/identity-service/main.go:97`, but the chart never set it; the
+  2026-09-01 wording "exists nowhere" was wrong), `opa.enabled` was inert with
   `opaUrl` pointing at a Service the chart never created (governance is
   fail-closed → breaks), `apisix.enabled` deployed nothing, and
   `Chart.yaml` still declared a Keycloak dependency. Now: a
@@ -289,10 +303,15 @@ product; either wire them or remove them from the UI.
 **D. Surface sprawl** — decide, then delete. ✅ *Pruned on this branch,
 except the mobile decision:*
 
-- Two overlapping mobile apps: `mobile/` (Expo — real, active) vs
-  `client/` (Flutter — never compiled in-repo by its own README; FCM stub
-  throws; iOS deep links unconfigured). Pick the shipping one; say so.
-  *(Still open — the pick is the maintainer's call, tracked in P4.)*
+- Two overlapping mobile apps. **The 2026-09-01 characterisation was
+  inverted.** `client/` (Flutter over the gomobile engine — posture and
+  Ziti are the same Go code as the desktop agent) builds Android *and*
+  iOS in CI and ships the APK on every `v*` tag; `mobile/` (Expo) has
+  never been compiled (its native Ziti module has no build), carries a
+  duplicate `android.package` in `app.json` that resolves to
+  `com.anonymous.openidxmobile`, and its only workflow is dispatch-only
+  and exits without `EXPO_TOKEN`. *Decided 2026-09-04: Flutter ships;
+  `mobile/` is deleted (P7).*
 - ✅ Dead/vestigial surfaces deleted: `frontend/` (committed pre-built JS
   bundle + duplicate Playwright suite), `web/admin-console/keycloak-theme/`
   (skeleton with no references), orphaned `pages/branding.tsx` (+ its
@@ -348,8 +367,10 @@ All six items landed with this guide (commits on
    floor, honest Helm section, real doc links, `install.cmd` deleted.
 5. ✅ **Security CI gates** (J8) — the nightly aggregate gate lost its
    `continue-on-error`, and govulncheck is blocking (verified clean at
-   arming time). gitleaks/npm-audit/semgrep stay non-blocking by
-   documented choice. *The gate has since done its job:* it caught
+   arming time). gitleaks/npm-audit/semgrep stayed non-blocking at the
+   time — *decided 2026-09-04: they become blocking on CRITICAL/HIGH
+   (P6); §5.1 is the rule and this line was the exception.* *The gate
+   has since done its job:* it caught
    GO-2026-6354/6355 (SSH channel-deadlock DoS in `golang.org/x/crypto`,
    reachable from the PAM broker's `ssh.Dial` / `ssh.NewClientConn`) on
    this branch, fixed by moving to `x/crypto` v0.56.0 — which raises the
@@ -595,8 +616,16 @@ all four pillars, deploy, log in, and find PAM.
 
 ### P3 — Operability & release hygiene
 
-1. **Cut v1.28.0 now** — 7 weeks of work including security fixes is
-   sitting unreleased; `docs/RELEASING.md` already defines the process.
+1. ~~**Cut v1.28.0 now**~~ — **corrected 2026-09-04:** v1.28.0 through
+   v1.33.3 were already cut when this was written (the audit clone had
+   no tags, so `git describe` lied). What is open is the *hygiene* of
+   those releases: `CHANGELOG.md` never advanced (359 already-shipped
+   lines under `[Unreleased]`, this branch's work absent, compare links
+   pinned at v1.17.0); `web/admin-console/package.json`, the chart's
+   `appVersion`, `client/pubspec.yaml` and `PRODUCTION-READINESS.md`
+   each pin a different version; and no cut release is signed (cosign
+   exists only on this branch). Tracked as **P8**; the next tag is
+   **v1.34.0**, the first signed one.
 2. ✅ **Helm chart finished** — *on this branch* (chart `0.2.0`):
    migration Job as a post-install/pre-upgrade hook (new `tools` image
    built in CI: `cmd/migrate` + `cmd/backup`); a **real** OPA
@@ -633,7 +662,7 @@ all four pillars, deploy, log in, and find PAM.
    surfaces pruned** — `frontend/`, the Keycloak theme, orphaned
    `branding.tsx`, the 13 legacy SQL files (credential-seeding one
    included), and `landing.tsx`'s unsubstantiated claims (see §3.1-D).
-   *Still open:* the Expo-vs-Flutter mobile pick (P4, maintainer's call).
+   *Decided 2026-09-04:* Flutter ships; `mobile/` is deleted (P7).
 
 ### P4 — Enterprise reach (sequence by sales pressure)
 
@@ -1307,10 +1336,204 @@ all four pillars, deploy, log in, and find PAM.
    reachability (1g–1h), every axe-detectable WCAG 2.1 A/AA rule over all
    renderable console pages (1i), and — from the source, so dialogs are
    included — that every form control has an accessible name (1j).
-3. Separate/hardened end-user portal bundle.
-4. Mobile app decision (Expo vs Flutter) executed — maintainer's call.
+3. Separate/hardened end-user portal bundle — *post-GA by decision
+   (2026-09-04).*
+4. ✅ Mobile app decision made (2026-09-04): Flutter; `mobile/` deleted
+   in P7.
 5. The existing roadmap epics (outbound SCIM, HR-driven JML, per-org
-   overlay scoping, SSF/CAEP, agent-identity substrate).
+   overlay scoping, SSF/CAEP, agent-identity substrate) — *post-GA by
+   decision (2026-09-04)*; their backends are shipped, routed and tested,
+   and P8 documents them as API-only so an evaluator is told, not
+   surprised.
+
+### Decisions ratified 2026-09-04 (maintainer)
+
+| # | Decision | Consequence |
+|---|---|---|
+| D1 | Mobile client is Flutter `client/`; `mobile/` (Expo) is deleted | P7.5 |
+| D2 | Trivy / Gitleaks / Semgrep / npm-audit block PRs on CRITICAL/HIGH | P6.5; §5.1 is the rule |
+| D3 | Roadmap-epic consoles (outbound SCIM, HR-JML, SSF/CAEP) are post-GA; shipped as documented API-only | P8.1 |
+| D4 | ABAC is wired into enforcement behind `ABAC_ENFORCE=off\|observe\|enforce` at the two existing enforcement points | P5.6 |
+
+Calls made as tech lead (stated so they can be overruled): CODEOWNERS is
+rewritten to the real owner; `mfa-setup-wizard.tsx` is deleted (the live
+flow is `my-security.tsx`); the dashboard "metrics" and "refresh" endpoints
+are removed rather than faked; macOS/iOS agent downloads are hidden until a
+build exists; push on Flutter commits to ntfy (already the fallback); the
+`OAUTH_LOGIN_UI` flag goes with the legacy page and is replaced by
+`OAUTH_LOGIN_URL` (the compose reference deployment serves the console on a
+different origin from the issuer, so the SPA login must be addressable);
+`internal/oauth/store.go` and `internal/feature/` are deleted, not fixed.
+
+### P5 — Tenant isolation and the enforcement lies (the P0 class, second layer)
+
+**Why first:** cross-tenant data exposure is the worst defect class in the
+product and the fix is self-contained; the enforcement lies are the exact
+class this whole program exists for.
+
+1. ☐ **Migration v138 `ispm_ai_org_isolation`** modelled on v69
+   (`internal/migrations/sql_v69.go`): `org_id` (nullable → backfill →
+   `NOT NULL` → index → `USING`+`WITH CHECK` policy → `ENABLE`+`FORCE` RLS →
+   `GRANT`) on `ispm_rules`, `ispm_findings`, `ispm_scores`, `ai_agents`
+   (+ `ai_agent_credentials/permissions/activity` from the parent),
+   `ai_recommendations` (+ `recommendation_history`), `bulk_operations`,
+   `notification_digests`. Unique keys re-scoped:
+   `ispm_scores(org_id, snapshot_date)`, `ispm_rules(org_id, check_type)`,
+   `ai_agents(org_id, name)`. `deployments/docker/seed.sql`'s rule seed
+   carries `org_id` in the same commit (the compose seed container runs
+   with `ON_ERROR_STOP`).
+2. ☐ **Handlers org-scoped** — `internal/admin/ispm.go` (every query;
+   the `DELETE` at `:470` gets `AND org_id`), `ai_agents.go`,
+   `ai_recommendations.go`; and **the ISPM Rules page becomes real**:
+   `RunPostureChecks` reads the org's rules (seeding the default rule set
+   idempotently on an org's first scan — today `deployments/docker/seed.sql`
+   seeds them once, install-wide), skips a disabled rule, stamps the rule's
+   severity and `rule_id` on findings. Tenant-isolation tests per handler
+   file (two orgs; A never sees or mutates B) in the shape of
+   `internal/oauth/ssf_tenant_isolation_test.go`; `ai_agents.go` gets its
+   first test file this way.
+3. ☐ **`tools/orgscope` inverted** so omission fails: scope is *derived*
+   from the migration registry (`CREATE TABLE`/`ADD COLUMN org_id`/
+   `FORCE ROW LEVEL SECURITY`/`DROP TABLE` folded over every `UpSQL`), and
+   a table with no `org_id` must be declared install-wide *with a reason*,
+   a table with `org_id` but no FORCE policy must be belt-exempt *with a
+   reason*; blank reasons are rejected. Self-tests for each rule; an
+   integration test compares the derived belt against
+   `information_schema`. The first `-fail` run is itself an audit: tenant
+   data it surfaces gets a migration, never a waiver.
+4. ☐ **OPA `deny` enforced** — `internal/common/middleware/opa.go`: abort
+   unless `Allow && len(Deny)==0`; `authz.rego:15-19`'s "any authenticated
+   user may GET anything" removed; `policies/access_control.rego`
+   (unreachable package, phantom inputs) deleted; allow+deny → 403 test.
+5. ☐ **No-op buttons made honest** — `ai_recommendations.go` "Apply"
+   performs each action through the primitive that exists or returns 501
+   with the reason (and the console shows it); `ispm.go` "Remediate"
+   sends the reminder / opens the review item and marks
+   `remediation_pending` / `flagged` — the score moves only when the next
+   scan passes.
+6. ☐ **ABAC enforcement (D4)** — new `internal/abac` (the `internal/appaccess`
+   shape: small, DB-direct, importable by both enforcement points) holds
+   the evaluator moved out of `internal/governance/service.go`; governance
+   keeps thin wrappers so the page's test button runs the production
+   evaluator. `ABAC_ENFORCE` tri-state validated like
+   `PAM_SESSION_RISK_GATE`; wired inside `assignmentGateAllows`
+   (`internal/oauth/service.go`) and the proxy's assignment decision
+   (`internal/access/service.go`), subject = the user row's attributes +
+   roles + groups, resource = the application; `abac.would_deny` /
+   `abac.denied` written through the same durable audit path as
+   assignment decisions; a mode badge on the ABAC page.
+7. ☐ **SMS `mock` is not a provider** outside development
+   (`internal/sms/service.go`); "Send test SMS" answers 501 on mock;
+   `ValidateProduction` rejects `SMS_ENABLED=true` + `SMS_PROVIDER=mock`.
+8. ☐ **Multi-IdP SSO** — `sso_state` carries `idp_id`; the callback loads
+   that IdP, not `idps[0]`.
+9. ☐ **Assignment gate fails closed under enforcement** — a lookup error
+   with `ACCESS_ASSIGNMENT_ENFORCE=true` denies (audited) instead of
+   issuing; report mode keeps logging and allowing.
+10. ☐ **`ValidateProduction()` sees the enforcement flags** — errors for
+    `DEV_ADMIN_BYPASS=true` and mock SMS; warnings surfaced on the ops
+    cockpit / first-run gate for every gate still in report mode
+    (`ACCESS_ASSIGNMENT_ENFORCE`, `ABAC_ENFORCE`, `ENABLE_OPA_AUTHZ`,
+    `PAM_SESSION_RISK_GATE`, `POSTURE_DEVICE_TRUST_GATE`).
+11. ☐ **Constants dressed as measurements** — real uptime; the dashboard
+    metrics/refresh endpoints removed; predictive growth computed or
+    removed; SAML transient NameID random per assertion; continuous-auth
+    geo uses `GEOIP_SERVICE_URL` or reports the factor unavailable;
+    role-assignment review campaigns populate from role assignments.
+
+*Exit test:* the two-org isolation tests and the orgscope inversion are
+green; the integration harness with `ABAC_ENFORCE=enforce` and a deny
+policy answers 403 + audit on `/oauth/authorize`.
+
+### P6 — A Definition of Done that CI proves
+
+1. ☐ **Convergence Task 15 is code, not ops** — the server-rendered login
+   is deleted: `GET /oauth/login`, `POST /oauth/authorize/callback`, the
+   five `/oauth/authorize/mfa*` routes, `hosted_mfa.go`,
+   `renderLoginPage`/`handleLoginPage`/`handleAuthorizeCallback`, the
+   `OAuthLoginUI` branch and flag. `POST /oauth/login` (the SPA's JSON
+   API) and `POST /oauth/mfa-verify` stay. `OAUTH_LOGIN_URL` (default
+   `<issuer>/login`) is set in the compose stack, whose console is on
+   another origin. Proof: a route-table test asserting the routes are
+   absent (with `POST /oauth/login` as the positive control) and an
+   integration case under `ACCESS_ASSIGNMENT_ENFORCE=true` proving an
+   unassigned user of an opted-in application is denied + audited and
+   `GET /oauth/login` is 404.
+2. ☐ **Smoke test in CI** — `docker compose up` (a CI override with
+   `ZITI_ENABLED=false` and an explicit service list) → `make smoke-test`.
+   The DoD §6.1 exit test, run on every PR.
+3. ☐ **Playwright in CI** — the mocked specs against `vite preview`, the
+   backend-dependent ones inside the smoke job; port/README drift fixed;
+   stale specs fixed or deleted, never skipped.
+4. ☐ **Helm install proof** — a `kind` job runs `make helm-install --wait`
+   and asserts the migration Job completed, OPA is ready, the backup
+   CronJob and NetworkPolicies exist.
+5. ☐ **Gates that gate (D2)** — `docs.yml` validates on PRs with
+   `--strict`; `security-scan.yml` blocks (Trivy exit 1 on CRITICAL/HIGH
+   with `ignore-unfixed`, Gitleaks/Semgrep/npm-audit without
+   `continue-on-error`, allowlists carry a reason); `status-check`
+   aggregates every guard job and `test-frontend`; `ci-android.yml` loses
+   its `|| true`; `tools/contractcheck` armed in `ci-web.yml` and
+   `api-contract.test.ts` compares console paths against the route tables.
+6. ☐ **CODEOWNERS** rewritten to the real owner; unsupported `!` lines and
+   dependabot references removed.
+7. ☐ **Agent downloads derived, not written** — the agent release builds
+   Linux deb/rpm with the existing `agent/Makefile` nfpm target and
+   publishes `agent-manifest.json`; `pages/add-device.tsx` renders only
+   what the manifest lists.
+
+*Exit test:* every new job green on the PR; DoD items 1, 2, 4 and 6 point
+at a job.
+
+### P7 — One console, one client
+
+1. ☐ **Bilingual for real** — the remaining English in
+   `components/` (`my-privileged-access-section`, the remote viewers, the
+   self-heal panel, the audit stream/dashboard, `manage-app-access-dialog`,
+   `relay-renderer`), `App.tsx`'s two loading strings, `api/mfa.ts`'s
+   thrown errors; the completeness test extended to `src/components/**`;
+   both page globs recursive so `pages/audit/` is gated.
+2. ☐ **Console controls that were not true** — idle timeout wired into the
+   layout from the session policy; device-trust sync awaited with a
+   warning on failure; all five topology queries gated and the
+   query-coverage guard counting per `useQuery`; `AdminRoute` on
+   `hasMinRole` with a route/role matrix test.
+3. ☐ **Dead console code out** (~1,300 LOC incl. `mfa-setup-wizard.tsx`),
+   duplicate proxy-route toggles collapsed, tests for the untested
+   security pages (`add-device`, `remote-support-popout`, `lib/webauthn`,
+   `api/mfa`), the `tr` catalog lazy-loaded.
+4. ☐ **Backend hygiene** — `internal/feature/`, `internal/oauth/store.go`,
+   the empty gateway loggers, the env reader that reads no env, the two
+   unbound config flags deleted; tests that name the security core
+   (`handleToken`, refresh, revoke, the MFA step-up handlers, backup/bypass
+   codes, vault reveal/checkout, `RunSoDSweep`, `handleApproveRequest`,
+   kill switch, the Guac session handlers); OpenAPI specs cover the routed
+   groups and carry the release version.
+5. ☐ **Mobile (D1)** — `mobile/` and its workflow deleted with every
+   reference; Flutter: release keystore from CI secrets, ntfy push (the
+   throwing Firebase stub removed), backup-codes / passkeys / TOTP screens
+   ported, iOS built as an artifact until Apple credentials exist.
+
+### P8 — Docs and the release
+
+1. ☐ **Docs sweep 3** — the drift the 2026-09-01 sweep missed
+   (`IMPLEMENTATION_GUIDE.md`, `IMPLEMENTATION_PLAN_PARALLEL.md`,
+   `FRONTEND_NAVIGATION.md`, `DEV-BRANCH-SUMMARY.md`, `CONTRIBUTING.md`,
+   the second `Admin123!` in `USER_GUIDE.md`, the README's saving claim
+   the landing test forbids, the mkdocs phantom Discord/analytics ids), an
+   IGA guide page so all four pillars are on the site, roadmap epics
+   documented as API-only (D3), and a docs-drift guard with a self-test
+   so none of it comes back.
+2. ☐ **CHANGELOG** advanced through v1.28.0…v1.33.3 by tag date, this
+   branch under `[Unreleased]`, compare links repaired.
+3. ☐ **Versions aligned** to 1.34.0 (`package.json`, `Chart.yaml
+   appVersion`, `pubspec.yaml`, `PRODUCTION-READINESS.md`, the OpenAPI
+   `version:` fields) with a version-sync guard.
+4. ☐ **`docs/evidence/`** — for each §5 control, the CI artifact that
+   proves it or the operator command and where to file the result.
+
+*Exit test:* `mkdocs build --strict` on PRs; the version-sync and
+docs-drift guards green; then the maintainer tags v1.34.0.
 
 ---
 
@@ -1411,9 +1634,9 @@ Call the project ready from the user's perspective when all of these hold:
 
 1. Every journey J1–J8 in §3 is ✅ with no manual workaround, and each has
    an automated or scripted verification.
-2. `ACCESS_ASSIGNMENT_ENFORCE=true` and `OAUTH_LOGIN_UI=spa` in the
-   reference deployment; the legacy login is deleted; §5.3's table holds
-   for every row.
+2. `ACCESS_ASSIGNMENT_ENFORCE=true` in the reference deployment; the
+   server-rendered login is deleted from the code (one login UI, at
+   `OAUTH_LOGIN_URL`); §5.3's table holds for every row.
 3. Every control visible in the admin console enforces something (no
    A-class defects open).
 4. A new operator completes first run from the README alone; a new end
@@ -1424,6 +1647,18 @@ Call the project ready from the user's perspective when all of these hold:
 6. Releases are current (no >2-week unreleased security fixes), signed,
    and the Helm path installs working or is not advertised.
 7. The §5 controls have run at least once on cadence with evidence.
+
+### 6.1 Scorecard (2026-09-04)
+
+| DoD item | State | What proves it, or what is missing |
+|---|---|---|
+| 1 · journeys verified | ☐ | J1 needs the smoke job (P6.2); J3 the enforced-posture integration case (P6.1); J7 a leaver integration case; J4/J5/J8 keep scripted operator drills (`tools/darkprobe`, `make dr-game-day`) filed under `docs/evidence/` (P8.4) |
+| 2 · enforced posture, legacy login gone | ☐ | code: P6.1 (Task 15 is unremoved code today, `internal/oauth/service.go` registers the routes unconditionally); ops: rollout Task 16 |
+| 3 · every control enforces | ☐ | P5 (the eleven items above) |
+| 4 · first run / first login / four pillars from the docs | ☐ | smoke job (P6.2), `USER_GUIDE.md` credential (P8.1), IGA guide page (P8.1) |
+| 5 · one story + auditor artifacts | ☐ | threat model and control mapping exist; docs sweep 3 + drift guard (P8.1) |
+| 6 · releases current, signed, Helm proven | ☐ | CHANGELOG/pins (P8.2–3); v1.34.0 will be the first signed tag; `kind` install proof (P6.4) |
+| 7 · controls run with evidence | ☐ | §5.1 automated half in CI; §5.2/§5.3 operator-run; `docs/evidence/` (P8.4) |
 
 ---
 
