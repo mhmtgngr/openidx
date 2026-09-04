@@ -82,7 +82,13 @@ jobs:
       # copy it next to the built executable, or into the app's bin/ directory,
       # so the supervisor can spawn it). Left as a no-op for the scaffold.
       - name: Bundle openidx-agent sidecar (placeholder)
-        run: echo "TODO: fetch + stage openidx-agent sidecar for ${{ matrix.platform }}"
+        # Block scalar, not a plain one: `run: echo "TODO: ...` is invalid YAML
+        # (a plain scalar may not contain ": "), and GitHub answered by failing
+        # the whole workflow before it scheduled a single job -- a run with no
+        # jobs, named after the file, red on every push since #814. Nothing was
+        # building the desktop client and the red check said nothing about why.
+        run: |
+          echo "TODO: fetch + stage openidx-agent sidecar for ${{ matrix.platform }}"
 
       - name: Build
         run: flutter build ${{ matrix.build_target }} --release

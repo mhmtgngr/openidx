@@ -1509,6 +1509,20 @@ policy answers 403 + audit on `/oauth/authorize`.
 
 ### P6 — A Definition of Done that CI proves
 
+0. ✅ **A workflow CI cannot parse removes itself from CI** — *shipped*.
+   `.github/workflows/client-desktop-build.yml` carried `run: echo "TODO:
+   ..."` since #814 — a plain YAML scalar containing `": "`, which is not
+   valid YAML. GitHub does not skip such a file: it creates a run named after
+   the file path, schedules **zero jobs**, and marks it failed. So the Flutter
+   desktop client was built on no commit at all, behind a red check with no
+   job, no log and no annotation. Fixed, and guarded:
+   `scripts/check-workflows-parse.sh` requires every workflow to parse, to
+   carry a trigger, and to define at least one job;
+   `check-workflows-parse.test.sh` proves it goes red on each of those (and
+   green on the bare and quoted `on:` spellings, so it cannot be retired as a
+   false-positive machine); the `workflows-parse` job runs both. This is the
+   one class of source CI cannot check by running it.
+
 1. ✅ **Convergence Task 15 is code, not ops** — *shipped*. The
    server-rendered login is deleted: `GET /oauth/login`, `POST
    /oauth/authorize/callback`, the five `/oauth/authorize/mfa*` routes,

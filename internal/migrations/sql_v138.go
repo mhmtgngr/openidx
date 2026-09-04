@@ -26,9 +26,11 @@ package migrations
 // runner's splitSQL cannot handle DO $$ blocks (the v56/v57 lesson).
 //
 // The two install-wide unique keys become per-tenant keys:
-//   ispm_rules(check_type)      → (org_id, check_type)
-//   ai_agents(name)             → (org_id, name)
-//   ispm_scores(snapshot_date)  → (org_id, snapshot_date)
+//
+//	ispm_rules(check_type)      → (org_id, check_type)
+//	ai_agents(name)             → (org_id, name)
+//	ispm_scores(snapshot_date)  → (org_id, snapshot_date)
+//
 // The constraint names are the ones Postgres generates for an inline UNIQUE
 // in the v54/v42 CREATE TABLE; DROP CONSTRAINT IF EXISTS keeps the migration
 // idempotent on an install where they are already gone.

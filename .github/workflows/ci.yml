@@ -86,6 +86,24 @@ jobs:
       - name: Both Docker build attempts must stay identical
         run: bash scripts/check-docker-retry-drift.sh
 
+  # A workflow file is the one kind of source here that CI cannot check by
+  # running it: a workflow GitHub cannot parse takes ITSELF out of CI. It does
+  # not skip the file — it creates a run named after the file path, schedules
+  # zero jobs, and marks it failed. client-desktop-build.yml shipped that way
+  # in #814 (`run: echo "TODO: ..."`, a plain scalar containing ": ") and the
+  # desktop client went unbuilt on every commit since, behind a red check with
+  # no job and no log to read.
+  workflows-parse:
+    name: Every workflow parses
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Verify the guard can go red
+        run: bash scripts/check-workflows-parse.test.sh
+      - name: Every workflow must be one GitHub can run
+        run: bash scripts/check-workflows-parse.sh
+
   # The README's quick start is two commands, and nothing had ever run either
   # of them: generate-secrets.sh aborted on SIGPIPE, it omitted two variables
   # compose declares required, and compose could not see the .env it wrote.
