@@ -1600,10 +1600,50 @@ policy answers 403 + audit on `/oauth/authorize`.
    - **Phase 4 checked a console nobody was serving.**
    Verified locally against a real stack before the job was written:
    **17 checks, 17 passed.**
-3. ✅ **Playwright in CI** — *shipped*, and the suite could not have passed
-   before it. **418 passed, 20 skipped, 0 failed** on chromium against a
-   real stack; the new `e2e` job runs all fifty spec files that way.
-   What had to be fixed first was not the specs:
+3. ✅ **Playwright in CI** — *shipped*, and the suite could not have run
+   before it. The new `e2e` job runs the spec files registered in
+   `web/admin-console/e2e/suite.txt` against a real stack.
+
+   **Correction.** This entry previously read "418 passed, 20 skipped, 0
+   failed … runs all fifty spec files". That number was read off a truncated
+   tail of a local run and is wrong; the first CI run of the job went red with
+   well over a hundred failures. Measured properly — one pass, no retries,
+   against Postgres, Redis and the eight services — the fifty files are
+   **448 passed, 282 failed**. Running the suite for the first time is what
+   surfaced that, which is what the job is for; what was wrong was the claim.
+
+   Three causes were mechanical, are the same defect wearing three hats — a
+   suite written for a mocked console — and are fixed in the specs:
+   - `page.evaluate(() => localStorage.setItem('auth_tokens', …))` in
+     `beforeEach`, 18 sites across four files. `page.evaluate` reaches into
+     the CURRENT document and a fresh page is still on `about:blank`, whose
+     origin is opaque, so every one threw `SecurityError`. It also wrote
+     `auth_tokens`, a key `lib/auth.tsx` has never read.
+   - A hand-assembled JWT ending in `mock-signature`, 22 sites across nine
+     files, planted over the real session by `addInitScript`. `btoa()` emits
+     standard base64 and JWT requires base64url, so identity-service answered
+     every request with "token is malformed: could not base64 decode claim"
+     and the console bounced back to `/login`.
+   - `page.goto('/audit/audit-dashboard')` in three files; `App.tsx` registers
+     `audit/dashboard`, and the catch-all sends everything else to the
+     dashboard.
+   The login form also gained `name="username"` / `name="password"` — it had
+   only `id`s, which is why nine `.noauth` specs sat waiting on
+   `input[name="username"]`, and which browsers and password managers read.
+
+   What is left is a genuine backlog, and `e2e/suite.txt` names every file of
+   it with the reason: specs that drive **`https://openidx.tdv.org`**, a live
+   third-party host (53 tests in one file — a CI suite must not depend on
+   someone's deployment); specs that need fixture users, passkeys, devices or
+   a Ziti controller that no seed creates; and specs asserting copy and DOM
+   shapes the console no longer has. They are not deleted and not
+   `test.skip`'d — `npm run test:e2e` runs all fifty — and
+   `scripts/check-e2e-suite.sh` (self-tested, enforced in `UI safety guards`)
+   fails if a spec file is missing from the register, if a `hold` carries no
+   reason, or if a listed file is renamed away. The hold side is meant to
+   shrink; each entry says what has to become true.
+
+   What had to be fixed before any of it could run was not the specs:
    - **Nothing ever signed in.** `playwright.config.ts` declared no `setup`
      project and no `storageState`, and `.setup.ts` does not match
      Playwright's default `testMatch` — so `auth.setup.ts` never ran and

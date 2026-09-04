@@ -1187,6 +1187,7 @@ export function LoginPage() {
                 <Label htmlFor="username">{t('login.form.usernameLabel')}</Label>
                 <Input
                   id="username"
+                  name="username"
                   type="text"
                   placeholder={t('login.form.usernamePlaceholder')}
                   value={username}
@@ -1201,6 +1202,7 @@ export function LoginPage() {
                 <Label htmlFor="password">{t('login.form.passwordLabel')}</Label>
                 <Input
                   id="password"
+                  name="password"
                   type="password"
                   placeholder={t('login.form.passwordPlaceholder')}
                   value={password}

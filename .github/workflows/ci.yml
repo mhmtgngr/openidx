@@ -152,6 +152,7 @@ jobs:
           bash scripts/check-no-handrolled-tables.test.sh
           bash scripts/check-keyboard-reachable.test.sh
           bash scripts/check-control-names.test.sh
+          bash scripts/check-e2e-suite.test.sh
       - name: Enforce UI safety guards
         run: |
           bash scripts/check-query-error-coverage.sh --enforce
@@ -160,6 +161,7 @@ jobs:
           bash scripts/check-no-handrolled-tables.sh --enforce
           bash scripts/check-keyboard-reachable.sh --enforce
           bash scripts/check-control-names.sh --enforce
+          bash scripts/check-e2e-suite.sh --enforce
 
   # The self-heal loop is the ONLY thing allowed to restart box services on its
   # own, so its collectors, ledger dedup, and (most importantly) the remediator
@@ -1163,7 +1165,7 @@ jobs:
             echo "::group::$f"; tail -60 "$f"; echo "::endgroup::"
           done
 
-  # The 50-file Playwright suite, against a real stack.
+  # The Playwright suite, against a real stack.
   #
   # It had never run anywhere: no workflow invoked it, and it could not have
   # passed if one had. playwright.config.ts declared no `setup` project and no
@@ -1174,8 +1176,28 @@ jobs:
   # makes sense against an authenticated default.) The setup also typed a
   # password, `admin123`, that matches nothing; the seeded admin is Admin@123.
   #
-  # With those fixed the suite is green: 418 passed, 20 skipped, 0 failed on
-  # chromium against this exact stack.
+  # CORRECTION to what this comment said before: it claimed the suite was then
+  # green at 418 passed / 0 failed. It is not, and never was — that number was
+  # read off a truncated tail of a local run, and the first CI run of this job
+  # went red with well over a hundred failures. Running the suite for the first
+  # time is what surfaced them, which is the point of running it; what was
+  # wrong was the claim, not the job.
+  #
+  # Three of the causes were mechanical and are fixed in the specs themselves
+  # (a `page.evaluate(localStorage…)` in beforeEach, which throws on the
+  # about:blank a fresh page starts on; a hand-assembled `mock-signature` JWT
+  # that overwrote the real session with one the backend rejects; a goto of
+  # /audit/audit-dashboard, a route App.tsx does not register). What is left is
+  # a long tail of specs written against a MOCKED console: fixture users no
+  # seed creates, DOM shapes the components no longer have.
+  #
+  # So this job runs the register in web/admin-console/e2e/suite.txt, which
+  # names every spec file as `run` or as `hold <reason>`. The held ones are not
+  # deleted and not `test.skip`'d — `npm run test:e2e` still runs the lot — and
+  # scripts/check-e2e-suite.sh (self-tested, wired into UI safety guards) fails
+  # if a spec file is missing from the register, if a hold carries no reason,
+  # or if a listed file is renamed away. An exclusion nobody can see is how a
+  # gate stops covering things quietly; this one has to be read to be changed.
   e2e:
     name: The console's journeys work in a browser
     runs-on: ubuntu-latest
@@ -1302,7 +1324,11 @@ jobs:
       # one of them.
       - name: Run the browser journeys
         working-directory: web/admin-console
-        run: npx playwright test --project=chromium
+        run: |
+          set -euo pipefail
+          mapfile -t specs < <(awk '$1 == "run" { print $2 }' e2e/suite.txt)
+          echo "running ${#specs[@]} registered spec file(s)"
+          npx playwright test --project=chromium "${specs[@]}"
         env:
           CI: "true"
 
