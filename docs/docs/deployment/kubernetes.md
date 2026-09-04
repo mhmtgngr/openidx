@@ -105,6 +105,33 @@ helm install openidx deployments/kubernetes/helm/openidx \
   -f values-production.yaml
 ```
 
+### An external database
+
+`postgresql.enabled=false` points the chart at a database you run. The
+migration Job connects with the DSN in `<release>-db-url` and needs two things
+a plain application role does not have:
+
+1. **`CREATE ROLE`, once.** Migration v53 provisions `openidx_app` — the
+   `NOSUPERUSER NOBYPASSRLS` runtime role the row-level-security belt is
+   enforced against. Either give the migration role `CREATEROLE`, or create the
+   role yourself before the first install and v53 will skip it:
+
+    ```sql
+    CREATE ROLE openidx_app LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
+    ```
+
+    (The bundled PostgreSQL does exactly this from
+    `postgresql.primary.initdb.scripts`, because the subchart creates `openidx`
+    without `CREATEROLE`.)
+
+2. **Ownership of the schema.** Migrations create and alter every table, and the
+   RLS belt is `FORCE`d, so the owner is subject to its own policies. The
+   migrator sets `app.bypass_rls` for the duration of each migration
+   transaction, which is what lets a non-superuser owner run the seeds; you do
+   not need to grant `BYPASSRLS` to anything.
+
+`redis.enabled=false` needs nothing beyond a reachable URL.
+
 ### External Secrets Operator
 
 For production, use External Secrets Operator to pull secrets from AWS Secrets Manager, HashiCorp Vault, or other providers:

@@ -1912,6 +1912,48 @@ policy answers 403 + audit on `/oauth/authorize`.
      `secrets.postgresPassword` is the single knob and it is `required`
      rather than silently empty.
 
+   Three more surfaced only because each round of the job got further than
+   the last — which is the argument for the job:
+
+   - **`replicaCount: 0` was silently `2`.** `values-ci.yaml` pins every
+     service to zero replicas; eight of nine honoured it. `oauth-service`,
+     `opa` and both `ziti-fabric` workloads read
+     `{{ .Values.x.replicaCount | default 2 }}`, and Go templates treat `0`
+     as empty, so the operator's `0` became `2`, the pods pulled `main`'s
+     `latest` image and crash-looped for twelve minutes until `--wait` timed
+     out. All four use `dig` now, which returns a present key's value
+     including zero, and the `Lint & Template` job asserts it for all nine.
+   - **The migration role could not create the role the RLS belt needs.**
+     Migration v53 provisions `openidx_app` — the `NOSUPERUSER NOBYPASSRLS`
+     runtime role the v37 belt is FORCE'd against — and the subchart creates
+     `openidx` as a plain LOGIN role: *"permission denied to create role.
+     Only roles with the CREATEROLE attribute may create roles."* The two
+     ways out are to give the role the application connects with the
+     permanent power to mint roles, or to create `openidx_app` before the
+     migration looks for it; the chart does the second, from
+     `postgresql.primary.initdb.scripts`, and v53's `IF NOT EXISTS` guard
+     then skips its own `CREATE ROLE`.
+   - **And then the seeds were refused by the belt itself.** Behind that
+     failure sat another: the belt FORCEs row-level security so the table
+     *owner* is subject to it too, and a migration is cross-org by
+     definition — v84 seeds an OAuth client, v138 backfills nine tables. With
+     neither `app.org_id` nor `app.bypass_rls` set the policy is fail-closed
+     and the seed dies with 42501, "new row violates row-level security
+     policy". It had never fired because every environment that runs
+     migrations — docker-compose, the CI harness, the test databases —
+     connects as `postgres`, which has `BYPASSRLS` and is exempt before any
+     policy is consulted. `Migrator.applyMigration` and `rollbackMigration`
+     now `SET LOCAL app.bypass_rls = 'on'`, transaction-scoped so it cannot
+     escape onto a pooled connection.
+
+   The second and third are pinned by
+   `internal/migrations/least_privilege_owner_test.go`, which builds that
+   deployment in miniature — a `NOSUPERUSER NOCREATEROLE NOBYPASSRLS` owner,
+   its own database, the full migration set — and is red without the fix at
+   exactly the migration the install would have died on. The `kind` job also
+   asserts `openidx_app` exists afterwards and is neither superuser nor
+   `BYPASSRLS`, because a v53 that silently did nothing would look identical.
+
    Why it went unnoticed: `values-prod.yaml` disables all three subcharts, so
    the reference deployment never touched them, and rendering is all CI did.
    `scripts/check-chart-images.sh` (self-tested, red on each of the three

@@ -32,8 +32,13 @@
 # rendered manifests are the ones a real install produces.
 
 # ----- Secrets -----
-# Throwaway values for a cluster that lives for the length of one job. The
-# encryption key is exactly 32 bytes, as the chart requires.
+# Throwaway values for a cluster that lives for the length of one job. Not
+# secrets, but credential-SHAPED, so each is named in .gitleaks.toml as an
+# anchored literal with the reason -- the secret scan blocks, and a real
+# credential added to this file still has to go red.
+#
+# encryptionKey carries 33 bytes: config.go:1430 requires at least 32, and a
+# string that says how long it is is easier to check than a counted one.
 secrets:
   postgresPassword: "ci-postgres-password"
   redisPassword: "ci-redis-password"

@@ -477,6 +477,47 @@ jobs:
             --metrics=off \
             --error --severity=ERROR
 
+      # A `nosemgrep` comment silences the finding for the SCAN — the gate step
+      # above passes — but semgrep still writes the result to the SARIF, tagged
+      # `suppressions: [{"kind": "inSource"}]`. Uploaded as-is, GitHub counted
+      # all five of this branch's suppressed findings as new alerts and the
+      # `Semgrep OSS` check went red on seven consecutive heads, with a number
+      # that never moved no matter what the diff contained: two
+      # detected-bcrypt-hash (the seeded default admin's hash, public by design
+      # and refused by ValidateProduction) and three cookie-missing-secure (the
+      # ZTNA session cookie, whose Secure flag is computed by
+      # sessionCookieSecure rather than written as a literal the rule can see).
+      #
+      # So the upload carries only what is NOT suppressed. This is not a
+      # widening: the gate step runs the full rule set with nothing filtered, a
+      # new finding without a nosemgrep comment still reaches the Security tab
+      # and still fails this check, and the artifact below keeps the COMPLETE
+      # report — suppressed results included — as the record. What changes is
+      # that a finding somebody deliberately silenced in source, with the
+      # reasoning written at the line, is not also carried as an open alert.
+      #
+      # The counts are printed so the next run says which of the two things
+      # happened: "0 suppressed in source" would mean this semgrep no longer
+      # emits the suppressions and the filter is a no-op, not a fix.
+      - name: Drop in-source suppressions from the upload
+        if: always() && hashFiles('semgrep-report.sarif') != ''
+        # python3, not jq: the semgrep image ships the interpreter semgrep
+        # itself runs on and makes no promise about jq.
+        run: |
+          set -euo pipefail
+          python3 - <<'EOF'
+          import json
+          d = json.load(open("semgrep-report.sarif"))
+          total = kept = 0
+          for run in d.get("runs", []):
+              results = run.get("results", [])
+              total += len(results)
+              run["results"] = [r for r in results if not r.get("suppressions")]
+              kept += len(run["results"])
+          json.dump(d, open("semgrep-upload.sarif", "w"))
+          print(f"semgrep results: {total} total, {total - kept} suppressed in source, {kept} uploaded")
+          EOF
+
       # The deprecated Semgrep action may not produce a SARIF file, and
       # SARIF upload needs GitHub code scanning enabled (not guaranteed on
       # forks/personal repos). Keep these non-blocking so a missing report
@@ -489,9 +530,9 @@ jobs:
       - name: Upload Semgrep results to GitHub Security
         uses: github/codeql-action/upload-sarif@v4
         continue-on-error: true
-        if: always() && hashFiles('semgrep-report.sarif') != ''
+        if: always() && hashFiles('semgrep-upload.sarif') != ''
         with:
-          sarif_file: semgrep-report.sarif
+          sarif_file: semgrep-upload.sarif
           category: 'semgrep-sast'
 
       - name: Upload Semgrep report artifact

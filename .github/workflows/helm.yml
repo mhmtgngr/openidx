@@ -180,6 +180,25 @@ jobs:
           echo "applied migrations: $applied"
           test "$applied" -gt 100 || { echo "expected the full migration set, got $applied"; exit 1; }
 
+      # The migration Job connects as `openidx`, the plain LOGIN role the
+      # PostgreSQL subchart creates -- not a superuser. Two migrations need
+      # more than a plain role has, and both faults are invisible until an
+      # install: v53 creates the openidx_app runtime role (a role without
+      # CREATEROLE cannot), and every seed after the v37 belt is refused by
+      # FORCE'd RLS unless the transaction sets app.bypass_rls. The Job
+      # succeeding above already covers the second; this covers the first,
+      # because a v53 that silently did nothing would look identical.
+      - name: The least-privileged owner got the runtime role it cannot create
+        run: |
+          set -euo pipefail
+          role=$(kubectl -n "$NS" exec "statefulset/$RELEASE-postgresql" -- \
+            env PGPASSWORD=ci-postgres-password \
+            psql -U openidx -d openidx -tAc \
+            "SELECT rolcanlogin::text || ',' || rolsuper::text || ',' || rolbypassrls::text FROM pg_roles WHERE rolname = 'openidx_app'")
+          test "$role" = "true,false,false" || {
+            echo "openidx_app is '$role', want 'true,false,false' (login, not superuser, not bypassrls)"; exit 1; }
+          echo "openidx_app present and least-privileged"
+
       - name: OPA answers at the address config.opaUrl names
         run: |
           set -euo pipefail
