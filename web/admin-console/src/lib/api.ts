@@ -164,19 +164,34 @@ export interface VaultRotationRun {
   completed_at?: string
 }
 
-// Get API base URL based on environment
+// Get API base URL based on environment.
+//
+// This used to fall through to a hardcoded http://localhost:8005 -- admin-api
+// -- in dev, and for any build served from http://localhost:3000. admin-api
+// owns a slice of /api/v1; identity, governance, audit, provisioning and
+// access own the rest, so the console sent its whole API surface to one
+// service and got 404 for everything that service does not register. The
+// login page's own "fetch identity providers" call was one of them. It also
+// meant Vite's dev proxy was never consulted: axios had an absolute base, so
+// no request was ever relative enough to proxy.
 const getAPIBaseURL = (): string => {
   const envURL = import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL
   if (envURL) {
     return envURL
   }
 
-  // In production, use the current origin
-  if (import.meta.env.PROD && window.location.origin !== 'http://localhost:3000') {
-    return window.location.origin
+  // Dev: relative, so Vite's proxy routes each prefix to its service. That map
+  // mirrors the deployed edge router (see vite.config.ts).
+  if (import.meta.env.DEV) {
+    return ''
   }
 
-  return 'http://localhost:8005'
+  // A built bundle talks to the origin it was served from. In every documented
+  // deployment the thing serving the SPA also fronts the API: nginx serves the
+  // console and sends /api/v1/ to APISIX
+  // (deployments/docker/nginx/conf.d/openidx.tdv.org.conf). Set VITE_API_URL
+  // when that is not true for you.
+  return window.location.origin
 }
 
 export const baseURL = getAPIBaseURL()

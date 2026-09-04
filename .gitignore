@@ -26,6 +26,16 @@ bin/
 /contractcheck
 /orgscope
 
+# Playwright output. test-results/ (videos, screenshots, error contexts) and
+# playwright-report/ are generated per run. e2e/.auth/user.json is the SESSION
+# auth.setup.ts saves and every authenticated spec loads -- a real token once
+# the setup signs in for real, so it belongs on disk and never in a commit.
+# (The version that was tracked held a hand-written `mock-signature` JWT, which
+# is the other half of why the authenticated specs proved nothing.)
+web/admin-console/test-results/
+web/admin-console/playwright-report/
+web/admin-console/e2e/.auth/
+
 # Go test binaries
 *.test
 

