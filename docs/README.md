@@ -70,7 +70,9 @@ ZTNA: [PUBLISHING_A_SERVICE.md](./PUBLISHING_A_SERVICE.md),
 Posture/EDR: [EDR_MDM_POSTURE.md](./EDR_MDM_POSTURE.md),
 [WAZUH_EDR_INTEGRATION.md](./WAZUH_EDR_INTEGRATION.md).
 Notifications: [NTFY_PUSH_NOTIFICATIONS.md](./NTFY_PUSH_NOTIFICATIONS.md).
-Mobile: [mobile-developer-guide-simple.md](./mobile-developer-guide-simple.md),
+Mobile: the client is the Flutter app in [`client/`](../client), over the same
+Go engine as the desktop agent. The API contracts below are still current; their
+file references point at the deleted Expo prototype and are being retargeted:
 [mobile-authenticator-developer-guide.md](./mobile-authenticator-developer-guide.md),
 [mobile-openziti-integration-guide.md](./mobile-openziti-integration-guide.md),
 [mobile-mfa-and-ziti-posture-access.md](./mobile-mfa-and-ziti-posture-access.md),

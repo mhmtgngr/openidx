@@ -1712,10 +1712,22 @@ at a job.
    codes, vault reveal/checkout, `RunSoDSweep`, `handleApproveRequest`,
    kill switch, the Guac session handlers); OpenAPI specs cover the routed
    groups and carry the release version.
-5. ☐ **Mobile (D1)** — `mobile/` and its workflow deleted with every
-   reference; Flutter: release keystore from CI secrets, ntfy push (the
-   throwing Firebase stub removed), backup-codes / passkeys / TOTP screens
-   ported, iOS built as an artifact until Apple credentials exist.
+5. ◐ **Mobile (D1)** — the deletion half is done, brought forward from P7
+   because the newly blocking Trivy scan found six HIGH advisories
+   (brace-expansion ×2, browserslist ×2, js-yaml, nanoid) in
+   `mobile/package-lock.json`. Waiving findings in a tree a ratified decision
+   already deletes would have been the wrong answer, so the tree went instead:
+   `mobile/` (102 files), `.github/workflows/mobile-eas-build.yml`, and
+   `docs/mobile-developer-guide-simple.md` (a setup guide for an app that no
+   longer exists) are gone, with the `.gitignore` entries and the `docs/README`
+   index updated. The three mobile documents that carry **API contracts** are
+   kept and now open with a banner saying the Expo app is deleted, the client
+   is Flutter, and their `mobile/src/...` pointers are historical.
+   Still to do, with the Flutter work: release keystore from CI secrets, ntfy
+   push (the throwing Firebase stub removed — it also carries a live Firebase
+   project id), backup-codes / passkeys / TOTP screens ported, iOS built as an
+   artifact until Apple credentials exist, and those three documents retargeted
+   at `client/` file paths rather than merely bannered.
 
 ### P8 — Docs and the release
 

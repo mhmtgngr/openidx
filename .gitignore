@@ -92,7 +92,6 @@ docs/MARKET_REANALYSIS_AND_GTM_2026-07.md
 docs/IAM_COMPETITOR_ANALYSIS.md
 docs/ULTIMATE_PRODUCT_PLAN.md
 docs/SESSION_HANDOFF_2026-07-22.md
-mobile/HANDOFF.md
 
 # Local-only agent orchestration + throwaway scripts / internal snapshots
 autopilot.sh
@@ -106,7 +105,6 @@ run-claude.sh
 run-claude-socket.sh
 run-claude-ssh.sh
 .autopilot/
-mobile/.claude/
 update_password.sql
 ACCESS_SETUP.md
 CLIENT_ACCESS_INSTRUCTIONS.md

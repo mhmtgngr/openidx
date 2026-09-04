@@ -1,5 +1,13 @@
 # OpenIDX Mobile Authenticator — Developer Guide
 
+> **The React Native / Expo app this guide was written against has been
+> deleted.** The mobile client is the Flutter app in [`client/`](../client),
+> which drives the same Go engine as the desktop agent (`agent/mobile`), so
+> posture and OpenZiti are one implementation rather than two. Every API
+> contract, endpoint, payload and sequence below is still current and is why
+> this document is kept; the `mobile/src/...` file references are historical
+> and point at code that is no longer in the tree.
+
 **Audience:** a mobile developer building the OpenIDX authenticator app (OAuth/OIDC
 login, TOTP, push-approval MFA, passkeys) **and** the "connect to applications"
 experience (zero-trust access to internal apps).
