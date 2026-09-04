@@ -44,7 +44,12 @@ interface PredictionSummary {
     avg_concurrent_sessions: number
     peak_hour: number
     peak_day_of_week: string
-    session_growth_rate_pct: number
+    /**
+     * null when there is no prior week to compare against. It used to be a
+     * number the backend hardcoded to 0, so "no history" and "flat" were the
+     * same value on screen.
+     */
+    session_growth_rate_pct: number | null
     recommended_capacity: number
     license_utilization_pct: number
   }
@@ -141,7 +146,7 @@ export function PredictiveAnalyticsPage() {
           avg_concurrent_sessions: res.capacity_forecast?.avg_concurrent_sessions ?? 0,
           peak_hour: res.capacity_forecast?.peak_hour ?? 0,
           peak_day_of_week: res.capacity_forecast?.peak_day_of_week ?? '',
-          session_growth_rate_pct: res.capacity_forecast?.session_growth_rate_pct ?? 0,
+          session_growth_rate_pct: res.capacity_forecast?.session_growth_rate_pct ?? null,
           recommended_capacity: res.capacity_forecast?.recommended_capacity ?? 0,
           license_utilization_pct: res.capacity_forecast?.license_utilization_pct ?? 0,
         },

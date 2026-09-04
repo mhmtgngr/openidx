@@ -74,7 +74,28 @@ type Config struct {
 	// Webhook provider
 	WebhookURL    string `mapstructure:"webhook_url"`     // Custom webhook URL for SMS delivery
 	WebhookAPIKey string `mapstructure:"webhook_api_key"` // API key for webhook authentication
+
+	// AllowMock permits Provider == "mock". It is deliberately NOT a
+	// mapstructure field: it is a property of the environment the service runs
+	// in, set by the caller from cfg.IsDevelopment(), never something a
+	// deployment file or the admin console's stored settings can turn on.
+	//
+	// WHY THIS EXISTS. "mock" is the default provider (config.go's
+	// sms.provider default), and a mock IS a provider as far as NewService was
+	// concerned — so an operator who set only SMS_ENABLED=true got a service,
+	// SetSMSProvider was called with it, and the not-configured gate in
+	// internal/identity/otp.go never fired. The result was an SMS factor a
+	// user could enrol into, that answered "Verification code sent to your
+	// phone", and that delivered nothing: the exact failure mode
+	// TwilioPhoneCallProvider was fixed for, in the channel next to it.
+	AllowMock bool `mapstructure:"-"`
 }
+
+// ErrMockProviderNotAllowed is returned when the mock provider is selected
+// outside development. Callers treat it as "SMS is not configured", which is
+// what it means: nothing is delivered.
+var ErrMockProviderNotAllowed = errors.New(
+	"SMS provider is \"mock\", which delivers nothing; configure a real provider or run with APP_ENV=development")
 
 // DefaultConfig returns the default SMS configuration
 func DefaultConfig() Config {
@@ -120,6 +141,9 @@ func NewService(cfg Config, logger *zap.Logger) (*Service, error) {
 	case "mutlucell":
 		provider, err = NewMutlucellProvider(cfg.MutlucellUsername, cfg.MutlucellPassword, cfg.MutlucellAPIKey, cfg.MutlucellSender, logger)
 	case "mock":
+		if !cfg.AllowMock {
+			return nil, ErrMockProviderNotAllowed
+		}
 		provider = NewMockProvider(logger)
 	default:
 		// A typo'd provider name must not silently become a mock that

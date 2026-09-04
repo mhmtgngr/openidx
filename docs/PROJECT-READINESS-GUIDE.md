@@ -1480,20 +1480,20 @@ class this whole program exists for.
    (get, update, delete) gained the `org_id` predicate they were relying on
    RLS alone for, which took `abac_policies` off the orgscope register.
 
-7. ☐ **SMS `mock` is not a provider** outside development
+7. ✅ **SMS `mock` is not a provider** — *shipped.* outside development
    (`internal/sms/service.go`); "Send test SMS" answers 501 on mock;
    `ValidateProduction` rejects `SMS_ENABLED=true` + `SMS_PROVIDER=mock`.
-8. ☐ **Multi-IdP SSO** — `sso_state` carries `idp_id`; the callback loads
+8. ✅ **Multi-IdP SSO** — *shipped.* — `sso_state` carries `idp_id`; the callback loads
    that IdP, not `idps[0]`.
-9. ☐ **Assignment gate fails closed under enforcement** — a lookup error
+9. ✅ **Assignment gate fails closed under enforcement** — *shipped.* — a lookup error
    with `ACCESS_ASSIGNMENT_ENFORCE=true` denies (audited) instead of
    issuing; report mode keeps logging and allowing.
-10. ☐ **`ValidateProduction()` sees the enforcement flags** — errors for
+10. ✅ **`ValidateProduction()` sees the enforcement flags** — *shipped* (`DEV_ADMIN_BYPASS` and mock-SMS-with-SMS-enabled are now errors; the seven report-mode gates are listed by a new `Config.ReportModeGates()` rather than failing startup, because shipping in report mode first is the designed rollout). — errors for
     `DEV_ADMIN_BYPASS=true` and mock SMS; warnings surfaced on the ops
     cockpit / first-run gate for every gate still in report mode
     (`ACCESS_ASSIGNMENT_ENFORCE`, `ABAC_ENFORCE`, `ENABLE_OPA_AUTHZ`,
     `PAM_SESSION_RISK_GATE`, `POSTURE_DEVICE_TRUST_GATE`).
-11. ☐ **Constants dressed as measurements** — real uptime; the dashboard
+11. ✅ **Constants dressed as measurements** — *shipped* (real process uptime; `/dashboard/metrics` and `/dashboard/refresh` deleted rather than faked; session growth computed week-over-week and `null` when there is no prior week; the SAML "transient" NameID is random per assertion; the geo factor renamed to what it measures, an address change, since `GEOIP_SERVICE_URL` has no client). — real uptime; the dashboard
     metrics/refresh endpoints removed; predictive growth computed or
     removed; SAML transient NameID random per assertion; continuous-auth
     geo uses `GEOIP_SERVICE_URL` or reports the factor unavailable;

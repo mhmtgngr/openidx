@@ -12,8 +12,12 @@ func DashboardRoutes(router *gin.RouterGroup, handler *DashboardHandler) {
 	dashboard := router.Group("/dashboard")
 	{
 		dashboard.GET("", handler.GetDashboardStats)
-		dashboard.GET("/metrics", handler.GetMetrics)
-		dashboard.POST("/refresh", handler.RefreshCache)
+		// GET /metrics and POST /refresh are gone. The first returned a zero
+		// SystemMetrics while its swagger said "real-time CPU, memory and disk
+		// usage"; the second answered "Dashboard cache refreshed successfully"
+		// from a body that was one comment and one c.JSON, invalidating
+		// nothing. An endpoint that reports success for work it does not do is
+		// worse than a 404: the 404 is at least true.
 	}
 }
 

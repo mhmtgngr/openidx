@@ -2339,13 +2339,29 @@ func (s *Service) assignmentGateAllows(c *gin.Context, clientID, userID string) 
 		clientID, org.ID).Scan(&appID, &requiresAssignment)
 	if err != nil {
 		if !errors.Is(err, pgx.ErrNoRows) {
+			// A LOOKUP FAILURE IS NOT AN ABSENCE. Under enforcement this used
+			// to return true, so an unreachable or overloaded database
+			// disabled the gate at exactly the moment it mattered: every
+			// /oauth/authorize request would mint, for every application,
+			// including the ones an operator had opted into
+			// require_assignment. Refuse instead, and say why — in report mode
+			// (the default) the previous behaviour is kept, because there the
+			// gate is not deciding anything yet and failing closed would turn
+			// a database blip into an outage for a control that is off.
 			s.logger.Error("assignment gate: application lookup failed",
 				zap.String("client_id", clientID), zap.Error(err))
+			if s.config != nil && s.config.AccessAssignmentEnforce {
+				c.JSON(503, gin.H{
+					"error":             "temporarily_unavailable",
+					"error_description": "access assignment could not be verified",
+				})
+				return false
+			}
 		}
-		// No application row behind this client (or a lookup failure): there is
-		// nothing for the ASSIGNMENT gate to check. ABAC still applies — a
-		// policy can be written for resource_type "application" with no
-		// resource_id, meaning "every application".
+		// No application row behind this client: there is nothing for the
+		// ASSIGNMENT gate to check. ABAC still applies — a policy can be
+		// written for resource_type "application" with no resource_id, meaning
+		// "every application".
 		return s.abacGateAllows(c, userID, clientID, "")
 	}
 	// ABAC runs regardless of require_assignment: an attribute policy is a
@@ -2369,8 +2385,19 @@ func (s *Service) assignmentGateAllows(c *gin.Context, clientID, userID string) 
 
 	assigned, aerr := appaccess.Allowed(ctx, s.db, userID, org.ID, appID)
 	if aerr != nil {
+		// Same rule as the lookup above: under enforcement an unanswerable
+		// question is a refusal, not a pass. This application has
+		// require_assignment=true — an operator has explicitly said only
+		// assigned principals may have a token for it.
 		s.logger.Error("assignment gate: allowed check failed",
 			zap.String("application_id", appID), zap.Error(aerr))
+		if s.config != nil && s.config.AccessAssignmentEnforce {
+			c.JSON(503, gin.H{
+				"error":             "temporarily_unavailable",
+				"error_description": "access assignment could not be verified",
+			})
+			return false
+		}
 		return true
 	}
 
@@ -2852,7 +2879,14 @@ func (s *Service) handleSSOAuthorize(c *gin.Context, idpID string) {
 		return
 	}
 
-	// 2. Store original request parameters in Redis
+	// 2. Store original request parameters in Redis, WITH the IdP this flow
+	// belongs to. Without idp_id the callback had nothing to resolve the
+	// provider from and used ListIdentityProviders(0, 1)[0] — so with more
+	// than one IdP configured (and the console lets an admin add many) every
+	// callback was exchanged against the wrong provider's client credentials
+	// and failed, or worse succeeded against a provider the user never
+	// authenticated to. The key is namespaced under the same sso_state entry
+	// so it expires with the flow.
 	state := GenerateRandomToken(32)
 	originalParams := map[string]string{
 		"client_id":             c.Query("client_id"),
@@ -2863,6 +2897,7 @@ func (s *Service) handleSSOAuthorize(c *gin.Context, idpID string) {
 		"nonce":                 c.Query("nonce"),
 		"code_challenge":        c.Query("code_challenge"),
 		"code_challenge_method": c.Query("code_challenge_method"),
+		"idp_id":                idp.ID.String(),
 	}
 	paramsJSON, _ := json.Marshal(originalParams)
 	s.redis.Client.Set(c.Request.Context(), "sso_state:"+state, string(paramsJSON), 10*time.Minute)
@@ -2897,14 +2932,25 @@ func (s *Service) handleCallback(c *gin.Context) {
 	var originalParams map[string]string
 	json.Unmarshal([]byte(paramsJSON), &originalParams)
 
-	// 3. Get IdP from identity service (we need to store idp_id in the state)
-	// For now, let's assume we have only one IdP for simplicity
-	idps, _, err := s.identityService.ListIdentityProviders(c.Request.Context(), 0, 1)
-	if err != nil || len(idps) == 0 {
-		c.JSON(500, gin.H{"error": "no identity provider configured"})
+	// 3. Resolve the IdP this flow was started against, from the state.
+	idpID := originalParams["idp_id"]
+	if idpID == "" {
+		// A state written before this field existed, or a tampered one. There
+		// is no safe way to guess which provider issued the code: exchanging
+		// it against a different provider's credentials is precisely the bug
+		// this replaced.
+		s.logAuditEvent(c.Request.Context(), "authentication", "sso", "sso_login", "failure",
+			"", c.ClientIP(), "", "user", map[string]interface{}{"reason": "state_missing_idp"})
+		c.JSON(400, gin.H{"error": "invalid_state"})
 		return
 	}
-	idp := idps[0]
+	idp, err := s.identityService.GetIdentityProvider(c.Request.Context(), idpID)
+	if err != nil || idp == nil {
+		s.logAuditEvent(c.Request.Context(), "authentication", "sso", "sso_login", "failure",
+			"", c.ClientIP(), "", "user", map[string]interface{}{"reason": "idp_not_found", "idp_id": idpID})
+		c.JSON(400, gin.H{"error": "invalid_idp"})
+		return
+	}
 
 	// 4. Exchange code for tokens
 	oauth2Config := &oauth2.Config{

@@ -5,7 +5,6 @@ import (
 	"compress/flate"
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"encoding/xml"
@@ -702,7 +701,7 @@ func (s *Service) buildSAMLResponseForUser(user *SAMLUser, sp *SAMLServiceProvid
 		nameID = user.ID
 	case NameIDFormatTransient:
 		// Generate a transient ID - should be stored and consistent for the SP-user pair
-		nameID = generateTransientID(user.ID, sp.EntityID)
+		nameID = generateTransientID()
 	}
 
 	// Build attributes with mappings
@@ -780,13 +779,28 @@ func getNameIDFormat(policy *NameIDPolicy) string {
 	return policy.Format
 }
 
-// generateTransientID creates a transient NameID for a user-SP pair
-func generateTransientID(userID, spEntityID string) string {
-	// In production, this should be stored in the database and consistently returned
-	// For now, generate a deterministic value
-	data := userID + "|" + spEntityID
-	hash := sha256.Sum256([]byte(data))
-	return base64.URLEncoding.EncodeToString(hash[:])[:32]
+// generateTransientID creates a transient NameID.
+//
+// It must be unpredictable and unlinkable ACROSS assertions: that is what
+// urn:oasis:names:tc:SAML:2.0:nameid-format:transient means, and an SP or a
+// pair of colluding SPs relying on that property is the reason an
+// administrator picks it. This used to return sha256(userID|spEntityID) —
+// stable for the life of the account, so every assertion carried the same
+// identifier and the format's one guarantee was false while the metadata
+// advertised it. A stable pairwise identifier is what
+// nameid-format:persistent is for; if that is what an SP wants, configure that
+// format instead of this one.
+//
+// The user and SP are no longer inputs at all: taking them would invite the
+// same mistake back.
+func generateTransientID() string {
+	b := make([]byte, 24)
+	if _, err := rand.Read(b); err != nil {
+		// crypto/rand failing is not recoverable into a weaker identifier:
+		// a predictable "transient" NameID is the defect this replaced.
+		panic("saml: transient NameID requires crypto/rand: " + err.Error())
+	}
+	return base64.RawURLEncoding.EncodeToString(b)
 }
 
 // sendSAMLResponseToSP sends the SAML Response to the SP's ACS endpoint

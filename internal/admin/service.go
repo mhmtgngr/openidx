@@ -4,6 +4,7 @@ package admin
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -1407,9 +1408,22 @@ func (s *Service) handleTestSMS(c *gin.Context) {
 	// Force enabled for test
 	cfg := req.Settings.ToConfig()
 	cfg.Enabled = true
+	// AllowMock stays false here whatever the environment. The point of this
+	// button is to prove a real message reaches a real phone; the mock
+	// provider logs and returns nil, so it used to answer "Test SMS sent
+	// successfully" while sending nothing — a test that cannot fail is worse
+	// than no test.
+	cfg.AllowMock = false
 
 	smsService, err := sms.NewService(cfg, s.logger)
 	if err != nil {
+		if errors.Is(err, sms.ErrMockProviderNotAllowed) {
+			c.JSON(http.StatusNotImplemented, gin.H{
+				"error":   "the mock provider does not deliver messages; choose a real SMS provider before testing",
+				"success": false,
+			})
+			return
+		}
 		c.JSON(400, gin.H{"error": fmt.Sprintf("failed to create SMS service: %v", err), "success": false})
 		return
 	}

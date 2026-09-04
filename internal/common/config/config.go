@@ -1520,12 +1520,73 @@ func (c *Config) ValidateProduction() error {
 			"guacamole_admin_password is the built-in default; set GUACAMOLE_ADMIN_PASSWORD to a unique secret in production")
 	}
 
+	// Critical: DEV_ADMIN_BYPASS treats every caller as an admin across the
+	// access service's admin surface. It is a local-development convenience
+	// and nothing else stops it in production today.
+	if c.DevAdminBypass {
+		criticalIssues = append(criticalIssues,
+			"dev_admin_bypass must be false in production; it treats every caller as an admin on the access-service admin surface")
+	}
+
+	// Critical: a mock SMS provider delivers nothing. With SMS enabled, that
+	// means a factor a user can enrol into, that answers "code sent", and that
+	// strands them at verification.
+	if c.SMS.Enabled && strings.EqualFold(strings.TrimSpace(c.SMS.Provider), "mock") {
+		criticalIssues = append(criticalIssues,
+			"sms.provider is \"mock\" with SMS enabled; the mock provider delivers nothing — configure a real provider or set SMS_ENABLED=false")
+	}
+
 	if len(criticalIssues) > 0 {
 		return fmt.Errorf("production security validation failed:\n  - %s",
 			strings.Join(criticalIssues, "\n  - "))
 	}
 
 	return nil
+}
+
+// ReportModeGates lists the authorization controls that are configured but not
+// enforcing, with the value each currently has.
+//
+// It exists because ValidateProduction checked secrets, TLS, CORS, CSRF and
+// default passwords thoroughly and not one enforcement flag — an install could
+// pass the production gate with assignment enforcement off, ABAC off, OPA off,
+// the PAM session risk gate off and the device posture gate off, which is to
+// say with every authorization control in the product observing rather than
+// deciding. These are NOT errors: shipping in report mode first is the
+// designed rollout, and failing startup for it would punish the safe path. But
+// an operator has to be able to see the list, so the first-run gate and the
+// ops cockpit surface it and RELEASING/DoD can require it be empty.
+func (c *Config) ReportModeGates() []string {
+	var open []string
+	if !c.AccessAssignmentEnforce {
+		open = append(open, "ACCESS_ASSIGNMENT_ENFORCE=false — application assignment is a catalogue, not a grant")
+	}
+	if !strings.EqualFold(strings.TrimSpace(c.ABACEnforce), "enforce") {
+		open = append(open, "ABAC_ENFORCE="+valueOrOff(c.ABACEnforce)+" — attribute policies do not refuse anything")
+	}
+	if !c.EnableOPAAuthz {
+		open = append(open, "ENABLE_OPA_AUTHZ=false — OPA is not in the request path")
+	}
+	if !strings.EqualFold(strings.TrimSpace(c.PAMSessionRiskGate), "enforce") {
+		open = append(open, "PAM_SESSION_RISK_GATE="+valueOrOff(c.PAMSessionRiskGate)+" — risky privileged sessions are scored but never terminated")
+	}
+	if !strings.EqualFold(strings.TrimSpace(c.PostureDeviceTrustGate), "enforce") {
+		open = append(open, "POSTURE_DEVICE_TRUST_GATE="+valueOrOff(c.PostureDeviceTrustGate)+" — device posture never changes overlay reach")
+	}
+	if !c.AccessAPIRequireAuth {
+		open = append(open, "ACCESS_API_REQUIRE_AUTH=false — the access API accepts anonymous callers under APP_ENV=development")
+	}
+	if !c.AdminAPIRequireAuth {
+		open = append(open, "ADMIN_API_REQUIRE_AUTH=false — the admin API accepts anonymous callers under APP_ENV=development")
+	}
+	return open
+}
+
+func valueOrOff(v string) string {
+	if strings.TrimSpace(v) == "" {
+		return "off"
+	}
+	return v
 }
 
 // DebugOTPsEnabled returns true only if explicitly enabled via config.

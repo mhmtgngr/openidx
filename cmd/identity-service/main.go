@@ -239,6 +239,11 @@ func main() {
 		MutlucellAPIKey:    cfg.SMS.MutlucellAPIKey,
 		MutlucellSender:    cfg.SMS.MutlucellSender,
 	}
+	// The mock provider delivers nothing, so outside development it counts as
+	// not configured rather than as a provider — otherwise SMS_ENABLED=true
+	// alone yields an enrollable factor that says "code sent" and sends
+	// nothing (see sms.ErrMockProviderNotAllowed).
+	smsConfig.AllowMock = cfg.IsDevelopment()
 	// A broken SMS config (e.g. a typo'd provider name) leaves the factor
 	// unwired: the identity service then answers SMS MFA requests with 501
 	// "not configured" instead of pretending via a fallback mock.

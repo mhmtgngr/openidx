@@ -1225,3 +1225,89 @@ func TestAccessAssignmentEnforceDefaultsOff(t *testing.T) {
 		t.Error("ACCESS_ASSIGNMENT_ENFORCE=true must enable enforcement")
 	}
 }
+
+// ValidateProduction checked secrets, TLS, CORS, CSRF and default passwords
+// thoroughly, and not one enforcement flag. These two are the ones where the
+// unsafe value is unambiguously wrong in production rather than a staging
+// choice, so they are errors; the rest are reported by ReportModeGates.
+func TestValidateProductionRejectsDevBypassAndMockSMS(t *testing.T) {
+	base := func() *Config {
+		c := &Config{Environment: "production"}
+		c.AccessSessionSecret = "0123456789abcdef0123456789abcdef"
+		c.JWTSecret = "0123456789abcdef0123456789abcdef"
+		c.EncryptionKey = "0123456789abcdef0123456789abcdef"
+		c.VaultKEK = "0123456789abcdef0123456789abcdef"
+		c.CORSAllowedOrigins = "https://console.example.test"
+		return c
+	}
+
+	t.Run("dev admin bypass", func(t *testing.T) {
+		c := base()
+		c.DevAdminBypass = true
+		err := c.ValidateProduction()
+		if err == nil || !strings.Contains(err.Error(), "dev_admin_bypass") {
+			t.Fatalf("DEV_ADMIN_BYPASS=true in production must be refused, got: %v", err)
+		}
+	})
+
+	t.Run("mock SMS with SMS enabled", func(t *testing.T) {
+		c := base()
+		c.SMS.Enabled = true
+		c.SMS.Provider = "mock"
+		err := c.ValidateProduction()
+		if err == nil || !strings.Contains(err.Error(), "mock") {
+			t.Fatalf("an enabled mock SMS provider in production must be refused, got: %v", err)
+		}
+	})
+
+	t.Run("mock SMS with SMS disabled is fine", func(t *testing.T) {
+		c := base()
+		c.SMS.Provider = "mock" // not enabled: nothing claims to send
+		if err := c.ValidateProduction(); err != nil && strings.Contains(err.Error(), "mock") {
+			t.Fatalf("a mock provider with SMS disabled sends nothing and claims nothing: %v", err)
+		}
+	})
+}
+
+// The report-mode list is what makes "every authorization control is off" a
+// visible fact rather than something an operator has to reconstruct from seven
+// environment variables. An install with every gate open must list every gate.
+func TestReportModeGatesNamesEveryOpenControl(t *testing.T) {
+	c := &Config{} // every gate at its zero/default value: all report-mode
+	open := c.ReportModeGates()
+	for _, want := range []string{
+		"ACCESS_ASSIGNMENT_ENFORCE",
+		"ABAC_ENFORCE",
+		"ENABLE_OPA_AUTHZ",
+		"PAM_SESSION_RISK_GATE",
+		"POSTURE_DEVICE_TRUST_GATE",
+		"ACCESS_API_REQUIRE_AUTH",
+		"ADMIN_API_REQUIRE_AUTH",
+	} {
+		found := false
+		for _, line := range open {
+			if strings.Contains(line, want) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("ReportModeGates() does not mention %s; an operator reading it would think that control is enforcing", want)
+		}
+	}
+
+	// And a fully-enforcing install must report nothing, or the list is noise
+	// nobody will read.
+	full := &Config{
+		AccessAssignmentEnforce: true,
+		ABACEnforce:             "enforce",
+		EnableOPAAuthz:          true,
+		PAMSessionRiskGate:      "enforce",
+		PostureDeviceTrustGate:  "enforce",
+		AccessAPIRequireAuth:    true,
+		AdminAPIRequireAuth:     true,
+	}
+	if got := full.ReportModeGates(); len(got) != 0 {
+		t.Errorf("a fully-enforcing install still reports open gates: %v", got)
+	}
+}
