@@ -107,3 +107,55 @@ func DecisionDetails(enforcementPoint, userID, applicationID string, enforced bo
 	}
 	return d
 }
+
+// --- ABAC decisions -------------------------------------------------------
+//
+// The ABAC gate (internal/abac, ABAC_ENFORCE) writes through the same table
+// and the same canonical details keys as the assignment gate, so one query
+// over unified_audit_events finds every reason a request was refused or would
+// have been. Only the event_type and the reason differ, which is what lets an
+// operator separate "not assigned to the app" from "a policy said no".
+const (
+	// EventTypeABACWouldDeny is the observe-mode record: the tenant's policies
+	// denied, ABAC_ENFORCE was not "enforce", and the request proceeded. These
+	// are the rows an operator counts before moving to enforce.
+	EventTypeABACWouldDeny = "access.abac.would_deny"
+
+	// EventTypeABACDenied is the enforcement record.
+	EventTypeABACDenied = "access.abac.denied"
+
+	// ReasonABACDenied is the reason value both ABAC records carry.
+	ReasonABACDenied = "abac_policy_denied"
+)
+
+// ABACDecisionEventType maps one ABAC decision to its unified event_type.
+func ABACDecisionEventType(enforced bool) string {
+	if enforced {
+		return EventTypeABACDenied
+	}
+	return EventTypeABACWouldDeny
+}
+
+// ABACDecisionDetails builds the details payload for one ABAC decision. It
+// carries every key in DecisionDetailKeys, with reason = ReasonABACDenied, plus
+// the policy that decided it — without policy_id an operator reading a denial
+// cannot tell which of their policies produced it, which is the first question
+// they will ask.
+func ABACDecisionDetails(enforcementPoint, userID, applicationID, policyID, policyReason string, enforced bool, extra map[string]interface{}) map[string]interface{} {
+	d := map[string]interface{}{
+		"enforcement_point": enforcementPoint,
+		"user_id":           userID,
+		"application_id":    applicationID,
+		"reason":            ReasonABACDenied,
+		"enforced":          enforced,
+		"policy_id":         policyID,
+		"policy_reason":     policyReason,
+	}
+	for k, v := range extra {
+		if _, canonical := d[k]; canonical {
+			continue
+		}
+		d[k] = v
+	}
+	return d
+}

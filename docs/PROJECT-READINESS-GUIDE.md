@@ -1440,27 +1440,46 @@ class this whole program exists for.
    engineering in the programme and the one that decides whether "multi-tenant
    isolation is enforced" is true of the whole schema or only of the part
    somebody had listed.
-4. ☐ **OPA `deny` enforced** — `internal/common/middleware/opa.go`: abort
+4. ✅ **OPA `deny` enforced** — *shipped.* — `internal/common/middleware/opa.go`: abort
    unless `Allow && len(Deny)==0`; `authz.rego:15-19`'s "any authenticated
    user may GET anything" removed; `policies/access_control.rego`
    (unreachable package, phantom inputs) deleted; allow+deny → 403 test.
-5. ☐ **No-op buttons made honest** — `ai_recommendations.go` "Apply"
+5. ✅ **No-op buttons made honest** — *shipped.* — `ai_recommendations.go` "Apply"
    performs each action through the primitive that exists or returns 501
    with the reason (and the console shows it); `ispm.go` "Remediate"
    sends the reminder / opens the review item and marks
    `remediation_pending` / `flagged` — the score moves only when the next
    scan passes.
-6. ☐ **ABAC enforcement (D4)** — new `internal/abac` (the `internal/appaccess`
-   shape: small, DB-direct, importable by both enforcement points) holds
-   the evaluator moved out of `internal/governance/service.go`; governance
-   keeps thin wrappers so the page's test button runs the production
-   evaluator. `ABAC_ENFORCE` tri-state validated like
-   `PAM_SESSION_RISK_GATE`; wired inside `assignmentGateAllows`
-   (`internal/oauth/service.go`) and the proxy's assignment decision
-   (`internal/access/service.go`), subject = the user row's attributes +
-   roles + groups, resource = the application; `abac.would_deny` /
-   `abac.denied` written through the same durable audit path as
-   assignment decisions; a mode badge on the ABAC page.
+6. ✅ **ABAC enforcement (D4)** — *shipped.* The evaluator moved out of
+   `internal/governance` into **`internal/abac`** (the `internal/appaccess`
+   shape: small, DB-direct, importable by both enforcement points), and
+   governance keeps a thin wrapper so the ABAC Policies page's "Test" button
+   runs the **same** evaluator production does — which was the whole defect:
+   that button and a benchmark were its only callers, so an admin could author
+   a deny policy, watch the page confirm it evaluates to deny, save it, and
+   change nobody's access. `ABAC_ENFORCE=off|observe|enforce` (default off,
+   unrecognised values fail toward off) is validated like
+   `PAM_SESSION_RISK_GATE`, and is wired inside `assignmentGateAllows`
+   (`/oauth/authorize`, one call site covering all six mint sites) and the
+   access proxy's route handler. Subject attributes come from the columns this
+   schema really has — username, email, department, job_title,
+   employment_status, enabled, plus roles and groups as lists — deliberately
+   **not** from `identity.User.Attributes`, whose `db:"attributes"` tag names a
+   column `users` does not have and which would give every subject an empty
+   bag and every policy a silent non-match. Denials are audited through the
+   assignment gate's own durable path (`unified_audit_events`, same canonical
+   detail keys, new `access.abac.would_deny` / `access.abac.denied` event
+   types) and written on **both** the observe and enforce branches, so
+   enforcement is never quieter than report mode. The `// (fail-open in dev
+   mode)` comment is gone: the no-match default-allow is correct semantics for
+   additive policies, and there was never a dev check to justify the wording.
+   Also fixed on the way through: `in`/`not_in` now match when **any** member
+   of a list-valued attribute (roles, groups) is in the condition's list —
+   comparing the whole slice as one string, which is what the old code did,
+   made every roles/groups policy match nothing; and the ABAC CRUD handlers
+   (get, update, delete) gained the `org_id` predicate they were relying on
+   RLS alone for, which took `abac_policies` off the orgscope register.
+
 7. ☐ **SMS `mock` is not a provider** outside development
    (`internal/sms/service.go`); "Send test SMS" answers 501 on mock;
    `ValidateProduction` rejects `SMS_ENABLED=true` + `SMS_PROVIDER=mock`.

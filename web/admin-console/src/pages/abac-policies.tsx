@@ -66,6 +66,19 @@ interface ABACEvaluationResult {
   allowed: boolean
   reason?: string
   policy_id?: string
+  /**
+   * Whether any policy applied. A decision that matched nothing is an absence
+   * of opinion, not an approval — showing "Allowed" for it without saying so
+   * is how this page implied a policy was doing work it was not.
+   */
+  matched: boolean
+  /**
+   * The configured ABAC_ENFORCE state: off | observe | enforce. Until this
+   * existed, the evaluator behind this button had no other caller in the
+   * product, so a policy could be authored, tested, saved — and decide
+   * nothing, with nothing on screen saying so.
+   */
+  mode: string
 }
 
 // These lists are module-level, so they carry catalog keys rather than
@@ -754,6 +767,16 @@ export function ABACPoliciesPage() {
                     {t('pages.abacPolicies.test.matchedPolicy', { id: testResult.policy_id })}
                   </p>
                 )}
+                {!testResult.matched && (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {t('pages.abacPolicies.test.noPolicyMatched')}
+                  </p>
+                )}
+                <p className="mt-2 text-xs text-muted-foreground">
+                  {t(`pages.abacPolicies.test.mode.${testResult.mode || 'off'}`, {
+                    defaultValue: t('pages.abacPolicies.test.mode.off'),
+                  })}
+                </p>
               </div>
             )}
           </div>

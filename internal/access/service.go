@@ -24,6 +24,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/abac"
 	"github.com/openidx/openidx/internal/appaccess"
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
@@ -2204,6 +2205,15 @@ func (s *Service) handleProxy(c *gin.Context) {
 			return
 		}
 
+		// ABAC overlay. The tenant's attribute policies are the second half of
+		// the same rollout: authored on the ABAC Policies page, enforced here
+		// and at /oauth/authorize, staged through ABAC_ENFORCE=off|observe|
+		// enforce exactly like ACCESS_ASSIGNMENT_ENFORCE. With the flag off
+		// this costs no query.
+		if !s.abacGateAllows(c, route, session.UserID, appOrgID, appID) {
+			return
+		}
+
 		// Context-aware access evaluation
 		accessCtx, ctxErr := s.buildAccessContext(c, route, session)
 		if ctxErr != nil {
@@ -3380,4 +3390,74 @@ func singleJoiningSlash(a, b string) string {
 		return a + "/" + b
 	}
 	return a + b
+}
+
+// abacGateAllows applies the tenant's attribute-based policies to a proxied
+// request. Returns true when the request may proceed; false means a 403 has
+// already been written, matching the assignment gate's contract above it.
+func (s *Service) abacGateAllows(c *gin.Context, route *ProxyRoute, userID, orgID, appID string) bool {
+	if s.config == nil {
+		return true
+	}
+	mode := abac.ParseMode(s.config.ABACEnforce)
+	if mode == abac.ModeOff || orgID == "" {
+		return true
+	}
+	ctx := c.Request.Context()
+
+	attrs, err := abac.SubjectAttributes(ctx, s.db, userID, orgID)
+	if err != nil {
+		s.logger.Warn("abac gate: subject attributes unavailable",
+			zap.String("user_id", userID), zap.Error(err))
+	}
+
+	allow, wouldDeny, res := abac.Gate(ctx, s.db, orgID, mode, abac.EvaluationRequest{
+		UserAttributes: attrs,
+		ResourceType:   "application",
+		ResourceID:     appID,
+	})
+	if wouldDeny {
+		s.recordABACDecision(ctx, route, userID, appID, c.ClientIP(), res.PolicyID, res.Reason, !allow)
+	}
+	if !allow {
+		s.logger.Info("abac gate denied proxy request",
+			zap.String("user_id", userID),
+			zap.String("application_id", appID),
+			zap.String("policy_id", res.PolicyID))
+		c.JSON(http.StatusForbidden, gin.H{"error": "denied by policy", "reason": res.Reason})
+		return false
+	}
+	return true
+}
+
+// recordABACDecision is recordAssignmentDecision's counterpart for the ABAC
+// gate: same table, same canonical details keys, written on BOTH the observe
+// and enforce branches so enforcement is never quieter than report mode.
+func (s *Service) recordABACDecision(ctx context.Context, route *ProxyRoute, userID, appID, actorIP, policyID, policyReason string, enforced bool) {
+	eventType := appaccess.ABACDecisionEventType(enforced)
+
+	var routeID, routeName string
+	if route != nil {
+		routeID, routeName = route.ID, route.Name
+	}
+	details := appaccess.ABACDecisionDetails(appaccess.EnforcementPointProxy, userID, appID, policyID, policyReason, enforced,
+		map[string]interface{}{"route": routeName})
+
+	if s.auditService == nil {
+		s.logger.Warn("abac decision not recorded: unified audit service unavailable",
+			zap.String("event_type", eventType),
+			zap.String("user_id", userID),
+			zap.String("application_id", appID),
+			zap.Bool("enforced", enforced))
+		return
+	}
+	if err := s.auditService.RecordEvent(ctx, appaccess.SourceProxy, eventType,
+		routeID, userID, actorIP, details); err != nil {
+		s.logger.Warn("abac decision not recorded: unified audit write failed",
+			zap.String("event_type", eventType),
+			zap.String("user_id", userID),
+			zap.String("application_id", appID),
+			zap.Bool("enforced", enforced),
+			zap.Error(err))
+	}
 }

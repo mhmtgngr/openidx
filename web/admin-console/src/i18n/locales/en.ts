@@ -5015,6 +5015,12 @@ const en = {
         allowed: 'ALLOWED',
         denied: 'DENIED',
         matchedPolicy: 'Matched Policy: {{id}}',
+        noPolicyMatched: 'No policy matched, so these policies had nothing to say about this request.',
+        mode: {
+          off: 'ABAC_ENFORCE is off: policies are not consulted by any decision point yet. This result is a simulation.',
+          observe: 'ABAC_ENFORCE is observe: a denial like this is recorded in the audit trail but the request is still allowed.',
+          enforce: 'ABAC_ENFORCE is enforce: a denial like this refuses the request at /oauth/authorize and at the access proxy.',
+        },
       },
       toast: {
         created: 'ABAC policy created successfully',

@@ -73,3 +73,47 @@ func (s *Service) recordAssignmentDecision(ctx context.Context, userID, clientID
 			zap.Error(err))
 	}
 }
+
+// recordABACDecision durably records one /oauth/authorize ABAC decision, on the
+// same path and with the same guarantees as recordAssignmentDecision: it lands
+// in unified_audit_events, it is written on BOTH the observe and enforce
+// branches so enforcement is never quieter than report mode, it never
+// influences the verdict, and every failure is logged rather than swallowed.
+func (s *Service) recordABACDecision(ctx context.Context, userID, clientID, appID, actorIP, policyID, policyReason string, enforced bool) {
+	eventType := appaccess.ABACDecisionEventType(enforced)
+	details := appaccess.ABACDecisionDetails(appaccess.EnforcementPointOIDC, userID, appID, policyID, policyReason, enforced,
+		map[string]interface{}{"client_id": clientID})
+
+	if s.db == nil || s.db.Pool == nil {
+		s.logger.Warn("abac decision not recorded: no database handle",
+			zap.String("event_type", eventType),
+			zap.String("user_id", userID),
+			zap.String("client_id", clientID))
+		return
+	}
+
+	detailsJSON, err := json.Marshal(details)
+	if err != nil {
+		s.logger.Warn("abac decision not recorded: details would not marshal",
+			zap.String("event_type", eventType), zap.Error(err))
+		return
+	}
+
+	var userIDPtr *string
+	if userID != "" {
+		userIDPtr = &userID
+	}
+
+	//orgscope:ignore unified_audit_events has no org_id column by design (that is why it accepts these writes at all); the record is scoped by user_id + application_id instead
+	if _, err := s.db.Pool.Exec(ctx, `
+		INSERT INTO unified_audit_events (id, source, event_type, route_id, user_id, actor_ip, details, created_at)
+		VALUES ($1, $2, $3, NULL, $4, $5, $6, NOW())
+	`, uuid.New().String(), appaccess.SourceOIDC, eventType, userIDPtr, actorIP, detailsJSON); err != nil {
+		s.logger.Warn("abac decision not recorded: unified audit write failed",
+			zap.String("event_type", eventType),
+			zap.String("user_id", userID),
+			zap.String("client_id", clientID),
+			zap.Bool("enforced", enforced),
+			zap.Error(err))
+	}
+}

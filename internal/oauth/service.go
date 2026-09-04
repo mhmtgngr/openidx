@@ -31,6 +31,7 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/oauth2"
 
+	"github.com/openidx/openidx/internal/abac"
 	"github.com/openidx/openidx/internal/appaccess"
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
@@ -2342,9 +2343,20 @@ func (s *Service) assignmentGateAllows(c *gin.Context, clientID, userID string) 
 				zap.String("client_id", clientID), zap.Error(err))
 		}
 		// No application row behind this client (or a lookup failure): there is
-		// nothing to gate on, same as a client that does not require assignment.
-		return true
+		// nothing for the ASSIGNMENT gate to check. ABAC still applies — a
+		// policy can be written for resource_type "application" with no
+		// resource_id, meaning "every application".
+		return s.abacGateAllows(c, userID, clientID, "")
 	}
+	// ABAC runs regardless of require_assignment: an attribute policy is a
+	// statement about who may reach a resource, not an opt-in per application.
+	// It sits here rather than at each of the six mint sites so it cannot be
+	// forgotten at one of them, which is the failure mode
+	// TestNoUngatedMintSite exists to catch for the assignment half.
+	if !s.abacGateAllows(c, userID, clientID, appID) {
+		return false
+	}
+
 	if !requiresAssignment {
 		// Skip the Allowed() query entirely: authorizeAssignmentDecision would
 		// discard its result anyway (its first branch is
@@ -4525,4 +4537,56 @@ func containsScope(scopes []string, scope string) bool {
 		}
 	}
 	return false
+}
+
+// abacGateAllows applies the tenant's attribute-based policies to this
+// authorization request.
+//
+// Returns true when the request may proceed. false means a 403 has already
+// been written and the caller must return without minting — the same contract
+// as assignmentGateAllows, so the two read alike at every call site.
+//
+// With ABAC_ENFORCE unset or "off" (the default) this does no query at all, so
+// the gate costs nothing until an operator turns it on. In "observe" it
+// evaluates, records what WOULD have been denied, and permits.
+func (s *Service) abacGateAllows(c *gin.Context, userID, clientID, appID string) bool {
+	if s.config == nil {
+		return true
+	}
+	mode := abac.ParseMode(s.config.ABACEnforce)
+	if mode == abac.ModeOff {
+		return true
+	}
+	ctx := c.Request.Context()
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		// No tenant context: there are no policies to apply. Matches the
+		// assignment gate's handling of the same condition.
+		return true
+	}
+
+	attrs, err := abac.SubjectAttributes(ctx, s.db, userID, org.ID)
+	if err != nil {
+		s.logger.Warn("abac gate: subject attributes unavailable",
+			zap.String("user_id", userID), zap.Error(err))
+	}
+
+	allow, wouldDeny, res := abac.Gate(ctx, s.db, org.ID, mode, abac.EvaluationRequest{
+		UserAttributes: attrs,
+		ResourceType:   "application",
+		ResourceID:     appID,
+	})
+	if wouldDeny {
+		s.recordABACDecision(ctx, userID, clientID, appID, c.ClientIP(), res.PolicyID, res.Reason, !allow)
+	}
+	if !allow {
+		s.logger.Info("abac gate denied authorization",
+			zap.String("user_id", userID),
+			zap.String("client_id", clientID),
+			zap.String("application_id", appID),
+			zap.String("policy_id", res.PolicyID))
+		c.JSON(403, gin.H{"error": "access_denied", "error_description": res.Reason})
+		return false
+	}
+	return true
 }

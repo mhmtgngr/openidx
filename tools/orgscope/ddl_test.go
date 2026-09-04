@@ -321,7 +321,7 @@ func TestRegistersOnlyShrink(t *testing.T) {
 	}{
 		{"needsScoping", len(needsScoping), 61},
 		{"needsBelt", len(needsBelt), 34},
-		{"predicateAuditPending", len(predicateAuditPending), 19},
+		{"predicateAuditPending", len(predicateAuditPending), 18},
 		{"installWideTables", len(installWideTables), 21},
 		{"beltExempt", len(beltExempt), 5},
 	} {

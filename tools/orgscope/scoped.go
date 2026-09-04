@@ -216,7 +216,6 @@ var predicateAuditPending = map[string]string{
 	"campaign_runs":                 "governance certification",
 	"request_approval_chains":       "governance approvals",
 	"jit_grants":                    "governance JIT",
-	"abac_policies":                 "governance ABAC (P5.6 rewrites these call sites)",
 	"vault_secrets":                 "PAM vault",
 	"vault_secret_versions":         "PAM vault",
 	"vault_access_grants":           "PAM vault",

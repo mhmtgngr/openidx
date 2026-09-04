@@ -5001,6 +5001,12 @@ const tr: typeof en = {
         allowed: 'İZİN VERİLDİ',
         denied: 'REDDEDİLDİ',
         matchedPolicy: 'Eşleşen politika: {{id}}',
+        noPolicyMatched: 'Hiçbir politika eşleşmedi; bu istek hakkında söyleyecek bir şeyleri yoktu.',
+        mode: {
+          off: 'ABAC_ENFORCE kapalı: politikalar henüz hiçbir karar noktasında kullanılmıyor. Bu sonuç bir simülasyondur.',
+          observe: 'ABAC_ENFORCE gözlem modunda: böyle bir ret denetim kaydına yazılır ama istek yine de izin alır.',
+          enforce: 'ABAC_ENFORCE zorlama modunda: böyle bir ret isteği /oauth/authorize ve erişim vekilinde reddeder.',
+        },
       },
       toast: {
         created: 'ABAC politikası oluşturuldu',

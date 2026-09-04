@@ -230,6 +230,23 @@ type Config struct {
 	// session is auto-suspended in "enforce" mode. Default 80.
 	PAMSessionRiskThreshold int `mapstructure:"pam_session_risk_threshold"`
 
+	// ABACEnforce drives whether the tenant's attribute-based access policies
+	// decide anything. Until this existed they decided nothing anywhere: the
+	// evaluator's only callers were the ABAC Policies page's own "Test" button
+	// and a benchmark, so an admin could author a deny policy, watch the page
+	// confirm it evaluates to deny, and change no one's access. Same tri-state
+	// as the posture and PAM gates:
+	//   "off"     (default) — policies are not consulted; nothing is queried.
+	//   "observe" — evaluate and audit what WOULD be denied; permit.
+	//   "enforce" — evaluate and deny.
+	// Off by default because enforcing policies that have never enforced
+	// anything can lock people out of applications they use today; observe
+	// exists so the audit trail shows exactly whom enforcing would stop before
+	// the flag is flipped. Enforced at the two points the assignment gate uses
+	// (/oauth/authorize and the access proxy), so it covers both the token and
+	// the overlay path.
+	ABACEnforce string `mapstructure:"abac_enforce"`
+
 	// DevAdminBypass, when true, treats every caller as admin across the
 	// access-service admin surface (the inline PAM admin check and the
 	// requireAdminRole gate) — a local-development convenience so a single
@@ -762,6 +779,7 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("selfheal_state_dir", "/home/cmit/oidx-runtime/selfheal")
 	v.SetDefault("selfheal_scripts_dir", "scripts/selfheal")
 	v.SetDefault("pam_session_risk_gate", "off")
+	v.SetDefault("abac_enforce", "off")
 	v.SetDefault("pam_session_risk_threshold", 80)
 	v.SetDefault("dev_admin_bypass", false)
 	v.SetDefault("access_api_require_auth", false)
@@ -1000,6 +1018,7 @@ func bindEnvVars(v *viper.Viper) {
 		"selfheal_state_dir":                  "SELFHEAL_STATE_DIR",
 		"selfheal_scripts_dir":                "SELFHEAL_SCRIPTS_DIR",
 		"pam_session_risk_gate":               "PAM_SESSION_RISK_GATE",
+		"abac_enforce":                        "ABAC_ENFORCE",
 		"pam_session_risk_threshold":          "PAM_SESSION_RISK_THRESHOLD",
 		"dev_admin_bypass":                    "DEV_ADMIN_BYPASS",
 		"access_api_require_auth":             "ACCESS_API_REQUIRE_AUTH",
