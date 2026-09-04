@@ -6,11 +6,31 @@ on:
     paths:
       - 'deployments/kubernetes/helm/**'
       - '.github/workflows/helm.yml'
+      # kind-install builds the tools image from this tree and runs `migrate
+      # up` inside the cluster, so a change to any of these changes what the
+      # job proves.
+      - 'deployments/docker/Dockerfile.tools'
+      - 'cmd/migrate/**'
+      - 'cmd/backup/**'
+      - 'internal/migrations/**'
+      - 'migrations/**'
+      - 'scripts/check-chart-images*.sh'
+      - 'scripts/ci-retry.sh'
   pull_request:
     branches: [main]
     paths:
       - 'deployments/kubernetes/helm/**'
       - '.github/workflows/helm.yml'
+      # kind-install builds the tools image from this tree and runs `migrate
+      # up` inside the cluster, so a change to any of these changes what the
+      # job proves.
+      - 'deployments/docker/Dockerfile.tools'
+      - 'cmd/migrate/**'
+      - 'cmd/backup/**'
+      - 'internal/migrations/**'
+      - 'migrations/**'
+      - 'scripts/check-chart-images*.sh'
+      - 'scripts/ci-retry.sh'
   workflow_dispatch:
 
 permissions:
@@ -44,8 +64,137 @@ jobs:
       - name: Lint
         run: helm lint "$CHART"
 
+      # The bundled PostgreSQL/Redis passwords are `required` (an empty one
+      # rendered a DSN that could not authenticate), so a render has to supply
+      # them. These are placeholders for a manifest that is thrown away.
       - name: Template (default values)
-        run: helm template openidx "$CHART" > /tmp/render-default.yaml
+        run: |
+          helm template openidx "$CHART" \
+            --set secrets.postgresPassword=render-only-not-a-credential \
+            --set secrets.redisPassword=render-only-not-a-credential \
+            --set secrets.jwtSecret=render-only-not-a-credential-000000 \
+            --set secrets.encryptionKey=render-only-not-a-credential32b \
+            > /tmp/render-default.yaml
 
       - name: Template (production values)
         run: helm template openidx "$CHART" -f "$CHART/values-prod.yaml" > /tmp/render-prod.yaml
+
+  kind-install:
+    name: Install on kind
+    runs-on: ubuntu-latest
+    env:
+      CHART: deployments/kubernetes/helm/openidx
+      NS: openidx-ci
+      RELEASE: openidx
+      TOOLS_IMAGE: ghcr.io/mhmtgngr/openidx/tools:ci
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v5
+        with:
+          version: v3.14.4
+
+      # Cheap and static: catches the two ways this chart has named images that
+      # do not exist, before spending a cluster on finding out.
+      - name: Chart images resolve
+        run: bash scripts/check-chart-images.sh --enforce
+
+      - name: Self-test the image guard
+        run: bash scripts/check-chart-images.test.sh
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: openidx-ci
+
+      # The one image built from THIS tree. The migration Job runs it, so the
+      # Job succeeding is the proof that this branch's migrations apply to an
+      # empty database — which pulling main's published `latest` could never
+      # show. The other services stay at replicaCount 0 (see values-ci.yaml).
+      - name: Build the tools image (migrate + backup)
+        run: docker build -f deployments/docker/Dockerfile.tools -t "$TOOLS_IMAGE" .
+
+      - name: Load it into the cluster
+        run: kind load docker-image "$TOOLS_IMAGE" --name openidx-ci
+
+      - name: Add chart repos
+        run: bash scripts/ci-retry.sh 3 5 -- helm repo add bitnami https://charts.bitnami.com/bitnami
+
+      - name: Build chart dependencies
+        run: bash scripts/ci-retry.sh 3 5 -- helm dependency build "$CHART"
+
+      # --wait blocks on every Deployment/StatefulSet becoming Ready and on the
+      # post-install migration hook Job succeeding, so a green here already
+      # means the data plane came up and the schema landed.
+      - name: helm install --wait
+        run: |
+          helm upgrade --install "$RELEASE" "$CHART" \
+            --namespace "$NS" --create-namespace \
+            --values "$CHART/values-ci.yaml" \
+            --wait --timeout 12m
+
+      # Each of the four claims the readiness guide makes about this chart,
+      # asserted against the running cluster rather than a rendered manifest.
+      - name: The migration hook Job ran and succeeded
+        run: |
+          set -euo pipefail
+          succeeded=$(kubectl -n "$NS" get job "$RELEASE-migrate" -o jsonpath='{.status.succeeded}')
+          test "${succeeded:-0}" -ge 1 || { echo "migrate Job did not succeed"; exit 1; }
+          echo "migrate Job succeeded"
+
+      - name: The schema actually landed
+        run: |
+          set -euo pipefail
+          # `migrate up` exiting 0 on an empty database would satisfy the Job;
+          # counting applied versions is what proves it did the work.
+          applied=$(kubectl -n "$NS" exec "statefulset/$RELEASE-postgresql" -- \
+            env PGPASSWORD=ci-postgres-password \
+            psql -U openidx -d openidx -tAc 'SELECT count(*) FROM schema_migrations')
+          echo "applied migrations: $applied"
+          test "$applied" -gt 100 || { echo "expected the full migration set, got $applied"; exit 1; }
+
+      - name: OPA answers at the address config.opaUrl names
+        run: |
+          set -euo pipefail
+          # config.opaUrl is http://opa:8281, and the Service is named literally
+          # `opa` so that address resolves without configuration. Assert the
+          # name and port the config depends on, then that it is really serving.
+          port=$(kubectl -n "$NS" get svc opa -o jsonpath='{.spec.ports[0].port}')
+          test "$port" = "8281" || { echo "opa Service is on $port, config.opaUrl says 8281"; exit 1; }
+          kubectl -n "$NS" port-forward svc/opa 8281:8281 >/dev/null 2>&1 &
+          pf=$!
+          trap 'kill $pf 2>/dev/null || true' EXIT
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8281/health >/dev/null 2>&1; then
+              echo "opa:8281 is serving"; exit 0
+            fi
+            sleep 2
+          done
+          echo "opa did not answer /health"; exit 1
+
+      - name: The backup CronJob and NetworkPolicies exist
+        run: |
+          set -euo pipefail
+          kubectl -n "$NS" get cronjob "$RELEASE-backup" >/dev/null
+          echo "backup CronJob present"
+          policies=$(kubectl -n "$NS" get networkpolicy -o name | wc -l)
+          test "$policies" -ge 10 || { echo "expected the NetworkPolicy set, got $policies"; exit 1; }
+          kubectl -n "$NS" get networkpolicy "$RELEASE-default-deny-ingress" >/dev/null
+          echo "$policies NetworkPolicies present, including default-deny-ingress"
+
+      # A first red round should say what broke, not require a second push to
+      # find out.
+      - name: Diagnose
+        if: failure()
+        run: |
+          kubectl -n "$NS" get all,networkpolicy,secret 2>&1 | head -100 || true
+          echo "===== pods ====="
+          kubectl -n "$NS" describe pods 2>&1 | tail -200 || true
+          echo "===== migrate job ====="
+          kubectl -n "$NS" describe job "$RELEASE-migrate" 2>&1 | tail -60 || true
+          kubectl -n "$NS" logs "job/$RELEASE-migrate" --all-containers --tail=200 2>&1 || true
+          echo "===== postgres ====="
+          kubectl -n "$NS" logs "statefulset/$RELEASE-postgresql" --tail=120 2>&1 || true
+          echo "===== events ====="
+          kubectl -n "$NS" get events --sort-by=.lastTimestamp 2>&1 | tail -80 || true

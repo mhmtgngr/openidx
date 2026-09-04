@@ -37,7 +37,7 @@ spec:
       {{- end }}
       containers:
         - name: admin-api
-          image: "{{ .Values.global.imageRegistry }}/{{ .Values.adminApi.image.repository }}:{{ .Values.adminApi.image.tag }}"
+          image: "{{ include "openidx.imageRegistry" . }}/{{ .Values.adminApi.image.repository }}:{{ .Values.adminApi.image.tag }}"
           imagePullPolicy: {{ .Values.adminApi.image.pullPolicy }}
           {{- include "openidx.preStopHook" . | nindent 10 }}
           ports:

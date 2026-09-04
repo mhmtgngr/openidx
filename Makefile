@@ -369,9 +369,16 @@ helm-lint:
 
 helm-template:
 	@echo "📄 Rendering Helm templates..."
+	@# The bundled PostgreSQL/Redis passwords are `required`: an empty one used
+	@# to render a DSN that could not authenticate. Rendering supplies
+	@# throwaway values — a real install sets secrets.* for itself.
 	$(HELM) template openidx deployments/kubernetes/helm/openidx \
 		--namespace $(NAMESPACE) \
-		--values deployments/kubernetes/helm/openidx/values.yaml
+		--values deployments/kubernetes/helm/openidx/values.yaml \
+		--set secrets.postgresPassword=render-only-not-a-credential \
+		--set secrets.redisPassword=render-only-not-a-credential \
+		--set secrets.jwtSecret=render-only-not-a-credential-000000 \
+		--set secrets.encryptionKey=render-only-not-a-credential32b
 
 helm-install:
 	@echo "🚀 Installing OpenIDX..."

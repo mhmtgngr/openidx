@@ -37,7 +37,7 @@ spec:
       {{- end }}
       containers:
         - name: identity-service
-          image: "{{ .Values.global.imageRegistry }}/{{ .Values.identityService.image.repository }}:{{ .Values.identityService.image.tag }}"
+          image: "{{ include "openidx.imageRegistry" . }}/{{ .Values.identityService.image.repository }}:{{ .Values.identityService.image.tag }}"
           imagePullPolicy: {{ .Values.identityService.image.pullPolicy }}
           {{- include "openidx.preStopHook" . | nindent 10 }}
           ports:

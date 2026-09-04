@@ -42,7 +42,12 @@ import (
 )
 
 func insecureTLS() *tls.Config {
-	return &tls.Config{InsecureSkipVerify: true} //nolint:gosec // dev probing of self-signed edge
+	// InsecureSkipVerify is the point of this helper (the local edge serves a
+	// self-signed cert); the MinVersion floor is not, and costs nothing.
+	return &tls.Config{ //nolint:gosec // dev probing of self-signed edge
+		InsecureSkipVerify: true,
+		MinVersion:         tls.VersionTLS12,
+	}
 }
 
 // declaredCall is one frontend api.get<{...}>('path') site.

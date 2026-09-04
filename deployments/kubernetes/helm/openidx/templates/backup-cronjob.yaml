@@ -32,7 +32,7 @@ spec:
             {{- toYaml .Values.podSecurityContext | nindent 12 }}
           containers:
             - name: backup
-              image: "{{ .Values.global.imageRegistry }}/{{ .Values.backup.image.repository }}:{{ .Values.backup.image.tag }}"
+              image: "{{ include "openidx.imageRegistry" . }}/{{ .Values.backup.image.repository }}:{{ .Values.backup.image.tag }}"
               imagePullPolicy: {{ .Values.backup.image.pullPolicy | default "IfNotPresent" }}
               command: ["/app/backup", "create"]
               env:

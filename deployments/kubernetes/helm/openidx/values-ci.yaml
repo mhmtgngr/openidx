@@ -1,0 +1,125 @@
+# Values for the `kind` install proof (.github/workflows/helm.yml, job
+# `kind-install`). Not a deployment profile — do not copy this for a real
+# install; start from values.yaml or values-prod.yaml.
+#
+# What this overlay is for
+# ------------------------
+# `helm template` proves the chart RENDERS. It cannot prove the manifests are
+# admissible to a real API server, that the migration hook Job runs and
+# succeeds, that OPA answers at the address `config.opaUrl` names, or that the
+# backup CronJob and NetworkPolicies exist once installed. Those four claims
+# are what the readiness guide makes about this chart, and until this job
+# existed nothing checked any of them.
+#
+# What it deliberately does NOT prove
+# -----------------------------------
+# The eight OpenIDX services and the console run at replicaCount 0. Their
+# images are published from `main` (docker.yml tags `latest` only on the
+# default branch), so pulling them on a PR would test main's binaries against
+# this branch's chart — a green that means nothing and a red that means
+# someone else's build broke. At zero replicas the Deployments, Services,
+# PodDisruptionBudgets and per-service NetworkPolicies are still created and
+# still have to satisfy the API server, which is the part the chart owns.
+# The one image built from THIS tree is `tools`, because the migration Job
+# runs it: that Job succeeding is the proof that this branch's migrations
+# apply to an empty database.
+
+# global.imageRegistry is deliberately NOT overridden: the bitnami postgresql
+# and redis subcharts read the same key, so pointing it at a local namespace
+# rewrote THEIR images too and the data plane could not start. The kind job
+# instead builds and side-loads the tools image under the chart's own default
+# name (ghcr.io/mhmtgngr/openidx/tools:ci) and pins pullPolicy: Never, so the
+# rendered manifests are the ones a real install produces.
+
+# ----- Secrets -----
+# Throwaway values for a cluster that lives for the length of one job. The
+# encryption key is exactly 32 bytes, as the chart requires.
+secrets:
+  postgresPassword: "ci-postgres-password"
+  redisPassword: "ci-redis-password"
+  jwtSecret: "ci-jwt-secret-at-least-32-bytes-long!!"
+  encryptionKey: "ci-encryption-key-exactly-32-byte"
+
+# ----- The claims under test -----
+migrations:
+  enabled: true
+  image:
+    repository: tools
+    tag: ci
+    # Never: the image is side-loaded into the cluster, and IfNotPresent would
+    # still let a stale node-cached layer win.
+    pullPolicy: Never
+  # A failing migration should surface in one Job, not six retries and a
+  # ten-minute timeout that reads like a cluster problem.
+  backoffLimit: 0
+
+backup:
+  enabled: true
+  image:
+    repository: tools
+    tag: ci
+    pullPolicy: Never
+  pvc:
+    # emptyDir instead of a PVC. kind's default StorageClass binds
+    # WaitForFirstConsumer, and this claim has no consumer until the CronJob
+    # fires at 03:00 — so the PVC would sit Pending and `helm --wait` would
+    # burn its whole timeout on it. The claim's rendering is covered by
+    # scripts/check-chart-images.sh's template passes and by `helm template`
+    # in the lint job; what this job proves is that the CronJob is admitted.
+    create: false
+
+networkPolicy:
+  enabled: true
+
+opa:
+  enabled: true
+  replicas: 1
+
+# ----- Data plane -----
+postgresql:
+  enabled: true
+  primary:
+    persistence:
+      size: 1Gi
+
+redis:
+  enabled: true
+  # One node, not a master plus three replicas: this job needs Redis to be
+  # installable, not highly available, and four pods is four image pulls.
+  architecture: standalone
+  master:
+    persistence:
+      size: 1Gi
+
+# Three ES replicas asking for 30Gi each is not a chart claim; it is a
+# search backend nothing in this job talks to.
+elasticsearch:
+  enabled: false
+
+# PrometheusRule and ServiceMonitor need prometheus-operator CRDs that a bare
+# kind cluster does not have. Rendering is covered by the Template steps in
+# the lint job; admission is not claimed here.
+monitoring:
+  enabled: false
+  serviceMonitor:
+    enabled: false
+
+# ----- Application tier: created, not run (see the header) -----
+identityService:
+  replicaCount: 0
+governanceService:
+  replicaCount: 0
+provisioningService:
+  replicaCount: 0
+auditService:
+  replicaCount: 0
+adminApi:
+  replicaCount: 0
+oauthService:
+  replicaCount: 0
+gatewayService:
+  replicaCount: 0
+accessService:
+  replicaCount: 0
+adminConsole:
+  replicaCount: 0

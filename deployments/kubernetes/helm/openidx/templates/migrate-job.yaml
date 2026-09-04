@@ -55,7 +55,7 @@ spec:
       {{- end }}
       containers:
         - name: migrate
-          image: "{{ .Values.global.imageRegistry }}/{{ .Values.migrations.image.repository }}:{{ .Values.migrations.image.tag }}"
+          image: "{{ include "openidx.imageRegistry" . }}/{{ .Values.migrations.image.repository }}:{{ .Values.migrations.image.tag }}"
           imagePullPolicy: {{ .Values.migrations.image.pullPolicy | default "IfNotPresent" }}
           command: ["/app/migrate", "up"]
           envFrom:

@@ -1877,8 +1877,68 @@ policy answers 403 + audit on `/oauth/authorize`.
    reachable as a defect, and widening this PR to a second unenforced
    validator on a hunch is not the trade. It goes in P7.4.
 
+9. ✅ **The Helm chart installs — it could not, and nothing said so.** P6.4
+   asked for a `kind` job running `make helm-install --wait`, to prove the
+   four things the chart claims: the migration hook Job runs, OPA answers at
+   the address `config.opaUrl` names, the backup CronJob exists, and the
+   NetworkPolicies exist. Writing the job found that a default `helm install`
+   has **never** been able to start its own bundled data plane, for three
+   independent reasons, none of which `helm lint` or `helm template` can see —
+   because every one of them is a value that is only wrong at install time.
+
+   - **The registry key was the Bitnami subcharts'.** `values.yaml` put the
+     OpenIDX namespace in `global.imageRegistry`. That key belongs to the
+     Bitnami contract: their `common.images.image` prefers the *global* over
+     each subchart's own `image.registry`, so PostgreSQL, Redis and
+     Elasticsearch all rendered as
+     `ghcr.io/mhmtgngr/openidx/bitnami/postgresql:16.2.0-…` — an image that
+     has never existed. OpenIDX images now read `global.openidxRegistry`
+     through an `openidx.imageRegistry` helper, and `global.imageRegistry`
+     ships empty so each subchart falls back to `docker.io`. An operator who
+     set only the old key still gets their images from it.
+   - **The pinned tags had moved.** Bitnami relocated every non-`latest` tag
+     out of `docker.io/bitnami` in August 2025; the tags these chart versions
+     pin answer 404 there and 200 under `docker.io/bitnamilegacy`. So even
+     with the registry fixed, the data plane could not pull.
+   - **The database had two unrelated passwords and no user.** `DATABASE_URL`
+     named a role `openidx` that nothing created — `postgresql.auth.username`
+     was never set — with `secrets.postgresPassword`, while
+     `postgresql.auth.postgresPassword` stayed empty, and an empty value makes
+     the Bitnami chart *generate* a random password it keeps in its own
+     secret. Redis had the identical split. The bundled stores came up with
+     credentials the connection string could not match, so every service —
+     the migration Job first — failed to authenticate. Both subcharts now read
+     one chart-rendered `openidx-datastore-auth` secret, so
+     `secrets.postgresPassword` is the single knob and it is `required`
+     rather than silently empty.
+
+   Why it went unnoticed: `values-prod.yaml` disables all three subcharts, so
+   the reference deployment never touched them, and rendering is all CI did.
+   `scripts/check-chart-images.sh` (self-tested, red on each of the three
+   regressions) now catches the naming half statically, and the `kind-install`
+   job catches the rest by installing.
+
+   **What the job does and does not prove.** It builds the `tools` image from
+   *this* tree, side-loads it, and asserts the migration Job succeeded *and*
+   that `schema_migrations` carries the full set — `migrate up` exiting 0
+   against an empty database would satisfy the Job alone. It then asserts the
+   `opa` Service is on 8281 and answers `/health`, and that the backup CronJob
+   and the NetworkPolicy set exist. The eight services and the console run at
+   `replicaCount: 0`: their images are published from `main`, so pulling them
+   on a PR would test main's binaries against this branch's chart. Their
+   Deployments, Services, PDBs and NetworkPolicies are still created and still
+   have to satisfy the API server, which is the part the chart owns.
+
 *Exit test:* every new job green on the PR; DoD items 1, 2, 4 and 6 point
 at a job.
+
+**Branch protection must list these by name.** `status-check` in `ci.yml`
+aggregates that workflow's jobs and cannot reach across workflows, so
+`Docs build clean under --strict`, `Secret Scanning (Gitleaks)`,
+`SAST Scan (Semgrep)`, `Go Dependency Scan`, `NPM Dependency Scan` and now
+`Install on kind` are only blocking if the repository's branch-protection
+rule names them. That gap is exactly how Semgrep stayed red for five
+commits without anyone noticing.
 
 ### P7 — One console, one client
 

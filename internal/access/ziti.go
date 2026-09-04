@@ -209,7 +209,11 @@ func NewZitiManager(cfg *config.Config, db *database.PostgresDB, logger *zap.Log
 	// error so production deploys can't silently lose verification.
 	// Previously this set InsecureSkipVerify unconditionally, which
 	// erased the value of every CA we then bolted on.
-	tlsConfig := &tls.Config{}
+	// TLS 1.2 floor: Go's default minimum has moved before and will again,
+	// and this client talks to an operator-run controller whose version we
+	// don't choose. Pinning the floor here means the handshake this process
+	// will accept is stated in the repo rather than inherited.
+	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}
 	caFile := filepath.Join(cfg.ZitiIdentityDir, "ca.pem")
 	caLoaded := false
 	if caPEM, err := os.ReadFile(caFile); err == nil {

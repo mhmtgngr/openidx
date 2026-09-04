@@ -37,7 +37,7 @@ spec:
       {{- end }}
       containers:
         - name: oauth-service
-          image: "{{ .Values.global.imageRegistry }}/{{ .Values.oauthService.image.repository | default "oauth-service" }}:{{ .Values.oauthService.image.tag | default "latest" }}"
+          image: "{{ include "openidx.imageRegistry" . }}/{{ .Values.oauthService.image.repository | default "oauth-service" }}:{{ .Values.oauthService.image.tag | default "latest" }}"
           imagePullPolicy: {{ .Values.oauthService.image.pullPolicy | default "IfNotPresent" }}
           {{- include "openidx.preStopHook" . | nindent 10 }}
           ports:

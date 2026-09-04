@@ -37,7 +37,7 @@ spec:
       {{- end }}
       containers:
         - name: provisioning-service
-          image: "{{ .Values.global.imageRegistry }}/{{ .Values.provisioningService.image.repository }}:{{ .Values.provisioningService.image.tag }}"
+          image: "{{ include "openidx.imageRegistry" . }}/{{ .Values.provisioningService.image.repository }}:{{ .Values.provisioningService.image.tag }}"
           imagePullPolicy: {{ .Values.provisioningService.image.pullPolicy }}
           {{- include "openidx.preStopHook" . | nindent 10 }}
           ports:

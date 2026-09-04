@@ -37,7 +37,7 @@ spec:
       {{- end }}
       containers:
         - name: audit-service
-          image: "{{ .Values.global.imageRegistry }}/{{ .Values.auditService.image.repository }}:{{ .Values.auditService.image.tag }}"
+          image: "{{ include "openidx.imageRegistry" . }}/{{ .Values.auditService.image.repository }}:{{ .Values.auditService.image.tag }}"
           imagePullPolicy: {{ .Values.auditService.image.pullPolicy }}
           {{- include "openidx.preStopHook" . | nindent 10 }}
           ports:
