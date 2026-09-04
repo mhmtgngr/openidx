@@ -62,6 +62,7 @@ redis://[:password@]host:port[/db]
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
 | `OAUTH_ISSUER` | string | - | Token issuer URL |
+| `OAUTH_LOGIN_URL` | url | `<OAUTH_ISSUER>/login` | Where `/oauth/authorize` sends a browser to sign in. Set it when the admin console is served from a different origin than the issuer; the reference compose stack is exactly that case. Must be an absolute URL. |
 | `OAUTH_ACCESS_TOKEN_TTL` | duration | `1h` | Access token lifetime |
 | `OAUTH_REFRESH_TOKEN_TTL` | duration | `720h` | Refresh token lifetime (30 days) |
 | `OAUTH_AUTH_CODE_TTL` | duration | `10m` | Authorization code lifetime |

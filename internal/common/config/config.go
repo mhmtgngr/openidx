@@ -298,16 +298,21 @@ type Config struct {
 	// docs/access-and-login-convergence-design.md.
 	AccessAssignmentEnforce bool `mapstructure:"access_assignment_enforce"`
 
-	// OAuthLoginUI selects which login UI /oauth/authorize sends the browser to.
-	// "server" (the default) preserves today's behaviour exactly: a public
-	// client whose Accept header isn't application/json gets the
-	// server-rendered login page, everyone else is redirected back to their
-	// own redirect_uri with ?login_session=. "spa" sends every client —
-	// public, confidential, native — to the IdP's own /login page instead,
-	// which is what lets a single login UI (and eventually the deletion of the
-	// server-rendered page) work for a native client whose redirect_uri is a
-	// custom scheme it cannot host a page at.
-	OAuthLoginUI string `mapstructure:"oauth_login_ui"`
+	// OAuthLoginURL is where /oauth/authorize sends a browser to sign in.
+	// Empty (the default) means "<issuer>/login".
+	//
+	// It replaces OAUTH_LOGIN_UI, a flag that chose between the SPA login and a
+	// second, server-rendered login page that no longer exists — a flag with
+	// one remaining option is dead configuration. The URL is needed because the
+	// SPA is not always served from the issuer's origin: the production nginx
+	// puts both at openidx.tdv.org, but the reference compose stack has the
+	// issuer at oauth.localtest.me:8446 and the console at localhost:3000, so
+	// deriving the login page from the issuer alone would 404 every sign-in
+	// there.
+	//
+	// Set it to the console's own /login (e.g. https://console.example.com/login).
+	// The login_session query parameter is appended by loginRedirectURL.
+	OAuthLoginURL string `mapstructure:"oauth_login_url"`
 
 	// OpenZiti configuration
 	ZitiEnabled           bool   `mapstructure:"ziti_enabled"`
@@ -786,7 +791,6 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("admin_api_require_auth", false)
 	v.SetDefault("show_all_apps_when_unassigned", false)
 	v.SetDefault("access_assignment_enforce", false)
-	v.SetDefault("oauth_login_ui", "server")
 
 	// Database defaults
 	v.SetDefault("database_url", "postgres://openidx:openidx_secret@localhost:5432/openidx?sslmode=disable")
@@ -1025,7 +1029,7 @@ func bindEnvVars(v *viper.Viper) {
 		"admin_api_require_auth":              "ADMIN_API_REQUIRE_AUTH",
 		"show_all_apps_when_unassigned":       "SHOW_ALL_APPS_WHEN_UNASSIGNED",
 		"access_assignment_enforce":           "ACCESS_ASSIGNMENT_ENFORCE",
-		"oauth_login_ui":                      "OAUTH_LOGIN_UI",
+		"oauth_login_url":                     "OAUTH_LOGIN_URL",
 		"shutdown_timeout_seconds":            "SHUTDOWN_TIMEOUT_SECONDS",
 		"public_base_url":                     "PUBLIC_BASE_URL",
 		"oauth_issuer":                        "OAUTH_ISSUER",

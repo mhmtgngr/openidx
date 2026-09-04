@@ -35,9 +35,10 @@ grants) — and they did not talk to each other. That is being converged:
 `/oauth/authorize` gate, and the Ziti dial policies are all derived from it
 through one predicate (`internal/appaccess`).
 
-The convergence ships behind staged flags (`ACCESS_ASSIGNMENT_ENFORCE`,
-`OAUTH_LOGIN_UI`) with a **reachability report** an admin drives to clean
-before flipping enforcement — nobody silently loses access. Until your
+The convergence ships behind one staged flag (`ACCESS_ASSIGNMENT_ENFORCE`)
+with a **reachability report** an admin drives to clean before flipping
+enforcement — nobody silently loses access. The login half is no longer a
+flag: there is a single login UI, and `OAUTH_LOGIN_URL` says where it is. Until your
 deployment flips the flags, treat route roles and dial policies as the
 enforced truth and assignments as the catalogue. PAM entry grants stay their
 own enforcement layer by design — privileged access is deliberately a

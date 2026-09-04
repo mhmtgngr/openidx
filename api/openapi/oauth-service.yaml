@@ -150,7 +150,17 @@ paths:
             enum: [S256]
       responses:
         '302':
-          description: Redirect to login page
+          description: >-
+            Redirect to the login UI (OAUTH_LOGIN_URL, default
+            `<issuer>/login`) with a `login_session` query parameter. Every
+            client gets this, public and confidential alike; the server used to
+            render its own login form for public clients and no longer does.
+          headers:
+            Location:
+              description: The login UI, carrying `?login_session=...`
+              schema:
+                type: string
+                format: uri
         '400':
           description: Invalid request
     post:
@@ -166,12 +176,18 @@ paths:
     post:
       tags: [Authorization]
       summary: Resource owner login
+      description: >-
+        The login UI posts the credentials it collected, together with the
+        `login_session` the authorize redirect handed it, and gets back the
+        redirect that carries the authorization code. This is a JSON API, not a
+        form post: the server-rendered login that submitted a form was deleted,
+        and this endpoint is the single remaining credential entry point.
       operationId: login
       security: []
       requestBody:
         required: true
         content:
-          application/x-www-form-urlencoded:
+          application/json:
             schema:
               type: object
               required: [username, password, login_session]
@@ -183,10 +199,42 @@ paths:
                 login_session:
                   type: string
       responses:
-        '302':
-          description: Redirect to callback with authorization code
+        '200':
+          description: >-
+            Authenticated. Either the authorization code (as `redirect_url`, the
+            client redirect_uri with `?code=`), or an MFA challenge the caller
+            must complete at `/oauth/mfa-verify` before a code is issued.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  redirect_url:
+                    type: string
+                    format: uri
+                  mfa_required:
+                    type: boolean
+                  mfa_session:
+                    type: string
+                  available_methods:
+                    type: array
+                    items:
+                      type: string
+        '400':
+          description: Missing or expired login_session
         '401':
           description: Invalid credentials
+        '403':
+          description: >-
+            Refused by a gate rather than by the credentials: the user is not
+            assigned to an application whose `require_assignment` is set and
+            `ACCESS_ASSIGNMENT_ENFORCE` is on, an ABAC policy denied under
+            `ABAC_ENFORCE=enforce`, or the login is blocked by country or device
+            trust. Body carries `error: access_denied`.
+        '503':
+          description: >-
+            Under `ACCESS_ASSIGNMENT_ENFORCE=true`, the assignment could not be
+            verified (the gate fails closed rather than issuing a code).
 
   /oauth/callback:
     get:

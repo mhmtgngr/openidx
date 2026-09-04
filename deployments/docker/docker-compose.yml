@@ -485,6 +485,12 @@ services:
       - OTEL_SERVICE_NAME=oauth-service
       - JWT_SECRET=${JWT_SECRET:?JWT_SECRET required - run scripts/generate-secrets.sh}
       - OAUTH_ISSUER=https://oauth.localtest.me:8446
+      # Where /oauth/authorize sends a browser to sign in. It defaults to
+      # <issuer>/login, which is right for the production nginx (SPA and issuer
+      # on one origin) and wrong here: the issuer is oauth.localtest.me:8446
+      # and the console is localhost:3000, so without this every sign-in would
+      # 404 on a page the oauth service does not serve.
+      - OAUTH_LOGIN_URL=http://localhost:3000/login
       - PORT=8006
     ports:
       - "8006:8006"

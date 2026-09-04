@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -274,15 +275,44 @@ func (h *AuthorizeHandler) storeAuthorizationRequest(ctx context.Context, sessio
 	return h.service.redis.Client.HMSet(ctx, key, data).Err()
 }
 
-// redirectToLogin redirects the user to the login page
+// redirectToLogin sends the browser to the one login UI, having written the
+// session the login endpoint will read.
+//
+// Both halves were broken. storeAuthorizationRequest writes an HMSet hash
+// under "auth_request:<id>", while POST /oauth/login reads a JSON string under
+// "login_session:<id>" — so a v2 flow that reached the login step always found
+// nothing and failed with "invalid login session". And it redirected to the
+// relative path /oauth/login, the server-rendered page that no longer exists.
+// The v2 hop therefore never completed for any client; it is repaired here
+// rather than left as a second broken path beside the one being deleted.
 func (h *AuthorizeHandler) redirectToLogin(c *gin.Context, req *AuthorizeRequest, sessionID string) {
-	loginURL, _ := url.Parse("/oauth/login")
-	query := loginURL.Query()
-	query.Set("login_session", sessionID)
-	query.Set("redirect_uri", req.RedirectURI)
-	loginURL.RawQuery = query.Encode()
+	oauthParams := map[string]string{
+		"client_id":             req.ClientID,
+		"redirect_uri":          req.RedirectURI,
+		"response_type":         req.ResponseType,
+		"scope":                 req.Scope,
+		"state":                 req.State,
+		"nonce":                 req.Nonce,
+		"code_challenge":        req.CodeChallenge,
+		"code_challenge_method": req.CodeChallengeMethod,
+	}
+	paramsJSON, err := json.Marshal(oauthParams)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "server_error"})
+		return
+	}
+	if err := h.service.redis.Client.Set(c.Request.Context(),
+		"login_session:"+sessionID, string(paramsJSON), 10*time.Minute).Err(); err != nil {
+		c.JSON(500, gin.H{"error": "server_error", "error_description": "could not start the login session"})
+		return
+	}
 
-	c.Redirect(302, loginURL.String())
+	target := loginRedirectURL(h.service.loginURL(), sessionID)
+	if target == "" {
+		c.JSON(500, gin.H{"error": "server_error", "error_description": "login URL is not configured"})
+		return
+	}
+	c.Redirect(302, target)
 }
 
 // handleError handles authorization errors and redirects appropriately

@@ -152,8 +152,7 @@ func (s *Service) handleMFASendOTP(c *gin.Context) {
 // flows. POST /oauth/native/login-init.
 //
 // The browser authorize flow (handleAuthorize) mints the login_session during a
-// 302 redirect to the server-rendered login page — which a native RN client
-// can't intercept. This exposes the same capture+validate+store step as a JSON
+// 302 redirect to the login UI — which a native RN client can't intercept. This exposes the same capture+validate+store step as a JSON
 // endpoint so the app can then drive /oauth/passkey-begin|finish with the
 // returned login_session. Public/PKCE only: a code_challenge is required and the
 // redirect_uri must be registered for the client (same checks as handleAuthorize).

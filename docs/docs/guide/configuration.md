@@ -33,6 +33,7 @@ OpenIDX services are configured via environment variables. All services share a 
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `OAUTH_ISSUER` | OAuth issuer URL | `http://localhost:8006` |
+| `OAUTH_LOGIN_URL` | Absolute URL of the login page `/oauth/authorize` redirects to. Set it when the console is not on the issuer's origin. | `<OAUTH_ISSUER>/login` |
 | `OAUTH_JWKS_URL` | JWKS endpoint URL | — |
 
 ### External Services

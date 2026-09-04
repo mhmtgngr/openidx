@@ -14,7 +14,6 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"html"
 	"net/url"
 	"strconv"
 	"strings"
@@ -1312,20 +1311,16 @@ func RegisterRoutes(router *gin.Engine, svc *Service, clientMgmtAuth gin.Handler
 			oauth.POST("/authorize/v2", svc.handleAuthorizeConsentV2)
 		}
 
-		// Server-rendered login form callback (for standard OIDC clients)
-		oauth.POST("/authorize/callback", svc.handleAuthorizeCallback)
-		// Second-factor steps for the server-rendered login page (hosted_mfa.go).
-		oauth.POST("/authorize/mfa", svc.handleAuthorizeMFA)
-		oauth.POST("/authorize/mfa/method", svc.handleAuthorizeMFAMethod)
-		oauth.POST("/authorize/mfa/send", svc.handleAuthorizeMFASend)
-		oauth.POST("/authorize/mfa/push", svc.handleAuthorizeMFAPush)
-		oauth.GET("/authorize/mfa/wait", svc.handleAuthorizeMFAWait)
+		// There is ONE login UI: the SPA. POST /authorize/callback, the five
+		// /authorize/mfa* steps and GET /login were the second one — a
+		// server-rendered form and its own second-factor pages, in Go, with
+		// hardcoded English and <label>/<input> pairs carrying no htmlFor, so
+		// outside every i18n and accessibility gate this project built, on the
+		// page a public OIDC client got by default. Two credential pipelines
+		// also meant two places for an MFA or lockout decision to drift.
+		// routes_legacy_login_test.go asserts they stay gone.
 
-		// Login page (GET) — the target of the /oauth/authorize[/v2] redirect for
-		// native/redirect clients; renders the server-side login form.
-		oauth.GET("/login", svc.handleLoginPage)
-
-		// Login endpoint for direct authentication (SPA flow)
+		// Login endpoint for direct authentication (the SPA posts here).
 		oauth.POST("/login", svc.handleLogin)
 
 		// MFA verification endpoint
@@ -1618,51 +1613,42 @@ func (s *Service) handleAuthorize(c *gin.Context) {
 	paramsJSON, _ := json.Marshal(oauthParams)
 	s.redis.Client.Set(c.Request.Context(), "login_session:"+loginSession, string(paramsJSON), 10*time.Minute)
 
-	// For public OIDC clients (like BrowZer), serve a server-rendered login page
-	// instead of redirecting back to the client with login_session. This is
-	// the DEFAULT path here — it stays on for OAUTH_LOGIN_UI unset, "server",
-	// or any unrecognised value, and only the explicit opt-in
-	// OAUTH_LOGIN_UI=spa turns it off. That direction matters: a typo'd or
-	// missing flag value must fail toward today's behaviour, not silently
-	// strand a public client (like BrowZer) with a login_session redirect to
-	// its own redirect_uri and no page to handle it.
-	//
-	// This is not the only path that reaches renderLoginPage: GET /oauth/login
-	// (handleLoginPage) and /oauth/authorize/v2 both render it unconditionally
-	// today, regardless of this flag — a later task deleting the page must
-	// account for those too.
-	if s.config.OAuthLoginUI != "spa" && client != nil && client.Type == "public" && c.GetHeader("Accept") != "application/json" {
-		s.renderLoginPage(c, loginSession, "")
-		return
-	}
-
-	redirectURI := oauthParams["redirect_uri"]
-	if redirectURI == "" {
-		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "redirect_uri is required"})
-		return
-	}
-
-	target := loginRedirectURL(s.issuer, redirectURI, loginSession, s.config.OAuthLoginUI)
+	// Every client goes to the one login UI. Public, confidential and native
+	// alike: the reason a second, server-rendered login existed was that a
+	// native client whose redirect_uri is a custom scheme cannot host a page
+	// at it — sending everyone to the IdP's own login solves that without a
+	// second credential pipeline.
+	target := loginRedirectURL(s.loginURL(), loginSession)
 	if target == "" {
-		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "invalid redirect_uri"})
+		c.JSON(500, gin.H{"error": "server_error", "error_description": "login URL is not configured"})
 		return
 	}
 	c.Redirect(302, target)
 }
 
-// loginRedirectURL decides where the browser goes to authenticate.
+// loginURL is where a browser is sent to sign in: OAUTH_LOGIN_URL when set,
+// otherwise <issuer>/login.
 //
-// In "spa" mode every client is sent to the IdP's own login page, which is the
-// ordinary hosted-IdP pattern and the thing that makes a single login UI
-// possible: a native client (redirect_uri openidx://oauth-callback) cannot host
-// one, which is why a second, server-rendered login existed at all.
-func loginRedirectURL(issuer, clientRedirectURI, loginSession, ui string) string {
-	target := clientRedirectURI
-	if ui == "spa" {
-		target = strings.TrimRight(issuer, "/") + "/login"
+// The default is right for the production deployment, where nginx serves the
+// SPA and the issuer from one origin. It is wrong for the reference compose
+// stack, where the issuer is oauth.localtest.me:8446 and the console is
+// localhost:3000 — hence the override, which that stack sets.
+func (s *Service) loginURL() string {
+	if s.config != nil && strings.TrimSpace(s.config.OAuthLoginURL) != "" {
+		return strings.TrimSpace(s.config.OAuthLoginURL)
 	}
-	u, err := url.Parse(target)
-	if err != nil {
+	return strings.TrimRight(s.issuer, "/") + "/login"
+}
+
+// loginRedirectURL appends the login_session to the login page's URL.
+//
+// It used to take the client's own redirect_uri and a ui flag, and in the
+// default mode sent the browser BACK to the client with ?login_session= — a
+// shape only a client hosting its own login page could use. There is one login
+// UI now, so there is one destination.
+func loginRedirectURL(loginPageURL, loginSession string) string {
+	u, err := url.Parse(loginPageURL)
+	if err != nil || u.Host == "" {
 		return ""
 	}
 	q := u.Query()
@@ -1675,320 +1661,6 @@ func loginRedirectURL(issuer, clientRedirectURI, loginSession, ui string) string
 // This handler implements RFC 6749 (Authorization Code Flow) and RFC 7636 (PKCE)
 func (s *Service) handleAuthorizeV2(c *gin.Context) {
 	s.authorizeHandler.HandleAuthorizeRequest(c)
-}
-
-// loginBranding holds the per-tenant branding applied to the server-rendered
-// login page. Mirrors the tenant_branding columns the admin Branding page edits.
-type loginBranding struct {
-	LogoURL            string
-	FaviconURL         string
-	PrimaryColor       string
-	SecondaryColor     string
-	BackgroundColor    string
-	BackgroundImageURL string
-	LoginPageTitle     string
-	LoginPageMessage   string
-	PortalTitle        string
-	CustomCSS          string
-	CustomFooter       string
-	PoweredByVisible   bool
-}
-
-func defaultLoginBranding() loginBranding {
-	return loginBranding{
-		PrimaryColor:     "#3b82f6",
-		SecondaryColor:   "#2563eb",
-		BackgroundColor:  "#0f172a",
-		LoginPageTitle:   "Sign In",
-		PortalTitle:      "OpenIDX Zero Trust Platform",
-		PoweredByVisible: true,
-	}
-}
-
-// loadLoginBranding resolves the request's org (set by the TenantResolver from
-// the subdomain / X-Org-Slug / fallback) and loads its branding from
-// tenant_branding, falling back to defaults when there is no org or no row.
-// tenant_branding is not RLS-scoped, so this unauthenticated read needs no
-// bypass; if it ever becomes org-scoped, switch to orgctx.WithBypassRLS here.
-func (s *Service) loadLoginBranding(ctx context.Context) loginBranding {
-	b := defaultLoginBranding()
-	org, err := orgctx.From(ctx)
-	if err != nil || s.db == nil || s.db.Pool == nil {
-		return b
-	}
-	var logo, fav, primary, secondary, bg, bgImg, title, msg, portal, css, footer string
-	var powered bool
-	if qerr := s.db.Pool.QueryRow(ctx,
-		`SELECT COALESCE(logo_url,''), COALESCE(favicon_url,''), COALESCE(primary_color,''),
-		        COALESCE(secondary_color,''), COALESCE(background_color,''), COALESCE(background_image_url,''),
-		        COALESCE(login_page_title,''), COALESCE(login_page_message,''), COALESCE(portal_title,''),
-		        COALESCE(custom_css,''), COALESCE(custom_footer,''), COALESCE(powered_by_visible,true)
-		 FROM tenant_branding WHERE org_id = $1`, org.ID).Scan(
-		&logo, &fav, &primary, &secondary, &bg, &bgImg, &title, &msg, &portal, &css, &footer, &powered); qerr != nil {
-		return b
-	}
-	// Overlay non-empty values over the defaults so an unset column never blanks the page.
-	b.LogoURL, b.FaviconURL, b.BackgroundImageURL = logo, fav, bgImg
-	b.CustomCSS, b.CustomFooter, b.LoginPageMessage = css, footer, msg
-	b.PoweredByVisible = powered
-	if primary != "" {
-		b.PrimaryColor = primary
-	}
-	if secondary != "" {
-		b.SecondaryColor = secondary
-	}
-	if bg != "" {
-		b.BackgroundColor = bg
-	}
-	if title != "" {
-		b.LoginPageTitle = title
-	}
-	if portal != "" {
-		b.PortalTitle = portal
-	}
-	return b
-}
-
-// handleLoginPage (GET /oauth/login) renders the server-side login form. It is
-// the redirect target of /oauth/authorize[/v2] for native/redirect clients
-// (e.g. the desktop/mobile PKCE-loopback flow). Validates the login_session
-// before rendering so a stale/forged session doesn't reach the form.
-func (s *Service) handleLoginPage(c *gin.Context) {
-	loginSession := c.Query("login_session")
-	if loginSession == "" || !isValidSessionID(loginSession) {
-		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "missing or invalid login_session"})
-		return
-	}
-	if _, err := s.redis.Client.Get(c.Request.Context(), "login_session:"+loginSession).Result(); err != nil {
-		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "login session expired; restart sign-in"})
-		return
-	}
-	s.renderLoginPage(c, loginSession, "")
-}
-
-// renderLoginPage serves a minimal HTML login form for standard OIDC clients,
-// styled with the requesting tenant's branding.
-func (s *Service) renderLoginPage(c *gin.Context, loginSession, errorMsg string) {
-	b := s.loadLoginBranding(c.Request.Context())
-
-	errHTML := ""
-	if errorMsg != "" {
-		errHTML = `<div style="color:#ef4444;background:#fef2f2;border:1px solid #fecaca;padding:12px;border-radius:8px;margin-bottom:16px;font-size:14px">` + html.EscapeString(errorMsg) + `</div>`
-	}
-	msgHTML := ""
-	if b.LoginPageMessage != "" {
-		msgHTML = `<p class="sub">` + html.EscapeString(b.LoginPageMessage) + `</p>`
-	} else {
-		msgHTML = `<p class="sub">` + html.EscapeString(b.PortalTitle) + `</p>`
-	}
-
-	body := msgHTML + errHTML + `
-<form method="POST" action="/oauth/authorize/callback">
-<input type="hidden" name="login_session" value="` + html.EscapeString(loginSession) + `">
-<div class="field"><label>Username</label><input type="text" name="username" required autofocus></div>
-<div class="field"><label>Password</label><input type="password" name="password" required></div>
-<button type="submit">Sign In</button>
-</form>`
-
-	s.renderBrandedPage(c, b, b.LoginPageTitle, body, "")
-}
-
-// renderBrandedPage is the shell every server-rendered auth step shares (the
-// login form and the second-factor steps in hosted_mfa.go), so the tenant's
-// branding is applied once and a new step cannot drift out of style.
-// headExtra carries per-page <head> content, e.g. the push wait page's meta
-// refresh — the page must stay JavaScript-free under script-src 'self'.
-//
-// Colors and custom_css are trusted tenant-admin input (same trust level as the
-// admin Branding page); user-visible text and URL attributes are escaped.
-func (s *Service) renderBrandedPage(c *gin.Context, b loginBranding, heading, bodyHTML, headExtra string) {
-	logoHTML := ""
-	if b.LogoURL != "" {
-		logoHTML = `<img src="` + html.EscapeString(b.LogoURL) + `" alt="" style="max-height:48px;margin-bottom:16px">`
-	}
-	faviconHTML := ""
-	if b.FaviconURL != "" {
-		faviconHTML = `<link rel="icon" href="` + html.EscapeString(b.FaviconURL) + `">`
-	}
-	bodyBg := b.BackgroundColor
-	if b.BackgroundImageURL != "" {
-		bodyBg = b.BackgroundColor + ` url('` + html.EscapeString(b.BackgroundImageURL) + `') center/cover no-repeat`
-	}
-	footerHTML := ""
-	if b.CustomFooter != "" {
-		footerHTML = `<p class="footer">` + html.EscapeString(b.CustomFooter) + `</p>`
-	} else if b.PoweredByVisible {
-		footerHTML = `<p class="footer">Powered by OpenIDX</p>`
-	}
-
-	// Tenant branding can point the logo/background at an external host, and
-	// these pages carry sign-in state; no-referrer keeps any of it out of the
-	// Referer on those requests.
-	c.Header("Referrer-Policy", "no-referrer")
-
-	page := `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>` + html.EscapeString(heading) + ` — ` + html.EscapeString(b.PortalTitle) + `</title>` + faviconHTML + headExtra + `
-<style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:` + bodyBg + `;color:#e2e8f0;display:flex;align-items:center;justify-content:center;min-height:100vh}
-.card{background:#1e293b;border:1px solid #334155;border-radius:16px;padding:40px;width:100%;max-width:400px;box-shadow:0 25px 50px rgba(0,0,0,.25);text-align:center}
-h1{font-size:24px;font-weight:700;margin-bottom:8px;color:#f8fafc}
-.sub{color:#94a3b8;margin-bottom:24px;font-size:14px}
-form{text-align:left}
-label{display:block;font-size:13px;font-weight:500;color:#94a3b8;margin-bottom:6px}
-input{width:100%;padding:10px 14px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#f8fafc;font-size:15px;outline:none;transition:border .2s}
-input:focus{border-color:` + b.PrimaryColor + `}
-.field{margin-bottom:16px}
-button{width:100%;padding:12px;background:` + b.PrimaryColor + `;color:#fff;border:none;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer;transition:background .2s}
-button:hover{background:` + b.SecondaryColor + `}
-.footer{margin-top:20px;font-size:12px;color:#64748b}
-</style>
-<style>` + b.CustomCSS + `</style></head><body>
-<div class="card">
-` + logoHTML + `
-<h1>` + html.EscapeString(heading) + `</h1>
-` + bodyHTML + `
-` + footerHTML + `
-</div></body></html>`
-	c.Data(200, "text/html; charset=utf-8", []byte(page))
-}
-
-// handleAuthorizeCallback handles the server-rendered login form submission for standard OIDC clients
-func (s *Service) handleAuthorizeCallback(c *gin.Context) {
-	loginSession := c.PostForm("login_session")
-	username := c.PostForm("username")
-	password := c.PostForm("password")
-
-	if loginSession == "" || username == "" || password == "" {
-		s.renderLoginPage(c, loginSession, "All fields are required.")
-		return
-	}
-
-	// Get OAuth parameters from Redis
-	paramsJSON, err := s.redis.Client.Get(c.Request.Context(), "login_session:"+loginSession).Result()
-	if err != nil {
-		s.renderLoginPage(c, loginSession, "Login session expired. Please try again.")
-		return
-	}
-
-	var oauthParams map[string]string
-	if err := json.Unmarshal([]byte(paramsJSON), &oauthParams); err != nil {
-		c.JSON(500, gin.H{"error": "server_error"})
-		return
-	}
-
-	// Authenticate user
-	// The login audit events identity emits are only useful with the caller's
-	// IP on them; the raw request context carries neither actor nor address.
-	user, err := s.identityService.AuthenticateUser(
-		identity.ContextWithActor(c.Request.Context(), "", c.ClientIP()), username, password)
-	if err != nil {
-		errorMsg := "Invalid username or password."
-		if err.Error() == "account is locked" {
-			errorMsg = "Account is locked. Please try again later."
-		} else if err.Error() == "account is disabled" {
-			errorMsg = "Account is disabled. Contact your administrator."
-		}
-		s.renderLoginPage(c, loginSession, errorMsg)
-		return
-	}
-
-	// Country-based login blocking
-	if err := s.checkCountryBlock(c.Request.Context(), c.ClientIP(), user.ID, username); err != nil {
-		s.renderLoginPage(c, loginSession, "Authentication is not available from your location.")
-		return
-	}
-
-	// Device-trust gate for clientless (BrowZer) access. BrowZer's data path
-	// bypasses the proxy's forward-auth device-trust check, and this
-	// server-rendered login (POST /oauth/authorize/callback) — not the JSON
-	// /oauth/login — is what the BrowZer public client uses, so this is the
-	// enforcement point. Mirrors the handleLogin gate (#268). Placed before the
-	// login_session is deleted so a blocked user can retry the same session.
-	if s.riskService != nil {
-		clientIP := c.ClientIP()
-		userAgent := c.GetHeader("User-Agent")
-		fingerprint := s.riskService.ComputeDeviceFingerprint(clientIP, userAgent)
-		// Register the device so an approval has a known_devices row to flip;
-		// deviceID is the known_devices UUID (device_trust_requests.device_id is
-		// a uuid — passing the fingerprint would fail the insert).
-		deviceID, _, _ := s.riskService.RegisterDevice(c.Request.Context(), user.ID, fingerprint, clientIP, userAgent, "")
-		deviceTrusted := s.riskService.IsDeviceTrusted(c.Request.Context(), user.ID, fingerprint)
-		if s.deviceTrustGateBlocks(oauthParams["client_id"], deviceTrusted) {
-			req, derr := s.identityService.CreateDeviceTrustRequest(c.Request.Context(),
-				user.ID, deviceID, fingerprint, parseBrowserNameFromUA(userAgent),
-				"browser", clientIP, userAgent,
-				"clientless (BrowZer) access from an untrusted device")
-			if !(derr == nil && req != nil && req.Status == "approved") {
-				s.logger.Warn("clientless login blocked: device not trusted",
-					zap.String("user_id", user.ID),
-					zap.String("client_id", oauthParams["client_id"]))
-				s.renderLoginPage(c, loginSession,
-					"This device must be approved before clientless access. An approval request has been filed; try again after an administrator approves it.")
-				return
-			}
-			// Auto-approved (e.g. known corporate IP) → fall through and issue the code.
-		}
-	}
-
-	// Second factor. This server-rendered path is what every PUBLIC client gets
-	// in a browser (BrowZer, the mobile app, the desktop client), and it used to
-	// issue an authorization code straight after the password — so a user with
-	// TOTP or push enrolled skipped MFA entirely here while the JSON path
-	// (/oauth/login) enforced it. Both flows now share one decision
-	// (evaluateMFA) and this one completes the challenge on server-rendered
-	// pages; a login that cannot complete its factor is refused, never issued.
-	clientIP := c.ClientIP()
-	userAgent := c.GetHeader("User-Agent")
-	fingerprint := ""
-	location := ""
-	deviceTrusted := false
-	riskScore := 0
-	var riskFactors []string
-	if s.riskService != nil {
-		fingerprint = s.riskService.ComputeDeviceFingerprint(clientIP, userAgent)
-		var lat, lon float64
-		if geo, _ := s.riskService.GeoIPLookup(c.Request.Context(), clientIP); geo != nil {
-			location = geo.City + ", " + geo.Country
-			lat, lon = geo.Lat, geo.Lon
-		}
-		deviceTrusted = s.riskService.IsDeviceTrusted(c.Request.Context(), user.ID, fingerprint)
-		riskScore, riskFactors = s.riskService.CalculateRiskScore(c.Request.Context(), user.ID, clientIP, userAgent, fingerprint, location, lat, lon)
-		// Record the sign-in, as the JSON path does. Without this, logins through
-		// the hosted page — BrowZer, the mobile app, the desktop client, i.e. most
-		// of them — never reached login_history, so they were missing from the
-		// user's recent sign-ins, from login analytics, and from the
-		// impossible-travel/anomaly checks that read that table.
-		s.riskService.RecordLogin(c.Request.Context(), user.ID, clientIP, userAgent, location, lat, lon, fingerprint, true, []string{"password"}, riskScore)
-	}
-	ev := s.evaluateMFA(c.Request.Context(), user, clientIP, userAgent, fingerprint, location, deviceTrusted, riskScore, riskFactors)
-	if ev.DenyAccess {
-		s.logger.Warn("hosted login denied by risk assessment",
-			zap.String("user_id", user.ID), zap.Int("risk_score", ev.RiskScore))
-		s.renderLoginPage(c, loginSession,
-			"Sign-in from this device or location is not allowed. Please enable MFA or contact your administrator.")
-		return
-	}
-	if ev.Challenge {
-		s.beginHostedMFA(c, user, oauthParams, loginSession, ev, fingerprint, location)
-		return
-	}
-
-	// Clean up login session
-	s.redis.Client.Del(c.Request.Context(), "login_session:"+loginSession)
-
-	// Record the session, exactly as the JSON login path does. Without this a
-	// login through the hosted page produced no `sessions` row at all: the
-	// user's own "My Sessions" never listed their BrowZer / mobile / desktop
-	// sign-ins, and an admin revoking sessions could not reach them.
-	if session, serr := s.identityService.CreateSession(c.Request.Context(), user.ID, oauthParams["client_id"], clientIP, userAgent, 24*time.Hour); serr != nil {
-		s.logger.Warn("Failed to create session during hosted login", zap.Error(serr))
-	} else if session != nil {
-		oauthParams["session_id"] = session.ID
-		s.recordSessionAuthMethods(c.Request.Context(), session.ID, []string{"pwd"})
-	}
-
-	s.issueHostedAuthorizationCode(c, oauthParams, user.ID)
 }
 
 // handleLogin handles username/password login for direct OpenIDX authentication
@@ -2158,9 +1830,10 @@ func (s *Service) handleLogin(c *gin.Context) {
 		}
 	}
 
-	// MFA decision — shared with the server-rendered login path
-	// (POST /oauth/authorize/callback) so the two browser login flows can never
-	// disagree about whether a second factor is required. See mfa_policy.go.
+	// MFA decision. This is now the only browser login path — it was shared
+	// with the server-rendered form's own POST /oauth/authorize/callback,
+	// which was deleted precisely so the two could never disagree about
+	// whether a second factor is required. See mfa_policy.go.
 	ev := s.evaluateMFA(c.Request.Context(), user, clientIP, userAgent, fingerprint, location, deviceTrusted, riskScore, riskFactors)
 	availableMFAMethods := ev.Methods
 	mfaEnabled := ev.Enabled
@@ -2172,8 +1845,9 @@ func (s *Service) handleLogin(c *gin.Context) {
 
 	if ev.Challenge {
 		// MFA required — store partial auth in Redis and return MFA challenge.
-		// createMFASession is shared with the server-rendered path so both
-		// flows pin the same allowed-method list into the session.
+		// createMFASession pins the allowed-method list into the session so a
+		// later /oauth/mfa-verify cannot be talked into a method this
+		// evaluation did not offer.
 		mfaSession, mfaErr := s.createMFASession(c.Request.Context(), user.ID, oauthParams, riskScore, fingerprint, location, availableMFAMethods)
 		if mfaErr != nil {
 			s.logger.Error("failed to create MFA session", zap.Error(mfaErr))
@@ -2286,18 +1960,19 @@ func authorizeAssignmentDecision(requiresAssignment, assigned, enforce bool) (is
 // applications that have no published route: those are reached only by
 // obtaining a token for their OAuth client, so the overlay and reverse-proxy
 // gates (the enforcement points for route-backed applications) never see
-// them. There are SIX places in this service that mint an authorization
+// them. There are FIVE places in this service that mint an authorization
 // code — issueAuthorizationCode, handleAuthorizeConsent, handleCallback,
-// issueHostedAuthorizationCode (hosted_mfa.go), handleMagicLinkVerify
-// (handlers_passwordless.go), and AuthorizeHandler.IssueAuthorizationCode
-// (authorize.go) — and every one of them is gated: the first five call this
-// directly before minting, and the sixth (IssueAuthorizationCode) has no
-// *gin.Context to gate with, so its only caller, handleAuthorizeConsentV2,
-// calls this before invoking it instead. mintSiteDisposition in
-// authorize_assignment_test.go is the canonical list of these six — keep
+// handleMagicLinkVerify (handlers_passwordless.go), and
+// AuthorizeHandler.IssueAuthorizationCode (authorize.go) — and every one of
+// them is gated: the first four call this directly before minting, and the
+// fifth (IssueAuthorizationCode) has no *gin.Context to gate with, so its
+// only caller, handleAuthorizeConsentV2, calls this before invoking it
+// instead. (There were six: issueHostedAuthorizationCode went with the
+// server-rendered login.) mintSiteDisposition in
+// authorize_assignment_test.go is the canonical list of these five — keep
 // this enumeration in sync with it. TestEveryMintSiteCallsAssignmentGate
 // guards the ordering at each known site and TestNoUngatedMintSite guards
-// that no new mint site (a seventh) goes unlisted; a missed call site fails
+// that no new mint site goes unlisted; a missed call site fails
 // silently (a code is issued, no error, no audit record) rather than
 // loudly.
 //

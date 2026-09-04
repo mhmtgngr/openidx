@@ -95,12 +95,14 @@ and — as of #878/#880 — fully landed in code**: one predicate package
 (`internal/appaccess`) consumed by the portal, the Ziti reconciler, the
 proxy and `/oauth/authorize`, plus one SPA login and a real MFA policy.
 
-**But it is all still behind flags that default to the old behaviour:**
-`ACCESS_ASSIGNMENT_ENFORCE=false` and `OAUTH_LOGIN_UI=server`
-(`internal/common/config/config.go:282,293,771`). Until the staged rollout
-(Task 16 of the plan) is executed, *assignment is still a catalogue, not a
-grant*. Executing that rollout is the single highest-leverage step this
-project can take — see §4, P1.
+**The login half is now unconditional and the enforcement half still
+defaults to the old behaviour.** The server-rendered login is deleted (P6.1),
+so every client reaches the one login UI at `OAUTH_LOGIN_URL` — there is no
+`OAUTH_LOGIN_UI` flag any more. `ACCESS_ASSIGNMENT_ENFORCE` still defaults to
+`false`, so until the staged rollout (Task 16 of the plan) is executed on a
+deployment, *assignment is still a catalogue, not a grant*. Executing that
+rollout is the single highest-leverage step this project can take — see §4,
+P1.
 
 ### 1.2 The missing glossary (use these words consistently)
 
@@ -534,8 +536,10 @@ exactly — it is already written:
 2. Drive the **assignment report** (`/assignment-report`) to clean —
    create the assignments you actually intend; only trust it when
    `reachability_source=controller` and `incomplete_users=0`.
-3. Flip `OAUTH_LOGIN_UI=spa`; verify console, mobile, BrowZer logins.
-4. Delete the server-rendered login (plan Task 15).
+3. Set `OAUTH_LOGIN_URL` if the console is not on the issuer origin;
+   verify console, mobile and BrowZer logins. There is no flag to flip and
+   no fallback page — rehearse on staging.
+4. ~~Delete the server-rendered login (plan Task 15).~~ Done in code (P6.1).
 5. Flip `ACCESS_ASSIGNMENT_ENFORCE=true`; verify an unassigned user can no
    longer dial, and the denial is audited.
 6. Create the first MFA policy (`{"factor_enrolled": true}`) and chase
@@ -1505,18 +1509,29 @@ policy answers 403 + audit on `/oauth/authorize`.
 
 ### P6 — A Definition of Done that CI proves
 
-1. ☐ **Convergence Task 15 is code, not ops** — the server-rendered login
-   is deleted: `GET /oauth/login`, `POST /oauth/authorize/callback`, the
-   five `/oauth/authorize/mfa*` routes, `hosted_mfa.go`,
-   `renderLoginPage`/`handleLoginPage`/`handleAuthorizeCallback`, the
-   `OAuthLoginUI` branch and flag. `POST /oauth/login` (the SPA's JSON
-   API) and `POST /oauth/mfa-verify` stay. `OAUTH_LOGIN_URL` (default
-   `<issuer>/login`) is set in the compose stack, whose console is on
-   another origin. Proof: a route-table test asserting the routes are
-   absent (with `POST /oauth/login` as the positive control) and an
-   integration case under `ACCESS_ASSIGNMENT_ENFORCE=true` proving an
-   unassigned user of an opted-in application is denied + audited and
-   `GET /oauth/login` is 404.
+1. ✅ **Convergence Task 15 is code, not ops** — *shipped*. The
+   server-rendered login is deleted: `GET /oauth/login`, `POST
+   /oauth/authorize/callback`, the five `/oauth/authorize/mfa*` routes,
+   `hosted_mfa.go`, `renderLoginPage`/`handleLoginPage`/
+   `handleAuthorizeCallback`, the branding loader, and the `OAuthLoginUI`
+   branch and flag. `POST /oauth/login` (the SPA's JSON API) and
+   `POST /oauth/mfa-verify` stay; `createMFASession` moved to
+   `mfa_session.go` with one consumer. `OAUTH_LOGIN_URL` (default
+   `<issuer>/login`) is set in the compose stack and the CI harness, whose
+   consoles are on another origin. `/oauth/authorize/v2`'s login hop was
+   repaired in the same change — it wrote an `auth_request:` hash that
+   `POST /oauth/login` never read and redirected to the relative page that
+   no longer exists, so it had never completed for any client.
+   Proof: `internal/oauth/routes_legacy_login_test.go` (route table absent
+   + `POST /oauth/login` positive control + an AST scan for the eleven
+   deleted functions) and `test/integration/enforced_posture_test.go`,
+   which under `ACCESS_ASSIGNMENT_ENFORCE=true` — now exported by the CI
+   harness, which mentioned the variable nowhere before — proves an
+   unassigned user of an application with `require_assignment=true` is
+   refused with `access_denied`, that the refusal lands in
+   `unified_audit_events` as `access.assignment.denied`, that assigning the
+   user makes the same flow issue a code, and that the seven deleted routes
+   answer 404 on the running service.
 2. ☐ **Smoke test in CI** — `docker compose up` (a CI override with
    `ZITI_ENABLED=false` and an explicit service list) → `make smoke-test`.
    The DoD §6.1 exit test, run on every PR.
@@ -1692,9 +1707,11 @@ Call the project ready from the user's perspective when all of these hold:
 
 1. Every journey J1–J8 in §3 is ✅ with no manual workaround, and each has
    an automated or scripted verification.
-2. `ACCESS_ASSIGNMENT_ENFORCE=true` in the reference deployment; the
-   server-rendered login is deleted from the code (one login UI, at
-   `OAUTH_LOGIN_URL`); §5.3's table holds for every row.
+2. `ACCESS_ASSIGNMENT_ENFORCE=true` in the reference deployment (operator
+   step); the server-rendered login is deleted from the code — ✅ done in
+   P6.1, one login UI at `OAUTH_LOGIN_URL`, guarded by a route-table test
+   and an enforced-posture integration case; §5.3's table holds for every
+   row.
 3. Every control visible in the admin console enforces something (no
    A-class defects open).
 4. A new operator completes first run from the README alone; a new end

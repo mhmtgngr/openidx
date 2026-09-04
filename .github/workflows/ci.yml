@@ -554,6 +554,18 @@ jobs:
           # run; the rate-limit middleware itself is still exercised.
           export RATE_LIMIT_AUTH_REQUESTS=10000
           export RATE_LIMIT_REQUESTS=10000
+          # The Definition of Done's posture (§6.2): assignment is a GRANT, not
+          # a catalogue. Every existing test keeps passing under it because the
+          # gate only denies when the application row has require_assignment=true
+          # (migration v137, default false), and no seeded application sets it —
+          # enforced_posture_test.go creates one that does. Before this, nothing
+          # in test/ or .github/ mentioned this variable at all, so the flip the
+          # DoD turns on had never been exercised.
+          export ACCESS_ASSIGNMENT_ENFORCE=true
+          # There is one login UI and it is not served by this process. The
+          # harness never follows the redirect; the enforced-posture test only
+          # asserts the Location it points at.
+          export OAUTH_LOGIN_URL=http://localhost:3000/login
 
           /tmp/identity-service > /tmp/identity.log 2>&1 &
           IDENTITY_PID=$!
