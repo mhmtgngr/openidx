@@ -2053,14 +2053,53 @@ commits without anyone noticing.
    duplicate proxy-route toggles collapsed, tests for the untested
    security pages (`add-device`, `remote-support-popout`, `lib/webauthn`,
    `api/mfa`), the `tr` catalog lazy-loaded.
-4. ☐ **Backend hygiene** — `/authorize` calling `validateResponseType`
-   (the twin of the scope gap P6.8 closed), `internal/feature/`, `internal/oauth/store.go`,
-   the empty gateway loggers, the env reader that reads no env, the two
-   unbound config flags deleted; tests that name the security core
-   (`handleToken`, refresh, revoke, the MFA step-up handlers, backup/bypass
-   codes, vault reveal/checkout, `RunSoDSweep`, `handleApproveRequest`,
-   kill switch, the Guac session handlers); OpenAPI specs cover the routed
-   groups and carry the release version.
+4. ◐ **Backend hygiene.** The deletions and the second unenforced validator
+   are done; the security-core tests and the OpenAPI sweep are not.
+
+   **`/authorize` now validates `response_type`** — the twin of the scope gap
+   P6.8 closed, and the same shape: `/authorize/v2` has checked it since it
+   was written (`AuthorizeHandler.validateResponseType`), and the primary
+   handler, the one every browser client actually reaches, checked nothing.
+   A client registered for `["code"]` could ask for a token in the fragment
+   and be carried to a login screen before anything noticed. Both handlers now
+   share one `responseTypeAllowedForClient`, so they cannot drift into two
+   opinions again — a test asserts they agree.
+
+   Adding the check surfaced a way to turn it into an outage.
+   `oauth_clients.response_types` is JSONB with **no column default**, so a row
+   written by anything that does not set it reads back empty, and refusing
+   those would have locked that client out entirely. RFC 7591 §2 makes the
+   default `["code"]` and `dcr.go` already applies exactly that at
+   registration; the predicate now applies it at the enforcement point too.
+   (The console's Applications page sends `["code"]` explicitly and every
+   seeded client carries it, so this is for rows that predate or bypass those
+   paths — including, before this, any that `/authorize/v2` would already have
+   refused.)
+
+   **Deleted:** `internal/feature/` (780 lines, 13 routes, no importer, with a
+   `TODO` that silently substituted a memory store); `internal/oauth/store.go`
+   (539 lines of a second, parallel token store with no non-test caller, whose
+   knowingly-broken token-family revocation would have been a P0 the day
+   someone wired it). `AccessTokenData` was the one symbol in it the live code
+   used and moved to `oauth_types.go`; the tests that exercised the store went
+   with it, and `TestConcurrentTokenGeneration` was repointed at
+   `generateRandomToken` — it had been asserting uniqueness about the wrong
+   generator. `codeRef` and its test went too: the live authorize/token path
+   never logs a raw code, so the helper protected nothing.
+
+   **The gateway required a logger and threw every line away.**
+   `logInfo`/`logError` were empty bodies under a "would use proper logger"
+   comment, while `NewService` refuses to start without `cfg.Logger`. The
+   gateway's shutdown sequence and every per-request line went nowhere — on
+   the one process whose logs say whether a request was proxied, to where, and
+   how long it took. They log now.
+
+   Still open, and moved to their own entry rather than left implied: tests
+   that name the security core (`handleToken`, refresh, revoke, the MFA
+   step-up handlers, backup/bypass codes, vault reveal/checkout,
+   `RunSoDSweep`, `handleApproveRequest`, kill switch, the Guac session
+   handlers), and the OpenAPI sweep (routed-but-undocumented groups, the three
+   specs with no service, the ten `version: 0.1.0` fields).
 5. ◐ **Mobile (D1)** — the deletion half is done, brought forward from P7
    because the newly blocking Trivy scan found six HIGH advisories
    (brace-expansion ×2, browserslist ×2, js-yaml, nanoid) in

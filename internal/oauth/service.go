@@ -1632,6 +1632,23 @@ func (s *Service) handleAuthorize(c *gin.Context) {
 		return
 	}
 
+	// response_type, the same shape and the same omission.
+	//
+	// /authorize/v2 has checked it since it was written (authorize.go:93,
+	// validateResponseType) and this handler — the one every browser client
+	// actually reaches — did not, so a client registered for ["code"] could
+	// ask for a token in the fragment and be carried to a login screen before
+	// anything noticed. Every client seeded today registers ["code"], which is
+	// why it has not bitten; a registration that adds one is all it would take.
+	//
+	// Same RFC 6749 §4.1.2.1 treatment as scope above: reported to the client
+	// at its registered redirect_uri, not to a user who cannot act on it.
+	if !responseTypeAllowedForClient(client, oauthParams["response_type"]) {
+		s.redirectAuthorizeError(c, oauthParams["redirect_uri"], oauthParams["state"],
+			ErrorUnsupportedResponseType, "response_type is not registered for this client")
+		return
+	}
+
 	paramsJSON, _ := json.Marshal(oauthParams)
 	s.redis.Client.Set(c.Request.Context(), "login_session:"+loginSession, string(paramsJSON), 10*time.Minute)
 

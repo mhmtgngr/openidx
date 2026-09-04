@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -26,88 +25,6 @@ func sha256Hash(data []byte) []byte {
 }
 
 // Test Authorization Code Storage
-
-func TestStoreAuthorizationCode(t *testing.T) {
-	// This test would require a mock Redis client
-	// For now, we'll test the structure creation
-
-	code := &StoredAuthorizationCode{
-		Code:                "test-code-123",
-		ClientID:            "test-client",
-		UserID:              "user-123",
-		RedirectURI:         "https://example.com/callback",
-		Scope:               "openid profile",
-		State:               "state-123",
-		Nonce:               "nonce-123",
-		CodeChallenge:       "challenge-123",
-		CodeChallengeMethod: "S256",
-		ExpiresAt:           time.Now().Add(10 * time.Minute),
-		CreatedAt:           time.Now(),
-		Used:                false,
-	}
-
-	assert.Equal(t, "test-code-123", code.Code)
-	assert.Equal(t, "test-client", code.ClientID)
-	assert.Equal(t, "S256", code.CodeChallengeMethod)
-	assert.False(t, code.Used)
-}
-
-func TestAuthorizationCodeExpiration(t *testing.T) {
-	// Test expired code
-	expiredCode := &StoredAuthorizationCode{
-		Code:      "expired-code",
-		ExpiresAt: time.Now().Add(-1 * time.Hour),
-		CreatedAt: time.Now().Add(-2 * time.Hour),
-	}
-
-	assert.True(t, time.Now().After(expiredCode.ExpiresAt))
-
-	// Test valid code
-	validCode := &StoredAuthorizationCode{
-		Code:      "valid-code",
-		ExpiresAt: time.Now().Add(10 * time.Minute),
-		CreatedAt: time.Now(),
-	}
-
-	assert.True(t, time.Now().Before(validCode.ExpiresAt))
-}
-
-// Test Token Storage
-
-func TestRefreshTokenFamily(t *testing.T) {
-	family := &RefreshTokenFamily{
-		FamilyID:    "family-123",
-		ClientID:    "client-123",
-		UserID:      "user-123",
-		Scope:       "openid profile offline_access",
-		CreatedAt:   time.Now(),
-		LastRotated: time.Now(),
-		TokenCount:  1,
-		ExpiresAt:   time.Now().Add(30 * 24 * time.Hour),
-	}
-
-	assert.Equal(t, "family-123", family.FamilyID)
-	assert.Equal(t, 1, family.TokenCount)
-}
-
-func TestStoredRefreshToken(t *testing.T) {
-	token := &StoredRefreshToken{
-		Token:     "refresh-token-123",
-		FamilyID:  "family-123",
-		ClientID:  "client-123",
-		UserID:    "user-123",
-		Scope:     "openid profile offline_access",
-		ExpiresAt: time.Now().Add(30 * 24 * time.Hour),
-		CreatedAt: time.Now(),
-		Revoked:   false,
-	}
-
-	assert.Equal(t, "refresh-token-123", token.Token)
-	assert.False(t, token.Revoked)
-	assert.Nil(t, token.RevokedAt)
-}
-
-// Test Scope Utilities
 
 func TestBuildScopeStringWithDeduplication(t *testing.T) {
 	tests := []struct {
@@ -136,23 +53,6 @@ func TestBuildScopeStringWithDeduplication(t *testing.T) {
 }
 
 // Test Token Generation
-
-func TestStoreGenerateToken(t *testing.T) {
-	store := &Store{}
-	token1 := store.GenerateToken()
-	token2 := store.GenerateToken()
-
-	assert.NotEmpty(t, token1)
-	assert.NotEmpty(t, token2)
-	assert.NotEqual(t, token1, token2, "Tokens should be unique")
-	assert.GreaterOrEqual(t, len(token1), 32, "Token should be at least 32 characters")
-}
-
-// Test Authorize Flow
-
-// Test Token Flow
-
-// Test HTTP Basic Authentication extraction
 
 func TestExtractBasicAuth(t *testing.T) {
 	tests := []struct {

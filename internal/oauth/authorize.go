@@ -165,10 +165,43 @@ func (h *AuthorizeHandler) validateRedirectURI(client *OAuthClient, redirectURI 
 	return false
 }
 
-// validateResponseType validates that the response type is supported by the client
+// validateResponseType validates that the response type is supported by the client.
 func (h *AuthorizeHandler) validateResponseType(client *OAuthClient, responseType string) bool {
-	// Check if response type is supported by the client
-	for _, rt := range client.ResponseTypes {
+	return responseTypeAllowedForClient(client, responseType)
+}
+
+// responseTypeAllowedForClient reports whether the requested response_type is
+// registered for the client.
+//
+// Package-level for the same reason scopeAllowedForClient is: /authorize/v2
+// enforced this through the method above while the primary /authorize handler
+// enforced nothing, and two copies of a rule are two chances for one of them
+// to be the one nobody calls. One function, both call sites.
+//
+// An empty response_type in the REQUEST is not allowed: it is required
+// (RFC 6749 §4.1.1) and no client registers "", so falling through on it would
+// turn a malformed request into an authorized one.
+//
+// An empty response_types on the CLIENT is a different thing and must not be
+// read as "nothing is allowed". `oauth_clients.response_types` is JSONB with
+// no column default, so a row written by anything that does not set it — and
+// nothing stops one — reads back as an empty slice. Refusing those would turn
+// a missing value into an outage for that client, which is a worse failure
+// than the one this check exists to prevent. RFC 7591 §2 makes the default
+// ["code"], and internal/oauth/dcr.go already applies exactly that when a
+// dynamically registered client omits it; this is the same rule at the
+// enforcement point. The console's Applications page sends ["code"]
+// explicitly, and every seeded client carries it, so this branch is for rows
+// that predate or bypass those paths.
+func responseTypeAllowedForClient(client *OAuthClient, responseType string) bool {
+	if client == nil || responseType == "" {
+		return false
+	}
+	registered := client.ResponseTypes
+	if len(registered) == 0 {
+		registered = []string{"code"}
+	}
+	for _, rt := range registered {
 		if rt == responseType {
 			return true
 		}

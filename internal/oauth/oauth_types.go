@@ -15,6 +15,7 @@ package oauth
 import (
 	"crypto/rand"
 	"fmt"
+	"time"
 )
 
 // RFC 6749 / OIDC error codes. ErrorServerError and
@@ -55,4 +56,19 @@ func generateUUID() string {
 	b[6] = (b[6] & 0x0f) | 0x40 // Version 4
 	b[8] = (b[8] & 0x3f) | 0x80 // Variant 10
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
+}
+
+// AccessTokenData is the Redis-stored shape of a minted access token.
+//
+// It moved here when internal/oauth/store.go was deleted: that file was 539
+// lines of a second, parallel token store with no non-test caller, and this
+// struct was the one thing in it the live code used
+// (generateTokensForUser in service.go).
+type AccessTokenData struct {
+	Token     string    `json:"token"`
+	ClientID  string    `json:"client_id"`
+	UserID    string    `json:"user_id"`
+	Scope     string    `json:"scope"`
+	ExpiresAt time.Time `json:"expires_at"`
+	CreatedAt time.Time `json:"created_at"`
 }
