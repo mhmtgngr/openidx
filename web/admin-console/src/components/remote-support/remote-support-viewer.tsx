@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import { Button } from '../ui/button'
 import { Badge } from '../ui/badge'
 import { Circle, Maximize, Square, WifiOff } from 'lucide-react'
@@ -48,6 +50,7 @@ export function RemoteSupportViewer({
   onClose: _onClose,
   onEnd,
 }: Props) {
+  const { t } = useTranslation()
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const liveStreamRef = useRef<MediaStream | null>(null)
   const overlayRef = useRef<HTMLDivElement | null>(null)
@@ -509,18 +512,18 @@ export function RemoteSupportViewer({
                 variant={controlActive ? 'default' : 'outline'}
                 size="sm"
                 onClick={toggleControl}
-                title={controlActive ? 'You are controlling the device — click to release' : 'View-only — click to take control'}
+                title={controlActive ? t('components.remoteSupportViewer.controlActiveHint') : t('components.remoteSupportViewer.controlInactiveHint')}
               >
-                {controlActive ? 'Release control' : 'Take control'}
+                {controlActive ? t('components.remoteSupportViewer.releaseControl') : t('components.remoteSupportViewer.takeControl')}
               </Button>
               <Button variant="outline" size="sm" disabled={!controlActive} onClick={() => sendInput({ event: 'global_action', action: 'back' })}>
-                Back
+                {t('components.remoteSupportViewer.back')}
               </Button>
               <Button variant="outline" size="sm" disabled={!controlActive} onClick={() => sendInput({ event: 'global_action', action: 'home' })}>
-                Home
+                {t('components.remoteSupportViewer.home')}
               </Button>
               <Button variant="outline" size="sm" disabled={!controlActive} onClick={() => sendInput({ event: 'global_action', action: 'recents' })}>
-                Recents
+                {t('components.remoteSupportViewer.recents')}
               </Button>
             </>
           )}
@@ -528,12 +531,12 @@ export function RemoteSupportViewer({
             variant="outline"
             size="sm"
             onClick={enterFullscreen}
-            title="Fullscreen (Esc to exit) — best for pixel-accurate control"
+            title={t('components.remoteSupportViewer.fullscreenHint')}
           >
-            <Maximize className="mr-1 h-3 w-3" /> Fullscreen
+            <Maximize className="mr-1 h-3 w-3" /> {t('components.remoteSupportViewer.fullscreen')}
           </Button>
           <Button variant="destructive" size="sm" onClick={onEnd}>
-            <Square className="mr-1 h-3 w-3" /> End session
+            <Square className="mr-1 h-3 w-3" /> {t('components.remoteSupportViewer.endSession')}
           </Button>
         </div>
       </div>
@@ -541,7 +544,7 @@ export function RemoteSupportViewer({
       <div
         ref={overlayRef}
         role="application"
-        aria-label="Remote screen. Keyboard and pointer input is sent to the remote machine."
+        aria-label={t('components.remoteSupportViewer.screenLabel')}
         tabIndex={0}
         onPointerDown={(e) => { e.currentTarget.focus(); onPointerDown(e) }}
         onPointerUp={onPointerUp}
@@ -573,8 +576,8 @@ export function RemoteSupportViewer({
 
       <p className="text-xs text-muted-foreground">
         {mode === 'interactive'
-          ? 'Tap = single press · drag = swipe · Esc = back · Enter / Backspace / Tab pass through · arrows + page keys need the OpenIDX keyboard active on the device.'
-          : 'View-only — input is disabled for this session.'}
+          ? t('components.remoteSupportViewer.inputHelp')
+          : t('components.remoteSupportViewer.viewOnlyHelp')}
       </p>
 
       {mode === 'interactive' && (
@@ -592,7 +595,7 @@ export function RemoteSupportViewer({
                   sendPendingText()
                 }
               }}
-              placeholder="Type and press Enter to inject into the focused field…"
+              placeholder={t('components.remoteSupportViewer.typePlaceholder')}
               className="flex-1 h-9 rounded-md border border-input bg-background px-3 text-sm"
               disabled={state !== 'streaming'}
             />
@@ -617,7 +620,7 @@ export function RemoteSupportViewer({
                   sendPendingClipboard()
                 }
               }}
-              placeholder="Push to device clipboard (user pastes wherever they need it)…"
+              placeholder={t('components.remoteSupportViewer.clipboardPlaceholder')}
               className="flex-1 h-9 rounded-md border border-input bg-background px-3 text-sm"
               disabled={state !== 'streaming'}
             />
@@ -654,36 +657,43 @@ function RecordingIndicator({ state }: { state: RecState }) {
 }
 
 function ConnectionStatus({ state, message }: { state: ConnState; message: string }) {
+  const { t } = useTranslation()
   const variant = state === 'streaming' ? 'success'
     : state === 'error' ? 'destructive'
     : 'secondary'
-  const label = state === 'streaming' ? 'streaming'
-    : state === 'connecting' ? 'connecting'
-    : state === 'awaiting-offer' ? 'waiting for device'
-    : state === 'negotiating' ? 'negotiating'
-    : state === 'closed' ? 'closed'
-    : `error${message ? `: ${message}` : ''}`
+  const label = state === 'streaming' ? t('components.remoteSupportViewer.badgeStreaming')
+    : state === 'connecting' ? t('components.remoteSupportViewer.badgeConnecting')
+    : state === 'awaiting-offer' ? t('components.remoteSupportViewer.badgeWaitingForDevice')
+    : state === 'negotiating' ? t('components.remoteSupportViewer.badgeNegotiating')
+    : state === 'closed' ? t('components.remoteSupportViewer.badgeClosed')
+    : message
+      ? t('components.remoteSupportViewer.badgeErrorWithMessage', { message })
+      : t('components.remoteSupportViewer.badgeError')
   return <Badge variant={variant as any}>{label}</Badge>
 }
 
 function Placeholder({ state, message }: { state: ConnState; message: string }) {
+  const { t } = useTranslation()
   if (state === 'error') {
     return (
       <div className="flex items-center gap-2">
         <WifiOff className="h-4 w-4" />
-        <span>{message || 'connection failed'}</span>
+        <span>{message || t('components.remoteSupportViewer.connectionFailed')}</span>
       </div>
     )
   }
-  return <span>{stateLabel(state)}</span>
+  return <span>{stateLabel(state, t)}</span>
 }
 
-function stateLabel(state: ConnState) {
+// Module scope, so it takes `t` rather than calling the hook: a plain
+// function is not a component and useTranslation() there is a hook-order bug
+// waiting for the first conditional caller.
+function stateLabel(state: ConnState, t: TFunction) {
   switch (state) {
-    case 'connecting': return 'Connecting to signaling…'
-    case 'awaiting-offer': return 'Waiting for the device to accept the consent prompt…'
-    case 'negotiating': return 'Negotiating WebRTC peer…'
-    case 'closed': return 'Session closed'
+    case 'connecting': return t('components.remoteSupportViewer.stateConnecting')
+    case 'awaiting-offer': return t('components.remoteSupportViewer.stateAwaitingOffer')
+    case 'negotiating': return t('components.remoteSupportViewer.stateNegotiating')
+    case 'closed': return t('components.remoteSupportViewer.stateClosed')
     default: return state
   }
 }

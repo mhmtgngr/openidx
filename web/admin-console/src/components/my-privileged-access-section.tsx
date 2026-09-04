@@ -62,8 +62,11 @@ const statusBadge = (status: string) => {
   return map[status] || 'bg-muted text-foreground'
 }
 
-const formatDate = (d: string) =>
-  new Date(d).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+// Takes the locale rather than assuming one. This was 'en-US', so a request's
+// date stayed American on a page whose every other word followed the user's
+// language — the last hard-coded locale in the console.
+const formatDate = (d: string, locale: string) =>
+  new Date(d).toLocaleDateString(locale, { year: 'numeric', month: 'short', day: 'numeric' })
 
 /**
  * MyPrivilegedAccessSection is the "Privileged access" block of the combined
@@ -77,7 +80,7 @@ export function MyPrivilegedAccessSection({ search }: { search: string }) {
   // still hardcoded English -- the i18n sweep covered src/pages, not the
   // components a page composes. The accessible name below goes through the
   // catalog like every other control name; the visible copy is its own batch.
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const queryClient = useQueryClient()
   const { toast } = useToast()
   const [activeTab, setActiveTab] = useState('sessions')
@@ -335,7 +338,7 @@ export function MyPrivilegedAccessSection({ search }: { search: string }) {
                             </span>
                           )}
                         </TableCell>
-                        <TableCell>{formatDate(r.created_at)}</TableCell>
+                        <TableCell>{formatDate(r.created_at, i18n.language)}</TableCell>
                         <TableCell>
                           {r.status === 'approved' &&
                             (!r.expires_at || new Date(r.expires_at) > new Date()) && (
@@ -405,7 +408,7 @@ export function MyPrivilegedAccessSection({ search }: { search: string }) {
                             </span>
                           )}
                         </TableCell>
-                        <TableCell>{formatDate(r.created_at)}</TableCell>
+                        <TableCell>{formatDate(r.created_at, i18n.language)}</TableCell>
                         <TableCell>
                           {r.status === 'fulfilled' && (
                             <div className="flex gap-2">

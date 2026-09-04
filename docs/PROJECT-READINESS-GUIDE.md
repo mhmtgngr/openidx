@@ -1942,12 +1942,49 @@ commits without anyone noticing.
 
 ### P7 — One console, one client
 
-1. ☐ **Bilingual for real** — the remaining English in
-   `components/` (`my-privileged-access-section`, the remote viewers, the
-   self-heal panel, the audit stream/dashboard, `manage-app-access-dialog`,
-   `relay-renderer`), `App.tsx`'s two loading strings, `api/mfa.ts`'s
-   thrown errors; the completeness test extended to `src/components/**`;
-   both page globs recursive so `pages/audit/` is gated.
+1. ✅ **Bilingual for real, and a gate that can see the whole console.**
+   Both page globs are recursive (`../pages/**/*.tsx`), which immediately
+   exposed what the single-level ones had been hiding: `pages/audit/
+   AuditDashboard.tsx`, 471 lines of English on an admin surface, outside
+   both the i18n and the accessibility gate for as long as either existed.
+
+   The completeness test now covers `src/components/**` as well. It asks a
+   narrower question than the pages one, because most components carry no
+   copy at all — the `ui/` primitives take their text as props, and
+   demanding `useTranslation` of them would be noise. It asks instead:
+   does this file contain a literal string a user would READ — a JSX text
+   node of two or more words, or a literal on a copy-bearing prop — and if
+   so, does it go through the catalogs? A translated component has no such
+   literal left, so it passes by having been done rather than by being
+   listed. There is no register to shrink.
+
+   It went red on five components, all now translated:
+   `selfheal-panel` (including the tier-1 autonomous-code-fix confirm, whose
+   mode help was a module-level map of English that is now a map of catalog
+   keys), `manage-app-access-dialog`, `remote-support-viewer`,
+   `relay-renderer` and `guac-session-viewer` — the last three being the
+   PAM and remote-support windows an operator works inside during an
+   incident. `AuditDashboard` went with them.
+
+   **The last two hard-coded locales are gone.** `formatDate` in
+   `my-privileged-access-section` and `formatTimestamp` in `AuditDashboard`
+   both passed `'en-US'` to `toLocaleDateString`/`toLocaleTimeString`, so a
+   request's date stayed American on pages whose every other word followed
+   the user's language. Both now take `i18n.language`.
+
+   **~900 LOC of dead code went out with it**, each verified by an unbounded
+   grep for importers, not a truncated one: `mfa-setup-wizard.tsx` (663
+   lines, a complete second MFA enrolment flow whose only importer was its
+   own test — the live surfaces are `pages/user-profile.tsx` for end users
+   and `pages/mfa-management.tsx` for admins), `hooks/useWebAuthnCredentials.ts`
+   (no importer), `api/mfa.ts` (imported only by that hook), `lib/utils/date.ts`,
+   `lib/store/{appStore,authStore,index}.ts` (shadowed by `lib/store.ts`,
+   which is what every `from '../lib/store'` actually resolves to),
+   `components/ui/index.ts` and the `components/ui/use-toast.ts` it was the
+   sole importer of, and `components/audit/index.ts`.
+   `pages/login-session.test.tsx` was on the audit's dead list and is **not**
+   dead: it imports `./login` and holds three live tests of the
+   already-authenticated path. It stays.
 2. ☐ **Console controls that were not true** — idle timeout wired into the
    layout from the session policy; device-trust sync awaited with a
    warning on failure; all five topology queries gated and the

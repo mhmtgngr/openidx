@@ -1254,7 +1254,11 @@ describe('i18n', () => {
     // Vite inlines each page's source at transform time, so this needs no
     // filesystem access and runs in the same environment as the rest of the
     // suite (the app's tsconfig deliberately carries no node types).
-    const sources = import.meta.glob('../pages/*.tsx', {
+    // Recursive on purpose: the single-level glob missed every page in a
+    // subdirectory, and pages/audit/AuditDashboard.tsx — 471 lines of
+    // English on an admin surface — sat outside this gate and the a11y
+    // one for as long as both existed.
+    const sources = import.meta.glob('../pages/**/*.tsx', {
       query: '?raw',
       import: 'default',
       eager: true,
@@ -1264,6 +1268,46 @@ describe('i18n', () => {
     expect(pages.length).toBeGreaterThan(90)
     const untranslated = pages.filter((p) => !sources[p].includes('useTranslation'))
     expect(untranslated).toEqual([])
+  })
+
+  // The same gate for the components a page composes.
+  //
+  // Pages have been gated since batch 1, and the bilingual claim still was not
+  // true: `pages/my-network.tsx` is fully translated and renders
+  // `my-privileged-access-section.tsx`, which was not — so the page a user
+  // sees was half English no matter what their language was set to.
+  //
+  // Unlike pages, most components legitimately carry no copy at all (the
+  // `ui/` primitives take their text as props), so requiring `useTranslation`
+  // everywhere would be noise. This asks a narrower question: does this file
+  // contain a literal string a user would READ — a JSX text node of two or
+  // more words, or a literal passed to a copy-bearing prop — and if so, does
+  // it go through the catalogs? A translated component has no such literal
+  // left, so it passes by having been done, not by being listed.
+  it('resolves every component that carries copy through the catalogs', () => {
+    const sources = import.meta.glob('../components/**/*.tsx', {
+      query: '?raw',
+      import: 'default',
+      eager: true,
+    }) as Record<string, string>
+
+    // A JSX text node: `>Some words<`, at least two of them, no interpolation.
+    const jsxCopy = /> *([A-Z][A-Za-z'’]+(?: +[A-Za-z'’]+)+) *</
+    // A literal on a prop the user reads.
+    const propCopy =
+      /\b(?:title|label|placeholder|description|aria-label)\s*=\s*["']([A-Z][^"']{4,})["']/
+
+    const offenders = Object.keys(sources)
+      .filter((p) => !p.endsWith('.test.tsx'))
+      .filter((p) => jsxCopy.test(sources[p]) || propCopy.test(sources[p]))
+      .filter((p) => !sources[p].includes('useTranslation'))
+
+    // Sanity: the glob must actually be finding the components.
+    expect(Object.keys(sources).length).toBeGreaterThan(40)
+    expect(
+      offenders,
+      `these components render English that never reaches a catalog:\n${offenders.join('\n')}`,
+    ).toEqual([])
   })
 
   // `typeof en` proves the two catalogs agree. It says nothing about whether a

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Activity, AlertCircle, CheckCircle, Clock, Globe, RefreshCw, Shield, TrendingUp, Wifi, WifiOff } from 'lucide-react'
 import { Button } from '../../components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card'
@@ -16,6 +17,7 @@ interface StreamStatistics {
 }
 
 export function AuditDashboard() {
+  const { t, i18n } = useTranslation()
   const [autoConnect] = useState(true)
   const [statistics, setStatistics] = useState<StreamStatistics>({
     totalEvents: 0,
@@ -94,7 +96,7 @@ export function AuditDashboard() {
   const formatTimestamp = (timestamp: string | null) => {
     if (!timestamp) return '-'
     const date = new Date(timestamp)
-    return date.toLocaleTimeString('en-US', {
+    return date.toLocaleTimeString(i18n.language, {
       hour: '2-digit',
       minute: '2-digit',
       second: '2-digit',
@@ -129,9 +131,9 @@ export function AuditDashboard() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Audit Dashboard</h1>
+          <h1 className="text-3xl font-bold tracking-tight">{t('pages.auditDashboard.title')}</h1>
           <p className="text-muted-foreground">
-            Real-time audit event stream with origin validation
+            {t('pages.auditDashboard.subtitle')}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -188,13 +190,15 @@ export function AuditDashboard() {
           <CardHeader className="pb-3">
             <CardTitle className="text-sm font-medium flex items-center gap-2">
               <Activity className="h-4 w-4" />
-              Total Events
+              {t('pages.auditDashboard.totalEvents')}
             </CardTitle>
           </CardHeader>
           <CardContent>
             <p className="text-2xl font-bold">{statistics.totalEvents}</p>
             <p className="text-xs text-muted-foreground mt-1">
-              {statistics.eventsPerMinute > 0 ? `${statistics.eventsPerMinute}/min` : 'In session'}
+              {statistics.eventsPerMinute > 0
+                ? t('pages.auditDashboard.perMinute', { count: statistics.eventsPerMinute })
+                : t('pages.auditDashboard.inSession')}
             </p>
           </CardContent>
         </Card>
@@ -204,15 +208,15 @@ export function AuditDashboard() {
           <CardHeader className="pb-3">
             <CardTitle className="text-sm font-medium flex items-center gap-2">
               <Clock className="h-4 w-4" />
-              Last Event
+              {t('pages.auditDashboard.lastEvent')}
             </CardTitle>
           </CardHeader>
           <CardContent>
             <p className="text-lg font-semibold">{formatTimestamp(statistics.lastEventAt)}</p>
             <p className="text-xs text-muted-foreground mt-1">
               {statistics.lastEventAt
-                ? `${Math.round((Date.now() - new Date(statistics.lastEventAt).getTime()) / 1000)}s ago`
-                : 'Waiting for events'}
+                ? t('pages.auditDashboard.secondsAgo', { count: Math.round((Date.now() - new Date(statistics.lastEventAt).getTime()) / 1000) })
+                : t('pages.auditDashboard.waitingForEvents')}
             </p>
           </CardContent>
         </Card>
@@ -222,7 +226,7 @@ export function AuditDashboard() {
           <CardHeader className="pb-3">
             <CardTitle className="text-sm font-medium flex items-center gap-2">
               <Globe className="h-4 w-4" />
-              Origin Status
+              {t('pages.auditDashboard.originStatus')}
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -235,7 +239,11 @@ export function AuditDashboard() {
                 <Shield className="h-4 w-4 text-muted-foreground" />
               )}
               <span className="text-sm font-medium">
-                {connectionState === 'origin_rejected' ? 'Not Allowed' : isConnected ? 'Validated' : 'Pending'}
+                {connectionState === 'origin_rejected'
+                  ? t('pages.auditDashboard.originNotAllowed')
+                  : isConnected
+                    ? t('pages.auditDashboard.originValidated')
+                    : t('pages.auditDashboard.originPending')}
               </span>
             </div>
             <p className="text-xs text-muted-foreground mt-1 truncate">
@@ -249,7 +257,7 @@ export function AuditDashboard() {
       <div className="grid gap-6 lg:grid-cols-2">
         {/* Connection Panel */}
         <div className="space-y-4">
-          <h2 className="text-lg font-semibold">Stream Connection</h2>
+          <h2 className="text-lg font-semibold">{t('pages.auditDashboard.streamConnection')}</h2>
           <AuditStream
             autoConnect={autoConnect}
             onStateChange={handleStateChange}
@@ -260,21 +268,21 @@ export function AuditDashboard() {
         {/* Live Events Feed */}
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold">Live Events Feed</h2>
+            <h2 className="text-lg font-semibold">{t('pages.auditDashboard.liveFeed')}</h2>
             {events.length > 0 && (
               <Badge variant="secondary">{events.length} events</Badge>
             )}
           </div>
           <Card>
             <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium">Recent Events</CardTitle>
+              <CardTitle className="text-sm font-medium">{t('pages.auditDashboard.recentEvents')}</CardTitle>
             </CardHeader>
             <CardContent>
               {events.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
                   <Activity className="h-8 w-8 mb-2 opacity-50" />
-                  <p className="text-sm">No events yet</p>
-                  <p className="text-xs">Connect to the stream to see real-time events</p>
+                  <p className="text-sm">{t('pages.auditDashboard.noEvents')}</p>
+                  <p className="text-xs">{t('pages.auditDashboard.noEventsHint')}</p>
                 </div>
               ) : (
                 <div className="space-y-2 max-h-[300px] overflow-y-auto">
@@ -398,13 +406,13 @@ export function AuditDashboard() {
           <CardHeader>
             <CardTitle className="text-sm font-medium flex items-center gap-2">
               <Shield className="h-4 w-4" />
-              Origin Validation Configuration
+              {t('pages.auditDashboard.originConfig')}
             </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
               <div>
-                <p className="text-sm font-medium">Current Origin</p>
+                <p className="text-sm font-medium">{t('pages.auditDashboard.currentOrigin')}</p>
                 <code className="text-xs bg-muted px-2 py-1 rounded mt-1 inline-block">
                   {currentOrigin}
                 </code>
@@ -412,7 +420,7 @@ export function AuditDashboard() {
 
               {allowedOrigins.length > 0 && (
                 <div>
-                  <p className="text-sm font-medium">Allowed Origins ({allowedOrigins.length})</p>
+                  <p className="text-sm font-medium">{t('pages.auditDashboard.allowedOrigins', { count: allowedOrigins.length })}</p>
                   <div className="mt-2 flex flex-wrap gap-2">
                     {allowedOrigins.map((origin) => (
                       <Badge

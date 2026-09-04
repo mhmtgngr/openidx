@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Trash2, UserPlus } from 'lucide-react'
 import { api } from '../lib/api'
@@ -60,6 +61,7 @@ export function ManageAppAccessDialog({
   onOpenChange,
   requireAssignment = false,
 }: ManageAppAccessDialogProps) {
+  const { t } = useTranslation()
   const queryClient = useQueryClient()
   const { toast } = useToast()
   const [principalType, setPrincipalType] = useState<'user' | 'group'>('group')
@@ -119,10 +121,10 @@ export function ManageAppAccessDialog({
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: assignmentsKey })
       setPrincipalId('')
-      toast({ title: 'Access granted', description: `${appName} assigned.`, variant: 'success' })
+      toast({ title: t('components.manageAppAccess.granted'), description: t('components.manageAppAccess.grantedDesc', { app: appName }), variant: 'success' })
     },
     onError: (err: Error) => {
-      toast({ title: 'Failed to grant access', description: err.message, variant: 'destructive' })
+      toast({ title: t('components.manageAppAccess.grantFailed'), description: err.message, variant: 'destructive' })
     },
   })
 
@@ -133,10 +135,10 @@ export function ManageAppAccessDialog({
       ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: assignmentsKey })
-      toast({ title: 'Access revoked', variant: 'success' })
+      toast({ title: t('components.manageAppAccess.revoked'), variant: 'success' })
     },
     onError: (err: Error) => {
-      toast({ title: 'Failed to revoke', description: err.message, variant: 'destructive' })
+      toast({ title: t('components.manageAppAccess.revokeFailed'), description: err.message, variant: 'destructive' })
     },
   })
 
@@ -150,7 +152,7 @@ export function ManageAppAccessDialog({
       setGateOn(next)
       queryClient.invalidateQueries({ queryKey: ['applications'] })
       toast({
-        title: next ? 'Assignment now required' : 'Assignment no longer required',
+        title: next ? t('components.manageAppAccess.requiredOn') : t('components.manageAppAccess.requiredOff'),
         description: next
           ? // Future-conditional on purpose. Assignment enforcement is a
             // deployment-level flag (ACCESS_ASSIGNMENT_ENFORCE) and it is off
@@ -165,7 +167,7 @@ export function ManageAppAccessDialog({
       })
     },
     onError: (err: Error) => {
-      toast({ title: 'Failed to save', description: err.message, variant: 'destructive' })
+      toast({ title: t('components.manageAppAccess.saveFailed'), description: err.message, variant: 'destructive' })
     },
   })
 
@@ -188,19 +190,16 @@ export function ManageAppAccessDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>Manage access — {appName}</DialogTitle>
+          <DialogTitle>{t('components.manageAppAccess.title', { app: appName })}</DialogTitle>
           <DialogDescription>
-            This is the grant: it decides who can actually reach {appName}, on the web
-            and over the network. Assign a user or a group here — group grants apply to
-            every member. Any route restrictions shown elsewhere for this application are
-            derived from this list, not a separate grant.
+            {t('components.manageAppAccess.description', { app: appName })}
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">
           <div className="flex items-end gap-2">
             <div className="w-32">
-              <label htmlFor="manage-app-access-dialog-assign-to" className="text-sm font-medium">Assign to</label>
+              <label htmlFor="manage-app-access-dialog-assign-to" className="text-sm font-medium">{t('components.manageAppAccess.assignTo')}</label>
               <Select
                 value={principalType}
                 onValueChange={(v) => {
@@ -212,8 +211,8 @@ export function ManageAppAccessDialog({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="group">Group</SelectItem>
-                  <SelectItem value="user">User</SelectItem>
+                  <SelectItem value="group">{t('components.manageAppAccess.group')}</SelectItem>
+                  <SelectItem value="user">{t('components.manageAppAccess.user')}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -221,7 +220,7 @@ export function ManageAppAccessDialog({
               <label htmlFor="manage-app-access-dialog-field" className="text-sm font-medium capitalize">{principalType}</label>
               <Select value={principalId} onValueChange={setPrincipalId}>
                 <SelectTrigger id="manage-app-access-dialog-field" className="mt-1">
-                  <SelectValue placeholder={`Select a ${principalType}…`} />
+                  <SelectValue placeholder={t('components.manageAppAccess.selectPrincipal', { type: principalType })} />
                 </SelectTrigger>
                 <SelectContent>
                   {(options || []).map((o) => (
@@ -252,12 +251,9 @@ export function ManageAppAccessDialog({
                 onChange={(e) => onToggleRequireAssignment(e.target.checked)}
               />
               <div className="space-y-1">
-                <Label htmlFor="require_assignment">Require assignment to sign in</Label>
+                <Label htmlFor="require_assignment">{t('components.manageAppAccess.requireLabel')}</Label>
                 <p className="text-sm text-muted-foreground">
-                  When enabled, only users or groups assigned above can obtain a token for
-                  this application. Once assignment enforcement is enabled, users who are not
-                  assigned will be refused at sign-in. Leave this off until the assignment
-                  list below is complete.
+                  {t('components.manageAppAccess.requireHelp')}
                 </p>
                 {/* The gate is per-application, but whether it REFUSES anyone is
                     a deployment-level decision. With assignment enforcement off
@@ -266,15 +262,13 @@ export function ManageAppAccessDialog({
                     be describing enforcement that is not happening. This line is
                     true in both states. */}
                 <p className="text-sm text-muted-foreground">
-                  This setting only refuses anyone while assignment enforcement is enabled for
-                  the deployment. Until then it is recorded, and the assignment report shows who
-                  would be refused, but no sign-in is denied.
+                  {t('components.manageAppAccess.requireModeNote')}
                 </p>
                 {!isLoading && (
                   <p className="text-sm text-muted-foreground">
                     {assigneeCount === 0
-                      ? 'No principals are assigned — enabling this would refuse everyone.'
-                      : `${assigneeCount} principal${assigneeCount === 1 ? '' : 's'} assigned and would keep access.`}
+                      ? t('components.manageAppAccess.noPrincipals')
+                      : t('components.manageAppAccess.principalsKeepAccess', { count: assigneeCount })}
                   </p>
                 )}
               </div>
@@ -282,12 +276,12 @@ export function ManageAppAccessDialog({
           </div>
 
           <div className="border-t pt-3">
-            <p className="mb-2 text-sm font-medium">Current access</p>
+            <p className="mb-2 text-sm font-medium">{t('components.manageAppAccess.currentAccess')}</p>
             {isLoading ? (
-              <p className="text-sm text-muted-foreground">Loading…</p>
+              <p className="text-sm text-muted-foreground">{t('common.loading')}</p>
             ) : !assignments || assignments.length === 0 ? (
               <p className="text-sm text-muted-foreground">
-                No one is assigned yet. Assign a user or group above.
+                {t('components.manageAppAccess.noneAssigned')}
               </p>
             ) : (
               <ul className="space-y-2">
@@ -322,22 +316,20 @@ export function ManageAppAccessDialog({
       <AlertDialog open={confirmLockout} onOpenChange={setConfirmLockout}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Require assignment for {appName}?</AlertDialogTitle>
+            <AlertDialogTitle>{t('components.manageAppAccess.confirmTitle', { app: appName })}</AlertDialogTitle>
             <AlertDialogDescription>
-              Nobody is assigned to {appName} yet. Once assignment enforcement is enabled,
-              turning this on refuses every user at sign-in until you assign a user or a
-              group.
+              {t('components.manageAppAccess.confirmDesc', { app: appName })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => {
                 setConfirmLockout(false)
                 requireAssignmentMutation.mutate(true)
               }}
             >
-              Require assignment
+              {t('components.manageAppAccess.confirmAction')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

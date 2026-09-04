@@ -112,7 +112,8 @@ const UNRENDERABLE: Record<string, string> = {
     'throws "A React Element from an older version of React was rendered".',
 }
 
-const modules = import.meta.glob('../pages/*.tsx')
+// Recursive: a page in a subdirectory is still a page a user reaches.
+const modules = import.meta.glob('../pages/**/*.tsx')
 
 function pageName(path: string): string {
   return path.split('/').pop()!.replace(/\.tsx$/, '')
