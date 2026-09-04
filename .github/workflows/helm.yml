@@ -79,6 +79,28 @@ jobs:
       - name: Template (production values)
         run: helm template openidx "$CHART" -f "$CHART/values-prod.yaml" > /tmp/render-prod.yaml
 
+      # `| default N` on a replica count silently turns an operator's 0 back
+      # into N, because Go templates treat 0 as empty. oauth-service, OPA and
+      # both Ziti workloads did exactly that, and the kind job watched
+      # oauth-service scale 0 -> 2 and crash-loop with every service pinned at
+      # zero. Scaling a service to zero is a legitimate action; assert it.
+      - name: replicaCount 0 means zero
+        run: |
+          set -euo pipefail
+          for svc in identityService governanceService provisioningService \
+                     auditService adminApi oauthService gatewayService \
+                     accessService adminConsole; do
+            got=$(helm template openidx "$CHART" \
+              --set secrets.postgresPassword=render-only-not-a-credential \
+              --set secrets.redisPassword=render-only-not-a-credential \
+              --set secrets.jwtSecret=render-only-not-a-credential-000000 \
+              --set secrets.encryptionKey=render-only-not-a-credential32b \
+              --set "$svc.replicaCount=0" \
+              | grep -c '^  replicas: 0' || true)
+            test "$got" -ge 1 || { echo "$svc.replicaCount=0 did not render replicas: 0"; exit 1; }
+          done
+          echo "every service honours replicaCount 0"
+
   kind-install:
     name: Install on kind
     runs-on: ubuntu-latest

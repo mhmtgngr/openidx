@@ -13,7 +13,12 @@ metadata:
     {{- include "openidx.labels" . | nindent 4 }}
     app.kubernetes.io/component: opa
 spec:
-  replicas: {{ .Values.opa.replicas | default 2 }}
+  # `| default N` would be wrong here: Go templates treat 0 as empty, so an
+  # operator scaling this to zero silently got N back — which is how the
+  # kind-install job, whose values-ci.yaml sets every service to 0, still
+  # watched oauth-service scale 0 -> 2 and crash-loop. `dig` returns the value
+  # when the key is present, including 0, and the default only when absent.
+  replicas: {{ dig "replicas" 2 (.Values.opa | default dict) }}
   selector:
     matchLabels:
       {{- include "openidx.selectorLabels" . | nindent 6 }}
