@@ -1555,15 +1555,57 @@ policy answers 403 + audit on `/oauth/authorize`.
 4. ☐ **Helm install proof** — a `kind` job runs `make helm-install --wait`
    and asserts the migration Job completed, OPA is ready, the backup
    CronJob and NetworkPolicies exist.
-5. ☐ **Gates that gate (D2)** — `docs.yml` validates on PRs with
-   `--strict`; `security-scan.yml` blocks (Trivy exit 1 on CRITICAL/HIGH
-   with `ignore-unfixed`, Gitleaks/Semgrep/npm-audit without
-   `continue-on-error`, allowlists carry a reason); `status-check`
-   aggregates every guard job and `test-frontend`; `ci-android.yml` loses
-   its `|| true`; `tools/contractcheck` armed in `ci-web.yml` and
-   `api-contract.test.ts` compares console paths against the route tables.
-6. ☐ **CODEOWNERS** rewritten to the real owner; unsupported `!` lines and
-   dependabot references removed.
+5. ◐ **Gates that gate (D2)** — four of six landed.
+   - ✅ **`docs.yml` validates on pull requests.** Its `validate` job
+     carried `if: github.event_name == 'pull_request'` and the workflow had
+     no `pull_request` trigger — dead code, so `mkdocs build --strict`,
+     which exists only there, had never run on any commit and the guide's
+     "builds clean under `--strict`" was backed by nothing. Trigger added;
+     `build`/`deploy` stay push-only so a PR can never publish to Pages;
+     concurrency split so validations do not queue on the Pages
+     environment; `--site-dir` made explicit, because MkDocs resolves it
+     against the *config file's* directory, so the site landed in
+     `docs/site` while the link pass looked at `./site/index.html` — a path
+     that never existed, hidden by its own `|| true`. That pass stays
+     informational **and now says so**: internal links are gated by
+     `--strict`; a third-party site being down is not this repository's
+     defect. (Verified: `--strict` passes on this tree today.)
+   - ✅ **`status-check` aggregates everything.** It listed seven jobs, in
+     two hand-maintained copies (`needs:` and a bash array) that had
+     drifted, so `test-frontend` and all nine guard jobs added since could
+     go red without Required Checks noticing. `needs:` is now the only list
+     — 18 jobs — and the step walks `toJSON(needs)`, so adding a job to
+     `needs` is the whole change. `scripts/check-required-checks.sh` fails
+     the build when a job is in neither `needs` nor an in-file
+     `# status-check: informational — <reason>` register (today: `benchmark`
+     and `coverage-report`, each with its reason). An empty `needs` is
+     treated as failure, so a mis-expanded expression cannot pass on zero
+     checks.
+   - ✅ **`ci-android.yml` loses its `|| true`.** The swallow was justified
+     as "neither module has tests yet", but Gradle's `test` task on a module
+     with no test sources succeeds by itself — so it was never protecting
+     against that, only against real failures.
+   - ☐ `security-scan.yml` blocks (Trivy exit 1 on CRITICAL/HIGH with
+     `ignore-unfixed`, Gitleaks/Semgrep/npm-audit without
+     `continue-on-error`, allowlists carrying a reason).
+   - ☐ `tools/contractcheck` armed in `ci-web.yml`, and
+     `api-contract.test.ts` comparing console paths against the route
+     tables instead of grepping for one literal.
+   - **Maintainer action:** branch protection must list the checks it
+     requires. `Required Checks` now covers all of `ci.yml`; the docs
+     `Docs build clean under --strict` job is in another workflow and has
+     to be added to the protection rule separately.
+6. ✅ **CODEOWNERS** — *shipped*. 212 lines naming eighteen `@openidx/*`
+   teams became `* @mhmtgngr`. The repository is under a personal
+   namespace and cannot have organization teams at all, so under
+   "require code-owner review" every rule either no-ops or blocks every PR
+   with no reviewer who can clear it — the same phantom-team class already
+   purged from `renovate.json`. The two `!` lines went with them: GitHub
+   CODEOWNERS has no negation, so they matched nothing while appearing to
+   exempt `.github/workflows/`; so did the rule owning the deleted
+   `.github/dependabot.yml`. `scripts/check-codeowners.sh` now rejects `!`
+   patterns, rules for paths that do not exist, and patterns with no owner
+   (which silently disown the subtree they match).
 7. ☐ **Agent downloads derived, not written** — the agent release builds
    Linux deb/rpm with the existing `agent/Makefile` nfpm target and
    publishes `agent-manifest.json`; `pages/add-device.tsx` renders only

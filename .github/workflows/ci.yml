@@ -86,23 +86,39 @@ jobs:
       - name: Both Docker build attempts must stay identical
         run: bash scripts/check-docker-retry-drift.sh
 
-  # A workflow file is the one kind of source here that CI cannot check by
-  # running it: a workflow GitHub cannot parse takes ITSELF out of CI. It does
-  # not skip the file — it creates a run named after the file path, schedules
-  # zero jobs, and marks it failed. client-desktop-build.yml shipped that way
-  # in #814 (`run: echo "TODO: ..."`, a plain scalar containing ": ") and the
-  # desktop client went unbuilt on every commit since, behind a red check with
-  # no job and no log to read.
-  workflows-parse:
-    name: Every workflow parses
+  # The files under .github/ decide what CI runs and who reviews it, and both
+  # had defects that made them describe a process that was not happening.
+  #
+  # A workflow GitHub cannot parse takes ITSELF out of CI: it does not skip the
+  # file, it creates a run named after the file path, schedules zero jobs, and
+  # marks it failed. client-desktop-build.yml shipped that way in #814
+  # (`run: echo "TODO: ..."`, a plain scalar containing ": ") and the desktop
+  # client went unbuilt on every commit since, behind a red check with no job
+  # and no log to read.
+  #
+  # CODEOWNERS named eighteen @openidx/* teams in a repository under a personal
+  # namespace, which cannot have teams — so under code-owner review either
+  # every rule no-ops or every PR is unclearable. And the required-checks
+  # aggregate listed seven of this workflow's jobs; every guard added since,
+  # plus the frontend tests, could go red without Required Checks noticing.
+  github-config:
+    name: GitHub config is runnable
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
-      - name: Verify the guard can go red
+      - name: Verify the workflow guard can go red
         run: bash scripts/check-workflows-parse.test.sh
       - name: Every workflow must be one GitHub can run
         run: bash scripts/check-workflows-parse.sh
+      - name: Verify the CODEOWNERS guard can go red
+        run: bash scripts/check-codeowners.test.sh
+      - name: CODEOWNERS must name owners that can review
+        run: bash scripts/check-codeowners.sh
+      - name: Verify the required-checks guard can go red
+        run: bash scripts/check-required-checks.test.sh
+      - name: Every CI job must be required or declared informational
+        run: bash scripts/check-required-checks.sh
 
   # The README's quick start is two commands, and nothing had ever run either
   # of them: generate-secrets.sh aborted on SIGPIPE, it omitted two variables
@@ -625,6 +641,9 @@ jobs:
           go test -v -tags=integration -timeout=20m ./test/integration/...
 
   # Benchmark regression detection
+  # status-check: informational — publishes a comparison comment; a slower
+  # benchmark is a report to read, not a reason to block a merge, and the
+  # numbers move with the runner it landed on.
   benchmark:
     name: Benchmarks
     runs-on: ubuntu-latest
@@ -874,6 +893,10 @@ jobs:
         run: govulncheck ./...
 
   # Coverage reporting with codecov
+  # status-check: informational — uploads to an external service, so its
+  # result depends on codecov being reachable rather than on this repository
+  # being correct. The tests it summarises are required jobs in their own
+  # right (test-unit, test-race).
   coverage-report:
     name: Coverage Report
     runs-on: ubuntu-latest
@@ -972,16 +995,48 @@ jobs:
       - name: Run race detector
         run: go test -race ./...
 
-  # Required status checks
+  # Required status checks.
+  #
+  # `needs` is the ONLY list. It used to be written twice — once here and once
+  # as a hand-maintained bash array below — and the two had drifted: the array
+  # named seven jobs, so test-frontend and every guard job this repository has
+  # added since (first-run, ui-safety-guards, selfheal, shell-prose,
+  # ci-resilience-guards, fault-matrix, field-fix-scoreboard,
+  # no-internal-topology, github-config) could go red without Required Checks
+  # noticing. The loop below now walks toJSON(needs), so adding a job to
+  # `needs` is the whole change, and scripts/check-required-checks.sh fails the
+  # build if a job in this workflow is in neither `needs` nor the informational
+  # register.
   status-check:
     name: Required Checks
+    needs:
+      - build-matrix
+      - ci-resilience-guards
+      - detect-changes
+      - fault-matrix
+      - field-fix-scoreboard
+      - first-run
+      - github-config
+      - lint
+      - no-internal-topology
+      - orgscope
+      - selfheal
+      - shell-prose
+      - test-frontend
+      - test-integration
+      - test-race
+      - test-unit
+      - ui-safety-guards
+      - vulnerability-check
     runs-on: ubuntu-latest
-    needs: [build-matrix, lint, test-unit, test-race, vulnerability-check, test-integration, orgscope]
     if: always()
     timeout-minutes: 5
 
     steps:
       - name: Check all required jobs passed
+        env:
+          # The results of every job in `needs`, as {"job": {"result": ...}}.
+          NEEDS: ${{ toJSON(needs) }}
         run: |
           # A gated job that detect-changes skipped (e.g. a docs-only or
           # frontend-only PR where go_changed=false) reports result
@@ -991,23 +1046,23 @@ jobs:
           # red on every PR that didn't touch Go code, defeating the
           # change-detection optimization entirely.
           failed=0
-          for jr in \
-            "build-matrix=${{ needs.build-matrix.result }}" \
-            "lint=${{ needs.lint.result }}" \
-            "test-unit=${{ needs.test-unit.result }}" \
-            "test-race=${{ needs.test-race.result }}" \
-            "vulnerability-check=${{ needs.vulnerability-check.result }}" \
-            "test-integration=${{ needs.test-integration.result }}" \
-            "orgscope=${{ needs.orgscope.result }}"; do
-            name="${jr%%=*}"
-            result="${jr#*=}"
-            if [[ "$result" != "success" && "$result" != "skipped" ]]; then
-              echo "Required check '$name' did not pass: $result"
-              failed=1
-            fi
-          done
+          checked=0
+          while IFS=$'\t' read -r name result; do
+            checked=$((checked + 1))
+            case "$result" in
+              success|skipped) ;;
+              *) echo "Required check '$name' did not pass: $result"; failed=1 ;;
+            esac
+          done < <(printf '%s' "$NEEDS" | jq -r 'to_entries | sort_by(.key)[] | "\(.key)\t\(.value.result // "missing")"')
+          if [[ "$checked" -eq 0 ]]; then
+            # An empty needs object means the expression did not expand —
+            # passing on zero checks is exactly the silent hole this job is
+            # supposed to close.
+            echo "No job results to check: the needs list did not expand"
+            exit 1
+          fi
           if [[ "$failed" -ne 0 ]]; then
             echo "Required checks failed"
             exit 1
           fi
-          echo "All required checks passed (success or skipped)"
+          echo "All $checked required checks passed (success or skipped)"

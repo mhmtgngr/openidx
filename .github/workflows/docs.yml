@@ -1,8 +1,19 @@
 name: Documentation
 
+# The validate job below has always carried `if: github.event_name ==
+# 'pull_request'`, and there was no pull_request trigger — so it was dead code,
+# and `mkdocs build --strict`, which lives only there, had never run in CI on
+# any commit. The readiness guide's claim that "the site builds clean under
+# --strict" was backed by nothing. The trigger is added here; build and deploy
+# stay push-only, because a pull request must never publish to Pages.
 on:
   push:
     branches: [main]
+    paths:
+      - 'docs/**'
+      - 'api/openapi/**'
+      - '.github/workflows/docs.yml'
+  pull_request:
     paths:
       - 'docs/**'
       - 'api/openapi/**'
@@ -19,12 +30,19 @@ permissions:
   pages: write
   id-token: write
 
+# Deploys serialise on one `pages` group and must never cancel each other.
+# Pull-request validations are per-ref and supersede themselves, so they do not
+# queue behind a deploy — sharing the group would have made every docs PR wait
+# on the Pages environment for no reason.
 concurrency:
-  group: pages
-  cancel-in-progress: false
+  group: ${{ github.event_name == 'pull_request' && format('docs-pr-{0}', github.ref) || 'pages' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
+    # Push and workflow_dispatch only: this job runs `mike deploy`, which
+    # writes the gh-pages branch.
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -99,6 +117,7 @@ jobs:
 
   deploy:
     needs: build
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
@@ -108,11 +127,19 @@ jobs:
         id: deployment
         uses: actions/deploy-pages@v5
 
+  # The docs gate. `--strict` turns MkDocs' warnings — a broken internal link, a
+  # nav entry pointing at a file that does not exist, an unreadable config — into
+  # a failed build, which is the only reason this job is worth having.
   validate:
+    name: Docs build clean under --strict
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v7
+        with:
+          # git-revision-date-localized reads the log; a shallow clone makes it
+          # fall back to the build date for every page.
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -124,10 +151,19 @@ jobs:
       - name: Install dependencies
         run: pip install -r docs/requirements.txt
 
+      # --site-dir is explicit because mkdocs resolves a relative site_dir
+      # against the CONFIG file's directory: without it the site lands in
+      # docs/site and the link pass below looked at ./site/index.html, a path
+      # that never existed — which its `|| true` hid completely.
       - name: Build documentation
-        run: mkdocs build --config-file docs/mkdocs.yml --strict
+        run: mkdocs build --config-file docs/mkdocs.yml --strict --site-dir "$GITHUB_WORKSPACE/site"
 
-      - name: Check for broken links
+      # Internal links are already gated: mkdocs --strict fails the build above on
+      # any link that does not resolve inside the site. This pass is about
+      # EXTERNAL links, whose liveness is not this repository's to guarantee —
+      # a third-party site going down for an afternoon must not block a merge.
+      # It stays non-blocking on purpose; the output is there to read.
+      - name: Report dead external links (informational)
         run: |
           pip install linkchecker
           linkchecker site/index.html --check-extern || true
