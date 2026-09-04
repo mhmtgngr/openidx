@@ -1,6 +1,6 @@
 import { Languages, Check } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { supportedLanguages } from '@/i18n'
+import { setLanguage, supportedLanguages } from '@/i18n'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -28,7 +28,7 @@ export function LanguageSwitcher() {
         {supportedLanguages.map((lang) => (
           <DropdownMenuItem
             key={lang.code}
-            onClick={() => void i18n.changeLanguage(lang.code)}
+            onClick={() => void setLanguage(lang.code)}
           >
             <span className="flex-1">{lang.label}</span>
             {current === lang.code && <Check className="ml-2 h-4 w-4" />}

@@ -2024,6 +2024,46 @@ commits without anyone noticing.
 
 ### P7 — One console, one client
 
+0. ✅ **The three console items the P7 audit left open.**
+   - **The Turkish catalog was in the entry chunk.** `i18n/index.ts` imported
+     both catalogs statically — 360 KB of source each — so an English reader
+     downloaded and parsed a Turkish catalog before the first paint. Only
+     English ships eagerly now; every other locale is a dynamic import behind
+     `setLanguage()`, which loads the catalog before switching (calling
+     `i18n.changeLanguage` directly would fall back to English with no error,
+     which reads as a missing translation rather than a missing fetch).
+     Measured: `tr` is its own 288 KB / 86 KB-gzip chunk, fetched only when
+     Turkish is chosen. The typing survives — `tr.ts` is still
+     `const tr: typeof en`, and `import type` costs nothing at runtime — and a
+     test reads `i18n/index.ts` and fails if any locale but `en` is imported
+     statically, because re-adding one changes nothing observable at runtime.
+   - **One card, two switches for the same feature.** A proxy-route card
+     rendered `RouteFeatureToggles` (compact OpenZiti/BrowZer switches) AND,
+     once expanded, `ServiceFeaturePanel`'s switches for the same two
+     features — both live, sharing the `['service-status', routeId]` cache, so
+     flipping either moved the other. The panel is the fuller control (it also
+     shows health and the BrowZer path/domain), so it wins while it is on
+     screen and the compact pair renders only on a collapsed card. The test is
+     red against the old markup: "expected length 1, got 2".
+   - **A remote-input surface that failed open.** `remote-support-popout.tsx`
+     read `?mode=` and treated anything that was not the literal `view` as
+     **interactive** — keyboard and mouse injection into someone else's
+     desktop. A typo, a truncated link, a missing parameter: all granted
+     control. It is now the other way round: `interactive` only when the URL
+     asks for it by that name. The opener always sends the session's own mode,
+     so no legitimate flow changes.
+
+   Tests for the three untested security surfaces the audit named:
+   `lib/webauthn.ts` (the only place the passkey wire format and the browser's
+   ArrayBuffer API meet — 11 cases including a full 256-byte round trip and
+   each unpadded base64url length), `add-device.tsx` (the end-user enrolment
+   wizard: a download appears only for a platform the manifest lists, iOS and
+   macOS say outright that no client is published rather than sending the user
+   to an administrator, and "enrolled" is not rendered as "trusted"), and
+   `remote-support-popout.tsx` (the fail-safe above). Console suite: 160 files
+   / 1178 tests.
+
+
 1. ✅ **Bilingual for real, and a gate that can see the whole console.**
    Both page globs are recursive (`../pages/**/*.tsx`), which immediately
    exposed what the single-level ones had been hiding: `pages/audit/

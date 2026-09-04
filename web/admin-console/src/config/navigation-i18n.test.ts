@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import i18n, { supportedLanguages } from '../i18n'
+import i18n, { ensureLanguage, setLanguage, supportedLanguages } from '../i18n'
 import { navigation, filterNavigation, flattenNavItems, scoreNavItem } from './navigation'
 
 // The typeof-en typing keeps en/tr catalogs in lockstep with each other; this
@@ -8,7 +8,7 @@ import { navigation, filterNavigation, flattenNavItems, scoreNavItem } from './n
 // as the raw key string.
 
 afterEach(async () => {
-  await i18n.changeLanguage('en')
+  await setLanguage('en')
 })
 
 function resolve(lng: string, key: string): unknown {
@@ -25,8 +25,10 @@ describe('navigation i18n', () => {
     }
   }
 
-  it('every referenced key resolves to a non-empty string in every language', () => {
+  it('every referenced key resolves to a non-empty string in every language', async () => {
     for (const lang of supportedLanguages) {
+      // Only English ships with the entry chunk; the rest arrive on demand.
+      await ensureLanguage(lang.code)
       for (const key of allKeys) {
         const value = resolve(lang.code, key)
         expect(value, `${lang.code}: ${key}`).toBeTypeOf('string')
@@ -45,7 +47,7 @@ describe('navigation i18n', () => {
   })
 
   it('sidebar search matches Turkish names too', async () => {
-    await i18n.changeLanguage('tr')
+    await setLanguage('tr')
     const groups = filterNavigation({
       roles: ['super_admin'],
       viewMode: 'admin',
@@ -56,7 +58,7 @@ describe('navigation i18n', () => {
   })
 
   it('command-palette scoring matches Turkish names too', async () => {
-    await i18n.changeLanguage('tr')
+    await setLanguage('tr')
     const users = flattenNavItems().find((i) => i.href === '/users')!
     expect(scoreNavItem(users, 'kullanıcılar')).toBeGreaterThan(0)
     // English stays a synonym in the Turkish UI.

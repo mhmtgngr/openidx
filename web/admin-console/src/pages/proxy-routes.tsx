@@ -529,14 +529,23 @@ export function ProxyRoutesPage() {
                     )}
                     {t('pages.proxyRoutes.actions.features')}
                   </Button>
-                  {(!route.route_type || route.route_type === 'http') && (
-                    <div className="ml-auto">
-                      <RouteFeatureToggles
-                        routeId={route.id}
-                        onUpdate={() => queryClient.invalidateQueries({ queryKey: ['proxy-routes'] })}
-                      />
-                    </div>
-                  )}
+                  {/* The compact OpenZiti/BrowZer switches, and ONLY while the
+                      card is collapsed. ServiceFeaturePanel below renders the
+                      same two features as switches too, so an expanded card
+                      used to carry two live controls per feature, side by
+                      side, sharing one query cache: flipping either moved the
+                      other, which reads as the UI arguing with itself. The
+                      panel is the fuller control (it also shows health and the
+                      BrowZer path/domain), so it wins when it is on screen. */}
+                  {expandedRoute !== route.id &&
+                    (!route.route_type || route.route_type === 'http') && (
+                      <div className="ml-auto">
+                        <RouteFeatureToggles
+                          routeId={route.id}
+                          onUpdate={() => queryClient.invalidateQueries({ queryKey: ['proxy-routes'] })}
+                        />
+                      </div>
+                    )}
                 </div>
                 {expandedRoute === route.id && (
                   <div className="mt-3 pt-3 border-t">

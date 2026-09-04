@@ -1,11 +1,11 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import i18n, { supportedLanguages } from './index'
+import i18n, { ensureLanguage, setLanguage, supportedLanguages } from './index'
 import en from './locales/en'
 
 // The singleton is initialized by the test setup file (same module as
 // main.tsx). Restore English so other test files see the default language.
 afterEach(async () => {
-  await i18n.changeLanguage('en')
+  await setLanguage('en')
 })
 
 describe('i18n', () => {
@@ -15,25 +15,44 @@ describe('i18n', () => {
   })
 
   it('switches to Turkish and back', async () => {
-    await i18n.changeLanguage('tr')
+    await setLanguage('tr')
     expect(i18n.t('landing.nav.signIn')).toBe('Oturum Aç')
     expect(i18n.t('landing.hero.point1')).toBe('%100 açık kaynak (Apache-2.0)')
     expect(i18n.t('login.form.signIn')).toBe('Oturum Aç')
     expect(i18n.t('chrome.account.logout')).toBe('Oturumu Kapat')
 
-    await i18n.changeLanguage('en')
+    await setLanguage('en')
     expect(i18n.t('landing.nav.signIn')).toBe('Sign In')
   })
 
   it('interpolates values', async () => {
-    await i18n.changeLanguage('en')
+    await setLanguage('en')
     expect(i18n.t('landing.footer.copyright', { year: 2026 })).toContain('2026')
   })
 
-  it('declares every supported language in the resource bundle', () => {
+  it('can load every supported language', async () => {
     for (const lang of supportedLanguages) {
-      expect(i18n.hasResourceBundle(lang.code, 'translation')).toBe(true)
+      await ensureLanguage(lang.code)
+      expect(
+        i18n.hasResourceBundle(lang.code, 'translation'),
+        `${lang.code} is in supportedLanguages but nothing can load its catalog`,
+      ).toBe(true)
     }
+  })
+
+  // The catalogs are ~360 KB of source each. Only English ships with the entry
+  // chunk; the rest are dynamic imports. A static `import tr from './locales/tr'`
+  // would put every language back in the first payload and nothing else in this
+  // file would notice, because the runtime behaviour is identical.
+  it('bundles only English eagerly', async () => {
+    const source = (await import('./index.ts?raw')).default as string
+    const staticLocaleImports = source
+      .split('\n')
+      .filter((l) => /^\s*import\s+[^;]*from\s+'\.\/locales\//.test(l))
+    expect(
+      staticLocaleImports,
+      'only en may be imported statically; every other locale is a dynamic import',
+    ).toEqual(["import en from './locales/en'"])
   })
 
   // Keys referenced through runtime maps (frictionKey, KIND_META, STATUS_META)
@@ -735,42 +754,42 @@ describe('i18n', () => {
   })
 
   it('pluralizes the dashboard relative times in both languages', async () => {
-    await i18n.changeLanguage('en')
+    await setLanguage('en')
     expect(i18n.t('pages.dashboard.time.hourAgo', { count: 1 })).toBe('1 hour ago')
     expect(i18n.t('pages.dashboard.time.hourAgo', { count: 3 })).toBe('3 hours ago')
     expect(i18n.t('pages.dashboard.time.dayAgo', { count: 2 })).toBe('2 days ago')
 
-    await i18n.changeLanguage('tr')
+    await setLanguage('tr')
     expect(i18n.t('pages.dashboard.time.hourAgo', { count: 1 })).toBe('1 saat önce')
     expect(i18n.t('pages.dashboard.time.hourAgo', { count: 3 })).toBe('3 saat önce')
   })
 
   it('pluralizes the notification-center times and browser expiry in both languages', async () => {
-    await i18n.changeLanguage('en')
+    await setLanguage('en')
     expect(i18n.t('pages.notifications.time.minuteAgo', { count: 1 })).toBe('1 minute ago')
     expect(i18n.t('pages.notifications.time.minuteAgo', { count: 5 })).toBe('5 minutes ago')
     expect(i18n.t('pages.trustedBrowsers.active.expiresIn', { count: 1 })).toBe('Expires in 1 day')
     expect(i18n.t('pages.trustedBrowsers.active.expiresIn', { count: 30 })).toBe('Expires in 30 days')
 
-    await i18n.changeLanguage('tr')
+    await setLanguage('tr')
     expect(i18n.t('pages.notifications.time.minuteAgo', { count: 5 })).toBe('5 dakika önce')
     expect(i18n.t('pages.trustedBrowsers.active.expiresIn', { count: 30 })).toBe('30 gün içinde doluyor')
   })
 
   it('pluralizes the MFA factor counts in both languages', async () => {
-    await i18n.changeLanguage('en')
+    await setLanguage('en')
     expect(i18n.t('pages.securityKeys.count', { count: 1 })).toBe('1 security key registered')
     expect(i18n.t('pages.securityKeys.count', { count: 3 })).toBe('3 security keys registered')
     expect(i18n.t('pages.pushDevices.count', { count: 1 })).toBe('1 device enrolled')
     expect(i18n.t('pages.pushDevices.count', { count: 2 })).toBe('2 devices enrolled')
 
-    await i18n.changeLanguage('tr')
+    await setLanguage('tr')
     expect(i18n.t('pages.securityKeys.count', { count: 3 })).toBe('3 güvenlik anahtarı kayıtlı')
     expect(i18n.t('pages.pushDevices.count', { count: 2 })).toBe('2 cihaz kayıtlı')
   })
 
   it('pluralizes the audit counts in both languages', async () => {
-    await i18n.changeLanguage('en')
+    await setLanguage('en')
     expect(i18n.t('pages.auditLogs.dayEvents', { date: '2026-01-01', count: 1 })).toBe(
       '2026-01-01: 1 event',
     )
@@ -786,7 +805,7 @@ describe('i18n', () => {
 
     // Turkish does not inflect the noun after a numeral, so both plural forms
     // carry the same wording -- but both must still resolve, not fall back.
-    await i18n.changeLanguage('tr')
+    await setLanguage('tr')
     expect(i18n.t('pages.auditLogs.dayEvents', { date: '2026-01-01', count: 7 })).toBe(
       '2026-01-01: 7 olay',
     )
@@ -796,7 +815,7 @@ describe('i18n', () => {
   })
 
   it('pluralizes the ABAC counts in both languages', async () => {
-    await i18n.changeLanguage('en')
+    await setLanguage('en')
     // The list header and the per-row chip both read from these, and the page
     // tests assert the exact strings ("0 policies", "1 condition").
     expect(i18n.t('pages.abacPolicies.policyCount', { count: 0 })).toBe('0 policies')
@@ -805,35 +824,35 @@ describe('i18n', () => {
     expect(i18n.t('pages.abacPolicies.conditionCount', { count: 1 })).toBe('1 condition')
     expect(i18n.t('pages.abacPolicies.conditionCount', { count: 2 })).toBe('2 conditions')
 
-    await i18n.changeLanguage('tr')
+    await setLanguage('tr')
     expect(i18n.t('pages.abacPolicies.policyCount', { count: 2 })).toBe('2 politika')
     expect(i18n.t('pages.abacPolicies.conditionCount', { count: 2 })).toBe('2 koşul')
   })
 
   it('pluralizes the proxy-route count in both languages', async () => {
-    await i18n.changeLanguage('en')
+    await setLanguage('en')
     // The page test asserts the exact badge text ("2 routes").
     expect(i18n.t('pages.proxyRoutes.routeCount', { count: 0 })).toBe('0 routes')
     expect(i18n.t('pages.proxyRoutes.routeCount', { count: 1 })).toBe('1 route')
     expect(i18n.t('pages.proxyRoutes.routeCount', { count: 2 })).toBe('2 routes')
 
-    await i18n.changeLanguage('tr')
+    await setLanguage('tr')
     expect(i18n.t('pages.proxyRoutes.routeCount', { count: 2 })).toBe('2 rota')
   })
 
   it('pluralizes the OTP code length in both languages', async () => {
-    await i18n.changeLanguage('en')
+    await setLanguage('en')
     expect(i18n.t('pages.settings.sms.digits', { count: 4 })).toBe('4 digits')
     expect(i18n.t('pages.settings.sms.digits', { count: 1 })).toBe('1 digit')
 
-    await i18n.changeLanguage('tr')
+    await setLanguage('tr')
     expect(i18n.t('pages.settings.sms.digits', { count: 6 })).toBe('6 hane')
   })
 
   it('resolves an unknown consent status or risk level to its raw value', async () => {
     // Both badges fall back rather than rendering a bare key, so a value the
     // privacy service adds later is still readable.
-    await i18n.changeLanguage('en')
+    await setLanguage('en')
     expect(i18n.t('pages.consentManagement.statuses.in_review')).toBe('In Review')
     expect(
       i18n.t('pages.consentManagement.statuses.escalated', { defaultValue: 'escalated' }),
@@ -847,12 +866,12 @@ describe('i18n', () => {
     // The count is interpolated as {{n}} so i18next does not try to resolve a
     // plural form the catalog deliberately does not carry, and Turkish keeps
     // its percent sign in front of the number.
-    await i18n.changeLanguage('en')
+    await setLanguage('en')
     expect(
       i18n.t('pages.notificationAdmin.stats.channelCount', { n: 12, percentage: 40 }),
     ).toBe('12 (40%)')
 
-    await i18n.changeLanguage('tr')
+    await setLanguage('tr')
     expect(
       i18n.t('pages.notificationAdmin.stats.channelCount', { n: 1, percentage: 3 }),
     ).toBe('1 (%3)')
@@ -861,7 +880,7 @@ describe('i18n', () => {
   it('falls back to the capitalized scope type and the generic scope hint', async () => {
     // A scope kind the delegation API adds later reads as itself in the filter,
     // the badge and both forms, and its Scope ID field still gets a hint.
-    await i18n.changeLanguage('en')
+    await setLanguage('en')
     expect(
       i18n.t('pages.delegations.scopeTypes.tenant', { defaultValue: 'Tenant' }),
     ).toBe('Tenant')
@@ -873,7 +892,7 @@ describe('i18n', () => {
   })
 
   it('pluralizes the relations-doctor scan result in both languages', async () => {
-    await i18n.changeLanguage('en')
+    await setLanguage('en')
     expect(
       i18n.t('pages.systemHealth.relations.scanResult', { count: 1, remaining: 2 }),
     ).toBe('1 safe fix applied, 2 remaining.')
@@ -881,7 +900,7 @@ describe('i18n', () => {
       i18n.t('pages.systemHealth.relations.scanResult', { count: 3, remaining: 0 }),
     ).toBe('3 safe fixes applied, 0 remaining.')
 
-    await i18n.changeLanguage('tr')
+    await setLanguage('tr')
     expect(
       i18n.t('pages.systemHealth.relations.scanResult', { count: 1, remaining: 2 }),
     ).toBe('1 güvenli düzeltme uygulandı, 2 tane kaldı.')
@@ -891,7 +910,7 @@ describe('i18n', () => {
     // The workflow's action list comes back from the server; an action the
     // lifecycle service adds later still reads as itself in the row badge,
     // the builder and the execute dialog.
-    await i18n.changeLanguage('tr')
+    await setLanguage('tr')
     expect(i18n.t('pages.lifecycleWorkflows.actionTypes.assign_role')).toBe('Rol Ata')
     expect(
       i18n.t('pages.lifecycleWorkflows.actionTypes.reset_password', {
@@ -903,14 +922,14 @@ describe('i18n', () => {
   it('keeps the OAuth playground protocol parameter names untranslated', async () => {
     // code_verifier and friends are the wire identifiers a developer types;
     // only the prose around them localizes.
-    await i18n.changeLanguage('tr')
+    await setLanguage('tr')
     expect(i18n.t('pages.oauthPlayground.jwt.useAccessToken')).toContain('access_token')
     expect(i18n.t('pages.oauthPlayground.step1.desc')).toContain('code_verifier')
     expect(i18n.t('pages.oauthPlayground.step4.call')).toContain('/oauth/userinfo')
   })
 
   it('pluralizes the Access 360 dial-policy line in both languages', async () => {
-    await i18n.changeLanguage('en')
+    await setLanguage('en')
     expect(i18n.t('pages.userAccess360.ziti.via', { count: 1, names: 'a' })).toBe(
       'Via 1 dial policy: a',
     )
@@ -918,7 +937,7 @@ describe('i18n', () => {
       'Via 2 dial policies: a, b',
     )
 
-    await i18n.changeLanguage('tr')
+    await setLanguage('tr')
     expect(i18n.t('pages.userAccess360.ziti.via', { count: 2, names: 'a, b' })).toBe(
       '2 çevirme politikası üzerinden: a, b',
     )
@@ -927,7 +946,7 @@ describe('i18n', () => {
   it('resolves an unknown agent compliance status to its prettified raw value', async () => {
     // The agent reports the status; an unknown one still reads as itself rather
     // than surfacing a bare key in the badge.
-    await i18n.changeLanguage('en')
+    await setLanguage('en')
     expect(i18n.t('pages.userAccess360.devices.complianceStatuses.non_compliant')).toBe(
       'non compliant',
     )
@@ -941,7 +960,7 @@ describe('i18n', () => {
   it('resolves an unknown notification channel to its raw value', async () => {
     // A channel the notification service adds later must still read as itself
     // in the rule table, the broadcast row and the delivery breakdown alike.
-    await i18n.changeLanguage('tr')
+    await setLanguage('tr')
     expect(i18n.t('pages.notificationAdmin.channels.in_app')).toBe('Uygulama içi')
     expect(
       i18n.t('pages.notificationAdmin.channels.webhook', { defaultValue: 'webhook' }),
@@ -951,7 +970,7 @@ describe('i18n', () => {
   it('resolves an unknown Ziti posture check type to its raw value', async () => {
     // The controller's own typeId is the wire value, so a check type a newer
     // controller reports still renders instead of leaking a bare key.
-    await i18n.changeLanguage('tr')
+    await setLanguage('tr')
     expect(i18n.t('pages.zitiNetwork.posture.checkTypes.Domain')).toBe('Etki alanı')
     expect(
       i18n.t('pages.zitiNetwork.posture.checkTypes.Windows', { defaultValue: 'Windows' }),
@@ -961,7 +980,7 @@ describe('i18n', () => {
   it('resolves an unknown connection-test probe to its prettified raw value', async () => {
     // ConnectionTestButton names probes from the backend's own map, so one
     // added later must still read as itself.
-    await i18n.changeLanguage('en')
+    await setLanguage('en')
     expect(i18n.t('pages.proxyRoutes.connectionTest.tests.upstream')).toBe('Upstream')
     expect(
       i18n.t('pages.proxyRoutes.connectionTest.tests.dns_resolve', {
@@ -973,7 +992,7 @@ describe('i18n', () => {
   it('leaves an unrecognised hosting mode without a hint', async () => {
     // The pre-i18n page rendered nothing when `.find()` missed; the catalog
     // lookup must not surface a bare key in its place.
-    await i18n.changeLanguage('en')
+    await setLanguage('en')
     expect(
       i18n.t('pages.proxyRoutes.hostingModeHints.tunnel', { defaultValue: '' }),
     ).toBe('')
@@ -982,7 +1001,7 @@ describe('i18n', () => {
   it('resolves an unknown audit event type to its prettified raw value', async () => {
     // The page falls back rather than rendering a bare key, so a type the
     // backend adds later is still readable.
-    await i18n.changeLanguage('en')
+    await setLanguage('en')
     expect(
       i18n.t('pages.auditLogs.eventTypes.secret_rotation', {
         defaultValue: 'secret_rotation'.replace('_', ' '),
@@ -993,7 +1012,7 @@ describe('i18n', () => {
   it('resolves an unknown agent status to its prettified raw value', async () => {
     // Both agent badges fall back rather than rendering a bare key, so a
     // lifecycle or compliance value the backend adds later is still readable.
-    await i18n.changeLanguage('en')
+    await setLanguage('en')
     expect(
       i18n.t('pages.agentFleet.statuses.quarantined', {
         defaultValue: 'quarantined'.replace(/_/g, ' '),
@@ -1006,12 +1025,12 @@ describe('i18n', () => {
     ).toBe('awaiting report')
     // The known values still resolve through the catalog in both languages.
     expect(i18n.t('pages.agentFleet.complianceStatuses.non_compliant')).toBe('non compliant')
-    await i18n.changeLanguage('tr')
+    await setLanguage('tr')
     expect(i18n.t('pages.agentFleet.complianceStatuses.non_compliant')).toBe('uyumsuz')
   })
 
   it('interpolates the agent enrolment checksum and the revoke confirmation', async () => {
-    await i18n.changeLanguage('en')
+    await setLanguage('en')
     expect(i18n.t('pages.agentFleet.qr.downloadApk', { checksum: 'a1b2c3d4e5f6…' })).toBe(
       'Download APK (a1b2c3d4e5f6…)',
     )
@@ -1021,7 +1040,7 @@ describe('i18n', () => {
   })
 
   it('resolves an unknown Ziti anomaly type and severity to their raw values', async () => {
-    await i18n.changeLanguage('en')
+    await setLanguage('en')
     expect(
       i18n.t('pages.zitiAiInsights.anomalyTypes.impossible_travel', {
         defaultValue: 'impossible_travel'.replace(/_/g, ' '),
@@ -1035,21 +1054,21 @@ describe('i18n', () => {
   it('names the directory a resolved Ziti subject came from', async () => {
     // A UUID-named overlay identity says nothing on its own, so the row states
     // what kind of account it is — and, for a person, where they came from.
-    await i18n.changeLanguage('en')
+    await setLanguage('en')
     expect(i18n.t('pages.zitiAiInsights.subjectFromSource', { source: 'ldap' })).toBe(
       'person (ldap)',
     )
     expect(i18n.t('pages.zitiAiInsights.subjectKinds.unresolved')).toBe(
       'account not visible here',
     )
-    await i18n.changeLanguage('tr')
+    await setLanguage('tr')
     expect(i18n.t('pages.zitiAiInsights.subjectFromSource', { source: 'ldap' })).toBe(
       'kişi (ldap)',
     )
   })
 
   it('pluralizes both counts in the Ziti analysis summary', async () => {
-    await i18n.changeLanguage('en')
+    await setLanguage('en')
     const one = i18n.t('pages.zitiAiInsights.toasts.analysisSummary', {
       observations: i18n.t('pages.zitiAiInsights.toasts.analysisObservations', { count: 1 }),
       anomalies: i18n.t('pages.zitiAiInsights.toasts.analysisAnomalies', { count: 1 }),
@@ -1061,7 +1080,7 @@ describe('i18n', () => {
     })
     expect(many).toBe('12 observations analyzed, 3 new anomalies detected.')
 
-    await i18n.changeLanguage('tr')
+    await setLanguage('tr')
     expect(
       i18n.t('pages.zitiAiInsights.toasts.analysisObservations', { count: 12 }),
     ).toBe('12 gözlem incelendi')
@@ -1070,7 +1089,7 @@ describe('i18n', () => {
   it('pluralizes the usage-analytics registration total in both languages', async () => {
     // The raw number picks the plural; the locale-formatted string fills the
     // sentence, so a five-figure total still reads as "12,345".
-    await i18n.changeLanguage('en')
+    await setLanguage('en')
     expect(
       i18n.t('pages.usageAnalytics.registrations.total', { count: 1, formatted: '1' }),
     ).toBe('Total: 1 new user')
@@ -1081,14 +1100,14 @@ describe('i18n', () => {
       }),
     ).toBe('Total: 12,345 new users')
 
-    await i18n.changeLanguage('tr')
+    await setLanguage('tr')
     expect(
       i18n.t('pages.usageAnalytics.registrations.total', { count: 3, formatted: '3' }),
     ).toBe('Toplam: 3 yeni kullanıcı')
   })
 
   it('resolves an unknown webhook delivery status to its raw value', async () => {
-    await i18n.changeLanguage('en')
+    await setLanguage('en')
     expect(
       i18n.t('pages.webhooks.deliveryStatuses.dropped', { defaultValue: 'dropped' }),
     ).toBe('dropped')
@@ -1098,14 +1117,14 @@ describe('i18n', () => {
   })
 
   it('names the tenant settings group inside its own sentence', async () => {
-    await i18n.changeLanguage('en')
+    await setLanguage('en')
     expect(
       i18n.t('pages.tenantManagement.settings.desc', {
         category: i18n.t('pages.tenantManagement.settings.categories.session'),
       }),
     ).toBe('Edit Session settings as JSON')
 
-    await i18n.changeLanguage('tr')
+    await setLanguage('tr')
     expect(
       i18n.t('pages.tenantManagement.settings.desc', {
         category: i18n.t('pages.tenantManagement.settings.categories.session'),
@@ -1114,7 +1133,7 @@ describe('i18n', () => {
   })
 
   it('pluralizes the device pagination line in both languages', async () => {
-    await i18n.changeLanguage('en')
+    await setLanguage('en')
     expect(
       i18n.t('pages.devices.showing', { from: 1, to: 1, total: 1, count: 1 }),
     ).toBe('Showing 1 to 1 of 1 device')
@@ -1122,14 +1141,14 @@ describe('i18n', () => {
       i18n.t('pages.devices.showing', { from: 1, to: 20, total: 42, count: 42 }),
     ).toBe('Showing 1 to 20 of 42 devices')
 
-    await i18n.changeLanguage('tr')
+    await setLanguage('tr')
     expect(
       i18n.t('pages.devices.showing', { from: 1, to: 20, total: 42, count: 42 }),
     ).toBe('42 cihazdan 1-20 arası gösteriliyor')
   })
 
   it('renders the AI agent vocabularies in both the badge and the form casing', async () => {
-    await i18n.changeLanguage('en')
+    await setLanguage('en')
     expect(i18n.t('pages.aiAgents.agentTypes.assistant')).toBe('assistant')
     expect(i18n.t('pages.aiAgents.form.typeOptions.assistant')).toBe('Assistant')
     expect(
@@ -1144,7 +1163,7 @@ describe('i18n', () => {
   })
 
   it('pluralizes the Ziti bulk-import summary in both languages', async () => {
-    await i18n.changeLanguage('en')
+    await setLanguage('en')
     expect(
       i18n.t('pages.zitiDiscovery.toasts.bulkSummary', {
         imported: i18n.t('pages.zitiDiscovery.toasts.bulkImported', { count: 1 }),
@@ -1161,7 +1180,7 @@ describe('i18n', () => {
       'Import 1 Service',
     )
 
-    await i18n.changeLanguage('tr')
+    await setLanguage('tr')
     expect(
       i18n.t('pages.zitiDiscovery.toasts.bulkImported', { count: 7 }),
     ).toBe('7 servis aktarıldı.')
@@ -1170,21 +1189,21 @@ describe('i18n', () => {
   it('inflects the topology empty sentence per node kind', async () => {
     // Keyed by the node kind rather than interpolating the word, so a locale
     // that inflects the noun can write each sentence out.
-    await i18n.changeLanguage('en')
+    await setLanguage('en')
     expect(i18n.t('pages.networkTopology.detail.noPolicies.identity')).toBe(
       'No service policies reference this identity.',
     )
     expect(i18n.t('pages.networkTopology.detail.noPolicies.service')).toBe(
       'No service policies reference this service.',
     )
-    await i18n.changeLanguage('tr')
+    await setLanguage('tr')
     expect(i18n.t('pages.networkTopology.detail.noPolicies.identity')).toContain(
       'kimliğe',
     )
   })
 
   it('resolves an unknown forecast trend to its prettified raw value', async () => {
-    await i18n.changeLanguage('en')
+    await setLanguage('en')
     expect(
       i18n.t('pages.predictiveAnalytics.trends.accelerating', {
         defaultValue: 'accelerating'.replace(/_/g, ' '),
@@ -1196,7 +1215,7 @@ describe('i18n', () => {
   })
 
   it('renders the organization plan in both the badge and the form casing', async () => {
-    await i18n.changeLanguage('en')
+    await setLanguage('en')
     expect(i18n.t('pages.organizations.plans.enterprise')).toBe('enterprise')
     expect(i18n.t('pages.organizations.form.planOptions.enterprise')).toBe('Enterprise')
     expect(i18n.t('pages.organizations.members.roles.owner')).toBe('owner')
@@ -1210,7 +1229,7 @@ describe('i18n', () => {
   it('builds the retention sentence from a plural and its own clause', async () => {
     // The archive clause is a separate key so each locale can punctuate it, and
     // the whole line lands in one text node rather than three siblings.
-    await i18n.changeLanguage('en')
+    await setLanguage('en')
     expect(
       i18n.t('pages.auditArchival.retention.retain', {
         count: 90,
@@ -1224,7 +1243,7 @@ describe('i18n', () => {
       }),
     ).toBe('Retain for 1 day (no archive)')
 
-    await i18n.changeLanguage('tr')
+    await setLanguage('tr')
     expect(
       i18n.t('pages.auditArchival.retention.retain', {
         count: 90,
@@ -1234,7 +1253,7 @@ describe('i18n', () => {
   })
 
   it('pluralizes the archive event count while keeping its formatted number', async () => {
-    await i18n.changeLanguage('en')
+    await setLanguage('en')
     expect(
       i18n.t('pages.auditArchival.archives.events', {
         count: 12345,
@@ -1383,7 +1402,7 @@ describe('i18n', () => {
   it('builds the assignment-report loss line from two independent plurals', async () => {
     // The English original wrote "user(s)" and "application(s)" because one
     // sentence cannot pluralize on two counts. Each half is its own key now.
-    await i18n.changeLanguage('en')
+    await setLanguage('en')
     const line = (users: number, applications: number) =>
       i18n.t('pages.assignmentReport.wouldLose', {
         users: i18n.t('pages.assignmentReport.userCount', { count: users }),
@@ -1398,7 +1417,7 @@ describe('i18n', () => {
   it('agrees the identity-less sentence with both of its counts', async () => {
     // The subject agrees with the organization total, the rest of the sentence
     // with how many users lack an identity, so the subject is composed first.
-    await i18n.changeLanguage('en')
+    await setLanguage('en')
     const line = (without: number, total: number) =>
       i18n.t('pages.assignmentReport.identityless', {
         count: without,
@@ -1416,7 +1435,7 @@ describe('i18n', () => {
   it('pluralizes the device-code expiry instead of appending an s', async () => {
     // The page used to render "about 1 minutes" whenever the remaining time
     // rounded to zero, because the clamp and the plural test disagreed.
-    await i18n.changeLanguage('en')
+    await setLanguage('en')
     expect(i18n.t('pages.deviceAuthorization.expiresIn', { count: 1 })).toBe(
       'Expires in about 1 minute',
     )
@@ -1426,7 +1445,7 @@ describe('i18n', () => {
   })
 
   it('pluralizes a recommendation affected-entity count around its wire type', async () => {
-    await i18n.changeLanguage('en')
+    await setLanguage('en')
     expect(
       i18n.t('pages.aiRecommendations.entityCount', { count: 1, type: 'user' }),
     ).toBe('1 user')
@@ -1434,7 +1453,7 @@ describe('i18n', () => {
       i18n.t('pages.aiRecommendations.entityCount', { count: 4, type: 'user' }),
     ).toBe('4 users')
     // Turkish does not pluralize the noun after a number.
-    await i18n.changeLanguage('tr')
+    await setLanguage('tr')
     expect(
       i18n.t('pages.aiRecommendations.entityCount', { count: 4, type: 'user' }),
     ).toBe('4 user')
@@ -1443,7 +1462,7 @@ describe('i18n', () => {
   it('puts the compliance weight percent where each locale wants it', async () => {
     // The weight itself lives in one const list on the page; the locale only
     // writes the wording around it — and Turkish puts the sign in front.
-    await i18n.changeLanguage('en')
+    await setLanguage('en')
     expect(
       i18n.t('pages.complianceDashboard.weightLine', {
         label: i18n.t('pages.complianceDashboard.weights.mfa'),
@@ -1451,7 +1470,7 @@ describe('i18n', () => {
       }),
     ).toBe('MFA adoption (25%)')
 
-    await i18n.changeLanguage('tr')
+    await setLanguage('tr')
     expect(
       i18n.t('pages.complianceDashboard.weightLine', {
         label: i18n.t('pages.complianceDashboard.weights.mfa'),
@@ -1463,7 +1482,7 @@ describe('i18n', () => {
   it('names the lifecycle run consequence through its own clause', async () => {
     // What the run does to a matching account is a clause, not an interpolated
     // adjective, so a locale can inflect it with the rest of the sentence.
-    await i18n.changeLanguage('en')
+    await setLanguage('en')
     expect(
       i18n.t('pages.lifecyclePolicies.runConfirm.description', {
         name: 'Stale accounts',
@@ -1480,14 +1499,14 @@ describe('i18n', () => {
 
   it('keeps both ISPM severity casings on one membership', async () => {
     for (const lang of supportedLanguages) {
-      await i18n.changeLanguage(lang.code)
+      await setLanguage(lang.code)
       for (const s of ['critical', 'high', 'medium', 'low']) {
         const badge = i18n.t(`pages.ispm.severities.${s}`)
         const label = i18n.t(`pages.ispm.severityLabels.${s}`)
         expect(badge.toLocaleLowerCase(lang.code)).toBe(label.toLocaleLowerCase(lang.code))
       }
     }
-    await i18n.changeLanguage('en')
+    await setLanguage('en')
     // A category the scanner adds later still reads as itself.
     expect(i18n.t('pages.ispm.categories.lifecycle', { defaultValue: 'lifecycle' })).toBe(
       'lifecycle',
@@ -1495,7 +1514,7 @@ describe('i18n', () => {
   })
 
   it('pluralizes the unified audit pagination line', async () => {
-    await i18n.changeLanguage('en')
+    await setLanguage('en')
     expect(
       i18n.t('pages.unifiedAudit.showing', { from: 1, to: 1, total: 1, count: 1 }),
     ).toBe('Showing 1 - 1 of 1 event')
@@ -1505,7 +1524,7 @@ describe('i18n', () => {
   })
 
   it('interpolates the page strings that carry values', async () => {
-    await i18n.changeLanguage('en')
+    await setLanguage('en')
     expect(
       i18n.t('pages.sessions.revoke.description', { username: 'alice', ip: '10.0.0.5' }),
     ).toBe('Revoke the session for alice from 10.0.0.5? The session will be signed out immediately.')
@@ -1513,7 +1532,7 @@ describe('i18n', () => {
       'Failed to load sessions. Please try again.',
     )
 
-    await i18n.changeLanguage('tr')
+    await setLanguage('tr')
     expect(
       i18n.t('pages.sessions.revoke.description', { username: 'alice', ip: '10.0.0.5' }),
     ).toContain('alice')

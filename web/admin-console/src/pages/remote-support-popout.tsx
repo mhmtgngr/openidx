@@ -19,9 +19,14 @@ export function RemoteSupportPopout() {
   const { t } = useTranslation()
   const [params] = useSearchParams()
   const wsPath = params.get('ws') || ''
-  const mode = (params.get('mode') === 'view' ? 'view' : 'interactive') as
-    | 'interactive'
-    | 'view'
+  // Fail safe. `interactive` is remote INPUT INJECTION into someone's
+  // desktop -- keyboard and mouse -- so it is granted only when the URL asks
+  // for it by that name. A missing mode, a typo, a link truncated in a chat
+  // window: all view-only. The opener (pages/remote-support.tsx) always sends
+  // the session's own mode, so no legitimate flow changes; what changes is
+  // what a malformed URL gets.
+  const mode: 'interactive' | 'view' =
+    params.get('mode') === 'interactive' ? 'interactive' : 'view'
   const sessionId = params.get('session') || ''
 
   const wsUrl = useMemo(
