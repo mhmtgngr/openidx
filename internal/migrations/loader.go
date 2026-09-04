@@ -8,6 +8,16 @@ func (m *Migrator) LoadMigrations() ([]*Migration, error) {
 	return allMigrations(), nil
 }
 
+// All returns the registered migrations, in registration order.
+//
+// It exists for tools/orgscope, which derives the tenant-scope census from
+// the DDL rather than from a hand-maintained list. A hand-maintained list
+// cannot see a table nobody remembered to add to it, and that blind spot is
+// exactly how ispm_*, ai_agents and ai_recommendations were read and mutated
+// across tenants until v138. The registry is the only place that knows every
+// table this schema has, so it is what the lint reads.
+func All() []*Migration { return allMigrations() }
+
 // allMigrations returns the complete list of migrations
 // This is generated from the migrations directory
 func allMigrations() []*Migration {

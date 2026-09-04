@@ -1392,15 +1392,54 @@ class this whole program exists for.
    file (two orgs; A never sees or mutates B) in the shape of
    `internal/oauth/ssf_tenant_isolation_test.go`; `ai_agents.go` gets its
    first test file this way.
-3. ☐ **`tools/orgscope` inverted** so omission fails: scope is *derived*
-   from the migration registry (`CREATE TABLE`/`ADD COLUMN org_id`/
-   `FORCE ROW LEVEL SECURITY`/`DROP TABLE` folded over every `UpSQL`), and
-   a table with no `org_id` must be declared install-wide *with a reason*,
-   a table with `org_id` but no FORCE policy must be belt-exempt *with a
-   reason*; blank reasons are rejected. Self-tests for each rule; an
-   integration test compares the derived belt against
-   `information_schema`. The first `-fail` run is itself an audit: tenant
-   data it surfaces gets a migration, never a waiver.
+3. ✅ **`tools/orgscope` inverted** so omission fails — *shipped.* Scope is
+   now **derived** from the migration registry (`CREATE TABLE` /
+   `ADD COLUMN org_id` / `FORCE ROW LEVEL SECURITY` / `DROP TABLE` / rename
+   folded over every `UpSQL`, comments stripped and column lists
+   paren-balanced), and every table must be classified with a reason;
+   blank reasons panic at startup. Twelve self-tests pin the derivation and
+   each rule, `TestDerivedSetCoversFormerHandList` pins the 87-name list it
+   replaced so coverage cannot shrink, and `TestRealSchemaIsFullyClassified`
+   is what goes red the day a table is added and forgotten. The CI job
+   prints the census in its summary.
+
+   **What the first run found, and it is the headline of this phase.** The
+   hand-maintained list covered **87 of the schema's 231 tables**. Of the
+   144 it never saw:
+
+   - **61 hold per-user or per-org data and have no `org_id` at all** — the
+     same defect class v138 fixed, in tables nobody had looked at. Among
+     them: `unified_audit_events` (the console's audit stream),
+     `admin_audit_log`, `mfa_bypass_codes` / `mfa_sms` / `mfa_email_otp` /
+     `hardware_tokens` (per-user credentials), `magic_links`,
+     `trusted_browsers`, `saml_sessions`, `lifecycle_*`, `guacamole_*`,
+     `enrolled_agents`, `breach_incidents`.
+   - **34 carry `org_id` but never received the RLS belt** — `v37`/`v121`
+     belted what existed then and everything since has drifted out. Several
+     of their own migration descriptions say "org-scoped for RLS" while the
+     `FORCE` statement was never written; `temp_access_links` got `org_id`
+     in v71 specifically to close a cross-tenant IDOR and the belt did not
+     follow.
+   - 19 more are belted but have queries that address rows by id without
+     naming `org_id` — defence in depth, not a live hole (RLS scopes them),
+     deferred for audit rather than bulk-edited.
+
+   These are recorded as three **registers** in `tools/orgscope/scoped.go`,
+   each entry naming what the table holds. They are printed with their count
+   on every run and do **not** fail the build — fixing 95 tables is a
+   migration programme, not a prerequisite for arming the gate — but their
+   sizes are pinned by a test, so a register can only shrink and a new table
+   cannot be parked on one to keep it quiet. **P5.3b** below is that
+   programme.
+
+3b. ☐ **Retire the registers** (the 61 + 34, in batches by domain: audit ·
+   MFA/credentials · lifecycle/governance · PAM/remote · agent fleet ·
+   notifications/console). Each batch is one migration in the v138 shape plus
+   the handler predicates plus a two-org isolation test, and drops the
+   register count in the same commit. This is the largest remaining piece of
+   engineering in the programme and the one that decides whether "multi-tenant
+   isolation is enforced" is true of the whole schema or only of the part
+   somebody had listed.
 4. ☐ **OPA `deny` enforced** — `internal/common/middleware/opa.go`: abort
    unless `Allow && len(Deny)==0`; `authz.rego:15-19`'s "any authenticated
    user may GET anything" removed; `policies/access_control.rego`
@@ -1654,7 +1693,7 @@ Call the project ready from the user's perspective when all of these hold:
 |---|---|---|
 | 1 · journeys verified | ☐ | J1 needs the smoke job (P6.2); J3 the enforced-posture integration case (P6.1); J7 a leaver integration case; J4/J5/J8 keep scripted operator drills (`tools/darkprobe`, `make dr-game-day`) filed under `docs/evidence/` (P8.4) |
 | 2 · enforced posture, legacy login gone | ☐ | code: P6.1 (Task 15 is unremoved code today, `internal/oauth/service.go` registers the routes unconditionally); ops: rollout Task 16 |
-| 3 · every control enforces | ☐ | P5 (the eleven items above) |
+| 3 · every control enforces | ☐ | P5 (the eleven items above); the tenant boundary itself is P5.1–5.3 + the P5.3b register programme |
 | 4 · first run / first login / four pillars from the docs | ☐ | smoke job (P6.2), `USER_GUIDE.md` credential (P8.1), IGA guide page (P8.1) |
 | 5 · one story + auditor artifacts | ☐ | threat model and control mapping exist; docs sweep 3 + drift guard (P8.1) |
 | 6 · releases current, signed, Helm proven | ☐ | CHANGELOG/pins (P8.2–3); v1.34.0 will be the first signed tag; `kind` install proof (P6.4) |

@@ -765,15 +765,21 @@ jobs:
           rc=$?
           set -e
           count=$(tail -n1 orgscope.err 2>/dev/null | grep -oE '^orgscope: [0-9]+' | awk '{print $2}' || echo "?")
+          # The census is the tenant-boundary state of the whole schema. Print
+          # it in the summary so a drifting classification is visible on the PR
+          # that causes it, not a release later.
+          go run ./tools/orgscope -census > census.out 2> census.err || true
           {
-            echo "## orgscope — possible org-unscoped queries"
+            echo "## orgscope — tenant boundary"
             echo
-            echo "**Finding count:** ${count}"
+            echo "**Blocking findings:** ${count}"
+            echo
+            echo "$(tail -n1 census.err)"
             echo
             if [ "$rc" -ne 0 ]; then
-              echo "❌ **Gate failed** — every query touching a tenant-scoped table must filter/populate org_id (or carry an //orgscope:ignore <reason>)."
+              echo "❌ **Gate failed** — either a table is not classified (see tools/orgscope/scoped.go) or a query touching a tenant-scoped table does not filter/populate org_id (or carry an //orgscope:ignore <reason>)."
             else
-              echo "✅ No unscoped tenant queries."
+              echo "✅ Every table is classified and no unscoped tenant query was found."
             fi
             echo
             echo "### Findings"
@@ -784,6 +790,14 @@ jobs:
               echo "... (truncated; $(wc -l < orgscope.out) lines total)"
             fi
             echo '```'
+            echo
+            echo "<details><summary>Table census</summary>"
+            echo
+            echo '```'
+            cat census.out
+            echo '```'
+            echo
+            echo "</details>"
           } >> "$GITHUB_STEP_SUMMARY"
           # Propagate the tool's exit code — non-zero fails the build.
           exit $rc
