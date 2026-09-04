@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest'
 import i18n, { supportedLanguages } from './index'
+import en from './locales/en'
 
 // The singleton is initialized by the test setup file (same module as
 // main.tsx). Restore English so other test files see the default language.
@@ -1263,6 +1264,76 @@ describe('i18n', () => {
     expect(pages.length).toBeGreaterThan(90)
     const untranslated = pages.filter((p) => !sources[p].includes('useTranslation'))
     expect(untranslated).toEqual([])
+  })
+
+  // `typeof en` proves the two catalogs agree. It says nothing about whether a
+  // key a component ASKS FOR exists: i18next answers a missing key by returning
+  // the key itself, so `t('components.myApps.heading')` renders the literal
+  // string "components.myApps.heading" on the page and every type-check, lint
+  // and test still passes. A typo in an extraction is invisible until someone
+  // looks at the screen. This resolves every literal key in the source against
+  // the English catalog, which is the one that has to be complete.
+  it('resolves every literal t() key used in the source', () => {
+    const sources = import.meta.glob('../**/*.{ts,tsx}', {
+      query: '?raw',
+      import: 'default',
+      eager: true,
+    }) as Record<string, string>
+    const files = Object.keys(sources).filter(
+      (p) => !/\.test\.tsx?$/.test(p) && !p.includes('/locales/'),
+    )
+    expect(files.length).toBeGreaterThan(150)
+
+    // Only LITERAL keys: `t(someVariable)` and `t(\`a.${b}\`)` are resolved at
+    // runtime from data and are pinned by the per-page tests instead.
+    const KEY = /(?:\bi18n\.t|\bt)\(\s*['"]([a-zA-Z][A-Za-z0-9_.]*)['"]/g
+    const I18N_KEY_PROP = /i18nKey="([A-Za-z0-9_.]+)"/g
+
+    const at = (path: string[]): unknown => {
+      let cur: unknown = en
+      for (const seg of path) {
+        if (typeof cur !== 'object' || cur === null || !(seg in (cur as object))) return undefined
+        cur = (cur as Record<string, unknown>)[seg]
+      }
+      return cur
+    }
+    const resolves = (key: string): boolean => {
+      const path = key.split('.')
+      if (typeof at(path) === 'string') return true
+      // A plural is stored as SIBLINGS -- `count_one` and `count_other` -- so
+      // the bare name the code passes to t() is never itself a key. Callers
+      // write t('…serviceCount', { count }) and i18next picks the suffix.
+      const leaf = path[path.length - 1]
+      const parent = path.slice(0, -1)
+      return ['_one', '_other', '_zero', '_few', '_many'].some(
+        (suffix) => typeof at([...parent, leaf + suffix]) === 'string',
+      )
+    }
+
+    // A module that is not a component cannot call the hook, so a couple of
+    // them define a local `t` that prefixes the namespace:
+    //   const t = (key) => i18n.t(`pam.path.${key}`)
+    // The call sites then pass a RELATIVE key. Detect the prefix and apply it
+    // rather than skipping the file -- these are exactly the modules where a
+    // typo has no component test to catch it.
+    const PREFIX = /const\s+t\s*=[^\n]*i18n\.t\(\s*`([A-Za-z0-9_.]+)\.\$\{/
+
+    const missing: string[] = []
+    for (const file of files) {
+      const pm = PREFIX.exec(sources[file])
+      const prefix = pm ? pm[1] + '.' : ''
+      for (const rx of [KEY, I18N_KEY_PROP]) {
+        rx.lastIndex = 0
+        let m: RegExpExecArray | null
+        while ((m = rx.exec(sources[file])) !== null) {
+          const key = m[1]
+          // Skip anything that is plainly not a catalog path.
+          if (!key.includes('.')) continue
+          if (!resolves(key) && !resolves(prefix + key)) missing.push(`${file}: ${key}`)
+        }
+      }
+    }
+    expect(missing).toEqual([])
   })
 
   it('builds the assignment-report loss line from two independent plurals', async () => {

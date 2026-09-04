@@ -4,6 +4,132 @@ const en = {
   switcher: {
     label: 'Language',
   },
+  // Strings owned by shared components rather than by a page. The i18n sweep
+  // that made every page bilingual stopped at src/pages, so the components a
+  // page composes -- the session dialogs, the theme switcher, the confirm
+  // dialog every destructive action routes through -- stayed English on a
+  // console that is otherwise translated.
+  components: {
+    myApps: {
+      heading: 'Sign in to your apps',
+      subtitle: 'Click one and OpenIDX signs you in automatically (single sign-on) — no separate password.',
+      loading: 'Loading applications...',
+      resource: 'applications',
+      noMatch: 'No apps match “{{search}}”.',
+      noDescription: 'No description available',
+      launch: 'Launch',
+      launchFailedTitle: 'Cannot launch application',
+      launchFailedDesc: '{{name}} has no valid launch URL configured. Contact your administrator.',
+    },
+    quickLinks: {
+      heading: 'Quick links',
+      subtitle: 'Shortcuts to support and collaboration systems, and one-click connections in your browser.',
+      resource: 'quick links',
+      noMatch: 'No quick links match “{{search}}”.',
+      kindTerminal: 'terminal',
+      kindConnect: 'connect',
+      kindLink: 'link',
+      launch: 'Launch',
+      open: 'Open',
+      nothingToLaunch: 'Nothing to launch',
+      approvalRequired: 'Approval required',
+      approvalRequiredDesc: 'Request access to this connection first.',
+      launchFailed: 'Launch failed',
+    },
+    windowsApps: {
+      heading: 'Windows apps',
+      subtitle: 'Windows programs published to you. Launch one in your browser — no install, no full desktop.',
+      resource: 'your Windows apps',
+      noMatch: 'No Windows apps match “{{search}}”.',
+      needsApproval: 'needs approval',
+      launch: 'Launch',
+      launching: 'Launching',
+      sessionRecorded: '{{host}} — session recorded',
+      sessionLive: '{{host}} — session live',
+      launchFailed: 'Launch failed',
+      noFreeHost: 'No free host',
+      activeSession: 'You have an active session',
+      since: 'since {{time}}',
+      disconnectAndLaunch: 'Disconnect & launch here',
+      nothingDisconnected: 'Nothing is disconnected unless you choose a session above.',
+    },
+    notificationBell: {
+      title: 'Notifications',
+      markAllRead: 'Mark all read',
+      empty: 'No notifications',
+      viewAll: 'View All Notifications',
+    },
+    linkedAccounts: {
+      removeFailed: 'Could not remove that account. Please try again.',
+      startFailed: 'Could not start sign-in with that account.',
+      fallbackName: 'Connected account',
+    },
+    gettingStarted: {
+      title: 'Get started with OpenIDX',
+      progress: '{{completed}} of {{total}} steps done — finish setting up your platform.',
+      dismiss: 'Dismiss getting started',
+      steps: {
+        app: {
+          title: 'Register your first application',
+          description: 'Add an app so users have something to sign in to.',
+        },
+        directory: {
+          title: 'Connect a directory or invite users',
+          description: 'Sync users from LDAP/AD/SCIM, or add them manually.',
+        },
+        signIn: {
+          title: 'Configure sign-in',
+          description: 'Add an identity provider (Google, Microsoft, SAML/OIDC).',
+        },
+        ziti: {
+          title: 'Set up the Zero Trust Network',
+          description: 'Optional: stand up the OpenZiti overlay for private access.',
+        },
+      },
+    },
+    sessionExpired: {
+      title: 'Your session ended',
+      description: 'Please sign in again to continue.',
+      signIn: 'Sign in',
+    },
+    idleTimeout: {
+      title: 'Session Expiring Soon',
+      description: 'Your session will expire in <clock>{{time}}</clock> due to inactivity.',
+      signOut: 'Sign Out',
+      keepAlive: 'Keep Me Signed In',
+    },
+    errorBoundary: {
+      title: 'Something went wrong',
+      tryAgain: 'Try again',
+    },
+    theme: {
+      toggle: 'Toggle theme',
+      light: 'Light',
+      dark: 'Dark',
+      system: 'System',
+    },
+    relatedLinks: {
+      label: 'Related:',
+    },
+    userLink: {
+      title: "Open this user's Access 360 (IAM · PAM · Network)",
+    },
+    confirmAction: {
+      confirm: 'Confirm',
+      reasonLabel: 'Reason (required)',
+      reasonPlaceholder: 'Why are you doing this? (recorded in the audit log)',
+    },
+    tenantSelector: {
+      label: 'Select organization',
+      own: 'Your organization',
+    },
+    dialog: {
+      close: 'Close',
+    },
+    skeleton: {
+      loading: 'Loading',
+    },
+  },
   common: {
     periodLabel: 'Time period',
     revealedValue: 'Retrieved value',

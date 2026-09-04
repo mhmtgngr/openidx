@@ -679,7 +679,9 @@ all four pillars, deploy, log in, and find PAM.
    incl. the AD/Azure-AD managed variants, sessions, personal access
    tokens, authorized apps) are fully bilingual, as are the shared
    compliance-score tooltips. **Every page a non-admin user can reach
-   now renders in English and Türkçe end to end.** *And the admin
+   now renders in English and Türkçe end to end** — with the caveat 1k
+   found and closed: "page" meant `src/pages`, and the components those
+   pages compose were not in scope. *And the admin
    surface is under way:* the IAM identity core — Users, Groups, Roles
    and Bulk Operations, the pages an admin drives daily (CRUD dialogs,
    role/permission and membership management, CSV import/export,
@@ -1261,6 +1263,41 @@ all four pillars, deploy, log in, and find PAM.
    (`id={\`scope-${s}\`}` / `htmlFor={\`scope-${s}\`}`) must match — a matcher
    that only reads `[A-Za-z0-9_-]` misses every dynamic pair and reports
    correctly-labelled rows as offenders, which it did on the first run.
+
+1k. ✅ **The bilingual claim had a boundary in it: `src/pages`.** The
+   completeness test that enforces it globs `../pages/*.tsx` and requires
+   `useTranslation` — so it never looked at the components a page *composes*.
+   Twenty-four of them render user-visible English and call `t()` nowhere,
+   including several a non-admin sees: My Apps, Windows Apps, Quick Links,
+   linked accounts, the notification bell, the getting-started checklist,
+   the idle-timeout and session-expired dialogs, the theme switcher, the
+   tenant selector, and the confirm dialog **every destructive action in the
+   console routes through**. A person switching the console to Türkçe got a
+   translated page with English dialogs on top of it.
+   Sixteen of those are now bilingual under a new `components.*` namespace —
+   the end-user-reachable set plus the shared chrome, including the sr-only
+   "Close" on every dialog and the "Loading" a skeleton announces, which are
+   accessible names as much as copy. Two of them cannot use the hook (a class
+   error boundary; a design-system primitive) and resolve through the i18n
+   singleton instead, with the trade-off written down: the string is picked at
+   render and does not follow a live language switch, which is acceptable on a
+   screen that exists because rendering already failed.
+   **The gate this needed is not about `useTranslation` at all.** `const tr:
+   typeof en` proves the two catalogs agree; it says nothing about whether a
+   key the code *asks for* exists. i18next answers a missing key by returning
+   the key, so `t('components.myApps.heading')` renders the literal string
+   `components.myApps.heading` on the page while type-check, lint and every
+   test stay green — a typo in an extraction is invisible until somebody looks
+   at the screen. A new test resolves **every literal `t()` key in the source**
+   against the English catalog: 150+ files, plural keys resolved through their
+   `_one`/`_other` siblings, and the local `t` wrappers that prefix a namespace
+   (`lib/connection-path.ts`) detected rather than skipped, because those are
+   exactly the modules with no component test to catch a typo. Red-proofed by
+   changing one character in one key and watching it name the file and the key.
+   *Still open:* the admin-only components (the MFA setup wizard, the self-heal
+   panel, the remote-support viewer, the audit stream) and extending the
+   `useTranslation` completeness test to cover `src/components` once they are
+   done.
 2. Accessibility audit to a VPAT with real assistive technology — what a
    screen reader actually *announces*, and whether a person can complete each
    journey with one. That still needs a person: no tool judges whether an

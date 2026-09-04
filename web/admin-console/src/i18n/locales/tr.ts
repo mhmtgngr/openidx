@@ -7,6 +7,127 @@ const tr: typeof en = {
   switcher: {
     label: 'Dil',
   },
+  components: {
+    myApps: {
+      heading: 'Uygulamalarınıza giriş yapın',
+      subtitle: 'Birine tıklayın, OpenIDX sizi otomatik olarak oturum açtırsın (çoklu oturum açma) — ayrı parola yok.',
+      loading: 'Uygulamalar yükleniyor...',
+      resource: 'uygulamalar',
+      noMatch: '“{{search}}” ile eşleşen uygulama yok.',
+      noDescription: 'Açıklama yok',
+      launch: 'Başlat',
+      launchFailedTitle: 'Uygulama başlatılamıyor',
+      launchFailedDesc: '{{name}} için geçerli bir başlatma adresi yapılandırılmamış. Yöneticinizle görüşün.',
+    },
+    quickLinks: {
+      heading: 'Hızlı bağlantılar',
+      subtitle: 'Destek ve iş birliği sistemlerine kısayollar ve tarayıcınızda tek tıkla bağlantılar.',
+      resource: 'hızlı bağlantılar',
+      noMatch: '“{{search}}” ile eşleşen hızlı bağlantı yok.',
+      kindTerminal: 'terminal',
+      kindConnect: 'bağlan',
+      kindLink: 'bağlantı',
+      launch: 'Başlat',
+      open: 'Aç',
+      nothingToLaunch: 'Başlatılacak bir şey yok',
+      approvalRequired: 'Onay gerekiyor',
+      approvalRequiredDesc: 'Önce bu bağlantı için erişim talep edin.',
+      launchFailed: 'Başlatma başarısız',
+    },
+    windowsApps: {
+      heading: 'Windows uygulamaları',
+      subtitle: 'Size yayımlanan Windows programları. Birini tarayıcınızda başlatın — kurulum yok, tam masaüstü yok.',
+      resource: 'Windows uygulamalarınız',
+      noMatch: '“{{search}}” ile eşleşen Windows uygulaması yok.',
+      needsApproval: 'onay gerekiyor',
+      launch: 'Başlat',
+      launching: 'Başlatılıyor',
+      sessionRecorded: '{{host}} — oturum kaydediliyor',
+      sessionLive: '{{host}} — oturum canlı',
+      launchFailed: 'Başlatma başarısız',
+      noFreeHost: 'Boş ana makine yok',
+      activeSession: 'Etkin bir oturumunuz var',
+      since: '{{time}} tarihinden beri',
+      disconnectAndLaunch: 'Bağlantıyı kes ve burada başlat',
+      nothingDisconnected: 'Yukarıdan bir oturum seçmediğiniz sürece hiçbir bağlantı kesilmez.',
+    },
+    notificationBell: {
+      title: 'Bildirimler',
+      markAllRead: 'Tümünü okundu işaretle',
+      empty: 'Bildirim yok',
+      viewAll: 'Tüm Bildirimleri Görüntüle',
+    },
+    linkedAccounts: {
+      removeFailed: 'Bu hesap kaldırılamadı. Lütfen tekrar deneyin.',
+      startFailed: 'Bu hesapla oturum açma başlatılamadı.',
+      fallbackName: 'Bağlı hesap',
+    },
+    gettingStarted: {
+      title: "OpenIDX'e başlayın",
+      progress: '{{total}} adımdan {{completed}} tanesi tamamlandı — platformunuzu kurmayı bitirin.',
+      dismiss: 'Başlangıç rehberini kapat',
+      steps: {
+        app: {
+          title: 'İlk uygulamanızı kaydedin',
+          description: 'Kullanıcıların giriş yapabileceği bir uygulama ekleyin.',
+        },
+        directory: {
+          title: 'Bir dizin bağlayın veya kullanıcı davet edin',
+          description: 'LDAP/AD/SCIM üzerinden kullanıcı eşitleyin ya da elle ekleyin.',
+        },
+        signIn: {
+          title: 'Oturum açmayı yapılandırın',
+          description: 'Bir kimlik sağlayıcı ekleyin (Google, Microsoft, SAML/OIDC).',
+        },
+        ziti: {
+          title: 'Sıfır Güven Ağını kurun',
+          description: 'İsteğe bağlı: özel erişim için OpenZiti örtüşme ağını ayağa kaldırın.',
+        },
+      },
+    },
+    sessionExpired: {
+      title: 'Oturumunuz sona erdi',
+      description: 'Devam etmek için lütfen tekrar giriş yapın.',
+      signIn: 'Giriş yap',
+    },
+    idleTimeout: {
+      title: 'Oturum Yakında Sona Eriyor',
+      description: 'Hareketsizlik nedeniyle oturumunuz <clock>{{time}}</clock> içinde sona erecek.',
+      signOut: 'Çıkış Yap',
+      keepAlive: 'Oturumumu Açık Tut',
+    },
+    errorBoundary: {
+      title: 'Bir şeyler ters gitti',
+      tryAgain: 'Tekrar dene',
+    },
+    theme: {
+      toggle: 'Temayı değiştir',
+      light: 'Açık',
+      dark: 'Koyu',
+      system: 'Sistem',
+    },
+    relatedLinks: {
+      label: 'İlgili:',
+    },
+    userLink: {
+      title: 'Bu kullanıcının Access 360 görünümünü aç (IAM · PAM · Ağ)',
+    },
+    confirmAction: {
+      confirm: 'Onayla',
+      reasonLabel: 'Gerekçe (zorunlu)',
+      reasonPlaceholder: 'Bunu neden yapıyorsunuz? (denetim kaydına yazılır)',
+    },
+    tenantSelector: {
+      label: 'Kuruluş seç',
+      own: 'Kendi kuruluşunuz',
+    },
+    dialog: {
+      close: 'Kapat',
+    },
+    skeleton: {
+      loading: 'Yükleniyor',
+    },
+  },
   common: {
     periodLabel: 'Zaman aralığı',
     revealedValue: 'Alınan değer',

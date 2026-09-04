@@ -1,5 +1,6 @@
 import type { HTMLAttributes } from 'react'
 import { cn } from '../../lib/utils'
+import i18n from '../../i18n'
 
 /** A single pulsing placeholder block. Size it via className (height/width). */
 export function Skeleton({
@@ -25,7 +26,7 @@ export interface TableSkeletonProps {
  */
 export function TableSkeleton({ rows = 5, cols = 4 }: TableSkeletonProps) {
   return (
-    <div className="space-y-2" role="status" aria-label="Loading">
+    <div className="space-y-2" role="status" aria-label={i18n.t('components.skeleton.loading')}>
       {Array.from({ length: rows }).map((_, r) => (
         <div
           key={r}
