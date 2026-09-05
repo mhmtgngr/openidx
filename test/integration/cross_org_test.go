@@ -432,6 +432,13 @@ func TestRLSBeltTables(t *testing.T) {
 		{"ssh_ca", `INSERT INTO ssh_ca (public_key, vault_secret_id, org_id) VALUES ('ssh-ed25519 tbelt',gen_random_uuid(),$1)`},
 		{"entitlement_warehouse", `INSERT INTO entitlement_warehouse (user_id, entitlement_type, entitlement_id, source, org_id) VALUES (gen_random_uuid(),'role','tbelt-ent','direct',$1)`},
 		{"upstream_pools", `INSERT INTO upstream_pools (name, org_id) VALUES ('tbelt-pool-` + suffix + `',$1)`},
+		// v141 — the compliance record. The admin log was listed WHERE 1=1 and
+		// fetched by bare id; archives were listed, fetched AND restored by bare
+		// id, so a tenant could name another tenant's export and have the
+		// product read that file back for them.
+		{"admin_audit_log", `INSERT INTO admin_audit_log (action, target_type, org_id) VALUES ('tbelt.probe','settings',$1)`},
+		{"audit_archives", `INSERT INTO audit_archives (name, org_id) VALUES ('tbelt-arch-` + suffix + `',$1)`},
+		{"audit_retention_policies", `INSERT INTO audit_retention_policies (name, retention_days, org_id) VALUES ('tbelt-ret-` + suffix + `',30,$1)`},
 	}
 
 	for _, c := range cases {

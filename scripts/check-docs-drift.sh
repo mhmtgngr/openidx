@@ -43,7 +43,7 @@ if [ ! -d "$ROOT" ]; then
 fi
 
 OPENIDX_DOCS_ROOT="$ROOT" ENFORCE="$ENFORCE" python3 - <<'PY'
-import os, re, sys, pathlib
+import os, re, subprocess, sys, pathlib
 
 root = pathlib.Path(os.environ["OPENIDX_DOCS_ROOT"]).resolve()
 enforce = os.environ["ENFORCE"] == "1"
@@ -117,15 +117,49 @@ for doc in docs:
             if is_shorthand(cited):
                 continue
             cited = cited.rstrip(",.;)")
-            if (root / cited).exists():
-                continue
+            # The register is consulted BEFORE the filesystem, so that a
+            # citation counts as a citation whether or not the path happens to
+            # be present. `docs/site` is the case that forced this: it is build
+            # output, so it exists after a local `mkdocs build` and not in a
+            # clean checkout, and checking the filesystem first meant the same
+            # register entry read as "cited" or "cited by nobody" depending on
+            # whether the reader had run the docs build. The two stale-waiver
+            # rules below stay independent of each other and of the disk.
             if cited in allowed:
                 seen_allowed.add(cited)
+                continue
+            if (root / cited).exists():
                 continue
             findings.append(f"{rel}:{lineno}: cites `{cited}`, which does not exist")
 
 # A waiver for a path that came back is a waiver nobody rechecked.
-returned = sorted(p for p in allowed if (root / p).exists())
+#
+# "Came back" means committed, not merely present on someone's disk. Several
+# waivers name build output -- `docs/site` is the mkdocs directory, gitignored
+# -- and asking the filesystem would fail the guard on any machine where the
+# build had been run once. A guard that cries wolf gets deleted, so ask git
+# what the repository actually tracks.
+def tracked(paths: list[str]) -> set[str]:
+    if not paths:
+        return set()
+    try:
+        proc = subprocess.run(["git", "-C", str(root), "ls-files", "-z", "--"] + paths,
+                              capture_output=True, text=True, check=False)
+        ok = proc.returncode == 0
+    except OSError:
+        ok = False
+    if not ok:
+        # Not a git work tree (a release tarball, or the .test.sh fixture root):
+        # fall back to the filesystem. Stricter, so it can never let through
+        # something the git answer would have caught.
+        return {p for p in paths if (root / p).exists()}
+    # ls-files reports files, so a waiver naming a directory matches on prefix.
+    found = {q for q in proc.stdout.split("\0") if q}
+    return {p for p in paths
+            if p in found or any(q.startswith(p.rstrip("/") + "/") for q in found)}
+
+
+returned = sorted(tracked(sorted(allowed)))
 
 for f in bad_register:
     print(f"check-docs-drift: {f}", file=sys.stderr)

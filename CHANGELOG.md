@@ -21,6 +21,16 @@ to a spec that describes an eighth of a surface, a documented endpoint that
   the posture score was neither one tenant's nor the install's. All now carry
   `org_id` under FORCE RLS, with the install-wide unique keys re-scoped and an
   isolation test per handler file.
+- **The compliance record got a tenant** (migration v141). `admin_audit_log`,
+  `audit_archives` and `audit_retention_policies` had no `org_id` at all, and
+  every handler read them accordingly: the admin log was listed `WHERE 1=1` and
+  fetched by bare id, so one tenant's admin could read another's full
+  administrative history including the before/after state of changes they had
+  no access to make; retention policies were updated and deleted by bare id;
+  and archives were listed, fetched **and restored** by bare id, so a tenant
+  could name another tenant's export and have the product read that file back.
+  All three now carry `org_id` under FORCE RLS, attributed to their own actor's
+  organization where one survives.
 - **The FORCE-RLS belt extended to fifteen more tables** (migration v140):
   `scheduled_reports`, `detailed_compliance_reports`,
   `audit_webhook_subscriptions`, `usage_metering_daily`, `email_branding`,
@@ -52,6 +62,12 @@ to a spec that describes an eighth of a surface, a documented endpoint that
 
 ### Fixed
 
+- **Audit archives came out empty and said they were fine.** `createAuditArchive`
+  runs detached on a bare `context.Background()`, and `audit_events` sits behind
+  the RLS belt — so the pool set no `app.org_id` at checkout, the policy matched
+  nothing, and every archive completed reporting an event count of zero with no
+  error anywhere. The worker now carries the organization that asked for the
+  archive.
 - **Email branding was a shared row.** Both `email_branding` handlers ignored
   the caller's organization entirely — the read was `ORDER BY created_at LIMIT
   1` and the write was `(SELECT id FROM organizations LIMIT 1)` — so on a

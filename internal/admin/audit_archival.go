@@ -51,9 +51,15 @@ func (s *Service) handleListRetentionPolicies(c *gin.Context) {
 		return
 	}
 
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "organization context required"})
+		return
+	}
+
 	rows, err := s.db.Pool.Query(c.Request.Context(),
 		`SELECT id, name, event_category, retention_days, archive_enabled, archive_format, enabled, created_at, updated_at
-		 FROM audit_retention_policies ORDER BY name`)
+		 FROM audit_retention_policies WHERE org_id = $1 ORDER BY name`, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to list retention policies", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list policies"})
@@ -104,11 +110,17 @@ func (s *Service) handleCreateRetentionPolicy(c *gin.Context) {
 		req.ArchiveFormat = "json_gz"
 	}
 
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "organization context required"})
+		return
+	}
+
 	var id string
 	err := s.db.Pool.QueryRow(c.Request.Context(),
-		`INSERT INTO audit_retention_policies (name, event_category, retention_days, archive_enabled, archive_format)
-		 VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-		req.Name, req.EventCategory, req.RetentionDays, req.ArchiveEnabled, req.ArchiveFormat,
+		`INSERT INTO audit_retention_policies (name, event_category, retention_days, archive_enabled, archive_format, org_id)
+		 VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+		req.Name, req.EventCategory, req.RetentionDays, req.ArchiveEnabled, req.ArchiveFormat, org.ID,
 	).Scan(&id)
 	if err != nil {
 		s.logger.Error("Failed to create retention policy", zap.Error(err))
@@ -172,10 +184,17 @@ func (s *Service) handleUpdateRetentionPolicy(c *gin.Context) {
 		argIdx++
 	}
 
-	args = append(args, id)
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "organization context required"})
+		return
+	}
+
+	args = append(args, id, org.ID)
 	// SECURITY: Column names in 'sets' are hardcoded string literals from the if-blocks above,
 	// not user input. This is safe from SQL injection.
-	query := fmt.Sprintf("UPDATE audit_retention_policies SET %s WHERE id = $%d", joinSetClauses(sets), argIdx)
+	query := fmt.Sprintf("UPDATE audit_retention_policies SET %s WHERE id = $%d AND org_id = $%d",
+		joinSetClauses(sets), argIdx, argIdx+1)
 
 	tag, err := s.db.Pool.Exec(c.Request.Context(), query, args...)
 	if err != nil {
@@ -196,7 +215,14 @@ func (s *Service) handleDeleteRetentionPolicy(c *gin.Context) {
 	}
 
 	id := c.Param("id")
-	tag, err := s.db.Pool.Exec(c.Request.Context(), "DELETE FROM audit_retention_policies WHERE id = $1", id)
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "organization context required"})
+		return
+	}
+
+	tag, err := s.db.Pool.Exec(c.Request.Context(),
+		"DELETE FROM audit_retention_policies WHERE id = $1 AND org_id = $2", id, org.ID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete policy"})
 		return
@@ -239,23 +265,24 @@ func (s *Service) handleCreateAuditArchive(c *gin.Context) {
 	userID, _ := c.Get("user_id")
 	userIDStr, _ := userID.(string)
 
+	// Capture the org before the insert: v141 gave audit_archives an org_id and
+	// the row needs it, and archive creation then runs on a detached
+	// context.Background goroutine that cannot read the request org later.
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	var archiveID string
 	err := s.db.Pool.QueryRow(c.Request.Context(),
-		`INSERT INTO audit_archives (name, date_range_start, date_range_end, status, created_by)
-		 VALUES ($1, $2, $3, 'creating', $4) RETURNING id`,
-		req.Name, start, end, nilIfEmpty(userIDStr),
+		`INSERT INTO audit_archives (name, date_range_start, date_range_end, status, created_by, org_id)
+		 VALUES ($1, $2, $3, 'creating', $4, $5) RETURNING id`,
+		req.Name, start, end, nilIfEmpty(userIDStr), org.ID,
 	).Scan(&archiveID)
 	if err != nil {
 		s.logger.Error("Failed to create audit archive", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create archive"})
-		return
-	}
-
-	// Capture the org synchronously: archive creation runs on a detached
-	// context.Background goroutine and can't read the request org later.
-	org, oerr := orgctx.From(c.Request.Context())
-	if oerr != nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
 		return
 	}
 
@@ -266,8 +293,17 @@ func (s *Service) handleCreateAuditArchive(c *gin.Context) {
 }
 
 func (s *Service) createAuditArchive(orgID, archiveID string, start, end time.Time, category string) {
-	// Use timeout context for archive creation (can be long-running)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	// Use timeout context for archive creation (can be long-running).
+	//
+	// The org has to be re-attached here. This goroutine is detached from the
+	// request, and audit_events sits behind the FORCE-RLS belt: on a bare
+	// context.Background the pool sets no app.org_id at checkout, the policy
+	// matches nothing, and every query below returns zero rows -- so the
+	// archive completed, reported event_count 0, and said nothing was wrong.
+	// Carrying the org rather than bypassing RLS keeps the boundary: an
+	// archive can only ever contain the events of the org that asked for it.
+	ctx, cancel := context.WithTimeout(
+		orgctx.With(context.Background(), orgctx.Org{ID: orgID}), 30*time.Minute)
 	defer cancel()
 
 	// Query events in date range, scoped to the org the archive belongs to.
@@ -286,7 +322,7 @@ func (s *Service) createAuditArchive(orgID, archiveID string, start, end time.Ti
 	if err != nil {
 		s.logger.Error("Failed to query audit events for archive", zap.Error(err))
 		_, _ = s.db.Pool.Exec(ctx,
-			"UPDATE audit_archives SET status = 'failed' WHERE id = $1", archiveID)
+			"UPDATE audit_archives SET status = 'failed' WHERE id = $1 AND org_id = $2", archiveID, orgID)
 		return
 	}
 	defer rows.Close()
@@ -300,7 +336,7 @@ func (s *Service) createAuditArchive(orgID, archiveID string, start, end time.Ti
 	if err != nil {
 		s.logger.Error("Failed to create archive file", zap.Error(err))
 		_, _ = s.db.Pool.Exec(ctx,
-			"UPDATE audit_archives SET status = 'failed' WHERE id = $1", archiveID)
+			"UPDATE audit_archives SET status = 'failed' WHERE id = $1 AND org_id = $2", archiveID, orgID)
 		return
 	}
 	defer file.Close()
@@ -351,8 +387,8 @@ func (s *Service) createAuditArchive(orgID, archiveID string, start, end time.Ti
 
 	_, _ = s.db.Pool.Exec(ctx,
 		`UPDATE audit_archives SET status = 'completed', event_count = $1, file_size = $2, file_path = $3
-		 WHERE id = $4`,
-		eventCount, fileSize, filePath, archiveID)
+		 WHERE id = $4 AND org_id = $5`,
+		eventCount, fileSize, filePath, archiveID, orgID)
 }
 
 func (s *Service) handleListAuditArchives(c *gin.Context) {
@@ -360,10 +396,16 @@ func (s *Service) handleListAuditArchives(c *gin.Context) {
 		return
 	}
 
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "organization context required"})
+		return
+	}
+
 	rows, err := s.db.Pool.Query(c.Request.Context(),
 		`SELECT id, name, date_range_start, date_range_end, event_count, file_size, file_path,
 		        format, status, created_by, created_at
-		 FROM audit_archives ORDER BY created_at DESC LIMIT 50`)
+		 FROM audit_archives WHERE org_id = $1 ORDER BY created_at DESC LIMIT 50`, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to list audit archives", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list archives"})
@@ -392,12 +434,18 @@ func (s *Service) handleGetAuditArchive(c *gin.Context) {
 		return
 	}
 
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "organization context required"})
+		return
+	}
+
 	id := c.Param("id")
 	var a AuditArchive
 	err := s.db.Pool.QueryRow(c.Request.Context(),
 		`SELECT id, name, date_range_start, date_range_end, event_count, file_size, file_path,
 		        format, status, created_by, created_at
-		 FROM audit_archives WHERE id = $1`, id,
+		 FROM audit_archives WHERE id = $1 AND org_id = $2`, id, org.ID,
 	).Scan(&a.ID, &a.Name, &a.DateRangeStart, &a.DateRangeEnd, &a.EventCount, &a.FileSize,
 		&a.FilePath, &a.Format, &a.Status, &a.CreatedBy, &a.CreatedAt)
 	if err != nil {
@@ -420,7 +468,7 @@ func (s *Service) handleRestoreAuditArchive(c *gin.Context) {
 	}
 	var filePath, status string
 	err := s.db.Pool.QueryRow(c.Request.Context(),
-		"SELECT file_path, status FROM audit_archives WHERE id = $1", id,
+		"SELECT file_path, status FROM audit_archives WHERE id = $1 AND org_id = $2", id, org.ID,
 	).Scan(&filePath, &status)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Archive not found"})

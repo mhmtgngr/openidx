@@ -1002,5 +1002,12 @@ func allMigrations() []*Migration {
 			UpSQL:       rlsBeltBatch1Up,
 			DownSQL:     rlsBeltBatch1Down,
 		},
+		{
+			Version:     141,
+			Name:        "audit_tenant_scope",
+			Description: "Add org_id + FORCE RLS to admin_audit_log, audit_archives and audit_retention_policies. All three held one tenant's compliance record in a table with nowhere to say whose it was, and every handler read them accordingly: the admin log was listed WHERE 1=1 and fetched by bare id (one tenant's admin could read another's full administrative history, before/after JSON included), archives were listed and RESTORED by bare id (a tenant could name another tenant's export and have the product read that file back), and retention policies were listed and updated or deleted by bare id (one tenant could shorten another's retention). Rows are attributed to their own actor's org where one survives (actor_id, created_by) and to the oldest org otherwise; retention policies carry no actor, so all existing ones go to the oldest org where they stay visible and can be re-filed. No column DEFAULT, so a rolled-back binary fails loudly instead of mis-tenanting.",
+			UpSQL:       auditTenantScopeUp,
+			DownSQL:     auditTenantScopeDown,
+		},
 	}
 }

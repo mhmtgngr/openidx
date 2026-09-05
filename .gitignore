@@ -145,3 +145,8 @@ google-services.json
 
 # stray root-level build outputs (e.g. `go build ./cmd/openidx/`)
 /openidx
+
+# mkdocs build output. `mkdocs build` writes it into the tree, and a stray
+# `git add -A` committed 83 files of it once; docs/doc-citations.txt waives the
+# path on the understanding that it is never checked in.
+docs/site/

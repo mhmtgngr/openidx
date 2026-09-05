@@ -1474,6 +1474,33 @@ class this whole program exists for.
    it comes under the missing-predicate rule *in the same commit*. Belting a
    table and auditing its queries are one act, which is why these leave in
    feature-sized batches and not in one sweep.
+
+   **Batch 2 shipped (migration v141, `needsScoping` 61 → 58; registers 80 →
+   77).** The first cut of the harder class — tables with *no `org_id` at
+   all*, so install-wide by construction. Three that hold one tenant's
+   compliance record in a table with nowhere to say whose it was:
+   `admin_audit_log`, `audit_archives`, `audit_retention_policies`. Every
+   handler read them accordingly — the admin log listed `WHERE 1=1` and
+   fetched by bare id, so one tenant's admin could read another's full
+   administrative history including the before/after JSON of changes they had
+   no access to make; retention policies were updated and deleted by bare id,
+   so one tenant could shorten another's retention; and archives were listed,
+   fetched **and restored** by bare id, so a tenant could name another
+   tenant's export and have the product read that file back for them. The
+   last is exfiltration, not disclosure.
+
+   Rows are attributed to their own actor's org where one survives
+   (`actor_id`, `created_by`) and to the oldest org otherwise — verified on
+   Postgres 16: a seeded row with an actor in org B backfilled to org B, and
+   an actor-less row to the fallback, exactly as intended.
+
+   The batch also found the archive worker silently producing empty archives.
+   `createAuditArchive` runs detached on a bare `context.Background()`, and
+   `audit_events` is behind the belt, so the pool set no `app.org_id` at
+   checkout, the policy matched nothing, and every archive completed reporting
+   `event_count` 0 with nothing wrong in the logs. It now carries the org
+   rather than bypassing RLS, so an archive can only ever contain the events
+   of the org that asked for it.
 4. ✅ **OPA `deny` enforced** — *shipped.* — `internal/common/middleware/opa.go`: abort
    unless `Allow && len(Deny)==0`; `authz.rego:15-19`'s "any authenticated
    user may GET anything" removed; `policies/access_control.rego`
@@ -3102,7 +3129,7 @@ that holds it rather than by the commit that wrote it.
 |---|---|---|
 | 1 · journeys verified | ☐ | J1 ✅ the `smoke` and `first-run` jobs (P6.2); J2 ✅ `test/integration/{auth_flows,mfa_flow,passwordless}_test.go`; J3 ✅ `test/integration/enforced_posture_test.go` (P6.1); ☐ **J6 has no automated proof** — `e2e/access-reviews-flow.spec.ts` is still on the `hold` side of `e2e/suite.txt`; ☐ **J7 needs a leaver integration case**; J4/J5/J8 stay scripted operator drills (`tools/darkprobe`, `make dr-game-day`) to be filed under `docs/evidence/` (P8.4) |
 | 2 · enforced posture, legacy login gone | ◐ | code ✅ — the server-rendered login is deleted and `internal/oauth/routes_legacy_login_test.go` fails if any of it returns (P6.1); ops ☐ — rollout Task 16 is the operator's, on a live deployment |
-| 3 · every control enforces | ◐ | P5.1–5.11 ✅ (tenant isolation, the inverted orgscope lint, OPA `deny`, ABAC at both PEPs, the honest Apply/Remediate, SMS, multi-IdP, the fail-closed gate, `ValidateProduction`, the faked measurements); ◐ the P5.3b register programme — batch 1 (v140) belted fifteen tables and fixed `email_branding`'s cross-tenant read *and* write; **80** still ride `needsScoping`/`needsBelt` waivers |
+| 3 · every control enforces | ◐ | P5.1–5.11 ✅ (tenant isolation, the inverted orgscope lint, OPA `deny`, ABAC at both PEPs, the honest Apply/Remediate, SMS, multi-IdP, the fail-closed gate, `ValidateProduction`, the faked measurements); ◐ the P5.3b register programme — batch 1 (v140) belted fifteen tables and fixed `email_branding`'s cross-tenant read *and* write; batch 2 (v141) scoped the compliance record and fixed an archive worker that was silently producing empty archives; **77** still ride `needsScoping`/`needsBelt` waivers |
 | 4 · first run / first login / four pillars from the docs | ✅ | first run ✅ the `smoke` and `first-run` jobs (P6.2); first login ✅ one authoritative credential in `GETTING-STARTED.md`, with the `USER_GUIDE.md` and `CONTRIBUTING.md` copies pointing at it rather than repeating it (P8.1); four pillars ✅ `guide/governance.md` was the missing one (P8.1) |
 | 5 · one story + auditor artifacts | ✅ | threat model and control mapping exist; docs sweep 3 ✅ and the docs-drift guard ✅ (`check-docs-drift.sh`, enforced in CI, so a document cannot cite a path that is not there); `docs/evidence/` ✅ (P8.4) |
 | 6 · releases current, signed, Helm proven | ◐ | signing ✅ `release.yml` (cosign) and, since P7.5, an Android artifact whose name tracks the key that signed it; Helm ✅ the `kind` install job (P6.4); versions ✅ `VERSION` + `check-version-sync.sh` (P8.3); CHANGELOG ✅ every release attributed from the commit that wrote its entry, 61 compare links that resolve (P8.2); ☐ v1.34.0 is not cut — the maintainer's |

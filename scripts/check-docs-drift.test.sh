@@ -67,6 +67,35 @@ expect red "a waiver no document cites any more" \
   "$(fixture unused 'allow internal/oauth/store.go  deleted' \
      'Nothing cites it.')"
 
+# Build output is the awkward case: a waived path that is absent in a clean
+# checkout and present after a local `mkdocs build`. Two rules have to hold at
+# once, and only a real git repository can tell them apart --
+# `git ls-files` says untracked while the filesystem says present:
+#
+#   - "came back" must mean COMMITTED, not merely present, or the guard fails
+#     on any machine where the docs have been built once;
+#   - the citation must still register as a citation, or the "nobody cites
+#     this waiver" rule fires instead.
+#
+# Before this ordering, the same fixture read as green or red depending on
+# whether the reader had run the docs build.
+gitfixture() { # gitfixture <name> <register-body> <doc-body> -> fixture root
+  local d="$tmp/$1"
+  mkdir -p "$d/docs" "$d/internal/oauth"
+  git -C "$d" init -q 2>/dev/null
+  printf '%s\n' "$2" > "$d/docs/doc-citations.txt"
+  printf '%s\n' "$3" > "$d/docs/guide.md"
+  printf 'internal/oauth/\n' > "$d/.gitignore"
+  git -C "$d" add -A >/dev/null 2>&1 || true
+  # Created AFTER the commit and gitignored: present on disk, untracked.
+  : > "$d/internal/oauth/service.go"
+  echo "$d"
+}
+
+expect ok "a gitignored build path is waived, present on disk, and still counts as cited" \
+  "$(gitfixture buildoutput 'allow internal/oauth/service.go  build output; gitignored' \
+     'See `internal/oauth/service.go`.')"
+
 expect ok "a skipped document" \
   "$(fixture skipped 'skip docs/guide.md  a dated audit, bannered as historical' \
      'See `internal/oauth/store.go`.')"

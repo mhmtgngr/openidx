@@ -73,14 +73,11 @@ var beltExempt = map[string]string{
 // to cut.
 var needsScoping = map[string]string{
 	// Audit and compliance — one tenant's auditor can read another's trail.
-	"admin_audit_log":          "every admin action with actor, target and before/after state",
-	"unified_audit_events":     "the unified audit stream the console's audit pages read",
-	"audit_archives":           "exported audit archives with file paths",
-	"audit_retention_policies": "per-tenant retention rules",
-	"compliance_gaps":          "named control gaps and remediation plans (v44)",
-	"policy_recommendations":   "recommendations naming affected users, roles and resources (v44)",
-	"breach_incidents":         "incidents with affected_user_ids and quarantine actions (v62)",
-	"breach_alerts":            "alerts naming user_id, session_id and IP (v62)",
+	"unified_audit_events":   "the unified audit stream the console's audit pages read",
+	"compliance_gaps":        "named control gaps and remediation plans (v44)",
+	"policy_recommendations": "recommendations naming affected users, roles and resources (v44)",
+	"breach_incidents":       "incidents with affected_user_ids and quarantine actions (v62)",
+	"breach_alerts":          "alerts naming user_id, session_id and IP (v62)",
 
 	// MFA and credentials — the most sensitive per-user rows in the product.
 	"mfa_bypass_codes":         "MFA bypass codes per user",

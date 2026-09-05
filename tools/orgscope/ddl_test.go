@@ -319,7 +319,9 @@ func TestRegistersOnlyShrink(t *testing.T) {
 		got  int
 		max  int
 	}{
-		{"needsScoping", len(needsScoping), 61},
+		// 61 -> 58: migration v141 scoped the admin audit log and the audit
+		// archives. Re-pinned so the register cannot grow back.
+		{"needsScoping", len(needsScoping), 58},
 		// 34 → 19: migration v140 belted the fifteen whose queries already
 		// carried their org predicate. Re-pinned rather than left at 34, or
 		// the register could grow back into the room the fix just made.

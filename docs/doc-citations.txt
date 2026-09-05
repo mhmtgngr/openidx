@@ -64,7 +64,7 @@ allow api/mfa.ts                       console-relative (web/admin-console/src/a
 allow api/mfa                          same, cited without the extension
 allow docs/mobile-developer-guide-simple.md  renamed; the guide records the rename
 allow docs/mobile/firebase-fcm-setup.md      replaced by docs/mobile/push-mfa-delivery.md
-allow docs/site                        the mkdocs build output directory, gitignored
+allow docs/site                        the mkdocs build output directory; gitignored, so it is absent in a clean checkout and present after a local `mkdocs build` -- the guard reads git, not the filesystem, when deciding whether a waived path came back
 allow docs/README                      a .gitignore pattern, not a file reference
 allow docs/api-reference               a branch-name example in CONTRIBUTING.md, not a path
 allow docs/api/CNAME                   a file the reader creates to serve the API docs on their own domain
