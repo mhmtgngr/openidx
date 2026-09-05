@@ -19,6 +19,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgconn"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // legalHoldRow is the wire shape returned by the list endpoint. Includes
@@ -62,6 +64,14 @@ func (h *RemoteSupportHandler) HandlePlaceLegalHold(c *gin.Context) {
 		return
 	}
 
+	// TENANCY (v149). Every handler in this file took a bare session id. The
+	// Guacamole twin, doing the identical job, gates on session visibility
+	// first; this one did not gate at all.
+	orgID, ok := h.legalHoldSessionOrg(c, sessionID)
+	if !ok {
+		return
+	}
+
 	placedBy := getUserID(c)
 	var placedByArg interface{}
 	if placedBy != "" {
@@ -70,10 +80,10 @@ func (h *RemoteSupportHandler) HandlePlaceLegalHold(c *gin.Context) {
 
 	var id string
 	err := h.db.Pool.QueryRow(c.Request.Context(), `
-        INSERT INTO recording_legal_holds (session_id, reason, placed_by)
-        VALUES ($1::uuid, $2, NULLIF($3,'')::uuid)
+        INSERT INTO recording_legal_holds (session_id, reason, placed_by, org_id)
+        VALUES ($1::uuid, $2, NULLIF($3,'')::uuid, $4)
         RETURNING id::text
-    `, sessionID, req.Reason, placedByArg).Scan(&id)
+    `, sessionID, req.Reason, placedByArg, orgID).Scan(&id)
 	if err != nil {
 		// Unique partial index → 23505 when an active hold already exists.
 		if isUniqueViolation(err) {
@@ -110,6 +120,15 @@ func (h *RemoteSupportHandler) HandleReleaseLegalHold(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "database unavailable"})
 		return
 	}
+	// TENANCY (v149), and this is the one that destroys. Releasing a hold is
+	// what lets sweepExpiredRecordings purge the recording it was protecting.
+	// With a bare session id, an administrator of one tenant released another
+	// tenant's litigation hold and the recording was gone at the next sweep.
+	orgID, ok := h.legalHoldSessionOrg(c, sessionID)
+	if !ok {
+		return
+	}
+
 	releasedBy := getUserID(c)
 	var releasedByArg interface{}
 	if releasedBy != "" {
@@ -122,7 +141,8 @@ func (h *RemoteSupportHandler) HandleReleaseLegalHold(c *gin.Context) {
                released_reason = NULLIF($3,'')
          WHERE session_id  = $1::uuid
            AND released_at IS NULL
-    `, sessionID, releasedByArg, req.Reason)
+           AND org_id      = $4
+    `, sessionID, releasedByArg, req.Reason, orgID)
 	if err != nil {
 		h.logger.Error("HandleReleaseLegalHold: update failed", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to release hold"})
@@ -144,14 +164,21 @@ func (h *RemoteSupportHandler) HandleListLegalHolds(c *gin.Context) {
 		c.JSON(http.StatusOK, []legalHoldRow{})
 		return
 	}
+	// TENANCY (v149): the reason is free text describing an investigation.
+	orgID, ok := h.legalHoldSessionOrg(c, sessionID)
+	if !ok {
+		return
+	}
+
 	rows, err := h.db.Pool.Query(c.Request.Context(), `
         SELECT id::text, session_id::text, reason, placed_at,
                COALESCE(placed_by::text, ''), released_at,
                COALESCE(released_by::text, ''), COALESCE(released_reason, '')
           FROM recording_legal_holds
          WHERE session_id = $1::uuid
+           AND org_id     = $2
          ORDER BY placed_at DESC
-    `, sessionID)
+    `, sessionID, orgID)
 	if err != nil {
 		h.logger.Warn("HandleListLegalHolds: query failed", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "query failed"})
@@ -184,16 +211,48 @@ func isUniqueViolation(err error) bool {
 	return false
 }
 
-// holdLookup runs from the sweeper to decide whether a session is
-// currently under legal hold. Pulled out so the sweeper's main query
-// can stay readable. Returns true when at least one unreleased hold
-// exists for the session.
+// legalHoldSessionOrg resolves the organization of the remote-support session a
+// legal-hold request names, answering 404 and reporting false if the session is
+// not in the caller's organization.
+//
+// Before v149 this file had no equivalent: place, release and list all took a
+// bare session id. The Guacamole twin's guacSessionVisible is the same idea,
+// and v149 gave that one an explicit tenant term too — a check that sources its
+// scope from RLS alone stops being a check the moment the app connects with
+// BYPASSRLS.
+func (h *RemoteSupportHandler) legalHoldSessionOrg(c *gin.Context, sessionID string) (string, bool) {
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "organization context required"})
+		return "", false
+	}
+	var found string
+	if err := h.db.Pool.QueryRow(c.Request.Context(),
+		`SELECT org_id::text FROM remote_support_sessions WHERE id = $1::uuid AND org_id = $2`,
+		sessionID, org.ID).Scan(&found); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "session not found"})
+		return "", false
+	}
+	return found, true
+}
+
+// hasActiveLegalHold reports whether a session is currently under legal hold.
+//
+// THE DIRECTION MATTERS HERE and points at destruction: a false answer means
+// "no hold", which means the recording may be purged. Under the v149 belt, a
+// read on a connection with no app.org_id returns zero rows — indistinguishable
+// from "not held" — so this runs BYPASSED, and over-reporting a hold (refusing
+// to purge) is the only failure this function is allowed to have. It has no
+// production caller today; the sweeps inline their own NOT EXISTS. It is left
+// safe rather than deleted so that wiring it up later cannot quietly turn a
+// retention sweep into an evidence shredder.
 func (h *RemoteSupportHandler) hasActiveLegalHold(ctx context.Context, sessionID string) (bool, error) {
 	if h.db == nil || h.db.Pool == nil {
 		return false, nil
 	}
 	var count int
-	err := h.db.Pool.QueryRow(ctx, `
+	//orgscope:ignore purge gate — must never read empty because of RLS; a false answer here permits deletion
+	err := h.db.Pool.QueryRow(orgctx.WithBypassRLS(ctx), `
         SELECT COUNT(*)
           FROM recording_legal_holds
          WHERE session_id = $1::uuid

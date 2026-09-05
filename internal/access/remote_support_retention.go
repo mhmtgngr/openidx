@@ -236,6 +236,15 @@ func (h *RemoteSupportHandler) sweepExpiredRecordings(ctx context.Context) {
 	// Sweeper SKIPS sessions with an active legal hold. The NOT EXISTS
 	// subquery rides the partial unique index uq_recording_legal_holds_active
 	// so this stays a single index lookup per session.
+	//
+	// TENANCY (v149): deliberately NOT org-scoped, and the direction is why.
+	// This runs under orgctx.WithBypassRLS (StartRecordingRetentionEnforcer),
+	// so the NOT EXISTS sees every hold in the install. That is the safe
+	// direction: a hold this query cannot see reads as "no hold", and the
+	// recording is purged. Scoping the subquery would make the belt able to
+	// hide a hold from the sweep — turning a retention job into an evidence
+	// shredder — so it stays install-wide on purpose.
+	//orgscope:ignore purge gate under a bypass context — a hold hidden from this query would permit deletion
 	rows, err := h.db.Pool.Query(ctx, `
         SELECT s.id,
                COALESCE(s.org_id::text, ''),

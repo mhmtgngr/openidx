@@ -575,6 +575,20 @@ func TestRLSBeltTables(t *testing.T) {
 				'00000000-0000-0000-0000-0000000000f1',NOW() + INTERVAL '1 day','active',$1) RETURNING id)
 			INSERT INTO temp_access_usage (link_id, ip_address, user_agent, connected_at, org_id)
 			SELECT l.id,'203.0.113.5','tbelt-ua',NOW(),$1 FROM l`},
+
+		// v149 — the legal holds. Each FKs to its own session table, so each
+		// brings its own session; the hold is what keeps a recording out of the
+		// retention sweep's purge list.
+		{"recording_legal_holds", `WITH s AS (
+			INSERT INTO remote_support_sessions (agent_id, status, mode, org_id)
+			VALUES ('tbelt-rslh-` + suffix + `','ended','view',$1) RETURNING id)
+			INSERT INTO recording_legal_holds (session_id, reason, org_id)
+			SELECT s.id,'tbelt hold ` + suffix + `',$1 FROM s`},
+		{"guacamole_recording_legal_holds", `WITH s AS (
+			INSERT INTO guacamole_sessions (connection_id, status, org_id)
+			VALUES (gen_random_uuid(),'ended',$1) RETURNING id)
+			INSERT INTO guacamole_recording_legal_holds (session_id, reason, org_id)
+			SELECT s.id,'tbelt guac hold ` + suffix + `',$1 FROM s`},
 	}
 
 	// One list, not two: the role is granted exactly the tables the cases probe.

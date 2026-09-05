@@ -21,6 +21,34 @@ to a spec that describes an eighth of a surface, a documented endpoint that
   the posture score was neither one tenant's nor the install's. All now carry
   `org_id` under FORCE RLS, with the install-wide unique keys re-scoped and an
   isolation test per handler file.
+- **One tenant could release another tenant's legal hold, and the recording was
+  then deleted** (migration v149). A legal hold marks a session recording as
+  evidence: while one is active, the job that enforces retention must leave the
+  recording alone. Releasing a hold is therefore not a status change — it is
+  what allows the next retention run to delete the recording.
+
+  The release endpoint for remote-support recordings identified the hold by the
+  session it belonged to and nothing else, so an administrator of one
+  organization who knew another organization's session identifier could release
+  that organization's hold. The recording it was protecting was deleted at the
+  next retention run — irreversibly, and with almost nothing to see afterwards:
+  the owning organization finds only a release timestamp attributed to an
+  account that is not theirs. Placing and listing holds were unrestricted in the
+  same way, which also exposed the stated reason for each hold, free text that
+  routinely describes an ongoing investigation.
+
+  The equivalent endpoints for privileged-session recordings did check that the
+  session belonged to the caller, which is how the gap was noticeable at all —
+  two implementations of one control, one guarded and one not. That check was
+  also weaker than it appeared: it had no organization condition of its own and
+  relied entirely on database-level enforcement, which does not apply when the
+  application connects with a privileged database account. Both hold tables now
+  carry an organization, the enforcement applies to them directly, and every
+  endpoint names the organization in its own query rather than delegating.
+
+  The retention sweeps remain deliberately install-wide and now say so where
+  they run: a hold a sweep cannot see reads as no hold at all, so narrowing
+  those queries would turn a retention job into a way of destroying evidence.
 - **Temporary vendor access is under the row-level-security belt, and its usage
   record has a tenant** (migration v148). A temporary access link grants an
   outside party SSH, RDP or VNC into an internal host. An earlier migration

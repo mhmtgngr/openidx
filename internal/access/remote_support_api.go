@@ -582,7 +582,8 @@ func (h *RemoteSupportHandler) HandleListSessions(c *gin.Context) {
                s.started_at, s.accepted_at, s.ended_at, COALESCE(s.notes,''),
                s.last_activity_at,
                EXISTS (SELECT 1 FROM recording_legal_holds rlh
-                        WHERE rlh.session_id = s.id AND rlh.released_at IS NULL)
+                        WHERE rlh.session_id = s.id AND rlh.released_at IS NULL
+                          AND rlh.org_id = s.org_id)
           FROM remote_support_sessions s
          ORDER BY s.started_at DESC
          LIMIT 200
@@ -1034,7 +1035,8 @@ func (h *RemoteSupportHandler) fetchSession(ctx context.Context, id string) (rem
                s.started_at, s.accepted_at, s.ended_at, COALESCE(s.notes,''),
                s.last_activity_at,
                EXISTS (SELECT 1 FROM recording_legal_holds rlh
-                        WHERE rlh.session_id = s.id AND rlh.released_at IS NULL)
+                        WHERE rlh.session_id = s.id AND rlh.released_at IS NULL
+                          AND rlh.org_id = s.org_id)
           FROM remote_support_sessions s
          WHERE s.id = $1
     `, id)

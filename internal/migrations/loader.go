@@ -1058,5 +1058,12 @@ func allMigrations() []*Migration {
 			UpSQL:       tempAccessTenantScopeUp,
 			DownSQL:     tempAccessTenantScopeDown,
 		},
+		{
+			Version:     149,
+			Name:        "legal_hold_tenant_scope",
+			Description: "Add org_id + FORCE RLS to recording_legal_holds (v42, remote support) and guacamole_recording_legal_holds (v68, PAM) — the two tables that mark a session recording as evidence. This batch destroys rather than discloses, which is a first for the programme: sweepExpiredRecordings selects purge candidates with NOT EXISTS over the hold table, so releasing a hold is what lets the next sweep delete the recording. HandleReleaseLegalHold took a BARE session id, so an administrator of one tenant could release another tenant's litigation hold by naming their session id, and the recording it protected was gone at the next sweep — irreversible, and invisible to the tenant that placed the hold beyond a released_by user id that is not in their organization. Place and list were equally bare, exposing the hold reasons, which are free text describing an investigation. The Guacamole twin is the reason the gap is legible: its handlers do the identical job and every one gates on guacSessionVisible first — two implementations of one control side by side, one guarded and one not, the shape v146 found in mfa_management.go. That guard was also thinner than it looked: guacSessionVisible carried no tenant term and its comment sourced the scope from 'RLS on guacamole_sessions', which holds on a correctly configured connection and not on one with BYPASSRLS, so the check now carries the organization itself and the belt is the second layer rather than the only one. The retention sweeps stay install-wide and already run under orgctx.WithBypassRLS. Holds are attributed through their session, with the oldest organization as a load-bearing fallback because both session tables allow a NULL org_id on old rows. The active-hold partial unique indexes are deliberately NOT re-scoped: they key on session_id, which already determines the organization, so a per-org key would let one session carry two active holds — the v146 UNIQUE(user_id) judgement reached the same way. No column DEFAULT.",
+			UpSQL:       legalHoldTenantScopeUp,
+			DownSQL:     legalHoldTenantScopeDown,
+		},
 	}
 }

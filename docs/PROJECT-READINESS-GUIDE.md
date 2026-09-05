@@ -1991,6 +1991,62 @@ class this whole program exists for.
    v148 applied, rolled back to 147 and re-applied — the rollback deliberately
    keeps `temp_access_links.org_id`, which is v71's column, and `v148_test.go`
    fails if a later edit drops it.
+
+   **Batch 11 shipped (migration v149, `needsScoping` 38 → 36; registers 56 →
+   54): the first one that destroys rather than discloses.** A legal hold marks
+   a session recording as evidence: while one is active, the retention sweep
+   must not purge the recording. There are two hold tables, one per kind of
+   recorded session — `recording_legal_holds` (v42, remote support) and
+   `guacamole_recording_legal_holds` (v68, PAM) — and neither carried an
+   organization.
+
+   `sweepExpiredRecordings` picks purge candidates with `NOT EXISTS (… FROM
+   recording_legal_holds WHERE session_id = s.id AND released_at IS NULL)`. So
+   **releasing a hold is not a status change; it is what lets the next sweep
+   delete the recording.** `HandleReleaseLegalHold` took a bare session id:
+   `UPDATE recording_legal_holds SET released_at = NOW() … WHERE session_id =
+   $1 AND released_at IS NULL`. An administrator of one tenant, naming another
+   tenant's session id, released that tenant's litigation hold — and the
+   recording was gone at the next sweep. Irreversible, and near-invisible: the
+   owning tenant sees only a `released_at` stamped by a user id that is not in
+   their organization. Place and list were equally bare, so the reasons — free
+   text describing an investigation — were readable across tenants too.
+
+   **The twin was guarded, which is how the gap was legible.** The Guacamole
+   hold handlers do the identical job and every one of them calls
+   `guacSessionVisible` first. Two implementations of one control, side by side,
+   one gated and one not — the shape v146 found in `mfa_management.go`'s
+   six-factor `SELECT`.
+
+   **And that guard was thinner than it looked.** `guacSessionVisible` was
+   `SELECT EXISTS(SELECT 1 FROM guacamole_sessions WHERE id=$1)` with no tenant
+   term at all, under a comment sourcing the scope from *"RLS on
+   guacamole_sessions"*. That is true on a correctly configured connection and
+   false on any connection with `BYPASSRLS` — which is what every test pool in
+   this repo is, and what an operator gets by pointing the app at a superuser
+   DSN. **A control whose only defence is a database setting has no defence in
+   the code**, so the check now carries the organization itself and the belt is
+   the second layer rather than the only one.
+
+   The retention sweeps stay install-wide on purpose and already ran under
+   `orgctx.WithBypassRLS`; the direction is now written at the call site,
+   because a hold the sweep *cannot see* reads as "no hold" and the recording is
+   purged — scoping that subquery would turn a retention job into an evidence
+   shredder. `hasActiveLegalHold`, which has no production caller today, is
+   fixed the same way rather than left as a landmine for whoever wires it up.
+
+   Proven on Postgres 16: four cases in `internal/access`, all red against the
+   old handlers — the decisive one reading **`org B released org A's litigation
+   hold: 200 {"status":"released"}`**. The test does not stop at the refusal: it
+   re-runs the sweeper's own purge-candidate query afterwards, because a release
+   that 404s to the caller but still stamps `released_at` would satisfy the
+   status check and still destroy the evidence. `TestRLSBeltTables` **41/41**.
+
+   **Still open on this surface:** `remote_support_sessions` carries `org_id`
+   but no belt and **14 unscoped queries** — including `HandleListSessions`,
+   which has no `WHERE` clause at all. It is on `needsBelt` with that count and
+   is the next batch; it is a separate change from the holds and is not claimed
+   here.
 4. ✅ **OPA `deny` enforced** — *shipped.* — `internal/common/middleware/opa.go`: abort
    unless `Allow && len(Deny)==0`; `authz.rego:15-19`'s "any authenticated
    user may GET anything" removed; `policies/access_control.rego`
@@ -3619,7 +3675,7 @@ that holds it rather than by the commit that wrote it.
 |---|---|---|
 | 1 · journeys verified | ☐ | J1 ✅ the `smoke` and `first-run` jobs (P6.2); J2 ✅ `test/integration/{auth_flows,mfa_flow,passwordless}_test.go`; J3 ✅ `test/integration/enforced_posture_test.go` (P6.1); ☐ **J6 has no automated proof** — `e2e/access-reviews-flow.spec.ts` is still on the `hold` side of `e2e/suite.txt`; ☐ **J7 needs a leaver integration case**; J4/J5/J8 stay scripted operator drills (`tools/darkprobe`, `make dr-game-day`) to be filed under `docs/evidence/` (P8.4) |
 | 2 · enforced posture, legacy login gone | ◐ | code ✅ — the server-rendered login is deleted and `internal/oauth/routes_legacy_login_test.go` fails if any of it returns (P6.1); ops ☐ — rollout Task 16 is the operator's, on a live deployment |
-| 3 · every control enforces | ◐ | P5.1–5.11 ✅ (tenant isolation, the inverted orgscope lint, OPA `deny`, ABAC at both PEPs, the honest Apply/Remediate, SMS, multi-IdP, the fail-closed gate, `ValidateProduction`, the faked measurements); ◐ the P5.3b register programme — batch 1 (v140) belted fifteen tables and fixed `email_branding`'s cross-tenant read *and* write; batch 2 (v141) scoped the compliance record and fixed an archive worker that was silently producing empty archives; batches 4–10 (v142–v148) took the unified audit stream, the sign-in tables, the SAML surface, the password-substitute credentials, the four second factors the belt had skipped, the breach response record — where a containment reported success while quarantining nobody — and the temporary vendor access surface, where v71's written-down reason for skipping the belt had expired three batches earlier; **56** still ride `needsScoping`/`needsBelt` waivers |
+| 3 · every control enforces | ◐ | P5.1–5.11 ✅ (tenant isolation, the inverted orgscope lint, OPA `deny`, ABAC at both PEPs, the honest Apply/Remediate, SMS, multi-IdP, the fail-closed gate, `ValidateProduction`, the faked measurements); ◐ the P5.3b register programme — batch 1 (v140) belted fifteen tables and fixed `email_branding`'s cross-tenant read *and* write; batch 2 (v141) scoped the compliance record and fixed an archive worker that was silently producing empty archives; batches 4–10 (v142–v148) took the unified audit stream, the sign-in tables, the SAML surface, the password-substitute credentials, the four second factors the belt had skipped, the breach response record — where a containment reported success while quarantining nobody — the temporary vendor access surface, where v71's written-down reason for skipping the belt had expired three batches earlier, and the legal holds — the first batch whose defect destroys rather than discloses, since releasing a hold is what lets the retention sweep delete the recording; **54** still ride `needsScoping`/`needsBelt` waivers |
 | 4 · first run / first login / four pillars from the docs | ✅ | first run ✅ the `smoke` and `first-run` jobs (P6.2); first login ✅ one authoritative credential in `GETTING-STARTED.md`, with the `USER_GUIDE.md` and `CONTRIBUTING.md` copies pointing at it rather than repeating it (P8.1); four pillars ✅ `guide/governance.md` was the missing one (P8.1) |
 | 5 · one story + auditor artifacts | ✅ | threat model and control mapping exist; docs sweep 3 ✅ and the docs-drift guard ✅ (`check-docs-drift.sh`, enforced in CI, so a document cannot cite a path that is not there); `docs/evidence/` ✅ (P8.4) |
 | 6 · releases current, signed, Helm proven | ◐ | signing ✅ `release.yml` (cosign) and, since P7.5, an Android artifact whose name tracks the key that signed it; Helm ✅ the `kind` install job (P6.4); versions ✅ `VERSION` + `check-version-sync.sh` (P8.3); CHANGELOG ✅ every release attributed from the commit that wrote its entry, 61 compare links that resolve (P8.2); ☐ v1.34.0 is not cut — the maintainer's |

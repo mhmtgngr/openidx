@@ -283,7 +283,8 @@ func (s *Service) handleListGuacSessionHistory(c *gin.Context) {
 		        (COALESCE(recording_path, '') <> '') AS recording_available,
 		        EXISTS (SELECT 1 FROM guacamole_recording_legal_holds h
 		                 WHERE h.session_id = guacamole_sessions.id
-		                   AND h.released_at IS NULL) AS on_legal_hold
+		                   AND h.released_at IS NULL
+		                   AND h.org_id = guacamole_sessions.org_id) AS on_legal_hold
 		   FROM guacamole_sessions
 		  WHERE org_id = $1
 		  ORDER BY started_at DESC

@@ -194,8 +194,8 @@ func TestAggregatePAMOverview(t *testing.T) {
 		t.Fatalf("seed active session: %v", err)
 	}
 	if _, err := db.Pool.Exec(ctx, `
-		INSERT INTO guacamole_recording_legal_holds (session_id, reason) VALUES ($1::uuid, 'litigation')`,
-		heldSessionID); err != nil {
+		INSERT INTO guacamole_recording_legal_holds (session_id, reason, org_id) VALUES ($1::uuid, 'litigation', $2::uuid)`,
+		heldSessionID, orgA); err != nil {
 		t.Fatalf("seed legal hold: %v", err)
 	}
 	if _, err := db.Pool.Exec(ctx, `
