@@ -56,10 +56,54 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # THE BUILDER BOOTSTRAP IS ITS OWN DOCKER HUB PULL, and it is the one the
+      # retry below the build step never covered. Both of these actions fetch an
+      # image from Docker Hub before any of this repo's code is touched: QEMU
+      # pulls tonistiigi/binfmt, buildx boots moby/buildkit:buildx-stable-1. The
+      # `build (tools)` leg died at "Booting builder" with
+      #
+      #   ERROR: Error response from daemon: Head
+      #   "https://registry-1.docker.io/v2/moby/buildkit/manifests/buildx-stable-1":
+      #   ... net/http: request canceled while waiting for connection
+      #
+      # on a commit whose diff was Go files and a shell script. The job never
+      # compiled anything. The build step next to it has been retried since the
+      # alpine:3.24 502, so the resilience work covered the build and left the
+      # builder -- the two steps that have to succeed BEFORE it -- unguarded.
+      #
+      # Same shape as the build retry: the first attempt may fail, a second runs
+      # only if it did, and the second is not allowed to fail. `continue-on-error`
+      # here would be a silent pass-through if the retry were ever deleted -- the
+      # build would fall back to the default driver and quietly produce a
+      # single-arch image -- so the pairing is enforced by
+      # scripts/check-docker-retry-drift.sh, not by discipline.
       - name: Set up QEMU
+        id: qemu
+        continue-on-error: true
+        uses: docker/setup-qemu-action@v3
+
+      # Docker Hub's rate limiter and its 502s both clear on the order of
+      # seconds, and an immediate retry into a registry that is still timing
+      # out is not a retry. 30s matches the settle used below the build step.
+      - name: Let Docker Hub settle before retrying QEMU
+        if: steps.qemu.outcome == 'failure'
+        run: sleep 30
+
+      - name: Set up QEMU (retry)
+        if: steps.qemu.outcome == 'failure'
         uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
+        id: buildx
+        continue-on-error: true
+        uses: docker/setup-buildx-action@v4
+
+      - name: Let Docker Hub settle before re-booting the builder
+        if: steps.buildx.outcome == 'failure'
+        run: sleep 30
+
+      - name: Set up Docker Buildx (retry)
+        if: steps.buildx.outcome == 'failure'
         uses: docker/setup-buildx-action@v4
 
       # Only authenticate (and therefore push) for non-PR events. PRs from
@@ -191,7 +235,22 @@ jobs:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     timeout-minutes: 10
     steps:
+      # Same Docker Hub exposure as the build job's bootstrap, and worse
+      # consequences: this job is what turns a pushed :<sha> manifest into the
+      # vX.Y.Z tag a release points at, so an outage here publishes a release
+      # whose version tags do not exist. Retried for the same reason and in the
+      # same shape.
       - name: Set up Docker Buildx
+        id: buildx
+        continue-on-error: true
+        uses: docker/setup-buildx-action@v4
+
+      - name: Let Docker Hub settle before re-booting the builder
+        if: steps.buildx.outcome == 'failure'
+        run: sleep 30
+
+      - name: Set up Docker Buildx (retry)
+        if: steps.buildx.outcome == 'failure'
         uses: docker/setup-buildx-action@v4
 
       - name: Log in to GHCR

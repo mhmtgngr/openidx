@@ -130,6 +130,108 @@ jobs:
 EOF
 t "tek adim karsilastirilamaz ama kirmizi degil" 0 "$WORK/single.yml"
 
+# --- the bootstrap steps, added after `build (tools)` died at "Booting
+# --- builder" on a Docker Hub auth timeout ------------------------------------
+
+setup_fixture() { # name [extra-lines-for-the-retry] -> path
+  cat > "$WORK/$1" <<EOF
+jobs:
+  build:
+    steps:
+      - name: Set up Docker Buildx
+        id: buildx
+        continue-on-error: true
+        uses: docker/setup-buildx-action@v4
+
+      - name: Set up Docker Buildx (retry)
+        if: steps.buildx.outcome == 'failure'
+        uses: docker/setup-buildx-action@v4
+${2:-}
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+EOF
+  echo "$WORK/$1"
+}
+
+# MUST STAY GREEN: two bare setup steps are identical by having no inputs at
+# all. Only build-push-action is required to carry a `with:` block.
+t "ciplak iki bootstrap adimi gecerli" 0 "$(setup_fixture setup-ok.yml)"
+
+# MUST GO RED: the retry boots a builder the failed attempt never asked for.
+t "bootstrap retry farkli girdi alirsa yakalanir" 1 \
+  "$(setup_fixture setup-drift.yml '        with:
+          driver: docker
+')"
+
+# MUST GO RED: `continue-on-error: true` with nothing reading the outcome is a
+# hole, not a retry. Delete the retry step and the job sails past a buildx that
+# never came up -- the build then falls back to the default driver and quietly
+# produces a single-arch image.
+cat > "$WORK/swallowed.yml" <<'EOF'
+jobs:
+  build:
+    steps:
+      - name: Set up Docker Buildx
+        id: buildx
+        continue-on-error: true
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+EOF
+t "tolere edilen hata tuketilmezse yakalanir" 1 "$WORK/swallowed.yml"
+
+# MUST STAY GREEN: a step that is advisory ON PURPOSE -- an image scan whose
+# findings are reported, not gated -- carries no `id:` and is not flagged.
+# Without this case the rule above would push people to delete the guard.
+cat > "$WORK/advisory.yml" <<'EOF'
+jobs:
+  build:
+    steps:
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+
+      - name: Trivy image scan
+        uses: aquasecurity/trivy-action@master
+        continue-on-error: true
+        with:
+          image-ref: local
+EOF
+t "id tasimayan tavsiye adimi tetiklemez" 0 "$WORK/advisory.yml"
+
+# MUST STAY GREEN: two JOBS may legitimately set the same action up
+# differently -- a retry pair always lives inside one job. Comparing per file
+# instead of per job would make this a false positive, and a guard that cries
+# wolf on a correct file is one somebody switches off.
+cat > "$WORK/twojobs.yml" <<'EOF'
+jobs:
+  build:
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+        with:
+          driver: docker-container
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+
+  release-tag:
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+        with:
+          driver: docker
+EOF
+t "farkli isler ayri degerlendirilir" 0 "$WORK/twojobs.yml"
+
 if [ "$fail" -gt 0 ]; then
   echo "DOCKER_RETRY_DRIFT_SELFTEST=FAILED($fail)"; exit 1
 fi

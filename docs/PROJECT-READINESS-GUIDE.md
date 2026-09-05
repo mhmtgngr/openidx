@@ -445,6 +445,25 @@ All six items landed with this guide (commits on
    retry would build, and on a push publish, an image the first attempt
    never tried).
 
+   **The first version of this covered the build and not the builder.**
+   `build (tools)` later died at *"Booting builder"* — a Docker Hub auth
+   timeout fetching `moby/buildkit:buildx-stable-1` — on a commit whose diff
+   was Go files and a shell script. The job never compiled anything, because
+   the two steps that run *before* the retried build, `setup-qemu-action` and
+   `setup-buildx-action`, each pull their own image from Docker Hub and
+   neither was retried. They are now, in all three jobs that boot a builder
+   (`docker.yml` build and release-tag, `security-scan.yml`), in the same
+   shape. That shape needs a second guarantee: `continue-on-error: true` on a
+   first attempt is a hole if the retry beside it is ever deleted — a buildx
+   that never came up does not stop the build, it falls back to the default
+   driver and quietly produces a single-arch image. So
+   `check-docker-retry-drift.sh` now also fails CI when a step is allowed to
+   fail and carries an `id:` that nothing in the job reads
+   `steps.<id>.outcome` from. A step that is advisory on purpose (the Trivy
+   image scan, the SARIF upload) carries no `id:` and is not flagged — the
+   green cases are in the self-test alongside the red ones, because a guard
+   that fires on a correct file is one somebody switches off.
+
 8. ✅ **Both proxies stop forwarding the caller's own claims about who it
    is.** This started as deprecation cleanup — Go 1.26 deprecates
    `httputil.ReverseProxy.Director`, and the ZTNA route proxy and the Ziti

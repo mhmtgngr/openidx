@@ -79,14 +79,16 @@ jobs:
       - name: A detached database call must name its tenant
         run: bash scripts/check-detached-org-writes.sh --enforce
 
-  # Two CI jobs used to go red on other people's outages -- a Docker Hub 502
-  # on a base-image manifest, a reset connection to the chart CDN -- on
-  # commits that changed nothing related. Both now retry, and both retries
-  # are load-bearing enough to need guarding: a retry wrapper that swallows
-  # the final exit code turns every red into a slow green, and a duplicated
-  # build block that drifts makes the second attempt build something the
-  # first never tried. Neither failure would be visible in a passing run,
-  # which is exactly why they are gates.
+  # CI jobs here used to go red on other people's outages -- a Docker Hub 502
+  # on a base-image manifest, a reset connection to the chart CDN, a Docker Hub
+  # auth timeout while BOOTING THE BUILDER, before a line of this repo was
+  # compiled -- on commits that changed nothing related. Those steps now retry,
+  # and the retries are load-bearing enough to need guarding three ways: a
+  # retry wrapper that swallows the final exit code turns every red into a slow
+  # green; a duplicated block that drifts makes the second attempt run
+  # something the first never tried; and `continue-on-error` with no retry left
+  # consuming it is a step that simply fails in silence. None of the three
+  # would be visible in a passing run, which is exactly why they are gates.
   ci-resilience-guards:
     name: Retries can still go red
     runs-on: ubuntu-latest
@@ -97,7 +99,7 @@ jobs:
         run: bash scripts/ci-retry.test.sh
       - name: Verify the drift guard works
         run: bash scripts/check-docker-retry-drift.test.sh
-      - name: Both Docker build attempts must stay identical
+      - name: A retried step must stay identical and never fail silently
         run: bash scripts/check-docker-retry-drift.sh
 
   # The files under .github/ decide what CI runs and who reviews it, and both
