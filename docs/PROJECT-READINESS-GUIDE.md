@@ -2185,9 +2185,48 @@ worked.
    verifier past the gate needs an identity service the harness does not build,
    so "it got through the gate" is an observable 500 and each case stands alone
    instead of the first one panicking and taking the run with it.
-7. ☐ Remaining from the audit's list: hardware-token verify/assign/revoke,
-   `handlePamRevealEntry`, `RunSoDSweep`, `handleApproveRequest`, and the
-   Guacamole session handlers.
+7. ✅ **The hardware token — three of the things holding it up were not.**
+   A physical second factor is a six-digit code against a shared HOTP/TOTP
+   seed, and three things stand between it and an attacker: the counter that
+   makes a code single-use, a lockout that makes guessing expensive, and the
+   status that makes a revoked token dead. Only the third worked.
+   - **The counter advance was fire-and-forget.** `s.db.Pool.Exec(...)` with
+     the error dropped, so a write that failed left the counter where it was,
+     the function returned `true`, and the same code kept working — silently,
+     for as long as the write kept failing. Verification refuses now: a code
+     that cannot be spent has not been verified. A trigger that blocks the
+     counter update stands in for whatever makes that write fail, and the test
+     is red against the old shape.
+   - **Nothing counted failures.** `mfa_totp` has carried
+     `failed_attempts`/`locked_until` since the throttle work, with a comment
+     explaining that a six-digit factor is only a factor if guessing it is
+     expensive. Hardware tokens had neither, and are the *wider* target:
+     `verifyHOTP` walks a look-ahead of ten counters and `verifyTOTP` accepts a
+     ±1 step window, so roughly eleven of a million values are live at any
+     instant. The same account was throttled on one factor and not the other.
+     Migration **v139** adds the three columns, and the verifier reuses
+     `mfa_totp`'s constants and its ordering — the lock is checked *before* the
+     code, because a verifier that checks the code first and only then notices
+     the lock still leaks whether the guess was right.
+   - **Revoking a token that does not exist reported success.** An `UPDATE`
+     matching no row succeeds, so `RevokeHardwareToken` and `ReportTokenLost`
+     returned nil and wrote a lifecycle event for a token id that was never
+     there. An administrator acting on a stale or mistyped id was told the
+     credential was dead while it went on working.
+
+   Nine tests, three of them red against the code they replace, covering
+   single use, the look-ahead moving *past* the match rather than to it,
+   lockout and its release on success, exclusive assignment, a revoked token
+   being unusable, an unknown token refusing both lifecycle calls without
+   writing an event, and a user with no assigned token.
+
+   Still open on this table and **not** fixed here: `hardware_tokens` has no
+   `org_id` and `serial_number` is UNIQUE install-wide, so every query in
+   `hardware_token.go` addresses tokens by bare id across tenants. That is the
+   orgscope `needsScoping` register (P5.3b) and its own migration — a backfill,
+   the RLS belt, and every query in the file — not a rider on this one.
+8. ☐ Remaining from the audit's list: `handlePamRevealEntry`, `RunSoDSweep`,
+   `handleApproveRequest`, and the Guacamole session handlers.
 
    `internal/identity`'s DB harness now also accepts
    `OPENIDX_TEST_DATABASE_URL`, so these can be written and run on a machine

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/secretcrypt"
 )
@@ -247,12 +248,21 @@ func (s *Service) UnassignHardwareToken(ctx context.Context, tokenID, unassigned
 	return nil
 }
 
+// ErrHardwareTokenNotFound is returned when an operation names a token that
+// does not exist. It exists because an UPDATE that matches no row succeeds:
+// revoking a token that is not there used to return nil and write a "revoked"
+// event for it, so an administrator acting on a stale id — or a typo'd one —
+// was told the credential was dead while it went on working.
+var ErrHardwareTokenNotFound = errors.New("hardware token not found")
+
 // RevokeHardwareToken marks token as revoked (cannot be used)
 func (s *Service) RevokeHardwareToken(ctx context.Context, tokenID, revokedBy, reason string) error {
-	query := `UPDATE hardware_tokens SET status = 'revoked' WHERE id = $1`
-	_, err := s.db.Pool.Exec(ctx, query, tokenID)
+	tag, err := s.db.Pool.Exec(ctx, `UPDATE hardware_tokens SET status = 'revoked' WHERE id = $1`, tokenID)
 	if err != nil {
 		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrHardwareTokenNotFound
 	}
 
 	s.logTokenEvent(ctx, tokenID, nil, "revoked", "", "", map[string]interface{}{
@@ -265,10 +275,12 @@ func (s *Service) RevokeHardwareToken(ctx context.Context, tokenID, revokedBy, r
 
 // ReportTokenLost marks token as lost
 func (s *Service) ReportTokenLost(ctx context.Context, tokenID, reportedBy string) error {
-	query := `UPDATE hardware_tokens SET status = 'lost' WHERE id = $1`
-	_, err := s.db.Pool.Exec(ctx, query, tokenID)
+	tag, err := s.db.Pool.Exec(ctx, `UPDATE hardware_tokens SET status = 'lost' WHERE id = $1`, tokenID)
 	if err != nil {
 		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrHardwareTokenNotFound
 	}
 
 	s.logTokenEvent(ctx, tokenID, nil, "lost_reported", "", "", map[string]interface{}{
@@ -282,16 +294,28 @@ func (s *Service) ReportTokenLost(ctx context.Context, tokenID, reportedBy strin
 func (s *Service) VerifyHardwareToken(ctx context.Context, userID, otp string, ipAddress, userAgent string) (bool, error) {
 	// Get user's assigned token
 	query := `
-		SELECT id, token_type, secret_key, counter
+		SELECT id, token_type, secret_key, counter, locked_until
 		FROM hardware_tokens
 		WHERE assigned_to = $1 AND status = 'assigned'
 	`
 
 	var tokenID, tokenType, encryptedSecret string
 	var counter int64
-	err := s.db.Pool.QueryRow(ctx, query, userID).Scan(&tokenID, &tokenType, &encryptedSecret, &counter)
+	var lockedUntil *time.Time
+	err := s.db.Pool.QueryRow(ctx, query, userID).Scan(&tokenID, &tokenType, &encryptedSecret, &counter, &lockedUntil)
 	if err != nil {
 		return false, errors.New("no hardware token assigned to user")
+	}
+
+	// Refuse while locked, before the code is examined at all — the same order
+	// VerifyTOTP uses, and for the same reason: a verifier that checks the code
+	// first and only then notices the lock still leaks whether the guess was
+	// right.
+	if lockedUntil != nil && time.Now().Before(*lockedUntil) {
+		s.logTokenEvent(ctx, tokenID, &userID, "failed", ipAddress, userAgent, map[string]interface{}{
+			"reason": "locked_out",
+		})
+		return false, ErrHardwareTokenLockedOut
 	}
 
 	// Decrypt secret
@@ -316,23 +340,76 @@ func (s *Service) VerifyHardwareToken(ctx context.Context, userID, otp string, i
 	}
 
 	if valid {
-		// Update counter and last used
-		updateQuery := `
+		// Advancing the counter is what makes an HOTP single-use, so this write
+		// is part of the verification, not bookkeeping after it. Its error used
+		// to be discarded: a failed UPDATE left the counter where it was and the
+		// same code kept working, for as long as the write kept failing, with
+		// nothing said. Refuse instead — a code that cannot be spent has not
+		// been verified.
+		if _, err := s.db.Pool.Exec(ctx, `
 			UPDATE hardware_tokens
-			SET counter = $1, last_used_at = NOW(), use_count = use_count + 1
+			SET counter = $1, last_used_at = NOW(), use_count = use_count + 1,
+			    failed_attempts = 0, last_failed_at = NULL, locked_until = NULL
 			WHERE id = $2
-		`
-		s.db.Pool.Exec(ctx, updateQuery, newCounter, tokenID)
+		`, newCounter, tokenID); err != nil {
+			s.logger.Error("Hardware token accepted but its counter could not be advanced; refusing",
+				zap.String("token_id", tokenID), zap.Error(err))
+			return false, fmt.Errorf("could not spend hardware token code: %w", err)
+		}
 
 		s.logTokenEvent(ctx, tokenID, &userID, "used", ipAddress, userAgent, nil)
 		return true, nil
 	}
 
+	s.recordFailedHardwareToken(ctx, tokenID)
 	s.logTokenEvent(ctx, tokenID, &userID, "failed", ipAddress, userAgent, map[string]interface{}{
 		"reason": "invalid_otp",
 	})
 
 	return false, nil
+}
+
+// Hardware-token verification throttling.
+//
+// The same exposure mfa_totp's throttle closes, and a wider one: verifyHOTP
+// walks a look-ahead of ten counters and verifyTOTP accepts a +/- 1 step
+// window, so roughly eleven of a million six-digit values are live at any
+// instant. Unthrottled, an attacker expects a hit in the tens of thousands of
+// requests. The constants are mfa_totp's, deliberately — one answer to "how
+// many tries do I get" across both factors is easier to reason about than two.
+const (
+	hardwareTokenMaxAttempts     = totpMaxAttempts
+	hardwareTokenLockoutDuration = totpLockoutDuration
+)
+
+// ErrHardwareTokenLockedOut is returned when the token is locked after repeated
+// failures, distinguishable from a wrong code so the caller can say "wait"
+// rather than "try again" — and carrying nothing about the submitted code.
+var ErrHardwareTokenLockedOut = errors.New("too many failed hardware token attempts; try again later")
+
+// recordFailedHardwareToken counts a failed verification and locks the token at
+// the threshold.
+//
+// The increment happens in the database, as recordFailedTOTP's does: reading
+// the count into Go, adding one and writing it back loses increments under
+// exactly the concurrency an attacker generates, so the cap binds later than it
+// claims — or never. The error is logged and swallowed because the caller has
+// already decided the code was wrong; failing the request instead would tell
+// the attacker their guess was interesting.
+func (s *Service) recordFailedHardwareToken(ctx context.Context, tokenID string) {
+	if _, err := s.db.Pool.Exec(ctx, `
+		UPDATE hardware_tokens
+		SET failed_attempts = failed_attempts + 1,
+		    last_failed_at  = NOW(),
+		    locked_until = CASE
+		        WHEN failed_attempts + 1 >= $2 THEN NOW() + $3::interval
+		        ELSE locked_until
+		    END
+		WHERE id = $1
+	`, tokenID, hardwareTokenMaxAttempts, hardwareTokenLockoutDuration.String()); err != nil {
+		s.logger.Error("Failed to record hardware token failure; throttling may not be enforced",
+			zap.String("token_id", tokenID), zap.Error(err))
+	}
 }
 
 // verifyHOTP validates HOTP code with look-ahead window

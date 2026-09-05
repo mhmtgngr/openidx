@@ -988,5 +988,12 @@ func allMigrations() []*Migration {
 			UpSQL:       ispmAIOrgIsolationUp,
 			DownSQL:     ispmAIOrgIsolationDown,
 		},
+		{
+			Version:     139,
+			Name:        "hardware_token_throttle",
+			Description: "Add failed_attempts/last_failed_at/locked_until to hardware_tokens, mirroring mfa_totp. VerifyHardwareToken checked a six-digit code with no failure counter and no lockout, and its HOTP look-ahead of ten counters plus the TOTP +/-1 step window leave roughly eleven of a million values live at any instant — a second factor is only a factor if guessing it is expensive. Additive and idempotent; hardware_tokens still has no org_id (orgscope needsScoping register, its own migration).",
+			UpSQL:       hardwareTokenThrottleUp,
+			DownSQL:     hardwareTokenThrottleDown,
+		},
 	}
 }
