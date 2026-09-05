@@ -2298,8 +2298,31 @@ worked.
    same approver both 404; another tenant's request answers what a
    non-existent one answers; and no caller or no organization refuses before
    anything is touched.
-10. ☐ Remaining from the audit's list: `handlePamRevealEntry` and the
-    Guacamole session handlers.
+10. ✅ **The PAM reveal path, pinned.** `handlePamRevealEntry` hands back a
+    privileged account's password in plaintext — the most sensitive read in the
+    product — and six checks stand in front of it. Unlike everything else in
+    this section, **this one was already correct**: the tests found no defect,
+    and say so. What they add is that the ladder can no longer be weakened
+    quietly, because *which* refusal a caller gets is itself the control. A
+    403 "reveal is disabled for this entry" and a 404 "no such entry" tell
+    someone enumerating ids very different things.
+
+    Nine tests, against a database the real migrator built (the vault schema,
+    `pam_entries` and the v105 checkout controls span several migrations and
+    carry FORCE RLS, so an approximation can pass against a shape production
+    does not have) and a vault service constructed exactly the way
+    `cmd/access-service` constructs it: the happy path returns the plaintext
+    *and* writes the checkout row carrying the caller's reason; a missing or
+    empty reason is 400 and leaks nothing; an `allow_reveal=false`
+    injection-only entry is 403 and writes no checkout row; "no stored secret"
+    (404) and "this entry points at a linked credential" (400, naming it) stay
+    distinct; another tenant's entry answers byte-for-byte what an unknown id
+    answers; a non-admin without an entry grant is 403; an exclusive entry
+    already held answers 409 rather than a second copy of the credential; a
+    dual-control entry answers 202 and hands back nothing until a second
+    administrator authorizes it; and no organization context refuses before the
+    entry is looked up at all.
+11. ☐ Remaining from the audit's list: the Guacamole session handlers.
 
    `internal/identity`'s DB harness now also accepts
    `OPENIDX_TEST_DATABASE_URL`, so these can be written and run on a machine
