@@ -135,6 +135,34 @@ func (s *Service) decideGuacSession(c *gin.Context, newStatus, auditAction strin
 		return
 	}
 
+	// Four eyes. `require_approval` on a connection means the session cannot
+	// start until someone APPROVES the request (handleGuacamoleConnect's
+	// checkAndConsumeApproval), and that gate applies to administrators too --
+	// there is no admin bypass on it. Both routes here are admin-only, so
+	// without this check an administrator who requests a session for a gated
+	// connection can turn round and approve it themselves, which is the gate
+	// approving nothing. Denying your own request is harmless (it is a
+	// withdrawal), so only the approval is refused.
+	//
+	// The lookup is org-scoped, so another tenant's request is a 404 the same
+	// as an unknown id.
+	var requesterID string
+	switch err := s.db.Pool.QueryRow(ctx,
+		`SELECT requester_id::text FROM guacamole_session_requests WHERE id = $1 AND org_id = $2`,
+		requestID, org.ID).Scan(&requesterID); {
+	case errors.Is(err, pgx.ErrNoRows):
+		c.JSON(http.StatusNotFound, gin.H{"error": "session request not found or not in pending state"})
+		return
+	case err != nil:
+		s.logger.Error("decideGuacSession: requester lookup failed",
+			zap.String("request_id", requestID), zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update session request"})
+		return
+	case newStatus == "approved" && requesterID == approverID:
+		c.JSON(http.StatusForbidden, gin.H{"error": "you cannot approve your own session request"})
+		return
+	}
+
 	tag, err := s.db.Pool.Exec(ctx,
 		`UPDATE guacamole_session_requests
 		    SET status      = $1,

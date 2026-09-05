@@ -2342,7 +2342,34 @@ worked.
     spec listed as `run` on a measurement taken against the wrong environment is
     exactly the failure the register exists to make visible, and it was visible
     within one CI round.
-12. ☐ Remaining from the audit's list: the Guacamole session handlers.
+12. ✅ **The Guacamole session decision — the same four-eyes hole, in the PAM
+    pillar.** `require_approval` on a connection means
+    `handleGuacamoleConnect` will not start the session until a request for it
+    has been approved (`checkAndConsumeApproval`), and that gate has **no
+    administrator bypass** — an admin needs an approved request like anyone
+    else. Both decision routes are `requireAdminRole()`-gated and
+    `decideGuacSession` checked nothing, so an administrator who requested a
+    session for a gated connection could approve it themselves: the gate
+    approving nothing. It refuses with 403 now, and the request stays pending.
+    *Denying* your own request still stands — that is a withdrawal, not an
+    escalation.
+
+    Five tests, one red before the fix: self-approval refused with the request
+    left pending; self-denial allowed; someone else's approval succeeding and a
+    second decision on the same request finding nothing pending; another
+    tenant's request answering byte-for-byte what an unknown id answers and
+    being left alone; and no organization context refusing before the request
+    is read.
+
+    That makes two instances of the same defect found in one pass —
+    `handleApproveRequest` in governance and `decideGuacSession` here — which
+    is the argument for putting the check at the decision point rather than at
+    row creation: creation guards are per-route and each new route starts
+    without one.
+
+**P7.4 is complete.** Every handler and function the audit named as untested
+now has a test, and eleven of the entries above record a defect those tests
+found.
 
    `internal/identity`'s DB harness now also accepts
    `OPENIDX_TEST_DATABASE_URL`, so these can be written and run on a machine
