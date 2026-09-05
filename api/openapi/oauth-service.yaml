@@ -1,7 +1,15 @@
 openapi: 3.0.3
 info:
   title: OpenIDX OAuth/OIDC Service
-  description: OAuth 2.0 authorization server with OpenID Connect and SAML 2.0 support.
+  description: |
+    OAuth 2.0 authorization server with OpenID Connect and SAML 2.0 support.
+
+    Every route cmd/oauth-service mounts appears here, and nothing
+    that is not mounted does: test/openapi/service_spec_coverage_test.go compares
+    this file against the live route table in both directions. Operations carry an
+    `x-openidx-handler` extension naming the Go handler that serves them; where a
+    payload shape is not yet pinned the body is shown as a free-form JSON object
+    rather than invented.
   version: 1.34.0
   license:
     name: Apache 2.0
@@ -12,11 +20,21 @@ servers:
     description: Local development
 
 tags:
-  - name: OIDC Discovery
   - name: Authorization
-  - name: Token
-  - name: UserInfo
   - name: Client Management
+  - name: Device Authorization
+  - name: Discovery
+  - name: Dynamic Client Registration
+  - name: Logout
+  - name: OIDC Discovery
+  - name: Passwordless
+  - name: SAML
+  - name: SSF / CAEP
+  - name: Social Login
+  - name: Step-up and MFA
+  - name: Token
+  - name: Tokens
+  - name: UserInfo
 
 paths:
   # --- OIDC Discovery ---
@@ -112,7 +130,39 @@ paths:
       summary: Authorization endpoint
       operationId: authorize
       security: []
-      parameters:
+      responses:
+    BadRequest:
+      description: The request was malformed or failed validation
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: No valid bearer token was presented
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: The caller is authenticated but not permitted
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: No such resource in the caller's organization
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    ServerError:
+      description: The request could not be completed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  parameters:
         - name: response_type
           in: query
           required: true
@@ -499,6 +549,1628 @@ paths:
                   client_secret:
                     type: string
 
+  /.well-known/apple-app-site-association:
+    get:
+      tags: [Discovery]
+      summary: Apple app site association
+      operationId: appleAppSiteAssociation
+      x-openidx-handler: internal/oauth.(*Service).handleAppleAppSiteAssociation
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /.well-known/assetlinks.json:
+    get:
+      tags: [Discovery]
+      summary: Android asset links
+      operationId: androidAssetLinks
+      x-openidx-handler: internal/oauth.(*Service).handleAndroidAssetLinks
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /.well-known/jwks.json:
+    options:
+      tags: [Discovery]
+      summary: JWKS
+      operationId: jwks
+      x-openidx-handler: internal/oauth.(*Service).handleJWKS
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /.well-known/openid-configuration:
+    options:
+      tags: [Discovery]
+      summary: Discovery
+      operationId: discovery
+      x-openidx-handler: internal/oauth.(*Service).handleDiscovery
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /.well-known/ssf-configuration:
+    get:
+      tags: [Discovery]
+      summary: SSF configuration
+      operationId: ssfConfiguration
+      x-openidx-handler: internal/oauth.(*Service).handleSSFConfiguration
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/saml/service-providers:
+    get:
+      tags: [SAML]
+      summary: List SAML service providers
+      operationId: listSAMLServiceProviders
+      x-openidx-handler: internal/oauth.(*Service).handleListSAMLServiceProviders
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [SAML]
+      summary: Create SAML service provider
+      operationId: createSAMLServiceProvider
+      x-openidx-handler: internal/oauth.(*Service).handleCreateSAMLServiceProvider
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/saml/service-providers/import-metadata:
+    post:
+      tags: [SAML]
+      summary: Import SAML metadata
+      operationId: importSAMLMetadata
+      x-openidx-handler: internal/oauth.(*Service).handleImportSAMLMetadata
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/saml/service-providers/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    delete:
+      tags: [SAML]
+      summary: Delete SAML service provider
+      operationId: deleteSAMLServiceProvider
+      x-openidx-handler: internal/oauth.(*Service).handleDeleteSAMLServiceProvider
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    get:
+      tags: [SAML]
+      summary: Get SAML service provider
+      operationId: getSAMLServiceProvider
+      x-openidx-handler: internal/oauth.(*Service).handleGetSAMLServiceProvider
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    put:
+      tags: [SAML]
+      summary: Update SAML service provider
+      operationId: updateSAMLServiceProvider
+      x-openidx-handler: internal/oauth.(*Service).handleUpdateSAMLServiceProvider
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/saml/service-providers/{id}/rotate-certificate:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    post:
+      tags: [SAML]
+      summary: Rotate sp certificate
+      operationId: rotateSPCertificate
+      x-openidx-handler: internal/oauth.(*Service).handleRotateSPCertificate
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /oauth/authorize/v2:
+    get:
+      tags: [Authorization]
+      summary: Authorize V 2
+      operationId: authorizeV2
+      x-openidx-handler: internal/oauth.(*Service).handleAuthorizeV2
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [Authorization]
+      summary: Authorize consent V 2
+      operationId: authorizeConsentV2
+      x-openidx-handler: internal/oauth.(*Service).handleAuthorizeConsentV2
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /oauth/consent:
+    post:
+      tags: [Authorization]
+      summary: Consent decision
+      operationId: consentDecision
+      x-openidx-handler: internal/oauth.(*Service).handleConsentDecision
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /oauth/device/decision:
+    post:
+      tags: [Device Authorization]
+      summary: Device verification decision
+      operationId: deviceVerificationDecision
+      x-openidx-handler: internal/oauth.(*Service).handleDeviceVerificationDecision
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /oauth/device/lookup:
+    get:
+      tags: [Device Authorization]
+      summary: Device verification lookup
+      operationId: deviceVerificationLookup
+      x-openidx-handler: internal/oauth.(*Service).handleDeviceVerificationLookup
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /oauth/device_authorization:
+    options:
+      tags: [Device Authorization]
+      summary: Device authorization
+      operationId: deviceAuthorization
+      x-openidx-handler: internal/oauth.(*Service).handleDeviceAuthorization
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [Device Authorization]
+      summary: Device authorization
+      operationId: deviceAuthorization2
+      x-openidx-handler: internal/oauth.(*Service).handleDeviceAuthorization
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /oauth/force-login:
+    post:
+      tags: [Authorization]
+      summary: Force login
+      operationId: forceLogin
+      x-openidx-handler: internal/oauth.(*Service).handleForceLogin
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /oauth/logout:
+    get:
+      tags: [Logout]
+      summary: Logout
+      operationId: logout
+      x-openidx-handler: internal/oauth.(*Service).handleLogout
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [Logout]
+      summary: Logout
+      operationId: logout2
+      x-openidx-handler: internal/oauth.(*Service).handleLogout
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /oauth/logout-all:
+    post:
+      tags: [Logout]
+      summary: Logout all
+      operationId: logoutAll
+      x-openidx-handler: internal/oauth.(*Service).handleLogoutAll
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /oauth/magic-link:
+    post:
+      tags: [Passwordless]
+      summary: O auth magic link
+      operationId: oAuthMagicLink
+      x-openidx-handler: internal/oauth.(*Service).handleOAuthMagicLink
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /oauth/magic-link-verify:
+    get:
+      tags: [Passwordless]
+      summary: Magic link verify
+      operationId: magicLinkVerify
+      x-openidx-handler: internal/oauth.(*Service).handleMagicLinkVerify
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /oauth/mfa-push-begin:
+    post:
+      tags: [Step-up and MFA]
+      summary: MFA push begin
+      operationId: mfaPushBegin
+      x-openidx-handler: internal/oauth.(*Service).handleMFAPushBegin
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /oauth/mfa-push-status/{challenge_id}:
+    parameters:
+      - name: challenge_id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [Step-up and MFA]
+      summary: MFA push status
+      operationId: mfaPushStatus
+      x-openidx-handler: internal/oauth.(*Service).handleMFAPushStatus
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /oauth/mfa-send-otp:
+    post:
+      tags: [Step-up and MFA]
+      summary: MFA send OTP
+      operationId: mfaSendOTP
+      x-openidx-handler: internal/oauth.(*Service).handleMFASendOTP
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /oauth/mfa-verify:
+    post:
+      tags: [Step-up and MFA]
+      summary: MFA verify
+      operationId: mfaVerify
+      x-openidx-handler: internal/oauth.(*Service).handleMFAVerify
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /oauth/mfa-webauthn-begin:
+    post:
+      tags: [Step-up and MFA]
+      summary: MFA web authn begin
+      operationId: mfaWebAuthnBegin
+      x-openidx-handler: internal/oauth.(*Service).handleMFAWebAuthnBegin
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /oauth/native/login-init:
+    post:
+      tags: [Passwordless]
+      summary: Native login init
+      operationId: nativeLoginInit
+      x-openidx-handler: internal/oauth.(*Service).handleNativeLoginInit
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /oauth/passkey-begin:
+    post:
+      tags: [Passwordless]
+      summary: Passkey begin
+      operationId: passkeyBegin
+      x-openidx-handler: internal/oauth.(*Service).handlePasskeyBegin
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /oauth/passkey-finish:
+    post:
+      tags: [Passwordless]
+      summary: Passkey finish
+      operationId: passkeyFinish
+      x-openidx-handler: internal/oauth.(*Service).handlePasskeyFinish
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /oauth/passwordless/phone/init:
+    post:
+      tags: [Passwordless]
+      summary: Passwordless phone init
+      operationId: passwordlessPhoneInit
+      x-openidx-handler: internal/oauth.(*Service).handlePasswordlessPhoneInit
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /oauth/qr-login/create:
+    post:
+      tags: [Passwordless]
+      summary: QR login create
+      operationId: qrLoginCreate
+      x-openidx-handler: internal/oauth.(*Service).handleQRLoginCreate
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /oauth/qr-login/poll:
+    get:
+      tags: [Passwordless]
+      summary: QR login poll
+      operationId: qrLoginPoll
+      x-openidx-handler: internal/oauth.(*Service).handleQRLoginPoll
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /oauth/register:
+    options:
+      tags: [Dynamic Client Registration]
+      summary: Func1
+      operationId: func1
+      x-openidx-handler: internal/oauth.RegisterRoutes.func1
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [Dynamic Client Registration]
+      summary: Register client
+      operationId: registerClient
+      x-openidx-handler: internal/oauth.(*Service).handleRegisterClient
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /oauth/register/{client_id}:
+    parameters:
+      - name: client_id
+        in: path
+        required: true
+        schema:
+          type: string
+    delete:
+      tags: [Dynamic Client Registration]
+      summary: Delete registered client
+      operationId: deleteRegisteredClient
+      x-openidx-handler: internal/oauth.(*Service).handleDeleteRegisteredClient
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    get:
+      tags: [Dynamic Client Registration]
+      summary: Get registered client
+      operationId: getRegisteredClient
+      x-openidx-handler: internal/oauth.(*Service).handleGetRegisteredClient
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    put:
+      tags: [Dynamic Client Registration]
+      summary: Update registered client
+      operationId: updateRegisteredClient
+      x-openidx-handler: internal/oauth.(*Service).handleUpdateRegisteredClient
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /oauth/session-info:
+    get:
+      tags: [Authorization]
+      summary: Session info
+      operationId: sessionInfo
+      x-openidx-handler: internal/oauth.(*Service).handleSessionInfo
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /oauth/social/callback:
+    get:
+      tags: [Social Login]
+      summary: Social login callback
+      operationId: socialLoginCallback
+      x-openidx-handler: internal/oauth.(*Service).handleSocialLoginCallback
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /oauth/social/link/callback:
+    get:
+      tags: [Social Login]
+      summary: Social link callback
+      operationId: socialLinkCallback
+      x-openidx-handler: internal/oauth.(*Service).handleSocialLinkCallback
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /oauth/social/link/{provider_id}/start:
+    parameters:
+      - name: provider_id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [Social Login]
+      summary: Social link start
+      operationId: socialLinkStart
+      x-openidx-handler: internal/oauth.(*Service).handleSocialLinkStart
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /oauth/social/{provider_id}:
+    parameters:
+      - name: provider_id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [Social Login]
+      summary: Social login init
+      operationId: socialLoginInit
+      x-openidx-handler: internal/oauth.(*Service).handleSocialLoginInit
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /oauth/stepup-challenge:
+    post:
+      tags: [Step-up and MFA]
+      summary: Step up challenge
+      operationId: stepUpChallenge
+      x-openidx-handler: internal/oauth.(*Service).handleStepUpChallenge
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /oauth/stepup-status/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    get:
+      tags: [Step-up and MFA]
+      summary: Step up status
+      operationId: stepUpStatus
+      x-openidx-handler: internal/oauth.(*Service).handleStepUpStatus
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /oauth/stepup-verify:
+    post:
+      tags: [Step-up and MFA]
+      summary: Step up verify
+      operationId: stepUpVerify
+      x-openidx-handler: internal/oauth.(*Service).handleStepUpVerify
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /oauth/token:
+    options:
+      tags: [Tokens]
+      summary: Token
+      operationId: token2
+      x-openidx-handler: internal/oauth.(*Service).handleToken
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /oauth/userinfo:
+    options:
+      tags: [Tokens]
+      summary: User info
+      operationId: userInfo
+      x-openidx-handler: internal/oauth.(*Service).handleUserInfo
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /saml/idp/metadata:
+    get:
+      tags: [SAML]
+      summary: ID P metadata
+      operationId: idPMetadata
+      x-openidx-handler: internal/oauth.(*Service).handleIdPMetadata
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /saml/idp/slo:
+    get:
+      tags: [SAML]
+      summary: ID pslo
+      operationId: idPSLO
+      x-openidx-handler: internal/oauth.(*Service).handleIdPSLO
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [SAML]
+      summary: ID pslo
+      operationId: idPSLO2
+      x-openidx-handler: internal/oauth.(*Service).handleIdPSLO
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /saml/idp/sso:
+    get:
+      tags: [SAML]
+      summary: ID psso
+      operationId: idPSSO
+      x-openidx-handler: internal/oauth.(*Service).handleIdPSSO
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [SAML]
+      summary: ID psso
+      operationId: idPSSO2
+      x-openidx-handler: internal/oauth.(*Service).handleIdPSSO
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /ssf/events:
+    post:
+      tags: [SSF / CAEP]
+      summary: SSF receive
+      operationId: ssfReceive
+      x-openidx-handler: internal/oauth.(*Service).handleSSFReceive
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /ssf/streams:
+    get:
+      tags: [SSF / CAEP]
+      summary: List SSF streams
+      operationId: listSSFStreams
+      x-openidx-handler: internal/oauth.(*Service).handleListSSFStreams
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [SSF / CAEP]
+      summary: Create SSF stream
+      operationId: createSSFStream
+      x-openidx-handler: internal/oauth.(*Service).handleCreateSSFStream
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /ssf/streams/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    delete:
+      tags: [SSF / CAEP]
+      summary: Delete SSF stream
+      operationId: deleteSSFStream
+      x-openidx-handler: internal/oauth.(*Service).handleDeleteSSFStream
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    get:
+      tags: [SSF / CAEP]
+      summary: Get SSF stream
+      operationId: getSSFStream
+      x-openidx-handler: internal/oauth.(*Service).handleGetSSFStream
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /ssf/streams/{id}/verify:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    post:
+      tags: [SSF / CAEP]
+      summary: SSF verify
+      operationId: ssfVerify
+      x-openidx-handler: internal/oauth.(*Service).handleSSFVerify
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
 components:
   securitySchemes:
     bearerAuth:
@@ -515,6 +2187,15 @@ components:
         type: string
 
   schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+          description: A short machine-readable reason
+        error_description:
+          type: string
+          description: Operator-facing detail, when the handler has one
     TokenResponse:
       type: object
       properties:

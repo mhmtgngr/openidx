@@ -2411,6 +2411,32 @@ those tests found.
     `docs/api/config.json` and the console's API-docs tabs say which process
     serves them instead of naming a service that does not exist.
 
+14. ✅ **Four more specs, the same census, and the two the plan named by hand.**
+    The admin API was not the only one. `provisioning-service.yaml` documented
+    21 of 29 routes and was silent on the entire outbound-SCIM target surface
+    (`/targets`, its status, sync and test endpoints — the roadmap epic the
+    plan ratified as API-only, so the API *is* the product there);
+    `oauth-service.yaml` 17 of 79, missing SSF/CAEP stream management
+    (`/ssf/streams`), device authorization, step-up, passwordless, QR login,
+    social login and dynamic client registration; `governance-service.yaml`
+    17 of 52, missing ABAC policies, entitlements, privileged accounts and the
+    SoD sweep; `audit-service.yaml` 9 of 15. Together: 64 of 175.
+
+    All four are complete now, and `test/openapi/spec_census_test.go` holds the
+    comparison the admin gate already used, so the four services are four table
+    entries rather than four copies of the same logic. Proven red by deleting
+    `/ssf/streams` from the oauth spec — which named both the GET and the POST,
+    because the census is per operation, not per path.
+
+    `access-service` and `identity-service` are not in the table yet: their
+    `RegisterRoutes` dereferences the service's database handle *while
+    registering* (`middleware.PermissionResolver(svc.db.Pool, …)`), so a
+    zero-value service panics before the first route lands. That is worth
+    untangling on its own — route registration reading live handles is what
+    makes the route table untestable — and until it is, `access-service.yaml`
+    (105 paths) and `identity-service.yaml` (82) are unproven. The test says so
+    in a comment rather than leaving the omission to be discovered.
+
 ### P7 — One console, one client
 
 0. ✅ **The three console items the P7 audit left open.**
