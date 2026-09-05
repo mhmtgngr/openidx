@@ -1,7 +1,14 @@
 openapi: 3.0.3
 info:
   title: OpenIDX Access Service
-  description: Zero Trust access proxy with route management, session control, OpenZiti network overlay, posture checks, BrowZer, Guacamole integration, and Privileged Access Management (vault-backed entries, brokered launch with credential injection, checkout controls, session moderation, SSH CA, cloud JIT, Windows app delivery).
+  description: |
+    Zero Trust access proxy with route management, session control, OpenZiti network overlay, posture checks, BrowZer, Guacamole integration, and Privileged Access Management (vault-backed entries, brokered launch with credential injection, checkout controls, session moderation, SSH CA, cloud JIT, Windows app delivery).
+
+    Every route cmd/access-service mounts appears here, and nothing that is not
+    mounted does: test/openapi/spec_census_test.go compares this file against the
+    live route table in both directions. Operations carry an `x-openidx-handler`
+    extension naming the Go handler that serves them; where a payload shape is not
+    yet pinned the body is shown as a free-form JSON object rather than invented.
   version: 1.34.0
   license:
     name: Apache 2.0
@@ -15,36 +22,58 @@ security:
   - bearerAuth: []
 
 tags:
+  - name: Agent Downloads
+  - name: Agent Enrollment
+  - name: Agent Fleet
+  - name: Assignment Report
   - name: Auth
-  - name: Routes
-  - name: Sessions
-  - name: Ziti Status
-  - name: Ziti Services
-  - name: Ziti Identities
-  - name: Ziti Fabric
-  - name: Posture Checks
-  - name: Policy Sync
-  - name: Certificates
-  - name: BrowZer
   - name: Auth Decision
-  - name: Policy
+  - name: BrowZer
+  - name: Certificates
+  - name: Devices
+  - name: Guacamole
+  - name: Integration Health
+  - name: Kiosk Mode
+  - name: MCP Gateway
+  - name: My Access
+  - name: OpenZiti Overlay
+  - name: Overview
+  - name: PAM Checkout Controls
   - name: PAM Entries
   - name: PAM Launch
-  - name: PAM Checkout Controls
   - name: PAM Moderation
-  - name: PAM SSH & Brokering
   - name: PAM Privilege Graph
+  - name: PAM SSH & Brokering
   - name: PAM Ziti Reach
+  - name: Policy
+  - name: Policy Sync
+  - name: Posture Checks
+  - name: Proxy Routes
+  - name: Published Applications
+  - name: Quick Links
+  - name: Remote Support
+  - name: Routes
+  - name: Services
+  - name: Session Brokering
+  - name: Session Recording
+  - name: Sessions
+  - name: Temporary Access
+  - name: Unified Audit
+  - name: Users
   - name: Windows Apps
-  - name: Guacamole
+  - name: Ziti Fabric
+  - name: Ziti Identities
+  - name: Ziti Services
+  - name: Ziti Status
 
 paths:
   # --- Auth (session-based, no bearer auth) ---
-  /access/login:
+  /access/.auth/login:
     get:
       tags: [Auth]
       summary: Login page
       operationId: loginPage
+      x-openidx-handler: internal/access.(*Service).handleLogin
       security: []
       responses:
         '200':
@@ -52,11 +81,12 @@ paths:
         '302':
           description: Redirect to identity provider
 
-  /access/callback:
+  /access/.auth/callback:
     get:
       tags: [Auth]
       summary: OAuth callback
       operationId: oauthCallback
+      x-openidx-handler: internal/access.(*Service).handleCallback
       security: []
       parameters:
         - name: code
@@ -73,21 +103,23 @@ paths:
         '400':
           $ref: '#/components/responses/BadRequest'
 
-  /access/logout:
+  /access/.auth/logout:
     get:
       tags: [Auth]
       summary: Logout
       operationId: logout
+      x-openidx-handler: internal/access.(*Service).handleLogout
       security: []
       responses:
         '302':
           description: Redirect to login after logout
 
-  /access/session:
+  /access/.auth/session:
     get:
       tags: [Auth]
       summary: Get current session info
       operationId: getSessionInfo
+      x-openidx-handler: internal/access.(*Service).handleSessionInfo
       security: []
       responses:
         '200':
@@ -99,11 +131,12 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
 
-  /access/idps:
+  /access/.auth/idps:
     get:
       tags: [Auth]
       summary: List identity providers
       operationId: listIdps
+      x-openidx-handler: internal/access.(*Service).handleIDPDiscovery
       security: []
       responses:
         '200':
@@ -2597,6 +2630,5168 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /api/v1/access/agent/apk-info:
+    get:
+      tags: [Agent Enrollment]
+      summary: Handle apk info
+      operationId: handleAPKInfo
+      x-openidx-handler: internal/access.(*AgentAPIHandler).HandleAPKInfo
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/agent/config:
+    get:
+      tags: [Agent Enrollment]
+      summary: Handle config
+      operationId: handleConfig
+      x-openidx-handler: internal/access.(*AgentAPIHandler).HandleConfig
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/agent/enroll:
+    post:
+      tags: [Agent Enrollment]
+      summary: Handle enroll
+      operationId: handleEnroll
+      x-openidx-handler: internal/access.(*AgentAPIHandler).HandleEnroll
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/agent/enroll/oauth:
+    post:
+      tags: [Agent Enrollment]
+      summary: Handle enroll O auth
+      operationId: handleEnrollOAuth
+      x-openidx-handler: internal/access.(*AgentAPIHandler).HandleEnrollOAuth
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/agent/enroll/session:
+    post:
+      tags: [Agent Enrollment]
+      summary: Handle create enroll session
+      operationId: handleCreateEnrollSession
+      x-openidx-handler: internal/access.(*AgentAPIHandler).HandleCreateEnrollSession
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/agent/enroll/session/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    delete:
+      tags: [Agent Enrollment]
+      summary: Handle cancel enroll session
+      operationId: handleCancelEnrollSession
+      x-openidx-handler: internal/access.(*AgentAPIHandler).HandleCancelEnrollSession
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/agent/enroll/session/{id}/status:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    get:
+      tags: [Agent Enrollment]
+      summary: Handle enroll session status
+      operationId: handleEnrollSessionStatus
+      x-openidx-handler: internal/access.(*AgentAPIHandler).HandleEnrollSessionStatus
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/agent/qr:
+    post:
+      tags: [Agent Enrollment]
+      summary: Handle generate qr
+      operationId: handleGenerateQR
+      x-openidx-handler: internal/access.(*AgentAPIHandler).HandleGenerateQR
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/agent/remote-support/sessions/{id}/consent:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    post:
+      tags: [Remote Support]
+      summary: Handle agent consent
+      operationId: handleAgentConsent
+      x-openidx-handler: internal/access.(*RemoteSupportHandler).HandleAgentConsent
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/agent/remote-support/sessions/{id}/ws:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    get:
+      tags: [Remote Support]
+      summary: Handle agent ws
+      operationId: handleAgentWS
+      x-openidx-handler: internal/access.(*RemoteSupportHandler).HandleAgentWS
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/agent/report:
+    post:
+      tags: [Agent Enrollment]
+      summary: Handle report
+      operationId: handleReport
+      x-openidx-handler: internal/access.(*AgentAPIHandler).HandleReport
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/agent/tokens:
+    get:
+      tags: [Agent Enrollment]
+      summary: Handle list tokens
+      operationId: handleListTokens
+      x-openidx-handler: internal/access.(*AgentAPIHandler).HandleListTokens
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [Agent Enrollment]
+      summary: Handle generate token
+      operationId: handleGenerateToken
+      x-openidx-handler: internal/access.(*AgentAPIHandler).HandleGenerateToken
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/agent/tokens/{token_id}:
+    parameters:
+      - name: token_id
+        in: path
+        required: true
+        schema:
+          type: string
+    delete:
+      tags: [Agent Enrollment]
+      summary: Handle revoke token
+      operationId: handleRevokeToken
+      x-openidx-handler: internal/access.(*AgentAPIHandler).HandleRevokeToken
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/agent/windows-apps/report:
+    post:
+      tags: [Agent Enrollment]
+      summary: Agent windows app report
+      operationId: agentWindowsAppReport
+      x-openidx-handler: internal/access.(*Service).handleAgentWindowsAppReport
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/agents:
+    get:
+      tags: [Agent Fleet]
+      summary: Handle list agents
+      operationId: handleListAgents
+      x-openidx-handler: internal/access.(*AgentAPIHandler).HandleListAgents
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/agents/{agent_id}:
+    parameters:
+      - name: agent_id
+        in: path
+        required: true
+        schema:
+          type: string
+    delete:
+      tags: [Agent Fleet]
+      summary: Handle revoke agent
+      operationId: handleRevokeAgent
+      x-openidx-handler: internal/access.(*AgentAPIHandler).HandleRevokeAgent
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/agents/{agent_id}/approve:
+    parameters:
+      - name: agent_id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [Agent Fleet]
+      summary: Handle approve agent
+      operationId: handleApproveAgent
+      x-openidx-handler: internal/access.(*AgentAPIHandler).HandleApproveAgent
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/agents/{agent_id}/posture:
+    parameters:
+      - name: agent_id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [Agent Fleet]
+      summary: Handle agent posture
+      operationId: handleAgentPosture
+      x-openidx-handler: internal/access.(*AgentAPIHandler).HandleAgentPosture
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/apps:
+    get:
+      tags: [Published Applications]
+      summary: List apps
+      operationId: listApps
+      x-openidx-handler: internal/access.(*Service).handleListApps
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [Published Applications]
+      summary: Register app
+      operationId: registerApp
+      x-openidx-handler: internal/access.(*Service).handleRegisterApp
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/apps/{appId}:
+    parameters:
+      - name: appId
+        in: path
+        required: true
+        schema:
+          type: string
+    delete:
+      tags: [Published Applications]
+      summary: Delete app
+      operationId: deleteApp
+      x-openidx-handler: internal/access.(*Service).handleDeleteApp
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    get:
+      tags: [Published Applications]
+      summary: Get app
+      operationId: getApp
+      x-openidx-handler: internal/access.(*Service).handleGetApp
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/apps/{appId}/consolidate:
+    parameters:
+      - name: appId
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [Published Applications]
+      summary: Consolidate app
+      operationId: consolidateApp
+      x-openidx-handler: internal/access.(*Service).handleConsolidateApp
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/apps/{appId}/discover:
+    parameters:
+      - name: appId
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [Published Applications]
+      summary: Start discovery
+      operationId: startDiscovery
+      x-openidx-handler: internal/access.(*Service).handleStartDiscovery
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/apps/{appId}/paths:
+    parameters:
+      - name: appId
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [Published Applications]
+      summary: List discovered paths
+      operationId: listDiscoveredPaths
+      x-openidx-handler: internal/access.(*Service).handleListDiscoveredPaths
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/apps/{appId}/paths/{pathId}:
+    parameters:
+      - name: appId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: pathId
+        in: path
+        required: true
+        schema:
+          type: string
+    put:
+      tags: [Published Applications]
+      summary: Update path classification
+      operationId: updatePathClassification
+      x-openidx-handler: internal/access.(*Service).handleUpdatePathClassification
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/apps/{appId}/publish:
+    parameters:
+      - name: appId
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [Published Applications]
+      summary: Publish paths
+      operationId: publishPaths
+      x-openidx-handler: internal/access.(*Service).handlePublishPaths
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/apps/{appId}/publish-app:
+    parameters:
+      - name: appId
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [Published Applications]
+      summary: Publish app
+      operationId: publishApp
+      x-openidx-handler: internal/access.(*Service).handlePublishApp
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/apps/{appId}/ziti-services:
+    parameters:
+      - name: appId
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [Published Applications]
+      summary: Get app ziti services
+      operationId: getAppZitiServices
+      x-openidx-handler: internal/access.(*Service).handleGetAppZitiServices
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/assignment-report:
+    get:
+      tags: [Assignment Report]
+      summary: Assignment report
+      operationId: assignmentReport
+      x-openidx-handler: internal/access.(*Service).handleAssignmentReport
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/audit/unified:
+    get:
+      tags: [Unified Audit]
+      summary: Get unified audit events
+      operationId: getUnifiedAuditEvents
+      x-openidx-handler: internal/access.(*Service).handleGetUnifiedAuditEvents
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/audit/unified/services/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    get:
+      tags: [Unified Audit]
+      summary: Get service audit events
+      operationId: getServiceAuditEvents
+      x-openidx-handler: internal/access.(*Service).handleGetServiceAuditEvents
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/audit/unified/summary:
+    get:
+      tags: [Unified Audit]
+      summary: Get audit events summary
+      operationId: getAuditEventsSummary
+      x-openidx-handler: internal/access.(*Service).handleGetAuditEventsSummary
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/audit/unified/sync:
+    post:
+      tags: [Unified Audit]
+      summary: Sync external audit events
+      operationId: syncExternalAuditEvents
+      x-openidx-handler: internal/access.(*Service).handleSyncExternalAuditEvents
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/certificates/apisix/disable:
+    post:
+      tags: [Certificates]
+      summary: Disable apisixssl
+      operationId: disableAPISIXSSL
+      x-openidx-handler: internal/access.(*Service).handleDisableAPISIXSSL
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/certificates/apisix/enable:
+    post:
+      tags: [Certificates]
+      summary: Enable apisixssl
+      operationId: enableAPISIXSSL
+      x-openidx-handler: internal/access.(*Service).handleEnableAPISIXSSL
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/certificates/platform:
+    delete:
+      tags: [Certificates]
+      summary: Revert platform cert
+      operationId: revertPlatformCert
+      x-openidx-handler: internal/access.(*Service).handleRevertPlatformCert
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    get:
+      tags: [Certificates]
+      summary: Get platform cert
+      operationId: getPlatformCert
+      x-openidx-handler: internal/access.(*Service).handleGetPlatformCert
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [Certificates]
+      summary: Upload platform cert
+      operationId: uploadPlatformCert
+      x-openidx-handler: internal/access.(*Service).handleUploadPlatformCert
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/certificates/status:
+    get:
+      tags: [Certificates]
+      summary: Get cert status
+      operationId: getCertStatus
+      x-openidx-handler: internal/access.(*Service).handleGetCertStatus
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/devices/enriched:
+    get:
+      tags: [Devices]
+      summary: Get enriched devices
+      operationId: getEnrichedDevices
+      x-openidx-handler: internal/access.(*Service).handleGetEnrichedDevices
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/enroll:
+    post:
+      tags: [Agent Enrollment]
+      summary: Enroll
+      operationId: enroll
+      x-openidx-handler: internal/access.(*Service).handleEnroll
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/guacamole/connections/{routeId}/credential:
+    parameters:
+      - name: routeId
+        in: path
+        required: true
+        schema:
+          type: string
+    put:
+      tags: [Session Brokering]
+      summary: Set guac credential
+      operationId: setGuacCredential
+      x-openidx-handler: internal/access.(*Service).handleSetGuacCredential
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/guacamole/connections/{routeId}/request:
+    parameters:
+      - name: routeId
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [Session Brokering]
+      summary: Request guac session
+      operationId: requestGuacSession
+      x-openidx-handler: internal/access.(*Service).handleRequestGuacSession
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/guacamole/my-connections:
+    get:
+      tags: [Session Brokering]
+      summary: List my guac connections
+      operationId: listMyGuacConnections
+      x-openidx-handler: internal/access.(*Service).handleListMyGuacConnections
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/guacamole/my-session-requests:
+    get:
+      tags: [Session Brokering]
+      summary: List my guac session requests
+      operationId: listMyGuacSessionRequests
+      x-openidx-handler: internal/access.(*Service).handleListMyGuacSessionRequests
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/guacamole/sessions/{id}/legal-hold:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    delete:
+      tags: [Session Brokering]
+      summary: Release guac legal hold
+      operationId: releaseGuacLegalHold
+      x-openidx-handler: internal/access.(*Service).handleReleaseGuacLegalHold
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [Session Brokering]
+      summary: Place guac legal hold
+      operationId: placeGuacLegalHold
+      x-openidx-handler: internal/access.(*Service).handlePlaceGuacLegalHold
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/guacamole/sessions/{id}/legal-holds:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    get:
+      tags: [Session Brokering]
+      summary: List guac legal holds
+      operationId: listGuacLegalHolds
+      x-openidx-handler: internal/access.(*Service).handleListGuacLegalHolds
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/guacamole/sessions/{id}/recording:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    get:
+      tags: [Session Brokering]
+      summary: Get guac recording
+      operationId: getGuacRecording
+      x-openidx-handler: internal/access.(*Service).handleGetGuacRecording
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/health/browzer:
+    get:
+      tags: [Integration Health]
+      summary: Health brow zer
+      operationId: healthBrowZer
+      x-openidx-handler: internal/access.(*Service).handleHealthBrowZer
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/health/fix/{checkId}:
+    parameters:
+      - name: checkId
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [Integration Health]
+      summary: Health fix
+      operationId: healthFix
+      x-openidx-handler: internal/access.(*Service).handleHealthFix
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/health/guacamole:
+    get:
+      tags: [Integration Health]
+      summary: Health guacamole
+      operationId: healthGuacamole
+      x-openidx-handler: internal/access.(*Service).handleHealthGuacamole
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/health/integrations:
+    get:
+      tags: [Integration Health]
+      summary: Health integrations
+      operationId: healthIntegrations
+      x-openidx-handler: internal/access.(*Service).handleHealthIntegrations
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/health/relations:
+    get:
+      tags: [Integration Health]
+      summary: Health relations
+      operationId: healthRelations
+      x-openidx-handler: internal/access.(*Service).handleHealthRelations
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/health/ziti:
+    get:
+      tags: [Integration Health]
+      summary: Health ziti
+      operationId: healthZiti
+      x-openidx-handler: internal/access.(*Service).handleHealthZiti
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/kiosk/assignments/{assignment_id}:
+    parameters:
+      - name: assignment_id
+        in: path
+        required: true
+        schema:
+          type: string
+    delete:
+      tags: [Kiosk Mode]
+      summary: Handle unassign policy
+      operationId: handleUnassignPolicy
+      x-openidx-handler: internal/access.(*KioskAPIHandler).HandleUnassignPolicy
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/kiosk/policies:
+    get:
+      tags: [Kiosk Mode]
+      summary: Handle list policies
+      operationId: handleListPolicies
+      x-openidx-handler: internal/access.(*KioskAPIHandler).HandleListPolicies
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [Kiosk Mode]
+      summary: Handle create policy
+      operationId: handleCreatePolicy
+      x-openidx-handler: internal/access.(*KioskAPIHandler).HandleCreatePolicy
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/kiosk/policies/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    delete:
+      tags: [Kiosk Mode]
+      summary: Handle delete policy
+      operationId: handleDeletePolicy
+      x-openidx-handler: internal/access.(*KioskAPIHandler).HandleDeletePolicy
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    get:
+      tags: [Kiosk Mode]
+      summary: Handle get policy
+      operationId: handleGetPolicy
+      x-openidx-handler: internal/access.(*KioskAPIHandler).HandleGetPolicy
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    put:
+      tags: [Kiosk Mode]
+      summary: Handle update policy
+      operationId: handleUpdatePolicy
+      x-openidx-handler: internal/access.(*KioskAPIHandler).HandleUpdatePolicy
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/kiosk/policies/{id}/assignments:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    get:
+      tags: [Kiosk Mode]
+      summary: Handle list assignments
+      operationId: handleListAssignments
+      x-openidx-handler: internal/access.(*KioskAPIHandler).HandleListAssignments
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [Kiosk Mode]
+      summary: Handle assign policy
+      operationId: handleAssignPolicy
+      x-openidx-handler: internal/access.(*KioskAPIHandler).HandleAssignPolicy
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/mcp/approvals/pending:
+    get:
+      tags: [MCP Gateway]
+      summary: List pending tool approvals
+      operationId: listPendingToolApprovals
+      x-openidx-handler: internal/access.(*Service).handleListPendingToolApprovals
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/mcp/approvals/{id}/{decision}:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+      - name: decision
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [MCP Gateway]
+      summary: Decide tool approval
+      operationId: decideToolApproval
+      x-openidx-handler: internal/access.(*Service).handleDecideToolApproval
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/mcp/servers:
+    get:
+      tags: [MCP Gateway]
+      summary: List mcp servers
+      operationId: listMCPServers
+      x-openidx-handler: internal/access.(*Service).handleListMCPServers
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [MCP Gateway]
+      summary: Create mcp server
+      operationId: createMCPServer
+      x-openidx-handler: internal/access.(*Service).handleCreateMCPServer
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/mcp/servers/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    delete:
+      tags: [MCP Gateway]
+      summary: Delete mcp server
+      operationId: deleteMCPServer
+      x-openidx-handler: internal/access.(*Service).handleDeleteMCPServer
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/mcp/servers/{id}/policies:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    post:
+      tags: [MCP Gateway]
+      summary: Add mcp tool policy
+      operationId: addMCPToolPolicy
+      x-openidx-handler: internal/access.(*Service).handleAddMCPToolPolicy
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/mcp/{server}/tools/{tool}:
+    parameters:
+      - name: server
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: tool
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [MCP Gateway]
+      summary: MCP invoke
+      operationId: mcpInvoke
+      x-openidx-handler: internal/access.(*Service).handleMCPInvoke
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/my-devices:
+    get:
+      tags: [My Access]
+      summary: My devices
+      operationId: myDevices
+      x-openidx-handler: internal/access.(*Service).handleMyDevices
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/my/resources:
+    get:
+      tags: [My Access]
+      summary: My resources
+      operationId: myResources
+      x-openidx-handler: internal/access.(*Service).handleMyResources
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/my/ziti/services:
+    get:
+      tags: [My Access]
+      summary: My ziti services
+      operationId: myZitiServices
+      x-openidx-handler: internal/access.(*Service).handleMyZitiServices
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/overview:
+    get:
+      tags: [Overview]
+      summary: Access overview
+      operationId: accessOverview
+      x-openidx-handler: internal/access.(*Service).handleAccessOverview
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/quick-links:
+    get:
+      tags: [Quick Links]
+      summary: List quick links
+      operationId: listQuickLinks
+      x-openidx-handler: internal/access.(*Service).handleListQuickLinks
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [Quick Links]
+      summary: Create quick link
+      operationId: createQuickLink
+      x-openidx-handler: internal/access.(*Service).handleCreateQuickLink
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/quick-links/my:
+    get:
+      tags: [Quick Links]
+      summary: My quick links
+      operationId: myQuickLinks
+      x-openidx-handler: internal/access.(*Service).handleMyQuickLinks
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/quick-links/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    delete:
+      tags: [Quick Links]
+      summary: Delete quick link
+      operationId: deleteQuickLink
+      x-openidx-handler: internal/access.(*Service).handleDeleteQuickLink
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    put:
+      tags: [Quick Links]
+      summary: Update quick link
+      operationId: updateQuickLink
+      x-openidx-handler: internal/access.(*Service).handleUpdateQuickLink
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/recording-retention-policy:
+    get:
+      tags: [Session Recording]
+      summary: Handle get retention policy
+      operationId: handleGetRetentionPolicy
+      x-openidx-handler: internal/access.(*RemoteSupportHandler).HandleGetRetentionPolicy
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    put:
+      tags: [Session Recording]
+      summary: Handle set retention policy
+      operationId: handleSetRetentionPolicy
+      x-openidx-handler: internal/access.(*RemoteSupportHandler).HandleSetRetentionPolicy
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/remote-support/sessions:
+    get:
+      tags: [Remote Support]
+      summary: Handle list sessions
+      operationId: handleListSessions
+      x-openidx-handler: internal/access.(*RemoteSupportHandler).HandleListSessions
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [Remote Support]
+      summary: Handle start session
+      operationId: handleStartSession
+      x-openidx-handler: internal/access.(*RemoteSupportHandler).HandleStartSession
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/remote-support/sessions/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    get:
+      tags: [Remote Support]
+      summary: Handle get session
+      operationId: handleGetSession
+      x-openidx-handler: internal/access.(*RemoteSupportHandler).HandleGetSession
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/remote-support/sessions/{id}/end:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    post:
+      tags: [Remote Support]
+      summary: Handle end session
+      operationId: handleEndSession
+      x-openidx-handler: internal/access.(*RemoteSupportHandler).HandleEndSession
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/remote-support/sessions/{id}/legal-hold:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    delete:
+      tags: [Remote Support]
+      summary: Handle release legal hold
+      operationId: handleReleaseLegalHold
+      x-openidx-handler: internal/access.(*RemoteSupportHandler).HandleReleaseLegalHold
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [Remote Support]
+      summary: Handle place legal hold
+      operationId: handlePlaceLegalHold
+      x-openidx-handler: internal/access.(*RemoteSupportHandler).HandlePlaceLegalHold
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/remote-support/sessions/{id}/legal-holds:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    get:
+      tags: [Remote Support]
+      summary: Handle list legal holds
+      operationId: handleListLegalHolds
+      x-openidx-handler: internal/access.(*RemoteSupportHandler).HandleListLegalHolds
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/remote-support/sessions/{id}/recording:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    get:
+      tags: [Remote Support]
+      summary: Handle download recording
+      operationId: handleDownloadRecording
+      x-openidx-handler: internal/access.(*RemoteSupportHandler).HandleDownloadRecording
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/remote-support/sessions/{id}/recording/chunk:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    post:
+      tags: [Remote Support]
+      summary: Handle upload recording chunk
+      operationId: handleUploadRecordingChunk
+      x-openidx-handler: internal/access.(*RemoteSupportHandler).HandleUploadRecordingChunk
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/remote-support/sessions/{id}/recording/finalize:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    post:
+      tags: [Remote Support]
+      summary: Handle finalize recording
+      operationId: handleFinalizeRecording
+      x-openidx-handler: internal/access.(*RemoteSupportHandler).HandleFinalizeRecording
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/remote-support/sessions/{id}/ws:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    get:
+      tags: [Remote Support]
+      summary: Handle admin ws
+      operationId: handleAdminWS
+      x-openidx-handler: internal/access.(*RemoteSupportHandler).HandleAdminWS
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/routes/bulk:
+    post:
+      tags: [Proxy Routes]
+      summary: Bulk routes
+      operationId: bulkRoutes
+      x-openidx-handler: internal/access.(*Service).handleBulkRoutes
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/services/quick-create:
+    post:
+      tags: [Services]
+      summary: Quick create
+      operationId: quickCreate
+      x-openidx-handler: internal/access.(*Service).handleQuickCreate
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/services/status:
+    get:
+      tags: [Services]
+      summary: Get all services status
+      operationId: getAllServicesStatus
+      x-openidx-handler: internal/access.(*Service).handleGetAllServicesStatus
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/services/{id}/features:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    get:
+      tags: [Services]
+      summary: Get service features
+      operationId: getServiceFeatures
+      x-openidx-handler: internal/access.(*Service).handleGetServiceFeatures
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/services/{id}/features/browzer/disable:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    post:
+      tags: [Services]
+      summary: Disable brow zer feature
+      operationId: disableBrowZerFeature
+      x-openidx-handler: internal/access.(*Service).handleDisableBrowZerFeature
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/services/{id}/features/browzer/enable:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    post:
+      tags: [Services]
+      summary: Enable brow zer feature
+      operationId: enableBrowZerFeature
+      x-openidx-handler: internal/access.(*Service).handleEnableBrowZerFeature
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/services/{id}/features/guacamole/disable:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    post:
+      tags: [Services]
+      summary: Disable guacamole feature
+      operationId: disableGuacamoleFeature
+      x-openidx-handler: internal/access.(*Service).handleDisableGuacamoleFeature
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/services/{id}/features/guacamole/enable:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    post:
+      tags: [Services]
+      summary: Enable guacamole feature
+      operationId: enableGuacamoleFeature
+      x-openidx-handler: internal/access.(*Service).handleEnableGuacamoleFeature
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/services/{id}/features/ziti/disable:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    post:
+      tags: [Services]
+      summary: Disable ziti feature
+      operationId: disableZitiFeature
+      x-openidx-handler: internal/access.(*Service).handleDisableZitiFeature
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/services/{id}/features/ziti/enable:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    post:
+      tags: [Services]
+      summary: Enable ziti feature
+      operationId: enableZitiFeature
+      x-openidx-handler: internal/access.(*Service).handleEnableZitiFeature
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/services/{id}/health:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    get:
+      tags: [Services]
+      summary: Health service
+      operationId: healthService
+      x-openidx-handler: internal/access.(*Service).handleHealthService
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/services/{id}/status:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    get:
+      tags: [Services]
+      summary: Get service status
+      operationId: getServiceStatus
+      x-openidx-handler: internal/access.(*Service).handleGetServiceStatus
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/services/{id}/test-connection:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    post:
+      tags: [Services]
+      summary: Test connection
+      operationId: testConnection
+      x-openidx-handler: internal/access.(*Service).handleTestConnection
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/services/{id}/test-history:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    get:
+      tags: [Services]
+      summary: Get connection test history
+      operationId: getConnectionTestHistory
+      x-openidx-handler: internal/access.(*Service).handleGetConnectionTestHistory
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/temp-access:
+    get:
+      tags: [Temporary Access]
+      summary: List temp access
+      operationId: listTempAccess
+      x-openidx-handler: internal/access.(*Service).handleListTempAccess
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [Temporary Access]
+      summary: Create temp access
+      operationId: createTempAccess
+      x-openidx-handler: internal/access.(*Service).handleCreateTempAccess
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/temp-access/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    delete:
+      tags: [Temporary Access]
+      summary: Revoke temp access
+      operationId: revokeTempAccess
+      x-openidx-handler: internal/access.(*Service).handleRevokeTempAccess
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    get:
+      tags: [Temporary Access]
+      summary: Get temp access
+      operationId: getTempAccess
+      x-openidx-handler: internal/access.(*Service).handleGetTempAccess
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/temp-access/{id}/usage:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    get:
+      tags: [Temporary Access]
+      summary: Get temp access usage
+      operationId: getTempAccessUsage
+      x-openidx-handler: internal/access.(*Service).handleGetTempAccessUsage
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/users/{id}/access-map:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    get:
+      tags: [Users]
+      summary: User access map
+      operationId: userAccessMap
+      x-openidx-handler: internal/access.(*Service).handleUserAccessMap
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/users/{id}/devices:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    get:
+      tags: [Users]
+      summary: User devices
+      operationId: userDevices
+      x-openidx-handler: internal/access.(*Service).handleUserDevices
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/users/{id}/devices/{agentId}/revoke:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+      - name: agentId
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [Users]
+      summary: Revoke user device
+      operationId: revokeUserDevice
+      x-openidx-handler: internal/access.(*Service).handleRevokeUserDevice
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/users/{id}/kill-switch:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    post:
+      tags: [Users]
+      summary: User kill switch
+      operationId: userKillSwitch
+      x-openidx-handler: internal/access.(*Service).handleUserKillSwitch
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/ai/analyze:
+    post:
+      tags: [OpenZiti Overlay]
+      summary: Ziti AI analyze
+      operationId: zitiAIAnalyze
+      x-openidx-handler: internal/access.(*Service).handleZitiAIAnalyze
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/ai/anomalies:
+    get:
+      tags: [OpenZiti Overlay]
+      summary: List ziti anomalies
+      operationId: listZitiAnomalies
+      x-openidx-handler: internal/access.(*Service).handleListZitiAnomalies
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/ai/anomalies/{id}/status:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    post:
+      tags: [OpenZiti Overlay]
+      summary: Update ziti anomaly status
+      operationId: updateZitiAnomalyStatus
+      x-openidx-handler: internal/access.(*Service).handleUpdateZitiAnomalyStatus
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/ai/identities/{id}/quarantine:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    post:
+      tags: [OpenZiti Overlay]
+      summary: Quarantine ziti identity
+      operationId: quarantineZitiIdentity
+      x-openidx-handler: internal/access.(*Service).handleQuarantineZitiIdentity
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/ai/identities/{id}/unquarantine:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    post:
+      tags: [OpenZiti Overlay]
+      summary: Unquarantine ziti identity
+      operationId: unquarantineZitiIdentity
+      x-openidx-handler: internal/access.(*Service).handleUnquarantineZitiIdentity
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/ai/identity-risk:
+    get:
+      tags: [OpenZiti Overlay]
+      summary: Ziti identity risk
+      operationId: zitiIdentityRisk
+      x-openidx-handler: internal/access.(*Service).handleZitiIdentityRisk
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/ai/insights:
+    get:
+      tags: [OpenZiti Overlay]
+      summary: Ziti AI insights
+      operationId: zitiAIInsights
+      x-openidx-handler: internal/access.(*Service).handleZitiAIInsights
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/ai/recommendations:
+    get:
+      tags: [OpenZiti Overlay]
+      summary: Ziti AI recommendations
+      operationId: zitiAIRecommendations
+      x-openidx-handler: internal/access.(*Service).handleZitiAIRecommendations
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/auth-policies:
+    get:
+      tags: [OpenZiti Overlay]
+      summary: List auth policies
+      operationId: listAuthPolicies
+      x-openidx-handler: internal/access.(*Service).handleListAuthPolicies
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [OpenZiti Overlay]
+      summary: Create auth policy
+      operationId: createAuthPolicy
+      x-openidx-handler: internal/access.(*Service).handleCreateAuthPolicy
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/auth-policies/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    delete:
+      tags: [OpenZiti Overlay]
+      summary: Delete auth policy
+      operationId: deleteAuthPolicy
+      x-openidx-handler: internal/access.(*Service).handleDeleteAuthPolicy
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    put:
+      tags: [OpenZiti Overlay]
+      summary: Update auth policy
+      operationId: updateAuthPolicy
+      x-openidx-handler: internal/access.(*Service).handleUpdateAuthPolicy
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/browzer/certificates:
+    delete:
+      tags: [OpenZiti Overlay]
+      summary: Brow zer cert revert
+      operationId: browZerCertRevert
+      x-openidx-handler: internal/access.(*Service).handleBrowZerCertRevert
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [OpenZiti Overlay]
+      summary: Brow zer cert upload
+      operationId: browZerCertUpload
+      x-openidx-handler: internal/access.(*Service).handleBrowZerCertUpload
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/browzer/domain:
+    put:
+      tags: [OpenZiti Overlay]
+      summary: Brow zer domain change
+      operationId: browZerDomainChange
+      x-openidx-handler: internal/access.(*Service).handleBrowZerDomainChange
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/browzer/management:
+    get:
+      tags: [OpenZiti Overlay]
+      summary: Brow zer management
+      operationId: browZerManagement
+      x-openidx-handler: internal/access.(*Service).handleBrowZerManagement
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/browzer/restart:
+    post:
+      tags: [OpenZiti Overlay]
+      summary: Brow zer restart
+      operationId: browZerRestart
+      x-openidx-handler: internal/access.(*Service).handleBrowZerRestart
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/config-types:
+    get:
+      tags: [OpenZiti Overlay]
+      summary: List config types
+      operationId: listConfigTypes
+      x-openidx-handler: internal/access.(*Service).handleListConfigTypes
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/configs:
+    get:
+      tags: [OpenZiti Overlay]
+      summary: List configs
+      operationId: listConfigs
+      x-openidx-handler: internal/access.(*Service).handleListConfigs
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [OpenZiti Overlay]
+      summary: Create config
+      operationId: createConfig
+      x-openidx-handler: internal/access.(*Service).handleCreateConfig
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/configs/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    delete:
+      tags: [OpenZiti Overlay]
+      summary: Delete config
+      operationId: deleteConfig
+      x-openidx-handler: internal/access.(*Service).handleDeleteConfig
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    put:
+      tags: [OpenZiti Overlay]
+      summary: Update config
+      operationId: updateConfig
+      x-openidx-handler: internal/access.(*Service).handleUpdateConfig
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/connect:
+    post:
+      tags: [OpenZiti Overlay]
+      summary: Ziti connect
+      operationId: zitiConnect
+      x-openidx-handler: internal/access.(*Service).handleZitiConnect
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/controller/features:
+    get:
+      tags: [OpenZiti Overlay]
+      summary: Ziti controller features
+      operationId: zitiControllerFeatures
+      x-openidx-handler: internal/access.(*Service).handleZitiControllerFeatures
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/disconnect:
+    post:
+      tags: [OpenZiti Overlay]
+      summary: Ziti disconnect
+      operationId: zitiDisconnect
+      x-openidx-handler: internal/access.(*Service).handleZitiDisconnect
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/discover:
+    get:
+      tags: [OpenZiti Overlay]
+      summary: Discover ziti services
+      operationId: discoverZitiServices
+      x-openidx-handler: internal/access.(*Service).handleDiscoverZitiServices
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/edge-router-policies:
+    get:
+      tags: [OpenZiti Overlay]
+      summary: List edge router policies
+      operationId: listEdgeRouterPolicies
+      x-openidx-handler: internal/access.(*Service).handleListEdgeRouterPolicies
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [OpenZiti Overlay]
+      summary: Create edge router policy
+      operationId: createEdgeRouterPolicy
+      x-openidx-handler: internal/access.(*Service).handleCreateEdgeRouterPolicy
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/edge-router-policies/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    delete:
+      tags: [OpenZiti Overlay]
+      summary: Delete edge router policy
+      operationId: deleteEdgeRouterPolicy
+      x-openidx-handler: internal/access.(*Service).handleDeleteEdgeRouterPolicy
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    put:
+      tags: [OpenZiti Overlay]
+      summary: Update edge router policy
+      operationId: updateEdgeRouterPolicy
+      x-openidx-handler: internal/access.(*Service).handleUpdateEdgeRouterPolicy
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/fabric/routers/enroll-token:
+    post:
+      tags: [OpenZiti Overlay]
+      summary: Router enroll token
+      operationId: routerEnrollToken
+      x-openidx-handler: internal/access.(*Service).handleRouterEnrollToken
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/identities/{id}/attributes:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    patch:
+      tags: [OpenZiti Overlay]
+      summary: Patch identity attributes
+      operationId: patchIdentityAttributes
+      x-openidx-handler: internal/access.(*Service).handlePatchIdentityAttributes
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/import:
+    post:
+      tags: [OpenZiti Overlay]
+      summary: Import ziti service
+      operationId: importZitiService
+      x-openidx-handler: internal/access.(*Service).handleImportZitiService
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/import/bulk:
+    post:
+      tags: [OpenZiti Overlay]
+      summary: Bulk import ziti services
+      operationId: bulkImportZitiServices
+      x-openidx-handler: internal/access.(*Service).handleBulkImportZitiServices
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/jwt-signers:
+    get:
+      tags: [OpenZiti Overlay]
+      summary: List jwt signers
+      operationId: listJWTSigners
+      x-openidx-handler: internal/access.(*Service).handleListJWTSigners
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [OpenZiti Overlay]
+      summary: Create jwt signer
+      operationId: createJWTSigner
+      x-openidx-handler: internal/access.(*Service).handleCreateJWTSigner
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/jwt-signers/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    delete:
+      tags: [OpenZiti Overlay]
+      summary: Delete jwt signer
+      operationId: deleteJWTSigner
+      x-openidx-handler: internal/access.(*Service).handleDeleteJWTSigner
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    put:
+      tags: [OpenZiti Overlay]
+      summary: Update jwt signer
+      operationId: updateJWTSigner
+      x-openidx-handler: internal/access.(*Service).handleUpdateJWTSigner
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/posture/device:
+    post:
+      tags: [OpenZiti Overlay]
+      summary: Submit device posture
+      operationId: submitDevicePosture
+      x-openidx-handler: internal/access.(*Service).handleSubmitDevicePosture
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/posture/edr:
+    get:
+      tags: [OpenZiti Overlay]
+      summary: List edr sources
+      operationId: listEDRSources
+      x-openidx-handler: internal/access.(*Service).handleListEDRSources
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [OpenZiti Overlay]
+      summary: Create edr source
+      operationId: createEDRSource
+      x-openidx-handler: internal/access.(*Service).handleCreateEDRSource
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/posture/edr/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    delete:
+      tags: [OpenZiti Overlay]
+      summary: Delete edr source
+      operationId: deleteEDRSource
+      x-openidx-handler: internal/access.(*Service).handleDeleteEDRSource
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    get:
+      tags: [OpenZiti Overlay]
+      summary: Get edr source
+      operationId: getEDRSource
+      x-openidx-handler: internal/access.(*Service).handleGetEDRSource
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/posture/edr/{id}/sync:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    post:
+      tags: [OpenZiti Overlay]
+      summary: Sync edr source
+      operationId: syncEDRSource
+      x-openidx-handler: internal/access.(*Service).handleSyncEDRSource
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/posture/edr/{id}/test:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    post:
+      tags: [OpenZiti Overlay]
+      summary: Test edr source
+      operationId: testEDRSource
+      x-openidx-handler: internal/access.(*Service).handleTestEDRSource
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/reconciler/status:
+    get:
+      tags: [OpenZiti Overlay]
+      summary: Ziti reconciler status
+      operationId: zitiReconcilerStatus
+      x-openidx-handler: internal/access.(*Service).handleZitiReconcilerStatus
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/service-policies:
+    post:
+      tags: [OpenZiti Overlay]
+      summary: Create service policy
+      operationId: createServicePolicy
+      x-openidx-handler: internal/access.(*Service).handleCreateServicePolicy
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/service-policies/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    delete:
+      tags: [OpenZiti Overlay]
+      summary: Delete service policy
+      operationId: deleteServicePolicy
+      x-openidx-handler: internal/access.(*Service).handleDeleteServicePolicy
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    put:
+      tags: [OpenZiti Overlay]
+      summary: Update service policy
+      operationId: updateServicePolicy
+      x-openidx-handler: internal/access.(*Service).handleUpdateServicePolicy
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/services/by-name/{name}/explain:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [OpenZiti Overlay]
+      summary: Explain ziti service
+      operationId: explainZitiService
+      x-openidx-handler: internal/access.(*Service).handleExplainZitiService
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/services/{id}/test:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    post:
+      tags: [OpenZiti Overlay]
+      summary: Test ziti service
+      operationId: testZitiService
+      x-openidx-handler: internal/access.(*Service).handleTestZitiService
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/sessions:
+    get:
+      tags: [OpenZiti Overlay]
+      summary: List ziti sessions
+      operationId: listZitiSessions
+      x-openidx-handler: internal/access.(*Service).handleListZitiSessions
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/sessions/batch-terminate:
+    post:
+      tags: [OpenZiti Overlay]
+      summary: Batch delete ziti sessions
+      operationId: batchDeleteZitiSessions
+      x-openidx-handler: internal/access.(*Service).handleBatchDeleteZitiSessions
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/sessions/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    delete:
+      tags: [OpenZiti Overlay]
+      summary: Delete ziti session
+      operationId: deleteZitiSession
+      x-openidx-handler: internal/access.(*Service).handleDeleteZitiSession
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/settings:
+    get:
+      tags: [OpenZiti Overlay]
+      summary: Get ziti settings
+      operationId: getZitiSettings
+      x-openidx-handler: internal/access.(*Service).handleGetZitiSettings
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    put:
+      tags: [OpenZiti Overlay]
+      summary: Put ziti settings
+      operationId: putZitiSettings
+      x-openidx-handler: internal/access.(*Service).handlePutZitiSettings
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/settings/test:
+    post:
+      tags: [OpenZiti Overlay]
+      summary: Test ziti settings
+      operationId: testZitiSettings
+      x-openidx-handler: internal/access.(*Service).handleTestZitiSettings
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/setup/status:
+    get:
+      tags: [OpenZiti Overlay]
+      summary: Ziti setup status
+      operationId: zitiSetupStatus
+      x-openidx-handler: internal/access.(*Service).handleZitiSetupStatus
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/sync/device-trust/{userId}:
+    parameters:
+      - name: userId
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [OpenZiti Overlay]
+      summary: Sync device trust
+      operationId: syncDeviceTrust
+      x-openidx-handler: internal/access.(*Service).handleSyncDeviceTrust
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/sync/groups:
+    post:
+      tags: [OpenZiti Overlay]
+      summary: Sync all groups
+      operationId: syncAllGroups
+      x-openidx-handler: internal/access.(*Service).handleSyncAllGroups
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/sync/my-identity:
+    get:
+      tags: [OpenZiti Overlay]
+      summary: Get my ziti identity
+      operationId: getMyZitiIdentity
+      x-openidx-handler: internal/access.(*Service).handleGetMyZitiIdentity
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/sync/status:
+    get:
+      tags: [OpenZiti Overlay]
+      summary: Get sync status
+      operationId: getSyncStatus
+      x-openidx-handler: internal/access.(*Service).handleGetSyncStatus
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/sync/unsynced:
+    get:
+      tags: [OpenZiti Overlay]
+      summary: Get unsynced users
+      operationId: getUnsyncedUsers
+      x-openidx-handler: internal/access.(*Service).handleGetUnsyncedUsers
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/sync/user-map:
+    get:
+      tags: [OpenZiti Overlay]
+      summary: Get user ziti map
+      operationId: getUserZitiMap
+      x-openidx-handler: internal/access.(*Service).handleGetUserZitiMap
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/sync/users:
+    post:
+      tags: [OpenZiti Overlay]
+      summary: Sync all users
+      operationId: syncAllUsers
+      x-openidx-handler: internal/access.(*Service).handleSyncAllUsers
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/sync/users/{userId}:
+    parameters:
+      - name: userId
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [OpenZiti Overlay]
+      summary: Sync single user
+      operationId: syncSingleUser
+      x-openidx-handler: internal/access.(*Service).handleSyncSingleUser
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/terminators:
+    get:
+      tags: [OpenZiti Overlay]
+      summary: List terminators
+      operationId: listTerminators
+      x-openidx-handler: internal/access.(*Service).handleListTerminators
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/terminators/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    delete:
+      tags: [OpenZiti Overlay]
+      summary: Delete terminator
+      operationId: deleteTerminator
+      x-openidx-handler: internal/access.(*Service).handleDeleteTerminator
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    get:
+      tags: [OpenZiti Overlay]
+      summary: Get terminator
+      operationId: getTerminator
+      x-openidx-handler: internal/access.(*Service).handleGetTerminator
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/ziti/unmanaged/count:
+    get:
+      tags: [OpenZiti Overlay]
+      summary: Get unmanaged services count
+      operationId: getUnmanagedServicesCount
+      x-openidx-handler: internal/access.(*Service).handleGetUnmanagedServicesCount
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /downloads/{file}:
+    parameters:
+      - name: file
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [Agent Downloads]
+      summary: Agent download
+      operationId: agentDownload
+      x-openidx-handler: internal/access.(*Service).handleAgentDownload
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /temp-access/{token}:
+    parameters:
+      - name: token
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [Temporary Access]
+      summary: Use temp access
+      operationId: useTempAccess
+      x-openidx-handler: internal/access.(*Service).handleUseTempAccess
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
 components:
   securitySchemes:
     bearerAuth:
@@ -2640,6 +7835,15 @@ components:
             $ref: '#/components/schemas/ErrorResponse'
 
   schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+          description: A short machine-readable reason
+        error_description:
+          type: string
+          description: Operator-facing detail, when the handler has one
     ErrorResponse:
       type: object
       properties:

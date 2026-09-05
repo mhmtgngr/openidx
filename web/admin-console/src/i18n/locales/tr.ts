@@ -8931,8 +8931,6 @@ const tr: typeof en = {
         governance: 'Yönetişim',
         provisioning: 'SCIM',
         audit: 'Denetim',
-        notifications: 'Bildirimler',
-        portal: 'Portal',
       },
     },
   },

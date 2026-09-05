@@ -5,7 +5,7 @@
   "specs": {
     "identity-service": {
       "name": "Identity Service",
-      "description": "User, group, role, MFA, and identity provider management",
+      "description": "Users, groups, roles, MFA and identity providers, plus the self-service portal and notification routes the same binary mounts",
       "port": 8001,
       "spec": "identity-service.yaml",
       "base_url": "/api/v1/identity"
@@ -51,20 +51,6 @@
       "port": 8007,
       "spec": "access-service.yaml",
       "base_url": "/api/v1/access"
-    },
-    "portal-service": {
-      "name": "Self-Service Portal (identity-service)",
-      "description": "Self-service portal routes, served by the Identity Service",
-      "port": 8001,
-      "spec": "portal-service.yaml",
-      "base_url": "/api/v1/identity/portal"
-    },
-    "notifications-service": {
-      "name": "Notifications (identity-service)",
-      "description": "Notification reads and preferences, served by the Identity Service",
-      "port": 8001,
-      "spec": "notifications-service.yaml",
-      "base_url": "/api/v1/identity/notifications"
     }
   },
   "servers": {

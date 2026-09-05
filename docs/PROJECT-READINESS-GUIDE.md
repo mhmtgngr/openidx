@@ -2428,14 +2428,38 @@ those tests found.
     `/ssf/streams` from the oauth spec — which named both the GET and the POST,
     because the census is per operation, not per path.
 
-    `access-service` and `identity-service` are not in the table yet: their
-    `RegisterRoutes` dereferences the service's database handle *while
-    registering* (`middleware.PermissionResolver(svc.db.Pool, …)`), so a
-    zero-value service panics before the first route lands. That is worth
-    untangling on its own — route registration reading live handles is what
-    makes the route table untestable — and until it is, `access-service.yaml`
-    (105 paths) and `identity-service.yaml` (82) are unproven. The test says so
-    in a comment rather than leaving the omission to be discovered.
+15. ✅ **The last two, and the five endpoints the census found that 404.**
+    `access-service` and `identity-service` looked like they needed a refactor
+    first: their `RegisterRoutes` reaches through the service to a live handle
+    (`middleware.PermissionResolver(svc.db.Pool, …)`), so a zero-value service
+    panics before the first route lands. They did not. Both constructors are
+    pure assignment — no dial, no goroutine — so `NewService` with zero-valued
+    handles yields a service that can be routed and not used, which is all a
+    census wants. That is the whole fix; no production code moved.
+
+    With them enumerable: `identity-service.yaml` described 104 of 208
+    operations and `access-service.yaml` 127 of 316. Both are complete now, and
+    `identity-service.yaml` covers the self-service portal and the notification
+    routes too, because the identity binary mounts them under
+    `/api/v1/identity`. So `portal-service.yaml` and `notifications-service.yaml`
+    are deleted along with `organization-service.yaml`: the spec set is the
+    deployable set, six files for six binaries, and the console's API-docs tabs,
+    `api/openapi/README.md`, `docs/api/README.md`, `docs/api/config.json` and
+    `docs/api/index.html` follow from one list rather than four.
+
+    **The census found a defect, not just gaps.** `access-service.yaml`
+    documented the proxy's auth flow at `/access/login`, `/access/callback`,
+    `/access/logout`, `/access/session` and `/access/idps`. The router serves
+    them at `/access/.auth/…` — the `.auth` prefix keeps them from colliding
+    with a proxied application's own paths. Five documented endpoints that
+    return 404, and only the phantom half of the gate could have found them:
+    coverage alone would have passed, because the served routes were about to
+    be documented under their real paths. The hand-written entries (with their
+    real schemas and 302s) moved onto the served paths rather than being
+    replaced by generated stubs.
+
+    That leaves every published spec proven against its binary, in both
+    directions, in one unit test.
 
 ### P7 — One console, one client
 
@@ -2711,6 +2735,10 @@ those tests found.
    `/api/v1`). "No `cmd/`" means "not its own binary", not "not served" —
    but which binary serves it is a fact to read off the call sites, not to
    infer from a package's presence.
+
+   All three files are gone now — folded into the spec of the binary that
+   serves them (P7.4 items 13 and 15), which is the answer the audit was
+   reaching for and this guide first argued against.
 4. ☐ **`docs/evidence/`** — for each §5 control, the CI artifact that
    proves it or the operator command and where to file the result.
 

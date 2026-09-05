@@ -18,6 +18,4 @@ export const API_SPECS = [
   { id: 'governance', file: 'governance-service.yaml' },
   { id: 'provisioning', file: 'provisioning-service.yaml' },
   { id: 'audit', file: 'audit-service.yaml' },
-  { id: 'notifications', file: 'notifications-service.yaml' },
-  { id: 'portal', file: 'portal-service.yaml' },
 ] as const
