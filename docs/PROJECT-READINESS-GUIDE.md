@@ -2905,8 +2905,44 @@ those tests found.
    All three files are gone now — folded into the spec of the binary that
    serves them (P7.4 items 13 and 15), which is the answer the audit was
    reaching for and this guide first argued against.
-4. ☐ **`docs/evidence/`** — for each §5 control, the CI artifact that
-   proves it or the operator command and where to file the result.
+4. ✅ **`docs/evidence/` — a place the pointing happens.** — *shipped.*
+
+   DoD item 7 asks for the §5 controls to have run "with evidence", and a
+   checklist nobody can point at is not evidence. The directory splits the
+   controls by who can possibly run them, which turns out to be the whole
+   point.
+
+   **Six of the nine §5.1 release-gate controls are already automated**, and
+   for those the evidence is the CI run: the build and full suite
+   (`Build (Go 1.26)`, 25 `Unit Tests` jobs, `Race Detector`,
+   `The stack answers end to end`), `Org-scope lint`, the five gating scanners,
+   `ValidateProduction()` still biting (four named tests in
+   `internal/common/config`), migrations applying **and rolling back** on a
+   real Postgres (`migration_test.go`, `v138_test.go`), and version currency
+   (`check-version-sync.sh`). One CI link at tag time covers all six, which is
+   the reason for automating them.
+
+   The other three genuinely cannot be: `make dr-game-day` needs real backup
+   media, `tools/darkprobe` needs a live overlay with two real identities, and
+   the assignment report needs a populated install. Each has the exact command
+   and an empty dated table.
+
+   **Nothing is pre-filled, and that is deliberate.** An operator-run control
+   has no evidence until someone runs it and writes the date down; a row with
+   no date means not done. Filing a control whose output lives only in
+   someone's terminal history is the same as not filing it.
+
+   §5.3 gained a seventh row — **ABAC**, with three states rather than two,
+   because a deny that does not deny is correct in `observe` and a defect in
+   `enforce`. And a note that the negative half of each verification is the
+   half that finds things: a grant that works is the expected case; a
+   *revocation* that does not is the finding.
+
+   Writing the commands down caught three that were wrong: `darkprobe` takes
+   `<identity.json> <service-name>`, not a config flag; `cmd/backup` has
+   `list`/`verify`, not `restore-verify --latest`; and `/ready` is served per
+   service on its own port, not under a path prefix — the loop a reader would
+   have copied returns 404 eight times.
 
 *Exit test:* `mkdocs build --strict` on PRs; the version-sync and
 docs-drift guards green; then the maintainer tags v1.34.0.
@@ -3038,9 +3074,9 @@ that holds it rather than by the commit that wrote it.
 | 2 · enforced posture, legacy login gone | ◐ | code ✅ — the server-rendered login is deleted and `internal/oauth/routes_legacy_login_test.go` fails if any of it returns (P6.1); ops ☐ — rollout Task 16 is the operator's, on a live deployment |
 | 3 · every control enforces | ◐ | P5.1–5.11 ✅ (tenant isolation, the inverted orgscope lint, OPA `deny`, ABAC at both PEPs, the honest Apply/Remediate, SMS, multi-IdP, the fail-closed gate, `ValidateProduction`, the faked measurements); ☐ the P5.3b register programme — 95 tables still ride `needsScoping`/`needsBelt` waivers |
 | 4 · first run / first login / four pillars from the docs | ✅ | first run ✅ the `smoke` and `first-run` jobs (P6.2); first login ✅ one authoritative credential in `GETTING-STARTED.md`, with the `USER_GUIDE.md` and `CONTRIBUTING.md` copies pointing at it rather than repeating it (P8.1); four pillars ✅ `guide/governance.md` was the missing one (P8.1) |
-| 5 · one story + auditor artifacts | ◐ | threat model and control mapping exist; docs sweep 3 ✅ and the docs-drift guard ✅ (`check-docs-drift.sh`, enforced in CI, so a document cannot cite a path that is not there); ☐ `docs/evidence/` is the auditor-facing half, and is P8.4 |
+| 5 · one story + auditor artifacts | ✅ | threat model and control mapping exist; docs sweep 3 ✅ and the docs-drift guard ✅ (`check-docs-drift.sh`, enforced in CI, so a document cannot cite a path that is not there); `docs/evidence/` ✅ (P8.4) |
 | 6 · releases current, signed, Helm proven | ◐ | signing ✅ `release.yml` (cosign) and, since P7.5, an Android artifact whose name tracks the key that signed it; Helm ✅ the `kind` install job (P6.4); versions ✅ `VERSION` + `check-version-sync.sh` (P8.3); CHANGELOG ✅ every release attributed from the commit that wrote its entry, 61 compare links that resolve (P8.2); ☐ v1.34.0 is not cut — the maintainer's |
-| 7 · controls run with evidence | ☐ | §5.1's automated half runs in CI; §5.2/§5.3 are operator-run; `docs/evidence/` does not exist yet (P8.4) |
+| 7 · controls run with evidence | ◐ | ✅ six of the nine §5.1 controls run in CI on every push, and `docs/evidence/release-gate.md` names the job for each; ☐ the three §5.1 drills and all of §5.2/§5.3 are operator-run against a live deployment and have no dated rows yet — by design, since nobody has run them |
 
 ◐ = the engineering half is done and proven; what remains is either an operator
 action on a live deployment or a later phase in this programme.

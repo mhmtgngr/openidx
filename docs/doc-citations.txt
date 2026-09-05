@@ -64,7 +64,6 @@ allow api/mfa.ts                       console-relative (web/admin-console/src/a
 allow api/mfa                          same, cited without the extension
 allow docs/mobile-developer-guide-simple.md  renamed; the guide records the rename
 allow docs/mobile/firebase-fcm-setup.md      replaced by docs/mobile/push-mfa-delivery.md
-allow docs/evidence/                   created by P8.4; the guide names it as the thing still missing
 allow docs/site                        the mkdocs build output directory, gitignored
 allow docs/README                      a .gitignore pattern, not a file reference
 allow docs/api-reference               a branch-name example in CONTRIBUTING.md, not a path
