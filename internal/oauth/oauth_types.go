@@ -13,8 +13,6 @@
 package oauth
 
 import (
-	"crypto/rand"
-	"fmt"
 	"time"
 )
 
@@ -45,17 +43,6 @@ type TokenFlowResponse struct {
 	RefreshToken string `json:"refresh_token,omitempty"`
 	IDToken      string `json:"id_token,omitempty"`
 	Scope        string `json:"scope,omitempty"`
-}
-
-// generateUUID returns a random RFC 4122 version 4 UUID string.
-// Retained because the live token store (store.go) uses it to mint family IDs.
-func generateUUID() string {
-	b := make([]byte, 16)
-	rand.Read(b)
-	// Set version and variant bits.
-	b[6] = (b[6] & 0x0f) | 0x40 // Version 4
-	b[8] = (b[8] & 0x3f) | 0x80 // Variant 10
-	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
 }
 
 // AccessTokenData is the Redis-stored shape of a minted access token.
