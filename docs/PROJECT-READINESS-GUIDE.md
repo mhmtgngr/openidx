@@ -491,6 +491,35 @@ All six items landed with this guide (commits on
    where one leg is exposed, the iOS PR build, the tag-time unsigned archive)
    look nothing alike.
 
+   **And one of these red ticks was CI lying about its own name.** The
+   **Race Detector** check failed with
+   `FAIL github.com/openidx/openidx/internal/access  600.077s` — on a commit
+   whose entire diff was two shell scripts, three workflows and a paragraph of
+   this document, with the same package green under `-race` on the commit
+   before it. 600s is Go's *default per-package test timeout*, not a race
+   report: there was no `WARNING: DATA RACE` anywhere in the log, only the
+   goroutine dump `go test` prints when it gives up — some fifty stacks, of
+   which forty-eight were parked in `testing.(*T).Parallel` behind the one
+   serial test still running.
+   That default is calibrated for uninstrumented tests. Under `-race`
+   everything costs several times more, and the database-backed suites start a
+   Postgres container per test on top of that; the same run measured
+   `internal/identity` at 379s and `internal/admin` at 283s, so the package
+   that crossed the line was simply the one closest to it. At a ten-minute
+   bound, **"this runner was slow" and "this test hung" are the same failure**,
+   and a check named for the race detector reports a diagnosis it never made —
+   this branch's own defect class, arriving in its CI. All four `-race`
+   invocations (`test-race`, the `test-unit` matrix, `release.yml`, the agent
+   Makefile target) now choose an explicit `-timeout 20m`: more than three
+   times the slowest legitimate package, so a genuine hang still fails, and the
+   job's `timeout-minutes` remains the outer bound.
+   `check-race-timeout.sh` fails CI on the next `-race` written without one —
+   the rule is about **presence, not the value**, because what the right bound
+   is depends on the suite, and a number chosen on purpose can be argued with
+   while a number nobody chose cannot. The underlying cost, a container per
+   test rather than per package, is worth attacking on its own; it is not what
+   made the check lie.
+
 8. ✅ **Both proxies stop forwarding the caller's own claims about who it
    is.** This started as deprecation cleanup — Go 1.26 deprecates
    `httputil.ReverseProxy.Director`, and the ZTNA route proxy and the Ziti

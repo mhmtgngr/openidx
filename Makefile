@@ -313,7 +313,10 @@ build-agent-all:
 
 test-agent:
 	@echo "Testing openidx-agent..."
-	cd agent && go test -v -race ./...
+# -timeout, as everywhere -race is used here: Go's ten-minute default is a
+# bound for uninstrumented tests and under the race detector it reports a slow
+# machine and a hung test identically.
+	cd agent && go test -v -race -timeout 20m ./...
 
 install-cli: build-cli
 	@echo "📦 Installing OpenIDX CLI..."

@@ -45,8 +45,12 @@ jobs:
           go-version: '1.26'
           cache: true
 
+      # An explicit -timeout, as in ci.yml's test-race: Go's ten-minute default
+      # is a bound for uninstrumented tests, and under -race a slow runner
+      # produces the same failure as a hung one. On this workflow that failure
+      # costs a release, not a re-push.
       - name: Run tests
-        run: go test -race ./...
+        run: go test -race -timeout 20m ./...
 
       - name: Build Linux binaries
         run: |
