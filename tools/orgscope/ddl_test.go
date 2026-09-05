@@ -330,7 +330,7 @@ func TestRegistersOnlyShrink(t *testing.T) {
 		// this register by leaving the schema; the census reads DROP TABLE.
 		// 34 -> 33 with v152, which scoped admin_delegations -- the table the
 		// policy enforcement point itself reads.
-		{"needsScoping", len(needsScoping), 33},
+		{"needsScoping", len(needsScoping), 32},
 		// 34 → 19: migration v140 belted the fifteen whose queries already
 		// carried their org predicate. Re-pinned rather than left at 34, or
 		// the register could grow back into the room the fix just made.

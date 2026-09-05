@@ -93,7 +93,6 @@ var needsScoping = map[string]string{
 	"lifecycle_executions":        "per-user lifecycle runs",
 	"lifecycle_policy_executions": "policy run history (v55)",
 	"entitlement_metadata":        "risk level and owner per entitlement",
-	"risk_policies":               "conditional risk policies (v39)",
 	"kiosk_policies":              "kiosk lockdown policies (v44)",
 	"kiosk_policy_assignments":    "kiosk policy targets (v44)",
 

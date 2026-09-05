@@ -11,6 +11,8 @@ import (
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // RiskPolicy represents a risk-based MFA policy
@@ -461,16 +463,44 @@ func (s *Service) RevokeAllTrustedBrowsers(ctx context.Context, userID string) e
 
 // --- Risk Policy Management ---
 
-// GetEnabledRiskPolicies returns all enabled risk policies
+// GetEnabledRiskPolicies returns the calling organization's enabled risk
+// policies, in priority order.
+//
+// THE PREDICATE IS THE CONTROL. AssessLoginRisk applies every policy this
+// returns that matches, and applyRiskPolicyActions REPLACES the allowed-factor
+// list rather than merging it -- so before migration v153, when this query had
+// no tenant term, one organization's policy carrying mfa_methods ["any"] and
+// the always-true condition risk_score_min: 0 downgraded every organization's
+// high-risk step-up from WebAuthn-and-push to a list including SMS and email.
+// deny: true on the same condition refused every login everywhere.
+//
+// A missing organization returns an error rather than an unfiltered read. The
+// caller degrades to requiring MFA on an error from this function, which is the
+// direction that fails safe: policies may MANDATE a factor, so losing them must
+// not be quieter than having them.
 func (s *Service) GetEnabledRiskPolicies(ctx context.Context) ([]RiskPolicy, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("organization context required to evaluate risk policies: %w", err)
+	}
+
+	// COALESCE the nullable columns. Without it a single policy with a NULL
+	// description fails the scan, GetEnabledRiskPolicies returns an error, and
+	// AssessLoginRisk drops EVERY policy for EVERY login on that installation —
+	// degrading to "require MFA", which is safe, and silently switching off
+	// every deny, step-up and factor restriction an administrator configured.
+	// internal/risk/service.go reads the same table and has always coalesced;
+	// two implementations of one read, one defensive and one not, is the shape
+	// v146, v149 and v151 each found.
 	query := `
-		SELECT id, name, description, enabled, priority, conditions, actions, created_at, updated_at
+		SELECT id, name, COALESCE(description,''), enabled, COALESCE(priority,100),
+		       COALESCE(conditions,'{}'), COALESCE(actions,'{}'), created_at, updated_at
 		FROM risk_policies
-		WHERE enabled = true
+		WHERE org_id = $1 AND enabled = true
 		ORDER BY priority ASC
 	`
 
-	rows, err := s.db.Pool.Query(ctx, query)
+	rows, err := s.db.Pool.Query(ctx, query, org.ID)
 	if err != nil {
 		return nil, err
 	}

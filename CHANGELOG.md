@@ -21,6 +21,43 @@ to a spec that describes an eighth of a surface, a documented endpoint that
   the posture score was neither one tenant's nor the install's. All now carry
   `org_id` under FORCE RLS, with the install-wide unique keys re-scoped and an
   isolation test per handler file.
+- **One organization's sign-in rule could weaken the second factor for every
+  organization** (migration v153). A risk policy is a rule the sign-in path
+  consults: when this condition holds, ask for a second factor, ask for a
+  stronger one, refuse the sign-in, or accept these particular factors. The
+  rules carried nothing saying which organization they belonged to, and the
+  sign-in path read all of them and applied every one that matched.
+
+  The damaging direction is the permissive one. When a sign-in looks risky the
+  system narrows the acceptable second factors to the two that resist phishing
+  — a security key or a push approval. A rule that names acceptable factors
+  does not add to that list, it **replaces** it. So a rule created in one
+  organization saying "any factor is acceptable" put one-time codes by SMS and
+  email back into every other organization's high-risk sign-ins. The condition
+  needed to trigger it is not exotic either: "risk score at least 0" is true of
+  every sign-in there has ever been. The same rule with "refuse" instead would
+  have blocked every sign-in on the installation.
+
+  Rules are now owned by an organization and only that organization's rules are
+  consulted, read or written. Listing, viewing, editing, enabling and deleting
+  are all limited to the caller's own.
+
+  **Operators of installations with more than one organization should review
+  their risk policies after upgrading.** These rules had no owner, so the
+  upgrade assigns every existing one to the oldest organization — there is no
+  other information on the record to go by. A rule that had been applying
+  everywhere will now apply in one place. That is the intended direction, since
+  no organization was ever meant to have another's rule applied to its
+  sign-ins, but the rules you meant each organization to have will need
+  re-creating there.
+
+  Fixed alongside it: one rule with an empty description made the sign-in path
+  fail to load **any** rules at all, on every sign-in, for the whole
+  installation. It failed in the safe direction — the path falls back to asking
+  for a second factor — but every refusal, every step-up and every factor
+  restriction an administrator had configured was silently doing nothing. The
+  same table is read elsewhere in the product with the empty value handled
+  properly; this reader had never had it.
 - **A delegated administrative permission followed the person into other
   organizations, and the permission cache shared it with their colleagues**
   (migration v152). A delegation record grants one person a named set of

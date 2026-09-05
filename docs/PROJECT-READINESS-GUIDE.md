@@ -2242,6 +2242,80 @@ class this whole program exists for.
    second reporting a second user handed it from the cache.
    `TestRLSBeltTables` **44/44**. v152 applied, rolled back to 151 and
    re-applied.
+
+   **Batch 15 shipped (migration v153, `needsScoping` 33 → 32; registers 50 →
+   49): one tenant could weaken every tenant's second factor.** A
+   `risk_policies` row is a rule the login path consults — *when this condition
+   holds, require MFA, require step-up, deny, or allow these factors.* v39
+   created it with no tenant column, and `GetEnabledRiskPolicies` read it with
+   no predicate: `SELECT … FROM risk_policies WHERE enabled = true ORDER BY
+   priority ASC`. `AssessLoginRisk` applies **every** returned policy that
+   matches, so every organization's rules were evaluated against every
+   organization's logins.
+
+   **The direction is what makes it sharp.** `applyRiskPolicyActions` does this:
+
+   ```go
+   if methods, ok := actions["mfa_methods"].([]interface{}); ok {
+       assessment.AllowedMethods = make([]string, 0)   // REPLACES, not merges
+       ... "any" -> {"totp","push","webauthn","sms","email"}
+   }
+   ```
+
+   At high risk the assessment restricts the second factor to WebAuthn and push
+   — the phishing-resistant ones. A policy belonging to another organization
+   with `mfa_methods: ["any"]` overwrites that list with one including SMS and
+   email. And the matching condition need not be clever: `risk_score_min: 0` is
+   `assessment.Score >= 0`, **true on every login ever assessed**. One row in
+   one tenant, and every tenant's step-up admits an SMS code. `deny: true` on
+   the same condition is the other end: every login refused, everywhere. A
+   control one organization can weaken for all of them is not a control — the
+   same finding as v151's cross-tenant `require_approval`, arriving on the
+   authentication path.
+
+   **The third comment in three batches asserting a scoping that does not
+   exist.** `internal/risk/policy.go`, on the create request's `TenantID`:
+   *"TenantID is optional. The policy is org-scoped by the request context."*
+   It was org-scoped by nothing — no column, no predicate — and
+   `CreateRiskPolicy` ended with `if req.TenantID != "" { p.TenantID =
+   req.TenantID }`, assigning the tenant to the **response struct** and never to
+   the row, so a caller who supplied one was handed it back as though it had
+   been recorded. (v151 credited an RLS belt that was never applied; v152 copied
+   a predicate's justification without the predicate.) List, get, update, delete
+   and toggle all addressed policies by bare id, so any administrator could
+   author, re-point, disable or delete any other tenant's login rules.
+
+   **A second defect surfaced while writing the test, and it is the more
+   embarrassing one.** `GetEnabledRiskPolicies` scanned the nullable
+   `description` column into a plain `string` with no `COALESCE`. A single
+   policy with a NULL description fails the scan, the function returns an
+   error, and `AssessLoginRisk` drops **every** policy for **every** login on
+   that installation — degrading to "require MFA", which is safe, and silently
+   switching off every deny, step-up and factor restriction an administrator
+   configured. `internal/risk/service.go` reads the same table and has always
+   coalesced: two implementations of one read, one defensive and one not, which
+   is the shape v146, v149 and v151 each found. Fixed in the same commit.
+
+   **The backfill needs an operator, and the guide says so rather than hiding
+   it.** Nothing on a `risk_policies` row names a tenant — no user, no route, no
+   parent of any kind — so every existing policy goes to the oldest
+   organization. A policy that has been applying to every tenant will now apply
+   to one. That is the correct direction (no tenant was ever entitled to have
+   another's rule applied to its logins), but a multi-organization install
+   should re-create the policies it meant to have.
+
+   Proven on Postgres 16: four cases in `internal/identity`, **all four red**
+   against the old code — org B's policy setting org A's allowed factors, org
+   B's policy denying an org A login, org A's policy reaching org B, and the
+   unfiltered read on a context with no organization. `TestRLSBeltTables`
+   **45/45**. v153 applied, rolled back to 152 and re-applied.
+
+   **Observed, not changed:** `applyRiskPolicyActions` sets `RequiresMFA`, and
+   then step 7's threshold switch reassigns it unconditionally in the low and
+   medium branches — so a policy's `require_mfa` survives only when the score
+   already put the login above the low threshold. That is a real defect of this
+   programme's class and it is not a tenant-scoping one, so it is recorded here
+   rather than folded into a scoping batch.
 4. ✅ **OPA `deny` enforced** — *shipped.* — `internal/common/middleware/opa.go`: abort
    unless `Allow && len(Deny)==0`; `authz.rego:15-19`'s "any authenticated
    user may GET anything" removed; `policies/access_control.rego`
@@ -3870,7 +3944,7 @@ that holds it rather than by the commit that wrote it.
 |---|---|---|
 | 1 · journeys verified | ☐ | J1 ✅ the `smoke` and `first-run` jobs (P6.2); J2 ✅ `test/integration/{auth_flows,mfa_flow,passwordless}_test.go`; J3 ✅ `test/integration/enforced_posture_test.go` (P6.1); ☐ **J6 has no automated proof** — `e2e/access-reviews-flow.spec.ts` is still on the `hold` side of `e2e/suite.txt`; ☐ **J7 needs a leaver integration case**; J4/J5/J8 stay scripted operator drills (`tools/darkprobe`, `make dr-game-day`) to be filed under `docs/evidence/` (P8.4) |
 | 2 · enforced posture, legacy login gone | ◐ | code ✅ — the server-rendered login is deleted and `internal/oauth/routes_legacy_login_test.go` fails if any of it returns (P6.1); ops ☐ — rollout Task 16 is the operator's, on a live deployment |
-| 3 · every control enforces | ◐ | P5.1–5.11 ✅ (tenant isolation, the inverted orgscope lint, OPA `deny`, ABAC at both PEPs, the honest Apply/Remediate, SMS, multi-IdP, the fail-closed gate, `ValidateProduction`, the faked measurements); ◐ the P5.3b register programme — batch 1 (v140) belted fifteen tables and fixed `email_branding`'s cross-tenant read *and* write; batch 2 (v141) scoped the compliance record and fixed an archive worker that was silently producing empty archives; batches 4–10 (v142–v148) took the unified audit stream, the sign-in tables, the SAML surface, the password-substitute credentials, the four second factors the belt had skipped, the breach response record — where a containment reported success while quarantining nobody — the temporary vendor access surface, where v71's written-down reason for skipping the belt had expired three batches earlier, the legal holds — the first batch whose defect destroys rather than discloses, since releasing a hold is what lets the retention sweep delete the recording — the remote support sessions, whose list ran with no `WHERE` clause at all over a nullable tenant column the belt would have hidden rather than scoped, and the PAM broker's connection registry — where the row that decides which vault credential is injected carried no tenant, so another tenant's route id bought a live session onto their machine with their password, and the four-eyes gates could not help because both are satisfiable inside the caller's own tenant — and delegated administration, read by the enforcement point itself under a deliberate bypass with a tenant-scoping comment copied from the query above it and a cache that handed one person's delegation to everyone sharing their roles; **50** still ride `needsScoping`/`needsBelt` waivers |
+| 3 · every control enforces | ◐ | P5.1–5.11 ✅ (tenant isolation, the inverted orgscope lint, OPA `deny`, ABAC at both PEPs, the honest Apply/Remediate, SMS, multi-IdP, the fail-closed gate, `ValidateProduction`, the faked measurements); ◐ the P5.3b register programme — batch 1 (v140) belted fifteen tables and fixed `email_branding`'s cross-tenant read *and* write; batch 2 (v141) scoped the compliance record and fixed an archive worker that was silently producing empty archives; batches 4–10 (v142–v148) took the unified audit stream, the sign-in tables, the SAML surface, the password-substitute credentials, the four second factors the belt had skipped, the breach response record — where a containment reported success while quarantining nobody — the temporary vendor access surface, where v71's written-down reason for skipping the belt had expired three batches earlier, the legal holds — the first batch whose defect destroys rather than discloses, since releasing a hold is what lets the retention sweep delete the recording — the remote support sessions, whose list ran with no `WHERE` clause at all over a nullable tenant column the belt would have hidden rather than scoped, and the PAM broker's connection registry — where the row that decides which vault credential is injected carried no tenant, so another tenant's route id bought a live session onto their machine with their password, and the four-eyes gates could not help because both are satisfiable inside the caller's own tenant — delegated administration, read by the enforcement point itself under a deliberate bypass with a tenant-scoping comment copied from the query above it and a cache that handed one person's delegation to everyone sharing their roles, and the login risk policies, where one tenant's row could replace every tenant's allowed second factors or deny every login outright; **49** still ride `needsScoping`/`needsBelt` waivers |
 | 4 · first run / first login / four pillars from the docs | ✅ | first run ✅ the `smoke` and `first-run` jobs (P6.2); first login ✅ one authoritative credential in `GETTING-STARTED.md`, with the `USER_GUIDE.md` and `CONTRIBUTING.md` copies pointing at it rather than repeating it (P8.1); four pillars ✅ `guide/governance.md` was the missing one (P8.1) |
 | 5 · one story + auditor artifacts | ✅ | threat model and control mapping exist; docs sweep 3 ✅ and the docs-drift guard ✅ (`check-docs-drift.sh`, enforced in CI, so a document cannot cite a path that is not there); `docs/evidence/` ✅ (P8.4) |
 | 6 · releases current, signed, Helm proven | ◐ | signing ✅ `release.yml` (cosign) and, since P7.5, an Android artifact whose name tracks the key that signed it; Helm ✅ the `kind` install job (P6.4); versions ✅ `VERSION` + `check-version-sync.sh` (P8.3); CHANGELOG ✅ every release attributed from the commit that wrote its entry, 61 compare links that resolve (P8.2); ☐ v1.34.0 is not cut — the maintainer's |

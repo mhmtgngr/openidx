@@ -614,6 +614,15 @@ func TestRLSBeltTables(t *testing.T) {
 			VALUES ($1,'tbelt-dlg-` + suffix + `','tbelt-dlg-` + suffix + `@example.test',true) RETURNING id)
 			INSERT INTO admin_delegations (org_id, delegate_id, delegated_by, scope_type, scope_id, permissions, enabled)
 			SELECT $1, u.id, u.id, 'organization', $1, '["vault:reveal"]'::jsonb, true FROM u`},
+
+		// v153 — the login risk policies. The read the login path makes is
+		// bypassed by nothing, so this belt is a real second layer behind the
+		// predicate: a query here that forgets its tenant does not leak a row,
+		// it applies another organization's rule to this organization's login.
+		{"risk_policies", `INSERT INTO risk_policies
+			(name, enabled, priority, conditions, actions, org_id)
+			VALUES ('tbelt-risk-` + suffix + `', true, 1, '{"risk_score_min": 0}'::jsonb,
+				'{"require_mfa": true}'::jsonb, $1)`},
 	}
 
 	// One list, not two: the role is granted exactly the tables the cases probe.
