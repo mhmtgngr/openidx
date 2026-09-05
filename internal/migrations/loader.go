@@ -1023,5 +1023,12 @@ func allMigrations() []*Migration {
 			UpSQL:       signinTenantScopeUp,
 			DownSQL:     signinTenantScopeDown,
 		},
+		{
+			Version:     144,
+			Name:        "saml_tenant_scope",
+			Description: "Add org_id + FORCE RLS to saml_service_providers and saml_sessions. saml_service_providers is the registry of federation partners this install acts as a SAML IdP for — entity id, ACS URL and the certificate used to verify their requests — and every handler read it install-wide: the list and its count had no org predicate at all, and get, update and delete took a bare id, so one tenant's admin could enumerate another tenant's partners, rewrite an ACS URL to point their assertions at a host of their choosing, or replace the certificate. saml_sessions is the SLO bookkeeping, keyed by user_id and so scoped in practice; the belt makes it structural. entity_id deliberately KEEPS its install-wide UNIQUE, unlike v143's provider_key: a SAML entity id is a globally unique URI by specification and it is what resolves the tenant on an incoming AuthnRequest, so scoping the key would make that lookup ambiguous and scoping the query would make it impossible. That lookup and the SLO session lookup run bypassed with the reason recorded, joining the api-key-by-hash and route-by-host class. Sessions are attributed to their user's org; service providers, which carry no such link, to the oldest org where an operator can re-file them. No column DEFAULT.",
+			UpSQL:       samlTenantScopeUp,
+			DownSQL:     samlTenantScopeDown,
+		},
 	}
 }

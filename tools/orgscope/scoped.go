@@ -95,8 +95,6 @@ var needsScoping = map[string]string{
 	"social_account_links":  "per-user social provider links",
 
 	// Identity federation and SSO configuration — per-tenant by nature.
-	"saml_service_providers": "registered SAML SPs with certificates",
-	"saml_sessions":          "live SAML sessions per user (v42)",
 	"federation_rules":       "email-domain to IdP routing rules",
 	"custom_claims_mappings": "per-application claim mappings",
 

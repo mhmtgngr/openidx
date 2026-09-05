@@ -21,6 +21,20 @@ to a spec that describes an eighth of a surface, a documented endpoint that
   the posture score was neither one tenant's nor the install's. All now carry
   `org_id` under FORCE RLS, with the install-wide unique keys re-scoped and an
   isolation test per handler file.
+- **The SAML surface got a tenant** (migration v144). `saml_service_providers`
+  — the registry of federation partners this install acts as a SAML identity
+  provider for, holding their assertion-consumer URL and the certificate the
+  IdP trusts — was listed, counted, fetched, updated, certificate-rotated,
+  metadata-refreshed and deleted install-wide, all by bare id. One tenant's
+  administrator could enumerate another tenant's partners, repoint their
+  assertions at a host of their choosing, or delete their federation.
+  `saml_sessions`, the single-logout bookkeeping, joins it under FORCE RLS.
+  `entity_id` deliberately keeps its install-wide uniqueness, unlike v143's
+  `provider_key`: a SAML entity id is a globally unique URI by specification
+  and it is what resolves the tenant on an inbound request, so a per-organization
+  key would make that lookup ambiguous. That lookup, and the equivalent one on
+  the single-logout path, are documented as spanning organizations for the same
+  reason API-key and route lookups do.
 - **The sign-in tables got a tenant** (migration v143). `social_providers` —
   the configuration behind the social sign-in buttons — was listed with the
   organization predicate inside a `LEFT JOIN`'s `ON` clause, where it filters

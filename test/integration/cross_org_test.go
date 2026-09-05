@@ -477,6 +477,18 @@ func TestRLSBeltTables(t *testing.T) {
 			VALUES ('tbelt-rb-` + suffix + `','tbelt-rb-` + suffix + `@example.test',true,$1) RETURNING id)
 			INSERT INTO user_risk_baselines (user_id, org_id) SELECT u.id,$1 FROM u`},
 		{"phone_call_challenges", `INSERT INTO phone_call_challenges (phone_number, code_hash, expires_at, org_id) VALUES ('+900000000','x',NOW() + INTERVAL '1 hour',$1)`},
+		// v144 — the SAML surface. saml_service_providers holds the federation
+		// partners' ACS URLs and certificates and was listed, counted, fetched,
+		// updated and deleted install-wide, so one tenant could repoint another
+		// tenant's assertions. entity_id stays UNIQUE across the install on
+		// purpose (it is what resolves the tenant on an inbound request), which
+		// is why the probe row's is suffixed rather than per-org.
+		{"saml_service_providers", `INSERT INTO saml_service_providers (name, entity_id, acs_url, org_id) VALUES ('tbelt sp','https://tbelt-` + suffix + `.example.test/metadata','https://tbelt-` + suffix + `.example.test/acs',$1)`},
+		{"saml_sessions", `WITH u AS (
+			INSERT INTO users (username, email, enabled, org_id)
+			VALUES ('tbelt-saml-` + suffix + `','tbelt-saml-` + suffix + `@example.test',true,$1) RETURNING id)
+			INSERT INTO saml_sessions (user_id, sp_id, sp_entity_id, session_index, name_id, name_id_format, expires_at, org_id)
+			SELECT u.id, gen_random_uuid(), 'https://tbelt-` + suffix + `.example.test/metadata','idx-` + suffix + `','tbelt@example.test','emailAddress',NOW() + INTERVAL '1 hour',$1 FROM u`},
 	}
 
 	// One list, not two: the role is granted exactly the tables the cases probe.

@@ -1657,6 +1657,51 @@ class this whole program exists for.
    passes after; get, update and delete are each refused across tenants; two
    tenants can now register the same `provider_key`. `TestRLSBeltTables` is
    24/24 with all five tables added.
+
+   **Batch 6 shipped (migration v144, `needsScoping` 52 → 50; registers 71 →
+   69): the SAML surface.** `saml_service_providers` is the registry of the
+   federation partners this install acts as an IdP for — their ACS URL and the
+   certificate it trusts — and every handler read it install-wide: the list and
+   its count had no org predicate at all, and get, update, certificate rotation,
+   metadata refresh and delete all took a bare id. The disclosure (one tenant
+   enumerating another's partners) is the least of it: the ACS URL is where
+   assertions are POSTed, so a cross-tenant update **redirects another tenant's
+   single sign-on** to a host of the attacker's choosing, and a cross-tenant
+   delete takes their federation down. `saml_sessions` (the SLO bookkeeping)
+   joins it under the belt.
+
+   **The interesting part is what this batch deliberately did *not* do.** v143
+   re-scoped `social_providers.provider_key` to `(org_id, provider_key)` because
+   an install-wide key let the first tenant to register `google` take the name
+   from everybody else. Applying that pattern mechanically to
+   `saml_service_providers.entity_id` would have broken the protocol:
+
+   - a SAML entity id is a **globally unique URI by specification**, so two
+     tenants holding one is a configuration error, not a legitimate case; and
+   - `GetServiceProviderByEntityID` is a **pre-tenant-resolution lookup** — an
+     inbound AuthnRequest names an entity id and nothing else, and the SP it
+     finds is what tells the IdP whose request this is. Scope that query by org
+     and it can never succeed; make the key per-org and it becomes ambiguous.
+
+   So the constraint stays, that lookup and the SLO session lookup run bypassed
+   with the reason recorded at the call site, and both join the
+   api-key-by-hash / route-by-host class `TestPreResolutionLookupsUnderRLS`
+   already pins. The generalisation worth carrying: **not every install-wide
+   unique key is a bug — the question is whether the key is the thing that
+   resolves the tenant.** `v144_test.go` asserts the constraint is *not*
+   touched, so a later batch applying the v143 pattern by rote fails there
+   first.
+
+   One process fix rides along. `internal/oauth`'s database-backed suites are
+   container-only (`testsupport.RunOrSkip`), so they skip silently wherever no
+   Docker daemon is reachable — which is how a broken assertion in
+   `assignment_audit_test.go` reached CI green-locally. The new
+   `saml_sp_tenant_isolation_test.go` reads `OPENIDX_TEST_DATABASE_URL`
+   instead, so it runs against a plain Postgres and a local sweep can see it.
+
+   Proven on Postgres 16: 5/5, and red against a mutation that removes the org
+   predicate from the get and delete paths ("org A read org B's service
+   provider by id", "org B's provider is gone"). `TestRLSBeltTables` 26/26.
 4. ✅ **OPA `deny` enforced** — *shipped.* — `internal/common/middleware/opa.go`: abort
    unless `Allow && len(Deny)==0`; `authz.rego:15-19`'s "any authenticated
    user may GET anything" removed; `policies/access_control.rego`
