@@ -85,6 +85,8 @@ nav:
       - Architecture: guide/architecture.md
       - Configuration: guide/configuration.md
 
+  - Governance (IGA): guide/governance.md
+
   - Privileged Access (PAM): guide/privileged-access.md
 
   - Zero Trust Network (ZTNA): guide/network-access.md
@@ -128,14 +130,9 @@ extra:
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/mhmtgngr/openidx
-    - icon: fontawesome/brands/discord
-      link: https://discord.gg/openidx
   version:
     provider: mike
     default: latest
-  analytics:
-    provider: google
-    property: G-XXXXXXXXXX
 
 extra_css:
   - stylesheets/extra.css

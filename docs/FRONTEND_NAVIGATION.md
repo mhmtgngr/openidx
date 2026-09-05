@@ -9,9 +9,15 @@ forward.
 | Surface | Path | Menus? |
 |---|---|---|
 | Admin Console (React/Vite) | `web/admin-console` | Yes — the only navigable UI |
-| Standalone e2e harness | `frontend/` | No app code, Playwright specs only |
-| Keycloak login theme | `web/admin-console/keycloak-theme` | Login pages only |
-| Desktop/mobile agents | `agent/`, `agent-android/` | Native, no web menus |
+| Browser journey suite | `web/admin-console/e2e` | No app code, Playwright specs only |
+| Mobile client (Flutter) | `client/` | Native, no web menus |
+| Desktop/Android agents | `agent/`, `agent-android/` | Native, no web menus |
+
+Two surfaces this table used to list are gone and are not coming back: the
+standalone `frontend/` harness (its specs live in `web/admin-console/e2e`
+now) and `web/admin-console/keycloak-theme` — OpenIDX is its own IdP and
+renders its own login, so there is no Keycloak theme to style. The Expo
+`mobile/` tree was deleted in favour of `client/`.
 
 ## Audit findings (2026-07) and resolutions
 
@@ -19,9 +25,9 @@ forward.
    menu entry. → Added under *Platform → System*.
 2. **Live Audit Dashboard dark** — `src/pages/audit/AuditDashboard.tsx`, the
    `AuditStream` component and the `audit-stream` store formed a complete
-   real-time feature nothing routed to (the `frontend/e2e` suite even expected
-   it at `/audit/dashboard`). → Routed at `/audit/dashboard`, menu entry
-   *Audit & Reporting → Live Audit Stream*.
+   real-time feature nothing routed to (the browser journey suite even
+   expected it at `/audit/dashboard`). → Routed at `/audit/dashboard`, menu
+   entry *Audit & Reporting → Live Audit Stream*.
 3. **Tenant selector unmounted** — the super_admin org switcher (with its
    `X-Org-Slug` request plumbing already live in `lib/api.ts`) existed only in
    a dead component. → Extracted to `components/tenant-selector.tsx`, mounted
@@ -39,12 +45,14 @@ forward.
 6. **Unmanageable menu source** — ~85 items hardcoded inside the layout
    component. → Moved to `src/config/navigation.ts` (single source of truth).
 
-Still open (documented, intentionally untouched):
+Both items this section left open have since been closed, in the direction
+the audit implied:
 
-- `src/pages/mfa/WebAuthnCredentials.tsx` duplicates `/security-keys` with a
-  richer implementation but is unrouted — decide which to keep.
-- `src/lib/api/` and `src/lib/store/` directories are shadowed by the
-  same-named `.ts` files and are mostly dead scaffolding.
+- `src/pages/mfa/WebAuthnCredentials.tsx` — deleted. `/security-keys` is the
+  one passkey surface, and it has a test.
+- `src/lib/api/` and `src/lib/store/` — deleted. The shadowing `.ts` files
+  (`lib/api.ts`, `lib/store.ts`) were the live ones all along; a directory
+  that shadows a module is a trap for the next reader, not scaffolding.
 
 ## How navigation works now
 

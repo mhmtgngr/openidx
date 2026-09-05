@@ -68,7 +68,7 @@ cover the others:
 | --- | --- | --- | --- |
 | `src/test/a11y.test.tsx` | CI (vitest/jsdom) | The axe WCAG 2.1 A/AA rule set over **every page in `src/pages`**, derived from the directory so a new page is covered the day it lands | Colour contrast — jsdom has no layout or paint, so the rule is disabled there rather than left to fail silently. Also anything behind an interaction: a dialog body or dropdown is not mounted until it is opened |
 | `src/test/design-token-contrast.test.ts` | CI (vitest) | Every design-token pair the components render, in **both** themes, straight out of `index.css` | Pairings built from Tailwind palette utilities, and tinted surfaces that composite per theme |
-| `scripts/contrast-audit.mjs` | By hand | axe's `color-contrast` over 36 routes × 2 colour schemes in real Chromium, with a stubbed API so authenticated pages render | Only what a route actually paints — a control inside an unopened dialog is never measured |
+| `web/admin-console/scripts/contrast-audit.mjs` | By hand | axe's `color-contrast` over 36 routes × 2 colour schemes in real Chromium, with a stubbed API so authenticated pages render | Only what a route actually paints — a control inside an unopened dialog is never measured |
 
 Running the browser audit:
 

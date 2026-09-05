@@ -21,8 +21,10 @@ capabilities that are usually four separate products — **identity (IAM),
 governance (IGA), privileged access (PAM), and a zero-trust network plane
 (ZTNA)** — in one self-hostable platform over one PostgreSQL database. It is
 built to replace a stack of Microsoft Entra ID, Okta, SailPoint, CyberArk, and
-Zscaler/NetFoundry at a fraction of the cost — a **70–80% saving** against the
-stacked per-user pricing of those tools.
+Zscaler/NetFoundry. It is self-hosted and Apache-2.0, so what it costs is your
+infrastructure and your operators rather than a per-user licence — what that
+works out to against your current stack depends on your seat counts and
+contracts, and nobody here has measured yours.
 
 Because the IdP, the policy engine, the PAM broker, and the OpenZiti network
 overlay share one control plane, a single decision propagates end-to-end: an

@@ -9,6 +9,34 @@ its user directory to match.
 This is modeled as a **directory-connector type** (`hris` / `bamboohr`), so it
 reuses the existing directory integration, scheduler, and sync-log machinery.
 
+!!! info "API-only today"
+
+    The console's directory form offers `active_directory`, `azure_ad` and
+    `ldap`; the HRIS types are **API-only** — a ratified post-GA decision,
+    recorded so nobody concludes the feature is missing. The connector,
+    scheduler and sync log below are all live. Create one with a POST:
+
+    ```bash
+    curl -X POST https://openidx.example.com/api/v1/directories \
+      -H "Authorization: Bearer $TOKEN" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "name": "BambooHR",
+        "type": "bamboohr",
+        "config": {
+          "provider": "bamboohr",
+          "subdomain": "acme",
+          "api_key": "<bamboohr-api-key>",
+          "sync_interval": 60,
+          "sync_enabled": true,
+          "deprovision_action": "disable"
+        }
+      }'
+    ```
+
+    Test it before arming the scheduler, and watch the first run in the sync
+    log: a leaver rule that fires on bad data disables real people.
+
 ## Lifecycle mapping
 
 | HR event | Detection | Action |

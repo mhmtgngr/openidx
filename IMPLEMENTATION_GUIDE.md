@@ -22,7 +22,8 @@ This guide explains the newly implemented features for OpenIDX: authentication m
 
 The new implementation provides:
 
-- **Authentication Middleware**: JWT validation with Keycloak, role-based access control, rate limiting
+- **Authentication Middleware**: JWT validation against the OpenIDX oauth
+  service's JWKS, role-based access control, rate limiting
 - **Input Validation**: Comprehensive validators for common data types
 - **Error Handling**: Structured error responses with proper HTTP status codes
 - **Enhanced Logging**: Structured logging with audit trails and performance tracking
@@ -37,7 +38,7 @@ Location: `/internal/common/middleware/middleware.go`
 
 ### Features
 
-1. **JWT Authentication** - Validates tokens from Keycloak
+1. **JWT Authentication** - Validates tokens against the issuer's JWKS
 2. **CORS** - Handles cross-origin requests
 3. **Request ID** - Adds unique IDs to requests for tracing
 4. **Role-Based Access Control** - Enforces permissions
@@ -64,7 +65,7 @@ router.Use(middleware.Recovery())
 router.Use(middleware.RateLimit(100, 1*time.Minute)) // 100 req/min
 
 // Protected routes
-router.Use(middleware.Auth(keycloakURL, "openidx"))
+router.Use(middleware.Auth(cfg.OAuthJWKSURL))
 
 // Role-specific routes
 adminRoutes := router.Group("/admin")
@@ -79,7 +80,7 @@ adminRoutes.Use(middleware.RequireRoles("admin"))
 ```go
 // Protect endpoint with JWT validation
 router.GET("/api/v1/users",
-    middleware.Auth(cfg.KeycloakURL, cfg.Realm),
+    middleware.Auth(cfg.OAuthJWKSURL),
     handleGetUsers,
 )
 
@@ -102,14 +103,14 @@ func handleGetUsers(c *gin.Context) {
 ```go
 // Require admin role
 router.DELETE("/api/v1/users/:id",
-    middleware.Auth(keycloakURL, realm),
+    middleware.Auth(cfg.OAuthJWKSURL),
     middleware.RequireRoles("admin"),
     handleDeleteUser,
 )
 
 // Require any of multiple roles
 router.GET("/api/v1/reports",
-    middleware.Auth(keycloakURL, realm),
+    middleware.Auth(cfg.OAuthJWKSURL),
     middleware.RequireRoles("admin", "auditor", "manager"),
     handleGetReports,
 )
@@ -685,7 +686,7 @@ func main() {
 
     // Protected routes
     api := router.Group("/api/v1")
-    api.Use(middleware.Auth(cfg.KeycloakURL, cfg.Realm))
+    api.Use(middleware.Auth(cfg.OAuthJWKSURL))
     api.Use(middleware.RateLimit(100, 1*time.Minute))
     {
         api.GET("/users", handleListUsers)

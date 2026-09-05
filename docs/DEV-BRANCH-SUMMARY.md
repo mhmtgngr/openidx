@@ -1,4 +1,17 @@
 # Dev Branch Summary - OpenIDX
+
+> **⚠️ Historical snapshot — January 2026.** This describes a branch
+> (`claude/identity-service-crud-9Fvs5`) that was merged and deleted long
+> ago, when the project was ~70% complete and still evaluated Keycloak. Its
+> percentages, file counts, "what's next" list and the documents it links
+> (among them `IAM_COMPETITOR_ANALYSIS.md`, never committed) describe that
+> moment, not the tree. Kept because the commit-by-commit narrative is
+> occasionally useful archaeology.
+>
+> For what is true now: **[PROJECT-READINESS-GUIDE.md](./PROJECT-READINESS-GUIDE.md)**
+> (state and roadmap) and **[GETTING-STARTED.md](./GETTING-STARTED.md)**
+> (how to run it).
+
 **Branch:** `claude/identity-service-crud-9Fvs5`
 **Last Updated:** 2026-01-17
 **Status:** ✅ All changes pushed and synced

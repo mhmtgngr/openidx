@@ -114,14 +114,17 @@ any *what* against the code before relying on it.
   [DESIGN_PATTERNS.md](./DESIGN_PATTERNS.md),
   [PATTERN_EXAMPLES.md](./PATTERN_EXAMPLES.md),
   [FRONTEND_NAVIGATION.md](./FRONTEND_NAVIGATION.md),
-  [SCIM-FEATURES-LOCATION.md](./SCIM-FEATURES-LOCATION.md),
-  [DEV-BRANCH-SUMMARY.md](./DEV-BRANCH-SUMMARY.md).
+  [SCIM-FEATURES-LOCATION.md](./SCIM-FEATURES-LOCATION.md).
 
 ## Historical (superseded — kept for context, bannered)
 
 [PROJECT-STATUS.md](./PROJECT-STATUS.md),
-[FEATURE_PRIORITY_PLAN.md](./FEATURE_PRIORITY_PLAN.md) — both carry
-banners pointing at the current docs.
+[FEATURE_PRIORITY_PLAN.md](./FEATURE_PRIORITY_PLAN.md),
+[DEV-BRANCH-SUMMARY.md](./DEV-BRANCH-SUMMARY.md) (a January 2026 branch
+snapshot),
+[IMPLEMENTATION_PLAN_PARALLEL.md](./IMPLEMENTATION_PLAN_PARALLEL.md) (the
+July 2026 parallelisation board) — all carry banners pointing at the
+current docs.
 
 ## Türkçe / Turkish-language docs
 

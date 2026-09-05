@@ -225,7 +225,7 @@ seams left as stubs that throw, no test, and no caller: `authServiceProvider`
 was declared and never read. On mobile the engine hands the authorize URL to
 the system browser (`ui/screens/login_screen.dart`), so passkeys, MFA and
 step-up happen in the browser against the same server flow the console uses,
-and `mobile/oauth_login_handler.dart` completes the login when the OS delivers
+and `lib/mobile/oauth_login_handler.dart` completes the login when the OS delivers
 `openidx://oauth-callback`. Two credential pipelines is the hazard this project
 keeps removing, so the dead one is gone.
 

@@ -60,7 +60,7 @@ Supporting binaries: `cmd/migrate` (schema migrations), `cmd/backup` (backup + r
 ### 2.3 OAuth 2.0 / OpenID Connect Provider
 
 - Grants: `authorization_code` (with PKCE S256, required for public clients), `refresh_token`, `client_credentials`.
-- Discovery endpoint, JWKS (RS256, key rotation supported via `internal/oauth/keys.go`).
+- Discovery endpoint, JWKS (RS256, key rotation supported via `internal/oauth/jwks.go` and `signer.go`).
 - Token revocation (RFC 7009) — access + refresh tokens, with per-token blacklist *and* per-user "revoke everything before now" marker enforced at `/oauth/userinfo` (PR #112).
 - OIDC RP-initiated logout (`/oauth/logout?id_token_hint=…`), logout-all.
 - Refresh-token rotation + replay detection (token family revocation).
@@ -269,7 +269,6 @@ any more, and `test-integration` is in the Required Checks `needs:` list
 |---|---|---|
 | The Ziti controller admin password uses a local AES-256-GCM encrypter rather than `internal/common/secretcrypt` | No KEK rotation for that one secret | Format is authenticated and test-pinned (`internal/access/secret_cipher.go`). Consolidating needs the stored value re-encrypted under a tagged format first — a data migration, not a refactor; `secretcrypt` passes untagged input through unchanged and would otherwise hand the base64 blob to a controller login as the password. |
 | Password hashing is bcrypt (cost 12), not Argon2id | Offline-cracking cost is lower than a memory-hard KDF's | One policy and one cost throughout (`internal/identity/passwords.go`). Adopting Argon2id needs bcrypt verification plus rehash-on-login; the unreachable Argon2id service that could not verify a single real bcrypt hash was deleted in #637 rather than left looking like coverage. |
-| `internal/oauth/oidc.go`'s `OIDCProvider` is unreachable | Nothing at runtime — `/userinfo` routes to `Service.handleUserInfo` | Dead, not wrong. Removing it also removes ~950 lines of tests and touches the shared OIDC test harness, so it is its own change. |
 | RFC 8628 device authorization grant not implemented | CLI / TV / input-constrained clients | Not advertised in discovery, so no client negotiates it. |
 | LDAP referral chasing absent | Multi-domain AD forests where the search base returns referrals | Point the connector at a global catalog, or configure one directory per domain. |
 

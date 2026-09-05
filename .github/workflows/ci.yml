@@ -64,6 +64,13 @@ jobs:
         run: bash scripts/check-shell-prose.test.sh
       - name: Scan shell scripts
         run: bash scripts/check-shell-prose.sh
+      - name: Verify the docs-drift guard can go red
+        # Same mutation discipline: it must flag a citation that does not
+        # resolve AND stay green on globs, brace sets, elisions and Go symbols
+        # -- a guard that flags `internal/oauth/**` gets switched off.
+        run: bash scripts/check-docs-drift.test.sh
+      - name: No document may cite a path that is not there
+        run: bash scripts/check-docs-drift.sh --enforce
 
   # Two CI jobs used to go red on other people's outages -- a Docker Hub 502
   # on a base-image manifest, a reset connection to the chart CDN -- on

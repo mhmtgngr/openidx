@@ -1,19 +1,21 @@
 # OpenIDX — Parallel Implementation Plan
 
-> **What this is.** The execution plan that turns the ~130 gaps in
-> [`MARKET_GAP_ANALYSIS_2026.md`](./MARKET_GAP_ANALYSIS_2026.md) into
-> **workstreams that can be picked up in parallel** — grouped by package
-> ownership to avoid merge collisions, ordered into dependency **waves** so
-> nothing is built before the thing it needs, each with concrete startable
-> tasks, the existing code to wire, acceptance criteria, and effort.
+> **⚠️ Superseded.** This was the July 2026 board for parallelising ~130
+> gaps, and most of what it schedules has since shipped. It cited two
+> registers — `MARKET_GAP_ANALYSIS_2026.md` and `ULTIMATE_PRODUCT_PLAN.md` —
+> that were **never committed**, so the gap counts and wave ordering below
+> cannot be checked against anything. Its file paths are the ones the plan
+> proposed, not the ones the tree has.
 >
-> Strategy and sequencing rationale live in
-> [`ULTIMATE_PRODUCT_PLAN.md`](./ULTIMATE_PRODUCT_PLAN.md). This document is the
-> board you assign from.
+> The current, code-verified roadmap and gap register is
+> **[PROJECT-READINESS-GUIDE.md](./PROJECT-READINESS-GUIDE.md)**. Read this
+> one only for how the work was partitioned.
 >
-> **Coverage:** every gap in the register maps to exactly one workstream below.
-> Nothing is dropped; deferred items are marked and parked in a workstream's
-> backlog. Last refreshed 2026-07-10.
+> **What it was.** The execution plan that turned those gaps into workstreams
+> that could be picked up in parallel — grouped by package ownership to avoid
+> merge collisions, ordered into dependency **waves**, each with startable
+> tasks, the existing code to wire, acceptance criteria, and effort. Last
+> refreshed 2026-07-10.
 
 ---
 

@@ -2691,7 +2691,7 @@ those tests found.
    seams (`passkeyAssertion`, `browserAuthorize`) left as stubs that throw, no
    test, and `authServiceProvider` declared and never read — by anything,
    including its own file. The app logs in through the Go engine
-   (`login_screen.dart` → `loginStart`, then `mobile/oauth_login_handler.dart`
+   (`login_screen.dart` → `loginStart`, then `client/lib/mobile/oauth_login_handler.dart`
    completes it when the OS delivers `openidx://oauth-callback`), so passkeys
    and MFA happen in the system browser against the server flow the console
    uses. Deleted, with the provider and the stale `deep_links.dart` comment
@@ -2750,14 +2750,91 @@ those tests found.
 
 ### P8 — Docs and the release
 
-1. ☐ **Docs sweep 3** — the drift the 2026-09-01 sweep missed
-   (`IMPLEMENTATION_GUIDE.md`, `IMPLEMENTATION_PLAN_PARALLEL.md`,
-   `FRONTEND_NAVIGATION.md`, `DEV-BRANCH-SUMMARY.md`, `CONTRIBUTING.md`,
-   the second `Admin123!` in `USER_GUIDE.md`, the README's saving claim
-   the landing test forbids, the mkdocs phantom Discord/analytics ids), an
-   IGA guide page so all four pillars are on the site, roadmap epics
-   documented as API-only (D3), and a docs-drift guard with a self-test
-   so none of it comes back.
+1. ✅ **Docs sweep 3, and a guard so there is no sweep 4.** — *shipped.*
+
+   The three previous sweeps were all the same shape: read the docs, notice
+   what has rotted, fix it, and hope. This one ends with something that
+   cannot be hoped through.
+
+   **The guard.** `scripts/check-docs-drift.sh` reads every markdown file in
+   the repo and fails when a backticked repo path does not resolve. The
+   argument for it is the first run's own output: **fifty broken citations,
+   two of them written by the commit immediately before it** — the P7.5
+   commit had cited the OAuth callback handler at a `mobile/` path when the
+   file is `client/lib/mobile/oauth_login_handler.dart`, and the agent's
+   posture collectors as an `agent/internal/posture` package that has never
+   existed — they are `agent/internal/checks`. Nobody gets this right by attention.
+
+   What it deliberately does not flag, because a guard that cries wolf is a
+   guard that gets deleted: globs (`internal/oauth/**`), brace sets, elisions
+   (`mobile/src/...`), and Go symbol references (`internal/auth.ValidateToken`,
+   told apart from a filename by whether the suffix is an extension we ship).
+   `docs/doc-citations.txt` registers the rest with a mandatory reason —
+   `allow` for a live document naming something deleted on purpose, `skip`
+   for a dated audit or a merged plan whose paths are a record of their
+   moment. A waiver whose path **comes back**, or that no document cites any
+   more, fails the guard: a waiver nobody rechecks is the same defect one
+   level up. `check-docs-drift.test.sh` proves all of that — 13 cases, six
+   red and seven green — and both run in the `No prose running as shell` job.
+
+   **The sweep itself.** `IMPLEMENTATION_GUIDE.md` is the document a
+   contributor opens after the README, and every code sample in it called
+   `middleware.Auth(cfg.KeycloakURL, cfg.Realm)` — a two-argument function
+   that has not existed for a long time (the real one is
+   `middleware.Auth(jwksURL string)`, and there is no `cfg.KeycloakURL`).
+   Checked the other way, though, the document held up: **64 of the 65
+   `middleware.*` / `validation.*` / `errors.*` / `logger.*` symbols it
+   documents exist in the package it names**, and the 65th is a `*zap.Logger`
+   method. So it was corrected, not bannered.
+
+   `FRONTEND_NAVIGATION.md` listed `frontend/` and a Keycloak login theme as
+   live surfaces and left two questions "open" that had both been answered by
+   deletion. `DEV-BRANCH-SUMMARY.md` (a January 2026 snapshot of a branch that
+   no longer exists, at "70% complete", evaluating Keycloak) and
+   `IMPLEMENTATION_PLAN_PARALLEL.md` (whose banner linked two registers that
+   were never committed) are bannered and moved to the Historical list in
+   `docs/README.md`. `CONTRIBUTING.md` told a new contributor to clone
+   `github.com/openidx/openidx` and start Keycloak. `USER_GUIDE.md:428` still
+   printed a default password; it now points at the one authoritative place.
+   `DESIGN_PATTERNS.md` gave a `**Location:**` for eight patterns, two of
+   which were never built — those two now say *proposed, not built* and name
+   what the tree does instead. `PRODUCTION-READINESS.md` listed a dead
+   `oauth/oidc.go` as a known gap; the file is gone.
+
+   **The README's saving claim.** `landing.test.tsx:89` has forbidden
+   "70%" on the landing page since the truthfulness rewrite, and the README's
+   second paragraph asserted a "**70–80% saving**" the whole time. It now says
+   what is actually true — self-hosted and Apache-2.0, so the cost is
+   infrastructure and operators — and that what that saves against a
+   particular stack depends on seat counts nobody here has measured. The
+   same number was in `SCIM.md` as "reduce manual provisioning work by
+   70-80%".
+
+   **The fourth pillar.** The site had guide pages for PAM and ZTNA and none
+   for governance, so "all four pillars from the docs" was three.
+   `docs/docs/guide/governance.md` is the missing one: the request →
+   approve → fulfil → certify → sever loop, with every endpoint it cites
+   checked against the OpenAPI specs that P7.4 proved against the route
+   tables. Writing it against the code rather than from memory caught three
+   things this guide would otherwise have shipped wrong: campaigns are the
+   *scheduled* form and `POST /reviews` is one round (with `type`, not
+   `review_type`), lifecycle policies are at `/api/v1/lifecycle-policies`
+   with no `/admin/` segment, and SoD's preventive half is specifically the
+   role-grant path.
+
+   **The API-only epics (decision 3).** `OUTBOUND_SCIM.md`, `SSF_CAEP.md` and
+   `HR_DRIVEN_JML.md` each described a shipped capability without ever saying
+   it has no console screen — so a reader would go looking for a page that is
+   not there, which is this project's defect class pointed at the docs. Each
+   now opens with an admonition saying it is API-only by a ratified post-GA
+   decision, and carries a working `curl` recipe. Writing those caught a
+   fourth wrong path: SSF stream management is served at `/ssf/streams` on
+   the oauth service, not under `/api/v1/oauth/`.
+
+   The mkdocs config's phantom Discord invite and its `G-XXXXXXXXXX`
+   analytics property are gone: a social link to a server that does not exist
+   sends readers into a dead end, and an unset property renders a broken tag
+   on every page.
 2. ☐ **CHANGELOG** advanced through v1.28.0…v1.33.3 by tag date, this
    branch under `[Unreleased]`, compare links repaired.
 3. ✅ **One version, and something that keeps it.** The tree carried five
@@ -2931,8 +3008,8 @@ that holds it rather than by the commit that wrote it.
 | 1 · journeys verified | ☐ | J1 ✅ the `smoke` and `first-run` jobs (P6.2); J2 ✅ `test/integration/{auth_flows,mfa_flow,passwordless}_test.go`; J3 ✅ `test/integration/enforced_posture_test.go` (P6.1); ☐ **J6 has no automated proof** — `e2e/access-reviews-flow.spec.ts` is still on the `hold` side of `e2e/suite.txt`; ☐ **J7 needs a leaver integration case**; J4/J5/J8 stay scripted operator drills (`tools/darkprobe`, `make dr-game-day`) to be filed under `docs/evidence/` (P8.4) |
 | 2 · enforced posture, legacy login gone | ◐ | code ✅ — the server-rendered login is deleted and `internal/oauth/routes_legacy_login_test.go` fails if any of it returns (P6.1); ops ☐ — rollout Task 16 is the operator's, on a live deployment |
 | 3 · every control enforces | ◐ | P5.1–5.11 ✅ (tenant isolation, the inverted orgscope lint, OPA `deny`, ABAC at both PEPs, the honest Apply/Remediate, SMS, multi-IdP, the fail-closed gate, `ValidateProduction`, the faked measurements); ☐ the P5.3b register programme — 95 tables still ride `needsScoping`/`needsBelt` waivers |
-| 4 · first run / first login / four pillars from the docs | ◐ | first run ✅ `smoke` + `first-run` jobs (P6.2); ☐ `USER_GUIDE.md:428` still prints a default credential and the site has no IGA guide page, so it is three pillars (P8.1) |
-| 5 · one story + auditor artifacts | ☐ | threat model and control mapping exist; docs sweep 3 + the docs-drift guard are P8.1 |
+| 4 · first run / first login / four pillars from the docs | ✅ | first run ✅ the `smoke` and `first-run` jobs (P6.2); first login ✅ one authoritative credential in `GETTING-STARTED.md`, with the `USER_GUIDE.md` and `CONTRIBUTING.md` copies pointing at it rather than repeating it (P8.1); four pillars ✅ `guide/governance.md` was the missing one (P8.1) |
+| 5 · one story + auditor artifacts | ◐ | threat model and control mapping exist; docs sweep 3 ✅ and the docs-drift guard ✅ (`check-docs-drift.sh`, enforced in CI, so a document cannot cite a path that is not there); ☐ `docs/evidence/` is the auditor-facing half, and is P8.4 |
 | 6 · releases current, signed, Helm proven | ◐ | signing ✅ `release.yml` (cosign) and, since P7.5, an Android artifact whose name tracks the key that signed it; Helm ✅ the `kind` install job (P6.4); versions ✅ `VERSION` + `check-version-sync.sh` (P8.3); ☐ the CHANGELOG still carries 359 shipped lines under `[Unreleased]` (P8.2), and v1.34.0 is not cut |
 | 7 · controls run with evidence | ☐ | §5.1's automated half runs in CI; §5.2/§5.3 are operator-run; `docs/evidence/` does not exist yet (P8.4) |
 

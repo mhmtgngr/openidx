@@ -12,7 +12,7 @@
 > features below are **shipped**, not pending:
 > - **Passwordless / WebAuthn-FIDO2** — built (`internal/identity` WebAuthn
 >   handlers, `mfa_webauthn` tables, admin Security Keys page).
-> - **Push notification MFA** — built (`internal/mfa` push, `mfa_push_*`
+> - **Push notification MFA** — built (`internal/identity/pushmfa.go`, `mfa_push_*`
 >   tables, admin Push Devices page).
 > - **Adaptive / risk-based auth** — built (`internal/risk`, admin Risk
 >   Policies / Risk Dashboard / Login Anomalies pages).

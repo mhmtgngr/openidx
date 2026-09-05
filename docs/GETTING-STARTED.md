@@ -548,8 +548,9 @@ curl http://localhost:8001/metrics
 
 - **Documentation:** `/docs` folder
 - **Issues:** https://github.com/mhmtgngr/openidx/issues
-- **Architecture:** See `docs/ARCHITECTURE.md` (to be created)
-- **API Reference:** See `docs/API-REFERENCE.md` (to be created)
+- **Architecture:** [Architecture](docs/guide/architecture.md) on the docs site
+- **API Reference:** the OpenAPI specs in `api/openapi/`, browsable in the
+  console under **Developer → API Docs**
 
 ---
 
