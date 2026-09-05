@@ -46,3 +46,51 @@ func (s *Service) createMFASession(ctx context.Context, userID string, oauthPara
 	}
 	return mfaSession, nil
 }
+
+// allowedMFAMethods returns the factor list this challenge was ISSUED for, or
+// nil when the session carries none.
+//
+// Nil means "no list was pinned", not "no method is allowed": the passwordless
+// phone flow (passwordless_phone.go) pins a single required_mfa_method instead,
+// which is stricter, and a session minted by an older build during a rollout
+// has neither. Sessions live five minutes, so that window closes on its own.
+func allowedMFAMethods(mfaData map[string]string) []string {
+	raw := strings.TrimSpace(mfaData["allowed_methods"])
+	if raw == "" {
+		return nil
+	}
+	var out []string
+	for _, m := range strings.Split(raw, ",") {
+		if m = strings.TrimSpace(m); m != "" {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// mfaMethodPermitted reports whether method may be used against this challenge.
+//
+// This is the check the pin above was written for, and until now nothing made
+// it. evaluateMFA filters the offerable factors by what the risk policy allows
+// (mfa_policy.go: `assessment.AllowedMethods` can restrict a high-risk login to
+// phishing-resistant factors alone), createMFASession stores the result, the
+// login response offers exactly that list to the console — and every endpoint
+// that consumes the session accepted any method the caller named. A caller who
+// skipped the console could finish a webauthn-only challenge with an SMS code,
+// which is precisely the substitution the filter exists to prevent.
+//
+// Enforced at all four consumers rather than only at mfa-verify: an excluded
+// factor should not be startable either, and a check that lives in one of four
+// doors is a check the next change walks around.
+func mfaMethodPermitted(mfaData map[string]string, method string) bool {
+	allowed := allowedMFAMethods(mfaData)
+	if len(allowed) == 0 {
+		return true
+	}
+	for _, m := range allowed {
+		if m == method {
+			return true
+		}
+	}
+	return false
+}

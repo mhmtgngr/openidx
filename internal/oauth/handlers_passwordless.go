@@ -112,6 +112,11 @@ func (s *Service) handleMFASendOTP(c *gin.Context) {
 		return
 	}
 
+	if !mfaMethodPermitted(mfaData, req.Method) {
+		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "this sign-in cannot be completed with " + req.Method})
+		return
+	}
+
 	userID := mfaData["user_id"]
 	if userID == "" {
 		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "MFA session missing user identity"})

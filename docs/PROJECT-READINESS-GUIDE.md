@@ -2148,10 +2148,46 @@ worked.
      coming back by the routes these left by: a viper default or
      `mapstructure` binding in `config.go`, and a line in any shipped
      `configs/*.yaml`. Both shown red against a restored `enable_mfa`.
-6. ☐ Remaining from the audit's list: the interactive MFA step-up handlers
-   (`handleMFAVerify`, `handleMFASendOTP`), hardware-token
-   verify/assign/revoke, `handlePamRevealEntry`, `RunSoDSweep`,
-   `handleApproveRequest`, and the Guacamole session handlers.
+6. ✅ **The interactive MFA path — two more controls that were not there.**
+   Writing the tests for `handleMFAVerify` and `handleMFASendOTP` found both.
+   - **SMS and email could not complete a login.** `verifyStepUpFactor`'s doc
+     comment says it verifies "using the same verifiers as the primary login
+     MFA flow (`handleMFAVerify`)". It did not: step-up had a `case "sms",
+     "email"` arm calling `identityService.VerifyOTP`, and `handleMFAVerify`'s
+     switch had no arm for either. So `evaluateMFA` offered SMS and email
+     whenever they were enrolled, `handleMFASendOTP` delivered the code, the
+     console posted it back — and the endpoint answered *"unsupported MFA
+     method"*. A user whose only enrolled factor was an OTP could not log in,
+     while the same credential re-authenticated them for a sensitive action on
+     the same account. `handleMFAVerify` has the arm now, and a test reads the
+     case labels out of both switches and fails when they differ, because the
+     two are only claimed to be the same verifier set — nothing made them so.
+   - **The risk policy's method restriction was written down and never read.**
+     `evaluateMFA` filters the offerable factors by what the adaptive-MFA
+     policy allows (`assessment.AllowedMethods` — a high-risk login can be
+     narrowed to phishing-resistant factors), `createMFASession` pins the
+     result into the Redis session, and `service.go`'s own comment says the pin
+     exists "so a later `/oauth/mfa-verify` cannot be talked into a method this
+     evaluation did not offer". Nothing read `allowed_methods`. The console
+     offered the narrowed list and the endpoint took whatever it was handed, so
+     a login the policy had restricted to WebAuthn was completable with a TOTP
+     code, a backup code or a bypass code — the exact substitution the filter
+     exists to prevent. Enforced now at all four consumers of the session
+     (`mfa-verify`, `mfa-send-otp`, `mfa-webauthn-begin`, `mfa-push-begin`):
+     an excluded factor should not be startable either, and a check that lives
+     in one of four doors is one the next change walks around. An absent pin
+     stays unrestricted — the passwordless phone flow pins a single
+     `required_mfa_method` instead, which is stricter, and sessions live five
+     minutes so a rollout's older ones age out.
+
+   Ten of the new sub-cases are red against the code they replace. The router
+   in these tests recovers, which is load-bearing rather than tidy: every
+   verifier past the gate needs an identity service the harness does not build,
+   so "it got through the gate" is an observable 500 and each case stands alone
+   instead of the first one panicking and taking the run with it.
+7. ☐ Remaining from the audit's list: hardware-token verify/assign/revoke,
+   `handlePamRevealEntry`, `RunSoDSweep`, `handleApproveRequest`, and the
+   Guacamole session handlers.
 
    `internal/identity`'s DB harness now also accepts
    `OPENIDX_TEST_DATABASE_URL`, so these can be written and run on a machine

@@ -2311,6 +2311,17 @@ func (s *Service) handleMFAVerify(c *gin.Context) {
 		return
 	}
 
+	// And the risk policy's own restriction. createMFASession pinned the
+	// offerable factors into this session so that a later mfa-verify "cannot be
+	// talked into a method this evaluation did not offer" — its words. Nothing
+	// read the pin, so the console offered the filtered list and this endpoint
+	// took whatever it was handed: on a login the policy had narrowed to
+	// webauthn, `{"method":"totp"}` — or a backup or bypass code — completed it.
+	if !mfaMethodPermitted(mfaData, req.Method) {
+		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "this sign-in cannot be completed with " + req.Method})
+		return
+	}
+
 	var valid bool
 	var verifyErr error
 
@@ -2373,6 +2384,19 @@ func (s *Service) handleMFAVerify(c *gin.Context) {
 			return
 		}
 		valid = true
+
+	case "sms", "email":
+		// The verifier verifyStepUpFactor already uses for these two, whose own
+		// doc comment says it verifies "using the same verifiers as the primary
+		// login MFA flow (handleMFAVerify)". It was not: this switch had no arm
+		// for either method. evaluateMFA offers sms and email whenever they are
+		// enrolled (mfa_policy.go), handleMFASendOTP delivers the code, the
+		// console posts it back here as method "sms" — and the default arm below
+		// answered "unsupported MFA method". A user whose only enrolled factor
+		// was an OTP could not finish a login at all, while the SAME credential
+		// worked for step-up on the same account.
+		verifyErr = s.identityService.VerifyOTP(c.Request.Context(), userID, req.Method, req.Code)
+		valid = verifyErr == nil
 
 	default:
 		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "unsupported MFA method"})
@@ -2470,6 +2494,11 @@ func (s *Service) handleMFAWebAuthnBegin(c *gin.Context) {
 		return
 	}
 
+	if !mfaMethodPermitted(mfaData, "webauthn") {
+		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "this sign-in cannot be completed with webauthn"})
+		return
+	}
+
 	userID := mfaData["user_id"]
 
 	// Look up username (WebAuthn methods require username)
@@ -2513,6 +2542,11 @@ func (s *Service) handleMFAPushBegin(c *gin.Context) {
 	var mfaData map[string]string
 	if err := json.Unmarshal([]byte(mfaDataJSON), &mfaData); err != nil {
 		c.JSON(500, gin.H{"error": "server_error"})
+		return
+	}
+
+	if !mfaMethodPermitted(mfaData, "push") {
+		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "this sign-in cannot be completed with push"})
 		return
 	}
 
