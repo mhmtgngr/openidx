@@ -1051,5 +1051,12 @@ func allMigrations() []*Migration {
 			UpSQL:       breachResponseTenantScopeUp,
 			DownSQL:     breachResponseTenantScopeDown,
 		},
+		{
+			Version:     148,
+			Name:        "temp_access_tenant_scope",
+			Description: "Put temp_access_links under the FORCE RLS belt and give temp_access_usage an org_id — the PAM temporary vendor access surface, where a link grants an outside party SSH/RDP/VNC into an internal host and a usage row records who redeemed it, from which IP, with what user agent. v71 already closed the cross-tenant IDOR on the links table by adding org_id and org-filtering the handlers, and it wrote down why it stopped short of the belt: the public token-redemption path runs with no authenticated org context, so FORCE RLS would fail closed and break redemption for the vendor, and 'the belt would add no protection there' since every management path was org-filtered in code. The first half was true and is now obsolete — a lookup keyed on a globally-unique secret before the tenant is known is a shape this branch has met four times, and v145's magic-link token is the same shape exactly, redeemed under orgctx.WithBypassRLS and pinned by TestPreResolutionLookupsUnderRLS. The second half is the claim the register programme answers: the belt guards the NEXT query, not the audited ones. That query was already present — temp_access_usage, created by v54, has no tenant column at all and handleGetTempAccessUsage reads it by bare link_id, safe only because a separate EXISTS statement runs first, the same implicit-scoping-through-a-joined-set shape v147 found in ai_intelligence.go and v143 in social_providers. Usage rows are attributed through their link, whose org_id has been NOT NULL since v71. The expiry sweep in internal/governance/jit_expiry.go is a third pattern and stays install-wide on purpose — a link past its expiry is expired in every tenant — so it runs explicitly bypassed rather than by accident. Down removes both belts and the usage column but keeps temp_access_links.org_id, which is v71's and not this migration's to drop. No column DEFAULT.",
+			UpSQL:       tempAccessTenantScopeUp,
+			DownSQL:     tempAccessTenantScopeDown,
+		},
 	}
 }

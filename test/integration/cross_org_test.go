@@ -557,6 +557,24 @@ func TestRLSBeltTables(t *testing.T) {
 			VALUES ('credential_stuffing','high','detected','tbelt-ba-` + suffix + `',ARRAY[]::text[],NOW(),0.8,'none',$1) RETURNING id)
 			INSERT INTO breach_alerts (incident_id, type, severity, message, ip_address, org_id)
 			SELECT i.id,'credential_stuffing','high','tbelt-ba-` + suffix + `','203.0.113.4',$1 FROM i`},
+
+		// v148 — PAM temporary vendor access. temp_access_links has carried
+		// org_id since v71, which deliberately left the belt off; the usage row
+		// is new here. A usage row needs a link, so it brings its own.
+		// created_by is NOT NULL on temp_access_links (v54) and carries no FK,
+		// so a literal uuid is enough; a link that fails to insert here would
+		// show up as the bypass count assertion failing, not as a seed error,
+		// because bypassExec swallows its own.
+		{"temp_access_links", `INSERT INTO temp_access_links
+			(token, name, protocol, target_host, target_port, username, created_by, expires_at, status, org_id)
+			VALUES ('tbelt-tal-` + suffix + `','tbelt link','ssh','internal.corp',22,'vendor',
+				'00000000-0000-0000-0000-0000000000f1',NOW() + INTERVAL '1 day','active',$1)`},
+		{"temp_access_usage", `WITH l AS (
+			INSERT INTO temp_access_links (token, name, protocol, target_host, target_port, username, created_by, expires_at, status, org_id)
+			VALUES ('tbelt-tau-` + suffix + `','tbelt usage link','ssh','internal.corp',22,'vendor',
+				'00000000-0000-0000-0000-0000000000f1',NOW() + INTERVAL '1 day','active',$1) RETURNING id)
+			INSERT INTO temp_access_usage (link_id, ip_address, user_agent, connected_at, org_id)
+			SELECT l.id,'203.0.113.5','tbelt-ua',NOW(),$1 FROM l`},
 	}
 
 	// One list, not two: the role is granted exactly the tables the cases probe.

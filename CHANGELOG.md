@@ -21,6 +21,33 @@ to a spec that describes an eighth of a surface, a documented endpoint that
   the posture score was neither one tenant's nor the install's. All now carry
   `org_id` under FORCE RLS, with the install-wide unique keys re-scoped and an
   isolation test per handler file.
+- **Temporary vendor access is under the row-level-security belt, and its usage
+  record has a tenant** (migration v148). A temporary access link grants an
+  outside party SSH, RDP or VNC into an internal host. An earlier migration
+  (v71) had already stopped one tenant from reading or revoking another's links,
+  and recorded why it went no further: the page that redeems a link runs with no
+  signed-in user, so enforcing tenancy in the database would have broken
+  redemption for the vendor, and every management screen was already filtered in
+  code. The first reason no longer holds — the same pattern has since been
+  solved four times over for other single-use secrets, most recently magic
+  links, which redeem exactly this way — so redemption now runs with the
+  enforcement deliberately lifted and the link's own organization carried
+  through, and the links table is enforced like every other.
+
+  The second reason is why the enforcement is worth having. It guards the next
+  query written, not the ones audited when it goes in, and that query was
+  already present: the record of who redeemed a link, from which address and
+  with what browser, had no tenant column at all and was read by link alone —
+  correct only because a separate check happened to run first. It now carries
+  its own organization and is filtered on it.
+
+  Two failures on the redemption path are fixed with it: the use counter and the
+  usage record were both written without checking whether the write succeeded,
+  so an unrecorded connection to an internal host would have gone unnoticed. The
+  background sweep that expires stale links stays deliberately install-wide — a
+  link past its expiry is expired for everyone, and a sweep that missed a tenant
+  would leave a vendor connected — and now says so at the call site instead of
+  being silently reduced to nothing by the new enforcement.
 - **Breach response is per tenant, and its containment now does what it
   reports** (migration v147). `breach_incidents` and `breach_alerts` — the
   record of what was detected, which users and sessions it affected and what

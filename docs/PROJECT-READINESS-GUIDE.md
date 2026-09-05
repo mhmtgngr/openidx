@@ -1936,6 +1936,61 @@ class this whole program exists for.
    handlers and green after — including "org B's alert came back blank", which
    is how the scan bug was found. `TestRLSBeltTables` 37/37. v147 applied,
    rolled back and re-applied.
+
+   **Batch 10 shipped (migration v148, `needsScoping` 39 → 38, `needsBelt` 19 →
+   18; registers 58 → 56): a waiver whose reason had expired.** A temp access
+   link grants an **outside party** SSH/RDP/VNC into an internal host. v71
+   already closed the cross-tenant IDOR on `temp_access_links` — before it, any
+   authenticated user could enumerate, read and revoke every other tenant's
+   vendor access — and it wrote down, in the migration, why it stopped short of
+   the belt: the public token-redemption path has no org context, so FORCE RLS
+   would fail closed and break redemption for the vendor; and since every
+   management path was org-filtered in code, *"the belt would add no protection
+   there."*
+
+   **The first half was true and had since become obsolete.** A lookup keyed on
+   a globally-unique secret that runs *before* the tenant is known is a shape
+   this branch has met four times — api-key-by-hash, route-by-host, SAML
+   `entity_id`, and v145's magic-link token, which is the same shape exactly: a
+   single-use secret redeemed by someone with no session. The remedy is uniform
+   and pinned (`orgctx.WithBypassRLS` + `TestPreResolutionLookupsUnderRLS`). v71
+   declined the belt because it had no way to keep redemption working; that
+   stopped being true three batches ago, and **a waiver whose reason has expired
+   is just a gap**.
+
+   **The second half is the claim this whole register programme answers.** The
+   belt does not protect against the queries that exist when it is installed —
+   those get audited on the way in. It protects against the *next* query,
+   written by someone who did not read the comment. **That query was already
+   there**: `temp_access_usage` — who redeemed a link, from which IP, with what
+   user agent — has never had a tenant column, and its read was `WHERE link_id =
+   $1` and nothing else, safe only because a *separate* `EXISTS` statement ran
+   first. Safety living in the order two statements are written in is the shape
+   v147 found recorded in `ai_intelligence.go` and v143 in `social_providers`.
+   The test pins the difference the new predicate makes: a usage row carrying
+   org B's `org_id` while hanging off org A's link is returned to org A under
+   the old query and filtered under the new one — the link check cannot catch
+   it, because it only proves the *link* is org A's.
+
+   **The expiry sweep is a third pattern, and neither of the other two.**
+   `jit_expiry.go` runs `UPDATE temp_access_links SET status = 'expired' …`
+   across the whole install deliberately: a link past its expiry is expired in
+   every tenant, and a sweep that iterated organizations would leave links live
+   in any tenant it missed — the failure mode being a vendor keeping SSH into an
+   internal host. Under the belt that write silently matches nothing unless it
+   says so, so it now runs explicitly bypassed with the reason at the call site.
+   Install-wide is a legitimate answer; going install-wide by accident is not.
+
+   Two discarded errors went with it: the use-count `UPDATE` and the usage
+   `INSERT` in the redemption path were both bare `s.db.Pool.Exec(…)`. An
+   unrecorded vendor connection to an internal host is worse than a refused one.
+
+   Proven on Postgres 16: three cases in `internal/access`, two red against the
+   old handlers (the usage record silently vanishes) and the third red against a
+   reverted predicate. `TestRLSBeltTables` **39/39** under the NOSUPERUSER role.
+   v148 applied, rolled back to 147 and re-applied — the rollback deliberately
+   keeps `temp_access_links.org_id`, which is v71's column, and `v148_test.go`
+   fails if a later edit drops it.
 4. ✅ **OPA `deny` enforced** — *shipped.* — `internal/common/middleware/opa.go`: abort
    unless `Allow && len(Deny)==0`; `authz.rego:15-19`'s "any authenticated
    user may GET anything" removed; `policies/access_control.rego`
@@ -3564,7 +3619,7 @@ that holds it rather than by the commit that wrote it.
 |---|---|---|
 | 1 · journeys verified | ☐ | J1 ✅ the `smoke` and `first-run` jobs (P6.2); J2 ✅ `test/integration/{auth_flows,mfa_flow,passwordless}_test.go`; J3 ✅ `test/integration/enforced_posture_test.go` (P6.1); ☐ **J6 has no automated proof** — `e2e/access-reviews-flow.spec.ts` is still on the `hold` side of `e2e/suite.txt`; ☐ **J7 needs a leaver integration case**; J4/J5/J8 stay scripted operator drills (`tools/darkprobe`, `make dr-game-day`) to be filed under `docs/evidence/` (P8.4) |
 | 2 · enforced posture, legacy login gone | ◐ | code ✅ — the server-rendered login is deleted and `internal/oauth/routes_legacy_login_test.go` fails if any of it returns (P6.1); ops ☐ — rollout Task 16 is the operator's, on a live deployment |
-| 3 · every control enforces | ◐ | P5.1–5.11 ✅ (tenant isolation, the inverted orgscope lint, OPA `deny`, ABAC at both PEPs, the honest Apply/Remediate, SMS, multi-IdP, the fail-closed gate, `ValidateProduction`, the faked measurements); ◐ the P5.3b register programme — batch 1 (v140) belted fifteen tables and fixed `email_branding`'s cross-tenant read *and* write; batch 2 (v141) scoped the compliance record and fixed an archive worker that was silently producing empty archives; batches 4–9 (v142–v147) took the unified audit stream, the sign-in tables, the SAML surface, the password-substitute credentials, the four second factors the belt had skipped, and the breach response record — where a containment reported success while quarantining nobody; **58** still ride `needsScoping`/`needsBelt` waivers |
+| 3 · every control enforces | ◐ | P5.1–5.11 ✅ (tenant isolation, the inverted orgscope lint, OPA `deny`, ABAC at both PEPs, the honest Apply/Remediate, SMS, multi-IdP, the fail-closed gate, `ValidateProduction`, the faked measurements); ◐ the P5.3b register programme — batch 1 (v140) belted fifteen tables and fixed `email_branding`'s cross-tenant read *and* write; batch 2 (v141) scoped the compliance record and fixed an archive worker that was silently producing empty archives; batches 4–10 (v142–v148) took the unified audit stream, the sign-in tables, the SAML surface, the password-substitute credentials, the four second factors the belt had skipped, the breach response record — where a containment reported success while quarantining nobody — and the temporary vendor access surface, where v71's written-down reason for skipping the belt had expired three batches earlier; **56** still ride `needsScoping`/`needsBelt` waivers |
 | 4 · first run / first login / four pillars from the docs | ✅ | first run ✅ the `smoke` and `first-run` jobs (P6.2); first login ✅ one authoritative credential in `GETTING-STARTED.md`, with the `USER_GUIDE.md` and `CONTRIBUTING.md` copies pointing at it rather than repeating it (P8.1); four pillars ✅ `guide/governance.md` was the missing one (P8.1) |
 | 5 · one story + auditor artifacts | ✅ | threat model and control mapping exist; docs sweep 3 ✅ and the docs-drift guard ✅ (`check-docs-drift.sh`, enforced in CI, so a document cannot cite a path that is not there); `docs/evidence/` ✅ (P8.4) |
 | 6 · releases current, signed, Helm proven | ◐ | signing ✅ `release.yml` (cosign) and, since P7.5, an Android artifact whose name tracks the key that signed it; Helm ✅ the `kind` install job (P6.4); versions ✅ `VERSION` + `check-version-sync.sh` (P8.3); CHANGELOG ✅ every release attributed from the commit that wrote its entry, 61 compare links that resolve (P8.2); ☐ v1.34.0 is not cut — the maintainer's |
