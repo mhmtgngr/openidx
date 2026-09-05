@@ -21,6 +21,48 @@ to a spec that describes an eighth of a surface, a documented endpoint that
   the posture score was neither one tenant's nor the install's. All now carry
   `org_id` under FORCE RLS, with the install-wide unique keys re-scoped and an
   isolation test per handler file.
+- **Every organization's single sign-on routing was visible to every
+  administrator, and two organizations could not share a domain or an identity
+  provider** (migration v155). A federation rule says which identity provider
+  authenticates a given email domain — the record that decides where someone
+  typing their work address is sent to sign in.
+
+  The administrative list of those rules showed every organization's, not just
+  the viewer's. The check that was meant to confine it sat in a part of the
+  query that decides how to *label* a row rather than whether to *return* it,
+  so it filtered nothing and merely left the provider name blank on the rules
+  belonging to other organizations. Rules could also be edited or deleted by
+  anyone who knew their identifier: an administrator elsewhere on the
+  installation could switch off another organization's SSO for a domain, after
+  which its users would quietly get a password prompt instead, with nothing on
+  the owner's screen to say the routing had changed. And a rule could be
+  created naming an identity provider belonging to a different organization.
+  All of this is now confined to the organization that owns the rule, and a
+  rule can only name a provider from that same organization.
+
+  Two limits that made multi-organization installs impossible are lifted in the
+  same change. An email domain could be registered **once per installation**:
+  whoever claimed it first held it everywhere, and the next organization to try
+  got an unexplained failure. An identity provider's issuer address was
+  likewise unique installation-wide, so two organizations could not both
+  federate to the same provider — two departments on one corporate tenant, or
+  simply both using the same public provider. Each is now unique per
+  organization, and a duplicate within one organization gets a message saying
+  so rather than a generic error.
+
+  **Operators of installations with more than one organization should review
+  their federation rules after upgrading.** Each rule is assigned to the
+  organization of the identity provider it routes to. A rule every
+  administrator could see will now be visible to one.
+
+  Also recorded, and not yet fixed: the custom claim mappings configured per
+  application — "include the user's department in the token as `dept`" — are
+  saved, listed back, and read by nothing. No token has ever carried them. The
+  page's three destination switches (ID token, access token, userinfo) have no
+  consumer behind them. The mappings are now confined to the organization that
+  owns the application, so they can no longer be added to or removed from
+  another organization's applications, but making them actually reach a token
+  is outstanding work rather than something this release delivers.
 - **A second organization could re-aim the rule that disables and deletes
   accounts** (migration v154). Joiner/mover/leaver automation is two kinds of
   rule — a workflow that runs on a person's arrival or departure, and a

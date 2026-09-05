@@ -333,7 +333,10 @@ func TestRegistersOnlyShrink(t *testing.T) {
 		// (risk_policies). 32 -> 28 with v154, which took the four
 		// joiner/mover/leaver tables in one go: the two rules that decide which
 		// accounts get disabled or deleted, and the two logs of what they did.
-		{"needsScoping", len(needsScoping), 28},
+		// 28 -> 26 with v155, the federation configuration: the rule that says
+		// which identity provider authenticates a domain, and the mappings that
+		// say what an application is told about whoever signed in.
+		{"needsScoping", len(needsScoping), 26},
 		// 34 → 19: migration v140 belted the fifteen whose queries already
 		// carried their org predicate. Re-pinned rather than left at 34, or
 		// the register could grow back into the room the fix just made.

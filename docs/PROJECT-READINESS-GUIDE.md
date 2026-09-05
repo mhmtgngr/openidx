@@ -2422,6 +2422,97 @@ class this whole program exists for.
    never even written. A policy page that offers a schedule and runs on none of
    it is this programme's own defect class, but building the runner is a feature
    rather than a scoping fix, so it is recorded here.
+
+   **Batch 17 shipped (migration v155, `needsScoping` 28 → 26; registers 45 →
+   43): a LEFT JOIN is not a tenant predicate.** `federation_rules` maps an
+   email domain to the identity provider that authenticates it — the row that
+   decides where someone typing their address is sent to sign in.
+   `custom_claims_mappings` decides what an application is told about whoever
+   signed in. v54 created both with no tenant column.
+
+   **The two reads of `federation_rules` are the same query one word apart.**
+   The login path (`internal/identity/handlers_federation.go`):
+
+   ```sql
+   FROM federation_rules fr
+   JOIN identity_providers ip ON fr.provider_id = ip.id AND ip.org_id = $2
+   ```
+
+   The admin list (`internal/admin/federation.go`):
+
+   ```sql
+   FROM federation_rules fr
+   LEFT JOIN identity_providers ip ON fr.provider_id = ip.id AND ip.org_id = $1
+   ```
+
+   An inner join drops the rows that fail the condition. A left join keeps every
+   row of the left table and nulls the right side — so `ip.org_id = $1` stopped
+   being a filter and became a decoration. The list returned **every**
+   organization's federation rules, with `COALESCE(ip.name,'')` rendering the
+   foreign ones' provider as an empty string. A join is a tenant predicate only
+   when failing it removes the row.
+
+   **And this file already knew.** Twelve functions above, `handleListSocialProviders`
+   carries the fix and the lesson, spelled out: *"The org predicate has to be in
+   the WHERE clause. It used to sit only in the LEFT JOIN's ON, which decides
+   whether the joined identity_providers row contributes and filters NOTHING on
+   social_providers."* The identical mistake on the neighbouring table, in the
+   same file, was never revisited. A lesson written down once beside the query
+   it was learned on does not generalise by itself.
+
+   **Two install-wide unique keys, and one of them found by this batch's own
+   test.** v54 declared `email_domain VARCHAR(255) NOT NULL UNIQUE`: one
+   organization per domain for the whole installation, so whoever registers
+   `example.com` first owns it and the next tenant gets a unique violation
+   reported as a bare 500. Then seeding an identity provider for each of two
+   organizations failed outright with
+   `duplicate key value violates unique constraint "identity_providers_issuer_url_key"`.
+   `identity_providers` is otherwise a model citizen — it carries `org_id`, it is
+   ENABLE + FORCE row-level-secured, it sits on no register, every lint passes
+   over it — and two organizations still could not both federate to the same
+   issuer. Which is not exotic: it is two tenants on the same Entra common
+   endpoint, two subsidiaries in one Okta org, or simply both using
+   `https://accounts.google.com`. **A table can be fully scoped, fully belted,
+   and still unusable by more than one tenant because of a key written before
+   tenants existed.** Both re-scoped, to `(org_id, email_domain)` and
+   `(org_id, issuer_url)`, the way v138 did `ispm_rules.check_type` and
+   `ai_agents.name`.
+
+   The rest is the familiar list: update and delete addressed rules by bare id,
+   so one administrator could disable or delete another organization's SSO
+   routing and its users would quietly fall back to a password prompt; create
+   inserted whatever `provider_id` the caller supplied with no check that the
+   provider was theirs.
+
+   **`custom_claims_mappings` is the same defect with nothing behind it.** Its
+   list, update and delete take a bare `application_id` or a bare id, so one
+   tenant could add, retarget or remove the claim mappings on another tenant's
+   application — an identity-forgery primitive, except that a search of the
+   whole tree finds **no reader**. The table is written by its own admin CRUD
+   and the console page driving it, and by nothing else: no token mint, no
+   `/userinfo`. The columns `include_in_id_token`, `include_in_access_token` and
+   `include_in_userinfo` name three destinations that have no consumer. An
+   administrator can map "department" into the ID token as `dept`, save it, see
+   it listed back, and no token ever carries it. It is scoped here rather than
+   dropped — v151 dropped `guacamole_connection_pool` because it was never read
+   *and* its only write had always failed, whereas this holds configuration an
+   operator really entered — and the gap is recorded rather than smuggled into a
+   scoping batch. **The cross-tenant write is harmless today only because the
+   feature does nothing at all.**
+
+   Backfill is exact rather than inferred: both tables have an enforced NOT NULL
+   foreign key to an already-scoped parent, so a rule goes to the organization of
+   the identity provider it routes to and a mapping to the organization of the
+   application it decorates.
+
+   Proven on Postgres 16: six cases in `internal/admin`, and every one that
+   tests a handler — the cross-tenant list, the foreign provider, the re-point,
+   the delete, and all three claim-mapping operations — **red against the old
+   code**. The two schema-level findings are proven by the constraint
+   definitions themselves, and the `issuer_url` one by the seeding failure that
+   surfaced it. `TestRLSBeltTables` **51/51**;
+   `TestComposeMigrateSeedProducesRLSInstall` green; v155 applied, rolled back
+   to 154 — restoring both install-wide keys — and re-applied.
 4. ✅ **OPA `deny` enforced** — *shipped.* — `internal/common/middleware/opa.go`: abort
    unless `Allow && len(Deny)==0`; `authz.rego:15-19`'s "any authenticated
    user may GET anything" removed; `policies/access_control.rego`
@@ -4050,7 +4141,7 @@ that holds it rather than by the commit that wrote it.
 |---|---|---|
 | 1 · journeys verified | ☐ | J1 ✅ the `smoke` and `first-run` jobs (P6.2); J2 ✅ `test/integration/{auth_flows,mfa_flow,passwordless}_test.go`; J3 ✅ `test/integration/enforced_posture_test.go` (P6.1); ☐ **J6 has no automated proof** — `e2e/access-reviews-flow.spec.ts` is still on the `hold` side of `e2e/suite.txt`; ☐ **J7 needs a leaver integration case**; J4/J5/J8 stay scripted operator drills (`tools/darkprobe`, `make dr-game-day`) to be filed under `docs/evidence/` (P8.4) |
 | 2 · enforced posture, legacy login gone | ◐ | code ✅ — the server-rendered login is deleted and `internal/oauth/routes_legacy_login_test.go` fails if any of it returns (P6.1); ops ☐ — rollout Task 16 is the operator's, on a live deployment |
-| 3 · every control enforces | ◐ | P5.1–5.11 ✅ (tenant isolation, the inverted orgscope lint, OPA `deny`, ABAC at both PEPs, the honest Apply/Remediate, SMS, multi-IdP, the fail-closed gate, `ValidateProduction`, the faked measurements); ◐ the P5.3b register programme — batch 1 (v140) belted fifteen tables and fixed `email_branding`'s cross-tenant read *and* write; batch 2 (v141) scoped the compliance record and fixed an archive worker that was silently producing empty archives; batches 4–10 (v142–v148) took the unified audit stream, the sign-in tables, the SAML surface, the password-substitute credentials, the four second factors the belt had skipped, the breach response record — where a containment reported success while quarantining nobody — the temporary vendor access surface, where v71's written-down reason for skipping the belt had expired three batches earlier, the legal holds — the first batch whose defect destroys rather than discloses, since releasing a hold is what lets the retention sweep delete the recording — the remote support sessions, whose list ran with no `WHERE` clause at all over a nullable tenant column the belt would have hidden rather than scoped, and the PAM broker's connection registry — where the row that decides which vault credential is injected carried no tenant, so another tenant's route id bought a live session onto their machine with their password, and the four-eyes gates could not help because both are satisfiable inside the caller's own tenant — delegated administration, read by the enforcement point itself under a deliberate bypass with a tenant-scoping comment copied from the query above it and a cache that handed one person's delegation to everyone sharing their roles, and the login risk policies, where one tenant's row could replace every tenant's allowed second factors or deny every login outright, and the joiner/mover/leaver automation, where every action the rules take was already scoped but the rules themselves were not, so another tenant could rewrite a policy labelled "disable after 90 days" into "delete after 0" and leave its owner running it; **45** still ride `needsScoping`/`needsBelt` waivers |
+| 3 · every control enforces | ◐ | P5.1–5.11 ✅ (tenant isolation, the inverted orgscope lint, OPA `deny`, ABAC at both PEPs, the honest Apply/Remediate, SMS, multi-IdP, the fail-closed gate, `ValidateProduction`, the faked measurements); ◐ the P5.3b register programme — batch 1 (v140) belted fifteen tables and fixed `email_branding`'s cross-tenant read *and* write; batch 2 (v141) scoped the compliance record and fixed an archive worker that was silently producing empty archives; batches 4–10 (v142–v148) took the unified audit stream, the sign-in tables, the SAML surface, the password-substitute credentials, the four second factors the belt had skipped, the breach response record — where a containment reported success while quarantining nobody — the temporary vendor access surface, where v71's written-down reason for skipping the belt had expired three batches earlier, the legal holds — the first batch whose defect destroys rather than discloses, since releasing a hold is what lets the retention sweep delete the recording — the remote support sessions, whose list ran with no `WHERE` clause at all over a nullable tenant column the belt would have hidden rather than scoped, and the PAM broker's connection registry — where the row that decides which vault credential is injected carried no tenant, so another tenant's route id bought a live session onto their machine with their password, and the four-eyes gates could not help because both are satisfiable inside the caller's own tenant — delegated administration, read by the enforcement point itself under a deliberate bypass with a tenant-scoping comment copied from the query above it and a cache that handed one person's delegation to everyone sharing their roles, and the login risk policies, where one tenant's row could replace every tenant's allowed second factors or deny every login outright, and the joiner/mover/leaver automation, where every action the rules take was already scoped but the rules themselves were not, so another tenant could rewrite a policy labelled "disable after 90 days" into "delete after 0" and leave its owner running it, and the identity federation configuration, where the admin list wrote its tenant condition into a LEFT JOIN's ON clause and so filtered nothing while the login path's inner join twelve functions away did — and where two install-wide UNIQUE keys meant one organization per email domain and one per issuer URL for the entire installation; **43** still ride `needsScoping`/`needsBelt` waivers |
 | 4 · first run / first login / four pillars from the docs | ✅ | first run ✅ the `smoke` and `first-run` jobs (P6.2); first login ✅ one authoritative credential in `GETTING-STARTED.md`, with the `USER_GUIDE.md` and `CONTRIBUTING.md` copies pointing at it rather than repeating it (P8.1); four pillars ✅ `guide/governance.md` was the missing one (P8.1) |
 | 5 · one story + auditor artifacts | ✅ | threat model and control mapping exist; docs sweep 3 ✅ and the docs-drift guard ✅ (`check-docs-drift.sh`, enforced in CI, so a document cannot cite a path that is not there); `docs/evidence/` ✅ (P8.4) |
 | 6 · releases current, signed, Helm proven | ◐ | signing ✅ `release.yml` (cosign) and, since P7.5, an Android artifact whose name tracks the key that signed it; Helm ✅ the `kind` install job (P6.4); versions ✅ `VERSION` + `check-version-sync.sh` (P8.3); CHANGELOG ✅ every release attributed from the commit that wrote its entry, 61 compare links that resolve (P8.2); ☐ v1.34.0 is not cut — the maintainer's |

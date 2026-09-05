@@ -83,10 +83,6 @@ var needsScoping = map[string]string{
 	"user_identity_links":   "per-user external identity links",
 	"social_account_links":  "per-user social provider links",
 
-	// Identity federation and SSO configuration — per-tenant by nature.
-	"federation_rules":       "email-domain to IdP routing rules",
-	"custom_claims_mappings": "per-application claim mappings",
-
 	// Lifecycle, governance and delegation.
 	"entitlement_metadata":     "risk level and owner per entitlement",
 	"kiosk_policies":           "kiosk lockdown policies (v44)",

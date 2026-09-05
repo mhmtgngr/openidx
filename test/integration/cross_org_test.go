@@ -653,6 +653,23 @@ func TestRLSBeltTables(t *testing.T) {
 				'{"inactive_days": 90}'::jsonb, '{"action": "disable"}'::jsonb, $1) RETURNING id)
 			INSERT INTO lifecycle_policy_executions (policy_id, status, users_scanned, org_id)
 			SELECT p.id, 'completed', 0, $1 FROM p`},
+
+		// v155 — the federation configuration. The admin list of this table
+		// wrote its tenant condition into a LEFT JOIN, where it filtered
+		// nothing; the belt is what makes the boundary hold regardless of how
+		// the next query happens to be written.
+		{"federation_rules", `WITH ip AS (
+			INSERT INTO identity_providers (org_id, name, provider_type, issuer_url, client_id, client_secret)
+			VALUES ($1, 'tbelt-idp-` + suffix + `', 'oidc', 'https://idp.example.test',
+				'tbelt-idp-cid-` + suffix + `', 'x') RETURNING id)
+			INSERT INTO federation_rules (name, email_domain, provider_id, enabled, org_id)
+			SELECT 'tbelt-fr-` + suffix + `', 'tbelt-` + suffix + `.example.test', ip.id, true, $1 FROM ip`},
+
+		{"custom_claims_mappings", `WITH a AS (
+			INSERT INTO applications (org_id, name, client_id, type)
+			VALUES ($1, 'tbelt-app-` + suffix + `', 'tbelt-cid-` + suffix + `', 'web') RETURNING id)
+			INSERT INTO custom_claims_mappings (application_id, claim_name, source_type, source_value, org_id)
+			SELECT a.id, 'tbelt-claim-` + suffix + `', 'user_attribute', 'department', $1 FROM a`},
 	}
 
 	// One list, not two: the role is granted exactly the tables the cases probe.
