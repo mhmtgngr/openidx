@@ -60,7 +60,13 @@ func integrationDB(t *testing.T) *pgxpool.Pool {
 // non-superuser master role, where the policies do apply; this role reproduces
 // that. The role is created idempotently via the (superuser) admin pool and
 // granted only what the belt assertions need (SELECT on users/organizations).
-func rlsRolePool(t *testing.T, admin *pgxpool.Pool) *pgxpool.Pool {
+//
+// extraTables are granted on top of the fixed list below. A caller that probes a
+// table it did not name gets "permission denied", which reads as a belt failure
+// and is not one -- so TestRLSBeltTables derives its argument from its own case
+// table rather than keeping a second list in step by hand. That is exactly how
+// six v140 cases came to fail here on a grant nobody had added.
+func rlsRolePool(t *testing.T, admin *pgxpool.Pool, extraTables ...string) *pgxpool.Pool {
 	t.Helper()
 	ctx := context.Background()
 	const roleName = "openidx_rls_test"
@@ -97,6 +103,10 @@ END $$;`, roleName, roleName, rolePass, roleName, rolePass))
 	} {
 		_, err := admin.Exec(ctx, stmt)
 		require.NoError(t, err, "grant to RLS test role: %s", stmt)
+	}
+	for _, tbl := range extraTables {
+		_, err := admin.Exec(ctx, `GRANT SELECT, INSERT ON `+tbl+` TO `+roleName)
+		require.NoError(t, err, "grant to RLS test role: %s", tbl)
 	}
 
 	// Build the role's DSN by swapping the userinfo on the admin DSN.
@@ -441,6 +451,12 @@ func TestRLSBeltTables(t *testing.T) {
 		{"audit_retention_policies", `INSERT INTO audit_retention_policies (name, retention_days, org_id) VALUES ('tbelt-ret-` + suffix + `',30,$1)`},
 	}
 
+	// One list, not two: the role is granted exactly the tables the cases probe.
+	probed := make([]string, 0, len(cases))
+	for _, c := range cases {
+		probed = append(probed, c.table)
+	}
+
 	for _, c := range cases {
 		c := c
 		t.Run(c.table, func(t *testing.T) {
@@ -448,7 +464,7 @@ func TestRLSBeltTables(t *testing.T) {
 			bypassExec(t, admin, c.insertSQL, orgB)
 			t.Cleanup(func() { bypassExec(t, admin, "DELETE FROM "+c.table+" WHERE org_id = $1", orgB) })
 
-			pool := rlsRolePool(t, admin)
+			pool := rlsRolePool(t, admin, probed...)
 			defer pool.Close()
 			conn, err := pool.Acquire(ctx)
 			require.NoError(t, err)
