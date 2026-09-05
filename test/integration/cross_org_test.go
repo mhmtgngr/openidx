@@ -543,6 +543,20 @@ func TestRLSBeltTables(t *testing.T) {
 			VALUES ('tbelt-otpc-` + suffix + `','tbelt-otpc-` + suffix + `@example.test',true,$1) RETURNING id)
 			INSERT INTO mfa_otp_challenges (user_id, method, recipient, code_hash, expires_at, org_id)
 			SELECT u.id,'sms','+15550000002','x',NOW() + INTERVAL '5 minutes',$1 FROM u`},
+
+		// v147 — the breach response record. An incident names its users in
+		// affected_user_ids (a TEXT[] of users.id values), so it needs a real
+		// user to name; the alert hangs off the incident.
+		{"breach_incidents", `WITH u AS (
+			INSERT INTO users (username, email, enabled, org_id)
+			VALUES ('tbelt-bi-` + suffix + `','tbelt-bi-` + suffix + `@example.test',true,$1) RETURNING id)
+			INSERT INTO breach_incidents (type, severity, status, title, affected_user_ids, first_detected_at, confidence, quarantine_action, org_id)
+			SELECT 'credential_stuffing','critical','detected','tbelt-` + suffix + `',ARRAY[u.id::text],NOW(),0.9,'none',$1 FROM u`},
+		{"breach_alerts", `WITH i AS (
+			INSERT INTO breach_incidents (type, severity, status, title, affected_user_ids, first_detected_at, confidence, quarantine_action, org_id)
+			VALUES ('credential_stuffing','high','detected','tbelt-ba-` + suffix + `',ARRAY[]::text[],NOW(),0.8,'none',$1) RETURNING id)
+			INSERT INTO breach_alerts (incident_id, type, severity, message, ip_address, org_id)
+			SELECT i.id,'credential_stuffing','high','tbelt-ba-` + suffix + `','203.0.113.4',$1 FROM i`},
 	}
 
 	// One list, not two: the role is granted exactly the tables the cases probe.

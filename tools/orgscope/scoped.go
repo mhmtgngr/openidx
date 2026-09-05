@@ -75,8 +75,6 @@ var needsScoping = map[string]string{
 	// Audit and compliance — one tenant's auditor can read another's trail.
 	"compliance_gaps":        "named control gaps and remediation plans (v44)",
 	"policy_recommendations": "recommendations naming affected users, roles and resources (v44)",
-	"breach_incidents":       "incidents with affected_user_ids and quarantine actions (v62)",
-	"breach_alerts":          "alerts naming user_id, session_id and IP (v62)",
 
 	// MFA and credentials — the most sensitive per-user rows in the product.
 	"biometric_preferences": "per-user biometric settings",

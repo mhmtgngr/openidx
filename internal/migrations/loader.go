@@ -1044,5 +1044,12 @@ func allMigrations() []*Migration {
 			UpSQL:       mfaFactorTenantScopeUp,
 			DownSQL:     mfaFactorTenantScopeDown,
 		},
+		{
+			Version:     147,
+			Name:        "breach_response_tenant_scope",
+			Description: "Add org_id + FORCE RLS to breach_incidents and breach_alerts — the Identity Breach Detection and Response record of what was detected, which users and sessions it affected, and what containment was applied. Neither carried a tenant: handleIBDRIncidents, the console's incident list, was `SELECT ... FROM breach_incidents ORDER BY first_detected_at DESC LIMIT 100` with no predicate at all; GetBreachAlerts filtered on `acknowledged` and nothing else while each alert names a user_id, a session_id and an IP address; AnalyzeBreachPatterns aggregated the whole install. THE SHARPEST PART IS THE CONTAINMENT, and it is a direction the earlier batches did not cover: TriggerIncidentResponse took a bare incident id, flipped the incident to 'investigating' and recorded containment steps against it, while the actions it invokes — executeFullQuarantine and revokeUserSessions — were ALREADY org-scoped. So an administrator of one tenant triggering response on another tenant's incident disabled nobody and revoked nothing, and left the owning tenant's real incident marked as handled: a containment that reports success and contains nothing. Scoping the action without scoping the record it acts on converts a cross-tenant write into a silent no-op instead of a refusal, which is worse than either half alone; the fix scopes the record, so the trigger refuses. internal/admin/ai_intelligence.go had already written the gap down as a property — 'breach incidents are install-wide; affected_user_ids carries users.id values so scoping happens implicitly via the org's user set' — the v143 social_providers shape: implicit scoping through a joined set holds until the query changes, and nothing made it hold. Existing incidents are attributed through the first entry of affected_user_ids, alerts through their incident and then their own user_id, with the oldest organization as the fallback for an incident whose users are gone. No column DEFAULT.",
+			UpSQL:       breachResponseTenantScopeUp,
+			DownSQL:     breachResponseTenantScopeDown,
+		},
 	}
 }

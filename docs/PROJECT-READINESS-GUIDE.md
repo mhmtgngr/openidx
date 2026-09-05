@@ -1872,6 +1872,70 @@ class this whole program exists for.
    RLS never applies there; the belt's own half is proved under the
    NOSUPERUSER role by `TestRLSBeltTables`, now 35/35. v146 applied, rolled
    back and re-applied.
+
+   **Batch 9 shipped (migration v147, `needsScoping` 41 → 39; registers 60 →
+   58): a containment that reported success and contained nothing.**
+   `breach_incidents` and `breach_alerts` are the Identity Breach Detection and
+   Response record — what was detected, which users and sessions it affected,
+   what containment was applied. Neither carried an organization.
+   `handleIBDRIncidents`, the console's incident list, was `SELECT … FROM
+   breach_incidents ORDER BY first_detected_at DESC LIMIT 100` with **no
+   predicate at all**; `GetBreachAlerts` filtered on `acknowledged` and nothing
+   else while each alert names a user, a session and an IP; `AnalyzeBreachPatterns`
+   aggregated the whole install. A third file had already written the gap down
+   as a property — `ai_intelligence.go` said breach incidents were install-wide
+   and "scoping happens implicitly via the org's user set", the v143
+   `social_providers` shape: implicit scoping through a joined set holds only
+   for as long as every consumer keeps joining, and nothing made that true.
+
+   **The sharpest part is the containment, and it is a direction the first
+   eight batches did not cover.** `TriggerIncidentResponse` took a *bare*
+   incident id, flipped the incident to `investigating` and recorded
+   containment steps against it — while the actions it invokes,
+   `executeFullQuarantine` and `revokeUserSessions`, were **already**
+   org-scoped. So an administrator of one tenant triggering response on another
+   tenant's incident disabled nobody and revoked nothing, and left the owning
+   tenant's real incident marked as handled. **Scoping the action without
+   scoping the record it acts on converts a cross-tenant write into a silent
+   no-op instead of a refusal, which is worse than either half alone.** The fix
+   scopes the record, so the trigger refuses; the test asserts the refusal *and*
+   that org A's incident is still `detected` with no containment recorded, not
+   merely that org B's quarantine matched nothing.
+
+   Writing that test turned up three more failures of the same family in the
+   same file, none of which had ever surfaced because every one of them
+   discarded its error:
+
+   - `executeFullQuarantine` wrote `UPDATE users SET status = 'quarantined'`.
+     **There is no `status` column on `users`** — no migration creates one, and
+     every other disable path in the product writes `enabled = false`. The
+     UPDATE errored on every call, `_, _ =` threw the error away, and
+     `disabled_user_<id>` was appended regardless. A critical-severity full
+     quarantine reported disabling users it had not disabled, **in its own
+     tenant**.
+   - The UPDATE that records the containment writes a `containment_steps`
+     column that `internal/migrations` never created (only the legacy standalone
+     tree at `migrations/017_*.up.sql` declares it). It too failed on every call
+     since v62, taking `quarantine_action` with it — so the console's incident
+     list has been reading `none` for incidents that were fully quarantined.
+     v147 adds the column and the write now reports.
+   - `GetBreachAlerts` and `handleIBDRIncidents` discarded `rows.Scan` errors
+     and appended the zero value. Every text column on both tables is nullable,
+     and `createAlert` leaves `session_id` NULL for any incident with no
+     affected session; pgx closes the rows on a scan error, so **one** such
+     alert truncated the whole list and handed the operator a single blank row,
+     with no error. Nullable columns are COALESCEd and scan errors are returned.
+
+   The medium-severity branch had the same shape in miniature: it assigned
+   `["revoke_sessions", "enable_monitoring"]` *before* calling
+   `revokeUserSessions` and discarding its result, and nothing implemented
+   "enable_monitoring" at all. Both steps are now recorded only if they
+   happened, through the enhanced-monitoring writer the high branch already had.
+
+   Proven on Postgres 16: six two-org cases, all six red against the old
+   handlers and green after — including "org B's alert came back blank", which
+   is how the scan bug was found. `TestRLSBeltTables` 37/37. v147 applied,
+   rolled back and re-applied.
 4. ✅ **OPA `deny` enforced** — *shipped.* — `internal/common/middleware/opa.go`: abort
    unless `Allow && len(Deny)==0`; `authz.rego:15-19`'s "any authenticated
    user may GET anything" removed; `policies/access_control.rego`
@@ -3500,7 +3564,7 @@ that holds it rather than by the commit that wrote it.
 |---|---|---|
 | 1 · journeys verified | ☐ | J1 ✅ the `smoke` and `first-run` jobs (P6.2); J2 ✅ `test/integration/{auth_flows,mfa_flow,passwordless}_test.go`; J3 ✅ `test/integration/enforced_posture_test.go` (P6.1); ☐ **J6 has no automated proof** — `e2e/access-reviews-flow.spec.ts` is still on the `hold` side of `e2e/suite.txt`; ☐ **J7 needs a leaver integration case**; J4/J5/J8 stay scripted operator drills (`tools/darkprobe`, `make dr-game-day`) to be filed under `docs/evidence/` (P8.4) |
 | 2 · enforced posture, legacy login gone | ◐ | code ✅ — the server-rendered login is deleted and `internal/oauth/routes_legacy_login_test.go` fails if any of it returns (P6.1); ops ☐ — rollout Task 16 is the operator's, on a live deployment |
-| 3 · every control enforces | ◐ | P5.1–5.11 ✅ (tenant isolation, the inverted orgscope lint, OPA `deny`, ABAC at both PEPs, the honest Apply/Remediate, SMS, multi-IdP, the fail-closed gate, `ValidateProduction`, the faked measurements); ◐ the P5.3b register programme — batch 1 (v140) belted fifteen tables and fixed `email_branding`'s cross-tenant read *and* write; batch 2 (v141) scoped the compliance record and fixed an archive worker that was silently producing empty archives; batches 4–8 (v142–v146) took the unified audit stream, the sign-in tables, the SAML surface, the password-substitute credentials and the four second factors the belt had skipped; **60** still ride `needsScoping`/`needsBelt` waivers |
+| 3 · every control enforces | ◐ | P5.1–5.11 ✅ (tenant isolation, the inverted orgscope lint, OPA `deny`, ABAC at both PEPs, the honest Apply/Remediate, SMS, multi-IdP, the fail-closed gate, `ValidateProduction`, the faked measurements); ◐ the P5.3b register programme — batch 1 (v140) belted fifteen tables and fixed `email_branding`'s cross-tenant read *and* write; batch 2 (v141) scoped the compliance record and fixed an archive worker that was silently producing empty archives; batches 4–9 (v142–v147) took the unified audit stream, the sign-in tables, the SAML surface, the password-substitute credentials, the four second factors the belt had skipped, and the breach response record — where a containment reported success while quarantining nobody; **58** still ride `needsScoping`/`needsBelt` waivers |
 | 4 · first run / first login / four pillars from the docs | ✅ | first run ✅ the `smoke` and `first-run` jobs (P6.2); first login ✅ one authoritative credential in `GETTING-STARTED.md`, with the `USER_GUIDE.md` and `CONTRIBUTING.md` copies pointing at it rather than repeating it (P8.1); four pillars ✅ `guide/governance.md` was the missing one (P8.1) |
 | 5 · one story + auditor artifacts | ✅ | threat model and control mapping exist; docs sweep 3 ✅ and the docs-drift guard ✅ (`check-docs-drift.sh`, enforced in CI, so a document cannot cite a path that is not there); `docs/evidence/` ✅ (P8.4) |
 | 6 · releases current, signed, Helm proven | ◐ | signing ✅ `release.yml` (cosign) and, since P7.5, an Android artifact whose name tracks the key that signed it; Helm ✅ the `kind` install job (P6.4); versions ✅ `VERSION` + `check-version-sync.sh` (P8.3); CHANGELOG ✅ every release attributed from the commit that wrote its entry, 61 compare links that resolve (P8.2); ☐ v1.34.0 is not cut — the maintainer's |

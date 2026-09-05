@@ -21,6 +21,38 @@ to a spec that describes an eighth of a surface, a documented endpoint that
   the posture score was neither one tenant's nor the install's. All now carry
   `org_id` under FORCE RLS, with the install-wide unique keys re-scoped and an
   isolation test per handler file.
+- **Breach response is per tenant, and its containment now does what it
+  reports** (migration v147). `breach_incidents` and `breach_alerts` — the
+  record of what was detected, which users and sessions it affected and what
+  containment was applied — had no `org_id`. The console's incident list ran
+  with no organization predicate at all, the alert feed filtered only on
+  whether an alert had been acknowledged while each alert names a user, a
+  session and an IP address, and the pattern analysis aggregated the whole
+  install. Both tables now carry `org_id` under FORCE RLS, with existing
+  incidents attributed through the users they name and alerts through their
+  incident.
+
+  The containment itself was the sharper half. Triggering incident response
+  took a bare incident id, while the actions it invokes — disabling the
+  affected users and revoking their sessions — were already scoped to the
+  caller's organization. An administrator of one tenant could therefore trigger
+  response on another tenant's incident, quarantine nobody, and leave that
+  tenant's real incident marked as investigated with containment steps recorded
+  against it. The incident is now scoped too, so the request is refused rather
+  than silently doing nothing.
+
+  Three further failures on the same path are fixed, each of which had been
+  invisible because its error was discarded: the full quarantine wrote a
+  `status` column that does not exist on the users table (every other disable
+  path in the product sets `enabled = false`), so it reported disabling users
+  it had not disabled — in its own tenant, not only across tenants; the update
+  that records what containment ran wrote a `containment_steps` column no
+  migration had ever created, so the quarantine action was never recorded
+  either and the incident list showed `none` for fully quarantined incidents
+  (v147 adds the column); and both list queries discarded row-scan errors and
+  appended a blank row, so a single alert with no session — what the detector
+  writes whenever it has no session id — truncated the whole alert list to one
+  empty entry with no error shown.
 - **The remaining second factors got a tenant** (migration v146). OpenIDX
   offers six second factors; three of them — TOTP, push and WebAuthn — already
   carried `org_id` and sat behind the row-level-security belt, and three did
