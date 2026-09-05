@@ -603,6 +603,17 @@ func TestRLSBeltTables(t *testing.T) {
 		{"guacamole_connections", `INSERT INTO guacamole_connections
 			(guacamole_connection_id, protocol, hostname, port, org_id)
 			VALUES ('tbelt-gc-` + suffix + `','rdp','10.0.0.7',3389,$1)`},
+
+		// v152 — delegated administration. The policy enforcement point reads
+		// this table under a deliberate bypass, so the belt is the second layer
+		// behind the predicate rather than the first; it is here because a
+		// query that forgets the predicate on a table like this does not leak a
+		// record, it grants a permission.
+		{"admin_delegations", `WITH u AS (
+			INSERT INTO users (org_id, username, email, enabled)
+			VALUES ($1,'tbelt-dlg-` + suffix + `','tbelt-dlg-` + suffix + `@example.test',true) RETURNING id)
+			INSERT INTO admin_delegations (org_id, delegate_id, delegated_by, scope_type, scope_id, permissions, enabled)
+			SELECT $1, u.id, u.id, 'organization', $1, '["vault:reveal"]'::jsonb, true FROM u`},
 	}
 
 	// One list, not two: the role is granted exactly the tables the cases probe.

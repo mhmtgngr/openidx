@@ -21,6 +21,49 @@ to a spec that describes an eighth of a surface, a documented endpoint that
   the posture score was neither one tenant's nor the install's. All now carry
   `org_id` under FORCE RLS, with the install-wide unique keys re-scoped and an
   isolation test per handler file.
+- **A delegated administrative permission followed the person into other
+  organizations, and the permission cache shared it with their colleagues**
+  (migration v152). A delegation record grants one person a named set of
+  administrative powers — "may reveal stored credentials, until this date." It
+  is read by the component that decides whether a request is allowed, and
+  merged into that person's permissions for the request. The record carried
+  nothing saying which organization it belonged to.
+
+  Two lookups sit side by side in that component, and both run with the
+  database's own restrictions deliberately lifted, because at that point in a
+  request the organization has not yet been established and a restricted read
+  would return nothing and refuse everybody. The first lookup limits itself to
+  the caller's organization and its note says so. The second, added later, says
+  it uses the same reasoning — but limits itself to the person, not the
+  organization. So it did not limit itself at all: a delegation granted in one
+  organization applied to that person wherever else they could act.
+
+  The cache made it worse in a different direction. Permissions are cached for
+  five minutes under a key made of the organization and the person's roles, and
+  the delegation lookup was adding its own caller's personal grants to what got
+  stored. Every other person in that organization holding the same roles was
+  then served one individual's delegated powers as their own, for as long as
+  the entry lived, and again on the next miss. Personal grants no longer go
+  into a shared entry: the expensive role lookup is still cached, the
+  delegation lookup runs per request, and entries written by the old code are
+  no longer read.
+
+  The administration API had the same gap on the writing side. Updating a
+  delegation identified it by its identifier alone, and the permission list is
+  one of the things an update can change — so an administrator of one
+  organization could rewrite what another organization's delegation granted,
+  and it would take effect on that person's next request. Deleting had the same
+  shape, and creating accepted any person as the recipient. All of these are
+  now limited to the caller's own organization, creation checks that the
+  recipient, the granting administrator and the stated scope all belong to it,
+  and the list's total count no longer counts every organization's records.
+
+  Not changed, and stated plainly because it is worth a decision rather than an
+  assumption: a delegation records a scope — a group, an application — and
+  nothing consults it. The check that decides a request compares only what is
+  being done, not where, so a delegation scoped to one group grants its powers
+  wherever that power is checked. Narrowing it would take administrative access
+  away from people who have it today, so it is documented rather than changed.
 - **A remote session onto another organization's machine, with that
   organization's password** (migration v151). A brokered connection record is
   the definition of a privileged target: which machine, which port, which

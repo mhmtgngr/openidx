@@ -92,7 +92,6 @@ var needsScoping = map[string]string{
 	"lifecycle_workflows":         "lifecycle workflow definitions",
 	"lifecycle_executions":        "per-user lifecycle runs",
 	"lifecycle_policy_executions": "policy run history (v55)",
-	"admin_delegations":           "delegated admin scopes and permissions",
 	"entitlement_metadata":        "risk level and owner per entitlement",
 	"risk_policies":               "conditional risk policies (v39)",
 	"kiosk_policies":              "kiosk lockdown policies (v44)",

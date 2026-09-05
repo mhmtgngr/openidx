@@ -726,99 +726,146 @@ func PermissionResolver(db *pgxpool.Pool, redisClient *redis.Client) gin.Handler
 		sortedRoles := make([]string, len(roleNames))
 		copy(sortedRoles, roleNames)
 		sort.Strings(sortedRoles)
-		cacheKey := "perms:" + orgID + ":" + strings.Join(sortedRoles, ",")
-
-		// Try Redis cache
-		if redisClient != nil {
-			cached, err := redisClient.Get(c.Request.Context(), cacheKey).Result()
-			if err == nil && cached != "" {
-				var perms []PermissionEntry
-				if json.Unmarshal([]byte(cached), &perms) == nil {
-					c.Set("permissions", perms)
-					c.Next()
-					return
-				}
-			}
-		}
-
-		// Cache miss: query DB.
+		// The key is (org, role set) and the cached value must therefore contain
+		// nothing that varies by user. It did: the admin-delegation read below
+		// used to append ITS caller's delegated permissions to this same slice
+		// before it was cached, so for the next five minutes every user in the
+		// organization who happened to share that role set was served one
+		// person's delegation as their own. Delegations are resolved per
+		// request now, after the cache, and only role-derived permissions are
+		// stored here.
 		//
+		// The "v2:" segment retires the keys written by the old code: entries
+		// already in Redis carry the mixed-in delegations and would keep
+		// granting them until they expired on their own.
+		cacheKey := "perms:v2:" + orgID + ":" + strings.Join(sortedRoles, ",")
+
 		// role_permissions is RLS-FORCE'd and the pool derives app.org_id from the
 		// acquire context's orgctx marker at checkout. This middleware runs before
 		// the tenant GUC is established, so a bare-context query sets no app.org_id
 		// and RLS hides EVERY row — perms resolve to null and RequirePermission then
-		// 403s every caller. This read is already scoped to the caller's org by the
-		// explicit r.org_id = $2 predicate, so WithBypassRLS (a legitimately
-		// org-scoped/install-wide read) is the correct, leak-free fix.
+		// 403s every caller. Both reads below are scoped to the caller's org by an
+		// explicit org_id predicate, so WithBypassRLS (a legitimately org-scoped
+		// read) is the correct, leak-free fix. The predicate is what makes that
+		// true; see resolveDelegations, where the sentence used to be copied
+		// without it.
 		resolveCtx := orgctx.WithBypassRLS(c.Request.Context())
-		rows, err := db.Query(resolveCtx, `
-			SELECT DISTINCT p.resource, p.action
-			FROM permissions p
-			JOIN role_permissions rp ON p.id = rp.permission_id
-			JOIN roles r ON r.id = rp.role_id
-			WHERE r.name = ANY($1) AND r.org_id = $2
-		`, roleNames, orgID)
-		if err != nil {
-			c.Next()
-			return
-		}
-		defer rows.Close()
 
 		var perms []PermissionEntry
-		for rows.Next() {
-			var pe PermissionEntry
-			if err := rows.Scan(&pe.Resource, &pe.Action); err == nil {
-				perms = append(perms, pe)
-			}
-		}
-
-		// Also resolve admin delegations for this user
-		userIDRaw, _ := c.Get("user_id")
-		userID, _ := userIDRaw.(string)
-		if userID != "" {
-			// Same RLS reasoning as the role_permissions read above: scoped by the
-			// explicit delegate_id = $1 predicate, so bypass is safe and necessary.
-			delegRows, err := db.Query(resolveCtx, `
-				SELECT permissions, scope_type, scope_id::text
-				FROM admin_delegations
-				WHERE delegate_id = $1 AND enabled = true
-				AND (expires_at IS NULL OR expires_at > NOW())
-			`, userID)
-			if err == nil {
-				defer delegRows.Close()
-				for delegRows.Next() {
-					var permsJSON []byte
-					var scopeType, scopeID string
-					if delegRows.Scan(&permsJSON, &scopeType, &scopeID) == nil {
-						var delegPerms []string
-						if json.Unmarshal(permsJSON, &delegPerms) == nil {
-							for _, dp := range delegPerms {
-								parts := strings.SplitN(dp, ":", 2)
-								if len(parts) == 2 {
-									perms = append(perms, PermissionEntry{
-										Resource:  parts[0],
-										Action:    parts[1],
-										ScopeType: scopeType,
-										ScopeID:   scopeID,
-									})
-								}
-							}
-						}
-					}
+		fromCache := false
+		if redisClient != nil {
+			if cached, err := redisClient.Get(c.Request.Context(), cacheKey).Result(); err == nil && cached != "" {
+				if json.Unmarshal([]byte(cached), &perms) == nil {
+					fromCache = true
 				}
 			}
 		}
 
-		// Cache in Redis for 5 minutes
-		if redisClient != nil {
-			if data, err := json.Marshal(perms); err == nil {
-				redisClient.Set(c.Request.Context(), cacheKey, string(data), 5*time.Minute)
+		if !fromCache {
+			rows, err := db.Query(resolveCtx, `
+				SELECT DISTINCT p.resource, p.action
+				FROM permissions p
+				JOIN role_permissions rp ON p.id = rp.permission_id
+				JOIN roles r ON r.id = rp.role_id
+				WHERE r.name = ANY($1) AND r.org_id = $2
+			`, roleNames, orgID)
+			if err != nil {
+				c.Next()
+				return
 			}
+			perms = nil
+			for rows.Next() {
+				var pe PermissionEntry
+				if err := rows.Scan(&pe.Resource, &pe.Action); err == nil {
+					perms = append(perms, pe)
+				}
+			}
+			rows.Close()
+
+			// Cache the ROLE-derived permissions for 5 minutes. Nothing that
+			// varies by user may go in here: the key is (org, role set).
+			if redisClient != nil {
+				if data, err := json.Marshal(perms); err == nil {
+					redisClient.Set(c.Request.Context(), cacheKey, string(data), 5*time.Minute)
+				}
+			}
+		}
+
+		// Delegations are per user, so they are resolved on every request —
+		// cached or not — and never written to the shared key above. One
+		// single-column index lookup; the expensive three-way role join is what
+		// the cache is for.
+		userIDRaw, _ := c.Get("user_id")
+		if userID, _ := userIDRaw.(string); userID != "" {
+			perms = append(perms, resolveDelegations(resolveCtx, db, userID, orgID)...)
 		}
 
 		c.Set("permissions", perms)
 		c.Next()
 	}
+}
+
+// resolveDelegations returns the administrative permissions delegated to this
+// user WITHIN this organization.
+//
+// The org_id predicate is the point. This query used to read:
+//
+//	// Same RLS reasoning as the role_permissions read above: scoped by the
+//	// explicit delegate_id = $1 predicate, so bypass is safe and necessary.
+//	WHERE delegate_id = $1 AND enabled = true AND (...)
+//
+// It was not the same reasoning: the role read is scoped by r.org_id, and
+// delegate_id is a user id, not a tenant term — over a table that until
+// migration v152 had no tenant column to name. Under the deliberate bypass
+// above, a delegation granted in one organization was therefore honoured for
+// that user in every organization they could authenticate into.
+//
+// A failed query returns nothing rather than an error: the caller keeps their
+// role-derived permissions and loses only the delegated ones, which is the
+// direction that fails closed.
+//
+// KNOWN GAP, not closed here: the ScopeType/ScopeID carried on each entry are
+// resolved and returned but never consulted — RequirePermission compares
+// resource and action only, so a delegation scoped to one group grants its
+// permissions wherever that permission is checked. Fixing it changes what
+// existing delegations grant, so it is a product decision; see the readiness
+// guide's P5.3b section.
+func resolveDelegations(ctx context.Context, db *pgxpool.Pool, userID, orgID string) []PermissionEntry {
+	rows, err := db.Query(ctx, `
+		SELECT permissions, scope_type, scope_id::text
+		FROM admin_delegations
+		WHERE delegate_id = $1 AND org_id = $2 AND enabled = true
+		AND (expires_at IS NULL OR expires_at > NOW())
+	`, userID, orgID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	var out []PermissionEntry
+	for rows.Next() {
+		var permsJSON []byte
+		var scopeType, scopeID string
+		if rows.Scan(&permsJSON, &scopeType, &scopeID) != nil {
+			continue
+		}
+		var delegPerms []string
+		if json.Unmarshal(permsJSON, &delegPerms) != nil {
+			continue
+		}
+		for _, dp := range delegPerms {
+			parts := strings.SplitN(dp, ":", 2)
+			if len(parts) == 2 {
+				out = append(out, PermissionEntry{
+					Resource:  parts[0],
+					Action:    parts[1],
+					ScopeType: scopeType,
+					ScopeID:   scopeID,
+				})
+			}
+		}
+	}
+	return out
 }
 
 // RequirePermission checks that the user has a specific permission via their roles.

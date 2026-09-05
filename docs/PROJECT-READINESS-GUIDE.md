@@ -2164,6 +2164,84 @@ class this whole program exists for.
    read half beside it was not — the same disagreement v146 and v149 found.
    `TestRLSBeltTables` **43/43**. v151 applied, rolled back to 150 and
    re-applied; the rollback restores the pool table in v67's shape.
+
+   **Batch 14 shipped (migration v152, `needsScoping` 34 → 33; registers 51 →
+   50): the enforcement point read a table that had no tenant, and the comment
+   saying otherwise was copied from the query above it.** An
+   `admin_delegations` row hands one person a named set of administrative
+   permissions — "this user may do `vault:reveal`, within this scope, until this
+   date." It is read by `PermissionResolver` in
+   `internal/common/middleware`, merged into the permission set
+   `RequirePermission` then decides on. A defect here is not a disclosure, it is
+   a grant.
+
+   Two reads sit in that function eight lines apart, both under a deliberate
+   `orgctx.WithBypassRLS` — deliberate because the middleware runs before the
+   tenant GUC is set, so a bare-context read returns nothing and 403s every
+   caller. The first:
+
+   > This read is already scoped to the caller's org by the explicit
+   > `r.org_id = $2` predicate, so `WithBypassRLS` … is the correct, leak-free
+   > fix.
+
+   The second:
+
+   > **Same RLS reasoning as the role_permissions read above**: scoped by the
+   > explicit `delegate_id = $1` predicate, so bypass is safe and necessary.
+
+   It is not the same reasoning. `r.org_id` is a tenant term; `delegate_id` is a
+   user id — over a table that had no tenant column to name even if someone had
+   wanted to. **Under the bypass the SQL predicate is the whole of the scoping**,
+   so a delegation granted in one organization was honoured for that user in
+   every organization they could act in. `organization_members` exists, so
+   multi-organization membership is a modelled state, not a hypothetical one.
+
+   **And the cache handed one person's delegation to everyone who shared their
+   roles.** The key is `perms:<org>:<sorted role names>`, and the comment above
+   it reasons carefully about why the *organization* must be in it. The
+   delegation block then appended its caller's per-user rows to the same slice
+   before it was cached — so for the next five minutes, renewed on every miss,
+   every user in that organization holding those roles was served one person's
+   delegated permissions as their own. The fix is not a longer key: per-user
+   data does not belong in a per-role entry at all. Role permissions (the
+   expensive three-way join) stay cached; delegations are resolved per request
+   by one indexed lookup. The key gained a `v2:` segment so entries already in
+   Redis, which carry the mixed-in delegations, are not read.
+
+   **The admin API could write across the boundary too.** `UpdateDelegation`
+   builds `UPDATE admin_delegations SET … WHERE id = $N` and `permissions` is
+   one of the fields it will set, `DeleteDelegation` is `DELETE … WHERE id = $1`,
+   and `CreateDelegation` inserted whatever `delegate_id` arrived in the body.
+   One tenant's administrator could therefore rewrite the permission list on
+   another tenant's delegation, or mint one naming another tenant's user, and
+   the unscoped read above would honour it on that user's next request. Create
+   now verifies that the delegate, the grantor **and** the scope all belong to
+   the caller's organization. The list's count query ran over the whole table —
+   its own comment said so — so the console showed one tenant's rows under every
+   tenant's paging total; both halves carry the predicate now.
+
+   **One finding on this surface is deliberately left open**, named here rather
+   than inherited: `scope_type`/`scope_id` are resolved by `PermissionResolver`,
+   carried on every entry, cached — and never read. `RequirePermission` compares
+   resource and action only, so a delegation scoped to one group grants its
+   permissions everywhere that permission is checked. It is the programme's
+   founding defect class on the delegation form. It is not fixed in v152 because
+   every way of fixing it changes what an existing, shipped delegation grants —
+   narrowing live administrative access, or widening it — and that is a product
+   decision. **The decision needed:** does a group/role/application-scoped
+   delegation (a) gate the endpoints that can be scope-checked and grant nothing
+   elsewhere, (b) become refusable at creation until scope-aware enforcement
+   exists, or (c) get documented as organization-wide, which is what it has
+   always been?
+
+   Proven on Postgres 16 and Redis: two cases in `internal/common/middleware` —
+   the enforcement point itself, running in CI where `ci.yml` attaches Postgres
+   and Redis to the unit matrix — plus six in `internal/admin`. Both middleware
+   cases go red against the old code, the first reporting the delegated
+   `vault:reveal` returned for an organization that never granted it and the
+   second reporting a second user handed it from the cache.
+   `TestRLSBeltTables` **44/44**. v152 applied, rolled back to 151 and
+   re-applied.
 4. ✅ **OPA `deny` enforced** — *shipped.* — `internal/common/middleware/opa.go`: abort
    unless `Allow && len(Deny)==0`; `authz.rego:15-19`'s "any authenticated
    user may GET anything" removed; `policies/access_control.rego`
@@ -3792,7 +3870,7 @@ that holds it rather than by the commit that wrote it.
 |---|---|---|
 | 1 · journeys verified | ☐ | J1 ✅ the `smoke` and `first-run` jobs (P6.2); J2 ✅ `test/integration/{auth_flows,mfa_flow,passwordless}_test.go`; J3 ✅ `test/integration/enforced_posture_test.go` (P6.1); ☐ **J6 has no automated proof** — `e2e/access-reviews-flow.spec.ts` is still on the `hold` side of `e2e/suite.txt`; ☐ **J7 needs a leaver integration case**; J4/J5/J8 stay scripted operator drills (`tools/darkprobe`, `make dr-game-day`) to be filed under `docs/evidence/` (P8.4) |
 | 2 · enforced posture, legacy login gone | ◐ | code ✅ — the server-rendered login is deleted and `internal/oauth/routes_legacy_login_test.go` fails if any of it returns (P6.1); ops ☐ — rollout Task 16 is the operator's, on a live deployment |
-| 3 · every control enforces | ◐ | P5.1–5.11 ✅ (tenant isolation, the inverted orgscope lint, OPA `deny`, ABAC at both PEPs, the honest Apply/Remediate, SMS, multi-IdP, the fail-closed gate, `ValidateProduction`, the faked measurements); ◐ the P5.3b register programme — batch 1 (v140) belted fifteen tables and fixed `email_branding`'s cross-tenant read *and* write; batch 2 (v141) scoped the compliance record and fixed an archive worker that was silently producing empty archives; batches 4–10 (v142–v148) took the unified audit stream, the sign-in tables, the SAML surface, the password-substitute credentials, the four second factors the belt had skipped, the breach response record — where a containment reported success while quarantining nobody — the temporary vendor access surface, where v71's written-down reason for skipping the belt had expired three batches earlier, the legal holds — the first batch whose defect destroys rather than discloses, since releasing a hold is what lets the retention sweep delete the recording — the remote support sessions, whose list ran with no `WHERE` clause at all over a nullable tenant column the belt would have hidden rather than scoped, and the PAM broker's connection registry — where the row that decides which vault credential is injected carried no tenant, so another tenant's route id bought a live session onto their machine with their password, and the four-eyes gates could not help because both are satisfiable inside the caller's own tenant; **51** still ride `needsScoping`/`needsBelt` waivers |
+| 3 · every control enforces | ◐ | P5.1–5.11 ✅ (tenant isolation, the inverted orgscope lint, OPA `deny`, ABAC at both PEPs, the honest Apply/Remediate, SMS, multi-IdP, the fail-closed gate, `ValidateProduction`, the faked measurements); ◐ the P5.3b register programme — batch 1 (v140) belted fifteen tables and fixed `email_branding`'s cross-tenant read *and* write; batch 2 (v141) scoped the compliance record and fixed an archive worker that was silently producing empty archives; batches 4–10 (v142–v148) took the unified audit stream, the sign-in tables, the SAML surface, the password-substitute credentials, the four second factors the belt had skipped, the breach response record — where a containment reported success while quarantining nobody — the temporary vendor access surface, where v71's written-down reason for skipping the belt had expired three batches earlier, the legal holds — the first batch whose defect destroys rather than discloses, since releasing a hold is what lets the retention sweep delete the recording — the remote support sessions, whose list ran with no `WHERE` clause at all over a nullable tenant column the belt would have hidden rather than scoped, and the PAM broker's connection registry — where the row that decides which vault credential is injected carried no tenant, so another tenant's route id bought a live session onto their machine with their password, and the four-eyes gates could not help because both are satisfiable inside the caller's own tenant — and delegated administration, read by the enforcement point itself under a deliberate bypass with a tenant-scoping comment copied from the query above it and a cache that handed one person's delegation to everyone sharing their roles; **50** still ride `needsScoping`/`needsBelt` waivers |
 | 4 · first run / first login / four pillars from the docs | ✅ | first run ✅ the `smoke` and `first-run` jobs (P6.2); first login ✅ one authoritative credential in `GETTING-STARTED.md`, with the `USER_GUIDE.md` and `CONTRIBUTING.md` copies pointing at it rather than repeating it (P8.1); four pillars ✅ `guide/governance.md` was the missing one (P8.1) |
 | 5 · one story + auditor artifacts | ✅ | threat model and control mapping exist; docs sweep 3 ✅ and the docs-drift guard ✅ (`check-docs-drift.sh`, enforced in CI, so a document cannot cite a path that is not there); `docs/evidence/` ✅ (P8.4) |
 | 6 · releases current, signed, Helm proven | ◐ | signing ✅ `release.yml` (cosign) and, since P7.5, an Android artifact whose name tracks the key that signed it; Helm ✅ the `kind` install job (P6.4); versions ✅ `VERSION` + `check-version-sync.sh` (P8.3); CHANGELOG ✅ every release attributed from the commit that wrote its entry, 61 compare links that resolve (P8.2); ☐ v1.34.0 is not cut — the maintainer's |
