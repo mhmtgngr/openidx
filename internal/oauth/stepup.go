@@ -250,8 +250,13 @@ func (s *Service) handleStepUpVerify(c *gin.Context) {
 			zap.String("method", logsafe.Clean(req.Method)),
 			zap.String("error", errMsg),
 		)
+		// Carry the caller's org into the detached write: audit_events is behind
+		// the FORCE-RLS belt, and a bare context.Background both loses the
+		// tenant (the row would fall back to the default org) and leaves
+		// app.org_id empty, which the policy refuses outright.
+		auditCtx := orgctx.With(context.Background(), orgctx.Org{ID: auditOrgID(c.Request.Context())})
 		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			ctx, cancel := context.WithTimeout(auditCtx, 5*time.Second)
 			defer cancel()
 			s.logAuditEvent(ctx, "authentication", "security", "step_up_failed", "failure",
 				userID, c.ClientIP(), userID, "user",

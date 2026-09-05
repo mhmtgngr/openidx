@@ -62,6 +62,17 @@ to a spec that describes an eighth of a surface, a documented endpoint that
 
 ### Fixed
 
+- **The audit trail was not recording.** `audit_events` is behind the FORCE-RLS
+  belt, and the pool sets `app.org_id` at checkout from the request context — but
+  the oauth (SAML/SSO), identity and provisioning services all wrote it from a
+  goroutine on a bare `context.Background()`. Each put the right organization in
+  the row and none put it on the connection, so the policy's `WITH CHECK`
+  refused every insert and the only trace was a WARN log. Two more of the same
+  class were worse: the joiner/mover/leaver policy runner disabled leavers with
+  `UPDATE users ... AND org_id = $2` on a detached context, matching its
+  predicate and affecting zero rows, and bulk operations and security alerts had
+  it too. All now carry the tenant on the context, and
+  `scripts/check-detached-org-writes.sh` fails the build on the next one.
 - **Audit archives came out empty and said they were fine.** `createAuditArchive`
   runs detached on a bare `context.Background()`, and `audit_events` sits behind
   the RLS belt — so the pool set no `app.org_id` at checkout, the policy matched

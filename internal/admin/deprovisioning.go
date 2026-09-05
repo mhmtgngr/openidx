@@ -442,9 +442,15 @@ func (s *Service) findAffectedUsers(ctx context.Context, p LifecyclePolicy) []Af
 }
 
 func (s *Service) executeLifecyclePolicy(orgID, execID string, p LifecyclePolicy, affected []AffectedUser) {
-	// Use timeout context for lifecycle policy execution. The org was captured in
-	// the handler and threaded in so every user mutation stays scoped.
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	// The org must travel on the CONTEXT, not only as an argument. `users` is
+	// behind the FORCE-RLS belt and the pool sets app.org_id at checkout from
+	// orgctx, so on a bare context.Background the leaver disable below --
+	// UPDATE users SET enabled = false WHERE id = $1 AND org_id = $2 -- matched
+	// the predicate and still affected zero rows. A joiner/mover/leaver policy
+	// that reports success and disables nobody is the defect this programme is
+	// named for.
+	ctx, cancel := context.WithTimeout(
+		orgctx.With(context.Background(), orgctx.Org{ID: orgID}), 10*time.Minute)
 	defer cancel()
 	usersAffected := 0
 	var actionsTaken []map[string]string

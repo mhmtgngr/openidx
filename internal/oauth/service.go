@@ -222,8 +222,16 @@ func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *confi
 	var privateKey *rsa.PrivateKey
 	var storedRaw string
 
-	// Use timeout context for database operations during initialization
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// Use timeout context for database operations during initialization.
+	//
+	// Install-wide by design, and said so explicitly: oauth_signing_keys (v79)
+	// holds one JWKS for the whole install and carries no org_id -- it is in
+	// tools/orgscope's installWideTables for that reason. This runs at startup
+	// with no request and therefore no tenant, so the bypass marker is the
+	// honest expression of "spans every org" rather than an omission that
+	// happens to work because the table has no policy today.
+	ctx, cancel := context.WithTimeout(
+		orgctx.WithBypassRLS(context.Background()), 10*time.Second)
 	defer cancel()
 
 	// The OAuth signing key mints every token in the system — a DB read of a

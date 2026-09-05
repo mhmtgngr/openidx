@@ -1494,6 +1494,39 @@ class this whole program exists for.
    Postgres 16: a seeded row with an actor in org B backfilled to org B, and
    an actor-less row to the fallback, exactly as intended.
 
+   **Batch 3 shipped: the audit trail that was not recording.** Following
+   batch 2's archive-worker finding, the same defect turned out to be a
+   *class*. The pool sets `app.org_id` at checkout from `orgctx`, so a
+   goroutine started on a bare `context.Background()` runs with it empty:
+   reads return nothing and writes are refused by the policy's `WITH CHECK`.
+   Neither failure is loud — a SELECT that returns nothing looks like "no
+   data", and a refused INSERT reaches a best-effort audit path that logs at
+   WARN and returns nil.
+
+   **Three services wrote every `audit_events` row this way** — oauth
+   (SAML/SSO), identity and provisioning. Each resolved the org correctly
+   *into the row*, and each carried a comment saying it had "captured the org
+   synchronously" — but none put it on the context the write ran on, so
+   Postgres rejected all of them. The code already knew: a comment in
+   `internal/oauth/assignment_audit.go` records that `audit_events` "has taken
+   one row since June while `unified_audit_events` takes writes today", and
+   routes the assignment-gate records to the unscoped table for that reason.
+   That was a workaround for this bug, not a property of the schema.
+
+   Two more of the same class, worse in effect: `executeLifecyclePolicy` runs
+   the joiner/mover/leaver actions detached, so `UPDATE users SET enabled =
+   false WHERE id = $1 AND org_id = $2` matched its predicate and affected
+   **zero rows** — a leaver policy that reports success and disables nobody.
+   `executeBulkOperation` and the security-alert writer had it too.
+
+   `scripts/check-detached-org-writes.sh` (+ its 10-case self-test) now fails
+   the build on a background pool call that names no tenant, and stays green on
+   the shapes that legitimately have none: `conn.Close`, a direct `pgx.Connect`
+   outside the app pool, a context that never reaches the database, and a job
+   that has declared `WithBypassRLS`. Verified at the database: the same row,
+   with and without `app.org_id` on the connection, is refused and then
+   accepted.
+
    The batch also found the archive worker silently producing empty archives.
    `createAuditArchive` runs detached on a bare `context.Background()`, and
    `audit_events` is behind the belt, so the pool set no `app.org_id` at

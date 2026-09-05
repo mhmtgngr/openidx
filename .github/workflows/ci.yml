@@ -71,6 +71,13 @@ jobs:
         run: bash scripts/check-docs-drift.test.sh
       - name: No document may cite a path that is not there
         run: bash scripts/check-docs-drift.sh --enforce
+      - name: Verify the detached-write guard can go red
+        # Same discipline again: it must flag a background pool call with no
+        # tenant AND stay green on conn.Close, a direct pgx.Connect outside the
+        # app pool, and a context that never reaches the database.
+        run: bash scripts/check-detached-org-writes.test.sh
+      - name: A detached database call must name its tenant
+        run: bash scripts/check-detached-org-writes.sh --enforce
 
   # Two CI jobs used to go red on other people's outages -- a Docker Hub 502
   # on a base-image manifest, a reset connection to the chart CDN -- on

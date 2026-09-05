@@ -2094,8 +2094,14 @@ func (s *Service) logAuditEvent(ctx context.Context, eventType, category, action
 		orgID = org.ID
 	}
 	go func() {
+		// The org has to travel on the CONTEXT, not just in the row.
+		// audit_events is behind the FORCE-RLS belt, and the pool sets
+		// app.org_id at checkout from orgctx -- so on a bare
+		// context.Background the setting is empty, the policy's WITH CHECK
+		// evaluates to NULL, and Postgres refuses the insert. Every one of
+		// these writes was being rejected and the only trace was a WARN.
 		detailsJSON, _ := json.Marshal(details)
-		_, err := s.db.Pool.Exec(context.Background(), `
+		_, err := s.db.Pool.Exec(orgctx.With(context.Background(), orgctx.Org{ID: orgID}), `
 			INSERT INTO audit_events (id, timestamp, event_type, category, action, outcome,
 			                          actor_id, actor_type, actor_ip, target_id, target_type,
 			                          resource_id, details, org_id)

@@ -1108,9 +1108,19 @@ func (s *Service) logAuditEvent(ctx context.Context, eventType, category, action
 	if s.db == nil || s.db.Pool == nil {
 		return
 	}
+	orgID := auditOrgID(ctx)
 	args := buildAuditInsertArgs(ctx, eventType, category, action, status, userID, ipAddress, resourceID, resourceType, metadata)
 	go func() {
-		bg, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		// The org has to travel on the CONTEXT, not just in the row.
+		// audit_events is behind the FORCE-RLS belt, and the pool sets
+		// app.org_id at checkout from orgctx -- so on a bare
+		// context.Background the setting is empty, the policy's WITH CHECK
+		// evaluates to NULL, and Postgres refuses the insert. Every one of
+		// these writes was being rejected and the only trace was a WARN,
+		// which is why audit_events had taken almost no rows while
+		// unified_audit_events (no org_id, no policy) took them all.
+		bg, cancel := context.WithTimeout(
+			orgctx.With(context.Background(), orgctx.Org{ID: orgID}), 5*time.Second)
 		defer cancel()
 		if _, err := s.db.Pool.Exec(bg, `
 			INSERT INTO audit_events (id, timestamp, event_type, category, action, outcome,
@@ -1130,12 +1140,20 @@ func (s *Service) logAuditEvent(ctx context.Context, eventType, category, action
 // context) and marshals the metadata, returning the positional args for the
 // audit_events INSERT in logAuditEvent. Extracted for unit testing the org fallback
 // and field mapping without a database.
+// auditOrgID resolves the tenant for an audit write, falling back to the default
+// org when the context carries none. Shared by the row's org_id column and by
+// the detached context the write runs on, so the two can never disagree -- a row
+// whose org_id differs from app.org_id is refused by the RLS policy.
+func auditOrgID(ctx context.Context) string {
+	if org, err := orgctx.From(ctx); err == nil && org.ID != "" {
+		return org.ID
+	}
+	return "00000000-0000-0000-0000-000000000010"
+}
+
 func buildAuditInsertArgs(ctx context.Context, eventType, category, action, status,
 	userID, ipAddress, resourceID, resourceType string, metadata map[string]interface{}) []interface{} {
-	orgID := "00000000-0000-0000-0000-000000000010"
-	if org, err := orgctx.From(ctx); err == nil && org.ID != "" {
-		orgID = org.ID
-	}
+	orgID := auditOrgID(ctx)
 	detailsJSON, _ := json.Marshal(metadata)
 	return []interface{}{eventType, category, action, status, userID, ipAddress, resourceID, resourceType, string(detailsJSON), orgID}
 }
