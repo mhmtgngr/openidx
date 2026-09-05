@@ -1030,5 +1030,12 @@ func allMigrations() []*Migration {
 			UpSQL:       samlTenantScopeUp,
 			DownSQL:     samlTenantScopeDown,
 		},
+		{
+			Version:     145,
+			Name:        "credential_tenant_scope",
+			Description: "Add org_id + FORCE RLS to hardware_tokens, hardware_token_events, mfa_bypass_codes, mfa_bypass_audit and magic_links — five v54 tables that are all a way to authenticate WITHOUT the password, and none of which carried a tenant. hardware_tokens is the live hole: internal/identity/hardware_token.go read and wrote it install-wide at every call site, so ListHardwareTokens showed one tenant every other tenant's inventory of physical tokens, get/revoke/report-lost took a bare id, and AssignHardwareToken took a bare token id AND a bare user id — an admin of tenant A could bind a token sitting available in tenant B's inventory to one of their own users. mfa_bypass_codes had its list scoped through the target user's org but RevokeBypassCode took a bare code id and RevokeAllBypassCodes a bare user id, so one tenant could destroy another's break-glass; GetBypassAuditLog's `WHERE ($1 = '' OR user_id::text = $1)` returned every tenant's bypass history when the console called it with no user. serial_number was UNIQUE install-wide and becomes UNIQUE(org_id, serial_number) — the opposite call from v144's entity_id, because a serial resolves no tenant (verification finds a token through assigned_to) while the install-wide constraint handed the first registrant a veto and answered existence questions about hardware another tenant owns. Per-user rows are attributed to their user; hardware_tokens rows exist before any user is attached, so unassigned ones go to the oldest org where an operator can re-file them. No column DEFAULT.",
+			UpSQL:       credentialTenantScopeUp,
+			DownSQL:     credentialTenantScopeDown,
+		},
 	}
 }

@@ -104,22 +104,22 @@ func (s *Service) CreateMagicLink(ctx context.Context, email, purpose, redirectU
 
 	// Invalidate any existing pending magic links for this user
 	s.db.Pool.Exec(ctx,
-		"UPDATE magic_links SET status = 'expired' WHERE user_id = $1 AND status = 'pending'",
-		userID,
+		"UPDATE magic_links SET status = 'expired' WHERE user_id = $1 AND status = 'pending' AND org_id = $2",
+		userID, org.ID,
 	)
 
 	// Create magic link
 	query := `
 		INSERT INTO magic_links (
-			id, user_id, email, token_hash, purpose, redirect_url,
+			id, org_id, user_id, email, token_hash, purpose, redirect_url,
 			ip_address, user_agent, status, created_at, expires_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', NOW(), $9)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending', NOW(), $10)
 		RETURNING created_at
 	`
 
 	var createdAt time.Time
 	err = s.db.Pool.QueryRow(ctx, query,
-		linkID, userID, email, string(tokenHash), purpose, redirectURL,
+		linkID, org.ID, userID, email, string(tokenHash), purpose, redirectURL,
 		ipAddress, userAgent, expiresAt,
 	).Scan(&createdAt)
 	if err != nil {
@@ -163,7 +163,22 @@ func (s *Service) SendMagicLinkEmail(ctx context.Context, to, magicLinkURL strin
 
 // VerifyMagicLink validates a magic link token and returns the user
 func (s *Service) VerifyMagicLink(ctx context.Context, token, ipAddress, userAgent string) (string, string, error) {
+	// A PRE-TENANT-RESOLUTION lookup, the same class as api-key-by-hash and
+	// route-by-host that TestPreResolutionLookupsUnderRLS pins. The visitor
+	// arrives holding a link and nothing else: no session, no organization, and
+	// the link is what says who they are. There is no tenant to scope by yet,
+	// so the belt is lifted here rather than in spite of it — under FORCE RLS
+	// this query would return no rows and every magic link in the product would
+	// stop working.
+	//
+	// Possession of the 32-byte token is the whole entitlement, and it is
+	// checked against the stored bcrypt hash, so spanning organizations
+	// discloses nothing: a token matches at most the one row it was minted for,
+	// and that row names its own user.
+	ctx = orgctx.WithBypassRLS(ctx)
+
 	// Find pending magic links
+	//orgscope:ignore pre-tenant-resolution: the link is presented before any organization is known and is itself the credential
 	query := `
 		SELECT id, user_id, token_hash, purpose, expires_at
 		FROM magic_links
@@ -187,7 +202,9 @@ func (s *Service) VerifyMagicLink(ctx context.Context, token, ipAddress, userAge
 
 		// Check expiration
 		if time.Now().After(expiresAt) {
-			s.db.Pool.Exec(ctx, "UPDATE magic_links SET status = 'expired' WHERE id = $1", linkID)
+			s.db.Pool.Exec(ctx,
+				//orgscope:ignore link id from the bypassed pre-resolution scan above; the token is the credential
+				"UPDATE magic_links SET status = 'expired' WHERE id = $1", linkID)
 			continue
 		}
 
@@ -198,6 +215,7 @@ func (s *Service) VerifyMagicLink(ctx context.Context, token, ipAddress, userAge
 
 		// Token is valid - mark as used
 		s.db.Pool.Exec(ctx,
+			//orgscope:ignore link id from the bypassed pre-resolution scan above; the token is the credential
 			"UPDATE magic_links SET status = 'used', used_at = NOW() WHERE id = $1",
 			linkID,
 		)
@@ -521,8 +539,16 @@ func (s *Service) CanLoginPasswordless(ctx context.Context, userID string) (bool
 // intentionally org-unscoped: they only touch already-expired or week-old
 // rows and expose no tenant data.
 func (s *Service) CleanupExpiredPasswordlessSessions(ctx context.Context) error {
+	// Since v145 magic_links sits behind the FORCE RLS belt, so a sweep with no
+	// tenant on its connection would match nothing at all and quietly stop
+	// cleaning up — the belt turning a maintenance job into a no-op is a real
+	// failure mode of adding one. The bypass is what keeps the sweep doing its
+	// job; the WHERE clauses are what keep it harmless.
+	ctx = orgctx.WithBypassRLS(ctx)
+
 	// Expire old magic links
 	s.db.Pool.Exec(ctx,
+		//orgscope:ignore cross-org maintenance sweep of expired links; no request/tenant context
 		"UPDATE magic_links SET status = 'expired' WHERE status = 'pending' AND expires_at < NOW()",
 	)
 
@@ -534,6 +560,7 @@ func (s *Service) CleanupExpiredPasswordlessSessions(ctx context.Context) error 
 
 	// Delete very old records (> 7 days)
 	s.db.Pool.Exec(ctx,
+		//orgscope:ignore cross-org maintenance sweep of week-old links; no request/tenant context
 		"DELETE FROM magic_links WHERE created_at < NOW() - INTERVAL '7 days'",
 	)
 	s.db.Pool.Exec(ctx,

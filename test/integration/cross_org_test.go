@@ -489,6 +489,33 @@ func TestRLSBeltTables(t *testing.T) {
 			VALUES ('tbelt-saml-` + suffix + `','tbelt-saml-` + suffix + `@example.test',true,$1) RETURNING id)
 			INSERT INTO saml_sessions (user_id, sp_id, sp_entity_id, session_index, name_id, name_id_format, expires_at, org_id)
 			SELECT u.id, gen_random_uuid(), 'https://tbelt-` + suffix + `.example.test/metadata','idx-` + suffix + `','tbelt@example.test','emailAddress',NOW() + INTERVAL '1 hour',$1 FROM u`},
+		// v145 — the credentials that stand in for a password. hardware_tokens
+		// is the live one: every call site took a bare id, so an administrator
+		// of one tenant could enumerate another's inventory and, worse, bind a
+		// token sitting available there to one of their own users. Unlike the
+		// v143 per-user tables, an inventory row exists before any user does,
+		// which is why its probe needs no CTE and its serial is suffixed
+		// per-probe rather than per-org — v145 re-scoped that key to
+		// (org_id, serial_number), the opposite call from v144's entity_id,
+		// because a serial resolves no tenant.
+		{"hardware_tokens", `INSERT INTO hardware_tokens (serial_number, name, token_type, secret_key, org_id) VALUES ('tbelt-` + suffix + `','tbelt token','oath-hotp','x',$1)`},
+		{"hardware_token_events", `WITH t AS (
+			INSERT INTO hardware_tokens (serial_number, name, token_type, secret_key, org_id)
+			VALUES ('tbelt-evt-` + suffix + `','tbelt token','oath-hotp','x',$1) RETURNING id)
+			INSERT INTO hardware_token_events (token_id, event_type, org_id) SELECT t.id,'tbelt.probe',$1 FROM t`},
+		// generated_by is NOT NULL and references users, so the bypass probes
+		// bring their own administrator along the way v143's per-user rows do.
+		{"mfa_bypass_codes", `WITH u AS (
+			INSERT INTO users (username, email, enabled, org_id)
+			VALUES ('tbelt-bc-` + suffix + `','tbelt-bc-` + suffix + `@example.test',true,$1) RETURNING id)
+			INSERT INTO mfa_bypass_codes (user_id, code_hash, reason, generated_by, valid_until, org_id)
+			SELECT u.id,'x','tbelt probe',u.id,NOW() + INTERVAL '1 hour',$1 FROM u`},
+		{"mfa_bypass_audit", `INSERT INTO mfa_bypass_audit (id, action, org_id) VALUES (gen_random_uuid(),'tbelt.probe',$1)`},
+		{"magic_links", `WITH u AS (
+			INSERT INTO users (username, email, enabled, org_id)
+			VALUES ('tbelt-ml-` + suffix + `','tbelt-ml-` + suffix + `@example.test',true,$1) RETURNING id)
+			INSERT INTO magic_links (user_id, email, token_hash, expires_at, org_id)
+			SELECT u.id,'tbelt-ml-` + suffix + `@example.test','x',NOW() + INTERVAL '1 hour',$1 FROM u`},
 	}
 
 	// One list, not two: the role is granted exactly the tables the cases probe.

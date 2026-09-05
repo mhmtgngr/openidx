@@ -320,8 +320,11 @@ func TestRegistersOnlyShrink(t *testing.T) {
 		max  int
 	}{
 		// 61 -> 58: migration v141 scoped the admin audit log and the audit
-		// archives. Re-pinned so the register cannot grow back.
-		{"needsScoping", len(needsScoping), 50},
+		// archives. Re-pinned so the register cannot grow back. 50 -> 45 with
+		// v145, which took the five credentials that stand in for a password:
+		// hardware_tokens, hardware_token_events, mfa_bypass_codes,
+		// mfa_bypass_audit and magic_links.
+		{"needsScoping", len(needsScoping), 45},
 		// 34 → 19: migration v140 belted the fifteen whose queries already
 		// carried their org predicate. Re-pinned rather than left at 34, or
 		// the register could grow back into the room the fix just made.

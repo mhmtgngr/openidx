@@ -10,6 +10,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/config"
+	"github.com/openidx/openidx/internal/common/orgctx"
 	"github.com/openidx/openidx/internal/common/secretcrypt"
 )
 
@@ -35,7 +36,8 @@ CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY, username TEXT, org_id UUID, enabled BOOLEAN DEFAULT TRUE);
 CREATE TABLE IF NOT EXISTS hardware_tokens (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    serial_number VARCHAR(50) UNIQUE NOT NULL,
+    org_id UUID NOT NULL,
+    serial_number VARCHAR(50) NOT NULL,
     name VARCHAR(255),
     token_type VARCHAR(50) NOT NULL DEFAULT 'yubikey',
     secret_key VARCHAR(255) NOT NULL,
@@ -55,8 +57,11 @@ CREATE TABLE IF NOT EXISTS hardware_tokens (
     last_failed_at TIMESTAMPTZ,
     locked_until TIMESTAMPTZ
 );
+-- v145: the serial is unique per organization, not across the install.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_hardware_tokens_org_serial ON hardware_tokens(org_id, serial_number);
 CREATE TABLE IF NOT EXISTS hardware_token_events (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id UUID NOT NULL,
     token_id UUID REFERENCES hardware_tokens(id) ON DELETE CASCADE,
     user_id UUID REFERENCES users(id) ON DELETE SET NULL,
     event_type VARCHAR(50) NOT NULL,
@@ -98,7 +103,10 @@ func newHardwareTokenService(t *testing.T) (*Service, context.Context) {
 		t.Fatalf("cipher: %v", err)
 	}
 
-	return &Service{db: db, cfg: &config.Config{}, logger: zap.NewNop(), idpCipher: cipher}, ctx
+	// Since v145 every query in hardware_token.go takes its tenant from the
+	// context, so the harness has to supply one the way a request would.
+	return &Service{db: db, cfg: &config.Config{}, logger: zap.NewNop(), idpCipher: cipher},
+		orgctx.With(ctx, orgctx.Org{ID: hwOrg})
 }
 
 // issueToken registers a token with a known seed and assigns it, returning the

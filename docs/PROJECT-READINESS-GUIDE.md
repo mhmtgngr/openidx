@@ -1729,6 +1729,69 @@ class this whole program exists for.
    Proven on Postgres 16: 5/5, and red against a mutation that removes the org
    predicate from the get and delete paths ("org A read org B's service
    provider by id", "org B's provider is gone"). `TestRLSBeltTables` 26/26.
+
+   **Batch 7 shipped (migration v145, `needsScoping` 50 → 45; registers 69 →
+   64): the credentials that stand in for a password.** Five v54 tables —
+   `hardware_tokens`, `hardware_token_events`, `mfa_bypass_codes`,
+   `mfa_bypass_audit`, `magic_links` — every one of them a way to authenticate
+   *without* the password, and not one of them carried a tenant.
+
+   `hardware_tokens` is the worst and the clearest. It is an inventory of
+   physical tokens holding the serial and the HOTP/TOTP `secret_key`, and
+   `internal/identity/hardware_token.go` read and wrote it install-wide at
+   **every single call site**. The list had no tenant predicate at all — both
+   its filters are optional, so the console's inventory page showed one
+   tenant's administrator every other tenant's tokens, serials and assignees.
+   Get, revoke and report-lost took a bare id. And **assignment took a bare
+   token id *and* a bare user id**, so an admin of tenant A could take a token
+   sitting available in tenant B's inventory and bind it to one of their own
+   users — or bind their own token to a user in tenant B. That is not
+   disclosure of a credential, it is transfer of one, and it is why the fix
+   checks the *user* as well as adding a predicate to the update.
+
+   `mfa_bypass_codes` is the break-glass code an administrator issues to get a
+   user past MFA. The list was already scoped (through a join on the target
+   user's org), but `RevokeBypassCode` took a bare code id and
+   `RevokeAllBypassCodes` a bare user id: **one tenant could destroy another's
+   break-glass**, and the owner would find out while locked out. The widest
+   read was `GetBypassAuditLog`, whose user filter is optional and whose only
+   console caller passes no user — it returned every tenant's record of who
+   issued a bypass, to whom, when it was used and from where. An optional
+   predicate is not a predicate; the tenant term is the one that is never
+   optional.
+
+   **`serial_number` moves to `(org_id, serial_number)`, which is the opposite
+   call from v144's `entity_id`, and the pair is the rule.** An install-wide
+   unique key is a bug *unless the key is the thing that resolves the tenant*.
+   An entity id resolves one; a hardware serial resolves nothing — verification
+   finds a token through `assigned_to` — so the install-wide constraint bought
+   no correctness and cost two real things: the first tenant to register a
+   serial vetoed every other tenant (v143's `provider_key` shape), and "already
+   exists" answered a question about hardware somebody else owns. `v145_test.go`
+   asserts the re-scope is present, the mirror image of `v144_test.go`
+   asserting it is absent, so a later batch cannot flatten the two cases into
+   one rule in either direction.
+
+   Three verification paths run with the belt **lifted** and the tenant in the
+   predicate instead: bypass-code verification, hardware-token verification and
+   magic-link verification. The first two are reached from the oauth service's
+   step-up as well as the identity API, and those callers do not all carry a
+   resolved organization; under FORCE RLS an unset `app.org_id` returns no rows,
+   which those functions report as "no code" and "no token assigned to user" —
+   **a second factor that silently stops existing**, on the path where that is
+   least visible. `VerifyBypassCode` has already been broken in exactly that
+   shape once (the "conn busy" comment in its own body). So the belt is lifted
+   deliberately and `AND org_id = (SELECT org_id FROM users WHERE id = $1)`
+   carries the tenant, which is checkable rather than argued. Magic-link
+   verification is the pre-resolution class proper: the visitor holds a link and
+   nothing else, and the link is what says who they are.
+
+   Proven on Postgres 16: 11 isolation assertions green, and red against a
+   mutation that removes each predicate — "org A bound org B's available token
+   to its own user", "org A read 2 entries of org B's bypass history with an
+   empty user filter", "org B's user could not spend its own bypass code".
+   v145 applied, rolled back (the serial's install-wide UNIQUE restored) and
+   re-applied. `TestRLSBeltTables` 31/31.
 4. ✅ **OPA `deny` enforced** — *shipped.* — `internal/common/middleware/opa.go`: abort
    unless `Allow && len(Deny)==0`; `authz.rego:15-19`'s "any authenticated
    user may GET anything" removed; `policies/access_control.rego`
@@ -3357,7 +3420,7 @@ that holds it rather than by the commit that wrote it.
 |---|---|---|
 | 1 · journeys verified | ☐ | J1 ✅ the `smoke` and `first-run` jobs (P6.2); J2 ✅ `test/integration/{auth_flows,mfa_flow,passwordless}_test.go`; J3 ✅ `test/integration/enforced_posture_test.go` (P6.1); ☐ **J6 has no automated proof** — `e2e/access-reviews-flow.spec.ts` is still on the `hold` side of `e2e/suite.txt`; ☐ **J7 needs a leaver integration case**; J4/J5/J8 stay scripted operator drills (`tools/darkprobe`, `make dr-game-day`) to be filed under `docs/evidence/` (P8.4) |
 | 2 · enforced posture, legacy login gone | ◐ | code ✅ — the server-rendered login is deleted and `internal/oauth/routes_legacy_login_test.go` fails if any of it returns (P6.1); ops ☐ — rollout Task 16 is the operator's, on a live deployment |
-| 3 · every control enforces | ◐ | P5.1–5.11 ✅ (tenant isolation, the inverted orgscope lint, OPA `deny`, ABAC at both PEPs, the honest Apply/Remediate, SMS, multi-IdP, the fail-closed gate, `ValidateProduction`, the faked measurements); ◐ the P5.3b register programme — batch 1 (v140) belted fifteen tables and fixed `email_branding`'s cross-tenant read *and* write; batch 2 (v141) scoped the compliance record and fixed an archive worker that was silently producing empty archives; **77** still ride `needsScoping`/`needsBelt` waivers |
+| 3 · every control enforces | ◐ | P5.1–5.11 ✅ (tenant isolation, the inverted orgscope lint, OPA `deny`, ABAC at both PEPs, the honest Apply/Remediate, SMS, multi-IdP, the fail-closed gate, `ValidateProduction`, the faked measurements); ◐ the P5.3b register programme — batch 1 (v140) belted fifteen tables and fixed `email_branding`'s cross-tenant read *and* write; batch 2 (v141) scoped the compliance record and fixed an archive worker that was silently producing empty archives; batches 4–7 (v142–v145) took the unified audit stream, the sign-in tables, the SAML surface and the password-substitute credentials; **64** still ride `needsScoping`/`needsBelt` waivers |
 | 4 · first run / first login / four pillars from the docs | ✅ | first run ✅ the `smoke` and `first-run` jobs (P6.2); first login ✅ one authoritative credential in `GETTING-STARTED.md`, with the `USER_GUIDE.md` and `CONTRIBUTING.md` copies pointing at it rather than repeating it (P8.1); four pillars ✅ `guide/governance.md` was the missing one (P8.1) |
 | 5 · one story + auditor artifacts | ✅ | threat model and control mapping exist; docs sweep 3 ✅ and the docs-drift guard ✅ (`check-docs-drift.sh`, enforced in CI, so a document cannot cite a path that is not there); `docs/evidence/` ✅ (P8.4) |
 | 6 · releases current, signed, Helm proven | ◐ | signing ✅ `release.yml` (cosign) and, since P7.5, an Android artifact whose name tracks the key that signed it; Helm ✅ the `kind` install job (P6.4); versions ✅ `VERSION` + `check-version-sync.sh` (P8.3); CHANGELOG ✅ every release attributed from the commit that wrote its entry, 61 compare links that resolve (P8.2); ☐ v1.34.0 is not cut — the maintainer's |

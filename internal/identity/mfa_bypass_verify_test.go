@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS users (
 );
 CREATE TABLE IF NOT EXISTS mfa_bypass_codes (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id UUID NOT NULL,
     user_id UUID REFERENCES users(id) ON DELETE CASCADE,
     code_hash VARCHAR(255) NOT NULL,
     reason TEXT NOT NULL,
@@ -53,6 +54,7 @@ CREATE TABLE IF NOT EXISTS mfa_bypass_codes (
 );
 CREATE TABLE IF NOT EXISTS mfa_bypass_audit (
     id UUID PRIMARY KEY,
+    org_id UUID NOT NULL,
     bypass_code_id UUID REFERENCES mfa_bypass_codes(id) ON DELETE SET NULL,
     user_id UUID REFERENCES users(id) ON DELETE SET NULL,
     action VARCHAR(50) NOT NULL,
@@ -101,9 +103,9 @@ func issueBypassCode(t *testing.T, s *Service, ctx context.Context, code string,
 	}
 	id := uuid.New().String()
 	if _, err := s.db.Pool.Exec(ctx, `
-		INSERT INTO mfa_bypass_codes (id, user_id, code_hash, reason, generated_by, valid_until, max_uses, use_count, status)
-		VALUES ($1, $2, $3, 'test', $4, $5, $6, 0, 'active')`,
-		id, bypassUser, string(hash), bypassAdmin, validUntil, maxUses); err != nil {
+		INSERT INTO mfa_bypass_codes (id, org_id, user_id, code_hash, reason, generated_by, valid_until, max_uses, use_count, status)
+		VALUES ($1, $2, $3, $4, 'test', $5, $6, $7, 0, 'active')`,
+		id, bypassOrg, bypassUser, string(hash), bypassAdmin, validUntil, maxUses); err != nil {
 		t.Fatalf("issue: %v", err)
 	}
 	return id

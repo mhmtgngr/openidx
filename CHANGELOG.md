@@ -21,6 +21,30 @@ to a spec that describes an eighth of a surface, a documented endpoint that
   the posture score was neither one tenant's nor the install's. All now carry
   `org_id` under FORCE RLS, with the install-wide unique keys re-scoped and an
   isolation test per handler file.
+- **The credentials that stand in for a password got a tenant** (migration
+  v145). `hardware_tokens`, `hardware_token_events`, `mfa_bypass_codes`,
+  `mfa_bypass_audit` and `magic_links` — five ways to authenticate without the
+  password, none of which carried an organization. `hardware_tokens` is an
+  inventory of physical tokens, holding the serial and the HOTP/TOTP seed, and
+  every call site read and wrote it install-wide: the console's inventory page
+  listed every tenant's tokens, and assignment took a bare token id *and* a
+  bare user id, so an administrator could bind a token sitting available in
+  another tenant's inventory to one of their own users — a transfer of a
+  working second factor, not a disclosure of one. Bypass codes are the
+  break-glass credential for getting a user past MFA: revoking one took a bare
+  code id and revoking all of a user's took a bare user id, so one tenant could
+  destroy another's break-glass at the moment it was needed, and the bypass
+  audit log's user filter was optional — the console calls it with no user,
+  which returned every tenant's history of who issued and used one.
+  `serial_number` was UNIQUE across the install and is now unique per
+  organization: unlike a SAML entity id it resolves no tenant, so the
+  install-wide key only let the first registrant veto everybody else and
+  confirmed the existence of hardware another tenant owns. Verification of a
+  bypass code, a hardware token and a magic link runs with the belt lifted and
+  the tenant in the predicate instead, because those paths do not all have an
+  organization resolved yet and an RLS-empty read there would silently retire
+  the factor. Existing rows are attributed to their user, their parent token or
+  code, or the primary organization.
 - **The SAML surface got a tenant** (migration v144). `saml_service_providers`
   — the registry of federation partners this install acts as a SAML identity
   provider for, holding their assertion-consumer URL and the certificate the
