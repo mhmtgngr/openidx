@@ -142,7 +142,7 @@ var crossPillarSchema = []string{
 	`CREATE TABLE IF NOT EXISTS known_devices (
 		id UUID PRIMARY KEY, user_id UUID, org_id UUID, trusted BOOLEAN DEFAULT false)`,
 	`CREATE TABLE IF NOT EXISTS unified_audit_events (
-		id UUID PRIMARY KEY, source VARCHAR(50), event_type VARCHAR(100),
+		id UUID PRIMARY KEY, org_id UUID NOT NULL, source VARCHAR(50), event_type VARCHAR(100),
 		route_id UUID, user_id UUID, actor_ip VARCHAR(45), details JSONB DEFAULT '{}',
 		created_at TIMESTAMPTZ DEFAULT NOW())`,
 }
@@ -214,10 +214,10 @@ func TestUserAccessMap_CrossPillar(t *testing.T) {
 		  VALUES (gen_random_uuid(),'agent-1','linux','active','compliant',$1)`, []any{testUser}},
 		{`INSERT INTO known_devices (id, user_id, org_id, trusted) VALUES (gen_random_uuid(),$1,$2,true)`,
 			[]any{testUser, testOrg}},
-		{`INSERT INTO unified_audit_events (id, source, event_type, user_id)
-		  VALUES (gen_random_uuid(),'ziti','circuit.created',$1)`, []any{testUser}},
-		{`INSERT INTO unified_audit_events (id, source, event_type, user_id)
-		  VALUES (gen_random_uuid(),'guacamole','session.started',$1)`, []any{testUser}},
+		{`INSERT INTO unified_audit_events (id, org_id, source, event_type, user_id)
+		  VALUES (gen_random_uuid(),$2,'ziti','circuit.created',$1)`, []any{testUser, testOrg}},
+		{`INSERT INTO unified_audit_events (id, org_id, source, event_type, user_id)
+		  VALUES (gen_random_uuid(),$2,'guacamole','session.started',$1)`, []any{testUser, testOrg}},
 	}
 	for _, s := range seed {
 		if _, err := db.Pool.Exec(ctx, s.sql, s.args...); err != nil {

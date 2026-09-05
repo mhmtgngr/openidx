@@ -73,7 +73,6 @@ var beltExempt = map[string]string{
 // to cut.
 var needsScoping = map[string]string{
 	// Audit and compliance — one tenant's auditor can read another's trail.
-	"unified_audit_events":   "the unified audit stream the console's audit pages read",
 	"compliance_gaps":        "named control gaps and remediation plans (v44)",
 	"policy_recommendations": "recommendations naming affected users, roles and resources (v44)",
 	"breach_incidents":       "incidents with affected_user_ids and quarantine actions (v62)",

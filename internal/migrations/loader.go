@@ -1009,5 +1009,12 @@ func allMigrations() []*Migration {
 			UpSQL:       auditTenantScopeUp,
 			DownSQL:     auditTenantScopeDown,
 		},
+		{
+			Version:     142,
+			Name:        "unified_audit_org_scope",
+			Description: "Add org_id + FORCE RLS to unified_audit_events, the table behind the console's Unified Audit page, the assignment- and ABAC-gate decision records, the agent lifecycle log, the MCP tool-call log, the Ziti/Guacamole sync and the usage metering rollup. It had no org_id at all and QueryEvents opened WHERE 1=1, so every tenant's admin read every tenant's audit trail — enforcement decisions on other tenants' applications, their users' IP addresses and (via the JOIN) e-mail addresses, and their route names; the summary endpoint counted install-wide the same way. The absence had been written down as a design property in three files, because the assignment gate chose this table over the org-scoped audit_events when audit_events was rejecting its writes — itself a bug (a detached context left app.org_id empty), fixed earlier in this series. Rows are attributed to their own user's org, else the org of the route they name (which covers the Ziti and Guacamole sync rows), else the oldest org for controller-level events that match neither. No column DEFAULT, so a rolled-back binary fails loudly instead of filing unattributed rows.",
+			UpSQL:       unifiedAuditOrgScopeUp,
+			DownSQL:     unifiedAuditOrgScopeDown,
+		},
 	}
 }

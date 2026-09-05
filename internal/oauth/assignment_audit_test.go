@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS proxy_routes (id UUID PRIMARY KEY, name VARCHAR(255));
 CREATE TABLE IF NOT EXISTS unified_audit_events (
 	id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+	org_id UUID NOT NULL,
 	source VARCHAR(50) NOT NULL,
 	event_type VARCHAR(100) NOT NULL,
 	route_id UUID REFERENCES proxy_routes(id) ON DELETE SET NULL,

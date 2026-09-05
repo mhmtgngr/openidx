@@ -1553,6 +1553,50 @@ class this whole program exists for.
    `event_count` 0 with nothing wrong in the logs. It now carries the org
    rather than bypassing RLS, so an archive can only ever contain the events
    of the org that asked for it.
+
+   **Batch 4 shipped (migration v142, `needsScoping` 58 → 57; registers 77 →
+   76): the unified audit stream.** `unified_audit_events` is the busiest audit
+   surface in the product — the console's Unified Audit page, the assignment-
+   and ABAC-gate decision records, the agent lifecycle log, the MCP gateway's
+   tool-call log, the Ziti and Guacamole sync, and the usage metering rollup —
+   and it had no `org_id` at all. `QueryEvents` opened `WHERE 1=1`, so every
+   tenant's admin read every tenant's audit trail: the enforcement decisions
+   taken on other tenants' applications, their users' actor IPs and, through
+   the `users` JOIN the query performs to render a friendly name, their users'
+   e-mail addresses. The summary endpoint counted install-wide the same way, so
+   one tenant's "last 24 hours" headline was the sum of everybody's activity.
+
+   **The interesting part is why it survived.** This absence was not an
+   oversight nobody had noticed; it had been *written down as a design
+   property*. Three files carried variations of "unified_audit_events has no
+   org_id column by design (that is why it accepts these writes at all)", and
+   the assignment gate chose this table over the org-scoped `audit_events`
+   precisely because `audit_events` was rejecting its inserts. That rejection
+   was batch 3's bug — a detached context left `app.org_id` empty — and the
+   workaround outlived the reason for it, hardened into a documented
+   invariant. A missing tenant column is not a design; it is a cross-tenant
+   read with a comment on it. The lesson is the one batch 3 started: follow the
+   *reason* a workaround exists rather than accepting the workaround.
+
+   Every writer now names the tenant — `RecordEvent` (which covers the proxy's
+   assignment and ABAC decisions, the kill switch, device revocation, kiosk and
+   remote support), the agent lifecycle log, the MCP gateway and the oauth
+   gate's two recorders — and the two external syncs derive it per event from
+   the route they correlate to, since a Ziti or Guacamole event names a service,
+   not a user. The fallback rule now lives once in `orgctx.AuditOrgID`, which
+   returns the primary org *and a flag saying it had to*, so a caller that
+   misattributes says so at WARN instead of doing it silently.
+
+   The billing rollup got more accurate for free: `usage_metering` attributed
+   fabric events by joining `users`, which yields nothing for the many events
+   that carry a service and no user — so overlay traffic on a tenant's own
+   route was billed to the zero-UUID bucket nobody owns. It reads the event's
+   own `org_id` now.
+
+   Proven both ways on Postgres 16: the new `TestQueryEventsIsScopedToOneTenant`
+   fails against the old `WHERE 1=1` with org A seeing all five rows and org B's
+   `guacamole` and `mcp` sources, and passes after. The belt itself is proved
+   separately against a real NOSUPERUSER role by `TestRLSBeltTables`.
 4. ✅ **OPA `deny` enforced** — *shipped.* — `internal/common/middleware/opa.go`: abort
    unless `Allow && len(Deny)==0`; `authz.rego:15-19`'s "any authenticated
    user may GET anything" removed; `policies/access_control.rego`

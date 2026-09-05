@@ -10,23 +10,31 @@ import (
 	"github.com/openidx/openidx/internal/appaccess"
 
 	"github.com/openidx/openidx/internal/common/logsafe"
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // recordAssignmentDecision durably records one /oauth/authorize assignment-gate
 // decision into unified_audit_events.
 //
-// Why not logAuditEvent (saml.go): that writes audit_events, which is org-scoped
-// and whose RLS policy rejects these writes — on the live box audit_events has
-// taken one row since June while unified_audit_events takes writes today, and
-// it carries no `oauth` source at all. In report mode
-// (ACCESS_ASSIGNMENT_ENFORCE=false, the default) these records are the ONLY
-// evidence an operator has for whether flipping the flag is safe, and the flip
-// is irreversible — so they have to land in the table that accepts them.
+// Why unified_audit_events and not audit_events (saml.go's logAuditEvent): the
+// unified stream is what the console's audit page and the Assignment Report
+// read, and it carries an `oauth` source that audit_events does not. In report
+// mode (ACCESS_ASSIGNMENT_ENFORCE=false, the default) these records are the
+// ONLY evidence an operator has for whether flipping the flag is safe, and the
+// flip is irreversible.
 //
-// unified_audit_events has no org_id column, so this is a plain insert and RLS
-// is not in play; do not add org scoping the table cannot express. route_id is
-// left NULL: this enforcement point exists precisely for applications with no
-// published route.
+// This comment used to say something else — that audit_events "rejects these
+// writes" and that unified_audit_events "has no org_id column by design (that
+// is why it accepts these writes at all)". Both halves were wrong in the same
+// way. audit_events was rejecting writes because its writers handed the pool a
+// detached context.Background(), leaving app.org_id empty so RLS refused them;
+// that was a bug, not a property of the table. And a missing tenant column is
+// not a design: it meant every tenant's admin could read every tenant's
+// enforcement decisions off the audit page. v142 gives the table org_id and the
+// FORCE belt, so this insert names the tenant like every other.
+//
+// route_id is left NULL: this enforcement point exists precisely for
+// applications with no published route.
 //
 // This is a side-effect recorder only. It never influences the gate's verdict,
 // never returns an error to the caller, and every failure is logged at WARN —
@@ -61,11 +69,18 @@ func (s *Service) recordAssignmentDecision(ctx context.Context, userID, clientID
 		userIDPtr = &userID
 	}
 
-	//orgscope:ignore unified_audit_events has no org_id column by design (that is why it accepts these writes at all); the record is scoped by user_id + application_id instead
+	orgID, resolved := orgctx.AuditOrgID(ctx)
+	if !resolved {
+		s.logger.Warn("assignment decision has no org context; filed under the primary organization",
+			logsafe.String("event_type", eventType),
+			logsafe.String("user_id", userID),
+			logsafe.String("client_id", clientID))
+	}
+
 	if _, err := s.db.Pool.Exec(ctx, `
-		INSERT INTO unified_audit_events (id, source, event_type, route_id, user_id, actor_ip, details, created_at)
-		VALUES ($1, $2, $3, NULL, $4, $5, $6, NOW())
-	`, uuid.New().String(), appaccess.SourceOIDC, eventType, userIDPtr, actorIP, detailsJSON); err != nil {
+		INSERT INTO unified_audit_events (id, org_id, source, event_type, route_id, user_id, actor_ip, details, created_at)
+		VALUES ($1, $2, $3, $4, NULL, $5, $6, $7, NOW())
+	`, uuid.New().String(), orgID, appaccess.SourceOIDC, eventType, userIDPtr, actorIP, detailsJSON); err != nil {
 		s.logger.Warn("assignment decision not recorded: unified audit write failed",
 			logsafe.String("event_type", eventType),
 			logsafe.String("user_id", userID),
@@ -106,11 +121,18 @@ func (s *Service) recordABACDecision(ctx context.Context, userID, clientID, appI
 		userIDPtr = &userID
 	}
 
-	//orgscope:ignore unified_audit_events has no org_id column by design (that is why it accepts these writes at all); the record is scoped by user_id + application_id instead
+	orgID, resolved := orgctx.AuditOrgID(ctx)
+	if !resolved {
+		s.logger.Warn("abac decision has no org context; filed under the primary organization",
+			logsafe.String("event_type", eventType),
+			logsafe.String("user_id", userID),
+			logsafe.String("client_id", clientID))
+	}
+
 	if _, err := s.db.Pool.Exec(ctx, `
-		INSERT INTO unified_audit_events (id, source, event_type, route_id, user_id, actor_ip, details, created_at)
-		VALUES ($1, $2, $3, NULL, $4, $5, $6, NOW())
-	`, uuid.New().String(), appaccess.SourceOIDC, eventType, userIDPtr, actorIP, detailsJSON); err != nil {
+		INSERT INTO unified_audit_events (id, org_id, source, event_type, route_id, user_id, actor_ip, details, created_at)
+		VALUES ($1, $2, $3, $4, NULL, $5, $6, $7, NOW())
+	`, uuid.New().String(), orgID, appaccess.SourceOIDC, eventType, userIDPtr, actorIP, detailsJSON); err != nil {
 		s.logger.Warn("abac decision not recorded: unified audit write failed",
 			logsafe.String("event_type", eventType),
 			logsafe.String("user_id", userID),

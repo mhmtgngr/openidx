@@ -449,6 +449,12 @@ func TestRLSBeltTables(t *testing.T) {
 		{"admin_audit_log", `INSERT INTO admin_audit_log (action, target_type, org_id) VALUES ('tbelt.probe','settings',$1)`},
 		{"audit_archives", `INSERT INTO audit_archives (name, org_id) VALUES ('tbelt-arch-` + suffix + `',$1)`},
 		{"audit_retention_policies", `INSERT INTO audit_retention_policies (name, retention_days, org_id) VALUES ('tbelt-ret-` + suffix + `',30,$1)`},
+		// v142 — the busiest audit surface in the product, and the one that was
+		// actually being read across tenants: QueryEvents opened WHERE 1=1, so
+		// the console's Unified Audit page showed every tenant's enforcement
+		// decisions, actor IPs and (through its users JOIN) e-mail addresses to
+		// every tenant's admin.
+		{"unified_audit_events", `INSERT INTO unified_audit_events (source, event_type, org_id) VALUES ('tbelt','tbelt.probe',$1)`},
 	}
 
 	// One list, not two: the role is granted exactly the tables the cases probe.

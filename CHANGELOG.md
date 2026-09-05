@@ -21,6 +21,22 @@ to a spec that describes an eighth of a surface, a documented endpoint that
   the posture score was neither one tenant's nor the install's. All now carry
   `org_id` under FORCE RLS, with the install-wide unique keys re-scoped and an
   isolation test per handler file.
+- **The unified audit stream got a tenant** (migration v142).
+  `unified_audit_events` — the console's Unified Audit page, the assignment-
+  and ABAC-gate decision records, the agent lifecycle log, the MCP gateway's
+  tool-call log, the Ziti and Guacamole sync and the usage metering rollup —
+  had no `org_id` at all, and `QueryEvents` opened `WHERE 1=1`. Every tenant's
+  admin could read every tenant's audit trail: the enforcement decisions taken
+  on other tenants' applications, their users' actor IPs and, through the query's
+  own `users` JOIN, their users' e-mail addresses; the summary endpoint counted
+  install-wide the same way. The table now carries `org_id` under FORCE RLS and
+  every writer names its tenant; the two external syncs derive it from the route
+  they correlate to. Existing rows are attributed to their own user's
+  organization, else the organization of the route they name, else the primary
+  organization for controller-level events that match neither. Usage metering
+  now reads the event's own `org_id` instead of joining `users`, so overlay
+  traffic with no user attached is billed to the tenant that ran it rather than
+  to an unowned bucket.
 - **The compliance record got a tenant** (migration v141). `admin_audit_log`,
   `audit_archives` and `audit_retention_policies` had no `org_id` at all, and
   every handler read them accordingly: the admin log was listed `WHERE 1=1` and

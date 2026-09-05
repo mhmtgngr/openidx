@@ -17,10 +17,18 @@ package appaccess
 // underlying question with — so "one query finds both" is true by
 // construction rather than by two hand-maintained literals agreeing.
 //
-// Both points write to `unified_audit_events`, NOT `audit_events`:
-// unified_audit_events has no org_id column and so is not subject to the
-// org-scoped RLS policy the audit_events writes fall foul of. Do not add org
-// scoping to these records — the table cannot express it.
+// Both points write to `unified_audit_events`, NOT `audit_events`: the unified
+// stream is what the console's audit page and the Assignment Report read, and
+// it carries the `oauth` source that audit_events does not.
+//
+// This paragraph used to end "unified_audit_events has no org_id column and so
+// is not subject to the org-scoped RLS policy the audit_events writes fall foul
+// of. Do not add org scoping to these records — the table cannot express it."
+// The premise was a bug wearing a design's clothes: audit_events was refusing
+// those writes because their context was detached, not because the record was
+// wrong, and a table that cannot say whose row it holds shows every tenant's
+// enforcement decisions to every tenant. Since v142 the table carries org_id
+// under the FORCE belt and both writers stamp it.
 const (
 	// EventTypeWouldDeny is the report-mode record: the caller was NOT
 	// assigned, the flag was off, and the request was allowed anyway. These

@@ -1140,15 +1140,15 @@ func (s *Service) logAuditEvent(ctx context.Context, eventType, category, action
 // context) and marshals the metadata, returning the positional args for the
 // audit_events INSERT in logAuditEvent. Extracted for unit testing the org fallback
 // and field mapping without a database.
-// auditOrgID resolves the tenant for an audit write, falling back to the default
-// org when the context carries none. Shared by the row's org_id column and by
-// the detached context the write runs on, so the two can never disagree -- a row
-// whose org_id differs from app.org_id is refused by the RLS policy.
+// auditOrgID resolves the tenant for an audit write. Shared by the row's org_id
+// column and by the detached context the write runs on, so the two can never
+// disagree -- a row whose org_id differs from app.org_id is refused by the RLS
+// policy. The fallback lives in orgctx now, because the unified audit stream
+// (v142) needs exactly the same rule and two copies of a default org id is how
+// they drift apart.
 func auditOrgID(ctx context.Context) string {
-	if org, err := orgctx.From(ctx); err == nil && org.ID != "" {
-		return org.ID
-	}
-	return "00000000-0000-0000-0000-000000000010"
+	id, _ := orgctx.AuditOrgID(ctx)
+	return id
 }
 
 func buildAuditInsertArgs(ctx context.Context, eventType, category, action, status,

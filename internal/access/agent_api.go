@@ -112,10 +112,15 @@ func (h *AgentAPIHandler) logAuditEventToDB(ctx context.Context, action, agentID
 	// users.id, and unified_audit_events.user_id has an FK to users, so passing
 	// the agent_id here fails the constraint (the event was silently dropped).
 	// The agent_id is preserved in details.agent_id above.
+	//
+	// The org comes from the request. An agent enrolling before it belongs to
+	// anyone has none, and falls back to the primary org rather than losing the
+	// record — the same trade the rest of the unified stream makes.
+	orgID, _ := orgctx.AuditOrgID(ctx)
 	_, err := h.db.Pool.Exec(ctx, `
-		INSERT INTO unified_audit_events (id, source, event_type, user_id, details, created_at)
-		VALUES ($1, 'access-service', $2, NULL, $3, NOW())
-	`, uuid.New().String(), action, detailsJSON)
+		INSERT INTO unified_audit_events (id, org_id, source, event_type, user_id, details, created_at)
+		VALUES ($1, $2, 'access-service', $3, NULL, $4, NOW())
+	`, uuid.New().String(), orgID, action, detailsJSON)
 	if err != nil {
 		h.logger.Warn("logAuditEventToDB: failed to persist audit event",
 			zap.String("action", action),
