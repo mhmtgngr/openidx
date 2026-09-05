@@ -117,23 +117,37 @@ jobs:
               --set secrets.jwtSecret=render-only-not-a-credential-000000 \
               --set secrets.encryptionKey=render-only-not-a-credential32b "$@"
           }
-          weight() {
-            render -s "templates/$1" \
-              | sed -n 's/.*"helm\.sh\/hook-weight": *"\(-\{0,1\}[0-9]\{1,\}\)".*/\1/p'
-          }
-          boot=$(weight db-bootstrap-job.yaml)
-          migr=$(weight migrate-job.yaml)
-          echo "db-bootstrap weight=$boot, migrate weight=$migr"
-          test "$boot" -lt "$migr" || {
-            echo "the bootstrap hook must run at a lower weight than the migration hook"; exit 1; }
+          # The chain is script -> role -> schema: the ConfigMap must exist
+          # before the Job that mounts it, and the role must exist before the
+          # migration that assumes it. Helm completes a hook weight before
+          # starting the next, so the whole ordering is three annotations --
+          # easy to get silently wrong, and wrong means the install fails.
+          render -s templates/db-bootstrap-job.yaml -s templates/migrate-job.yaml \
+          | python3 -c '
+          import sys, yaml
+          w = {}
+          for doc in yaml.safe_load_all(sys.stdin):
+              if not doc:
+                  continue
+              ann = (doc.get("metadata") or {}).get("annotations") or {}
+              if "helm.sh/hook-weight" in ann:
+                  w[(doc["kind"], doc["metadata"]["name"])] = int(ann["helm.sh/hook-weight"])
+          print("hook weights:", w)
+          cm  = w[("ConfigMap", "openidx-db-bootstrap")]
+          job = w[("Job", "openidx-db-bootstrap")]
+          mig = w[("Job", "openidx-migrate")]
+          assert cm < job, f"the bootstrap script ConfigMap ({cm}) must be created before the Job that mounts it ({job})"
+          assert job < mig, f"the bootstrap Job ({job}) must run before the migration Job ({mig})"
+          print("ordering holds: ConfigMap -> bootstrap Job -> migrate Job")
+          '
 
-          # An external database gets no bootstrap Job: the chart holds no
+          # An external database gets no bootstrap objects: the chart holds no
           # superuser credential for a server it does not run, and rendering
-          # one would put a Job in the release that could only ever fail.
+          # them would put a Job in the release that could only ever fail.
           if render --set postgresql.enabled=false | grep -q 'db-bootstrap'; then
             echo "db-bootstrap rendered with postgresql.enabled=false"; exit 1
           fi
-          echo "bootstrap ordering holds; external-database installs skip it"
+          echo "external-database installs skip it"
 
       # The kubelet expands $(VAR) references in `command` and `args`, and its
       # escape for a literal dollar is a doubled one -- so a `$$` written there
