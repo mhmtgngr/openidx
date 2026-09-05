@@ -2089,6 +2089,81 @@ class this whole program exists for.
    later edit that "tidies up" the device queries by adding a predicate.
    `TestRLSBeltTables` **42/42**. v150 applied, rolled back to 149 and
    re-applied; the rollback lifts the `NOT NULL` and keeps v92's column.
+
+   **Batch 13 shipped (migration v151, `needsScoping` 36 → 34; registers 53 →
+   51): a session onto another tenant's machine, with that tenant's password.**
+   Every batch before this one leaked a record. This one handed over a
+   *machine*. A `guacamole_connections` row is the definition of a privileged
+   session target — host, port, protocol, the vault secret injected into the
+   session, and whether an approval, a moderator or a recording is required —
+   and it carried no tenant at all. v59 added the `vault_secret_id` column to
+   it, belted the two tables it created alongside, and wrote the deferral down
+   with no reason: *"guacamole_connections is NOT belted (only ALTERed)."*
+
+   `POST /guacamole/connections/:routeId/connect` carries no admin gate — it is
+   the end-user launcher, and correctly so. It resolved the caller's
+   organization, refused when there was none, and then loaded the target row by
+   route id alone, never using it. **The refusal was theatre and the lookup was
+   the door.** Everything downstream acts on whatever row comes back: the
+   handler reads that row's `vault_secret_id` under `orgctx.WithBypassRLS` —
+   deliberately, because the server is the thing that injects it — pushes the
+   credential into the broker as connection parameters, and returns a connect
+   URL. A user of one tenant, holding nothing but another tenant's route id,
+   got a live RDP, SSH or VNC session onto that tenant's host with that
+   tenant's credential typed in for them. The vault's own belt was intact and
+   irrelevant: it was bypassed on purpose, and the connection row decided which
+   secret to bypass it *for*.
+
+   **The pre-session gates could not have saved it, and the reason is worth
+   keeping.** Both key on the connection: `checkAndConsumeApproval` and
+   `checkModerationActive` match `(connection_id, requester_id)` over
+   `guacamole_session_requests` and `guacamole_moderation_sessions`, which
+   *are* belted — so each query sees only the caller's own organization's rows.
+   That is precisely why they could not help. The request is opened against the
+   other tenant's connection id, an administrator of the **caller's own** tenant
+   approves it, and the gate passes on a row that never left home. A four-eyes
+   control satisfiable entirely inside the attacker's tenant is a control
+   guarding the door of a room they are already standing in. Scoping the
+   connection is what gives those two queries something to mean.
+
+   The list endpoint was the plain read of the same defect — `SELECT … FROM
+   guacamole_connections ORDER BY created_at DESC`, no `WHERE` clause and no
+   admin gate: every tenant's internal hostnames, ports and connection
+   parameters to any authenticated caller. It is now admin-only, matching the
+   app-publishing routes registered beside it, whose own comment already
+   explained why (*"Without it any authenticated user could
+   register/discover/publish/delete apps"*). The end-user launcher keeps
+   `/guacamole/my-connections`, which returns the PAM flags without the
+   infrastructure. And `handleListMyGuacConnections` carried a comment that had
+   it exactly backwards — *"RLS scopes guacamole_connections via the request
+   context; the explicit `pr.org_id` predicate is defence in depth"* — when
+   there was no policy at all, so what it called defence in depth was the
+   entire defence. After v151 both halves are true.
+
+   **One table left the register by leaving the schema.**
+   `guacamole_connection_pool` was listed as *"live connection tokens per
+   user."* It holds none and never has: `GetPooledConnection` and
+   `CleanupExpiredConnections` have no callers, nothing reads the table, and
+   `savePooledConnection`'s only INSERT ends in `ON CONFLICT (connection_id)`
+   against a column carrying a plain index and no unique constraint — so every
+   write since v54 has been rejected at plan time with `42P10`, into a
+   `logger.Warn`. v67 widened its token column so the tokens would be encrypted
+   at rest; there have never been any. Three layers of care over an
+   always-empty table, and scoping it would have been a fourth. It is dropped
+   instead, and the census in `tools/orgscope/ddl.go` reads `DROP TABLE`, so
+   the register shrank by two for one migration.
+
+   Proven on Postgres 16: five cases in `internal/access`, three red against
+   the old handlers — the first returning **`200 {"connect_url":
+   ".../#/client/guac-a-…?token=…","connection_id":"guac-a-…"}`** to org B for
+   org A's machine. That case also asserts org B's own approval row is still
+   `approved` afterwards, which is what proves the refusal happens at the
+   connection rather than at the gate. The fourth is labelled in the file as
+   green both ways: `handleSetGuacCredential` already gated on a
+   `proxy_routes` join, so the write half of this feature was scoped while the
+   read half beside it was not — the same disagreement v146 and v149 found.
+   `TestRLSBeltTables` **43/43**. v151 applied, rolled back to 150 and
+   re-applied; the rollback restores the pool table in v67's shape.
 4. ✅ **OPA `deny` enforced** — *shipped.* — `internal/common/middleware/opa.go`: abort
    unless `Allow && len(Deny)==0`; `authz.rego:15-19`'s "any authenticated
    user may GET anything" removed; `policies/access_control.rego`
@@ -3717,7 +3792,7 @@ that holds it rather than by the commit that wrote it.
 |---|---|---|
 | 1 · journeys verified | ☐ | J1 ✅ the `smoke` and `first-run` jobs (P6.2); J2 ✅ `test/integration/{auth_flows,mfa_flow,passwordless}_test.go`; J3 ✅ `test/integration/enforced_posture_test.go` (P6.1); ☐ **J6 has no automated proof** — `e2e/access-reviews-flow.spec.ts` is still on the `hold` side of `e2e/suite.txt`; ☐ **J7 needs a leaver integration case**; J4/J5/J8 stay scripted operator drills (`tools/darkprobe`, `make dr-game-day`) to be filed under `docs/evidence/` (P8.4) |
 | 2 · enforced posture, legacy login gone | ◐ | code ✅ — the server-rendered login is deleted and `internal/oauth/routes_legacy_login_test.go` fails if any of it returns (P6.1); ops ☐ — rollout Task 16 is the operator's, on a live deployment |
-| 3 · every control enforces | ◐ | P5.1–5.11 ✅ (tenant isolation, the inverted orgscope lint, OPA `deny`, ABAC at both PEPs, the honest Apply/Remediate, SMS, multi-IdP, the fail-closed gate, `ValidateProduction`, the faked measurements); ◐ the P5.3b register programme — batch 1 (v140) belted fifteen tables and fixed `email_branding`'s cross-tenant read *and* write; batch 2 (v141) scoped the compliance record and fixed an archive worker that was silently producing empty archives; batches 4–10 (v142–v148) took the unified audit stream, the sign-in tables, the SAML surface, the password-substitute credentials, the four second factors the belt had skipped, the breach response record — where a containment reported success while quarantining nobody — the temporary vendor access surface, where v71's written-down reason for skipping the belt had expired three batches earlier, the legal holds — the first batch whose defect destroys rather than discloses, since releasing a hold is what lets the retention sweep delete the recording — and the remote support sessions, whose list ran with no `WHERE` clause at all over a nullable tenant column the belt would have hidden rather than scoped; **53** still ride `needsScoping`/`needsBelt` waivers |
+| 3 · every control enforces | ◐ | P5.1–5.11 ✅ (tenant isolation, the inverted orgscope lint, OPA `deny`, ABAC at both PEPs, the honest Apply/Remediate, SMS, multi-IdP, the fail-closed gate, `ValidateProduction`, the faked measurements); ◐ the P5.3b register programme — batch 1 (v140) belted fifteen tables and fixed `email_branding`'s cross-tenant read *and* write; batch 2 (v141) scoped the compliance record and fixed an archive worker that was silently producing empty archives; batches 4–10 (v142–v148) took the unified audit stream, the sign-in tables, the SAML surface, the password-substitute credentials, the four second factors the belt had skipped, the breach response record — where a containment reported success while quarantining nobody — the temporary vendor access surface, where v71's written-down reason for skipping the belt had expired three batches earlier, the legal holds — the first batch whose defect destroys rather than discloses, since releasing a hold is what lets the retention sweep delete the recording — the remote support sessions, whose list ran with no `WHERE` clause at all over a nullable tenant column the belt would have hidden rather than scoped, and the PAM broker's connection registry — where the row that decides which vault credential is injected carried no tenant, so another tenant's route id bought a live session onto their machine with their password, and the four-eyes gates could not help because both are satisfiable inside the caller's own tenant; **51** still ride `needsScoping`/`needsBelt` waivers |
 | 4 · first run / first login / four pillars from the docs | ✅ | first run ✅ the `smoke` and `first-run` jobs (P6.2); first login ✅ one authoritative credential in `GETTING-STARTED.md`, with the `USER_GUIDE.md` and `CONTRIBUTING.md` copies pointing at it rather than repeating it (P8.1); four pillars ✅ `guide/governance.md` was the missing one (P8.1) |
 | 5 · one story + auditor artifacts | ✅ | threat model and control mapping exist; docs sweep 3 ✅ and the docs-drift guard ✅ (`check-docs-drift.sh`, enforced in CI, so a document cannot cite a path that is not there); `docs/evidence/` ✅ (P8.4) |
 | 6 · releases current, signed, Helm proven | ◐ | signing ✅ `release.yml` (cosign) and, since P7.5, an Android artifact whose name tracks the key that signed it; Helm ✅ the `kind` install job (P6.4); versions ✅ `VERSION` + `check-version-sync.sh` (P8.3); CHANGELOG ✅ every release attributed from the commit that wrote its entry, 61 compare links that resolve (P8.2); ☐ v1.34.0 is not cut — the maintainer's |

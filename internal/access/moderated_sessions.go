@@ -96,9 +96,17 @@ func (s *Service) handleRequestModeration(c *gin.Context) {
 		return
 	}
 
+	// Scoped to the caller's organization. The moderation row that comes out of
+	// this handler is what checkModerationActive later matches on, and that
+	// query reads a belted table — so it only ever sees the caller's own
+	// organization's rows. Resolving the connection unscoped here is what let a
+	// moderation request be opened against another tenant's connection and then
+	// satisfied at home, which is a four-eyes control the requester's own
+	// tenant can complete alone.
 	var connectionID string
 	if err := s.db.Pool.QueryRow(ctx,
-		`SELECT id FROM guacamole_connections WHERE route_id = $1`, body.RouteID).
+		`SELECT id FROM guacamole_connections WHERE route_id = $1 AND org_id = $2`,
+		body.RouteID, org.ID).
 		Scan(&connectionID); err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "no Guacamole connection for this route"})
 		return
@@ -188,17 +196,23 @@ func (s *Service) handleGetModerationStatus(c *gin.Context) {
 // The moderator queue: every pending, unexpired moderation request in the org.
 func (s *Service) handleListPendingModeration(c *gin.Context) {
 	ctx := c.Request.Context()
-	if _, err := orgctx.From(ctx); err != nil {
+	org, err := orgctx.From(ctx)
+	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
 		return
 	}
+	// The org term stays on the LEFT JOIN rather than moving into the WHERE:
+	// a moderation request must never disappear from its moderator's queue
+	// because the connection behind it could not be resolved. Out-of-org, the
+	// hostname comes back empty and the request is still actionable.
 	rows, err := s.db.Pool.Query(ctx,
 		`SELECT m.id, m.connection_id, m.requester_id::text, COALESCE(m.reason,''),
 		        m.created_at, m.expires_at, COALESCE(gc.hostname,'')
 		   FROM guacamole_moderation_sessions m
-		   LEFT JOIN guacamole_connections gc ON gc.id = m.connection_id
-		  WHERE m.status = 'pending' AND (m.expires_at IS NULL OR m.expires_at > NOW())
-		  ORDER BY m.created_at ASC`)
+		   LEFT JOIN guacamole_connections gc ON gc.id = m.connection_id AND gc.org_id = $1
+		  WHERE m.org_id = $1 AND m.status = 'pending'
+		    AND (m.expires_at IS NULL OR m.expires_at > NOW())
+		  ORDER BY m.created_at ASC`, org.ID)
 	if err != nil {
 		s.logger.Error("handleListPendingModeration: query failed", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list pending moderation"})

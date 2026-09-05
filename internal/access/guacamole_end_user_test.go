@@ -44,9 +44,9 @@ func TestGuacEndUserSelfService(t *testing.T) {
 	var connectionID string
 	if err := db.Pool.QueryRow(ctx, `
 		INSERT INTO guacamole_connections
-			(route_id, guacamole_connection_id, protocol, hostname, port, require_approval, record_session)
-		VALUES ($1::uuid, 'guac-conn-1', 'ssh', '10.0.0.5', 22, true, true)
-		RETURNING id::text`, routeID).Scan(&connectionID); err != nil {
+			(route_id, org_id, guacamole_connection_id, protocol, hostname, port, require_approval, record_session)
+		VALUES ($1::uuid, $2::uuid, 'guac-conn-1', 'ssh', '10.0.0.5', 22, true, true)
+		RETURNING id::text`, routeID, defaultOrg).Scan(&connectionID); err != nil {
 		t.Fatalf("seed guacamole connection: %v", err)
 	}
 

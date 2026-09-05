@@ -98,10 +98,6 @@ var needsScoping = map[string]string{
 	"kiosk_policies":              "kiosk lockdown policies (v44)",
 	"kiosk_policy_assignments":    "kiosk policy targets (v44)",
 
-	// PAM / remote access.
-	"guacamole_connections":     "brokered connection definitions with hostname and parameters",
-	"guacamole_connection_pool": "live connection tokens per user",
-
 	// Agent fleet — the devices enrolled by a tenant's users.
 	"enrolled_agents":         "enrolled devices with tokens and compliance state (v43)",
 	"agent_posture_results":   "per-device posture results (v43)",

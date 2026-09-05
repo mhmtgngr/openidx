@@ -630,8 +630,15 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// Policy DSL validation
 		api.POST("/routes/validate-policy", svc.handleValidatePolicy)
 
-		// Guacamole remote access
-		api.GET("/guacamole/connections", svc.handleListGuacamoleConnections)
+		// Guacamole remote access. The connection list is broker internals —
+		// hostname, port, protocol and the injected connection parameters of
+		// every brokered target — so it carries the same adminOnly gate as the
+		// app-publishing routes below, and for the same reason. The end-user
+		// launcher reads /guacamole/my-connections instead, which returns the
+		// PAM flags without the infrastructure. Connect stays open to any
+		// authenticated user: launching a session the caller is entitled to is
+		// the end-user path, and v151 gave it the org predicate it was missing.
+		api.GET("/guacamole/connections", adminOnly, svc.handleListGuacamoleConnections)
 		api.POST("/guacamole/connections/:routeId/connect", svc.handleGuacamoleConnect)
 		api.PUT("/guacamole/connections/:routeId/credential", svc.requireAdminRole(), svc.handleSetGuacCredential)
 

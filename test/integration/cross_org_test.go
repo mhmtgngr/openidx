@@ -594,6 +594,15 @@ func TestRLSBeltTables(t *testing.T) {
 		{"remote_support_sessions", `INSERT INTO remote_support_sessions
 			(agent_id, status, mode, org_id)
 			VALUES ('tbelt-rss-` + suffix + `','ended','view',$1)`},
+
+		// v151 — the PAM broker's target definitions: which host, which port,
+		// and which vault secret gets injected into the session. The connect
+		// handler read this row by route id alone and then used its
+		// vault_secret_id under a deliberate bypass, so the row is what decided
+		// whose credential was typed into whose machine.
+		{"guacamole_connections", `INSERT INTO guacamole_connections
+			(guacamole_connection_id, protocol, hostname, port, org_id)
+			VALUES ('tbelt-gc-` + suffix + `','rdp','10.0.0.7',3389,$1)`},
 	}
 
 	// One list, not two: the role is granted exactly the tables the cases probe.

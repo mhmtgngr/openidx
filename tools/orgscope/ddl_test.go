@@ -324,7 +324,11 @@ func TestRegistersOnlyShrink(t *testing.T) {
 		// v145, which took the five credentials that stand in for a password:
 		// hardware_tokens, hardware_token_events, mfa_bypass_codes,
 		// mfa_bypass_audit and magic_links.
-		{"needsScoping", len(needsScoping), 36},
+		// 36 -> 34 with v151, which scoped guacamole_connections — the PAM
+		// broker's target definitions — and dropped guacamole_connection_pool,
+		// whose only INSERT had never once succeeded. A table may also leave
+		// this register by leaving the schema; the census reads DROP TABLE.
+		{"needsScoping", len(needsScoping), 34},
 		// 34 → 19: migration v140 belted the fifteen whose queries already
 		// carried their org predicate. Re-pinned rather than left at 34, or
 		// the register could grow back into the room the fix just made.

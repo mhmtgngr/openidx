@@ -21,6 +21,48 @@ to a spec that describes an eighth of a surface, a documented endpoint that
   the posture score was neither one tenant's nor the install's. All now carry
   `org_id` under FORCE RLS, with the install-wide unique keys re-scoped and an
   isolation test per handler file.
+- **A remote session onto another organization's machine, with that
+  organization's password** (migration v151). A brokered connection record is
+  the definition of a privileged target: which machine, which port, which
+  stored credential is typed into the session on the user's behalf, and whether
+  the session needs an approval, a live supervisor, or a recording. The record
+  carried nothing saying which organization it belonged to.
+
+  The endpoint that opens a session is available to any signed-in user, which
+  is correct — it is how a person launches the access they have been granted.
+  It asked which organization the caller belonged to, refused if there was
+  none, and then looked the target up by its address alone, never using the
+  answer. Everything after that acts on whatever record comes back: the stored
+  credential is fetched with the database's own restrictions deliberately
+  lifted, because the server is the thing that types it in, and a working
+  connection link is handed back. So a user of one organization who knew
+  another organization's route identifier received a live remote desktop or
+  terminal session on that organization's machine, signed in with that
+  organization's credential. The credential store's own protection was intact
+  and beside the point: it had been set aside on purpose, and the unscoped
+  record was what chose which secret to set it aside for.
+
+  The approval and supervision requirements could not have stopped this. Both
+  are checked against records belonging to the caller's own organization, so
+  the caller's own administrator could approve the caller for someone else's
+  machine and the check would pass. A two-person rule that one organization can
+  satisfy alone is not a control. Restricting the connection record is what
+  makes those checks mean something, and it is now restricted and enforced at
+  the database level.
+
+  The list of brokered connections had the same gap in its simplest form — no
+  condition at all, so every organization's internal hostnames, ports and
+  connection settings were readable by any signed-in user. It is now
+  administrator-only and limited to the viewer's own organization; the list end
+  users see for launching their own access is unchanged and shows no
+  infrastructure.
+
+  Removed with it: a connection-token cache table that has been empty on every
+  installation since it was introduced. Nothing read it, nothing called the
+  code that filled it, and the statement meant to write to it referenced a
+  constraint the table does not have, so every attempt failed silently into a
+  log line. A later change widened one of its columns so the tokens it stored
+  would be encrypted; there were never any tokens.
 - **Every organization's remote support history was on every organization's
   console** (migration v150). A remote support session is an administrator
   watching or driving an end user's screen. The list of them ran with no

@@ -43,10 +43,10 @@ func TestModeratedSessionStateMachine(t *testing.T) {
 	}
 	if err := db.Pool.QueryRow(ctx, `
 		INSERT INTO guacamole_connections
-		    (route_id, guacamole_connection_id, protocol, hostname, port,
+		    (route_id, org_id, guacamole_connection_id, protocol, hostname, port,
 		     require_approval, record_session, require_moderator)
-		VALUES ($1::uuid, 'gc-1', 'ssh', 'h', 22, false, false, true)
-		RETURNING id::text`, routeID).Scan(&connID); err != nil {
+		VALUES ($1::uuid, $2::uuid, 'gc-1', 'ssh', 'h', 22, false, false, true)
+		RETURNING id::text`, routeID, org).Scan(&connID); err != nil {
 		t.Fatalf("seed connection: %v", err)
 	}
 

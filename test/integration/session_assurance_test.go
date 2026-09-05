@@ -91,7 +91,7 @@ func TestGuacSessionEndDetection(t *testing.T) {
 		bypassExec(t, admin, `DELETE FROM proxy_routes WHERE id = $1`, routeID)
 	})
 
-	connID := seedGuacConnection(t, admin, routeID)
+	connID := seedGuacConnection(t, admin, routeID, orgID)
 	t.Cleanup(func() {
 		bypassExec(t, admin, `DELETE FROM guacamole_connections WHERE id = $1`, connID)
 	})

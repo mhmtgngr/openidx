@@ -1130,24 +1130,41 @@ paths:
   /api/v1/access/guacamole/connections:
     get:
       tags: [Guacamole]
-      summary: List Guacamole connections
+      summary: List the organization's Guacamole connections
+      description: >
+        Admin only. Returns the brokered connection definitions of the calling
+        organization — hostname, port, protocol and connection parameters of
+        every PAM target. End users read /guacamole/my-connections instead,
+        which returns the launcher's PAM flags without the infrastructure.
       operationId: listGuacamoleConnections
       responses:
         '200':
-          description: List of Guacamole connections
+          description: The calling organization's Guacamole connections
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/GuacamoleConnection'
+                type: object
+                properties:
+                  connections:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/GuacamoleConnection'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
 
   /api/v1/access/guacamole/connections/{routeId}/connect:
     post:
       tags: [Guacamole]
       summary: Connect to Guacamole session
+      description: >
+        Any authenticated user; the connection must belong to the caller's
+        organization. Applies the connection's PAM gates in order — pre-session
+        approval, live moderation — then injects the configured vault
+        credential server-side and returns a broker connect URL. A routeId
+        outside the caller's organization is 404, not 403: the connection is
+        not theirs to know about.
       operationId: connectGuacamole
       parameters:
         - name: routeId
@@ -1163,6 +1180,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/GuacamoleConnectResponse'
+        '403':
+          description: >
+            No organization on the request, the pre-session approval is missing
+            or spent, or the injected credential is unavailable.
+        '428':
+          description: The session requires a moderator to join before it can start.
         '404':
           $ref: '#/components/responses/NotFound'
 
