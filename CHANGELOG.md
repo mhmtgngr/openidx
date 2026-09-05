@@ -21,6 +21,36 @@ to a spec that describes an eighth of a surface, a documented endpoint that
   the posture score was neither one tenant's nor the install's. All now carry
   `org_id` under FORCE RLS, with the install-wide unique keys re-scoped and an
   isolation test per handler file.
+- **The developer portal kept one settings record for the whole installation,
+  and its OAuth playground handed out a live flow's secret to anyone who knew
+  the session's identifier** (migration v156). The developer settings page sets
+  the maximum number of API keys a user may hold, which permissions an API key
+  may carry, the webhook address allowlist, the browser origins allowed to call
+  the API, the default rate limit, and whether sandbox mode is on. There was
+  exactly one such record on the installation, shared by every organization:
+  whichever administrator saved last chose all of it for everyone. Each
+  organization now has its own.
+
+  The console's OAuth playground — the tool for stepping through a sign-in flow
+  by hand — stores the secret that lets that flow's authorization code be
+  exchanged for a token. It was retrievable by session identifier alone: no
+  check of which organization the session belonged to, no check that the person
+  asking was the one who started it, and, unlike every other page in that part
+  of the API, no check that they were an administrator at all. All three checks
+  are now in place.
+
+  **Operators of installations with more than one organization should review
+  their developer settings after upgrading.** The existing record is assigned to
+  the organization of whoever last saved it; every other organization starts
+  from the defaults and should set its own.
+
+  Also recorded, and not yet fixed: none of the developer settings is consulted
+  by anything. No API-key issuance checks the maximum or the permitted
+  permissions, no browser-origin check reads the allowlist, no limiter reads the
+  rate limit. The page has always saved six limits and enforced none of them,
+  which is why sharing the record between organizations has not caused visible
+  harm. Making those values take effect is outstanding work rather than
+  something this release delivers.
 - **Every organization's single sign-on routing was visible to every
   administrator, and two organizations could not share a domain or an identity
   provider** (migration v155). A federation rule says which identity provider

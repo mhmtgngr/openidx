@@ -105,11 +105,20 @@ func (s *Service) handleGetDeveloperSettings(c *gin.Context) {
 	if !requireAdmin(c) {
 		return
 	}
+	org, ok := requireOrg(c)
+	if !ok {
+		return
+	}
 	ctx := c.Request.Context()
 
+	// 'global' is a literal, not a tenant: before v156 setting_key was UNIQUE
+	// across the installation, so there was exactly one settings row and the
+	// last administrator to press Save chose the API-key, webhook, CORS and
+	// rate-limit values for every organization.
 	var valueBytes []byte
 	err := s.db.Pool.QueryRow(ctx,
-		"SELECT setting_value FROM developer_settings WHERE setting_key = 'global'").Scan(&valueBytes)
+		"SELECT setting_value FROM developer_settings WHERE setting_key = 'global' AND org_id = $1",
+		org.ID).Scan(&valueBytes)
 
 	if err != nil {
 		// Return defaults when no row exists
@@ -133,6 +142,11 @@ func (s *Service) handleUpdateDeveloperSettings(c *gin.Context) {
 	if !requireAdmin(c) {
 		return
 	}
+	org, ok := requireOrg(c)
+	if !ok {
+		return
+	}
+
 	var settings DeveloperSettings
 	if err := c.ShouldBindJSON(&settings); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -147,10 +161,10 @@ func (s *Service) handleUpdateDeveloperSettings(c *gin.Context) {
 
 	ctx := c.Request.Context()
 	_, err = s.db.Pool.Exec(ctx, `
-		INSERT INTO developer_settings (setting_key, setting_value, updated_at)
-		VALUES ('global', $1, NOW())
-		ON CONFLICT (setting_key) DO UPDATE SET setting_value = $1, updated_at = NOW()
-	`, valueBytes)
+		INSERT INTO developer_settings (setting_key, setting_value, updated_at, org_id)
+		VALUES ('global', $1, NOW(), $2)
+		ON CONFLICT (org_id, setting_key) DO UPDATE SET setting_value = $1, updated_at = NOW()
+	`, valueBytes, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to upsert developer settings", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save developer settings"})
@@ -216,6 +230,17 @@ func (s *Service) handleGetCodeSamples(c *gin.Context) {
 
 // handleCreatePlaygroundSession creates a new OAuth playground session with PKCE parameters
 func (s *Service) handleCreatePlaygroundSession(c *gin.Context) {
+	// Neither playground handler used to check the caller's role, though every
+	// other handler in this file does. The row this one writes holds the PKCE
+	// verifier for a live OAuth flow.
+	if !requireAdmin(c) {
+		return
+	}
+	org, ok := requireOrg(c)
+	if !ok {
+		return
+	}
+
 	var req struct {
 		ClientID    string `json:"client_id"`
 		RedirectURI string `json:"redirect_uri"`
@@ -278,13 +303,21 @@ func (s *Service) handleCreatePlaygroundSession(c *gin.Context) {
 	// space-separated string (what the OAuth spec and the UI use). Split into an
 	// array for storage; a plain string bind produced a 500 "malformed array
 	// literal".
+	// v54 gave this table a user_id column and an index on it, and the insert
+	// never set it -- an index on a column that is always NULL. Both are
+	// written now, so the execute handler can require the owner as well as the
+	// tenant.
+	userID, _ := c.Get("user_id")
+	userIDStr, _ := userID.(string)
+
 	scopeList := strings.Fields(session.Scopes)
 	_, err = s.db.Pool.Exec(ctx, `
 		INSERT INTO oauth_playground_sessions (id, state, code_verifier, code_challenge,
-			redirect_uri, client_id, scopes, created_at, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+			redirect_uri, client_id, scopes, created_at, expires_at, user_id, org_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 	`, session.ID, session.State, session.CodeVerifier, session.CodeChallenge,
-		session.RedirectURI, session.ClientID, scopeList, session.CreatedAt, session.ExpiresAt)
+		session.RedirectURI, session.ClientID, scopeList, session.CreatedAt, session.ExpiresAt,
+		nilIfEmpty(userIDStr), org.ID)
 
 	if err != nil {
 		s.logger.Error("Failed to create playground session", zap.Error(err))
@@ -297,6 +330,14 @@ func (s *Service) handleCreatePlaygroundSession(c *gin.Context) {
 
 // handleExecutePlayground executes an OAuth playground step
 func (s *Service) handleExecutePlayground(c *gin.Context) {
+	if !requireAdmin(c) {
+		return
+	}
+	org, ok := requireOrg(c)
+	if !ok {
+		return
+	}
+
 	var req PlaygroundExecRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -313,11 +354,15 @@ func (s *Service) handleExecutePlayground(c *gin.Context) {
 	// Load session
 	var session PlaygroundSession
 	var scopeList []string
+	// code_verifier is what lets this session's authorization code be redeemed.
+	// It was fetched by id alone: no tenant, no owner, no role.
+	callerID, _ := c.Get("user_id")
+	callerIDStr, _ := callerID.(string)
 	err := s.db.Pool.QueryRow(ctx, `
 		SELECT id, state, code_verifier, code_challenge, redirect_uri, client_id, scopes, created_at, expires_at
 		FROM oauth_playground_sessions
-		WHERE id = $1
-	`, req.SessionID).Scan(
+		WHERE id = $1 AND org_id = $2 AND (user_id IS NULL OR user_id::text = $3)
+	`, req.SessionID, org.ID, callerIDStr).Scan(
 		&session.ID, &session.State, &session.CodeVerifier, &session.CodeChallenge,
 		&session.RedirectURI, &session.ClientID, &scopeList,
 		&session.CreatedAt, &session.ExpiresAt,

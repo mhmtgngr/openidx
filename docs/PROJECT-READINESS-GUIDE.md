@@ -2513,6 +2513,66 @@ class this whole program exists for.
    surfaced it. `TestRLSBeltTables` **51/51**;
    `TestComposeMigrateSeedProducesRLSInstall` green; v155 applied, rolled back
    to 154 — restoring both install-wide keys — and re-applied.
+
+   **Batch 18 shipped (migration v156, `needsScoping` 26 → 24; registers 43 →
+   41): one row for the whole installation, keyed on a string literal.** The
+   developer portal's settings read and write are these, in full:
+
+   ```sql
+   SELECT setting_value FROM developer_settings WHERE setting_key = 'global'
+
+   INSERT INTO developer_settings (setting_key, setting_value, updated_at)
+   VALUES ('global', $1, NOW())
+   ON CONFLICT (setting_key) DO UPDATE SET setting_value = $1, updated_at = NOW()
+   ```
+
+   v54 declared `setting_key VARCHAR(100) UNIQUE NOT NULL`, and the key is the
+   constant `'global'`. So there was exactly **one** settings row on the
+   installation, and every organization's administrators shared it. The last one
+   to press Save decided, for everybody: the maximum API keys per user, which
+   scopes an API key may carry (the defaults include `write:users`,
+   `write:applications` and `write:provisioning`), the webhook IP allowlist, the
+   CORS allowed origins, the default rate limit, and whether sandbox mode is on.
+
+   This is the **third install-wide unique key in two batches**, after v155's
+   `federation_rules.email_domain` and `identity_providers.issuer_url`, and the
+   second time the key itself — not a missing predicate — was the whole defect.
+   Re-scoped to `(org_id, setting_key)`.
+
+   **And nothing reads it.** A search of the tree finds `developer_settings` in
+   its own two handlers, in the migrations, and nowhere else. No API-key mint
+   checks `APIKeyMaxPerUser` or `APIKeyAllowedScopes`; no CORS middleware
+   consults `CORSAllowedOrigins`; no limiter reads `RateLimitDefault`. The page
+   presents six security limits, saves them, reads them back, and constrains
+   nothing — so the cross-tenant write is only as harmful as the settings are
+   effective, which is not at all. Same shape as v155's
+   `custom_claims_mappings`, recorded for the same reason: giving these values a
+   consumer is a feature, and a scoping batch is the wrong place to smuggle one
+   in.
+
+   **The playground session holds the secrets of an OAuth flow.** Its columns
+   are `code_verifier` (the PKCE secret), `authorization_code`, `access_token`
+   and `id_token`, and the execute handler loaded one by bare id — no tenant
+   term, no owner term, and **no `requireAdmin`**, though every other handler in
+   that file has one. So the verifier that lets a session's authorization code
+   be redeemed was retrievable by id alone.
+
+   The schema shows what was meant. v54 gave the table
+   `user_id UUID REFERENCES users(id) ON DELETE CASCADE` and an index on it,
+   `idx_playground_user`. The insert has never set that column and no read has
+   ever used it: **an index on a column that is always NULL**, which is what an
+   intention looks like after the code that would have honoured it was not
+   written. Both handlers now set and check the owner as well as the tenant, and
+   both gained the missing role check.
+
+   Proven on Postgres 16: four cases in `internal/admin`, **all four red**
+   against the old code — org B reading org A's saved settings back out of the
+   shared row (the failure prints org A's `rate_limit=50` under org B's read),
+   org B executing a step on org A's playground session, a colleague in the same
+   organization doing the same, and both playground handlers answering 201/400
+   instead of 403 to a non-administrator. `TestRLSBeltTables` **53/53**; v156
+   applied, seeded, rolled back to 155 — restoring the install-wide key — and
+   re-applied.
 4. ✅ **OPA `deny` enforced** — *shipped.* — `internal/common/middleware/opa.go`: abort
    unless `Allow && len(Deny)==0`; `authz.rego:15-19`'s "any authenticated
    user may GET anything" removed; `policies/access_control.rego`
@@ -4141,7 +4201,7 @@ that holds it rather than by the commit that wrote it.
 |---|---|---|
 | 1 · journeys verified | ☐ | J1 ✅ the `smoke` and `first-run` jobs (P6.2); J2 ✅ `test/integration/{auth_flows,mfa_flow,passwordless}_test.go`; J3 ✅ `test/integration/enforced_posture_test.go` (P6.1); ☐ **J6 has no automated proof** — `e2e/access-reviews-flow.spec.ts` is still on the `hold` side of `e2e/suite.txt`; ☐ **J7 needs a leaver integration case**; J4/J5/J8 stay scripted operator drills (`tools/darkprobe`, `make dr-game-day`) to be filed under `docs/evidence/` (P8.4) |
 | 2 · enforced posture, legacy login gone | ◐ | code ✅ — the server-rendered login is deleted and `internal/oauth/routes_legacy_login_test.go` fails if any of it returns (P6.1); ops ☐ — rollout Task 16 is the operator's, on a live deployment |
-| 3 · every control enforces | ◐ | P5.1–5.11 ✅ (tenant isolation, the inverted orgscope lint, OPA `deny`, ABAC at both PEPs, the honest Apply/Remediate, SMS, multi-IdP, the fail-closed gate, `ValidateProduction`, the faked measurements); ◐ the P5.3b register programme — batch 1 (v140) belted fifteen tables and fixed `email_branding`'s cross-tenant read *and* write; batch 2 (v141) scoped the compliance record and fixed an archive worker that was silently producing empty archives; batches 4–10 (v142–v148) took the unified audit stream, the sign-in tables, the SAML surface, the password-substitute credentials, the four second factors the belt had skipped, the breach response record — where a containment reported success while quarantining nobody — the temporary vendor access surface, where v71's written-down reason for skipping the belt had expired three batches earlier, the legal holds — the first batch whose defect destroys rather than discloses, since releasing a hold is what lets the retention sweep delete the recording — the remote support sessions, whose list ran with no `WHERE` clause at all over a nullable tenant column the belt would have hidden rather than scoped, and the PAM broker's connection registry — where the row that decides which vault credential is injected carried no tenant, so another tenant's route id bought a live session onto their machine with their password, and the four-eyes gates could not help because both are satisfiable inside the caller's own tenant — delegated administration, read by the enforcement point itself under a deliberate bypass with a tenant-scoping comment copied from the query above it and a cache that handed one person's delegation to everyone sharing their roles, and the login risk policies, where one tenant's row could replace every tenant's allowed second factors or deny every login outright, and the joiner/mover/leaver automation, where every action the rules take was already scoped but the rules themselves were not, so another tenant could rewrite a policy labelled "disable after 90 days" into "delete after 0" and leave its owner running it, and the identity federation configuration, where the admin list wrote its tenant condition into a LEFT JOIN's ON clause and so filtered nothing while the login path's inner join twelve functions away did — and where two install-wide UNIQUE keys meant one organization per email domain and one per issuer URL for the entire installation; **43** still ride `needsScoping`/`needsBelt` waivers |
+| 3 · every control enforces | ◐ | P5.1–5.11 ✅ (tenant isolation, the inverted orgscope lint, OPA `deny`, ABAC at both PEPs, the honest Apply/Remediate, SMS, multi-IdP, the fail-closed gate, `ValidateProduction`, the faked measurements); ◐ the P5.3b register programme — batch 1 (v140) belted fifteen tables and fixed `email_branding`'s cross-tenant read *and* write; batch 2 (v141) scoped the compliance record and fixed an archive worker that was silently producing empty archives; batches 4–10 (v142–v148) took the unified audit stream, the sign-in tables, the SAML surface, the password-substitute credentials, the four second factors the belt had skipped, the breach response record — where a containment reported success while quarantining nobody — the temporary vendor access surface, where v71's written-down reason for skipping the belt had expired three batches earlier, the legal holds — the first batch whose defect destroys rather than discloses, since releasing a hold is what lets the retention sweep delete the recording — the remote support sessions, whose list ran with no `WHERE` clause at all over a nullable tenant column the belt would have hidden rather than scoped, and the PAM broker's connection registry — where the row that decides which vault credential is injected carried no tenant, so another tenant's route id bought a live session onto their machine with their password, and the four-eyes gates could not help because both are satisfiable inside the caller's own tenant — delegated administration, read by the enforcement point itself under a deliberate bypass with a tenant-scoping comment copied from the query above it and a cache that handed one person's delegation to everyone sharing their roles, and the login risk policies, where one tenant's row could replace every tenant's allowed second factors or deny every login outright, and the joiner/mover/leaver automation, where every action the rules take was already scoped but the rules themselves were not, so another tenant could rewrite a policy labelled "disable after 90 days" into "delete after 0" and leave its owner running it, and the identity federation configuration, where the admin list wrote its tenant condition into a LEFT JOIN's ON clause and so filtered nothing while the login path's inner join twelve functions away did — and where two install-wide UNIQUE keys meant one organization per email domain and one per issuer URL for the entire installation, and the developer portal, whose settings row was keyed on the literal 'global' and unique across the installation so the last administrator to press Save chose the API-key limits, CORS origins and rate limit for every organization — and whose OAuth playground handed out a live flow's PKCE verifier by id alone, with no role check at all; **41** still ride `needsScoping`/`needsBelt` waivers |
 | 4 · first run / first login / four pillars from the docs | ✅ | first run ✅ the `smoke` and `first-run` jobs (P6.2); first login ✅ one authoritative credential in `GETTING-STARTED.md`, with the `USER_GUIDE.md` and `CONTRIBUTING.md` copies pointing at it rather than repeating it (P8.1); four pillars ✅ `guide/governance.md` was the missing one (P8.1) |
 | 5 · one story + auditor artifacts | ✅ | threat model and control mapping exist; docs sweep 3 ✅ and the docs-drift guard ✅ (`check-docs-drift.sh`, enforced in CI, so a document cannot cite a path that is not there); `docs/evidence/` ✅ (P8.4) |
 | 6 · releases current, signed, Helm proven | ◐ | signing ✅ `release.yml` (cosign) and, since P7.5, an Android artifact whose name tracks the key that signed it; Helm ✅ the `kind` install job (P6.4); versions ✅ `VERSION` + `check-version-sync.sh` (P8.3); CHANGELOG ✅ every release attributed from the commit that wrote its entry, 61 compare links that resolve (P8.2); ☐ v1.34.0 is not cut — the maintainer's |

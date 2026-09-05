@@ -670,6 +670,18 @@ func TestRLSBeltTables(t *testing.T) {
 			VALUES ($1, 'tbelt-app-` + suffix + `', 'tbelt-cid-` + suffix + `', 'web') RETURNING id)
 			INSERT INTO custom_claims_mappings (application_id, claim_name, source_type, source_value, org_id)
 			SELECT a.id, 'tbelt-claim-` + suffix + `', 'user_attribute', 'department', $1 FROM a`},
+
+		// v156 — the developer portal. The settings row was keyed on the
+		// literal 'global' and unique across the installation; the playground
+		// session holds the PKCE verifier that lets a live authorization code
+		// be redeemed.
+		{"developer_settings", `INSERT INTO developer_settings (setting_key, setting_value, org_id)
+			VALUES ('tbelt-` + suffix + `', '{"rate_limit_default":100}'::jsonb, $1)`},
+
+		{"oauth_playground_sessions", `INSERT INTO oauth_playground_sessions
+			(client_id, state, code_verifier, code_challenge, redirect_uri, org_id)
+			VALUES ('tbelt-pg-` + suffix + `', 'st', 'verifier', 'challenge',
+				'https://console.example.test/callback', $1)`},
 	}
 
 	// One list, not two: the role is granted exactly the tables the cases probe.

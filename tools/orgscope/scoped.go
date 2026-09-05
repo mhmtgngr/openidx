@@ -101,14 +101,12 @@ var needsScoping = map[string]string{
 	"webhook_delivery_stats":     "delivery statistics per subscription",
 
 	// Admin console and developer surfaces.
-	"admin_console_settings":    "console settings key/value (v62 deferred org_id explicitly)",
-	"developer_settings":        "developer-portal settings",
-	"oauth_playground_sessions": "playground sessions holding real tokens per user",
-	"bulk_operations":           "bulk import/export runs (v54)",
-	"bulk_operation_items":      "per-row results of a bulk run (v54)",
-	"connection_tests":          "connectivity test results per route",
-	"feature_adoption":          "per-user feature usage",
-	"service_features":          "per-route feature toggles (v40)",
+	"admin_console_settings": "console settings key/value (v62 deferred org_id explicitly)",
+	"bulk_operations":        "bulk import/export runs (v54)",
+	"bulk_operation_items":   "per-row results of a bulk run (v54)",
+	"connection_tests":       "connectivity test results per route",
+	"feature_adoption":       "per-user feature usage",
+	"service_features":       "per-route feature toggles (v40)",
 }
 
 // needsBelt: OPEN FINDINGS. These carry org_id -- the application filters on

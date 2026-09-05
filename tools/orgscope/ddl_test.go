@@ -335,8 +335,11 @@ func TestRegistersOnlyShrink(t *testing.T) {
 		// accounts get disabled or deleted, and the two logs of what they did.
 		// 28 -> 26 with v155, the federation configuration: the rule that says
 		// which identity provider authenticates a domain, and the mappings that
-		// say what an application is told about whoever signed in.
-		{"needsScoping", len(needsScoping), 26},
+		// say what an application is told about whoever signed in. 26 -> 24 with
+		// v156, the developer portal: a settings row keyed on the literal
+		// 'global' and unique across the installation, and the playground
+		// session that holds a live flow's PKCE verifier.
+		{"needsScoping", len(needsScoping), 24},
 		// 34 → 19: migration v140 belted the fifteen whose queries already
 		// carried their org predicate. Re-pinned rather than left at 34, or
 		// the register could grow back into the room the fix just made.
