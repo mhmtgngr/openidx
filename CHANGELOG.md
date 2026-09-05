@@ -7,6 +7,123 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+The project-readiness programme (PR #883). One organising defect class: **a
+control that displays without enforcing is a lie** — extended, phase by phase,
+to a spec that describes an eighth of a surface, a documented endpoint that
+404s, and a "release" artifact signed with a debug key.
+
+### Added
+
+- **Tenant isolation on the nine ISPM/AI tables** (migration v138). `ispm_rules`,
+  `ispm_findings`, `ispm_scores`, `ai_agents`, `ai_recommendations`,
+  `bulk_operations`, `enrolled_agents` and `notification_digests` had no
+  `org_id`: one tenant's "Scan" deleted every other tenant's open findings, and
+  the posture score was neither one tenant's nor the install's. All now carry
+  `org_id` under FORCE RLS, with the install-wide unique keys re-scoped and an
+  isolation test per handler file.
+- **ABAC actually decides something** — `internal/abac`, `ABAC_ENFORCE=off|observe|enforce`,
+  wired at both enforcement points (the token endpoint and the access proxy).
+  The admin page had authored allow/deny rules that no enforcement point
+  consulted.
+- **A Definition of Done that CI proves**: the smoke stack, the browser journey
+  suite, a `kind` Helm install, `docs` under `--strict`, and the security scans
+  gating rather than reporting.
+- **Governance (IGA) guide page** — the site had PAM and ZTNA and called it four
+  pillars.
+- **`scripts/check-docs-drift.sh`** — no document may cite a repo path that is
+  not there. Its first run found fifty broken citations.
+- **`scripts/check-release-signing.sh`** — a release artifact's name must track
+  the key that signed it.
+- **`VERSION` + `scripts/check-version-sync.sh`** — the tree carried five answers
+  to "what version is this?".
+- Every published OpenAPI spec is proven against its binary's route table in
+  both directions: 445 documented operations became 1,143 of 1,143.
+
+### Fixed
+
+- The assignment gate, the OPA `deny` path and the SMS mock provider each failed
+  **open**; they now fail closed or refuse to start.
+- Five documented `/access/*` auth endpoints that returned 404 (the served
+  routes are `/access/.auth/*`).
+- Constants dressed as measurements: a literal 365-day uptime, a "refresh" that
+  refreshed nothing, a deterministic SAML "transient" NameID.
+
+### Removed
+
+- The server-rendered login (`GET /oauth/login`, the five `/authorize/mfa*`
+  routes, `hosted_mfa.go`) — a second credential pipeline outside every i18n and
+  accessibility gate this branch built.
+- `internal/feature/`, `internal/oauth/store.go`, `client/lib/api/auth.dart` and
+  the Expo `mobile/` tree: dead code that read as shipped capability.
+
+### Changed
+
+- The README's "70–80% saving" claim — forbidden on the console's landing page
+  by its own test since the truthfulness rewrite — is gone from the README too.
+
+## [1.33.3] - 2026-08-25
+
+_No changelog entries were recorded for this release._
+
+**Why several releases below say that.** `[Unreleased]` was never advanced when
+v1.28.0 was cut, so everything written between v1.27.0 and v1.33.3 piled up
+under one heading — 359 lines that all read as unshipped. The attribution here
+was recovered rather than guessed: `CHANGELOG.md` was touched exactly twice in
+that window (`427592d8`, in v1.28.0, and `ddb2ba3f`, in v1.33.2), so each entry
+belongs to the release containing the commit that added it. The releases in
+between shipped code but wrote nothing here, and saying so is more accurate
+than distributing entries across them by feel.
+
+**There is no v1.30.0.** The version sequence skips it — no tag, no release.
+
+## [1.33.2] - 2026-08-24
+
+### Fixed
+
+- **Android/iOS client no longer boots to a blank white screen.** `main()` ran
+  the desktop boot path on every platform: it awaited
+  `windowManager.ensureInitialized()` (and later `TrayController.init()`), but
+  `window_manager` / `tray_manager` are desktop-only plugins with no method-channel
+  implementation on mobile. The call threw
+  `MissingPluginException(No implementation found for method ensureInitialized on
+  channel window_manager)` **before `runApp()`**, so the app started, painted
+  nothing, and showed no crash dialog — it just sat on white. `main()` now
+  branches on `EngineClientFactory.isMobile`: mobile calls `runApp()` directly
+  (leaving `engineSupervisorProvider` un-overridden so `engineClientProvider`
+  builds the in-process `MobileEngineClient`), while desktop keeps the unchanged
+  window-chrome + tray + sidecar-supervisor path. The rest of the mobile
+  code (`MobileShell`, `SettingsScreen`) was already platform-guarded; `main.dart`
+  was the only unguarded entry point. The Flutter client version also now tracks
+  the release tag (`1.33.2+13302`, was `0.1.0+1`) so the installed build is
+  identifiable on-device.
+
+## [1.33.1] - 2026-08-24
+
+_No changelog entries were recorded for this release (see the note under
+[1.33.3])._
+
+## [1.33.0] - 2026-08-24
+
+_No changelog entries were recorded for this release (see the note under
+[1.33.3])._
+
+## [1.32.0] - 2026-08-24
+
+_No changelog entries were recorded for this release (see the note under
+[1.33.3])._
+
+## [1.31.0] - 2026-08-23
+
+_No changelog entries were recorded for this release (see the note under
+[1.33.3])._
+
+## [1.29.0] - 2026-08-19
+
+_No changelog entries were recorded for this release (see the note under
+[1.33.3])._
+
+## [1.28.0] - 2026-08-18
+
 ### Added
 
 - **Clientless remote access + Quick Links launcher + attended-support consent.**
@@ -181,22 +298,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Android/iOS client no longer boots to a blank white screen.** `main()` ran
-  the desktop boot path on every platform: it awaited
-  `windowManager.ensureInitialized()` (and later `TrayController.init()`), but
-  `window_manager` / `tray_manager` are desktop-only plugins with no method-channel
-  implementation on mobile. The call threw
-  `MissingPluginException(No implementation found for method ensureInitialized on
-  channel window_manager)` **before `runApp()`**, so the app started, painted
-  nothing, and showed no crash dialog — it just sat on white. `main()` now
-  branches on `EngineClientFactory.isMobile`: mobile calls `runApp()` directly
-  (leaving `engineSupervisorProvider` un-overridden so `engineClientProvider`
-  builds the in-process `MobileEngineClient`), while desktop keeps the unchanged
-  window-chrome + tray + sidecar-supervisor path. The rest of the mobile
-  code (`MobileShell`, `SettingsScreen`) was already platform-guarded; `main.dart`
-  was the only unguarded entry point. The Flutter client version also now tracks
-  the release tag (`1.33.2+13302`, was `0.1.0+1`) so the installed build is
-  identifiable on-device.
 
 - **Admin-console unit tests can run again (frontend test env repaired).**
   `vitest.config.ts` requested `environment: 'happy-dom'`, but `happy-dom` was
@@ -2386,7 +2487,42 @@ The first tagged release: a hardened, single-tenant, self-hostable v1.
   reverse-proxy hop-by-hop header stripping, and audit-stream SIEM config
   endpoints.
 
-[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.17.0...HEAD
+
+[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.33.3...HEAD
+[1.33.3]: https://github.com/mhmtgngr/openidx/compare/v1.33.2...v1.33.3
+[1.33.2]: https://github.com/mhmtgngr/openidx/compare/v1.33.1...v1.33.2
+[1.33.1]: https://github.com/mhmtgngr/openidx/compare/v1.33.0...v1.33.1
+[1.33.0]: https://github.com/mhmtgngr/openidx/compare/v1.32.0...v1.33.0
+[1.32.0]: https://github.com/mhmtgngr/openidx/compare/v1.31.0...v1.32.0
+[1.31.0]: https://github.com/mhmtgngr/openidx/compare/v1.29.0...v1.31.0
+[1.29.0]: https://github.com/mhmtgngr/openidx/compare/v1.28.0...v1.29.0
+[1.28.0]: https://github.com/mhmtgngr/openidx/compare/v1.27.0...v1.28.0
+[1.27.0]: https://github.com/mhmtgngr/openidx/compare/v1.26.0...v1.27.0
+[1.26.0]: https://github.com/mhmtgngr/openidx/compare/v1.25.0...v1.26.0
+[1.25.0]: https://github.com/mhmtgngr/openidx/compare/v1.24.11...v1.25.0
+[1.24.11]: https://github.com/mhmtgngr/openidx/compare/v1.24.9...v1.24.11
+[1.24.9]: https://github.com/mhmtgngr/openidx/compare/v1.24.8...v1.24.9
+[1.24.8]: https://github.com/mhmtgngr/openidx/compare/v1.24.7...v1.24.8
+[1.24.7]: https://github.com/mhmtgngr/openidx/compare/v1.24.6...v1.24.7
+[1.24.6]: https://github.com/mhmtgngr/openidx/compare/v1.24.5...v1.24.6
+[1.24.5]: https://github.com/mhmtgngr/openidx/compare/v1.24.4...v1.24.5
+[1.24.4]: https://github.com/mhmtgngr/openidx/compare/v1.24.3...v1.24.4
+[1.24.3]: https://github.com/mhmtgngr/openidx/compare/v1.24.2...v1.24.3
+[1.24.2]: https://github.com/mhmtgngr/openidx/compare/v1.24.1...v1.24.2
+[1.24.1]: https://github.com/mhmtgngr/openidx/compare/v1.24.0...v1.24.1
+[1.24.0]: https://github.com/mhmtgngr/openidx/compare/v1.23.5...v1.24.0
+[1.23.5]: https://github.com/mhmtgngr/openidx/compare/v1.23.4...v1.23.5
+[1.23.4]: https://github.com/mhmtgngr/openidx/compare/v1.23.3...v1.23.4
+[1.23.3]: https://github.com/mhmtgngr/openidx/compare/v1.23.2...v1.23.3
+[1.23.2]: https://github.com/mhmtgngr/openidx/compare/v1.23.1...v1.23.2
+[1.23.1]: https://github.com/mhmtgngr/openidx/compare/v1.23.0...v1.23.1
+[1.23.0]: https://github.com/mhmtgngr/openidx/compare/v1.22.0...v1.23.0
+[1.22.0]: https://github.com/mhmtgngr/openidx/compare/v1.21.1...v1.22.0
+[1.21.1]: https://github.com/mhmtgngr/openidx/compare/v1.21.0...v1.21.1
+[1.21.0]: https://github.com/mhmtgngr/openidx/compare/v1.20.0...v1.21.0
+[1.20.0]: https://github.com/mhmtgngr/openidx/compare/v1.19.0...v1.20.0
+[1.19.0]: https://github.com/mhmtgngr/openidx/compare/v1.18.0...v1.19.0
+[1.18.0]: https://github.com/mhmtgngr/openidx/compare/v1.17.0...v1.18.0
 [1.17.0]: https://github.com/mhmtgngr/openidx/compare/v1.16.1...v1.17.0
 [1.16.1]: https://github.com/mhmtgngr/openidx/compare/v1.16.0...v1.16.1
 [1.16.0]: https://github.com/mhmtgngr/openidx/compare/v1.15.0...v1.16.0
@@ -2407,4 +2543,13 @@ The first tagged release: a hardened, single-tenant, self-hostable v1.
 [1.7.2]: https://github.com/mhmtgngr/openidx/compare/v1.7.1...v1.7.2
 [1.7.1]: https://github.com/mhmtgngr/openidx/compare/v1.7.0...v1.7.1
 [1.7.0]: https://github.com/mhmtgngr/openidx/compare/v1.6.0...v1.7.0
+[1.6.0]: https://github.com/mhmtgngr/openidx/compare/v1.5.0...v1.6.0
+[1.5.0]: https://github.com/mhmtgngr/openidx/compare/v1.4.0...v1.5.0
+[1.4.0]: https://github.com/mhmtgngr/openidx/compare/v1.3.0...v1.4.0
+[1.3.0]: https://github.com/mhmtgngr/openidx/compare/v1.2.0...v1.3.0
+[1.2.0]: https://github.com/mhmtgngr/openidx/compare/v1.1.0...v1.2.0
+[1.1.0]: https://github.com/mhmtgngr/openidx/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/mhmtgngr/openidx/releases/tag/v1.0.0
+
+<!-- [1.24.10] has a section above but no v1.24.10 tag was ever pushed, so it has
+     no compare link. Left as-is rather than invented. -->

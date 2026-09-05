@@ -8,7 +8,17 @@ A release is cut by pushing a `vX.Y.Z` git tag — everything else is automated.
 1. `main` is green (Go CI, Frontend CI, Docker Build, Helm, Terraform).
 2. All PRs intended for the release are merged.
 3. Update `CHANGELOG.md`: rename the `[Unreleased]` section to
-   `[X.Y.Z] - YYYY-MM-DD` and start a fresh empty `[Unreleased]`.
+   `[X.Y.Z] - YYYY-MM-DD`, add its compare-link definition at the bottom of the
+   file, and start a fresh empty `[Unreleased]`.
+
+   **This is the step that gets skipped.** It was missed on all eight releases
+   from v1.28.0 to v1.33.3, so 359 lines of shipped work sat under
+   `[Unreleased]` reading as unshipped, and the compare links stopped at
+   v1.17.0. If you do only one thing here, do this one.
+4. `VERSION` matches the tag you are about to push, and
+   `bash scripts/check-version-sync.sh --enforce` is green — it holds the
+   console, the Helm chart's `appVersion`, the Flutter client and all ten
+   OpenAPI specs to that number.
 
 ## Cut the release
 
@@ -42,6 +52,13 @@ git push origin vX.Y.Z
 - A deployed service reports the version: `GET /health` → `"version":"vX.Y.Z"`.
 
 ### Verifying downloaded binaries (consumers)
+
+!!! note "Signing starts at v1.34.0"
+
+    Cosign signing landed with the project-readiness programme, so **v1.34.0 is
+    the first signed release**. Everything from v1.33.3 back has a
+    `SHA256SUMS` but no `.sig`/`.pem`, and the recipes below will not verify
+    against it — that is expected, not a tampering signal.
 
 The release job signs `SHA256SUMS` with keyless cosign (Sigstore): the
 signing certificate is minted from the workflow's GitHub OIDC identity, so

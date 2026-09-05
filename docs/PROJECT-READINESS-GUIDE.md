@@ -2835,8 +2835,37 @@ those tests found.
    analytics property are gone: a social link to a server that does not exist
    sends readers into a dead end, and an unset property renders a broken tag
    on every page.
-2. ☐ **CHANGELOG** advanced through v1.28.0…v1.33.3 by tag date, this
-   branch under `[Unreleased]`, compare links repaired.
+2. ✅ **The CHANGELOG said nothing had shipped in eight releases.** — *shipped.*
+
+   359 lines sat under `[Unreleased]` — every one of them already released —
+   and the compare links stopped at v1.17.0. `RELEASING.md`'s step 3 (rename
+   `[Unreleased]`, start a fresh one) was skipped on all eight cuts from
+   v1.28.0 to v1.33.3.
+
+   **The attribution was recovered, not guessed.** Rather than distribute the
+   entries across the releases by feel, the clone was unshallowed and each
+   entry traced to the commit that *added it to the changelog* (`git log -S`
+   over `CHANGELOG.md`), then to the first tag containing that commit. The
+   answer is sharper than the plan assumed: `CHANGELOG.md` was touched exactly
+   **twice** in that window — `427592d8` in v1.28.0 and `ddb2ba3f` in v1.33.2 —
+   so all but one entry belongs to v1.28.0, one (the Flutter blank-white-screen
+   fix) to v1.33.2, and the six releases in between shipped code while writing
+   nothing here. They now say so, which is more honest than inventing content
+   for them.
+
+   **Two facts the plan had wrong, both corrected here.** There is no
+   **v1.30.0** — no tag, no release; the sequence skips it, so the guide's and
+   the plan's "v1.28.0…v1.33.3" was never eight consecutive versions. And
+   `[1.24.10]` has a changelog section but **no v1.24.10 tag was ever pushed**,
+   so it is the one heading with no compare link — recorded in a comment rather
+   than given a link that would 404. Sixty-one link definitions were generated
+   from the real tag list, and every one resolves.
+
+   `[Unreleased]` now carries this branch's work, and `RELEASING.md` says two
+   things it did not: that step 3 is the step that gets skipped (with the
+   evidence), and that **v1.34.0 is the first signed release** — the cosign
+   recipes in that document describe verification that cannot succeed against
+   any existing tag, which would read as tampering rather than as absence.
 3. ✅ **One version, and something that keeps it.** The tree carried five
    answers to "what version is this?" and none of them was wrong on purpose:
    the console said 1.27.0, the Helm chart's `appVersion` said 0.1.0, the
@@ -3010,7 +3039,7 @@ that holds it rather than by the commit that wrote it.
 | 3 · every control enforces | ◐ | P5.1–5.11 ✅ (tenant isolation, the inverted orgscope lint, OPA `deny`, ABAC at both PEPs, the honest Apply/Remediate, SMS, multi-IdP, the fail-closed gate, `ValidateProduction`, the faked measurements); ☐ the P5.3b register programme — 95 tables still ride `needsScoping`/`needsBelt` waivers |
 | 4 · first run / first login / four pillars from the docs | ✅ | first run ✅ the `smoke` and `first-run` jobs (P6.2); first login ✅ one authoritative credential in `GETTING-STARTED.md`, with the `USER_GUIDE.md` and `CONTRIBUTING.md` copies pointing at it rather than repeating it (P8.1); four pillars ✅ `guide/governance.md` was the missing one (P8.1) |
 | 5 · one story + auditor artifacts | ◐ | threat model and control mapping exist; docs sweep 3 ✅ and the docs-drift guard ✅ (`check-docs-drift.sh`, enforced in CI, so a document cannot cite a path that is not there); ☐ `docs/evidence/` is the auditor-facing half, and is P8.4 |
-| 6 · releases current, signed, Helm proven | ◐ | signing ✅ `release.yml` (cosign) and, since P7.5, an Android artifact whose name tracks the key that signed it; Helm ✅ the `kind` install job (P6.4); versions ✅ `VERSION` + `check-version-sync.sh` (P8.3); ☐ the CHANGELOG still carries 359 shipped lines under `[Unreleased]` (P8.2), and v1.34.0 is not cut |
+| 6 · releases current, signed, Helm proven | ◐ | signing ✅ `release.yml` (cosign) and, since P7.5, an Android artifact whose name tracks the key that signed it; Helm ✅ the `kind` install job (P6.4); versions ✅ `VERSION` + `check-version-sync.sh` (P8.3); CHANGELOG ✅ every release attributed from the commit that wrote its entry, 61 compare links that resolve (P8.2); ☐ v1.34.0 is not cut — the maintainer's |
 | 7 · controls run with evidence | ☐ | §5.1's automated half runs in CI; §5.2/§5.3 are operator-run; `docs/evidence/` does not exist yet (P8.4) |
 
 ◐ = the engineering half is done and proven; what remains is either an operator
