@@ -2225,7 +2225,47 @@ worked.
    `hardware_token.go` addresses tokens by bare id across tenants. That is the
    orgscope `needsScoping` register (P5.3b) and its own migration — a backfill,
    the RLS belt, and every query in the file — not a rider on this one.
-8. ☐ Remaining from the audit's list: `handlePamRevealEntry`, `RunSoDSweep`,
+8. ✅ **The separation-of-duties sweep, and the clock it compared against.**
+   `evaluateSoDPolicy` blocks a *request* that would create a toxic
+   combination; `RunSoDSweep` is the detective half — the control an
+   SOX/ISAE/DORA audit actually asks to see — and its whole value is in what it
+   does on the second run. It had no test.
+   - **The sweep's clock was not the database's.** `sweepStart := time.Now()`
+     in Go; `last_detected_at` written by PostgreSQL's `NOW()`; and the
+     auto-resolve pass closes every open violation whose `last_detected_at`
+     predates `sweepStart`. Two clocks. If the database's is behind this
+     process's by a few hundred milliseconds — two hosts, ordinary NTP drift —
+     a violation the sweep has *just recorded* is auto-resolved on the spot,
+     and the register shows a live toxic combination as "resolved: conflict no
+     longer present". That is the worst way for a detective control to fail:
+     silently, and in the reassuring direction. `sweepStart` now comes from
+     `clock_timestamp()`, so both sides of the comparison are on one clock.
+     Honest note: this one is *not* red-provable in a same-host harness — there
+     is no skew to induce — so what the tests pin is the behaviour it protects
+     (a violation found by a sweep is never closed by that sweep), not the
+     defect itself.
+   - **A reopened violation kept the note saying it was gone.** The auto-resolve
+     appends "[auto-resolved: conflict no longer present]"; the reopen path
+     cleared `resolved_at` and left the note, so the register showed a live,
+     open violation still claiming the conflict was resolved. It appends
+     "[reopened: conflict detected again]" now — appends rather than clears,
+     because an operator's own note lives in that column too. Red before the
+     fix.
+
+   Eight tests: a conflict is recorded and left open by its own sweep; a
+   second identical sweep refreshes rather than duplicating and does not move
+   `first_detected_at` (the age of a finding is what an auditor reads);
+   remediation auto-resolves and a recurrence reopens the *same* row;
+   `waived` is never touched, note and all; `acknowledged` survives while the
+   conflict persists; a role plus a *group* still matches, case-insensitively
+   (otherwise the control is avoidable by granting the second half through a
+   group); disabled policies and disabled users produce nothing; and one org's
+   sweep neither scans nor closes another's — the auto-resolve is a bare
+   `UPDATE sod_violations`, the shape that has crossed tenants elsewhere here.
+
+   `internal/governance`'s DB harness also gained the
+   `OPENIDX_TEST_DATABASE_URL` escape hatch the other four packages carry.
+9. ☐ Remaining from the audit's list: `handlePamRevealEntry`,
    `handleApproveRequest`, and the Guacamole session handlers.
 
    `internal/identity`'s DB harness now also accepts

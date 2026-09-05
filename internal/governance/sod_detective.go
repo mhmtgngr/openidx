@@ -146,7 +146,22 @@ type SoDSweepResult struct {
 // policy and reconciles the sod_violations register. Reusable by an on-demand
 // endpoint and (future) a scheduled worker.
 func (s *Service) RunSoDSweep(ctx context.Context, orgID string) (*SoDSweepResult, error) {
-	sweepStart := time.Now()
+	// The sweep's clock has to be the DATABASE's, not this process's.
+	//
+	// The auto-resolve below closes any violation whose last_detected_at
+	// predates the start of this sweep, and last_detected_at is written by
+	// PostgreSQL's NOW(). Reading the start from time.Now() compares two
+	// different clocks: if the database's is behind this process's by even a
+	// few hundred milliseconds — two hosts, ordinary NTP drift — then a
+	// violation this very sweep just recorded has last_detected_at < sweepStart
+	// and is auto-resolved on the spot. The register would show a real toxic
+	// combination as "resolved: conflict no longer present", which is the worst
+	// possible way for a detective control to fail: silently, and in the
+	// reassuring direction.
+	var sweepStart time.Time
+	if err := s.db.Pool.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&sweepStart); err != nil {
+		return nil, err
+	}
 	res := &SoDSweepResult{SweptAt: sweepStart}
 
 	sets, err := s.loadSoDConflictSets(ctx, orgID)
@@ -228,7 +243,14 @@ func (s *Service) upsertSoDViolation(ctx context.Context, orgID string, set sodC
 		       detail = EXCLUDED.detail,
 		       policy_name = EXCLUDED.policy_name,
 		       status = CASE WHEN sod_violations.status = 'resolved' THEN 'open' ELSE sod_violations.status END,
-		       resolved_at = CASE WHEN sod_violations.status = 'resolved' THEN NULL ELSE sod_violations.resolved_at END
+		       resolved_at = CASE WHEN sod_violations.status = 'resolved' THEN NULL ELSE sod_violations.resolved_at END,
+		       -- A reopened row kept the note the auto-resolve left on it, so
+		       -- the register read "conflict no longer present" against a live,
+		       -- open violation. Append rather than clear: an operator's own
+		       -- note lives in this column too.
+		       notes = CASE WHEN sod_violations.status = 'resolved'
+		                    THEN COALESCE(sod_violations.notes,'') || ' [reopened: conflict detected again]'
+		                    ELSE sod_violations.notes END
 		RETURNING (xmax = 0) AS inserted`,
 		orgID, set.policyID, set.policyName, userID, names, detail).Scan(&inserted)
 	if err != nil {

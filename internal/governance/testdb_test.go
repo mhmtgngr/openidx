@@ -3,6 +3,7 @@ package governance
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 
@@ -13,11 +14,38 @@ import (
 	"github.com/openidx/openidx/internal/common/testsupport"
 )
 
-// setupTestDB creates a test database container
+// setupTestDB creates a test database container.
+//
+// OPENIDX_TEST_DATABASE_URL, when set, points the harness at an existing server
+// instead of starting a container — for a workstation or sandbox that has
+// Postgres but no Docker daemon (the same escape hatch internal/identity,
+// internal/admin, internal/access and internal/vault carry). CI does not set it
+// and keeps using throwaway containers.
+//
+// On that path the public schema is DROPPED and recreated: the tests in this
+// package each build the tables they need and several seed fixed UUIDs, so
+// against a persistent database the second run would be a wall of
+// duplicate-key failures that look like regressions. The reset is per call, so
+// run ONE package at a time against this variable.
 func setupTestDB(t *testing.T) (*database.PostgresDB, func()) {
 	t.Helper()
 
 	ctx := context.Background()
+
+	if url := os.Getenv("OPENIDX_TEST_DATABASE_URL"); url != "" {
+		db, err := database.NewPostgres(url)
+		if err != nil {
+			t.Skipf("OPENIDX_TEST_DATABASE_URL set but unreachable: %v", err)
+			return nil, func() {}
+		}
+		for _, stmt := range []string{"DROP SCHEMA public CASCADE", "CREATE SCHEMA public"} {
+			if _, err := db.Pool.Exec(ctx, stmt); err != nil {
+				db.Close()
+				t.Fatalf("reset test schema (%s): %v", stmt, err)
+			}
+		}
+		return db, func() { db.Close() }
+	}
 
 	// Start PostgreSQL container
 	req := testcontainers.ContainerRequest{
