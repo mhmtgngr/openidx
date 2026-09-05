@@ -2316,6 +2316,22 @@ class this whole program exists for.
    already put the login above the low threshold. That is a real defect of this
    programme's class and it is not a tenant-scoping one, so it is recorded here
    rather than folded into a scoping batch.
+
+   **And the batch went red in CI, which is the point of the gate.** v153's
+   `NOT NULL` broke `deployments/docker/seed.sql`, whose starter risk policies
+   were inserted with no organization — `TestComposeMigrateSeedProducesRLSInstall`
+   applies that seed against a freshly migrated database and reported
+   *"null value in column `org_id` of relation `risk_policies` violates
+   not-null constraint"*. The seed now names the default organization
+   explicitly, in the shape `tenant_branding` already used
+   (`SELECT … FROM organizations WHERE slug = 'default'`), because v153
+   deliberately adds no column DEFAULT: **a default is how a row acquires a
+   tenant it was never given**, which is the defect this programme exists to
+   remove. The pre-push check that missed it was scoped to `*_test.go`; a
+   migration that adds a `NOT NULL` column has to be checked against
+   `deployments/docker/seed.sql` too. Two tables still on `needsScoping` —
+   `lifecycle_policies` and `notification_routing_rules` — are seeded there and
+   will need the same treatment when their batch comes.
 4. ✅ **OPA `deny` enforced** — *shipped.* — `internal/common/middleware/opa.go`: abort
    unless `Allow && len(Deny)==0`; `authz.rego:15-19`'s "any authenticated
    user may GET anything" removed; `policies/access_control.rego`

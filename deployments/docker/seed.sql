@@ -71,51 +71,65 @@ INSERT INTO posture_check_types (id, name, description, category, parameters) VA
 ('a0000000-0000-0000-0000-000000000005', 'process_check', 'Running Process Check', 'endpoint', '{"os_type": "", "path": "", "hashes": []}')
 ON CONFLICT (id) DO NOTHING;
 
--- Risk policies
+-- Risk policies (default org)
+--
 -- Explicit ids pinned so re-applying the seed is idempotent: risk_policies has no
 -- unique key other than the id PK, so a bare ON CONFLICT (on the auto-generated id)
 -- would never collide and would duplicate all rows on every re-apply.
-INSERT INTO risk_policies (id, name, description, priority, conditions, actions) VALUES
-(
-    'f1000000-0000-0000-0000-000000000001',
-    'New Device MFA',
-    'Require MFA when logging in from a new device',
-    100,
-    '{"new_device": true}',
-    '{"require_mfa": true, "mfa_methods": ["any"]}'
-),
-(
-    'f1000000-0000-0000-0000-000000000002',
-    'New Location MFA',
-    'Require MFA when logging in from a new location',
-    90,
-    '{"new_location": true}',
-    '{"require_mfa": true, "mfa_methods": ["any"]}'
-),
-(
-    'f1000000-0000-0000-0000-000000000003',
-    'High Risk Score',
-    'Require strong MFA for high-risk logins',
-    80,
-    '{"risk_score_min": 50}',
-    '{"require_mfa": true, "mfa_methods": ["webauthn", "push"], "step_up": true}'
-),
-(
-    'f1000000-0000-0000-0000-000000000004',
-    'Impossible Travel',
-    'Block or require step-up auth for impossible travel',
-    70,
-    '{"impossible_travel": true}',
-    '{"require_mfa": true, "mfa_methods": ["webauthn", "push"], "step_up": true, "notify_admin": true}'
-),
-(
-    'f1000000-0000-0000-0000-000000000005',
-    'Blocked IP',
-    'Deny access from blocked IP addresses',
-    60,
-    '{"ip_blocked": true}',
-    '{"deny": true, "notify_admin": true}'
-)
+--
+-- org_id is named explicitly. Migration v153 made risk_policies per-tenant with
+-- NOT NULL and no column DEFAULT (the register programme does not add defaults --
+-- a default is how a row acquires a tenant it was never given), so unlike the
+-- v36-era scoped tables above, an INSERT that omits org_id fails rather than
+-- landing in the default org. These are starter rules for the default
+-- organization; another organization gets its own, and one organization's rules
+-- no longer apply to another organization's logins.
+INSERT INTO risk_policies (id, org_id, name, description, priority, conditions, actions)
+SELECT v.id::uuid, o.id, v.name, v.description, v.priority, v.conditions::jsonb, v.actions::jsonb
+FROM organizations o
+CROSS JOIN (VALUES
+    (
+        'f1000000-0000-0000-0000-000000000001',
+        'New Device MFA',
+        'Require MFA when logging in from a new device',
+        100,
+        '{"new_device": true}',
+        '{"require_mfa": true, "mfa_methods": ["any"]}'
+    ),
+    (
+        'f1000000-0000-0000-0000-000000000002',
+        'New Location MFA',
+        'Require MFA when logging in from a new location',
+        90,
+        '{"new_location": true}',
+        '{"require_mfa": true, "mfa_methods": ["any"]}'
+    ),
+    (
+        'f1000000-0000-0000-0000-000000000003',
+        'High Risk Score',
+        'Require strong MFA for high-risk logins',
+        80,
+        '{"risk_score_min": 50}',
+        '{"require_mfa": true, "mfa_methods": ["webauthn", "push"], "step_up": true}'
+    ),
+    (
+        'f1000000-0000-0000-0000-000000000004',
+        'Impossible Travel',
+        'Block or require step-up auth for impossible travel',
+        70,
+        '{"impossible_travel": true}',
+        '{"require_mfa": true, "mfa_methods": ["webauthn", "push"], "step_up": true, "notify_admin": true}'
+    ),
+    (
+        'f1000000-0000-0000-0000-000000000005',
+        'Blocked IP',
+        'Deny access from blocked IP addresses',
+        60,
+        '{"ip_blocked": true}',
+        '{"deny": true, "notify_admin": true}'
+    )
+) AS v(id, name, description, priority, conditions, actions)
+WHERE o.slug = 'default'
 ON CONFLICT (id) DO NOTHING;
 
 -- ISPM rules: NOT seeded here any more. ispm_rules is per-tenant since
