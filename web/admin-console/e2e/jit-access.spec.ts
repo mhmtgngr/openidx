@@ -83,7 +83,24 @@ test.describe('JIT Access — Duration Picker', () => {
     await typeSelect.click();
     await page.getByRole('option', { name: 'Role' }).click();
 
-    await page.getByPlaceholder('Enter resource name').fill('admin-role');
+    // Resource Name is two controls, not one: the page renders a picker when
+    // the roles query came back with roles, and a free-text input when it did
+    // not. Against a real stack that is a picker; against an empty one it is
+    // the input. Filling the input unconditionally used to pass only because
+    // the environment had no roles -- when it did, the input was replaced mid
+    // -fill and Playwright waited for a detached element until the test timed
+    // out. Take whichever control is on screen, and remember what it produced
+    // so the assertion below does not depend on the seed data.
+    const namePicker = page.getByRole('combobox', { name: 'Resource Name' });
+    let expectedName = 'admin-role';
+    if (await namePicker.isVisible().catch(() => false)) {
+      await namePicker.click();
+      const firstOption = page.getByRole('option').first();
+      expectedName = ((await firstOption.textContent()) || '').trim();
+      await firstOption.click();
+    } else {
+      await page.getByPlaceholder('Enter resource name').fill(expectedName);
+    }
     await page.getByPlaceholder('Explain why you need access').fill('Temporary admin access for maintenance');
 
     // Select duration
@@ -101,7 +118,7 @@ test.describe('JIT Access — Duration Picker', () => {
     const postedData = JSON.parse(request.postData() || '{}');
 
     expect(postedData.resource_type).toBe('role');
-    expect(postedData.resource_name).toBe('admin-role');
+    expect(postedData.resource_name).toBe(expectedName);
     expect(postedData.duration).toBe('4h');
   });
 });

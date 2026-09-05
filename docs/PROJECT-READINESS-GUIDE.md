@@ -2322,7 +2322,27 @@ worked.
     dual-control entry answers 202 and hands back nothing until a second
     administrator authorizes it; and no organization context refuses before the
     entry is looked up at all.
-11. ☐ Remaining from the audit's list: the Guacamole session handlers.
+11. ✅ **A browser journey that only passed against an empty stack.** The
+    Playwright gate went red on `jit-access.spec.ts` — three times, not a
+    flake: `locator.fill: Test timeout`, *"element was detached from the DOM,
+    retrying"*. The Resource Name field on the access-request dialog is two
+    controls, not one: `access-requests.tsx` renders a **picker** when the
+    resource query came back with entries and a **free-text input** when it did
+    not. The spec filled the input unconditionally, which held only because the
+    environment it was first measured against had no roles; against CI's real
+    stack the input was replaced mid-fill and Playwright waited on a detached
+    element until the test timed out. The spec now takes whichever control is on
+    screen and asserts the posted name matches what it produced, so it no longer
+    depends on the seed data. A unit test pins the branch the spec relies on —
+    picker present, input gone, the accessible name it is found by, and the
+    picked name reaching the POST — because that contract is invisible in the
+    spec itself.
+
+    Worth naming: this is the register from P6.2 doing its job the hard way. A
+    spec listed as `run` on a measurement taken against the wrong environment is
+    exactly the failure the register exists to make visible, and it was visible
+    within one CI round.
+12. ☐ Remaining from the audit's list: the Guacamole session handlers.
 
    `internal/identity`'s DB harness now also accepts
    `OPENIDX_TEST_DATABASE_URL`, so these can be written and run on a machine
