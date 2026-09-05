@@ -90,10 +90,10 @@ func TestGuacamoleConnections_TenantIsolation(t *testing.T) {
 
 	routeA := seedRoute(orgA, "gc-a-"+suffix)
 	routeB := seedRoute(orgB, "gc-b-"+suffix)
-	const hostA = "10.9.9.9"
+	const hostA = "198.51.100.9"
 	guacA := "guac-a-" + suffix
 	connA := seedConn(orgA, routeA, guacA, hostA, true) // approval required
-	seedConn(orgB, routeB, "guac-b-"+suffix, "10.1.1.1", false)
+	seedConn(orgB, routeB, "guac-b-"+suffix, "198.51.100.11", false)
 
 	// A broker stub so the handler's success path is deterministic and offline.
 	// perUserIdentities is false, so the only call it makes is the token mint.
