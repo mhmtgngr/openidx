@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest'
 import i18n, { ensureLanguage, setLanguage, supportedLanguages } from './index'
 import en from './locales/en'
+import { API_SPECS } from '@/lib/api-specs'
 
 // The singleton is initialized by the test setup file (same module as
 // main.tsx). Restore English so other test files see the default language.
@@ -730,19 +731,10 @@ describe('i18n', () => {
       ...['active', 'loading', 'ended', 'failed'].map(
         (k) => `pages.pamSessionWindow.phases.${k}`,
       ),
-      // api-docs: one tab per published spec.
-      ...[
-        'identity',
-        'oauth',
-        'admin',
-        'access',
-        'governance',
-        'provisioning',
-        'audit',
-        'notifications',
-        'organization',
-        'portal',
-      ].map((k) => `pages.apiDocs.specs.${k}`),
+      // api-docs: one tab per published spec. Derived from the page's own
+      // API_SPECS, not a second copy of it — when a spec is retired the tab
+      // and its label go together.
+      ...API_SPECS.map((s) => `pages.apiDocs.specs.${s.id}`),
     ]
     for (const lang of supportedLanguages) {
       for (const key of mapKeys) {

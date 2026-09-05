@@ -9206,7 +9206,6 @@ const en = {
         provisioning: 'SCIM',
         audit: 'Audit',
         notifications: 'Notifications',
-        organization: 'Organizations',
         portal: 'Portal',
       },
     },

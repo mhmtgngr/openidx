@@ -14,6 +14,8 @@ vi.mock('swagger-ui-react/swagger-ui.css', () => ({}))
 vi.mock('../styles/swagger-overrides.css', () => ({}))
 
 import { ApiDocsPage } from './api-docs'
+import { API_SPECS } from '@/lib/api-specs'
+import en from '@/i18n/locales/en'
 
 describe('ApiDocsPage', () => {
   beforeEach(() => {
@@ -43,14 +45,16 @@ describe('ApiDocsPage', () => {
       </MemoryRouter>,
     )
 
-    for (const label of [
-      'Identity', 'OAuth/OIDC', 'Admin API', 'Access', 'Governance',
-      'SCIM', 'Audit', 'Notifications', 'Organizations', 'Portal',
-    ]) {
-      expect(
-        screen.getByRole('tab', { name: label }),
-      ).toBeInTheDocument()
+    // The list comes from the page's own API_SPECS and the label from the
+    // English catalog, so retiring a spec cannot leave a phantom tab asserted
+    // here — or a real one unasserted.
+    expect(API_SPECS.length).toBeGreaterThan(0)
+    for (const { id } of API_SPECS) {
+      const label = en.pages.apiDocs.specs[id as keyof typeof en.pages.apiDocs.specs]
+      expect(label, `no en label for spec "${id}"`).toBeTypeOf('string')
+      expect(screen.getByRole('tab', { name: label })).toBeInTheDocument()
     }
+    expect(screen.getAllByRole('tab')).toHaveLength(API_SPECS.length)
   })
 
   it('renders SwaggerUI bound to the Identity spec by default', () => {

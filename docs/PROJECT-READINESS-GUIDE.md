@@ -2367,13 +2367,49 @@ worked.
     row creation: creation guards are per-route and each new route starts
     without one.
 
-**P7.4 is complete.** Every handler and function the audit named as untested
-now has a test, and eleven of the entries above record a defect those tests
-found.
+**P7.4's test half is complete.** Every handler and function the audit named
+as untested now has a test, and eleven of the entries above record a defect
+those tests found.
 
    `internal/identity`'s DB harness now also accepts
    `OPENIDX_TEST_DATABASE_URL`, so these can be written and run on a machine
    with Postgres and no Docker daemon; CI keeps using throwaway containers.
+
+13. ✅ **The admin API's spec described an eighth of it, and read as complete.**
+    `api/openapi/admin-api.yaml` carried 19 paths. `cmd/admin-api` mounts 194:
+    `internal/admin` alone registers 176, and organization, notifications, the
+    admin console handlers, the self-heal panel, the vault, the rotation engine
+    and the PAM overview add the rest. ISPM, AI agents, AI intelligence, AI
+    recommendations, privacy and DSAR, federation, lifecycle policies, bulk
+    operations, audit archival and retention, continuous authentication,
+    notifications, email templates, entitlements, delegations, attestation
+    campaigns, analytics, tenants — every one routed, every one absent. A
+    partial spec is worse than none: nothing in it says it is partial, so an
+    integrator reads the silence as "no such endpoint".
+
+    All 257 undocumented operations are now in the file, each with a summary,
+    a tag, its path parameters, its status codes, and an `x-openidx-handler`
+    extension naming the Go handler that serves it — so a reader can go from
+    an endpoint to the code without grepping. Where a handler's payload shape
+    is not pinned, the body is a free-form JSON object and `info.description`
+    says so in as many words, rather than inventing fields.
+
+    The gate is what keeps it true. `test/openapi/admin_api_coverage_test.go`
+    mounts the same groups `cmd/admin-api/main.go` mounts and compares the live
+    route table against the file **in both directions**: a served route with no
+    operation fails, and an operation nobody serves fails too — the second half
+    matters because a documented endpoint that 404s costs an integrator more
+    than an undocumented one. Both were proven red before landing: deleting
+    `GET /api/v1/ispm/findings` from the spec, and adding a `GET /api/v1/ghost`
+    to it.
+
+    `api/openapi/organization-service.yaml` is deleted. Its five paths are
+    admin-api's, and they are in `admin-api.yaml` now; keeping a second file
+    implied a binary an operator could deploy and could not find. The
+    notifications and portal specs stay for now — they describe the
+    identity-service mount, which has no coverage gate yet — but the README,
+    `docs/api/config.json` and the console's API-docs tabs say which process
+    serves them instead of naming a service that does not exist.
 
 ### P7 — One console, one client
 
@@ -2635,16 +2671,20 @@ found.
    releases; it now names v1.33.3 as the last release and points at `VERSION`
    for what is being built.
 
-   **Correction to the audit.** It listed
-   `notifications-service.yaml`, `organization-service.yaml` and
-   `portal-service.yaml` as specs for services that do not exist, on the
-   evidence that no `cmd/` directory matches. Every path in all three is
-   registered by a running process: `internal/organization` is mounted by
-   governance-service, oauth-service and access-service; `internal/portal` and
-   `internal/notifications` by identity-service (and notifications by
-   admin-api too). "No `cmd/`" means "not its own binary", not "not served".
-   Each spec now says which processes serve it, so the next reader does not
-   have to re-derive it.
+   **Correction to the audit, and to this guide's first correction of it.**
+   The audit listed `notifications-service.yaml`, `organization-service.yaml`
+   and `portal-service.yaml` as specs for services that do not exist, on the
+   evidence that no `cmd/` directory matches. This guide answered that every
+   path in all three is served, and named governance-service, oauth-service
+   and access-service as mounting `internal/organization`. That is wrong:
+   those three construct `organization.NewService` only to feed the tenant
+   resolver's `NewOrgLookup`; `grep -rn 'organization.RegisterRoutes' cmd/`
+   returns exactly one call site, in admin-api. `internal/portal` is mounted
+   by identity-service alone, and `internal/notifications` by both
+   identity-service (under `/api/v1/identity`) and admin-api (under
+   `/api/v1`). "No `cmd/`" means "not its own binary", not "not served" —
+   but which binary serves it is a fact to read off the call sites, not to
+   infer from a package's presence.
 4. ☐ **`docs/evidence/`** — for each §5 control, the CI artifact that
    proves it or the operator command and where to file the result.
 

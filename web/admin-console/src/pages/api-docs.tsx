@@ -11,20 +11,7 @@ import {
   CardTitle,
 } from '../components/ui/card'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs'
-
-/** Each tab names a service; the spec file behind it is a path, not prose. */
-const API_SPECS = [
-  { id: 'identity', file: 'identity-service.yaml' },
-  { id: 'oauth', file: 'oauth-service.yaml' },
-  { id: 'admin', file: 'admin-api.yaml' },
-  { id: 'access', file: 'access-service.yaml' },
-  { id: 'governance', file: 'governance-service.yaml' },
-  { id: 'provisioning', file: 'provisioning-service.yaml' },
-  { id: 'audit', file: 'audit-service.yaml' },
-  { id: 'notifications', file: 'notifications-service.yaml' },
-  { id: 'organization', file: 'organization-service.yaml' },
-  { id: 'portal', file: 'portal-service.yaml' },
-] as const
+import { API_SPECS } from '@/lib/api-specs'
 
 const requestInterceptor = (req: Record<string, any>) => {
   const token = localStorage.getItem('token')
