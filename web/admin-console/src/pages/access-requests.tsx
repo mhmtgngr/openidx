@@ -209,6 +209,11 @@ export function AccessRequestsPage() {
     },
   })
 
+  // Approving is not the same as granting. The endpoint answers 409 when the
+  // decision was recorded but fulfilment failed -- an SoD conflict on the role,
+  // most often -- and without an onError the approver sees nothing at all and
+  // assumes the access exists. The server's own reason is the useful text here;
+  // the key is only the fallback.
   const approveMutation = useMutation({
     mutationFn: ({ id, comments }: { id: string; comments: string }) =>
       api.post(`/api/v1/governance/requests/${id}/approve`, { comments }),
@@ -217,6 +222,14 @@ export function AccessRequestsPage() {
       queryClient.invalidateQueries({ queryKey: ['all-requests'] })
       toast({ title: t('pages.accessRequests.toasts.approved') })
       setApprovalOpen(false)
+    },
+    onError: (err: { response?: { data?: { error?: string } } }) => {
+      queryClient.invalidateQueries({ queryKey: ['my-approvals'] })
+      queryClient.invalidateQueries({ queryKey: ['all-requests'] })
+      toast({
+        title: err.response?.data?.error || t('pages.accessRequests.toasts.approveFailed'),
+        variant: 'destructive',
+      })
     },
   })
 
@@ -228,6 +241,12 @@ export function AccessRequestsPage() {
       queryClient.invalidateQueries({ queryKey: ['all-requests'] })
       toast({ title: t('pages.accessRequests.toasts.denied') })
       setApprovalOpen(false)
+    },
+    onError: (err: { response?: { data?: { error?: string } } }) => {
+      toast({
+        title: err.response?.data?.error || t('pages.accessRequests.toasts.denyFailed'),
+        variant: 'destructive',
+      })
     },
   })
 

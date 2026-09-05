@@ -2265,8 +2265,41 @@ worked.
 
    `internal/governance`'s DB harness also gained the
    `OPENIDX_TEST_DATABASE_URL` escape hatch the other four packages carry.
-9. ☐ Remaining from the audit's list: `handlePamRevealEntry`,
-   `handleApproveRequest`, and the Guacamole session handlers.
+9. ✅ **The approval endpoint — four eyes, and a success message for a grant
+   that did not happen.** `handleApproveRequest` is where a request becomes
+   access, and it had no test.
+   - **Nothing stopped you approving your own request.** `createApprovalRows`
+     excludes the requester when it expands a role- or group-based approver
+     step — the right place to *prevent* the row — but it is not the only route
+     to one: an `escalate_to` target is inserted with no such check
+     (`request.go`), a policy step may name the requester outright, the
+     no-policy fallback inserts a fixed admin id, and rows written before that
+     guard existed are still in the table. Every route ends at this handler,
+     and this handler checked nothing. It refuses with 403 now — the row
+     exists; it is the caller who may not act on it.
+   - **A failed fulfilment answered "Request approved successfully."** The
+     approval is recorded, `access_requests` stays at `approved` (only
+     `fulfillRequest` may write `fulfilled`), and the access does not exist —
+     and the approver was told it did. The commonest way to land there is the
+     SoD gate refusing the role, which is a policy answer somebody needs to
+     read, not a line in a server log. It answers 409 with the reason now, and
+     distinguishes the three outcomes it always had but never reported:
+     *fulfilled*, *recorded and still awaiting other approvers*, and
+     *approved but not granted*.
+   - The console had no `onError` on that mutation, so a 409 would have shown
+     the approver nothing at all. `access-requests.tsx` surfaces the server's
+     own reason for both approve and deny.
+
+   Seven tests, four red against the handler they replace: self-approval is
+   refused and records no decision; the ordinary path reaches `fulfilled` and
+   the role really lands; an unfulfillable request does not answer 200 and
+   leaves the record at `approved`; a two-approver request is not granted by
+   the first approval and *says* so; a stranger and a second approval from the
+   same approver both 404; another tenant's request answers what a
+   non-existent one answers; and no caller or no organization refuses before
+   anything is touched.
+10. ☐ Remaining from the audit's list: `handlePamRevealEntry` and the
+    Guacamole session handlers.
 
    `internal/identity`'s DB harness now also accepts
    `OPENIDX_TEST_DATABASE_URL`, so these can be written and run on a machine
