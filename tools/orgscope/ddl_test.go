@@ -328,7 +328,7 @@ func TestRegistersOnlyShrink(t *testing.T) {
 		// 34 → 19: migration v140 belted the fifteen whose queries already
 		// carried their org predicate. Re-pinned rather than left at 34, or
 		// the register could grow back into the room the fix just made.
-		{"needsBelt", len(needsBelt), 18},
+		{"needsBelt", len(needsBelt), 17},
 		{"predicateAuditPending", len(predicateAuditPending), 18},
 		{"installWideTables", len(installWideTables), 21},
 		{"beltExempt", len(beltExempt), 5},

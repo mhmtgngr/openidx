@@ -21,6 +21,34 @@ to a spec that describes an eighth of a surface, a documented endpoint that
   the posture score was neither one tenant's nor the install's. All now carry
   `org_id` under FORCE RLS, with the install-wide unique keys re-scoped and an
   isolation test per handler file.
+- **Every organization's remote support history was on every organization's
+  console** (migration v150). A remote support session is an administrator
+  watching or driving an end user's screen. The list of them ran with no
+  condition restricting it to the viewer's own organization — so any
+  administrator could see whose screen had been taken over, by which
+  administrator, when, and whether a recording of it exists, across every
+  organization on the installation. It is now filtered, and the table is
+  enforced at the database level like the rest.
+
+  Turning that enforcement on was not straightforward. The organization column
+  on these rows has been optional since it was added, and the code that starts
+  a session wrote it empty whenever the caller had no organization resolved.
+  Enforcing on an optional column does not restrict those rows — it makes them
+  vanish: the administrator who started such a session could no longer see it,
+  end it, or delete its recording, while the session itself carried on, because
+  the live connection is held in memory and never re-reads the record. The
+  existing rows are therefore attributed to the administrator who started them
+  first, the column is made mandatory, and only then is enforcement switched
+  on. Starting a session without an organization is now refused outright rather
+  than accepted and lost.
+
+  The paths a device uses — answering the consent prompt, asking whether a
+  session is waiting for it, and ending one — are deliberately exempt, because
+  the device authenticates as itself and not as a member of an organization.
+  Without that exemption an end user's machine could never be helped: the
+  administrator would start a session the device never sees. The background job
+  that expires stalled sessions is exempt for the same kind of reason — one it
+  cannot see is one that never ages out.
 - **One tenant could release another tenant's legal hold, and the recording was
   then deleted** (migration v149). A legal hold marks a session recording as
   evidence: while one is active, the job that enforces retention must leave the

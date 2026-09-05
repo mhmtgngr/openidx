@@ -1065,5 +1065,12 @@ func allMigrations() []*Migration {
 			UpSQL:       legalHoldTenantScopeUp,
 			DownSQL:     legalHoldTenantScopeDown,
 		},
+		{
+			Version:     150,
+			Name:        "remote_support_session_scope",
+			Description: "Backfill, pin NOT NULL and belt remote_support_sessions.org_id — an administrator watching or driving an end user's screen, with the consent state and the recording location on the row. The table carried org_id since v92 and never got the belt; it held the largest count on the needsBelt register, fourteen unscoped queries, and the worst was HandleListSessions: `SELECT ... FROM remote_support_sessions s ORDER BY s.started_at DESC LIMIT 200` with no WHERE clause at all, putting every tenant's remote support history — whose screen was taken over, by which administrator, when, and whether a recording exists — on any tenant's console with no belt behind the omission. THE NULLABLE COLUMN IS THE HAZARD: v92 added org_id without NOT NULL and HandleStartSession wrote whatever getOrgID returned, so belting it would HIDE those rows rather than scope them — the administrator who started a NULL-org session could not list, end or revoke it while the session kept running from the broker's memory, which is the warning the register already carries against edr_device_mappings. The backfill and the NOT NULL therefore precede the policy, and the handler now refuses a session with no organization instead of writing NULL. Queries split three ways as in v148 and v149: admin paths take an explicit org predicate; device paths (consent grant/deny, the agent's own active-session lookup, markActive, touchSession, endSession) authenticate as a device with no tenant on the request and run bypassed on the session or agent key, like v145's magic-link redemption — belting the agent's poll without the bypass would leave a device that can never be helped; and expireOrphanSessions stays install-wide, because a stalled session the sweep cannot see never ages out. Sessions are attributed through the administrator who started them, with the oldest organization as the fallback. Down keeps org_id, which is v92's column, and only lifts the NOT NULL. No column DEFAULT.",
+			UpSQL:       remoteSupportSessionScopeUp,
+			DownSQL:     remoteSupportSessionScopeDown,
+		},
 	}
 }

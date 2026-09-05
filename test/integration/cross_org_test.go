@@ -589,6 +589,11 @@ func TestRLSBeltTables(t *testing.T) {
 			VALUES (gen_random_uuid(),'ended',$1) RETURNING id)
 			INSERT INTO guacamole_recording_legal_holds (session_id, reason, org_id)
 			SELECT s.id,'tbelt guac hold ` + suffix + `',$1 FROM s`},
+
+		// v150 — an administrator watching or driving an end user's screen.
+		{"remote_support_sessions", `INSERT INTO remote_support_sessions
+			(agent_id, status, mode, org_id)
+			VALUES ('tbelt-rss-` + suffix + `','ended','view',$1)`},
 	}
 
 	// One list, not two: the role is granted exactly the tables the cases probe.

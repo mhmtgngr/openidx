@@ -2042,11 +2042,53 @@ class this whole program exists for.
    that 404s to the caller but still stamps `released_at` would satisfy the
    status check and still destroy the evidence. `TestRLSBeltTables` **41/41**.
 
-   **Still open on this surface:** `remote_support_sessions` carries `org_id`
-   but no belt and **14 unscoped queries** — including `HandleListSessions`,
-   which has no `WHERE` clause at all. It is on `needsBelt` with that count and
-   is the next batch; it is a separate change from the holds and is not claimed
-   here.
+   **Still open on this surface** (closed by batch 12, below):
+   `remote_support_sessions` carries `org_id` but no belt and **14 unscoped
+   queries** — including `HandleListSessions`, which has no `WHERE` clause at
+   all.
+
+   **Batch 12 shipped (migration v150, `needsBelt` 18 → 17; registers 54 → 53):
+   the session list with no WHERE clause, and a nullable tenant column.** A
+   remote support session is an administrator watching or driving an end user's
+   screen. `remote_support_sessions` had carried `org_id` since v92, never got
+   the belt, and held the largest count on the `needsBelt` register. The worst
+   of the fourteen was the list itself — `SELECT … FROM remote_support_sessions
+   s ORDER BY s.started_at DESC LIMIT 200`, no predicate at all: every tenant's
+   remote support history on any tenant's console, showing whose screen was
+   taken over, by which administrator, when, and whether a recording exists.
+
+   **The nullable column was the hazard, and it is a direction this programme
+   had not hit before.** v92 added `org_id UUID` without `NOT NULL`, and
+   `HandleStartSession` wrote whatever `getOrgID(c)` returned — NULL whenever
+   the caller had no organization resolved. **Belting a nullable tenant column
+   does not scope those rows; it hides them.** A NULL-org session becomes
+   invisible to every scoped query at once, so the administrator who started it
+   cannot list it, end it, or revoke its recording — *while the session keeps
+   running*, because the broker holds the peer in memory and never re-reads the
+   row. The `needsBelt` register already carried this warning against
+   `edr_device_mappings`; it applied here. So the backfill and the `NOT NULL`
+   land before the policy, and the handler refuses a session with no
+   organization at the door instead of writing NULL and discovering it later.
+
+   **Three kinds of query, three answers** — the same split v148 and v149
+   reached. Admin paths (list, start, supersede, fetch-by-id, finalize
+   recording) take an explicit org predicate; **device paths** (consent
+   grant/deny, the agent's own active-session poll, `markActive`,
+   `touchSession`, `endSession`) authenticate as a *device* with no tenant on
+   the request and run bypassed on the session or agent key — belting the
+   agent's poll without that leaves a device that can never be helped, and
+   belting `endSession` leaves a session nobody can end while the broker keeps
+   relaying it; `expireOrphanSessions` stays install-wide, because a stalled
+   session the sweep cannot see never ages out.
+
+   Proven on Postgres 16: three cases in `internal/access`, the two that can be
+   red against the old handlers both red — the first reading *"org B's console
+   lists org A's remote support session"*. The third is labelled in the file as
+   a **forward guard**: it cannot go red against pre-v150 code, because before
+   the belt there was nothing to fail closed against, and it exists to catch a
+   later edit that "tidies up" the device queries by adding a predicate.
+   `TestRLSBeltTables` **42/42**. v150 applied, rolled back to 149 and
+   re-applied; the rollback lifts the `NOT NULL` and keeps v92's column.
 4. ✅ **OPA `deny` enforced** — *shipped.* — `internal/common/middleware/opa.go`: abort
    unless `Allow && len(Deny)==0`; `authz.rego:15-19`'s "any authenticated
    user may GET anything" removed; `policies/access_control.rego`
@@ -3675,7 +3717,7 @@ that holds it rather than by the commit that wrote it.
 |---|---|---|
 | 1 · journeys verified | ☐ | J1 ✅ the `smoke` and `first-run` jobs (P6.2); J2 ✅ `test/integration/{auth_flows,mfa_flow,passwordless}_test.go`; J3 ✅ `test/integration/enforced_posture_test.go` (P6.1); ☐ **J6 has no automated proof** — `e2e/access-reviews-flow.spec.ts` is still on the `hold` side of `e2e/suite.txt`; ☐ **J7 needs a leaver integration case**; J4/J5/J8 stay scripted operator drills (`tools/darkprobe`, `make dr-game-day`) to be filed under `docs/evidence/` (P8.4) |
 | 2 · enforced posture, legacy login gone | ◐ | code ✅ — the server-rendered login is deleted and `internal/oauth/routes_legacy_login_test.go` fails if any of it returns (P6.1); ops ☐ — rollout Task 16 is the operator's, on a live deployment |
-| 3 · every control enforces | ◐ | P5.1–5.11 ✅ (tenant isolation, the inverted orgscope lint, OPA `deny`, ABAC at both PEPs, the honest Apply/Remediate, SMS, multi-IdP, the fail-closed gate, `ValidateProduction`, the faked measurements); ◐ the P5.3b register programme — batch 1 (v140) belted fifteen tables and fixed `email_branding`'s cross-tenant read *and* write; batch 2 (v141) scoped the compliance record and fixed an archive worker that was silently producing empty archives; batches 4–10 (v142–v148) took the unified audit stream, the sign-in tables, the SAML surface, the password-substitute credentials, the four second factors the belt had skipped, the breach response record — where a containment reported success while quarantining nobody — the temporary vendor access surface, where v71's written-down reason for skipping the belt had expired three batches earlier, and the legal holds — the first batch whose defect destroys rather than discloses, since releasing a hold is what lets the retention sweep delete the recording; **54** still ride `needsScoping`/`needsBelt` waivers |
+| 3 · every control enforces | ◐ | P5.1–5.11 ✅ (tenant isolation, the inverted orgscope lint, OPA `deny`, ABAC at both PEPs, the honest Apply/Remediate, SMS, multi-IdP, the fail-closed gate, `ValidateProduction`, the faked measurements); ◐ the P5.3b register programme — batch 1 (v140) belted fifteen tables and fixed `email_branding`'s cross-tenant read *and* write; batch 2 (v141) scoped the compliance record and fixed an archive worker that was silently producing empty archives; batches 4–10 (v142–v148) took the unified audit stream, the sign-in tables, the SAML surface, the password-substitute credentials, the four second factors the belt had skipped, the breach response record — where a containment reported success while quarantining nobody — the temporary vendor access surface, where v71's written-down reason for skipping the belt had expired three batches earlier, the legal holds — the first batch whose defect destroys rather than discloses, since releasing a hold is what lets the retention sweep delete the recording — and the remote support sessions, whose list ran with no `WHERE` clause at all over a nullable tenant column the belt would have hidden rather than scoped; **53** still ride `needsScoping`/`needsBelt` waivers |
 | 4 · first run / first login / four pillars from the docs | ✅ | first run ✅ the `smoke` and `first-run` jobs (P6.2); first login ✅ one authoritative credential in `GETTING-STARTED.md`, with the `USER_GUIDE.md` and `CONTRIBUTING.md` copies pointing at it rather than repeating it (P8.1); four pillars ✅ `guide/governance.md` was the missing one (P8.1) |
 | 5 · one story + auditor artifacts | ✅ | threat model and control mapping exist; docs sweep 3 ✅ and the docs-drift guard ✅ (`check-docs-drift.sh`, enforced in CI, so a document cannot cite a path that is not there); `docs/evidence/` ✅ (P8.4) |
 | 6 · releases current, signed, Helm proven | ◐ | signing ✅ `release.yml` (cosign) and, since P7.5, an Android artifact whose name tracks the key that signed it; Helm ✅ the `kind` install job (P6.4); versions ✅ `VERSION` + `check-version-sync.sh` (P8.3); CHANGELOG ✅ every release attributed from the commit that wrote its entry, 61 compare links that resolve (P8.2); ☐ v1.34.0 is not cut — the maintainer's |

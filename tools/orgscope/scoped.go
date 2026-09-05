@@ -146,7 +146,6 @@ var needsBelt = map[string]string{
 	"device_trust_requests":         "v39; 2 unscoped queries",
 	"published_apps":                "v40; 2 unscoped queries",
 	"discovered_paths":              "v40; 1 unscoped query",
-	"remote_support_sessions":       "v42; 14 unscoped queries",
 	"scim_target_apps":              "v95 says org-scoped for RLS; 3 unscoped queries",
 	"scim_provisioning_records":     "v95 says org-scoped for RLS; 2 unscoped queries",
 	"scim_provisioning_queue":       "v95 outbox; confirm the outbound worker's scope before belting; 4 unscoped queries",

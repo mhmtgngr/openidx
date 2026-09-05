@@ -341,6 +341,18 @@ func (h *RemoteSupportHandler) HandleStartSession(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+
+	// TENANCY (v150). A session with no organization used to be written with a
+	// NULL org_id and discovered later. Under the belt that row is not scoped,
+	// it is INVISIBLE: the administrator who started it cannot list it, cannot
+	// end it and cannot revoke its recording, while the session keeps running
+	// because the broker holds the peer in memory and never re-reads the row.
+	// Refusing at the door is the only safe direction.
+	sessionOrg := remoteSupportOrg(c)
+	if sessionOrg == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "organization context required to start a session"})
+		return
+	}
 	mode := req.Mode
 	if mode == "" {
 		mode = "interactive"
@@ -370,9 +382,9 @@ func (h *RemoteSupportHandler) HandleStartSession(c *gin.Context) {
 	var blockingID string
 	_ = h.db.Pool.QueryRow(c.Request.Context(), `
         SELECT id FROM remote_support_sessions
-         WHERE agent_id = $1 AND status IN ('pending','active')
+         WHERE agent_id = $1 AND status IN ('pending','active') AND org_id = $2
          LIMIT 1
-    `, req.AgentID).Scan(&blockingID)
+    `, req.AgentID, sessionOrg).Scan(&blockingID)
 	if blockingID != "" {
 		c.JSON(http.StatusConflict, gin.H{
 			"error":      "agent already has an active session",
@@ -412,14 +424,13 @@ func (h *RemoteSupportHandler) HandleStartSession(c *gin.Context) {
 	}
 
 	recordingEnabled := req.Record && h.recordingStore != nil
-	orgID := getOrgID(c)
 	var retentionArg interface{}
 	if req.RecordingRetentionDays != nil {
 		retentionArg = *req.RecordingRetentionDays
 	}
 	var orgArg interface{}
-	if orgID != "" {
-		orgArg = orgID
+	if sessionOrg != "" {
+		orgArg = sessionOrg
 	}
 	// Supersede any prior in-flight session for this agent. Starting a new session
 	// while an old one is still pending/active left two live sessions: the config
@@ -430,9 +441,9 @@ func (h *RemoteSupportHandler) HandleStartSession(c *gin.Context) {
 	rows, err := h.db.Pool.Query(c.Request.Context(), `
         UPDATE remote_support_sessions
            SET status = 'ended', ended_at = NOW(), end_reason = 'superseded'
-         WHERE agent_id = $1 AND status IN ('pending','active')
+         WHERE agent_id = $1 AND status IN ('pending','active') AND org_id = $2
         RETURNING id
-    `, req.AgentID)
+    `, req.AgentID, sessionOrg)
 	if err != nil {
 		h.logger.Warn("HandleStartSession: supersede prior sessions failed", zap.Error(err))
 	} else {
@@ -549,7 +560,12 @@ func (h *RemoteSupportHandler) HandleAgentConsent(c *gin.Context) {
 
 	if newStatus == "denied" {
 		// A denial ends the session immediately (fail-closed).
-		_, _ = h.db.Pool.Exec(c.Request.Context(), `
+		// TENANCY (v150): device path. The agent answers consent authenticated
+		// as a DEVICE, with no organization on the request, so this runs
+		// bypassed on the session id. Belting it without the bypass would make
+		// a denial silently fail to end the session.
+		//orgscope:ignore device consent callback — agent authenticates as a device, no tenant on the request
+		_, _ = h.db.Pool.Exec(orgctx.WithBypassRLS(c.Request.Context()), `
             UPDATE remote_support_sessions
                SET consent_status='denied', consent_decided_at=NOW(),
                    status='ended', ended_at=NOW(), end_reason='consent denied by device'
@@ -559,7 +575,8 @@ func (h *RemoteSupportHandler) HandleAgentConsent(c *gin.Context) {
 		return
 	}
 
-	_, _ = h.db.Pool.Exec(c.Request.Context(), `
+	//orgscope:ignore device consent callback — agent authenticates as a device, no tenant on the request
+	_, _ = h.db.Pool.Exec(orgctx.WithBypassRLS(c.Request.Context()), `
         UPDATE remote_support_sessions
            SET consent_status='granted', consent_decided_at=NOW()
          WHERE id=$1`, id)
@@ -571,6 +588,15 @@ func (h *RemoteSupportHandler) HandleAgentConsent(c *gin.Context) {
 func (h *RemoteSupportHandler) HandleListSessions(c *gin.Context) {
 	if h.db == nil || h.db.Pool == nil {
 		c.JSON(http.StatusOK, []remoteSessionRow{})
+		return
+	}
+
+	// TENANCY (v150). This query had NO WHERE CLAUSE — every tenant's remote
+	// support history, on any tenant's console: whose screen was taken over, by
+	// which administrator, when, and whether a recording of it exists.
+	org := remoteSupportOrg(c)
+	if org == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "organization context required"})
 		return
 	}
 	rows, err := h.db.Pool.Query(c.Request.Context(), `
@@ -585,9 +611,10 @@ func (h *RemoteSupportHandler) HandleListSessions(c *gin.Context) {
                         WHERE rlh.session_id = s.id AND rlh.released_at IS NULL
                           AND rlh.org_id = s.org_id)
           FROM remote_support_sessions s
+         WHERE s.org_id = $1
          ORDER BY s.started_at DESC
          LIMIT 200
-    `)
+    `, org)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list"})
 		return
@@ -904,7 +931,10 @@ func (h *RemoteSupportHandler) markActive(ctx context.Context, sessionID string)
 	if h.db == nil || h.db.Pool == nil {
 		return
 	}
-	_, _ = h.db.Pool.Exec(ctx, `
+	// TENANCY (v150): broker path. Called from the signalling loop, which has
+	// no HTTP request and no tenant; the session id is the key.
+	//orgscope:ignore broker signalling path — no request context, keyed on the session id
+	_, _ = h.db.Pool.Exec(orgctx.WithBypassRLS(ctx), `
         UPDATE remote_support_sessions
            SET status = 'active', accepted_at = COALESCE(accepted_at, NOW()),
                last_activity_at = NOW()
@@ -918,7 +948,8 @@ func (h *RemoteSupportHandler) touchSession(ctx context.Context, sessionID strin
 	if h.db == nil || h.db.Pool == nil {
 		return
 	}
-	_, _ = h.db.Pool.Exec(ctx,
+	_, _ = h.db.Pool.Exec(orgctx.WithBypassRLS(ctx),
+		//orgscope:ignore broker signalling path — no request context, keyed on the session id
 		`UPDATE remote_support_sessions SET last_activity_at = NOW() WHERE id = $1`,
 		sessionID)
 }
@@ -926,7 +957,11 @@ func (h *RemoteSupportHandler) touchSession(ctx context.Context, sessionID strin
 // endSession persists end state and tears down any live broker entry.
 func (h *RemoteSupportHandler) endSession(ctx context.Context, sessionID, reason string) error {
 	if h.db != nil && h.db.Pool != nil {
-		_, err := h.db.Pool.Exec(ctx, `
+		// Either peer can end a session, including the device, so this runs
+		// bypassed too. Failing closed here would leave a session that nobody
+		// can end while the broker keeps relaying it.
+		//orgscope:ignore either peer may end a session, including the device
+		_, err := h.db.Pool.Exec(orgctx.WithBypassRLS(ctx), `
             UPDATE remote_support_sessions
                SET status = 'ended', ended_at = COALESCE(ended_at, NOW()),
                    end_reason = COALESCE(NULLIF($2,''), end_reason),
@@ -1006,7 +1041,12 @@ func findActiveSessionForAgent(ctx context.Context, db *database.PostgresDB, age
 		return activeSessionInfo{}, false
 	}
 	var iceBytes []byte
-	err := db.Pool.QueryRow(ctx, `
+	// TENANCY (v150): the DEVICE asks whether it has a session waiting, keyed
+	// on its own agent id, with no tenant on the request. Belting this without
+	// the bypass leaves a device that can never be helped: the poll returns
+	// nothing and the admin's session never binds.
+	//orgscope:ignore agent polls for its own session — device auth, no tenant on the request
+	err := db.Pool.QueryRow(orgctx.WithBypassRLS(ctx), `
         SELECT id, mode, ice_servers, recording_enabled, consent_required, consent_status,
                COALESCE(transport,'webrtc')
           FROM remote_support_sessions
@@ -1026,6 +1066,10 @@ func (h *RemoteSupportHandler) fetchSession(ctx context.Context, id string) (rem
 	if h.db == nil || h.db.Pool == nil {
 		return remoteSessionRow{}, errors.New("database unavailable")
 	}
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return remoteSessionRow{}, errors.New("organization context required")
+	}
 	row := h.db.Pool.QueryRow(ctx, `
         SELECT s.id, s.agent_id, COALESCE(s.admin_user_id::text,''), s.status, s.mode,
                COALESCE(s.transport,'webrtc'),
@@ -1038,8 +1082,8 @@ func (h *RemoteSupportHandler) fetchSession(ctx context.Context, id string) (rem
                         WHERE rlh.session_id = s.id AND rlh.released_at IS NULL
                           AND rlh.org_id = s.org_id)
           FROM remote_support_sessions s
-         WHERE s.id = $1
-    `, id)
+         WHERE s.id = $1 AND s.org_id = $2
+    `, id, org.ID)
 	return scanRemoteSessionRow(row)
 }
 
@@ -1090,7 +1134,11 @@ func (h *RemoteSupportHandler) expireOrphanSessions(ctx context.Context, idleAft
 	if h.db == nil || h.db.Pool == nil {
 		return
 	}
-	tag, err := h.db.Pool.Exec(ctx, `
+	// TENANCY (v150): install-wide ON PURPOSE, and the direction says why — a
+	// stalled session this sweep cannot see is one that never ages out, so it
+	// runs bypassed rather than being silently reduced to zero rows.
+	//orgscope:ignore orphan-timeout sweep — install-wide by design under an explicit bypass
+	tag, err := h.db.Pool.Exec(orgctx.WithBypassRLS(ctx), `
         UPDATE remote_support_sessions
            SET status = 'expired', ended_at = NOW(),
                end_reason = COALESCE(end_reason, 'orphan_timeout')

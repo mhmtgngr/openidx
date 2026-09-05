@@ -302,6 +302,11 @@ func (h *RemoteSupportHandler) purgeRecording(ctx context.Context, sessionID str
 	if err := h.recordingStore.Delete(sessionID); err != nil {
 		return err
 	}
+	// TENANCY (v150): reached only from the retention sweep, whose context
+	// already carries the bypass set by StartRecordingRetentionEnforcer. The
+	// sweep is install-wide by design and each candidate was already selected
+	// with its own org_id in hand.
+	//orgscope:ignore called only from the install-wide retention sweep, under the caller's bypass context
 	_, err := h.db.Pool.Exec(ctx, `
         UPDATE remote_support_sessions
            SET recording_purged_at  = NOW(),
@@ -679,6 +684,23 @@ func getOrgID(c *gin.Context) string {
 		if s, _ := v.(string); s != "" {
 			return s
 		}
+	}
+	return ""
+}
+
+// remoteSupportOrg resolves the caller's organization for the admin-facing
+// remote-support handlers, preferring the gin key the older code set and
+// falling back to the request context the tenant resolver populates.
+//
+// Both are checked because they disagree: getOrgID reads a gin key that only
+// some middleware sets, which is how remote_support_sessions ended up with
+// NULL org_id rows even on requests that had a resolved tenant.
+func remoteSupportOrg(c *gin.Context) string {
+	if s := getOrgID(c); s != "" {
+		return s
+	}
+	if org, err := orgctx.From(c.Request.Context()); err == nil {
+		return org.ID
 	}
 	return ""
 }
