@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // Social provider registration policy.
@@ -41,16 +43,36 @@ type socialProviderPolicy struct {
 // A missing row is not an error: social_providers is the display/config table
 // for the login buttons and an identity provider can be used without one. In
 // that case the caller keeps the previous behaviour.
+//
+// THE TENANT COMES FROM THE PROVIDER, NOT FROM THE CONTEXT, and that is
+// deliberate. Since v143 social_providers is behind FORCE RLS, and this runs on
+// the sign-in path — where the visitor is not yet a user of anything and the
+// request may carry no resolved org. A read that returned nothing because
+// app.org_id was empty would be indistinguishable, one line below, from "no
+// button registered", and the caller's response to that is to allow every
+// e-mail domain and provision accounts automatically. In other words the
+// obvious scoping would have turned an administrator's restriction OFF at
+// exactly the moment it matters, silently, which is the failure this whole
+// function was written to fix.
+//
+// So the lookup is bypassed and scoped by joining the identity provider it
+// belongs to: provider_id is a globally unique UUID that already names one
+// tenant's provider, and requiring sp.org_id = ip.org_id means a button
+// configured by one tenant can never decorate another tenant's provider.
+//
+//nolint:lll // the reason has to travel with the directive
+//orgscope:ignore sign-in path with no resolved tenant; scoped by joining the identity provider (sp.org_id = ip.org_id) rather than by app.org_id, because an RLS-empty read here is indistinguishable from "unconfigured" and would silently disable the admin's domain restriction
 func (s *Service) loadSocialProviderPolicy(ctx context.Context, providerID string) (socialProviderPolicy, error) {
 	policy := socialProviderPolicy{autoCreateUsers: true}
 
 	var domainsJSON []byte
 	var autoCreate *bool
-	err := s.db.Pool.QueryRow(ctx, `
-		SELECT allowed_domains, auto_create_users
-		FROM social_providers
-		WHERE provider_id = $1
-		ORDER BY sort_order NULLS LAST
+	err := s.db.Pool.QueryRow(orgctx.WithBypassRLS(ctx), `
+		SELECT sp.allowed_domains, sp.auto_create_users
+		FROM social_providers sp
+		JOIN identity_providers ip ON ip.id = sp.provider_id AND ip.org_id = sp.org_id
+		WHERE sp.provider_id = $1
+		ORDER BY sp.sort_order NULLS LAST
 		LIMIT 1
 	`, providerID).Scan(&domainsJSON, &autoCreate)
 	if err != nil {

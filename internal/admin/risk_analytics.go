@@ -156,7 +156,7 @@ func (s *Service) handleUserRiskProfile(c *gin.Context) {
 		       urb.typical_ips, urb.avg_risk_score, urb.login_count, urb.last_updated_at
 		FROM user_risk_baselines urb
 		JOIN users u ON u.id = urb.user_id AND u.org_id = $2
-		WHERE urb.user_id = $1
+		WHERE urb.user_id = $1 AND urb.org_id = $2
 	`, userID, org.ID).Scan(
 		&profile.UserID, &profile.Username,
 		&profile.TypicalLoginHours, &profile.TypicalCountries,

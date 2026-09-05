@@ -114,9 +114,12 @@ func (s *Service) CreatePhoneCallChallenge(ctx context.Context, userID, phoneNum
 
 	// Store challenge
 	_, err = s.db.Pool.Exec(ctx,
+		// org_id is derived from the challenge's own user: the column is nullable
+		// on this table, so a challenge raised without one used to sit in nobody's
+		// scope at all.
 		`INSERT INTO phone_call_challenges
-		(id, user_id, phone_number, code_hash, call_type, status, attempts, created_at, expires_at)
-		VALUES ($1, $2, $3, $4, $5, 'pending', 0, NOW(), $6)`,
+		(id, org_id, user_id, phone_number, code_hash, call_type, status, attempts, created_at, expires_at)
+		VALUES ($1, (SELECT org_id FROM users WHERE id = $2), $2, $3, $4, $5, 'pending', 0, NOW(), $6)`,
 		challengeID, userID, phoneNumber, string(codeHash), callType, expiresAt,
 	)
 	if err != nil {
@@ -129,16 +132,18 @@ func (s *Service) CreatePhoneCallChallenge(ctx context.Context, userID, phoneNum
 	if err != nil {
 		// Update status to failed
 		s.db.Pool.Exec(ctx,
-			"UPDATE phone_call_challenges SET status = 'failed' WHERE id = $1",
-			challengeID,
+			`UPDATE phone_call_challenges SET status = 'failed'
+			  WHERE id = $1 AND org_id = (SELECT org_id FROM users WHERE id = $2)`,
+			challengeID, userID,
 		)
 		return nil, fmt.Errorf("failed to initiate call: %w", err)
 	}
 
 	// Update with call SID
 	s.db.Pool.Exec(ctx,
-		"UPDATE phone_call_challenges SET call_sid = $1, status = 'calling' WHERE id = $2",
-		callSID, challengeID,
+		`UPDATE phone_call_challenges SET call_sid = $1, status = 'calling'
+		  WHERE id = $2 AND org_id = (SELECT org_id FROM users WHERE id = $3)`,
+		callSID, challengeID, userID,
 	)
 
 	return &PhoneCallChallenge{
@@ -163,7 +168,8 @@ func (s *Service) VerifyPhoneCallChallenge(ctx context.Context, userID, code str
 
 	err := s.db.Pool.QueryRow(ctx,
 		`SELECT id, code_hash, attempts, expires_at FROM phone_call_challenges
-		WHERE user_id = $1 AND status IN ('pending', 'calling', 'answered')
+		WHERE user_id = $1 AND org_id = (SELECT org_id FROM users WHERE id = $1)
+		  AND status IN ('pending', 'calling', 'answered')
 		ORDER BY created_at DESC LIMIT 1`,
 		userID,
 	).Scan(&challengeID, &codeHash, &attempts, &expiresAt)
@@ -173,20 +179,23 @@ func (s *Service) VerifyPhoneCallChallenge(ctx context.Context, userID, code str
 
 	// Check expiration
 	if time.Now().After(expiresAt) {
-		s.db.Pool.Exec(ctx, "UPDATE phone_call_challenges SET status = 'expired' WHERE id = $1", challengeID)
+		s.db.Pool.Exec(ctx, `UPDATE phone_call_challenges SET status = 'expired'
+			WHERE id = $1 AND org_id = (SELECT org_id FROM users WHERE id = $2)`, challengeID, userID)
 		return errors.New("challenge expired")
 	}
 
 	// Check max attempts
 	if attempts >= 3 {
-		s.db.Pool.Exec(ctx, "UPDATE phone_call_challenges SET status = 'failed' WHERE id = $1", challengeID)
+		s.db.Pool.Exec(ctx, `UPDATE phone_call_challenges SET status = 'failed'
+			WHERE id = $1 AND org_id = (SELECT org_id FROM users WHERE id = $2)`, challengeID, userID)
 		return errors.New("maximum attempts exceeded")
 	}
 
 	// Increment attempts
 	s.db.Pool.Exec(ctx,
-		"UPDATE phone_call_challenges SET attempts = attempts + 1 WHERE id = $1",
-		challengeID,
+		`UPDATE phone_call_challenges SET attempts = attempts + 1
+		  WHERE id = $1 AND org_id = (SELECT org_id FROM users WHERE id = $2)`,
+		challengeID, userID,
 	)
 
 	// Verify code
@@ -196,8 +205,9 @@ func (s *Service) VerifyPhoneCallChallenge(ctx context.Context, userID, code str
 
 	// Mark challenge as completed
 	s.db.Pool.Exec(ctx,
-		"UPDATE phone_call_challenges SET status = 'completed', verified_at = NOW() WHERE id = $1",
-		challengeID,
+		`UPDATE phone_call_challenges SET status = 'completed', verified_at = NOW()
+		  WHERE id = $1 AND org_id = (SELECT org_id FROM users WHERE id = $2)`,
+		challengeID, userID,
 	)
 
 	// Mark enrollment as verified

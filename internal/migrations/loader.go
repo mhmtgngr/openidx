@@ -1016,5 +1016,12 @@ func allMigrations() []*Migration {
 			UpSQL:       unifiedAuditOrgScopeUp,
 			DownSQL:     unifiedAuditOrgScopeDown,
 		},
+		{
+			Version:     143,
+			Name:        "signin_tenant_scope",
+			Description: "Add org_id + FORCE RLS to social_providers, trusted_browsers, passwordless_preferences, user_risk_baselines and phone_call_challenges. social_providers is the live hole: its list query put the org predicate inside a LEFT JOIN's ON clause, where it filters nothing on the driving table, so every tenant's social providers were listed to every tenant with only the joined idp_name blanked out; get, update and delete then took a bare id with no org at all, and internal/oauth/social_policy.go reads this table on the login path, so one tenant could change which sign-in buttons another tenant's users see and which e-mail domains auto-provision. provider_key was UNIQUE install-wide (the v138 ispm_rules.check_type shape: the first tenant to register 'google' took it from everybody else) and becomes UNIQUE(org_id, provider_key). The other four were already keyed by the org-scoped user_id, so they are depth rather than a live hole — with two exceptions the belt closes: trusted_browsers was updated by bare id at two sites, and phone_call_challenges.user_id is nullable, so a challenge with no user sat in nobody's scope. Social providers are attributed to the org of the identity provider they extend; the per-user tables to their user, with the oldest-org fallback where user_id is nullable. No column DEFAULT.",
+			UpSQL:       signinTenantScopeUp,
+			DownSQL:     signinTenantScopeDown,
+		},
 	}
 }

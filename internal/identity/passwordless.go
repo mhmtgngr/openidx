@@ -406,7 +406,7 @@ func (s *Service) GetPasswordlessPreferences(ctx context.Context, userID string)
 		SELECT id, user_id, webauthn_only, magic_link_enabled, qr_login_enabled,
 			preferred_method, created_at, updated_at
 		FROM passwordless_preferences
-		WHERE user_id = $1
+		WHERE user_id = $1 AND org_id = (SELECT org_id FROM users WHERE id = $1)
 	`
 
 	var prefs PasswordlessPreferences
@@ -433,7 +433,8 @@ func (s *Service) UpdatePasswordlessPreferences(ctx context.Context, userID stri
 	// Check if exists
 	var existing string
 	err := s.db.Pool.QueryRow(ctx,
-		"SELECT id FROM passwordless_preferences WHERE user_id = $1",
+		`SELECT id FROM passwordless_preferences
+		  WHERE user_id = $1 AND org_id = (SELECT org_id FROM users WHERE id = $1)`,
 		userID,
 	).Scan(&existing)
 
@@ -443,17 +444,19 @@ func (s *Service) UpdatePasswordlessPreferences(ctx context.Context, userID stri
 			`UPDATE passwordless_preferences
 			SET webauthn_only = $1, magic_link_enabled = $2, qr_login_enabled = $3,
 				preferred_method = $4, updated_at = NOW()
-			WHERE user_id = $5`,
+			WHERE user_id = $5 AND org_id = (SELECT org_id FROM users WHERE id = $5)`,
 			prefs.WebAuthnOnly, prefs.MagicLinkEnabled, prefs.QRLoginEnabled,
 			prefs.PreferredMethod, userID,
 		)
 	} else {
 		// Insert
 		_, err = s.db.Pool.Exec(ctx,
+			// org_id comes from the row's own user, so the two cannot disagree
+			// and the v143 WITH CHECK cannot refuse a legitimate write.
 			`INSERT INTO passwordless_preferences (
-				id, user_id, webauthn_only, magic_link_enabled, qr_login_enabled,
+				id, org_id, user_id, webauthn_only, magic_link_enabled, qr_login_enabled,
 				preferred_method, created_at, updated_at
-			) VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())`,
+			) VALUES ($1, (SELECT org_id FROM users WHERE id = $2), $2, $3, $4, $5, $6, NOW(), NOW())`,
 			uuid.New().String(), userID, prefs.WebAuthnOnly, prefs.MagicLinkEnabled,
 			prefs.QRLoginEnabled, prefs.PreferredMethod,
 		)

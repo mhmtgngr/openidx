@@ -455,6 +455,28 @@ func TestRLSBeltTables(t *testing.T) {
 		// decisions, actor IPs and (through its users JOIN) e-mail addresses to
 		// every tenant's admin.
 		{"unified_audit_events", `INSERT INTO unified_audit_events (source, event_type, org_id) VALUES ('tbelt','tbelt.probe',$1)`},
+		// v143 — the sign-in tables. social_providers is the live one: its list
+		// query put the org predicate inside a LEFT JOIN's ON clause, which
+		// filters nothing on the driving table, and get/update/delete then took
+		// a bare id. The other four were keyed by the org-scoped user_id, so the
+		// belt is depth — except where trusted_browsers was updated by bare id
+		// and phone_call_challenges carried a nullable user.
+		//
+		// trusted_browsers and user_risk_baselines carry a NOT NULL / primary-key
+		// FK to users, so their probe row has to bring its own user along: a CTE
+		// creates one in the same org and the insert reads its id back.
+		{"social_providers", `INSERT INTO social_providers (provider_key, display_name, org_id) VALUES ('tbelt-` + suffix + `','tbelt provider',$1)`},
+		{"trusted_browsers", `WITH u AS (
+			INSERT INTO users (username, email, enabled, org_id)
+			VALUES ('tbelt-tb-` + suffix + `','tbelt-tb-` + suffix + `@example.test',true,$1) RETURNING id)
+			INSERT INTO trusted_browsers (user_id, browser_hash, expires_at, org_id)
+			SELECT u.id,'tbelt-` + suffix + `',NOW() + INTERVAL '1 day',$1 FROM u`},
+		{"passwordless_preferences", `INSERT INTO passwordless_preferences (user_id, org_id) VALUES (NULL,$1)`},
+		{"user_risk_baselines", `WITH u AS (
+			INSERT INTO users (username, email, enabled, org_id)
+			VALUES ('tbelt-rb-` + suffix + `','tbelt-rb-` + suffix + `@example.test',true,$1) RETURNING id)
+			INSERT INTO user_risk_baselines (user_id, org_id) SELECT u.id,$1 FROM u`},
+		{"phone_call_challenges", `INSERT INTO phone_call_challenges (phone_number, code_hash, expires_at, org_id) VALUES ('+900000000','x',NOW() + INTERVAL '1 hour',$1)`},
 	}
 
 	// One list, not two: the role is granted exactly the tables the cases probe.

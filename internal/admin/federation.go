@@ -94,6 +94,13 @@ func (s *Service) handleListSocialProviders(c *gin.Context) {
 		return
 	}
 
+	// The org predicate has to be in the WHERE clause. It used to sit only in
+	// the LEFT JOIN's ON, which decides whether the joined identity_providers
+	// row contributes and filters NOTHING on social_providers -- so this listed
+	// every tenant's sign-in providers to every tenant, with the org check
+	// blanking out nothing but the idp_name column of the ones that belonged to
+	// somebody else. It is kept in the ON clause too: a provider must not be
+	// labelled with an identity provider from another org.
 	rows, err := s.db.Pool.Query(c.Request.Context(),
 		`SELECT sp.id, COALESCE(sp.provider_id::text, ''), sp.provider_key, sp.display_name, sp.icon_url,
 		        sp.button_color, sp.button_text, sp.auto_create_users, sp.auto_link_by_email,
@@ -102,6 +109,7 @@ func (s *Service) handleListSocialProviders(c *gin.Context) {
 		        COALESCE(ip.name, '') as idp_name
 		 FROM social_providers sp
 		 LEFT JOIN identity_providers ip ON sp.provider_id = ip.id AND ip.org_id = $1
+		 WHERE sp.org_id = $1
 		 ORDER BY sp.sort_order`, org.ID)
 	if err != nil {
 		respondError(c, s.logger, apperrors.Internal("Failed to list social providers", err))
@@ -165,14 +173,20 @@ func (s *Service) handleCreateSocialProvider(c *gin.Context) {
 		providerIDArg = req.ProviderID
 	}
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	var id string
-	err := s.db.Pool.QueryRow(c.Request.Context(),
-		`INSERT INTO social_providers (provider_id, provider_key, display_name, icon_url,
+	err = s.db.Pool.QueryRow(c.Request.Context(),
+		`INSERT INTO social_providers (org_id, provider_id, provider_key, display_name, icon_url,
 		  button_color, button_text, auto_create_users, auto_link_by_email,
 		  default_role, allowed_domains, attribute_mapping, enabled, sort_order)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		 RETURNING id`,
-		providerIDArg, req.ProviderKey, req.DisplayName, req.IconURL,
+		org.ID, providerIDArg, req.ProviderKey, req.DisplayName, req.IconURL,
 		req.ButtonColor, req.ButtonText, req.AutoCreateUsers, req.AutoLinkByEmail,
 		req.DefaultRole, req.AllowedDomains, req.AttributeMapping, req.Enabled, req.SortOrder,
 	).Scan(&id)
@@ -189,14 +203,20 @@ func (s *Service) handleGetSocialProvider(c *gin.Context) {
 		return
 	}
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	id := c.Param("id")
 	var p SocialProvider
-	err := s.db.Pool.QueryRow(c.Request.Context(),
+	err = s.db.Pool.QueryRow(c.Request.Context(),
 		`SELECT id, COALESCE(provider_id::text, ''), provider_key, display_name, icon_url,
 		        button_color, button_text, auto_create_users, auto_link_by_email,
 		        default_role, allowed_domains, attribute_mapping, enabled,
 		        sort_order, created_at, updated_at
-		 FROM social_providers WHERE id = $1`, id,
+		 FROM social_providers WHERE id = $1 AND org_id = $2`, id, org.ID,
 	).Scan(&p.ID, &p.ProviderID, &p.ProviderKey, &p.DisplayName, &p.IconURL,
 		&p.ButtonColor, &p.ButtonText, &p.AutoCreateUsers, &p.AutoLinkByEmail,
 		&p.DefaultRole, &p.AllowedDomains, &p.AttributeMapping, &p.Enabled,
@@ -299,11 +319,21 @@ func (s *Service) handleUpdateSocialProvider(c *gin.Context) {
 		argIdx++
 	}
 
-	args = append(args, id)
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
+	args = append(args, id, org.ID)
 	// SECURITY: Column names in 'sets' are hardcoded string literals from the if-blocks above,
 	// not user input. This is safe from SQL injection.
-	query := fmt.Sprintf("UPDATE social_providers SET %s WHERE id = $%d",
-		joinStrings(sets, ", "), argIdx)
+	//
+	// The org predicate makes the RowsAffected()==0 below mean "not yours or not
+	// there" rather than only "not there": without it this edited another
+	// tenant's sign-in button by id.
+	query := fmt.Sprintf("UPDATE social_providers SET %s WHERE id = $%d AND org_id = $%d",
+		joinStrings(sets, ", "), argIdx, argIdx+1)
 
 	tag, err := s.db.Pool.Exec(c.Request.Context(), query, args...)
 	if err != nil {
@@ -322,9 +352,15 @@ func (s *Service) handleDeleteSocialProvider(c *gin.Context) {
 		return
 	}
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	id := c.Param("id")
 	tag, err := s.db.Pool.Exec(c.Request.Context(),
-		"DELETE FROM social_providers WHERE id = $1", id)
+		"DELETE FROM social_providers WHERE id = $1 AND org_id = $2", id, org.ID)
 	if err != nil {
 		respondError(c, s.logger, apperrors.Internal("Failed to delete social provider", err))
 		return

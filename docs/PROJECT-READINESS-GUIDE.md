@@ -1597,6 +1597,66 @@ class this whole program exists for.
    fails against the old `WHERE 1=1` with org A seeing all five rows and org B's
    `guacamole` and `mcp` sources, and passes after. The belt itself is proved
    separately against a real NOSUPERUSER role by `TestRLSBeltTables`.
+
+   **Batch 5 shipped (migration v143, `needsScoping` 57 → 52; registers 76 →
+   71): the sign-in tables.** `social_providers` plus four per-user
+   authentication records (`trusted_browsers`, `passwordless_preferences`,
+   `user_risk_baselines`, `phone_call_challenges`).
+
+   `social_providers` is the live one, and its list query is the most
+   instructive thing in this whole programme so far, because it names the
+   caller's organization and still returns everybody's rows:
+
+   ```sql
+   FROM social_providers sp
+   LEFT JOIN identity_providers ip ON sp.provider_id = ip.id AND ip.org_id = $1
+   ORDER BY sp.sort_order
+   ```
+
+   Inside a `LEFT JOIN`'s `ON` clause a predicate decides only whether the
+   *joined* row contributes — it filters nothing on the driving table. So every
+   tenant's sign-in providers were listed to every tenant, and all the org check
+   achieved was blanking out the `idp_name` column of the ones belonging to
+   somebody else. A reviewer scanning for "is the org in the query?" would have
+   said yes. Get, update and delete then took a bare id with no org at all, and
+   `internal/oauth/social_policy.go` reads this table **on the sign-in path**:
+   so one tenant could change which e-mail domains may sign in to another
+   tenant's deployment, whether unknown visitors are auto-provisioned accounts
+   there, or delete their sign-in button outright. `provider_key` was also
+   UNIQUE install-wide — the v138 `ispm_rules.check_type` shape, where the first
+   tenant to register `google` took the name from everybody else; it is now
+   `UNIQUE(org_id, provider_key)`.
+
+   The other four were already keyed by the org-scoped `user_id`, so the belt is
+   depth rather than a live hole — with two exceptions it closes:
+   `trusted_browsers` was updated by **bare id** at two sites (`SET expires_at`,
+   `SET last_used_at`), reachable only after a user-scoped read but with nothing
+   in the function saying so; and `phone_call_challenges.user_id` is nullable,
+   so a challenge raised before its user resolved sat in nobody's scope at all.
+
+   One decision worth recording, because the obvious fix was the wrong one.
+   `loadSocialProviderPolicy` runs on the sign-in path, where the visitor is not
+   yet a user of anything and the request may carry no resolved organization.
+   Scoping it by `app.org_id` would make an RLS-empty read indistinguishable,
+   one line later, from "no button registered" — and the caller's response to
+   *that* is to allow every e-mail domain and provision accounts automatically.
+   The obvious scoping would have switched an administrator's restriction **off**
+   at exactly the moment it matters. So the tenant comes from the provider
+   instead: the lookup is bypassed and joined to `identity_providers` on
+   `sp.org_id = ip.org_id`, which cannot fail open and still cannot let one
+   tenant's button decorate another's provider.
+
+   Deliberately **not** in this batch: `social_account_links` and
+   `user_identity_links`. Their `(provider_id, external_id)` uniqueness is a
+   security property of the login path, and scoping it raises a real product
+   question — may one external Google account link to a user in two tenants? —
+   that deserves its own change rather than a rider on this one.
+
+   Proven on Postgres 16: `TestTenantIsolation_SocialProviders` fails against
+   the old LEFT-JOIN-only predicate (org A's list contains org B's provider) and
+   passes after; get, update and delete are each refused across tenants; two
+   tenants can now register the same `provider_key`. `TestRLSBeltTables` is
+   24/24 with all five tables added.
 4. ✅ **OPA `deny` enforced** — *shipped.* — `internal/common/middleware/opa.go`: abort
    unless `Allow && len(Deny)==0`; `authz.rego:15-19`'s "any authenticated
    user may GET anything" removed; `policies/access_control.rego`

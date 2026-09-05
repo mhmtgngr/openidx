@@ -21,6 +21,22 @@ to a spec that describes an eighth of a surface, a documented endpoint that
   the posture score was neither one tenant's nor the install's. All now carry
   `org_id` under FORCE RLS, with the install-wide unique keys re-scoped and an
   isolation test per handler file.
+- **The sign-in tables got a tenant** (migration v143). `social_providers` —
+  the configuration behind the social sign-in buttons — was listed with the
+  organization predicate inside a `LEFT JOIN`'s `ON` clause, where it filters
+  nothing on the driving table, so every tenant's providers were listed to every
+  tenant; get, update and delete then took a bare id with no organization at
+  all. Because the sign-in path reads this table for `allowed_domains` and
+  `auto_create_users`, one tenant could change which e-mail domains may sign in
+  to another tenant's deployment, whether unknown visitors are provisioned
+  accounts there, or delete their sign-in button. `provider_key` was also
+  UNIQUE across the install, so the first tenant to register `google` took the
+  key from everybody else; it is now unique per organization. `trusted_browsers`,
+  `passwordless_preferences`, `user_risk_baselines` and `phone_call_challenges`
+  join it under FORCE RLS: they were keyed by the organization-scoped user, but
+  trusted browsers were updated by bare id and a phone-call challenge could
+  carry no user at all. Existing rows are attributed to the identity provider
+  they extend or to their own user, with the primary organization as fallback.
 - **The unified audit stream got a tenant** (migration v142).
   `unified_audit_events` — the console's Unified Audit page, the assignment-
   and ABAC-gate decision records, the agent lifecycle log, the MCP gateway's

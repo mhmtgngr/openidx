@@ -96,7 +96,7 @@ func (s *Service) AssessLoginRisk(ctx context.Context, lc *LoginContext) (*RiskA
 			assessment.TrustedBrowserID = trusted.ID
 			lc.TrustedBrowser = true
 			// Update last used
-			s.updateTrustedBrowserLastUsed(ctx, trusted.ID)
+			s.updateTrustedBrowserLastUsed(ctx, trusted.ID, trusted.UserID)
 		}
 	}
 
@@ -362,7 +362,8 @@ func (s *Service) IsTrustedBrowser(ctx context.Context, userID, browserHash stri
 		SELECT id, user_id, browser_hash, name, ip_address, user_agent,
 		       trusted_at, expires_at, last_used_at, revoked
 		FROM trusted_browsers
-		WHERE user_id = $1 AND browser_hash = $2 AND revoked = false AND expires_at > NOW()
+		WHERE user_id = $1 AND org_id = (SELECT org_id FROM users WHERE id = $1)
+		  AND browser_hash = $2 AND revoked = false AND expires_at > NOW()
 	`
 
 	var tb TrustedBrowser
@@ -391,7 +392,7 @@ func (s *Service) GetTrustedBrowsers(ctx context.Context, userID string) ([]Trus
 		SELECT id, user_id, browser_hash, name, ip_address, user_agent,
 		       trusted_at, expires_at, last_used_at, revoked
 		FROM trusted_browsers
-		WHERE user_id = $1
+		WHERE user_id = $1 AND org_id = (SELECT org_id FROM users WHERE id = $1)
 		ORDER BY trusted_at DESC
 	`
 
@@ -427,7 +428,8 @@ func (s *Service) GetTrustedBrowsers(ctx context.Context, userID string) ([]Trus
 
 // RevokeTrustedBrowser revokes a trusted browser
 func (s *Service) RevokeTrustedBrowser(ctx context.Context, userID, browserID string) error {
-	query := `UPDATE trusted_browsers SET revoked = true WHERE user_id = $1 AND id = $2`
+	query := `UPDATE trusted_browsers SET revoked = true
+		   WHERE user_id = $1 AND org_id = (SELECT org_id FROM users WHERE id = $1) AND id = $2`
 	result, err := s.db.Pool.Exec(ctx, query, userID, browserID)
 	if err != nil {
 		return fmt.Errorf("failed to revoke browser: %w", err)
@@ -446,7 +448,8 @@ func (s *Service) RevokeTrustedBrowser(ctx context.Context, userID, browserID st
 
 // RevokeAllTrustedBrowsers revokes all trusted browsers for a user
 func (s *Service) RevokeAllTrustedBrowsers(ctx context.Context, userID string) error {
-	query := `UPDATE trusted_browsers SET revoked = true WHERE user_id = $1`
+	query := `UPDATE trusted_browsers SET revoked = true
+		   WHERE user_id = $1 AND org_id = (SELECT org_id FROM users WHERE id = $1)`
 	_, err := s.db.Pool.Exec(ctx, query, userID)
 	if err != nil {
 		return fmt.Errorf("failed to revoke browsers: %w", err)
@@ -520,9 +523,13 @@ func (s *Service) GetEnabledRiskPolicies(ctx context.Context) ([]RiskPolicy, err
 // --- Helper Functions ---
 
 func (s *Service) storeTrustedBrowser(ctx context.Context, tb *TrustedBrowser) error {
+	// org_id is derived from the row's own user rather than passed in, so the
+	// two can never disagree -- and under the v143 belt a row whose org_id
+	// differs from app.org_id is refused outright, which would lose the trust
+	// record and silently re-prompt the user for MFA on every sign-in.
 	query := `
-		INSERT INTO trusted_browsers (id, user_id, browser_hash, name, ip_address, user_agent, trusted_at, expires_at, revoked)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		INSERT INTO trusted_browsers (id, org_id, user_id, browser_hash, name, ip_address, user_agent, trusted_at, expires_at, revoked)
+		VALUES ($1, (SELECT org_id FROM users WHERE id = $2), $2, $3, $4, $5, $6, $7, $8, $9)
 		ON CONFLICT (user_id, browser_hash) DO UPDATE
 		SET name = EXCLUDED.name, ip_address = EXCLUDED.ip_address, user_agent = EXCLUDED.user_agent,
 		    expires_at = EXCLUDED.expires_at, revoked = EXCLUDED.revoked
@@ -542,14 +549,22 @@ func (s *Service) storeTrustedBrowser(ctx context.Context, tb *TrustedBrowser) e
 }
 
 func (s *Service) updateTrustedBrowser(ctx context.Context, tb *TrustedBrowser) error {
-	query := `UPDATE trusted_browsers SET expires_at = $1 WHERE id = $2`
-	_, err := s.db.Pool.Exec(ctx, query, tb.ExpiresAt, tb.ID)
+	// Was `WHERE id = $2` alone: a bare id on a table that had no tenant column
+	// at all. It carries the user now, and through the user the org.
+	query := `UPDATE trusted_browsers SET expires_at = $1
+		   WHERE id = $2 AND user_id = $3 AND org_id = (SELECT org_id FROM users WHERE id = $3)`
+	_, err := s.db.Pool.Exec(ctx, query, tb.ExpiresAt, tb.ID, tb.UserID)
 	return err
 }
 
-func (s *Service) updateTrustedBrowserLastUsed(ctx context.Context, browserID string) {
-	query := `UPDATE trusted_browsers SET last_used_at = $1 WHERE id = $2`
-	s.db.Pool.Exec(ctx, query, time.Now(), browserID)
+// updateTrustedBrowserLastUsed takes the owning user as well as the browser id.
+// It used to take the id alone and update `WHERE id = $2` -- reachable only
+// after a user-scoped read, but nothing in the function said so, and a second
+// caller would not have known.
+func (s *Service) updateTrustedBrowserLastUsed(ctx context.Context, browserID, userID string) {
+	query := `UPDATE trusted_browsers SET last_used_at = $1
+		   WHERE id = $2 AND user_id = $3 AND org_id = (SELECT org_id FROM users WHERE id = $3)`
+	s.db.Pool.Exec(ctx, query, time.Now(), browserID, userID)
 }
 
 // generateBrowserHash creates a hash from browser characteristics
