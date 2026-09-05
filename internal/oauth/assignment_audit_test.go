@@ -17,6 +17,7 @@ import (
 
 	"github.com/openidx/openidx/internal/appaccess"
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/orgctx"
 	"github.com/openidx/openidx/internal/common/testsupport"
 )
 
@@ -218,10 +219,21 @@ func TestOAuthAssignmentDecisionWarnsWhenWriteFails(t *testing.T) {
 
 	core, logs := observer.New(zapcore.WarnLevel)
 	s := &Service{db: db, logger: zap.New(core)}
-	s.recordAssignmentDecision(context.Background(), uuid.New().String(), "client-abc", uuid.New().String(), "", false)
+	// A real gate decision always carries a tenant, so give it one: without an
+	// org on the context the recorder legitimately warns that it filed the row
+	// under the primary organization, and that is a different finding from the
+	// one under test.
+	ctx := orgctx.With(context.Background(), orgctx.Org{ID: uuid.New().String()})
+	s.recordAssignmentDecision(ctx, uuid.New().String(), "client-abc", uuid.New().String(), "", false)
 
-	if n := len(logs.FilterLevelExact(zapcore.WarnLevel).All()); n != 1 {
-		t.Fatalf("a rejected write must be logged at WARN, got %d entries", n)
+	// Match the message rather than counting every WARN. This assertion used to
+	// be `len(all) != 1`, which made the test fail the moment the recorder
+	// gained a second, unrelated warning -- reporting a defect in the new
+	// warning rather than in the behaviour under test.
+	const want = "assignment decision not recorded: unified audit write failed"
+	if n := len(logs.FilterMessage(want).All()); n != 1 {
+		t.Fatalf("a rejected write must be logged at WARN as %q, got %d such entries out of %d: %+v",
+			want, n, logs.Len(), logs.All())
 	}
 }
 
@@ -233,9 +245,11 @@ func TestOAuthAssignmentDecisionWarnsWithNoDB(t *testing.T) {
 
 	s.recordAssignmentDecision(context.Background(), "user-1", "client-abc", "app-1", "203.0.113.9", false)
 
-	entries := logs.FilterLevelExact(zapcore.WarnLevel).All()
+	// Same reasoning as above: name the warning, do not count them all.
+	entries := logs.FilterMessage("assignment decision not recorded: no database handle").All()
 	if len(entries) != 1 {
-		t.Fatalf("expected exactly one WARN for the dropped record, got %d: %+v", len(entries), entries)
+		t.Fatalf("expected exactly one WARN for the dropped record, got %d of %d: %+v",
+			len(entries), logs.Len(), logs.All())
 	}
 	fields := entries[0].ContextMap()
 	if fields["user_id"] != "user-1" || fields["application_id"] != "app-1" {
