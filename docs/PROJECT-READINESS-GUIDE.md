@@ -1952,7 +1952,7 @@ policy answers 403 + audit on `/oauth/authorize`.
      `secrets.postgresPassword` is the single knob and it is `required`
      rather than silently empty.
 
-   Four more surfaced only because each round of the job got further than
+   Five more surfaced only because each round of the job got further than
    the last — which is the argument for the job:
 
    - **`replicaCount: 0` was silently `2`.** `values-ci.yaml` pins every
@@ -1989,6 +1989,18 @@ policy answers 403 + audit on `/oauth/authorize`.
      prints what it left behind, and is gone. Bootstrap is a privileged,
      one-time act; doing it in the open beats granting `CREATEROLE`
      permanently to fix a one-time problem.
+   - **And the runtime rewrote the script.** Round five: `syntax error at or
+     near "$" at character 4`, against a script that had just been run
+     verbatim against a real PostgreSQL 16 and worked. The kubelet expands
+     `$(VAR)` references in a container's `command` and `args`, and its escape
+     for a literal dollar is a doubled one — so v53's `DO $$ … $$;`, correct
+     in the rendered manifest, reached the container as `DO $ … $;`. Nothing
+     at render time could see it: the manifest was right and the runtime
+     changed it. The script is a mounted ConfigMap now, which is delivered
+     byte for byte, and that also makes the rendered chart the thing you can
+     run — extract the key from `helm template` and it is what the container
+     executes. `Lint & Template` fails on a `$$` in any container command line
+     and names the rule; shown red with the script put back inline.
    - **And then the seeds were refused by the belt itself.** Behind that
      failure sat another: the belt FORCEs row-level security so the table
      *owner* is subject to it too, and a migration is cross-org by

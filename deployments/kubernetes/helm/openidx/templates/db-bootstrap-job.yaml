@@ -1,5 +1,5 @@
 {{- if and .Values.migrations.enabled .Values.postgresql.enabled .Values.migrations.roleBootstrap.enabled }}
-# Bootstrap Job — creates the one role the migrations cannot create themselves.
+# Bootstrap hook — creates the one role the migrations cannot create themselves.
 #
 # Migration v53 provisions `openidx_app`, the NOSUPERUSER NOBYPASSRLS runtime
 # role the v37 RLS belt is FORCE'd against. The migration Job connects as the
@@ -22,26 +22,85 @@
 #      which defaults to $POSTGRESQL_USER — here `openidx`, the same role that
 #      cannot create a role. An initdb script therefore fails with the exact
 #      error above, inside a phase whose server log is a background stream
-#      nobody reads. Pointing it at the superuser means putting the superuser
-#      password in `primary.initdb.password`, which the subchart renders as a
-#      plaintext env value in the StatefulSet pod spec.
-#   2. initdb scripts run once, on the first boot of an empty data directory.
+#      nobody reads. Pointing it at the superuser means `primary.initdb.password`,
+#      which the subchart renders as a plaintext env value in the StatefulSet
+#      pod spec.
+#   2. initdb scripts run only on the first boot of an empty data directory.
 #      An existing install upgrading into this chart version would never get
 #      the role.
 #
-# This Job runs on install AND upgrade, reads the superuser password from the
+# This hook runs on install AND upgrade, reads the superuser password from the
 # Secret that already holds it, and is gone as soon as it succeeds. Bootstrap
 # is a privileged, one-time act; doing it in the open beats giving `openidx`
 # CREATEROLE permanently to fix a one-time problem.
 #
-# hook-weight -1 puts it strictly before the migration Job (weight 0): Helm
-# waits for each weight to complete before starting the next.
+# Why the script is a ConfigMap and not `args`
+# --------------------------------------------
+# It was `args` for exactly one CI round. The kubelet expands `$(VAR)`
+# references in `command` and `args`, and its escape for a literal dollar is a
+# doubled one — so it rewrote the `$$` of v53's `DO $$ … $$;` to a single `$`
+# and PostgreSQL answered `syntax error at or near "$" at character 4`. A
+# ConfigMap is mounted byte for byte, which also makes the rendered chart the
+# thing you can run: extract this key from `helm template` and it is the script
+# the container executes.
+#
+# hook-weight orders the two: the ConfigMap at -2, this Job at -1, the
+# migration Job at 0. Helm completes a weight before starting the next.
 #
 # The role stays passwordless, exactly as v53 leaves it — nothing logs in as
 # openidx_app until an operator sets a password out of band and points
 # DATABASE_URL at it. With an external database (postgresql.enabled=false)
-# this Job does not render, so there the DSN the migration Job uses must
-# itself be able to CREATE ROLE, or openidx_app must already exist.
+# neither object renders, so there the DSN the migration Job uses must itself
+# be able to CREATE ROLE, or openidx_app must already exist.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "openidx.fullname" . }}-db-bootstrap
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: db-bootstrap
+  annotations:
+    "helm.sh/hook": post-install,pre-upgrade
+    "helm.sh/hook-weight": "-2"
+    "helm.sh/hook-delete-policy": before-hook-creation
+data:
+  bootstrap.sh: |
+    set -eu
+    export PGPASSWORD="$POSTGRES_SUPERUSER_PASSWORD"
+
+    # On a fresh install the PostgreSQL StatefulSet is a chart resource, so this
+    # hook can win the race with it. Wait for a server that ANSWERS, not just a
+    # port that is open.
+    i=0
+    until psql -U postgres -tAc 'SELECT 1' >/dev/null 2>&1; do
+      i=$((i + 1))
+      if [ "$i" -gt 150 ]; then
+        echo "postgresql at $PGHOST did not accept connections within 5m"
+        exit 1
+      fi
+      echo "waiting for postgresql..."
+      sleep 2
+    done
+
+    # Byte for byte the CREATE ROLE from migration v53, so the two cannot drift
+    # into disagreeing about what the runtime role is. v53's own IF NOT EXISTS
+    # then makes its copy a no-op.
+    psql -U postgres -v ON_ERROR_STOP=1 <<'SQL'
+    DO
+    $$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'openidx_app') THEN
+        CREATE ROLE openidx_app LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
+      END IF;
+    END
+    $$;
+    SQL
+
+    # Say what was left behind. A bootstrap that silently did nothing and one
+    # that worked have the same exit code.
+    psql -U postgres -v ON_ERROR_STOP=1 -tAc \
+      "SELECT 'openidx_app: login=' || rolcanlogin || ' superuser=' || rolsuper || ' bypassrls=' || rolbypassrls FROM pg_roles WHERE rolname = 'openidx_app'"
+---
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -65,45 +124,19 @@ spec:
       serviceAccountName: {{ .Values.serviceAccount.name | default "openidx" }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      volumes:
+        - name: bootstrap-script
+          configMap:
+            name: {{ include "openidx.fullname" . }}-db-bootstrap
       containers:
         - name: create-runtime-role
           image: {{ .Values.migrations.roleBootstrap.image | quote }}
           imagePullPolicy: {{ .Values.migrations.roleBootstrap.pullPolicy | default "IfNotPresent" }}
-          command: ["/bin/sh", "-c"]
-          args:
-            - |
-              set -eu
-              export PGPASSWORD="$POSTGRES_SUPERUSER_PASSWORD"
-              # On a fresh install the PostgreSQL StatefulSet is a chart
-              # resource, so this hook can win the race with it. Wait for a
-              # server that ANSWERS, not just a port that is open.
-              i=0
-              until psql -U postgres -tAc 'SELECT 1' >/dev/null 2>&1; do
-                i=$((i + 1))
-                if [ "$i" -gt 150 ]; then
-                  echo "postgresql at $PGHOST did not accept connections within 5m"
-                  exit 1
-                fi
-                echo "waiting for postgresql..."
-                sleep 2
-              done
-              # Byte-for-byte the CREATE ROLE from migration v53, so the two
-              # cannot drift into disagreeing about what the runtime role is.
-              # v53's own IF NOT EXISTS then makes its copy a no-op.
-              psql -U postgres -v ON_ERROR_STOP=1 <<'SQL'
-              DO
-              $$
-              BEGIN
-                IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'openidx_app') THEN
-                  CREATE ROLE openidx_app LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
-                END IF;
-              END
-              $$;
-              SQL
-              # Say what was left behind. A bootstrap that silently did nothing
-              # and one that worked look identical from the Job's exit code.
-              psql -U postgres -v ON_ERROR_STOP=1 -tAc \
-                "SELECT 'openidx_app: login=' || rolcanlogin || ' superuser=' || rolsuper || ' bypassrls=' || rolbypassrls FROM pg_roles WHERE rolname = 'openidx_app'"
+          command: ["/bin/sh", "/scripts/bootstrap.sh"]
+          volumeMounts:
+            - name: bootstrap-script
+              mountPath: /scripts
+              readOnly: true
           env:
             - name: PGHOST
               value: {{ include "openidx.fullname" . }}-postgresql

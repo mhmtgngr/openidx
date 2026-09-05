@@ -135,6 +135,51 @@ jobs:
           fi
           echo "bootstrap ordering holds; external-database installs skip it"
 
+      # The kubelet expands $(VAR) references in `command` and `args`, and its
+      # escape for a literal dollar is a doubled one -- so a `$$` written there
+      # reaches the container as a single `$`. The bootstrap script carried
+      # v53's `DO $$ ... $$;` in args for one CI round and PostgreSQL answered
+      # `syntax error at or near "$" at character 4`. Nothing at render time
+      # could see it: the manifest was correct, the runtime rewrote it.
+      #
+      # A shell script belongs in a ConfigMap, which is mounted byte for byte.
+      # This fails if one goes back into a command line.
+      - name: No doubled dollar in a container command line
+        run: |
+          set -euo pipefail
+          for values in "" "-f $CHART/values-prod.yaml" "-f $CHART/values-ci.yaml"; do
+            # shellcheck disable=SC2086
+            helm template openidx "$CHART" \
+              --set secrets.postgresPassword=render-only-not-a-credential \
+              --set secrets.redisPassword=render-only-not-a-credential \
+              --set secrets.jwtSecret=render-only-not-a-credential-000000 \
+              --set secrets.encryptionKey=render-only-not-a-credential32b \
+              $values \
+            | python3 -c '
+          import sys, yaml
+          bad = []
+          def walk(o):
+              if isinstance(o, dict):
+                  for c in list(o.get("containers", [])) + list(o.get("initContainers", [])):
+                      for field in ("command", "args"):
+                          for entry in c.get(field) or []:
+                              if "\$\$" in str(entry):
+                                  bad.append((c.get("name"), field))
+                  for v in o.values():
+                      walk(v)
+              elif isinstance(o, list):
+                  for v in o:
+                      walk(v)
+          for doc in yaml.safe_load_all(sys.stdin):
+              walk(doc)
+          if bad:
+              for name, field in bad:
+                  print(f"container {name}: {field} contains $$, which the kubelet rewrites to a single $")
+              sys.exit(1)
+          print("no container command line carries a doubled dollar")
+          '
+          done
+
   kind-install:
     name: Install on kind
     runs-on: ubuntu-latest
