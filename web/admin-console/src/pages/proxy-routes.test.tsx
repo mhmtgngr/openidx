@@ -159,6 +159,42 @@ describe('ProxyRoutesPage', () => {
     expect(groupsInput).not.toHaveAttribute('readonly')
   })
 
+  // A route card carried the compact OpenZiti/BrowZer switches AND, once
+  // expanded, ServiceFeaturePanel's switches for the same two features --
+  // two live controls per feature on one card, sharing the
+  // ['service-status', routeId] cache, so flipping either moved the other.
+  it('never shows two controls for the same feature on one route card', async () => {
+    vi.mocked(api.get).mockImplementation((url: string) => {
+      if (url.includes('/status')) {
+        return Promise.resolve({
+          features: {
+            ziti: { enabled: false, health_status: 'unknown' },
+            browzer: { enabled: false, health_status: 'unknown' },
+          },
+        })
+      }
+      return Promise.resolve({ routes: [activeRoute], total: 1 })
+    })
+
+    render(<ProxyRoutesPage />, { wrapper: createWrapper() })
+    expect(await screen.findByText('jira')).toBeInTheDocument()
+
+    // Collapsed: the compact switch in the action bar.
+    expect(await screen.findAllByRole('switch', { name: /openziti/i })).toHaveLength(1)
+
+    // The page keeps a Radix Dialog mounted for "Add Route"; in jsdom its
+    // body-level `pointer-events: none` outlives the closed state, and
+    // user-event reads that as an unclickable element. Real browsers do not
+    // reproduce it -- the Playwright suite drives this same button.
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+    await user.click(screen.getByRole('button', { name: /^features$/i }))
+
+    // Expanded: the panel owns it, and there is still exactly one.
+    expect(await screen.findByText(/enable or disable integration features/i)).toBeInTheDocument()
+    expect(screen.getAllByRole('switch', { name: /openziti/i })).toHaveLength(1)
+    expect(screen.getAllByRole('switch', { name: /browzer/i })).toHaveLength(1)
+  })
+
   it('shows the empty state when no routes exist', async () => {
     vi.mocked(api.get).mockResolvedValue({ routes: [], total: 0 })
 

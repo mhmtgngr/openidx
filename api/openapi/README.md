@@ -10,20 +10,13 @@ Each service has its own OpenAPI specification file:
 
 | File | Service | Port | Description |
 |------|---------|------|-------------|
-| `identity-service.yaml` | Identity Service | 8001 | User, group, role, MFA, and identity provider management |
+| `identity-service.yaml` | Identity Service | 8001 | Users, groups, roles, MFA and identity providers, plus the self-service portal and notification routes the same binary mounts under `/api/v1/identity` |
 | `governance-service.yaml` | Governance Service | 8002 | Access reviews, certification campaigns, and policy management |
 | `provisioning-service.yaml` | Provisioning Service | 8003 | SCIM 2.0 user and group provisioning, plus automation rules |
 | `audit-service.yaml` | Audit Service | 8004 | Audit event logging, compliance reporting, and export |
-| `admin-api.yaml` | Admin API | 8005 | Dashboard, system settings, application management, directory integrations |
+| `admin-api.yaml` | Admin API | 8005 | The whole administration surface: dashboard and settings, users and service accounts, applications and SSO, directories, MFA, the credential vault and rotation, governance, ISPM, AI agents and recommendations, privacy, audit archival, analytics, notifications, organizations and tenants |
 | `oauth-service.yaml` | OAuth/OIDC Service | 8006 | OAuth 2.0 authorization server with OpenID Connect and SAML 2.0 support |
-| `access-service.yaml` | Access Service | 8007 | Zero Trust access proxy with route management, session control, OpenZiti network overlay |
-| `portal-service.yaml` | Self-Service Portal | 8001 | Self-service portal for application access and group membership requests |
-| `notifications-service.yaml` | Notifications Service | 8001 | User notification management and preferences |
-| `organization-service.yaml` | Organization Service | 8005 | Organization and member management |
-
-### Consolidated Specification
-
-`openidx.yaml` provides a unified view of all services with cross-references to individual service specifications.
+| `access-service.yaml` | Access Service | 8007 | Zero Trust access proxy with route management, session control, OpenZiti network overlay, and the full PAM surface (`/pam/*`: entries/vault, brokered launch, checkout controls, moderation, SSH CA, cloud JIT, Windows apps) |
 
 ## Using the Specifications
 
@@ -160,4 +153,4 @@ All timestamps use ISO 8601 format in UTC:
 
 ## Support
 
-For questions or issues with the API documentation, please open an issue on [GitHub](https://github.com/openidx/openidx/issues).
+For questions or issues with the API documentation, please open an issue on [GitHub](https://github.com/mhmtgngr/openidx/issues).

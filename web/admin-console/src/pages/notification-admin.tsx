@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Bell, Plus, Trash2, Send, BarChart3, Route, Megaphone, Edit } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
@@ -50,7 +51,12 @@ interface NotificationStats {
 
 type AdminTab = 'routing' | 'broadcasts' | 'stats'
 
+// The delivery channels the notification service accepts. These are wire
+// values; their labels resolve through the catalog at render.
 const CHANNELS = ['in_app', 'email', 'sms', 'push']
+const BROADCAST_CHANNELS = ['in_app', 'email']
+const TARGET_TYPES = ['all', 'role', 'group']
+const PRIORITIES = ['low', 'normal', 'high', 'urgent']
 
 const statusBadgeClass = (status: string) => {
   const map: Record<string, string> = {
@@ -64,6 +70,7 @@ const statusBadgeClass = (status: string) => {
 // ── Component ───────────────────────────────────────────────────────────────
 
 export function NotificationAdminPage() {
+  const { t } = useTranslation()
   const queryClient = useQueryClient()
   const { toast } = useToast()
   const [activeTab, setActiveTab] = useState<AdminTab>('routing')
@@ -120,10 +127,10 @@ export function NotificationAdminPage() {
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['routing-rules'] })
-      toast({ title: 'Routing rule created' })
+      toast({ title: t('pages.notificationAdmin.routing.created') })
       resetRuleForm()
     },
-    onError: () => toast({ title: 'Failed to create routing rule', variant: 'destructive' }),
+    onError: () => toast({ title: t('pages.notificationAdmin.routing.createFailed'), variant: 'destructive' }),
   })
 
   const updateRuleMutation = useMutation({
@@ -131,10 +138,10 @@ export function NotificationAdminPage() {
       api.put(`/api/v1/notifications/routing-rules/${id}`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['routing-rules'] })
-      toast({ title: 'Routing rule updated' })
+      toast({ title: t('pages.notificationAdmin.routing.updated') })
       resetRuleForm()
     },
-    onError: () => toast({ title: 'Failed to update routing rule', variant: 'destructive' }),
+    onError: () => toast({ title: t('pages.notificationAdmin.routing.updateFailed'), variant: 'destructive' }),
   })
 
   const deleteRuleMutation = useMutation({
@@ -142,9 +149,9 @@ export function NotificationAdminPage() {
       api.delete(`/api/v1/notifications/routing-rules/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['routing-rules'] })
-      toast({ title: 'Routing rule deleted' })
+      toast({ title: t('pages.notificationAdmin.routing.deleted') })
     },
-    onError: () => toast({ title: 'Failed to delete routing rule', variant: 'destructive' }),
+    onError: () => toast({ title: t('pages.notificationAdmin.routing.deleteFailed'), variant: 'destructive' }),
   })
 
   const toggleRuleMutation = useMutation({
@@ -152,9 +159,9 @@ export function NotificationAdminPage() {
       api.put(`/api/v1/notifications/routing-rules/${id}`, { enabled }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['routing-rules'] })
-      toast({ title: 'Rule status updated' })
+      toast({ title: t('pages.notificationAdmin.routing.statusUpdated') })
     },
-    onError: () => toast({ title: 'Failed to update rule', variant: 'destructive' }),
+    onError: () => toast({ title: t('pages.notificationAdmin.routing.statusUpdateFailed'), variant: 'destructive' }),
   })
 
   // ── Broadcast Mutations ─────────────────────────────────────────────────
@@ -167,10 +174,10 @@ export function NotificationAdminPage() {
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['broadcasts'] })
-      toast({ title: 'Broadcast created' })
+      toast({ title: t('pages.notificationAdmin.broadcasts.created') })
       resetBroadcastForm()
     },
-    onError: () => toast({ title: 'Failed to create broadcast', variant: 'destructive' }),
+    onError: () => toast({ title: t('pages.notificationAdmin.broadcasts.createFailed'), variant: 'destructive' }),
   })
 
   const sendBroadcastMutation = useMutation({
@@ -178,9 +185,9 @@ export function NotificationAdminPage() {
       api.post(`/api/v1/notifications/broadcasts/${id}/send`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['broadcasts'] })
-      toast({ title: 'Broadcast sent' })
+      toast({ title: t('pages.notificationAdmin.broadcasts.sent') })
     },
-    onError: () => toast({ title: 'Failed to send broadcast', variant: 'destructive' }),
+    onError: () => toast({ title: t('pages.notificationAdmin.broadcasts.sendFailed'), variant: 'destructive' }),
   })
 
   const deleteBroadcastMutation = useMutation({
@@ -188,9 +195,9 @@ export function NotificationAdminPage() {
       api.delete(`/api/v1/notifications/broadcasts/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['broadcasts'] })
-      toast({ title: 'Broadcast deleted' })
+      toast({ title: t('pages.notificationAdmin.broadcasts.deleted') })
     },
-    onError: () => toast({ title: 'Failed to delete broadcast', variant: 'destructive' }),
+    onError: () => toast({ title: t('pages.notificationAdmin.broadcasts.deleteFailed'), variant: 'destructive' }),
   })
 
   // ── Helpers ─────────────────────────────────────────────────────────────
@@ -238,8 +245,8 @@ export function NotificationAdminPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold tracking-tight">Notification Administration</h1>
-        <p className="text-muted-foreground">Manage routing rules, broadcasts, and delivery statistics</p>
+        <h1 className="text-3xl font-bold tracking-tight">{t('pages.notificationAdmin.title')}</h1>
+        <p className="text-muted-foreground">{t('pages.notificationAdmin.subtitle')}</p>
       </div>
 
       {/* Tab Navigation */}
@@ -251,7 +258,7 @@ export function NotificationAdminPage() {
           }`}
         >
           <Route className="h-4 w-4" />
-          Routing Rules
+          {t('pages.notificationAdmin.tabs.routing')}
         </button>
         <button
           onClick={() => setActiveTab('broadcasts')}
@@ -260,7 +267,7 @@ export function NotificationAdminPage() {
           }`}
         >
           <Megaphone className="h-4 w-4" />
-          Broadcasts
+          {t('pages.notificationAdmin.tabs.broadcasts')}
         </button>
         <button
           onClick={() => setActiveTab('stats')}
@@ -269,7 +276,7 @@ export function NotificationAdminPage() {
           }`}
         >
           <BarChart3 className="h-4 w-4" />
-          Delivery Stats
+          {t('pages.notificationAdmin.tabs.stats')}
         </button>
       </div>
 
@@ -278,10 +285,10 @@ export function NotificationAdminPage() {
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between">
-              <CardTitle>Routing Rules</CardTitle>
+              <CardTitle>{t('pages.notificationAdmin.routing.heading')}</CardTitle>
               <Button onClick={() => { resetRuleForm(); setShowRuleForm(true) }}>
                 <Plus className="mr-2 h-4 w-4" />
-                Create Rule
+                {t('pages.notificationAdmin.routing.create')}
               </Button>
             </div>
           </CardHeader>
@@ -290,30 +297,32 @@ export function NotificationAdminPage() {
             {showRuleForm && (
               <div className="mb-6 p-4 rounded-lg border bg-muted/30 space-y-4">
                 <h3 className="font-semibold text-sm">
-                  {editingRule ? 'Edit Routing Rule' : 'Create Routing Rule'}
+                  {editingRule
+                    ? t('pages.notificationAdmin.routing.formEdit')
+                    : t('pages.notificationAdmin.routing.formCreate')}
                 </h3>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="text-sm font-medium">Name</label>
+                    <label className="text-sm font-medium">{t('pages.notificationAdmin.routing.name')}</label>
                     <input
                       className="w-full mt-1 px-3 py-2 border rounded-md text-sm"
-                      placeholder="Rule name"
+                      placeholder={t('pages.notificationAdmin.routing.namePlaceholder')}
                       value={ruleForm.name}
                       onChange={e => setRuleForm(p => ({ ...p, name: e.target.value }))}
                     />
                   </div>
                   <div>
-                    <label className="text-sm font-medium">Event Type</label>
+                    <label className="text-sm font-medium">{t('pages.notificationAdmin.routing.eventType')}</label>
                     <input
                       className="w-full mt-1 px-3 py-2 border rounded-md text-sm"
-                      placeholder="e.g. security_alert"
+                      placeholder={t('pages.notificationAdmin.routing.eventTypePlaceholder')}
                       value={ruleForm.event_type}
                       onChange={e => setRuleForm(p => ({ ...p, event_type: e.target.value }))}
                     />
                   </div>
                 </div>
                 <div>
-                  <label className="text-sm font-medium">Channels</label>
+                  <label className="text-sm font-medium">{t('pages.notificationAdmin.routing.channels')}</label>
                   <div className="flex gap-4 mt-1">
                     {CHANNELS.map(ch => (
                       <label key={ch} className="flex items-center gap-2 text-sm">
@@ -322,14 +331,14 @@ export function NotificationAdminPage() {
                           checked={ruleForm.channels.includes(ch)}
                           onChange={() => toggleChannel(ch)}
                         />
-                        {ch}
+                        {t(`pages.notificationAdmin.channels.${ch}`, { defaultValue: ch })}
                       </label>
                     ))}
                   </div>
                 </div>
                 <div>
-                  <label className="text-sm font-medium">Priority</label>
-                  <input
+                  <label htmlFor="notification-admin-priority" className="text-sm font-medium">{t('pages.notificationAdmin.routing.priority')}</label>
+                  <input id="notification-admin-priority"
                     type="number"
                     className="w-32 mt-1 px-3 py-2 border rounded-md text-sm"
                     value={ruleForm.priority}
@@ -342,10 +351,12 @@ export function NotificationAdminPage() {
                     onClick={handleRuleSubmit}
                     disabled={!ruleForm.name || !ruleForm.event_type || ruleForm.channels.length === 0 || createRuleMutation.isPending || updateRuleMutation.isPending}
                   >
-                    {editingRule ? 'Update Rule' : 'Create Rule'}
+                    {editingRule
+                      ? t('pages.notificationAdmin.routing.submitUpdate')
+                      : t('pages.notificationAdmin.routing.submitCreate')}
                   </Button>
                   <Button size="sm" variant="outline" onClick={resetRuleForm}>
-                    Cancel
+                    {t('common.cancel')}
                   </Button>
                 </div>
               </div>
@@ -355,27 +366,27 @@ export function NotificationAdminPage() {
             {rulesLoading ? (
               <div className="flex flex-col items-center justify-center py-12">
                 <LoadingSpinner size="lg" />
-                <p className="mt-4 text-sm text-muted-foreground">Loading routing rules...</p>
+                <p className="mt-4 text-sm text-muted-foreground">{t('pages.notificationAdmin.routing.loading')}</p>
               </div>
             ) : rulesIsError ? (
-              <QueryError error={rulesError} resource="routing rules" />
+              <QueryError error={rulesError} resource={t('pages.notificationAdmin.routing.resource')} />
             ) : rules.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
                 <Route className="h-12 w-12 text-muted-foreground/40 mb-3" />
-                <p className="font-medium">No routing rules</p>
-                <p className="text-sm">Create a routing rule to define how notifications are delivered</p>
+                <p className="font-medium">{t('pages.notificationAdmin.routing.emptyTitle')}</p>
+                <p className="text-sm">{t('pages.notificationAdmin.routing.emptyDesc')}</p>
               </div>
             ) : (
               <div className="rounded-md border">
                 <Table>
                   <TableHeader>
                     <TableRow className="border-b bg-muted/50">
-                      <TableHead className="text-left py-3 px-4 text-sm font-medium">Name</TableHead>
-                      <TableHead className="text-left py-3 px-4 text-sm font-medium">Event Type</TableHead>
-                      <TableHead className="text-left py-3 px-4 text-sm font-medium">Channels</TableHead>
-                      <TableHead className="text-left py-3 px-4 text-sm font-medium">Priority</TableHead>
-                      <TableHead className="text-left py-3 px-4 text-sm font-medium">Enabled</TableHead>
-                      <TableHead className="text-left py-3 px-4 text-sm font-medium">Actions</TableHead>
+                      <TableHead className="text-left py-3 px-4 text-sm font-medium">{t('pages.notificationAdmin.routing.colName')}</TableHead>
+                      <TableHead className="text-left py-3 px-4 text-sm font-medium">{t('pages.notificationAdmin.routing.colEventType')}</TableHead>
+                      <TableHead className="text-left py-3 px-4 text-sm font-medium">{t('pages.notificationAdmin.routing.colChannels')}</TableHead>
+                      <TableHead className="text-left py-3 px-4 text-sm font-medium">{t('pages.notificationAdmin.routing.colPriority')}</TableHead>
+                      <TableHead className="text-left py-3 px-4 text-sm font-medium">{t('pages.notificationAdmin.routing.colEnabled')}</TableHead>
+                      <TableHead className="text-left py-3 px-4 text-sm font-medium">{t('pages.notificationAdmin.routing.colActions')}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -388,7 +399,9 @@ export function NotificationAdminPage() {
                         <TableCell className="py-3 px-4">
                           <div className="flex gap-1 flex-wrap">
                             {rule.channels.map(ch => (
-                              <Badge key={ch} className="text-xs bg-blue-100 text-blue-800">{ch}</Badge>
+                              <Badge key={ch} className="text-xs bg-blue-100 text-blue-800">
+                                {t(`pages.notificationAdmin.channels.${ch}`, { defaultValue: ch })}
+                              </Badge>
                             ))}
                           </div>
                         </TableCell>
@@ -407,18 +420,21 @@ export function NotificationAdminPage() {
                         </TableCell>
                         <TableCell className="py-3 px-4">
                           <div className="flex gap-1">
-                            <Button variant="ghost" size="sm" className="h-8 w-8 p-0" title="Edit" onClick={() => startEditRule(rule)}>
+                            <Button variant="ghost" size="sm" className="h-8 w-8 p-0" title={t('pages.notificationAdmin.routing.edit')} onClick={() => startEditRule(rule)}>
                               <Edit className="h-4 w-4" />
                             </Button>
                             <ConfirmAction
-                              title="Delete this routing rule?"
-                              description={`This deletes the "${rule.name}" notification routing rule. Notifications for the "${rule.event_type}" event will no longer be routed by this rule.`}
+                              title={t('pages.notificationAdmin.routing.deleteTitle')}
+                              description={t('pages.notificationAdmin.routing.deleteDesc', {
+                                name: rule.name,
+                                eventType: rule.event_type,
+                              })}
                               destructive
-                              confirmLabel="Delete"
+                              confirmLabel={t('pages.notificationAdmin.routing.delete')}
                               onConfirm={() => deleteRuleMutation.mutateAsync(rule.id)}
                             >
                               {(open) => (
-                                <Button variant="ghost" size="sm" className="h-8 w-8 p-0" title="Delete" onClick={open}>
+                                <Button variant="ghost" size="sm" className="h-8 w-8 p-0" title={t('pages.notificationAdmin.routing.delete')} onClick={open}>
                                   <Trash2 className="h-4 w-4 text-red-500" />
                                 </Button>
                               )}
@@ -440,10 +456,10 @@ export function NotificationAdminPage() {
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between">
-              <CardTitle>Broadcasts</CardTitle>
+              <CardTitle>{t('pages.notificationAdmin.broadcasts.heading')}</CardTitle>
               <Button onClick={() => { resetBroadcastForm(); setShowBroadcastForm(true) }}>
                 <Plus className="mr-2 h-4 w-4" />
-                Create Broadcast
+                {t('pages.notificationAdmin.broadcasts.create')}
               </Button>
             </div>
           </CardHeader>
@@ -451,71 +467,77 @@ export function NotificationAdminPage() {
             {/* Create Form */}
             {showBroadcastForm && (
               <div className="mb-6 p-4 rounded-lg border bg-muted/30 space-y-4">
-                <h3 className="font-semibold text-sm">Create Broadcast</h3>
+                <h3 className="font-semibold text-sm">{t('pages.notificationAdmin.broadcasts.formTitle')}</h3>
                 <div>
-                  <label className="text-sm font-medium">Title</label>
+                  <label className="text-sm font-medium">{t('pages.notificationAdmin.broadcasts.titleLabel')}</label>
                   <input
                     className="w-full mt-1 px-3 py-2 border rounded-md text-sm"
-                    placeholder="Broadcast title"
+                    placeholder={t('pages.notificationAdmin.broadcasts.titlePlaceholder')}
                     value={broadcastForm.title}
                     onChange={e => setBroadcastForm(p => ({ ...p, title: e.target.value }))}
                   />
                 </div>
                 <div>
-                  <label className="text-sm font-medium">Body</label>
+                  <label className="text-sm font-medium">{t('pages.notificationAdmin.broadcasts.body')}</label>
                   <textarea
                     className="w-full mt-1 px-3 py-2 border rounded-md text-sm min-h-[80px]"
-                    placeholder="Broadcast message body"
+                    placeholder={t('pages.notificationAdmin.broadcasts.bodyPlaceholder')}
                     value={broadcastForm.body}
                     onChange={e => setBroadcastForm(p => ({ ...p, body: e.target.value }))}
                   />
                 </div>
                 <div className="grid grid-cols-3 gap-4">
                   <div>
-                    <label className="text-sm font-medium">Channel</label>
-                    <select
+                    <label htmlFor="notification-admin-channel" className="text-sm font-medium">{t('pages.notificationAdmin.broadcasts.channel')}</label>
+                    <select id="notification-admin-channel"
                       className="w-full mt-1 px-3 py-2 border rounded-md text-sm"
                       value={broadcastForm.channel}
                       onChange={e => setBroadcastForm(p => ({ ...p, channel: e.target.value }))}
                     >
-                      <option value="in_app">In-App</option>
-                      <option value="email">Email</option>
+                      {BROADCAST_CHANNELS.map(ch => (
+                        <option key={ch} value={ch}>{t(`pages.notificationAdmin.channels.${ch}`)}</option>
+                      ))}
                     </select>
                   </div>
                   <div>
-                    <label className="text-sm font-medium">Target Type</label>
-                    <select
+                    <label htmlFor="notification-admin-target-type" className="text-sm font-medium">{t('pages.notificationAdmin.broadcasts.targetType')}</label>
+                    <select id="notification-admin-target-type"
                       className="w-full mt-1 px-3 py-2 border rounded-md text-sm"
                       value={broadcastForm.target_type}
                       onChange={e => setBroadcastForm(p => ({ ...p, target_type: e.target.value }))}
                     >
-                      <option value="all">All Users</option>
-                      <option value="role">By Role</option>
-                      <option value="group">By Group</option>
+                      {TARGET_TYPES.map(tt => (
+                        <option key={tt} value={tt}>{t(`pages.notificationAdmin.targetTypes.${tt}`)}</option>
+                      ))}
                     </select>
                   </div>
                   <div>
-                    <label className="text-sm font-medium">Priority</label>
-                    <select
+                    <label htmlFor="notification-admin-priority-2" className="text-sm font-medium">{t('pages.notificationAdmin.broadcasts.priority')}</label>
+                    <select id="notification-admin-priority-2"
                       className="w-full mt-1 px-3 py-2 border rounded-md text-sm"
                       value={broadcastForm.priority}
                       onChange={e => setBroadcastForm(p => ({ ...p, priority: e.target.value }))}
                     >
-                      <option value="low">Low</option>
-                      <option value="normal">Normal</option>
-                      <option value="high">High</option>
-                      <option value="urgent">Urgent</option>
+                      {PRIORITIES.map(p => (
+                        <option key={p} value={p}>{t(`pages.notificationAdmin.priorities.${p}`)}</option>
+                      ))}
                     </select>
                   </div>
                 </div>
                 {(broadcastForm.target_type === 'role' || broadcastForm.target_type === 'group') && (
                   <div>
                     <label className="text-sm font-medium">
-                      Target IDs ({broadcastForm.target_type === 'role' ? 'Role' : 'Group'} names, one per line)
+                      {broadcastForm.target_type === 'role'
+                        ? t('pages.notificationAdmin.broadcasts.targetIdsRole')
+                        : t('pages.notificationAdmin.broadcasts.targetIdsGroup')}
                     </label>
                     <textarea
                       className="w-full mt-1 px-3 py-2 border rounded-md text-sm min-h-[60px]"
-                      placeholder={`Enter ${broadcastForm.target_type} names, one per line`}
+                      placeholder={
+                        broadcastForm.target_type === 'role'
+                          ? t('pages.notificationAdmin.broadcasts.targetIdsRolePlaceholder')
+                          : t('pages.notificationAdmin.broadcasts.targetIdsGroupPlaceholder')
+                      }
                       value={broadcastForm.target_ids}
                       onChange={e => setBroadcastForm(p => ({ ...p, target_ids: e.target.value }))}
                     />
@@ -527,10 +549,12 @@ export function NotificationAdminPage() {
                     onClick={() => createBroadcastMutation.mutate(broadcastForm)}
                     disabled={!broadcastForm.title || !broadcastForm.body || createBroadcastMutation.isPending}
                   >
-                    {createBroadcastMutation.isPending ? 'Creating...' : 'Create Broadcast'}
+                    {createBroadcastMutation.isPending
+                      ? t('pages.notificationAdmin.broadcasts.creating')
+                      : t('pages.notificationAdmin.broadcasts.create')}
                   </Button>
                   <Button size="sm" variant="outline" onClick={resetBroadcastForm}>
-                    Cancel
+                    {t('common.cancel')}
                   </Button>
                 </div>
               </div>
@@ -540,29 +564,29 @@ export function NotificationAdminPage() {
             {broadcastsLoading ? (
               <div className="flex flex-col items-center justify-center py-12">
                 <LoadingSpinner size="lg" />
-                <p className="mt-4 text-sm text-muted-foreground">Loading broadcasts...</p>
+                <p className="mt-4 text-sm text-muted-foreground">{t('pages.notificationAdmin.broadcasts.loading')}</p>
               </div>
             ) : broadcastsIsError ? (
-              <QueryError error={broadcastsError} resource="broadcasts" />
+              <QueryError error={broadcastsError} resource={t('pages.notificationAdmin.broadcasts.resource')} />
             ) : broadcasts.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
                 <Megaphone className="h-12 w-12 text-muted-foreground/40 mb-3" />
-                <p className="font-medium">No broadcasts</p>
-                <p className="text-sm">Create a broadcast to send notifications to users</p>
+                <p className="font-medium">{t('pages.notificationAdmin.broadcasts.emptyTitle')}</p>
+                <p className="text-sm">{t('pages.notificationAdmin.broadcasts.emptyDesc')}</p>
               </div>
             ) : (
               <div className="rounded-md border">
                 <Table>
                   <TableHeader>
                     <TableRow className="border-b bg-muted/50">
-                      <TableHead className="text-left py-3 px-4 text-sm font-medium">Title</TableHead>
-                      <TableHead className="text-left py-3 px-4 text-sm font-medium">Channel</TableHead>
-                      <TableHead className="text-left py-3 px-4 text-sm font-medium">Target</TableHead>
-                      <TableHead className="text-left py-3 px-4 text-sm font-medium">Status</TableHead>
-                      <TableHead className="text-left py-3 px-4 text-sm font-medium">Recipients</TableHead>
-                      <TableHead className="text-left py-3 px-4 text-sm font-medium">Delivered</TableHead>
-                      <TableHead className="text-left py-3 px-4 text-sm font-medium">Read</TableHead>
-                      <TableHead className="text-left py-3 px-4 text-sm font-medium">Actions</TableHead>
+                      <TableHead className="text-left py-3 px-4 text-sm font-medium">{t('pages.notificationAdmin.broadcasts.colTitle')}</TableHead>
+                      <TableHead className="text-left py-3 px-4 text-sm font-medium">{t('pages.notificationAdmin.broadcasts.colChannel')}</TableHead>
+                      <TableHead className="text-left py-3 px-4 text-sm font-medium">{t('pages.notificationAdmin.broadcasts.colTarget')}</TableHead>
+                      <TableHead className="text-left py-3 px-4 text-sm font-medium">{t('pages.notificationAdmin.broadcasts.colStatus')}</TableHead>
+                      <TableHead className="text-left py-3 px-4 text-sm font-medium">{t('pages.notificationAdmin.broadcasts.colRecipients')}</TableHead>
+                      <TableHead className="text-left py-3 px-4 text-sm font-medium">{t('pages.notificationAdmin.broadcasts.colDelivered')}</TableHead>
+                      <TableHead className="text-left py-3 px-4 text-sm font-medium">{t('pages.notificationAdmin.broadcasts.colRead')}</TableHead>
+                      <TableHead className="text-left py-3 px-4 text-sm font-medium">{t('pages.notificationAdmin.broadcasts.colActions')}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -570,14 +594,24 @@ export function NotificationAdminPage() {
                       <TableRow key={broadcast.id} className="border-b last:border-0">
                         <TableCell className="py-3 px-4 text-sm font-medium">{broadcast.title}</TableCell>
                         <TableCell className="py-3 px-4 text-sm">
-                          <Badge variant="outline">{broadcast.channel}</Badge>
+                          <Badge variant="outline">
+                            {t(`pages.notificationAdmin.channels.${broadcast.channel}`, {
+                              defaultValue: broadcast.channel,
+                            })}
+                          </Badge>
                         </TableCell>
                         <TableCell className="py-3 px-4 text-sm">
-                          <Badge variant="outline">{broadcast.target_type}</Badge>
+                          <Badge variant="outline">
+                            {t(`pages.notificationAdmin.targetTypes.${broadcast.target_type}`, {
+                              defaultValue: broadcast.target_type,
+                            })}
+                          </Badge>
                         </TableCell>
                         <TableCell className="py-3 px-4">
                           <Badge className={statusBadgeClass(broadcast.status)}>
-                            {broadcast.status}
+                            {t(`pages.notificationAdmin.statuses.${broadcast.status}`, {
+                              defaultValue: broadcast.status,
+                            })}
                           </Badge>
                         </TableCell>
                         <TableCell className="py-3 px-4 text-sm">{broadcast.total_recipients}</TableCell>
@@ -588,11 +622,20 @@ export function NotificationAdminPage() {
                             {broadcast.status === 'draft' && (
                               <>
                                 <ConfirmAction
-                                  title="Send this broadcast to all targeted users?"
-                                  description={`This sends the broadcast "${broadcast.title}" to ${broadcast.total_recipients || 'all targeted'} recipients immediately. Delivered notifications cannot be recalled.`}
+                                  title={t('pages.notificationAdmin.broadcasts.sendTitle')}
+                                  description={
+                                    broadcast.total_recipients
+                                      ? t('pages.notificationAdmin.broadcasts.sendDesc', {
+                                          title: broadcast.title,
+                                          recipients: broadcast.total_recipients,
+                                        })
+                                      : t('pages.notificationAdmin.broadcasts.sendDescUnknown', {
+                                          title: broadcast.title,
+                                        })
+                                  }
                                   destructive
                                   requireReason
-                                  confirmLabel="Send Broadcast"
+                                  confirmLabel={t('pages.notificationAdmin.broadcasts.sendConfirm')}
                                   onConfirm={() => sendBroadcastMutation.mutateAsync(broadcast.id)}
                                 >
                                   {(open) => (
@@ -600,7 +643,7 @@ export function NotificationAdminPage() {
                                       variant="ghost"
                                       size="sm"
                                       className="h-8 w-8 p-0"
-                                      title="Send"
+                                      title={t('pages.notificationAdmin.broadcasts.send')}
                                       onClick={open}
                                       disabled={sendBroadcastMutation.isPending}
                                     >
@@ -609,10 +652,12 @@ export function NotificationAdminPage() {
                                   )}
                                 </ConfirmAction>
                                 <ConfirmAction
-                                  title="Delete this broadcast?"
-                                  description={`This permanently deletes the draft broadcast "${broadcast.title}". It has not been sent, and this cannot be undone.`}
+                                  title={t('pages.notificationAdmin.broadcasts.deleteTitle')}
+                                  description={t('pages.notificationAdmin.broadcasts.deleteDesc', {
+                                    title: broadcast.title,
+                                  })}
                                   destructive
-                                  confirmLabel="Delete"
+                                  confirmLabel={t('pages.notificationAdmin.broadcasts.delete')}
                                   onConfirm={() => deleteBroadcastMutation.mutateAsync(broadcast.id)}
                                 >
                                   {(open) => (
@@ -620,7 +665,7 @@ export function NotificationAdminPage() {
                                       variant="ghost"
                                       size="sm"
                                       className="h-8 w-8 p-0"
-                                      title="Delete"
+                                      title={t('pages.notificationAdmin.broadcasts.delete')}
                                       onClick={open}
                                       disabled={deleteBroadcastMutation.isPending}
                                     >
@@ -648,15 +693,15 @@ export function NotificationAdminPage() {
           {statsLoading ? (
             <div className="flex flex-col items-center justify-center py-12">
               <LoadingSpinner size="lg" />
-              <p className="mt-4 text-sm text-muted-foreground">Loading delivery statistics...</p>
+              <p className="mt-4 text-sm text-muted-foreground">{t('pages.notificationAdmin.stats.loading')}</p>
             </div>
           ) : statsIsError ? (
-            <QueryError error={statsError} resource="delivery statistics" />
+            <QueryError error={statsError} resource={t('pages.notificationAdmin.stats.resource')} />
           ) : !statsData ? (
             <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
               <BarChart3 className="h-12 w-12 text-muted-foreground/40 mb-3" />
-              <p className="font-medium">No statistics available</p>
-              <p className="text-sm">Statistics will appear once notifications have been sent</p>
+              <p className="font-medium">{t('pages.notificationAdmin.stats.emptyTitle')}</p>
+              <p className="text-sm">{t('pages.notificationAdmin.stats.emptyDesc')}</p>
             </div>
           ) : (
             <>
@@ -664,7 +709,7 @@ export function NotificationAdminPage() {
               <div className="grid gap-4 md:grid-cols-4">
                 <Card>
                   <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-medium">Total Sent</CardTitle>
+                    <CardTitle className="text-sm font-medium">{t('pages.notificationAdmin.stats.totalSent')}</CardTitle>
                   </CardHeader>
                   <CardContent>
                     <div className="text-2xl font-bold">{statsData.total_sent}</div>
@@ -672,7 +717,7 @@ export function NotificationAdminPage() {
                 </Card>
                 <Card>
                   <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-medium">Read Rate</CardTitle>
+                    <CardTitle className="text-sm font-medium">{t('pages.notificationAdmin.stats.readRate')}</CardTitle>
                   </CardHeader>
                   <CardContent>
                     <div className="text-2xl font-bold text-green-600">{readRate}%</div>
@@ -680,7 +725,7 @@ export function NotificationAdminPage() {
                 </Card>
                 <Card>
                   <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-medium">Unread</CardTitle>
+                    <CardTitle className="text-sm font-medium">{t('pages.notificationAdmin.stats.unread')}</CardTitle>
                   </CardHeader>
                   <CardContent>
                     <div className="text-2xl font-bold text-yellow-600">{statsData.total_unread}</div>
@@ -688,7 +733,7 @@ export function NotificationAdminPage() {
                 </Card>
                 <Card>
                   <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-medium">Active Rules</CardTitle>
+                    <CardTitle className="text-sm font-medium">{t('pages.notificationAdmin.stats.activeRules')}</CardTitle>
                   </CardHeader>
                   <CardContent>
                     <div className="text-2xl font-bold">{statsData.routing_rules_count}</div>
@@ -699,7 +744,7 @@ export function NotificationAdminPage() {
               {/* Channel Breakdown */}
               <Card>
                 <CardHeader>
-                  <CardTitle>Channel Breakdown</CardTitle>
+                  <CardTitle>{t('pages.notificationAdmin.stats.channelBreakdown')}</CardTitle>
                 </CardHeader>
                 <CardContent>
                   {statsData.channel_breakdown && Object.keys(statsData.channel_breakdown).length > 0 ? (
@@ -712,7 +757,7 @@ export function NotificationAdminPage() {
                           <div key={channel} className="flex items-center gap-4">
                             <div className="w-24 text-sm font-medium flex items-center gap-2">
                               <Bell className="h-4 w-4 text-muted-foreground" />
-                              {channel}
+                              {t(`pages.notificationAdmin.channels.${channel}`, { defaultValue: channel })}
                             </div>
                             <div className="flex-1">
                               <div className="w-full bg-muted rounded-full h-2.5">
@@ -723,7 +768,7 @@ export function NotificationAdminPage() {
                               </div>
                             </div>
                             <div className="w-20 text-right text-sm text-muted-foreground">
-                              {count} ({percentage}%)
+                              {t('pages.notificationAdmin.stats.channelCount', { n: count, percentage })}
                             </div>
                           </div>
                         )
@@ -731,7 +776,7 @@ export function NotificationAdminPage() {
                     </div>
                   ) : (
                     <p className="text-sm text-muted-foreground py-4 text-center">
-                      No channel data available yet
+                      {t('pages.notificationAdmin.stats.noChannelData')}
                     </p>
                   )}
                 </CardContent>

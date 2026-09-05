@@ -36,6 +36,7 @@ func TestHandleCreateMagicLink_DoesNotLeakToken(t *testing.T) {
 		);
 		CREATE TABLE magic_links (
 			id UUID PRIMARY KEY,
+			org_id UUID NOT NULL,
 			user_id UUID NOT NULL,
 			email VARCHAR(255) NOT NULL,
 			token_hash TEXT NOT NULL,

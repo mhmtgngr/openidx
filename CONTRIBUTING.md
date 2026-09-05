@@ -13,21 +13,28 @@ Thank you for your interest in contributing to OpenIDX. This guide explains how 
 
 ```bash
 # Clone the repository
-git clone https://github.com/openidx/openidx.git
+git clone https://github.com/mhmtgngr/openidx.git
 cd openidx
 
 # Install dependencies
 make deps
 
-# Start infrastructure (PostgreSQL, Redis, Elasticsearch, Keycloak, etc.)
+# Start infrastructure (PostgreSQL, Redis, Elasticsearch, APISIX, OPA,
+# and the observability stack) — OpenIDX is its own IdP, so there is no
+# Keycloak to start
 make dev-infra
 
 # Start all services
 make dev
 
 # Access the admin console at http://localhost:3000
-# Default credentials: admin@openidx.local / Admin@123
 ```
+
+The seeded admin is `admin` / `Admin@123`, and
+[docs/GETTING-STARTED.md § First Login](docs/GETTING-STARTED.md#1-first-login)
+is the authoritative source for it — rotate the password before you do
+anything else, because production refuses to start while the default still
+authenticates.
 
 ## Project Structure
 

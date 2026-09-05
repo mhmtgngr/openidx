@@ -2,12 +2,22 @@
 package identity
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 
 	apperrors "github.com/openidx/openidx/internal/common/errors"
 )
+
+// otpErrStatus mirrors phoneCallErrStatus: an unconfigured factor is the
+// installation's limitation (501), not the caller's mistake (400).
+func otpErrStatus(err error) int {
+	if errors.Is(err, ErrSMSMFANotConfigured) || errors.Is(err, ErrEmailOTPMFANotConfigured) {
+		return http.StatusNotImplemented
+	}
+	return http.StatusBadRequest
+}
 
 // --- SMS OTP Handlers ---
 
@@ -36,7 +46,7 @@ func (s *Service) handleEnrollSMS(c *gin.Context) {
 
 	enrollment, code, err := s.EnrollSMS(c.Request.Context(), userID, req.PhoneNumber, req.CountryCode)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(otpErrStatus(err), gin.H{"error": err.Error()})
 		return
 	}
 
@@ -141,7 +151,7 @@ func (s *Service) handleCreateSMSChallenge(c *gin.Context) {
 
 	challenge, err := s.CreateSMSChallenge(c.Request.Context(), userID, c.ClientIP(), c.GetHeader("User-Agent"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(otpErrStatus(err), gin.H{"error": err.Error()})
 		return
 	}
 
@@ -190,7 +200,7 @@ func (s *Service) handleEnrollEmailOTP(c *gin.Context) {
 
 	enrollment, code, err := s.EnrollEmailOTP(c.Request.Context(), userID, email)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(otpErrStatus(err), gin.H{"error": err.Error()})
 		return
 	}
 
@@ -263,7 +273,7 @@ func (s *Service) handleCreateEmailOTPChallenge(c *gin.Context) {
 
 	challenge, err := s.CreateEmailOTPChallenge(c.Request.Context(), userID, c.ClientIP(), c.GetHeader("User-Agent"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(otpErrStatus(err), gin.H{"error": err.Error()})
 		return
 	}
 

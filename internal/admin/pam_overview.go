@@ -163,7 +163,8 @@ func (s *Service) aggregatePAMOverview(ctx context.Context, orgID string) (*PAMO
 		        COUNT(*) FILTER (WHERE started_at > NOW() - INTERVAL '30 days'),
 		        COUNT(*) FILTER (WHERE EXISTS (
 		            SELECT 1 FROM guacamole_recording_legal_holds h
-		             WHERE h.session_id = guacamole_sessions.id AND h.released_at IS NULL))
+		             WHERE h.session_id = guacamole_sessions.id AND h.released_at IS NULL
+		               AND h.org_id = guacamole_sessions.org_id))
 		   FROM guacamole_sessions
 		  WHERE org_id = $1`, orgID).
 		Scan(&o.Sessions.ActiveSessions, &o.Sessions.Sessions30d, &o.Sessions.RecordingsOnHold)

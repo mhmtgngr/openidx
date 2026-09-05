@@ -339,6 +339,19 @@ func (s *Service) CalculateRiskScore(ctx context.Context, userID, ip, userAgent,
 		return 0, factors
 	}
 
+	// Factor 0: IP on the threat list (+70). The install-wide deny-list that
+	// admins curate and IBDR auto-populates was honored by the access proxy
+	// but contributed nothing here, so a login from a listed source scored
+	// like any other. 70 is exactly the step-up threshold
+	// (internal/oauth/mfa_policy.go): a listed IP alone forces MFA, and
+	// denies an account that has none enrolled.
+	if ip != "" {
+		if blocked, _ := s.CheckIPThreatList(ctx, ip); blocked {
+			score += 70
+			factors = append(factors, "ip_threat_list")
+		}
+	}
+
 	// Factor 1: New device (+30)
 	var deviceCount int
 	s.db.Pool.QueryRow(ctx,
@@ -682,12 +695,16 @@ func (s *Service) GetRecentFailedAttempts(ctx context.Context, userID string) in
 
 // ListRiskPolicies returns all risk policies, optionally filtered by enabled status
 func (s *Service) ListRiskPolicies(ctx context.Context, enabledOnly bool) ([]RiskPolicy, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("organization context required to list risk policies: %w", err)
+	}
 	query := `SELECT id, name, COALESCE(description,''), enabled, COALESCE(priority,100),
 	                 COALESCE(conditions,'{}'), COALESCE(actions,'{}'), created_at, updated_at
-	          FROM risk_policies`
-	args := []interface{}{}
+	          FROM risk_policies WHERE org_id = $1`
+	args := []interface{}{org.ID}
 	if enabledOnly {
-		query += ` WHERE enabled = $1`
+		query += ` AND enabled = $2`
 		args = append(args, true)
 	}
 	query += ` ORDER BY priority ASC, created_at DESC`
@@ -715,17 +732,20 @@ func (s *Service) ListRiskPolicies(ctx context.Context, enabledOnly bool) ([]Ris
 
 // GetRiskPolicy returns a specific risk policy by ID
 func (s *Service) GetRiskPolicy(ctx context.Context, policyID string) (*RiskPolicy, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("organization context required to read a risk policy: %w", err)
+	}
 	row := s.db.Pool.QueryRow(ctx,
 		`SELECT id, name, COALESCE(description,''), enabled, COALESCE(priority,100),
 		        COALESCE(conditions,'{}'), COALESCE(actions,'{}'), created_at, updated_at
-		 FROM risk_policies WHERE id = $1`, policyID)
+		 FROM risk_policies WHERE id = $1 AND org_id = $2`, policyID, org.ID)
 
 	var p RiskPolicy
 	var priority int
 	var conditionsJSON, actionsJSON []byte
-	err := row.Scan(&p.ID, &p.Name, &p.Description, &p.Enabled, &priority,
-		&conditionsJSON, &actionsJSON, &p.CreatedAt, &p.UpdatedAt)
-	if err != nil {
+	if err := row.Scan(&p.ID, &p.Name, &p.Description, &p.Enabled, &priority,
+		&conditionsJSON, &actionsJSON, &p.CreatedAt, &p.UpdatedAt); err != nil {
 		return nil, fmt.Errorf("policy not found")
 	}
 
@@ -750,15 +770,20 @@ func (s *Service) CreateRiskPolicy(ctx context.Context, req CreateRiskPolicyRequ
 		priorityIn = *req.Priority
 	}
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("organization context required to create a risk policy: %w", err)
+	}
+
 	var p RiskPolicy
 	var priority int
 	var conditionsOut, actionsOut []byte
-	err := s.db.Pool.QueryRow(ctx,
-		`INSERT INTO risk_policies (name, description, enabled, priority, conditions, actions)
-		 VALUES ($1, $2, $3, $4, $5, $6)
+	err = s.db.Pool.QueryRow(ctx,
+		`INSERT INTO risk_policies (org_id, name, description, enabled, priority, conditions, actions)
+		 VALUES ($7, $1, $2, $3, $4, $5, $6)
 		 RETURNING id, name, COALESCE(description,''), enabled, COALESCE(priority,100),
 		           COALESCE(conditions,'{}'), COALESCE(actions,'{}'), created_at, updated_at`,
-		req.Name, req.Description, enabled, priorityIn, conditions, actions,
+		req.Name, req.Description, enabled, priorityIn, conditions, actions, org.ID,
 	).Scan(&p.ID, &p.Name, &p.Description, &p.Enabled, &priority,
 		&conditionsOut, &actionsOut, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
@@ -769,9 +794,11 @@ func (s *Service) CreateRiskPolicy(ctx context.Context, req CreateRiskPolicyRequ
 	p.Conditions = conditionsOut
 	p.Actions = actionsOut
 	parseThresholdsFromJSON(conditionsOut, actionsOut, &p)
-	if req.TenantID != "" {
-		p.TenantID = req.TenantID
-	}
+	// The organization the row actually carries, not the one the request asked
+	// for. This used to echo req.TenantID straight back into the response
+	// without writing it anywhere, so a caller that supplied a tenant was told
+	// it had been recorded.
+	p.TenantID = org.ID
 
 	s.logger.Info("Risk policy created",
 		zap.String("id", p.ID),
@@ -782,7 +809,13 @@ func (s *Service) CreateRiskPolicy(ctx context.Context, req CreateRiskPolicyRequ
 
 // UpdateRiskPolicy updates an existing risk policy
 func (s *Service) UpdateRiskPolicy(ctx context.Context, policyID string, req CreateRiskPolicyRequest) (*RiskPolicy, error) {
-	// First verify the policy exists
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("organization context required to update a risk policy: %w", err)
+	}
+
+	// First verify the policy exists IN THIS ORGANIZATION -- GetRiskPolicy is
+	// org-scoped since v153, so this read is also the authorization check.
 	existing, err := s.GetRiskPolicy(ctx, policyID)
 	if err != nil {
 		return nil, err
@@ -836,10 +869,10 @@ func (s *Service) UpdateRiskPolicy(ctx context.Context, policyID string, req Cre
 	err = s.db.Pool.QueryRow(ctx,
 		`UPDATE risk_policies
 		 SET name = $2, description = $3, enabled = $4, priority = $5, conditions = $6, actions = $7, updated_at = NOW()
-		 WHERE id = $1
+		 WHERE id = $1 AND org_id = $8
 		 RETURNING id, name, COALESCE(description,''), enabled, COALESCE(priority,100),
 		           COALESCE(conditions,'{}'), COALESCE(actions,'{}'), created_at, updated_at`,
-		policyID, req.Name, req.Description, *req.Enabled, priorityIn, conditions, actions,
+		policyID, req.Name, req.Description, *req.Enabled, priorityIn, conditions, actions, org.ID,
 	).Scan(&p.ID, &p.Name, &p.Description, &p.Enabled, &priority,
 		&conditionsOut, &actionsOut, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
@@ -850,9 +883,7 @@ func (s *Service) UpdateRiskPolicy(ctx context.Context, policyID string, req Cre
 	p.Conditions = conditionsOut
 	p.Actions = actionsOut
 	parseThresholdsFromJSON(conditionsOut, actionsOut, &p)
-	if req.TenantID != "" {
-		p.TenantID = req.TenantID
-	}
+	p.TenantID = org.ID
 
 	s.logger.Info("Risk policy updated",
 		zap.String("id", p.ID),
@@ -863,8 +894,12 @@ func (s *Service) UpdateRiskPolicy(ctx context.Context, policyID string, req Cre
 
 // DeleteRiskPolicy deletes a risk policy by ID
 func (s *Service) DeleteRiskPolicy(ctx context.Context, policyID string) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return fmt.Errorf("organization context required to delete a risk policy: %w", err)
+	}
 	result, err := s.db.Pool.Exec(ctx,
-		`DELETE FROM risk_policies WHERE id = $1`, policyID)
+		`DELETE FROM risk_policies WHERE id = $1 AND org_id = $2`, policyID, org.ID)
 	if err != nil {
 		return fmt.Errorf("failed to delete risk policy: %w", err)
 	}
@@ -878,9 +913,13 @@ func (s *Service) DeleteRiskPolicy(ctx context.Context, policyID string) error {
 
 // ToggleRiskPolicy enables or disables a risk policy
 func (s *Service) ToggleRiskPolicy(ctx context.Context, policyID string, enabled bool) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return fmt.Errorf("organization context required to toggle a risk policy: %w", err)
+	}
 	result, err := s.db.Pool.Exec(ctx,
-		`UPDATE risk_policies SET enabled = $2, updated_at = NOW() WHERE id = $1`,
-		policyID, enabled)
+		`UPDATE risk_policies SET enabled = $2, updated_at = NOW() WHERE id = $1 AND org_id = $3`,
+		policyID, enabled, org.ID)
 	if err != nil {
 		return fmt.Errorf("failed to toggle risk policy: %w", err)
 	}

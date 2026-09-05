@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Activity,
@@ -125,14 +126,17 @@ interface RelationsReport {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function formatUptime(seconds: number): string {
+/** Minimal shape of i18next's `t`, so this helper needs no type import. */
+type Translate = (key: string, options?: Record<string, unknown>) => string
+
+function formatUptime(seconds: number, t: Translate): string {
   const days = Math.floor(seconds / 86400)
   const hours = Math.floor((seconds % 86400) / 3600)
   const minutes = Math.floor((seconds % 3600) / 60)
   const parts: string[] = []
-  if (days > 0) parts.push(`${days}d`)
-  if (hours > 0) parts.push(`${hours}h`)
-  parts.push(`${minutes}m`)
+  if (days > 0) parts.push(t('pages.systemHealth.uptimeDays', { n: days }))
+  if (hours > 0) parts.push(t('pages.systemHealth.uptimeHours', { n: hours }))
+  parts.push(t('pages.systemHealth.uptimeMinutes', { n: minutes }))
   return parts.join(' ')
 }
 
@@ -144,23 +148,22 @@ function formatTimestamp(iso: string): string {
   }
 }
 
+// Labels live in the catalog and resolve at render; only the styling and the
+// icon are frozen here.
 const STATUS_CONFIG = {
   healthy: {
-    label: 'Healthy',
     bgColor: 'bg-green-50 border-green-200',
     textColor: 'text-green-800',
     icon: CheckCircle2,
     iconColor: 'text-green-600',
   },
   degraded: {
-    label: 'Degraded',
     bgColor: 'bg-yellow-50 border-yellow-200',
     textColor: 'text-yellow-800',
     icon: AlertTriangle,
     iconColor: 'text-yellow-600',
   },
   unhealthy: {
-    label: 'Unhealthy',
     bgColor: 'bg-red-50 border-red-200',
     textColor: 'text-red-800',
     icon: XCircle,
@@ -171,17 +174,14 @@ const STATUS_CONFIG = {
 const DEP_STATUS_CONFIG = {
   up: {
     dotColor: 'bg-green-500',
-    label: 'Up',
     badgeClass: 'bg-green-100 text-green-800 border-green-200',
   },
   degraded: {
     dotColor: 'bg-yellow-500',
-    label: 'Degraded',
     badgeClass: 'bg-yellow-100 text-yellow-800 border-yellow-200',
   },
   down: {
     dotColor: 'bg-red-500',
-    label: 'Down',
     badgeClass: 'bg-red-100 text-red-800 border-red-200',
   },
 } as const
@@ -211,6 +211,7 @@ function severityClass(severity: string): string {
 // ---------------------------------------------------------------------------
 
 function RelationsDoctor() {
+  const { t } = useTranslation()
   const queryClient = useQueryClient()
   const { toast } = useToast()
 
@@ -223,25 +224,28 @@ function RelationsDoctor() {
     mutationFn: () => api.get<RelationsReport>('/api/v1/access/health/relations?heal=safe'),
     onSuccess: (report) => {
       toast({
-        title: 'Scan complete',
-        description: `${report.healed?.length ?? 0} safe fix(es) applied, ${report.remaining?.length ?? 0} remaining.`,
+        title: t('pages.systemHealth.relations.scanComplete'),
+        description: t('pages.systemHealth.relations.scanResult', {
+          count: report.healed?.length ?? 0,
+          remaining: report.remaining?.length ?? 0,
+        }),
         variant: 'success',
       })
       queryClient.invalidateQueries({ queryKey: ['health-relations'] })
     },
     onError: (e: Error) => {
-      toast({ title: 'Heal failed', description: e.message, variant: 'destructive' })
+      toast({ title: t('pages.systemHealth.relations.healFailed'), description: e.message, variant: 'destructive' })
     },
   })
 
   const fix = useMutation({
     mutationFn: (f: Finding) => api.post(`/api/v1/access/health/fix/${f.check_id}`, { subject: f.subject }),
     onSuccess: () => {
-      toast({ title: 'Fix applied', variant: 'success' })
+      toast({ title: t('pages.systemHealth.relations.fixApplied'), variant: 'success' })
       queryClient.invalidateQueries({ queryKey: ['health-relations'] })
     },
     onError: (e: Error) => {
-      toast({ title: 'Fix failed', description: e.message, variant: 'destructive' })
+      toast({ title: t('pages.systemHealth.relations.fixFailed'), description: e.message, variant: 'destructive' })
     },
   })
 
@@ -252,30 +256,32 @@ function RelationsDoctor() {
     <div>
       <div className="flex items-center justify-between mb-4">
         <div>
-          <h3 className="text-lg font-semibold">Relations &amp; Integrity</h3>
+          <h3 className="text-lg font-semibold">{t('pages.systemHealth.relations.heading')}</h3>
           <p className="text-sm text-muted-foreground">
-            Cross-domain relations &amp; referential integrity across the access fabric
+            {t('pages.systemHealth.relations.subtitle')}
           </p>
         </div>
         <Button onClick={() => heal.mutate()} disabled={heal.isPending || isFetching}>
           <Wand2 className={`mr-2 h-4 w-4 ${heal.isPending ? 'animate-pulse' : ''}`} />
-          {heal.isPending ? 'Healing...' : 'Scan & Heal (safe)'}
+          {heal.isPending
+            ? t('pages.systemHealth.relations.healing')
+            : t('pages.systemHealth.relations.scanAndHeal')}
         </Button>
       </div>
 
       {isLoading ? (
         <Card>
           <CardContent className="py-8 text-center text-sm text-muted-foreground">
-            Scanning relations...
+            {t('pages.systemHealth.relations.scanning')}
           </CardContent>
         </Card>
       ) : findings.length === 0 ? (
         <Card>
           <CardContent className="py-8 text-center">
             <ShieldCheck className="h-10 w-10 mx-auto text-green-500 mb-3" />
-            <p className="font-medium">No drift detected</p>
+            <p className="font-medium">{t('pages.systemHealth.relations.noDriftTitle')}</p>
             <p className="text-sm text-muted-foreground">
-              All cross-domain relations are consistent.
+              {t('pages.systemHealth.relations.noDriftDesc')}
             </p>
           </CardContent>
         </Card>
@@ -297,14 +303,14 @@ function RelationsDoctor() {
                   <p className="text-sm mt-1.5 break-words">{f.detail || f.subject}</p>
                   {f.detail && f.subject && (
                     <p className="text-xs text-muted-foreground mt-0.5 break-words">
-                      Subject: {f.subject}
+                      {t('pages.systemHealth.relations.subjectLabel', { subject: f.subject })}
                     </p>
                   )}
                 </div>
                 <div className="shrink-0">
                   {f.safe ? (
                     <span className="text-xs text-green-600 whitespace-nowrap">
-                      auto-heals on scan
+                      {t('pages.systemHealth.relations.autoHeals')}
                     </span>
                   ) : (
                     <Button
@@ -314,7 +320,7 @@ function RelationsDoctor() {
                       onClick={() => fix.mutate(f)}
                     >
                       <Wrench className="mr-1.5 h-3.5 w-3.5" />
-                      {f.action || 'Fix'}
+                      {f.action || t('pages.systemHealth.relations.fix')}
                     </Button>
                   )}
                 </div>
@@ -332,6 +338,7 @@ function RelationsDoctor() {
 // ---------------------------------------------------------------------------
 
 export function SystemHealthPage() {
+  const { t } = useTranslation()
   const { toast } = useToast()
   const queryClient = useQueryClient()
   const { hasRole } = useAuth()
@@ -361,7 +368,10 @@ export function SystemHealthPage() {
 
   const handleRefresh = () => {
     queryClient.invalidateQueries({ queryKey: ['system-health'] })
-    toast({ title: 'Refreshing', description: 'Checking system health...' })
+    toast({
+      title: t('pages.systemHealth.refreshing'),
+      description: t('pages.systemHealth.refreshingDesc'),
+    })
   }
 
   // ---------------------------------------------------------------------------
@@ -371,8 +381,8 @@ export function SystemHealthPage() {
   if (isLoading) {
     return (
       <div className="space-y-6">
-        <h1 className="text-3xl font-bold tracking-tight">System Health</h1>
-        <p className="text-center py-8">Loading health status...</p>
+        <h1 className="text-3xl font-bold tracking-tight">{t('pages.systemHealth.title')}</h1>
+        <p className="text-center py-8">{t('pages.systemHealth.loading')}</p>
       </div>
     )
   }
@@ -382,8 +392,8 @@ export function SystemHealthPage() {
   if (isError) {
     return (
       <div className="space-y-6">
-        <h1 className="text-3xl font-bold tracking-tight">System Health</h1>
-        <QueryError error={error} resource="system health" />
+        <h1 className="text-3xl font-bold tracking-tight">{t('pages.systemHealth.title')}</h1>
+        <QueryError error={error} resource={t('pages.systemHealth.resource')} />
       </div>
     )
   }
@@ -396,15 +406,15 @@ export function SystemHealthPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">System Health</h1>
-          <p className="text-muted-foreground">
-            Monitor OpenIDX platform dependencies and uptime
-          </p>
+          <h1 className="text-3xl font-bold tracking-tight">{t('pages.systemHealth.title')}</h1>
+          <p className="text-muted-foreground">{t('pages.systemHealth.subtitle')}</p>
         </div>
         <div className="flex items-center gap-3">
           {dataUpdatedAt > 0 && (
             <span className="text-xs text-muted-foreground">
-              Last checked: {new Date(dataUpdatedAt).toLocaleTimeString()}
+              {t('pages.systemHealth.lastChecked', {
+                time: new Date(dataUpdatedAt).toLocaleTimeString(),
+              })}
             </span>
           )}
           <Button
@@ -415,7 +425,7 @@ export function SystemHealthPage() {
             <RefreshCw
               className={`mr-2 h-4 w-4 ${isFetching ? 'animate-spin' : ''}`}
             />
-            {isFetching ? 'Checking...' : 'Check Now'}
+            {isFetching ? t('pages.systemHealth.checking') : t('pages.systemHealth.checkNow')}
           </Button>
         </div>
       </div>
@@ -426,14 +436,18 @@ export function SystemHealthPage() {
           <StatusIcon className={`h-10 w-10 ${config.iconColor}`} />
           <div>
             <h2 className={`text-2xl font-bold ${config.textColor}`}>
-              System {config.label}
+              {t('pages.systemHealth.systemStatus', {
+                status: t(`pages.systemHealth.statuses.${overallStatus}`),
+              })}
             </h2>
             <div className="flex items-center gap-4 mt-1">
               {health && (
                 <>
                   <div className="flex items-center gap-1 text-sm text-muted-foreground">
                     <Clock className="h-4 w-4" />
-                    Uptime: {formatUptime(health.uptime_seconds)}
+                    {t('pages.systemHealth.uptime', {
+                      value: formatUptime(health.uptime_seconds, t),
+                    })}
                   </div>
                   {health.version && (
                     <Badge variant="outline">{health.version}</Badge>
@@ -447,7 +461,7 @@ export function SystemHealthPage() {
 
       {/* Dependency cards */}
       <div>
-        <h3 className="text-lg font-semibold mb-4">Dependencies</h3>
+        <h3 className="text-lg font-semibold mb-4">{t('pages.systemHealth.dependencies')}</h3>
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           {(health?.dependencies || []).map((dep) => {
             const depConfig = DEP_STATUS_CONFIG[dep.status]
@@ -468,7 +482,7 @@ export function SystemHealthPage() {
                       <span
                         className={`text-xs font-medium px-2 py-0.5 rounded-full border ${depConfig.badgeClass}`}
                       >
-                        {depConfig.label}
+                        {t(`pages.systemHealth.depStatuses.${dep.status}`)}
                       </span>
                     </div>
                   </div>
@@ -476,13 +490,13 @@ export function SystemHealthPage() {
                 <CardContent>
                   <div className="space-y-2">
                     <div className="flex items-center justify-between text-sm">
-                      <span className="text-muted-foreground">Latency</span>
+                      <span className="text-muted-foreground">{t('pages.systemHealth.latency')}</span>
                       <span className="font-mono font-medium">
-                        {dep.latency_ms}ms
+                        {t('pages.systemHealth.latencyMs', { n: dep.latency_ms })}
                       </span>
                     </div>
                     <div className="flex items-center justify-between text-sm">
-                      <span className="text-muted-foreground">Last Checked</span>
+                      <span className="text-muted-foreground">{t('pages.systemHealth.depLastChecked')}</span>
                       <span className="text-xs">
                         {formatTimestamp(dep.last_checked)}
                       </span>
@@ -517,13 +531,11 @@ export function SystemHealthPage() {
         <Card>
           <CardContent className="py-12 text-center">
             <XCircle className="h-12 w-12 mx-auto text-red-400 mb-4" />
-            <CardTitle className="mb-2">Unable to Retrieve Health Status</CardTitle>
-            <CardDescription>
-              The health endpoint did not respond. Verify that the platform services are running.
-            </CardDescription>
+            <CardTitle className="mb-2">{t('pages.systemHealth.unavailableTitle')}</CardTitle>
+            <CardDescription>{t('pages.systemHealth.unavailableDesc')}</CardDescription>
             <Button variant="outline" className="mt-4" onClick={handleRefresh}>
               <RefreshCw className="mr-2 h-4 w-4" />
-              Retry
+              {t('pages.systemHealth.retry')}
             </Button>
           </CardContent>
         </Card>

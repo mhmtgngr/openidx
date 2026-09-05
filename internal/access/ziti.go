@@ -31,6 +31,8 @@ import (
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/orgctx"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 // ZitiManager handles OpenZiti SDK integration and management API communication
@@ -193,7 +195,7 @@ func NewZitiManager(cfg *config.Config, db *database.PostgresDB, logger *zap.Log
 	if pool.Size() > 1 {
 		urls := make([]string, 0, pool.Size())
 		for _, ep := range pool.Snapshot() {
-			urls = append(urls, scrubLogValue(ep.URL))
+			urls = append(urls, logsafe.Clean(ep.URL))
 		}
 		zm.logger.Info("Ziti controller HA endpoint pool configured", zap.Strings("endpoints", urls))
 	}
@@ -207,7 +209,11 @@ func NewZitiManager(cfg *config.Config, db *database.PostgresDB, logger *zap.Log
 	// error so production deploys can't silently lose verification.
 	// Previously this set InsecureSkipVerify unconditionally, which
 	// erased the value of every CA we then bolted on.
-	tlsConfig := &tls.Config{}
+	// TLS 1.2 floor: Go's default minimum has moved before and will again,
+	// and this client talks to an operator-run controller whose version we
+	// don't choose. Pinning the floor here means the handshake this process
+	// will accept is stated in the repo rather than inherited.
+	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}
 	caFile := filepath.Join(cfg.ZitiIdentityDir, "ca.pem")
 	caLoaded := false
 	if caPEM, err := os.ReadFile(caFile); err == nil {
@@ -572,17 +578,8 @@ func (zm *ZitiManager) forwardHTTPConnection(zitiConn edge.Conn, targetAddr, ser
 
 	// Create reverse proxy to upstream
 	target, _ := url.Parse("http://" + targetAddr)
-	proxy := httputil.NewSingleHostReverseProxy(target)
-	origDirector := proxy.Director
-	proxy.Director = func(req *http.Request) {
-		origDirector(req)
-		if callerID != "" {
-			req.Header.Set("X-Forwarded-User", callerID)
-			req.Header.Set("X-Forwarded-Email", email)
-			req.Header.Set("X-Forwarded-Name", strings.TrimSpace(name))
-			req.Header.Set("X-Forwarded-Roles", roles)
-			req.Header.Set("X-Ziti-Identity", callerID)
-		}
+	proxy := &httputil.ReverseProxy{
+		Rewrite: zitiProxyRewrite(target, callerID, email, strings.TrimSpace(name), roles),
 	}
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 		zm.logger.Error("Ziti HTTP proxy error",
@@ -598,6 +595,58 @@ func (zm *ZitiManager) forwardHTTPConnection(zitiConn edge.Conn, targetAddr, ser
 	ln := &singleConnListener{ch: make(chan net.Conn, 1)}
 	ln.ch <- zitiConn
 	server.Serve(ln)
+}
+
+// zitiProxyRewrite builds the Rewrite hook for the overlay's HTTP proxy.
+//
+// The Director this replaces did more than it looked like. It wrapped the one
+// NewSingleHostReverseProxy installs and only appended identity headers — but
+// on the Director path the standard library folds the CLIENT'S
+// X-Forwarded-For into the outbound one and passes Forwarded,
+// X-Forwarded-Host and X-Forwarded-Proto through untouched. A Ziti client
+// sending "X-Forwarded-For: 9.9.9.9" reached the upstream as
+// "9.9.9.9, <overlay peer>", and an upstream reading the leftmost entry —
+// the usual convention for "the real client" — believed 9.9.9.9. Rewrite
+// deletes all four before this runs, so nothing the caller claimed survives.
+//
+// X-Forwarded-Proto and X-Forwarded-Host are then deliberately not re-set.
+// This hop cannot honestly name the scheme the browser used: the overlay
+// carries its own encryption and Go sees a plain conn, so asserting "http" to
+// an upstream that redirects http→https would loop. Nothing is lost by
+// staying quiet — the Director never asserted either value itself, it only
+// let the caller's claim through. What identifies the caller here is the
+// enrolled Ziti identity below, which the request cannot influence.
+func zitiProxyRewrite(target *url.URL, callerID, email, name, roles string) func(*httputil.ProxyRequest) {
+	return func(pr *httputil.ProxyRequest) {
+		pr.SetURL(target)
+		// SetURL clears Out.Host so the target's host is used. The Director
+		// this replaces left the inbound Host alone, and a name-based virtual
+		// host upstream depends on that, so it is restored.
+		pr.Out.Host = pr.In.Host
+
+		// Whatever the caller asserted about itself goes before anything is
+		// written, so a connection with no resolved identity forwards none
+		// rather than the caller's own.
+		for _, h := range proxyOwnedHeaders {
+			pr.Out.Header.Del(h)
+		}
+
+		// The overlay peer, as this proxy observed it — not as anyone claimed
+		// it. If the address is not host:port shaped, say nothing rather than
+		// forward a value that would be read as a client address.
+		if host, _, err := net.SplitHostPort(pr.In.RemoteAddr); err == nil {
+			pr.Out.Header.Set("X-Forwarded-For", host)
+			pr.Out.Header.Set("X-Real-IP", host)
+		}
+
+		if callerID != "" {
+			pr.Out.Header.Set("X-Forwarded-User", callerID)
+			pr.Out.Header.Set("X-Forwarded-Email", email)
+			pr.Out.Header.Set("X-Forwarded-Name", name)
+			pr.Out.Header.Set("X-Forwarded-Roles", roles)
+			pr.Out.Header.Set("X-Ziti-Identity", callerID)
+		}
+	}
 }
 
 // singleConnListener wraps a single net.Conn as a net.Listener for http.Server.Serve
@@ -805,7 +854,7 @@ func (zm *ZitiManager) authenticate() error {
 			}
 			tried[next] = true
 			zm.logger.Warn("Ziti controller auth failed; failing over",
-				zap.String("from", scrubLogValue(base)), zap.String("to", scrubLogValue(next)), zap.Error(err))
+				zap.String("from", logsafe.Clean(base)), zap.String("to", logsafe.Clean(next)), zap.Error(err))
 			base = next
 			if err = zm.authenticateAt(base); err == nil {
 				zm.pool.MarkUp(base)
@@ -2101,7 +2150,7 @@ func (zm *ZitiManager) mgmtRequest(method, path string, body []byte) ([]byte, in
 		next, changed := zm.pool.MarkDown(base)
 		if changed {
 			zm.logger.Warn("Ziti controller unreachable; failing over",
-				zap.String("from", scrubLogValue(base)), zap.String("to", scrubLogValue(next)),
+				zap.String("from", logsafe.Clean(base)), zap.String("to", logsafe.Clean(next)),
 				zap.Int("status", status), zap.Error(err))
 			if authErr := zm.authenticateAt(next); authErr == nil {
 				respBody, status, err = zm.mgmtRequestAt(next, method, path, body)

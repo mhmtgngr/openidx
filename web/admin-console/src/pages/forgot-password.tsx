@@ -1,13 +1,16 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { Shield, ArrowLeft, Loader2, CheckCircle, AlertCircle } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card'
 import { Input } from '../components/ui/input'
 import { Label } from '../components/ui/label'
 import { baseURL } from '../lib/api'
+import { AuthCardFooter, PoweredBy } from '../components/auth-card-footer'
 
 export function ForgotPasswordPage() {
+  const { t } = useTranslation()
   const [email, setEmail] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [submitted, setSubmitted] = useState(false)
@@ -29,10 +32,11 @@ export function ForgotPasswordPage() {
         setSubmitted(true)
       } else {
         const data = await response.json()
-        setError(data.error || 'Something went wrong. Please try again.')
+        // The API's own error text when it sends one.
+        setError(data.error || t('pages.forgotPassword.failed'))
       }
     } catch {
-      setError('Unable to connect to the server. Please try again.')
+      setError(t('pages.forgotPassword.offline'))
     } finally {
       setIsSubmitting(false)
     }
@@ -52,7 +56,7 @@ export function ForgotPasswordPage() {
               OpenIDX
             </CardTitle>
             <CardDescription className="text-base mt-2">
-              Reset your password
+              {t('pages.forgotPassword.title')}
             </CardDescription>
           </div>
         </CardHeader>
@@ -62,14 +66,16 @@ export function ForgotPasswordPage() {
             <div className="space-y-4">
               <div className="flex items-center gap-2 p-3 bg-green-50 border border-green-200 rounded-md">
                 <CheckCircle className="h-4 w-4 text-green-600 flex-shrink-0" />
+                {/* Deliberately identical whether or not the address exists,
+                    so this page cannot be used to enumerate accounts. */}
                 <p className="text-sm text-green-700">
-                  If an account with that email exists, a password reset link has been sent. Check your email or server logs.
+                  {t('pages.forgotPassword.sent')}
                 </p>
               </div>
               <Link to="/login">
                 <Button variant="ghost" className="w-full">
                   <ArrowLeft className="mr-2 h-4 w-4" />
-                  Back to login
+                  {t('pages.forgotPassword.backToLogin')}
                 </Button>
               </Link>
             </div>
@@ -77,17 +83,18 @@ export function ForgotPasswordPage() {
             <form onSubmit={handleSubmit} className="space-y-4">
               {error && (
                 <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-md">
-                  <AlertCircle className="h-4 w-4 text-red-600 flex-shrink-0" />
-                  <p className="text-sm text-red-600">{error}</p>
+                  <AlertCircle className="h-4 w-4 text-red-700 flex-shrink-0" />
+                  {/* Either this page's own message or the API's. */}
+                  <p className="text-sm text-red-700">{error}</p>
                 </div>
               )}
 
               <div className="space-y-2">
-                <Label htmlFor="email">Email Address</Label>
+                <Label htmlFor="email">{t('pages.forgotPassword.email')}</Label>
                 <Input
                   id="email"
                   type="email"
-                  placeholder="Enter your email address"
+                  placeholder={t('pages.forgotPassword.emailPlaceholder')}
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
@@ -104,38 +111,28 @@ export function ForgotPasswordPage() {
                 {isSubmitting ? (
                   <span className="flex items-center gap-2">
                     <Loader2 className="h-4 w-4 animate-spin" />
-                    Sending...
+                    {t('pages.forgotPassword.submitting')}
                   </span>
                 ) : (
-                  'Send Reset Link'
+                  t('pages.forgotPassword.submit')
                 )}
               </Button>
 
               <Link to="/login">
                 <Button type="button" variant="ghost" className="w-full">
                   <ArrowLeft className="mr-2 h-4 w-4" />
-                  Back to login
+                  {t('pages.forgotPassword.backToLogin')}
                 </Button>
               </Link>
             </form>
           )}
         </CardContent>
 
-        <div className="px-6 py-4 bg-muted border-t border-border rounded-b-lg">
-          <div className="flex items-center justify-center gap-4 text-xs text-muted-foreground">
-            <span>Privacy</span>
-            <span>•</span>
-            <span>Terms</span>
-            <span>•</span>
-            <span>Help</span>
-          </div>
-        </div>
+        <AuthCardFooter />
       </Card>
 
       <div className="absolute bottom-4 text-center w-full">
-        <p className="text-sm text-muted-foreground">
-          Powered by <span className="font-semibold text-foreground">OpenIDX</span>
-        </p>
+        <PoweredBy />
       </div>
     </div>
   )

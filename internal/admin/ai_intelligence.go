@@ -155,12 +155,16 @@ func (s *Service) computeOrgIntelligence(ctx context.Context, orgID string) (*or
 		rows.Close()
 	}
 
-	// Breach incidents are install-wide (no org_id); affected_user_ids carries
-	// users.id values so scoping happens implicitly via the org's user set.
+	// v147 gave breach_incidents an org_id, so the predicate is explicit here.
+	// It used to say the incidents were install-wide and that scoping happened
+	// "implicitly via the org's user set" — a join that filters is not a
+	// predicate that holds: it holds only for as long as every consumer keeps
+	// joining, and nothing made that true.
 	breaches := make(map[string]int)
 	rows, err = s.db.Pool.Query(ctx, `
 		SELECT unnest(affected_user_ids) FROM breach_incidents
-		 WHERE created_at > NOW() - INTERVAL '30 days' AND status NOT IN ('resolved','closed')`)
+		 WHERE created_at > NOW() - INTERVAL '30 days' AND status NOT IN ('resolved','closed')
+		   AND org_id = $1`, orgID)
 	if err == nil {
 		for rows.Next() {
 			var id string

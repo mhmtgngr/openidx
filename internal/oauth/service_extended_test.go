@@ -2,23 +2,17 @@
 package oauth
 
 import (
-	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"math/big"
 	"testing"
-	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
-
-	"github.com/openidx/openidx/internal/common/database"
 )
 
 // ============================================================
@@ -210,334 +204,6 @@ func TestConstantTimeStringCompare(t *testing.T) {
 // Session Management Tests
 // ============================================================
 
-func TestStore_AuthorizationCodeLifecycle(t *testing.T) {
-	mini := miniredis.RunT(t)
-	defer mini.Close()
-
-	client := redis.NewClient(&redis.Options{Addr: mini.Addr()})
-	defer client.Close()
-
-	redisWrapper := &database.RedisClient{Client: client}
-	store := NewStore(redisWrapper, zap.NewNop())
-	ctx := context.Background()
-
-	t.Run("Store and retrieve authorization code", func(t *testing.T) {
-		code := &StoredAuthorizationCode{
-			Code:                "test-code-123",
-			ClientID:            "test-client",
-			UserID:              "user-123",
-			RedirectURI:         "https://example.com/callback",
-			Scope:               "openid profile",
-			State:               "state-456",
-			Nonce:               "nonce-789",
-			CodeChallenge:       "challenge-abc",
-			CodeChallengeMethod: "S256",
-			ExpiresAt:           time.Now().Add(10 * time.Minute),
-			CreatedAt:           time.Now(),
-			Used:                false,
-		}
-
-		err := store.StoreAuthorizationCode(ctx, code, 10*time.Minute)
-		require.NoError(t, err)
-
-		retrieved, err := store.GetAuthorizationCode(ctx, code.Code)
-		assert.NoError(t, err)
-		assert.Equal(t, "test-code-123", retrieved.Code)
-		assert.Equal(t, "test-client", retrieved.ClientID)
-		assert.Equal(t, "user-123", retrieved.UserID)
-		assert.False(t, retrieved.Used)
-	})
-
-	t.Run("Consume authorization code marks as used", func(t *testing.T) {
-		code := &StoredAuthorizationCode{
-			Code:        "consume-test-code",
-			ClientID:    "test-client",
-			UserID:      "user-123",
-			RedirectURI: "https://example.com/callback",
-			Scope:       "openid",
-			ExpiresAt:   time.Now().Add(10 * time.Minute),
-			CreatedAt:   time.Now(),
-			Used:        false,
-		}
-
-		err := store.StoreAuthorizationCode(ctx, code, 10*time.Minute)
-		require.NoError(t, err)
-
-		err = store.ConsumeAuthorizationCode(ctx, code.Code)
-		assert.NoError(t, err)
-
-		_, err = store.GetAuthorizationCode(ctx, code.Code)
-		assert.Error(t, err)
-		assert.Equal(t, ErrCodeNotFound, err)
-	})
-
-	t.Run("Delete authorization code", func(t *testing.T) {
-		code := &StoredAuthorizationCode{
-			Code:        "delete-test-code",
-			ClientID:    "test-client",
-			UserID:      "user-123",
-			RedirectURI: "https://example.com/callback",
-			Scope:       "openid",
-			ExpiresAt:   time.Now().Add(10 * time.Minute),
-			CreatedAt:   time.Now(),
-			Used:        false,
-		}
-
-		err := store.StoreAuthorizationCode(ctx, code, 10*time.Minute)
-		require.NoError(t, err)
-
-		err = store.DeleteAuthorizationCode(ctx, code.Code)
-		assert.NoError(t, err)
-
-		_, err = store.GetAuthorizationCode(ctx, code.Code)
-		assert.Error(t, err)
-		assert.Equal(t, ErrCodeNotFound, err)
-	})
-
-	t.Run("Expired authorization code", func(t *testing.T) {
-		code := &StoredAuthorizationCode{
-			Code:        "expired-code",
-			ClientID:    "test-client",
-			UserID:      "user-123",
-			RedirectURI: "https://example.com/callback",
-			Scope:       "openid",
-			ExpiresAt:   time.Now().Add(-1 * time.Minute),
-			CreatedAt:   time.Now().Add(-2 * time.Minute),
-			Used:        false,
-		}
-
-		err := store.StoreAuthorizationCode(ctx, code, time.Minute)
-		require.NoError(t, err)
-
-		_, err = store.GetAuthorizationCode(ctx, code.Code)
-		assert.Error(t, err)
-		assert.Equal(t, ErrCodeExpired, err)
-	})
-
-	t.Run("Already used authorization code", func(t *testing.T) {
-		code := &StoredAuthorizationCode{
-			Code:        "already-used-code",
-			ClientID:    "test-client",
-			UserID:      "user-123",
-			RedirectURI: "https://example.com/callback",
-			Scope:       "openid",
-			ExpiresAt:   time.Now().Add(10 * time.Minute),
-			CreatedAt:   time.Now(),
-			Used:        true,
-		}
-
-		err := store.StoreAuthorizationCode(ctx, code, 10*time.Minute)
-		require.NoError(t, err)
-
-		_, err = store.GetAuthorizationCode(ctx, code.Code)
-		assert.Error(t, err)
-		assert.Equal(t, ErrCodeAlreadyUsed, err)
-	})
-}
-
-func TestStore_AccessTokenLifecycle(t *testing.T) {
-	mini := miniredis.RunT(t)
-	defer mini.Close()
-
-	client := redis.NewClient(&redis.Options{Addr: mini.Addr()})
-	defer client.Close()
-
-	redisWrapper := &database.RedisClient{Client: client}
-	store := NewStore(redisWrapper, zap.NewNop())
-	ctx := context.Background()
-
-	t.Run("Store and retrieve access token", func(t *testing.T) {
-		token := &AccessTokenData{
-			Token:     "access-token-123",
-			ClientID:  "test-client",
-			UserID:    "user-123",
-			Scope:     "openid profile email",
-			ExpiresAt: time.Now().Add(1 * time.Hour),
-			CreatedAt: time.Now(),
-		}
-
-		err := store.StoreAccessToken(ctx, token, time.Hour)
-		require.NoError(t, err)
-
-		retrieved, err := store.GetAccessToken(ctx, token.Token)
-		assert.NoError(t, err)
-		assert.Equal(t, "access-token-123", retrieved.Token)
-		assert.Equal(t, "test-client", retrieved.ClientID)
-		assert.Equal(t, "user-123", retrieved.UserID)
-	})
-
-	t.Run("Revoke access token", func(t *testing.T) {
-		token := &AccessTokenData{
-			Token:     "revoke-token-123",
-			ClientID:  "test-client",
-			UserID:    "user-123",
-			Scope:     "openid",
-			ExpiresAt: time.Now().Add(1 * time.Hour),
-			CreatedAt: time.Now(),
-		}
-
-		err := store.StoreAccessToken(ctx, token, time.Hour)
-		require.NoError(t, err)
-
-		err = store.RevokeAccessToken(ctx, token.Token)
-		assert.NoError(t, err)
-
-		_, err = store.GetAccessToken(ctx, token.Token)
-		assert.Error(t, err)
-	})
-
-	t.Run("Expired access token", func(t *testing.T) {
-		token := &AccessTokenData{
-			Token:     "expired-access-token",
-			ClientID:  "test-client",
-			UserID:    "user-123",
-			Scope:     "openid",
-			ExpiresAt: time.Now().Add(-1 * time.Minute),
-			CreatedAt: time.Now().Add(-2 * time.Minute),
-		}
-
-		err := store.StoreAccessToken(ctx, token, time.Minute)
-		require.NoError(t, err)
-
-		_, err = store.GetAccessToken(ctx, token.Token)
-		assert.Error(t, err)
-	})
-}
-
-func TestStore_RefreshTokenLifecycle(t *testing.T) {
-	mini := miniredis.RunT(t)
-	defer mini.Close()
-
-	client := redis.NewClient(&redis.Options{Addr: mini.Addr()})
-	defer client.Close()
-
-	redisWrapper := &database.RedisClient{Client: client}
-	store := NewStore(redisWrapper, zap.NewNop())
-	ctx := context.Background()
-
-	t.Run("Store and retrieve refresh token", func(t *testing.T) {
-		token := &StoredRefreshToken{
-			Token:     "refresh-token-123",
-			ClientID:  "test-client",
-			UserID:    "user-123",
-			Scope:     "openid profile offline_access",
-			ExpiresAt: time.Now().Add(30 * 24 * time.Hour),
-			CreatedAt: time.Now(),
-			Revoked:   false,
-		}
-
-		err := store.StoreRefreshToken(ctx, token, "test-family-123", 30*24*time.Hour)
-		require.NoError(t, err)
-
-		retrieved, err := store.GetRefreshToken(ctx, token.Token)
-		assert.NoError(t, err)
-		assert.Equal(t, "refresh-token-123", retrieved.Token)
-		assert.Equal(t, "test-family-123", retrieved.FamilyID)
-		assert.Equal(t, "test-client", retrieved.ClientID)
-		assert.False(t, retrieved.Revoked)
-	})
-
-	t.Run("Revoke refresh token", func(t *testing.T) {
-		token := &StoredRefreshToken{
-			Token:     "revoke-refresh-123",
-			ClientID:  "test-client",
-			UserID:    "user-123",
-			Scope:     "openid",
-			ExpiresAt: time.Now().Add(30 * 24 * time.Hour),
-			CreatedAt: time.Now(),
-			Revoked:   false,
-		}
-
-		err := store.StoreRefreshToken(ctx, token, "revoke-family-xyz", 30*24*time.Hour)
-		require.NoError(t, err)
-
-		err = store.RevokeRefreshToken(ctx, token.Token)
-		assert.NoError(t, err)
-
-		_, err = store.GetRefreshToken(ctx, token.Token)
-		assert.Error(t, err)
-		assert.Equal(t, ErrTokenInvalidated, err)
-	})
-
-	t.Run("Retrieve non-existent refresh token", func(t *testing.T) {
-		_, err := store.GetRefreshToken(ctx, "non-existent-token")
-		assert.Error(t, err)
-		assert.Equal(t, ErrRefreshTokenNotFound, err)
-	})
-
-	t.Run("Expired refresh token", func(t *testing.T) {
-		token := &StoredRefreshToken{
-			Token:     "expired-refresh-token",
-			ClientID:  "test-client",
-			UserID:    "user-123",
-			Scope:     "openid",
-			ExpiresAt: time.Now().Add(-1 * time.Hour),
-			CreatedAt: time.Now().Add(-2 * time.Hour),
-			Revoked:   false,
-		}
-
-		err := store.StoreRefreshToken(ctx, token, "expired-family", time.Minute)
-		require.NoError(t, err)
-
-		_, err = store.GetRefreshToken(ctx, token.Token)
-		assert.Error(t, err)
-		assert.Equal(t, ErrRefreshTokenExpired, err)
-	})
-}
-
-func TestStore_RevokeUserTokens(t *testing.T) {
-	mini := miniredis.RunT(t)
-	defer mini.Close()
-
-	client := redis.NewClient(&redis.Options{Addr: mini.Addr()})
-	defer client.Close()
-
-	redisWrapper := &database.RedisClient{Client: client}
-	store := NewStore(redisWrapper, zap.NewNop())
-	ctx := context.Background()
-
-	userID := "user-revoke-test"
-
-	// Create multiple tokens for the user
-	for i := 0; i < 3; i++ {
-		token := &AccessTokenData{
-			Token:     fmt.Sprintf("user-token-%d", i),
-			ClientID:  "test-client",
-			UserID:    userID,
-			Scope:     "openid",
-			ExpiresAt: time.Now().Add(1 * time.Hour),
-			CreatedAt: time.Now(),
-		}
-		err := store.StoreAccessToken(ctx, token, time.Hour)
-		require.NoError(t, err)
-	}
-
-	// Verify tokens exist
-	token, err := store.GetAccessToken(ctx, "user-token-0")
-	assert.NoError(t, err)
-	assert.Equal(t, userID, token.UserID)
-
-	// Revoke all user tokens
-	err = store.RevokeUserTokens(ctx, userID)
-	assert.NoError(t, err)
-
-	// Verify tokens are gone
-	_, err = store.GetAccessToken(ctx, "user-token-0")
-	assert.Error(t, err)
-	_, err = store.GetAccessToken(ctx, "user-token-1")
-	assert.Error(t, err)
-	_, err = store.GetAccessToken(ctx, "user-token-2")
-	assert.Error(t, err)
-}
-
-// ============================================================
-// Client Authentication and Validation Tests
-// ============================================================
-
-// ============================================================
-// Utility Function Tests
-// ============================================================
-
 func TestBuildRedirectURI(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -696,11 +362,6 @@ func TestOAuthConstants(t *testing.T) {
 		assert.Equal(t, "server_error", ErrorServerError)
 	})
 
-	t.Run("Default token lifetimes", func(t *testing.T) {
-		assert.Equal(t, 10*time.Minute, DefaultAuthCodeTTL)
-		assert.Equal(t, 30*24*time.Hour, DefaultRefreshTokenTTL)
-		assert.Equal(t, time.Hour, DefaultAccessTokenTTL)
-	})
 }
 
 // ============================================================
@@ -743,10 +404,6 @@ func TestSecurityFeatures(t *testing.T) {
 	client := redis.NewClient(&redis.Options{Addr: mini.Addr()})
 	defer client.Close()
 
-	redisWrapper := &database.RedisClient{Client: client}
-	store := NewStore(redisWrapper, zap.NewNop())
-	ctx := context.Background()
-
 	t.Run("PKCE prevents code interception attack", func(t *testing.T) {
 		correctVerifier := generateValidCodeVerifier()
 		correctChallenge := calculateS256Challenge(correctVerifier)
@@ -761,44 +418,23 @@ func TestSecurityFeatures(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
-	t.Run("Single-use authorization codes", func(t *testing.T) {
-		code := &StoredAuthorizationCode{
-			Code:        "single-use-code",
-			ClientID:    "test-client",
-			UserID:      "user-123",
-			RedirectURI: "https://example.com/callback",
-			Scope:       "openid",
-			ExpiresAt:   time.Now().Add(10 * time.Minute),
-			CreatedAt:   time.Now(),
-			Used:        false,
-		}
-
-		err := store.StoreAuthorizationCode(ctx, code, 10*time.Minute)
-		require.NoError(t, err)
-
-		// First use succeeds
-		err = store.ConsumeAuthorizationCode(ctx, code.Code)
-		assert.NoError(t, err)
-
-		// Second use fails (replay attack prevention)
-		err = store.ConsumeAuthorizationCode(ctx, code.Code)
-		assert.Error(t, err)
-	})
 }
 
 // ============================================================
 // Concurrency Tests
 // ============================================================
 
+// Repointed at generateRandomToken when the parallel Store was deleted: it
+// used to call Store.GenerateToken, which no live path ever reached, so the
+// uniqueness this asserts was being asserted about the wrong generator.
 func TestConcurrentTokenGeneration(t *testing.T) {
-	store := &Store{}
 	tokenSet := make(map[string]bool)
 	results := make(chan string, 100)
 
 	// Generate tokens concurrently
 	for i := 0; i < 100; i++ {
 		go func() {
-			results <- store.GenerateToken()
+			results <- generateRandomToken(32)
 		}()
 	}
 
@@ -814,31 +450,6 @@ func TestConcurrentTokenGeneration(t *testing.T) {
 
 // ============================================================
 // Store Tests
-// ============================================================
-
-func TestStore_GenerateToken(t *testing.T) {
-	store := &Store{}
-
-	t.Run("Generates unique tokens", func(t *testing.T) {
-		tokens := make(map[string]bool)
-		for i := 0; i < 100; i++ {
-			token := store.GenerateToken()
-			assert.NotEmpty(t, token)
-			assert.False(t, tokens[token], "Token should be unique")
-			tokens[token] = true
-		}
-		assert.Len(t, tokens, 100)
-	})
-
-	t.Run("Tokens are reasonable length", func(t *testing.T) {
-		token := store.GenerateToken()
-		assert.GreaterOrEqual(t, len(token), 32)
-		assert.LessOrEqual(t, len(token), 64)
-	})
-}
-
-// ============================================================
-// Custom Type Tests
 // ============================================================
 
 func TestUserInfo(t *testing.T) {

@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import {
   AlertTriangle,
   CheckCircle2,
@@ -57,6 +58,7 @@ function StatRow({ label, value, alert }: { label: string; value: number; alert?
 }
 
 export function PAMDashboardPage() {
+  const { t } = useTranslation()
   const { data, isLoading, error } = useQuery({
     queryKey: ['pam-overview'],
     queryFn: () => api.get<PAMOverview>('/api/v1/pam/overview'),
@@ -72,7 +74,7 @@ export function PAMDashboardPage() {
   }
 
   if (error) {
-    return <QueryError error={error} resource="PAM overview" />
+    return <QueryError error={error} resource={t('pages.pamDashboard.resource')} />
   }
 
   if (!data) return null
@@ -85,13 +87,17 @@ export function PAMDashboardPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Privileged Access</h1>
+          <h1 className="text-3xl font-bold tracking-tight">
+            {t('pages.pamDashboard.title')}
+          </h1>
           <p className="text-muted-foreground">
-            Vault inventory, rotation health, checkout activity, and privileged sessions
+            {t('pages.pamDashboard.subtitle')}
           </p>
         </div>
         <span className="text-xs text-muted-foreground">
-          Updated {new Date(data.generated_at).toLocaleTimeString()}
+          {t('pages.pamDashboard.updated', {
+            time: new Date(data.generated_at).toLocaleTimeString(),
+          })}
         </span>
       </div>
 
@@ -99,15 +105,16 @@ export function PAMDashboardPage() {
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Vault Secrets</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('pages.pamDashboard.secrets')}</CardTitle>
             <Vault className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold tabular-nums">{data.secrets.total}</div>
             <div className="mt-1 flex flex-wrap gap-1">
               {Object.entries(data.secrets.by_type).map(([type, count]) => (
+                // The type is the vault's own kind for the secret.
                 <Badge key={type} variant="outline" className="text-xs">
-                  {type}: {count}
+                  {t('pages.pamDashboard.secretType', { type, count })}
                 </Badge>
               ))}
             </div>
@@ -116,40 +123,46 @@ export function PAMDashboardPage() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Active Leases</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('pages.pamDashboard.leases')}</CardTitle>
             <KeyRound className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold tabular-nums">{data.checkouts.active_leases}</div>
             <p className="text-xs text-muted-foreground mt-1">
-              {data.checkouts.checkouts_30d} checkouts in the last 30 days
+              {t('pages.pamDashboard.checkouts30d', { count: data.checkouts.checkouts_30d })}
             </p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Active Sessions</CardTitle>
+            <CardTitle className="text-sm font-medium">
+              {t('pages.pamDashboard.activeSessions')}
+            </CardTitle>
             <MonitorPlay className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold tabular-nums">{data.sessions.active_sessions}</div>
             <p className="text-xs text-muted-foreground mt-1">
-              {data.sessions.sessions_30d} sessions in the last 30 days
+              {t('pages.pamDashboard.sessions30d', { count: data.sessions.sessions_30d })}
             </p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Pending Approvals</CardTitle>
+            <CardTitle className="text-sm font-medium">
+              {t('pages.pamDashboard.pendingApprovals')}
+            </CardTitle>
             <Clock className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold tabular-nums">{needsAttention}</div>
             <p className="text-xs text-muted-foreground mt-1">
-              {data.checkouts.pending_credential_requests} credential ·{' '}
-              {data.sessions.pending_requests} session
+              {t('pages.pamDashboard.pendingBreakdown', {
+                credential: data.checkouts.pending_credential_requests,
+                session: data.sessions.pending_requests,
+              })}
             </p>
           </CardContent>
         </Card>
@@ -161,28 +174,40 @@ export function PAMDashboardPage() {
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-2 text-sm font-medium">
               <RefreshCw className="h-4 w-4" />
-              Rotation Health
+              {t('pages.pamDashboard.rotation.title')}
               {rotationHealthy ? (
                 <span className="inline-flex items-center gap-1 text-xs font-medium text-green-700">
                   <CheckCircle2 className="h-3.5 w-3.5" />
-                  Healthy
+                  {t('pages.pamDashboard.rotation.healthy')}
                 </span>
               ) : (
                 <span className="inline-flex items-center gap-1 text-xs font-medium text-red-600">
                   <AlertTriangle className="h-3.5 w-3.5" />
-                  Needs attention
+                  {t('pages.pamDashboard.rotation.attention')}
                 </span>
               )}
             </CardTitle>
-            <CardDescription>Credential rotation policies and recent runs</CardDescription>
+            <CardDescription>{t('pages.pamDashboard.rotation.desc')}</CardDescription>
           </CardHeader>
           <CardContent className="divide-y">
-            <StatRow label="Policies" value={data.rotation.policies} />
-            <StatRow label="Enabled" value={data.rotation.policies_enabled} />
-            <StatRow label="Failing (last run)" value={data.rotation.policies_failing} alert />
-            <StatRow label="Overdue" value={data.rotation.policies_overdue} alert />
-            <StatRow label="Runs (30 days)" value={data.rotation.runs_30d} />
-            <StatRow label="Failed runs (30 days)" value={data.rotation.failures_30d} alert />
+            <StatRow label={t('pages.pamDashboard.rotation.policies')} value={data.rotation.policies} />
+            <StatRow label={t('pages.pamDashboard.rotation.enabled')} value={data.rotation.policies_enabled} />
+            <StatRow
+              label={t('pages.pamDashboard.rotation.failing')}
+              value={data.rotation.policies_failing}
+              alert
+            />
+            <StatRow
+              label={t('pages.pamDashboard.rotation.overdue')}
+              value={data.rotation.policies_overdue}
+              alert
+            />
+            <StatRow label={t('pages.pamDashboard.rotation.runs')} value={data.rotation.runs_30d} />
+            <StatRow
+              label={t('pages.pamDashboard.rotation.failedRuns')}
+              value={data.rotation.failures_30d}
+              alert
+            />
           </CardContent>
         </Card>
 
@@ -190,15 +215,21 @@ export function PAMDashboardPage() {
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-2 text-sm font-medium">
               <Gavel className="h-4 w-4" />
-              Session Assurance
+              {t('pages.pamDashboard.assurance.title')}
             </CardTitle>
-            <CardDescription>Brokered privileged sessions and recording holds</CardDescription>
+            <CardDescription>{t('pages.pamDashboard.assurance.desc')}</CardDescription>
           </CardHeader>
           <CardContent className="divide-y">
-            <StatRow label="Active sessions" value={data.sessions.active_sessions} />
-            <StatRow label="Sessions (30 days)" value={data.sessions.sessions_30d} />
-            <StatRow label="Pending session requests" value={data.sessions.pending_requests} />
-            <StatRow label="Recordings on legal hold" value={data.sessions.recordings_on_hold} />
+            <StatRow label={t('pages.pamDashboard.assurance.active')} value={data.sessions.active_sessions} />
+            <StatRow label={t('pages.pamDashboard.assurance.sessions30d')} value={data.sessions.sessions_30d} />
+            <StatRow
+              label={t('pages.pamDashboard.assurance.pending')}
+              value={data.sessions.pending_requests}
+            />
+            <StatRow
+              label={t('pages.pamDashboard.assurance.holds')}
+              value={data.sessions.recordings_on_hold}
+            />
           </CardContent>
         </Card>
       </div>
@@ -210,21 +241,21 @@ export function PAMDashboardPage() {
           className="flex items-center gap-2 rounded-md border bg-background p-3 text-sm font-medium transition-shadow hover:shadow-md"
         >
           <KeyRound className="h-4 w-4 text-purple-600" />
-          Manage Vault Secrets
+          {t('pages.pamDashboard.manage.vault')}
         </Link>
         <Link
           to="/rotation-policies"
           className="flex items-center gap-2 rounded-md border bg-background p-3 text-sm font-medium transition-shadow hover:shadow-md"
         >
           <RefreshCw className="h-4 w-4 text-purple-600" />
-          Manage Rotation Policies
+          {t('pages.pamDashboard.manage.rotation')}
         </Link>
         <Link
           to="/guacamole-sessions"
           className="flex items-center gap-2 rounded-md border bg-background p-3 text-sm font-medium transition-shadow hover:shadow-md"
         >
           <MonitorPlay className="h-4 w-4 text-purple-600" />
-          Manage Privileged Sessions
+          {t('pages.pamDashboard.manage.sessions')}
         </Link>
       </div>
     </div>

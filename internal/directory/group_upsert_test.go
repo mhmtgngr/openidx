@@ -3,6 +3,7 @@ package directory
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -35,7 +36,12 @@ func setupGroupsDB(t *testing.T) (*database.PostgresDB, func()) {
 		Image:        "postgres:16-alpine",
 		ExposedPorts: []string{"5432/tcp"},
 		Env:          map[string]string{"POSTGRES_USER": "test", "POSTGRES_PASSWORD": "test", "POSTGRES_DB": "testdb"},
-		WaitingFor:   wait.ForListeningPort("5432/tcp"),
+		// Log-based readiness, same as the portal/access/admin harnesses — a
+		// port wait races Postgres startup (SQLSTATE 57P03); the ready message
+		// appears twice, once during initdb's throwaway start.
+		WaitingFor: wait.ForLog("database system is ready to accept connections").
+			WithOccurrence(2).
+			WithStartupTimeout(60 * time.Second),
 	}
 	container := testsupport.RunOrSkip(t, req.Image, func() (testcontainers.Container, error) {
 		return testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{

@@ -56,8 +56,9 @@ func TestAuthorizeAssignmentDecision(t *testing.T) {
 // This is the regression guard for the Critical the first cut of this gate
 // shipped with: issueAuthorizationCode was gated, but four other live mint
 // sites — handleAuthorizeConsent, handleAuthorizeConsentV2,
-// issueHostedAuthorizationCode (the hosted login page BrowZer/mobile/desktop
-// use) and handleMagicLinkVerify — were not, so an unassigned user could still
+// issueHostedAuthorizationCode (the server-rendered login page, deleted with
+// hosted_mfa.go — there is one login UI now) and handleMagicLinkVerify — were
+// not, so an unassigned user could still
 // obtain a code through any of them with no error and no audit record, even
 // with ACCESS_ASSIGNMENT_ENFORCE on. A missed call site is silent, which is
 // exactly why a table test on the pure decision function alone cannot catch
@@ -72,7 +73,6 @@ func TestEveryMintSiteCallsAssignmentGate(t *testing.T) {
 		{"service.go", "func (s *Service) handleAuthorizeConsent(", "s.CreateAuthorizationCode("},
 		{"service.go", "func (s *Service) handleAuthorizeConsentV2(", "s.authorizeHandler.IssueAuthorizationCode("},
 		{"service.go", "func (s *Service) handleCallback(", "s.CreateAuthorizationCode("},
-		{"hosted_mfa.go", "func (s *Service) issueHostedAuthorizationCode(", "s.CreateAuthorizationCode("},
 		{"handlers_passwordless.go", "func (s *Service) handleMagicLinkVerify(", "s.CreateAuthorizationCode("},
 	}
 
@@ -128,11 +128,10 @@ func TestEveryMintSiteCallsAssignmentGate(t *testing.T) {
 // surviving three review rounds the way the sixth (handleCallback) survived
 // two.
 var mintSiteDisposition = map[string]string{
-	"issueAuthorizationCode":       "gated",
-	"handleAuthorizeConsent":       "gated",
-	"handleCallback":               "gated",
-	"issueHostedAuthorizationCode": "gated",
-	"handleMagicLinkVerify":        "gated",
+	"issueAuthorizationCode": "gated",
+	"handleAuthorizeConsent": "gated",
+	"handleCallback":         "gated",
+	"handleMagicLinkVerify":  "gated",
 
 	// AuthorizeHandler.IssueAuthorizationCode (authorize.go) takes a plain
 	// context.Context, not a *gin.Context — it has no request to attach a 403

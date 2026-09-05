@@ -10,7 +10,7 @@
 ✅ **Deprovisioning** - Remove access when users leave
 ✅ **Synchronization** - Keep user data consistent everywhere
 ✅ **Standard Protocol** - Works with Okta, Azure AD, OneLogin, and more
-✅ **Cost Savings** - Reduce manual provisioning work by 70-80%
+✅ **Less manual work** - Joiner, mover and leaver changes stop being tickets
 
 ## Use Cases
 

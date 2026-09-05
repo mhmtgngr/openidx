@@ -81,9 +81,52 @@ test.describe('JIT Access — Duration Picker', () => {
     // Fill form
     const typeSelect = page.locator('text=Select type');
     await typeSelect.click();
-    await page.getByRole('option', { name: 'Role' }).click();
 
-    await page.getByPlaceholder('Enter resource name').fill('admin-role');
+    // Resource Name is two controls, not one, and WHICH one is on screen
+    // changes while the test is running. Each type's list query is `enabled`
+    // only for the selected type, so choosing "Role" is what starts the roles
+    // request; until it resolves the page renders the free-text input, and
+    // then swaps in the picker if any roles came back.
+    //
+    // Sampling `isVisible()` right after the click therefore reads the
+    // pre-swap render nearly every time: the test took the input branch and
+    // then filled an element that detached under it, and Playwright waited on
+    // the detached node until the 30s timeout. That is not a flake — it is
+    // deterministic whenever the stack has roles and the response is slower
+    // than one round trip through the click.
+    //
+    // So decide from the same data the component decides from: wait for the
+    // roles response, read it, and then wait for the control that payload
+    // implies. Each wait auto-retries, which covers the gap between the
+    // response landing and React committing the swap.
+    const rolesSettled = page
+      .waitForResponse(
+        (r) => r.url().includes('/api/v1/identity/roles') && r.request().method() === 'GET',
+        { timeout: 15_000 },
+      )
+      .catch(() => null);
+    await page.getByRole('option', { name: 'Role' }).click();
+    const rolesResponse = await rolesSettled;
+    const rolesPayload = rolesResponse ? await rolesResponse.json().catch(() => null) : null;
+    const roleList = Array.isArray(rolesPayload)
+      ? rolesPayload
+      : Array.isArray(rolesPayload?.data)
+        ? rolesPayload.data
+        : [];
+
+    let expectedName = 'admin-role';
+    if (roleList.length > 0) {
+      const namePicker = page.getByRole('combobox', { name: 'Resource Name' });
+      await expect(namePicker).toBeVisible();
+      await namePicker.click();
+      const firstOption = page.getByRole('option').first();
+      expectedName = ((await firstOption.textContent()) || '').trim();
+      await firstOption.click();
+    } else {
+      const nameInput = page.getByPlaceholder('Enter resource name');
+      await expect(nameInput).toBeVisible();
+      await nameInput.fill(expectedName);
+    }
     await page.getByPlaceholder('Explain why you need access').fill('Temporary admin access for maintenance');
 
     // Select duration
@@ -101,7 +144,7 @@ test.describe('JIT Access — Duration Picker', () => {
     const postedData = JSON.parse(request.postData() || '{}');
 
     expect(postedData.resource_type).toBe('role');
-    expect(postedData.resource_name).toBe('admin-role');
+    expect(postedData.resource_name).toBe(expectedName);
     expect(postedData.duration).toBe('4h');
   });
 });

@@ -1,20 +1,28 @@
 # Getting Started with OpenIDX
 
-> **Planning a production deploy?** The 5-minute Quick Start below
-> brings up a development stack with insecure defaults. Before going
-> to production, walk through
+> **Just want to run OpenIDX?** Use the **[Quick Start in the repository
+> README](../README.md#quick-start)** — the Docker Compose path with
+> generated secrets is the one supported first run, and it is maintained
+> in exactly one place. This document is for **developers building from
+> source** (and for the first-time setup tasks below, which apply to
+> both paths).
+>
+> **Planning a production deploy?** The developer setup below brings up
+> a development stack with insecure defaults. Before going to
+> production, walk through
 > [docs/SECURITY-HARDENING.md](./SECURITY-HARDENING.md), which lists
 > the knobs the in-process `ValidateProduction()` gate refuses to
 > start without. Also read
 > [docs/SECURITY-TENANCY.md](./SECURITY-TENANCY.md) — OpenIDX is
-> single-tenant by design.
+> multi-tenant, enforced at the database with FORCE row-level
+> security; that document defines the trust boundary.
 
-## 🚀 Quick Start (5 Minutes)
+## 🛠 Developer Setup (from source)
 
 ### Prerequisites
 
-- Go 1.22+
-- Node.js 18+
+- Go 1.26+
+- Node.js 20+
 - Docker & Docker Compose
 - PostgreSQL 16 (or use Docker)
 - Make (optional, for convenience)
@@ -36,8 +44,8 @@ cd web/admin-console && npm install
 
 ```bash
 # Option A: Using Docker Compose (Recommended)
-cd deployments/docker
-docker-compose up -d postgres redis elasticsearch keycloak
+./scripts/generate-secrets.sh          # writes .env with random secrets
+docker compose -f deployments/docker/docker-compose.yml up -d postgres redis elasticsearch
 
 # Option B: Local PostgreSQL
 # Make sure PostgreSQL is running on localhost:5432
@@ -126,61 +134,54 @@ Open your browser:
 
 ## 🐳 Docker Compose (Full Stack)
 
-### Start Everything
+The full-stack compose path is the **[README Quick
+Start](../README.md#quick-start)** — clone, run
+`./scripts/generate-secrets.sh` (compose refuses to start without the
+generated `.env`), then `docker compose -f
+deployments/docker/docker-compose.yml up -d`. It is not duplicated here
+so the instructions can never diverge. Infrastructure credentials
+(PostgreSQL, Redis, Grafana, …) are the random values in your generated
+`.env`, not fixed defaults.
+
+Day-to-day commands once it's up:
 
 ```bash
-cd deployments/docker
+# View logs / status
+docker compose -f deployments/docker/docker-compose.yml logs -f
+docker compose -f deployments/docker/docker-compose.yml ps
 
-# Start all services
-docker-compose up -d
-
-# View logs
-docker-compose logs -f
-
-# Check status
-docker-compose ps
+# Stop (keep data) / stop and remove all data
+docker compose -f deployments/docker/docker-compose.yml down
+docker compose -f deployments/docker/docker-compose.yml down -v
 ```
 
-### Access Services
-
-| Service | URL | Credentials |
-|---------|-----|-------------|
-| Admin Console | http://localhost:3000 | - |
-| API Gateway | http://localhost:8088 | - |
-| Keycloak | http://localhost:8180 | admin/admin |
-| PostgreSQL | localhost:5432 | openidx/openidx_secret |
-| Redis | localhost:6379 | redis_secret |
-| Elasticsearch | http://localhost:9200 | - |
-| OPA | http://localhost:8281 | - |
-
-### Stop Everything
-
-```bash
-# Stop services (keep data)
-docker-compose down
-
-# Stop and remove all data
-docker-compose down -v
-```
+The admin console is at http://localhost:3000 (sign-in:
+[First Login](#1-first-login)); the API gateway at http://localhost:8088.
 
 ---
 
 ## 📝 First-Time Setup Tasks
 
-### 1. Create First Admin User
+### 1. First Login
 
-```bash
-curl -X POST http://localhost:8001/api/v1/identity/users \
-  -H "Content-Type: application/json" \
-  -d '{
-    "username": "admin",
-    "email": "admin@openidx.local",
-    "first_name": "Admin",
-    "last_name": "User",
-    "enabled": true,
-    "email_verified": true
-  }'
-```
+You do not create the first admin — the seed migration (v10) already did.
+This is the **authoritative** first-login credential; if another document
+disagrees, this one is right:
+
+| Field | Value |
+|---|---|
+| Username | `admin` (email `admin@openidx.local`) |
+| Password | `Admin@123` |
+
+Sign in at http://localhost:3000 and **rotate this password immediately**
+(Console: **Users → admin → Set password**, or
+`POST /api/v1/identity/users/00000000-0000-0000-0000-000000000001/set-password`).
+
+This is not optional for production: the identity and oauth services
+**refuse to start** with `APP_ENV=production` while the seeded default
+password still authenticates
+(`identity.EnsureDefaultAdminRotated`, called from both service mains).
+Rotate it while still in development and the gate never bothers you.
 
 ### 2. Register OAuth Client for Admin Console
 
@@ -547,8 +548,9 @@ curl http://localhost:8001/metrics
 
 - **Documentation:** `/docs` folder
 - **Issues:** https://github.com/mhmtgngr/openidx/issues
-- **Architecture:** See `docs/ARCHITECTURE.md` (to be created)
-- **API Reference:** See `docs/API-REFERENCE.md` (to be created)
+- **Architecture:** [Architecture](docs/guide/architecture.md) on the docs site
+- **API Reference:** the OpenAPI specs in `api/openapi/`, browsable in the
+  console under **Developer → API Docs**
 
 ---
 

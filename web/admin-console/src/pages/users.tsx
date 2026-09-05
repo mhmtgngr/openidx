@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import { isAxiosError } from 'axios'
 import { Plus, Search, MoreHorizontal, Mail, Edit, Trash2, Key, Shield, Download, Upload, ChevronLeft, ChevronRight, Users, Network, LayoutGrid } from 'lucide-react'
 import { Button } from '../components/ui/button'
@@ -97,6 +98,7 @@ interface ZitiInfo {
 }
 
 export function UsersPage() {
+  const { t } = useTranslation()
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const { toast } = useToast()
@@ -170,8 +172,8 @@ export function UsersPage() {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['users'] })
       toast({
-        title: 'Success',
-        description: `User ${toFlatUser(data).username} created successfully!`,
+        title: t('common.success'),
+        description: t('pages.users.toasts.created', { name: toFlatUser(data).username }),
         variant: 'success',
       })
       setAddUserModal(false)
@@ -179,8 +181,8 @@ export function UsersPage() {
     },
     onError: (error: Error) => {
       toast({
-        title: 'Error',
-        description: `Failed to create user: ${error.message}`,
+        title: t('common.error'),
+        description: t('pages.users.toasts.createFailed', { message: error.message }),
         variant: 'destructive',
       })
     },
@@ -193,8 +195,8 @@ export function UsersPage() {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['users'] })
       toast({
-        title: 'Success',
-        description: `User ${toFlatUser(data).username} updated successfully!`,
+        title: t('common.success'),
+        description: t('pages.users.toasts.updated', { name: toFlatUser(data).username }),
         variant: 'success',
       })
       setEditUserModal(false)
@@ -202,8 +204,8 @@ export function UsersPage() {
     },
     onError: (error: Error) => {
       toast({
-        title: 'Error',
-        description: `Failed to update user: ${error.message}`,
+        title: t('common.error'),
+        description: t('pages.users.toasts.updateFailed', { message: error.message }),
         variant: 'destructive',
       })
     },
@@ -216,15 +218,15 @@ export function UsersPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['users'] })
       toast({
-        title: 'Success',
-        description: 'User deleted successfully!',
+        title: t('common.success'),
+        description: t('pages.users.toasts.deleted'),
         variant: 'success',
       })
     },
     onError: (error: Error) => {
       toast({
-        title: 'Error',
-        description: `Failed to delete user: ${error.message}`,
+        title: t('common.error'),
+        description: t('pages.users.toasts.deleteFailed', { message: error.message }),
         variant: 'destructive',
       })
     },
@@ -239,8 +241,8 @@ export function UsersPage() {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['users'] })
       toast({
-        title: 'Import Complete',
-        description: `${data.created} of ${data.total} users imported. ${data.errors} errors.`,
+        title: t('pages.users.toasts.importTitle'),
+        description: t('pages.users.toasts.imported', { created: data.created, total: data.total, errors: data.errors }),
         variant: data.errors > 0 ? 'destructive' : 'success',
       })
       setImportModal(false)
@@ -248,8 +250,8 @@ export function UsersPage() {
     },
     onError: (error: Error) => {
       toast({
-        title: 'Error',
-        description: `Failed to import users: ${error.message}`,
+        title: t('common.error'),
+        description: t('pages.users.toasts.importFailed', { message: error.message }),
         variant: 'destructive',
       })
     },
@@ -266,7 +268,7 @@ export function UsersPage() {
       a.click()
       window.URL.revokeObjectURL(url)
     } catch {
-      toast({ title: 'Error', description: 'Failed to export users', variant: 'destructive' })
+      toast({ title: t('common.error'), description: t('pages.users.toasts.exportFailed'), variant: 'destructive' })
     }
   }
 
@@ -295,15 +297,15 @@ export function UsersPage() {
     try {
       await api.post(`/api/v1/identity/users/${userId}/reset-password`)
       toast({
-        title: 'Success',
-        description: 'Password reset email sent successfully.',
+        title: t('common.success'),
+        description: t('pages.users.toasts.resetSent'),
         variant: 'success',
       })
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Unknown error'
       toast({
-        title: 'Error',
-        description: `Failed to reset password: ${message}`,
+        title: t('common.error'),
+        description: t('pages.users.toasts.resetFailed', { message }),
         variant: 'destructive',
       })
     }
@@ -346,8 +348,8 @@ export function UsersPage() {
       queryClient.invalidateQueries({ queryKey: ['roles'] })
       queryClient.invalidateQueries({ queryKey: ['user-roles', variables.userId] })
       toast({
-        title: 'Success',
-        description: `Roles updated for user ${selectedUser?.username}`,
+        title: t('common.success'),
+        description: t('pages.users.toasts.rolesUpdated', { name: selectedUser?.username ?? '' }),
         variant: 'success',
       })
       setManageRolesModal(false)
@@ -359,14 +361,14 @@ export function UsersPage() {
         const violations = error.response.data.violations as Array<{ policy_name: string; reason: string }>
         const details = violations.map((v: { policy_name: string; reason: string }) => `${v.policy_name}: ${v.reason}`).join('\n')
         toast({
-          title: 'Policy Violation',
+          title: t('common.policyViolation'),
           description: details,
           variant: 'destructive',
         })
       } else {
         toast({
-          title: 'Error',
-          description: `Failed to update roles: ${error.message}`,
+          title: t('common.error'),
+          description: t('pages.users.toasts.rolesUpdateFailed', { message: error.message }),
           variant: 'destructive',
         })
       }
@@ -414,18 +416,18 @@ export function UsersPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Users</h1>
-          <p className="text-muted-foreground">Manage user accounts and access</p>
+          <h1 className="text-3xl font-bold tracking-tight">{t('nav.items.users')}</h1>
+          <p className="text-muted-foreground">{t('pages.users.subtitle')}</p>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" onClick={handleExportCSV}>
-            <Download className="mr-2 h-4 w-4" /> Export CSV
+            <Download className="mr-2 h-4 w-4" /> {t('pages.users.exportCsv')}
           </Button>
           <Button variant="outline" onClick={() => setImportModal(true)}>
-            <Upload className="mr-2 h-4 w-4" /> Import CSV
+            <Upload className="mr-2 h-4 w-4" /> {t('pages.users.importCsv')}
           </Button>
           <Button onClick={handleAddUser}>
-            <Plus className="mr-2 h-4 w-4" /> Add User
+            <Plus className="mr-2 h-4 w-4" /> {t('pages.users.addUser')}
           </Button>
         </div>
       </div>
@@ -436,7 +438,7 @@ export function UsersPage() {
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
-                placeholder="Search users..."
+                placeholder={t('pages.users.searchPlaceholder')}
                 value={search}
                 onChange={(e) => { setSearch(e.target.value); setPage(0) }}
                 className="pl-9"
@@ -448,24 +450,24 @@ export function UsersPage() {
           {isLoading ? (
             <TableSkeleton rows={8} cols={6} />
           ) : isError ? (
-            <QueryError error={error} resource="users" />
+            <QueryError error={error} resource={t('pages.users.resourceName')} />
           ) : filteredUsers.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
               <Users className="h-12 w-12 text-muted-foreground/40 mb-3" />
-              <p className="font-medium">No users found</p>
-              <p className="text-sm">{search ? 'No users match your search criteria' : 'Users will appear here when accounts are created'}</p>
+              <p className="font-medium">{t('pages.users.empty')}</p>
+              <p className="text-sm">{search ? t('pages.users.emptySearchHint') : t('pages.users.emptyHint')}</p>
             </div>
           ) : (
           <div className="rounded-md border">
             <Table>
               <TableHeader>
                 <TableRow className="border-b bg-muted">
-                  <TableHead className="p-3 text-left text-sm font-medium">User</TableHead>
-                  <TableHead className="p-3 text-left text-sm font-medium">Email</TableHead>
-                  <TableHead className="p-3 text-left text-sm font-medium">Status</TableHead>
-                  <TableHead className="p-3 text-left text-sm font-medium">Ziti</TableHead>
-                  <TableHead className="p-3 text-left text-sm font-medium">Created</TableHead>
-                  <TableHead className="p-3 text-right text-sm font-medium">Actions</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">{t('pages.users.table.user')}</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">{t('pages.users.table.email')}</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">{t('pages.users.table.status')}</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">{t('pages.users.table.ziti')}</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">{t('pages.users.table.created')}</TableHead>
+                  <TableHead className="p-3 text-right text-sm font-medium">{t('pages.users.table.actions')}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -494,21 +496,21 @@ export function UsersPage() {
                           <Mail className="h-4 w-4 text-muted-foreground" />
                           {user.email}
                           {user.email_verified && (
-                            <Badge variant="outline" className="ml-2">Verified</Badge>
+                            <Badge variant="outline" className="ml-2">{t('pages.users.badges.verified')}</Badge>
                           )}
                         </div>
                       </TableCell>
                       <TableCell className="p-3">
                         <Badge className={user.enabled ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}>
-                          {user.enabled ? 'Active' : 'Disabled'}
+                          {user.enabled ? t('pages.users.badges.active') : t('pages.users.badges.disabled')}
                         </Badge>
                       </TableCell>
                       <TableCell className="p-3">
                         {zitiMap && zitiMap[user.id] ? (
-                          <div className="flex items-center gap-1.5" title={`Ziti: ${zitiMap[user.id].name}\nRoles: ${zitiMap[user.id].attributes.join(', ') || 'none'}`}>
+                          <div className="flex items-center gap-1.5" title={t('pages.users.zitiTitle', { name: zitiMap[user.id].name, roles: zitiMap[user.id].attributes.join(', ') || t('pages.users.zitiNone') })}>
                             <Network className="h-3.5 w-3.5 text-green-600" />
                             <Badge variant="outline" className="text-xs bg-green-50 text-green-700 border-green-200">
-                              {zitiMap[user.id].enrolled ? 'Enrolled' : 'Linked'}
+                              {zitiMap[user.id].enrolled ? t('pages.users.badges.enrolled') : t('pages.users.badges.linked')}
                             </Badge>
                           </div>
                         ) : (
@@ -528,20 +530,20 @@ export function UsersPage() {
                           <DropdownMenuContent align="end">
                             <DropdownMenuItem onClick={() => navigate(`/users/${user.id}/access-360`)}>
                               <LayoutGrid className="mr-2 h-4 w-4" />
-                              Access 360
+                              {t('pages.users.menu.access360')}
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
                             <DropdownMenuItem onClick={() => handleEditUser(user)}>
                               <Edit className="mr-2 h-4 w-4" />
-                              Edit User
+                              {t('pages.users.menu.edit')}
                             </DropdownMenuItem>
                             <DropdownMenuItem onClick={() => handleResetPassword(user.id, user.username)}>
                               <Key className="mr-2 h-4 w-4" />
-                              Reset Password
+                              {t('pages.users.menu.resetPassword')}
                             </DropdownMenuItem>
                             <DropdownMenuItem onClick={() => handleManageRoles(user.id)}>
                               <Shield className="mr-2 h-4 w-4" />
-                              Manage Roles
+                              {t('pages.users.menu.manageRoles')}
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
                             <DropdownMenuItem
@@ -550,7 +552,7 @@ export function UsersPage() {
                               disabled={deleteUserMutation.isPending}
                             >
                               <Trash2 className="mr-2 h-4 w-4" />
-                              {deleteUserMutation.isPending ? 'Deleting...' : 'Delete User'}
+                              {deleteUserMutation.isPending ? t('pages.users.menu.deleting') : t('pages.users.menu.delete')}
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
@@ -566,7 +568,7 @@ export function UsersPage() {
           {totalCount > PAGE_SIZE && (
             <div className="flex items-center justify-between pt-4 px-1">
               <p className="text-sm text-muted-foreground">
-                Showing {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, totalCount)} of {totalCount} users
+                {t('pages.users.showing', { from: page * PAGE_SIZE + 1, to: Math.min((page + 1) * PAGE_SIZE, totalCount), total: totalCount })}
               </p>
               <div className="flex items-center gap-2">
                 <Button
@@ -576,10 +578,10 @@ export function UsersPage() {
                   disabled={page === 0}
                 >
                   <ChevronLeft className="h-4 w-4 mr-1" />
-                  Previous
+                  {t('common.pagination.previous')}
                 </Button>
                 <span className="text-sm text-muted-foreground">
-                  Page {page + 1} of {Math.ceil(totalCount / PAGE_SIZE)}
+                  {t('common.pagination.pageOf', { page: page + 1, pages: Math.ceil(totalCount / PAGE_SIZE) })}
                 </span>
                 <Button
                   variant="outline"
@@ -587,7 +589,7 @@ export function UsersPage() {
                   onClick={() => setPage(p => p + 1)}
                   disabled={(page + 1) * PAGE_SIZE >= totalCount}
                 >
-                  Next
+                  {t('common.pagination.next')}
                   <ChevronRight className="h-4 w-4 ml-1" />
                 </Button>
               </div>
@@ -600,11 +602,11 @@ export function UsersPage() {
       <Dialog open={addUserModal} onOpenChange={setAddUserModal}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Add New User</DialogTitle>
+            <DialogTitle>{t('pages.users.addDialog.title')}</DialogTitle>
           </DialogHeader>
           <form onSubmit={handleFormSubmit} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="username">Username *</Label>
+              <Label htmlFor="username">{t('pages.users.addDialog.username')}</Label>
               <Input
                 id="username"
                 name="username"
@@ -615,7 +617,7 @@ export function UsersPage() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="email">Email *</Label>
+              <Label htmlFor="email">{t('pages.users.addDialog.email')}</Label>
               <Input
                 id="email"
                 name="email"
@@ -628,7 +630,7 @@ export function UsersPage() {
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="first_name">First Name</Label>
+                <Label htmlFor="first_name">{t('pages.users.addDialog.firstName')}</Label>
                 <Input
                   id="first_name"
                   name="first_name"
@@ -638,7 +640,7 @@ export function UsersPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="last_name">Last Name</Label>
+                <Label htmlFor="last_name">{t('pages.users.addDialog.lastName')}</Label>
                 <Input
                   id="last_name"
                   name="last_name"
@@ -655,10 +657,10 @@ export function UsersPage() {
                 onClick={() => setAddUserModal(false)}
                 disabled={createUserMutation.isPending}
               >
-                Cancel
+                {t('common.cancel')}
               </Button>
               <Button type="submit" disabled={createUserMutation.isPending}>
-                {createUserMutation.isPending ? 'Creating...' : 'Create User'}
+                {createUserMutation.isPending ? t('pages.users.addDialog.creating') : t('pages.users.addDialog.create')}
               </Button>
             </div>
           </form>
@@ -669,11 +671,11 @@ export function UsersPage() {
       <Dialog open={editUserModal} onOpenChange={setEditUserModal}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Edit User</DialogTitle>
+            <DialogTitle>{t('pages.users.editDialog.title')}</DialogTitle>
           </DialogHeader>
           <form onSubmit={handleFormSubmit} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="edit-username">Username *</Label>
+              <Label htmlFor="edit-username">{t('pages.users.addDialog.username')}</Label>
               <Input
                 id="edit-username"
                 name="username"
@@ -683,7 +685,7 @@ export function UsersPage() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="edit-email">Email *</Label>
+              <Label htmlFor="edit-email">{t('pages.users.addDialog.email')}</Label>
               <Input
                 id="edit-email"
                 name="email"
@@ -695,7 +697,7 @@ export function UsersPage() {
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="edit-first_name">First Name</Label>
+                <Label htmlFor="edit-first_name">{t('pages.users.addDialog.firstName')}</Label>
                 <Input
                   id="edit-first_name"
                   name="first_name"
@@ -704,7 +706,7 @@ export function UsersPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="edit-last_name">Last Name</Label>
+                <Label htmlFor="edit-last_name">{t('pages.users.addDialog.lastName')}</Label>
                 <Input
                   id="edit-last_name"
                   name="last_name"
@@ -720,10 +722,10 @@ export function UsersPage() {
                 onClick={() => setEditUserModal(false)}
                 disabled={updateUserMutation.isPending}
               >
-                Cancel
+                {t('common.cancel')}
               </Button>
               <Button type="submit" disabled={updateUserMutation.isPending}>
-                {updateUserMutation.isPending ? 'Updating...' : 'Update User'}
+                {updateUserMutation.isPending ? t('pages.users.editDialog.updating') : t('pages.users.editDialog.update')}
               </Button>
             </div>
           </form>
@@ -734,14 +736,14 @@ export function UsersPage() {
       <Dialog open={importModal} onOpenChange={setImportModal}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Import Users from CSV</DialogTitle>
+            <DialogTitle>{t('pages.users.importDialog.title')}</DialogTitle>
           </DialogHeader>
           <form onSubmit={(e) => {
             e.preventDefault()
             if (importFile) importUsersMutation.mutate(importFile)
           }} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="csv-file">CSV File</Label>
+              <Label htmlFor="csv-file">{t('pages.users.importDialog.fileLabel')}</Label>
               <Input
                 id="csv-file"
                 type="file"
@@ -750,15 +752,15 @@ export function UsersPage() {
                 required
               />
               <p className="text-xs text-muted-foreground">
-                CSV file with headers: username, email, first_name, last_name, enabled
+                {t('pages.users.importDialog.hint')}
               </p>
             </div>
             <div className="flex justify-end gap-2 pt-4">
               <Button type="button" variant="outline" onClick={() => { setImportModal(false); setImportFile(null) }}>
-                Cancel
+                {t('common.cancel')}
               </Button>
               <Button type="submit" disabled={importUsersMutation.isPending || !importFile}>
-                {importUsersMutation.isPending ? 'Importing...' : 'Import'}
+                {importUsersMutation.isPending ? t('pages.users.importDialog.importing') : t('pages.users.importDialog.importAction')}
               </Button>
             </div>
           </form>
@@ -769,17 +771,17 @@ export function UsersPage() {
       <Dialog open={manageRolesModal} onOpenChange={setManageRolesModal}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Manage Roles - {selectedUser?.username}</DialogTitle>
+            <DialogTitle>{t('pages.users.rolesDialog.title', { name: selectedUser?.username ?? '' })}</DialogTitle>
           </DialogHeader>
           {rolesLoading || userRolesLoading ? (
             <div className="flex flex-col items-center justify-center py-8">
               <LoadingSpinner size="md" />
-              <p className="mt-3 text-sm text-muted-foreground">Loading roles...</p>
+              <p className="mt-3 text-sm text-muted-foreground">{t('pages.users.rolesDialog.loading')}</p>
             </div>
           ) : (
             <form onSubmit={handleRolesSubmit} className="space-y-4">
               <div className="space-y-3">
-                <Label>Available Roles</Label>
+                <Label>{t('pages.users.rolesDialog.available')}</Label>
                 <div className="space-y-2 max-h-64 overflow-y-auto">
                   {availableRoles?.map((role) => (
                     <div key={role.id} className="flex items-center space-x-2">
@@ -804,10 +806,10 @@ export function UsersPage() {
               </div>
               <div className="flex justify-end gap-2 pt-4">
                 <Button type="button" variant="outline" onClick={() => setManageRolesModal(false)}>
-                  Cancel
+                  {t('common.cancel')}
                 </Button>
                 <Button type="submit" disabled={updateUserRolesMutation.isPending}>
-                  {updateUserRolesMutation.isPending ? 'Updating...' : 'Update Roles'}
+                  {updateUserRolesMutation.isPending ? t('pages.users.rolesDialog.updating') : t('pages.users.rolesDialog.update')}
                 </Button>
               </div>
             </form>
@@ -819,15 +821,15 @@ export function UsersPage() {
       <AlertDialog open={!!resetPasswordTarget} onOpenChange={(open) => !open && setResetPasswordTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+            <AlertDialogTitle>{t('common.areYouSure')}</AlertDialogTitle>
             <AlertDialogDescription>
-              {resetPasswordTarget ? `Are you sure you want to reset the password for "${resetPasswordTarget.username}"?` : ''}
+              {resetPasswordTarget ? t('pages.users.resetDialog.description', { name: resetPasswordTarget.username }) : ''}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction onClick={() => { if (resetPasswordTarget) { executeResetPassword(resetPasswordTarget.id); setResetPasswordTarget(null) } }}>
-              Reset Password
+              {t('pages.users.menu.resetPassword')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -837,15 +839,15 @@ export function UsersPage() {
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+            <AlertDialogTitle>{t('common.areYouSure')}</AlertDialogTitle>
             <AlertDialogDescription>
-              {deleteTarget ? `Are you sure you want to delete user "${deleteTarget.username}"? This action cannot be undone.` : ''}
+              {deleteTarget ? t('pages.users.deleteDialog.description', { name: deleteTarget.username }) : ''}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction onClick={() => { if (deleteTarget) { deleteUserMutation.mutate(deleteTarget.id); setDeleteTarget(null) } }}>
-              Delete
+              {t('common.delete')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

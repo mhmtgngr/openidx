@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next'
 import { Button } from './ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from './ui/dialog'
 
@@ -11,6 +12,7 @@ interface SessionExpiredDialogProps {
  * clear path back (re-authenticate) instead of leaving them on masked-empty pages.
  */
 export function SessionExpiredDialog({ open, onSignIn }: SessionExpiredDialogProps) {
+  const { t } = useTranslation()
   if (!open) return null
   return (
     <Dialog open={open}>
@@ -20,11 +22,11 @@ export function SessionExpiredDialog({ open, onSignIn }: SessionExpiredDialogPro
         onEscapeKeyDown={(e) => e.preventDefault()}
       >
         <DialogHeader>
-          <DialogTitle>Your session ended</DialogTitle>
-          <DialogDescription>Please sign in again to continue.</DialogDescription>
+          <DialogTitle>{t('components.sessionExpired.title')}</DialogTitle>
+          <DialogDescription>{t('components.sessionExpired.description')}</DialogDescription>
         </DialogHeader>
         <DialogFooter>
-          <Button onClick={onSignIn}>Sign in</Button>
+          <Button onClick={onSignIn}>{t('components.sessionExpired.signIn')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

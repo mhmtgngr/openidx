@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/openidx/openidx/internal/common/orgctx"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -53,15 +54,15 @@ func (s *Service) EnrollPhoneCall(ctx context.Context, userID, phoneNumber, coun
 
 	// Check if already enrolled
 	var existing string
-	err := s.db.Pool.QueryRow(ctx,
-		"SELECT id FROM mfa_phone_call WHERE user_id = $1", userID,
+	err := s.db.Pool.QueryRow(orgctx.WithBypassRLS(ctx),
+		"SELECT id FROM mfa_phone_call WHERE user_id = $1 AND org_id = (SELECT org_id FROM users WHERE id = $1)", userID,
 	).Scan(&existing)
 	if err == nil {
 		// Update existing enrollment
-		_, err = s.db.Pool.Exec(ctx,
+		_, err = s.db.Pool.Exec(orgctx.WithBypassRLS(ctx),
 			`UPDATE mfa_phone_call
 			SET phone_number = $1, country_code = $2, verified = false
-			WHERE user_id = $3`,
+			WHERE user_id = $3 AND org_id = (SELECT org_id FROM users WHERE id = $3)`,
 			phoneNumber, countryCode, userID,
 		)
 		if err != nil {
@@ -69,9 +70,9 @@ func (s *Service) EnrollPhoneCall(ctx context.Context, userID, phoneNumber, coun
 		}
 	} else {
 		// Create new enrollment
-		_, err = s.db.Pool.Exec(ctx,
-			`INSERT INTO mfa_phone_call (id, user_id, phone_number, country_code, verified, enabled, voice_language, created_at)
-			VALUES ($1, $2, $3, $4, false, true, 'en-US', NOW())`,
+		_, err = s.db.Pool.Exec(orgctx.WithBypassRLS(ctx),
+			`INSERT INTO mfa_phone_call (id, org_id, user_id, phone_number, country_code, verified, enabled, voice_language, created_at)
+			VALUES ($1, (SELECT org_id FROM users WHERE id = $2), $2, $3, $4, false, true, 'en-US', NOW())`,
 			uuid.New().String(), userID, phoneNumber, countryCode,
 		)
 		if err != nil {
@@ -83,8 +84,20 @@ func (s *Service) EnrollPhoneCall(ctx context.Context, userID, phoneNumber, coun
 	return s.CreatePhoneCallChallenge(ctx, userID, fullNumber, "outbound")
 }
 
+// ErrPhoneCallMFANotConfigured is returned when the phone-call factor is
+// exercised on an installation with no call provider wired.
+var ErrPhoneCallMFANotConfigured = fmt.Errorf("phone-call MFA is not configured on this installation")
+
 // CreatePhoneCallChallenge creates a phone call challenge and initiates the call
 func (s *Service) CreatePhoneCallChallenge(ctx context.Context, userID, phoneNumber, callType string) (*PhoneCallChallenge, error) {
+	// Refuse up front when no call provider is wired (SetPhoneCallProvider).
+	// This path used to store the challenge, skip the call, and report
+	// success — the user waits for a call that never comes and the factor
+	// can never verify. A control that displays must be true.
+	if s.phoneCallProvider == nil {
+		return nil, ErrPhoneCallMFANotConfigured
+	}
+
 	// Generate 6-digit code
 	code, err := generateSecureCode(6)
 	if err != nil {
@@ -102,34 +115,37 @@ func (s *Service) CreatePhoneCallChallenge(ctx context.Context, userID, phoneNum
 
 	// Store challenge
 	_, err = s.db.Pool.Exec(ctx,
+		// org_id is derived from the challenge's own user: the column is nullable
+		// on this table, so a challenge raised without one used to sit in nobody's
+		// scope at all.
 		`INSERT INTO phone_call_challenges
-		(id, user_id, phone_number, code_hash, call_type, status, attempts, created_at, expires_at)
-		VALUES ($1, $2, $3, $4, $5, 'pending', 0, NOW(), $6)`,
+		(id, org_id, user_id, phone_number, code_hash, call_type, status, attempts, created_at, expires_at)
+		VALUES ($1, (SELECT org_id FROM users WHERE id = $2), $2, $3, $4, $5, 'pending', 0, NOW(), $6)`,
 		challengeID, userID, phoneNumber, string(codeHash), callType, expiresAt,
 	)
 	if err != nil {
 		return nil, err
 	}
 
-	// Initiate the call (if provider is configured)
-	var callSID string
-	if s.phoneCallProvider != nil {
-		callSID, err = s.phoneCallProvider.InitiateCall(phoneNumber, code, "en-US")
-		if err != nil {
-			// Update status to failed
-			s.db.Pool.Exec(ctx,
-				"UPDATE phone_call_challenges SET status = 'failed' WHERE id = $1",
-				challengeID,
-			)
-			return nil, fmt.Errorf("failed to initiate call: %w", err)
-		}
-
-		// Update with call SID
+	// Initiate the call. The provider was verified non-nil above, so a
+	// stored challenge always corresponds to a call that was attempted.
+	callSID, err := s.phoneCallProvider.InitiateCall(phoneNumber, code, "en-US")
+	if err != nil {
+		// Update status to failed
 		s.db.Pool.Exec(ctx,
-			"UPDATE phone_call_challenges SET call_sid = $1, status = 'calling' WHERE id = $2",
-			callSID, challengeID,
+			`UPDATE phone_call_challenges SET status = 'failed'
+			  WHERE id = $1 AND org_id = (SELECT org_id FROM users WHERE id = $2)`,
+			challengeID, userID,
 		)
+		return nil, fmt.Errorf("failed to initiate call: %w", err)
 	}
+
+	// Update with call SID
+	s.db.Pool.Exec(ctx,
+		`UPDATE phone_call_challenges SET call_sid = $1, status = 'calling'
+		  WHERE id = $2 AND org_id = (SELECT org_id FROM users WHERE id = $3)`,
+		callSID, challengeID, userID,
+	)
 
 	return &PhoneCallChallenge{
 		ID:          challengeID,
@@ -153,7 +169,8 @@ func (s *Service) VerifyPhoneCallChallenge(ctx context.Context, userID, code str
 
 	err := s.db.Pool.QueryRow(ctx,
 		`SELECT id, code_hash, attempts, expires_at FROM phone_call_challenges
-		WHERE user_id = $1 AND status IN ('pending', 'calling', 'answered')
+		WHERE user_id = $1 AND org_id = (SELECT org_id FROM users WHERE id = $1)
+		  AND status IN ('pending', 'calling', 'answered')
 		ORDER BY created_at DESC LIMIT 1`,
 		userID,
 	).Scan(&challengeID, &codeHash, &attempts, &expiresAt)
@@ -163,20 +180,23 @@ func (s *Service) VerifyPhoneCallChallenge(ctx context.Context, userID, code str
 
 	// Check expiration
 	if time.Now().After(expiresAt) {
-		s.db.Pool.Exec(ctx, "UPDATE phone_call_challenges SET status = 'expired' WHERE id = $1", challengeID)
+		s.db.Pool.Exec(ctx, `UPDATE phone_call_challenges SET status = 'expired'
+			WHERE id = $1 AND org_id = (SELECT org_id FROM users WHERE id = $2)`, challengeID, userID)
 		return errors.New("challenge expired")
 	}
 
 	// Check max attempts
 	if attempts >= 3 {
-		s.db.Pool.Exec(ctx, "UPDATE phone_call_challenges SET status = 'failed' WHERE id = $1", challengeID)
+		s.db.Pool.Exec(ctx, `UPDATE phone_call_challenges SET status = 'failed'
+			WHERE id = $1 AND org_id = (SELECT org_id FROM users WHERE id = $2)`, challengeID, userID)
 		return errors.New("maximum attempts exceeded")
 	}
 
 	// Increment attempts
 	s.db.Pool.Exec(ctx,
-		"UPDATE phone_call_challenges SET attempts = attempts + 1 WHERE id = $1",
-		challengeID,
+		`UPDATE phone_call_challenges SET attempts = attempts + 1
+		  WHERE id = $1 AND org_id = (SELECT org_id FROM users WHERE id = $2)`,
+		challengeID, userID,
 	)
 
 	// Verify code
@@ -186,13 +206,14 @@ func (s *Service) VerifyPhoneCallChallenge(ctx context.Context, userID, code str
 
 	// Mark challenge as completed
 	s.db.Pool.Exec(ctx,
-		"UPDATE phone_call_challenges SET status = 'completed', verified_at = NOW() WHERE id = $1",
-		challengeID,
+		`UPDATE phone_call_challenges SET status = 'completed', verified_at = NOW()
+		  WHERE id = $1 AND org_id = (SELECT org_id FROM users WHERE id = $2)`,
+		challengeID, userID,
 	)
 
 	// Mark enrollment as verified
-	s.db.Pool.Exec(ctx,
-		"UPDATE mfa_phone_call SET verified = true, last_used_at = NOW() WHERE user_id = $1",
+	s.db.Pool.Exec(orgctx.WithBypassRLS(ctx),
+		"UPDATE mfa_phone_call SET verified = true, last_used_at = NOW() WHERE user_id = $1 AND org_id = (SELECT org_id FROM users WHERE id = $1)",
 		userID,
 	)
 
@@ -204,11 +225,11 @@ func (s *Service) GetPhoneCallEnrollment(ctx context.Context, userID string) (*P
 	query := `
 		SELECT id, user_id, phone_number, country_code, verified, enabled, voice_language, created_at, last_used_at
 		FROM mfa_phone_call
-		WHERE user_id = $1
+		WHERE user_id = $1 AND org_id = (SELECT org_id FROM users WHERE id = $1)
 	`
 
 	var e PhoneCallEnrollment
-	err := s.db.Pool.QueryRow(ctx, query, userID).Scan(
+	err := s.db.Pool.QueryRow(orgctx.WithBypassRLS(ctx), query, userID).Scan(
 		&e.ID, &e.UserID, &e.PhoneNumber, &e.CountryCode, &e.Verified, &e.Enabled,
 		&e.VoiceLanguage, &e.CreatedAt, &e.LastUsedAt,
 	)
@@ -224,7 +245,8 @@ func (s *Service) GetPhoneCallEnrollment(ctx context.Context, userID string) (*P
 
 // DeletePhoneCallEnrollment removes phone call MFA
 func (s *Service) DeletePhoneCallEnrollment(ctx context.Context, userID string) error {
-	_, err := s.db.Pool.Exec(ctx, "DELETE FROM mfa_phone_call WHERE user_id = $1", userID)
+	_, err := s.db.Pool.Exec(orgctx.WithBypassRLS(ctx),
+		"DELETE FROM mfa_phone_call WHERE user_id = $1 AND org_id = (SELECT org_id FROM users WHERE id = $1)", userID)
 	return err
 }
 
@@ -232,8 +254,8 @@ func (s *Service) DeletePhoneCallEnrollment(ctx context.Context, userID string) 
 func (s *Service) RequestCallback(ctx context.Context, userID string) (*PhoneCallChallenge, error) {
 	// Get user's enrolled phone
 	var phoneNumber, countryCode string
-	err := s.db.Pool.QueryRow(ctx,
-		"SELECT phone_number, country_code FROM mfa_phone_call WHERE user_id = $1 AND verified = true",
+	err := s.db.Pool.QueryRow(orgctx.WithBypassRLS(ctx),
+		"SELECT phone_number, country_code FROM mfa_phone_call WHERE user_id = $1 AND verified = true AND org_id = (SELECT org_id FROM users WHERE id = $1)",
 		userID,
 	).Scan(&phoneNumber, &countryCode)
 	if err != nil {
@@ -274,26 +296,18 @@ type TwilioPhoneCallProvider struct {
 	FromNumber string
 }
 
-// InitiateCall makes a phone call via Twilio
+// InitiateCall makes a phone call via Twilio.
+//
+// NOT IMPLEMENTED: the Twilio API integration was never written (the TwiML
+// draft lived in a comment here). It used to return a fabricated call SID
+// and GetCallStatus always said "completed", so anyone wiring this provider
+// would ship a factor that looks healthy and never rings a phone. It now
+// fails loudly until a real integration exists.
 func (t *TwilioPhoneCallProvider) InitiateCall(phoneNumber, code, language string) (string, error) {
-	// In production, this would use Twilio's API to make a call
-	// The TwiML would speak the verification code
-	/*
-		twiml := fmt.Sprintf(`
-			<Response>
-				<Say voice="alice" language="%s">
-					Your verification code is: %s. I repeat: %s.
-				</Say>
-			</Response>
-		`, language, formatCodeForSpeech(code), formatCodeForSpeech(code))
-	*/
-
-	// For now, return a mock call SID
-	return "CALL_" + uuid.New().String()[:8], nil
+	return "", fmt.Errorf("TwilioPhoneCallProvider is not implemented: no call is placed; wire a real PhoneCallProvider")
 }
 
-// GetCallStatus gets the status of a Twilio call
+// GetCallStatus gets the status of a Twilio call.
 func (t *TwilioPhoneCallProvider) GetCallStatus(callSID string) (string, error) {
-	// In production, query Twilio API for call status
-	return "completed", nil
+	return "", fmt.Errorf("TwilioPhoneCallProvider is not implemented")
 }

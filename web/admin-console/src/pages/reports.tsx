@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { FileText, Download, Clock, Trash2, Pencil } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
@@ -12,6 +13,8 @@ import { api } from '../lib/api'
 import { QueryError } from '../components/query-error'
 import { ConfirmAction } from '../components/confirm-action'
 import { useToast } from '../hooks/use-toast'
+
+const REPORT_TYPES = ['user_access', 'compliance', 'entitlement', 'activity'] as const
 
 interface ReportExport {
   id: string
@@ -43,6 +46,7 @@ interface ScheduledReport {
 }
 
 export function ReportsPage() {
+  const { t } = useTranslation()
   const queryClient = useQueryClient()
   const { toast } = useToast()
   const [tab, setTab] = useState<'exports' | 'scheduled'>('exports')
@@ -95,10 +99,10 @@ export function ReportsPage() {
     mutationFn: (body: Record<string, unknown>) => api.post('/api/v1/audit/reports/generate', body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['report-exports'] })
-      toast({ title: 'Report generation started' })
+      toast({ title: t('pages.reports.toast.generationStarted') })
       setGenerateOpen(false)
     },
-    onError: () => toast({ title: 'Failed to generate report', variant: 'destructive' }),
+    onError: () => toast({ title: t('pages.reports.toast.generateFailed'), variant: 'destructive' }),
   })
 
   // Download an export through the authenticated api client (blob), not a bare
@@ -124,17 +128,17 @@ export function ReportsPage() {
       // Revoke on the next tick so the click has consumed the URL.
       setTimeout(() => URL.revokeObjectURL(url), 1000)
     },
-    onError: () => toast({ title: 'Download failed', variant: 'destructive' }),
+    onError: () => toast({ title: t('pages.reports.toast.downloadFailed'), variant: 'destructive' }),
   })
 
   const createScheduleMutation = useMutation({
     mutationFn: (body: Record<string, unknown>) => api.post('/api/v1/audit/reports/scheduled', body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['scheduled-reports'] })
-      toast({ title: editSchedule ? 'Schedule updated' : 'Schedule created' })
+      toast({ title: t(editSchedule ? 'pages.reports.toast.scheduleUpdated' : 'pages.reports.toast.scheduleCreated') })
       setScheduleOpen(false)
     },
-    onError: () => toast({ title: 'Failed to save schedule', variant: 'destructive' }),
+    onError: () => toast({ title: t('pages.reports.toast.saveFailed'), variant: 'destructive' }),
   })
 
   const updateScheduleMutation = useMutation({
@@ -142,7 +146,7 @@ export function ReportsPage() {
       api.put(`/api/v1/audit/reports/scheduled/${id}`, body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['scheduled-reports'] })
-      toast({ title: 'Schedule updated' })
+      toast({ title: t('pages.reports.toast.scheduleUpdated') })
       setScheduleOpen(false)
     },
   })
@@ -151,7 +155,7 @@ export function ReportsPage() {
     mutationFn: (id: string) => api.delete(`/api/v1/audit/reports/scheduled/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['scheduled-reports'] })
-      toast({ title: 'Schedule deleted' })
+      toast({ title: t('pages.reports.toast.scheduleDeleted') })
     },
   })
 
@@ -195,33 +199,33 @@ export function ReportsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Reports & Exports</h1>
-          <p className="text-muted-foreground">Generate, download, and schedule reports</p>
+          <h1 className="text-3xl font-bold tracking-tight">{t('pages.reports.title')}</h1>
+          <p className="text-muted-foreground">{t('pages.reports.subtitle')}</p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={() => openSchedule()}><Clock className="mr-2 h-4 w-4" />Schedule Report</Button>
-          <Button onClick={openGenerate}><FileText className="mr-2 h-4 w-4" />Generate Report</Button>
+          <Button variant="outline" onClick={() => openSchedule()}><Clock className="mr-2 h-4 w-4" />{t('pages.reports.scheduleReport')}</Button>
+          <Button onClick={openGenerate}><FileText className="mr-2 h-4 w-4" />{t('pages.reports.generateReport')}</Button>
         </div>
       </div>
 
       {/* Tabs */}
       <div className="flex gap-2 border-b pb-2">
-        <Button variant={tab === 'exports' ? 'default' : 'ghost'} size="sm" onClick={() => setTab('exports')}>Report History</Button>
-        <Button variant={tab === 'scheduled' ? 'default' : 'ghost'} size="sm" onClick={() => setTab('scheduled')}>Scheduled Reports</Button>
+        <Button variant={tab === 'exports' ? 'default' : 'ghost'} size="sm" onClick={() => setTab('exports')}>{t('pages.reports.tabExports')}</Button>
+        <Button variant={tab === 'scheduled' ? 'default' : 'ghost'} size="sm" onClick={() => setTab('scheduled')}>{t('pages.reports.tabScheduled')}</Button>
       </div>
 
       {tab === 'exports' && (
         <Card>
-          <CardHeader><CardTitle>Generated Reports</CardTitle></CardHeader>
+          <CardHeader><CardTitle>{t('pages.reports.generatedReports')}</CardTitle></CardHeader>
           <CardContent>
-            {exportsLoading ? <p className="text-center py-8 text-muted-foreground">Loading...</p> :
-             exportsError ? <QueryError error={exportsErrorObj} resource="report exports" /> :
-             exports.length === 0 ? <p className="text-center py-8 text-muted-foreground">No reports generated yet</p> : (
+            {exportsLoading ? <p className="text-center py-8 text-muted-foreground">{t('common.loading')}</p> :
+             exportsError ? <QueryError error={exportsErrorObj} resource={t('pages.reports.exportsResource')} /> :
+             exports.length === 0 ? <p className="text-center py-8 text-muted-foreground">{t('pages.reports.noExports')}</p> : (
               <Table>
                 <TableHeader><TableRow>
-                  <TableHead>Name</TableHead><TableHead>Type</TableHead><TableHead>Format</TableHead>
-                  <TableHead>Status</TableHead><TableHead>Size</TableHead><TableHead>Rows</TableHead>
-                  <TableHead>Created</TableHead><TableHead>Actions</TableHead>
+                  <TableHead>{t('pages.reports.columns.name')}</TableHead><TableHead>{t('pages.reports.columns.type')}</TableHead><TableHead>{t('pages.reports.columns.format')}</TableHead>
+                  <TableHead>{t('pages.reports.columns.status')}</TableHead><TableHead>{t('pages.reports.columns.size')}</TableHead><TableHead>{t('pages.reports.columns.rows')}</TableHead>
+                  <TableHead>{t('pages.reports.columns.created')}</TableHead><TableHead>{t('pages.reports.columns.actions')}</TableHead>
                 </TableRow></TableHeader>
                 <TableBody>
                   {exports.map(exp => (
@@ -251,15 +255,15 @@ export function ReportsPage() {
 
       {tab === 'scheduled' && (
         <Card>
-          <CardHeader><CardTitle>Scheduled Reports</CardTitle></CardHeader>
+          <CardHeader><CardTitle>{t('pages.reports.tabScheduled')}</CardTitle></CardHeader>
           <CardContent>
-            {scheduledLoading ? <p className="text-center py-8 text-muted-foreground">Loading...</p> :
-             scheduledError ? <QueryError error={scheduledErrorObj} resource="scheduled reports" /> :
-             scheduled.length === 0 ? <p className="text-center py-8 text-muted-foreground">No scheduled reports</p> : (
+            {scheduledLoading ? <p className="text-center py-8 text-muted-foreground">{t('common.loading')}</p> :
+             scheduledError ? <QueryError error={scheduledErrorObj} resource={t('pages.reports.scheduledResource')} /> :
+             scheduled.length === 0 ? <p className="text-center py-8 text-muted-foreground">{t('pages.reports.noScheduled')}</p> : (
               <Table>
                 <TableHeader><TableRow>
-                  <TableHead>Name</TableHead><TableHead>Type</TableHead><TableHead>Schedule</TableHead>
-                  <TableHead>Format</TableHead><TableHead>Status</TableHead><TableHead>Last Run</TableHead><TableHead>Actions</TableHead>
+                  <TableHead>{t('pages.reports.columns.name')}</TableHead><TableHead>{t('pages.reports.columns.type')}</TableHead><TableHead>{t('pages.reports.columns.schedule')}</TableHead>
+                  <TableHead>{t('pages.reports.columns.format')}</TableHead><TableHead>{t('pages.reports.columns.status')}</TableHead><TableHead>{t('pages.reports.columns.lastRun')}</TableHead><TableHead>{t('pages.reports.columns.actions')}</TableHead>
                 </TableRow></TableHeader>
                 <TableBody>
                   {scheduled.map(s => (
@@ -268,16 +272,16 @@ export function ReportsPage() {
                       <TableCell><Badge variant="outline">{s.report_type}</Badge></TableCell>
                       <TableCell className="font-mono text-sm">{s.schedule}</TableCell>
                       <TableCell>{s.format.toUpperCase()}</TableCell>
-                      <TableCell><Badge variant={s.enabled ? 'default' : 'secondary'}>{s.enabled ? 'Active' : 'Disabled'}</Badge></TableCell>
-                      <TableCell>{s.last_run_at ? new Date(s.last_run_at).toLocaleString() : 'Never'}</TableCell>
+                      <TableCell><Badge variant={s.enabled ? 'default' : 'secondary'}>{t(s.enabled ? 'pages.reports.active' : 'pages.reports.disabled')}</Badge></TableCell>
+                      <TableCell>{s.last_run_at ? new Date(s.last_run_at).toLocaleString() : t('pages.reports.never')}</TableCell>
                       <TableCell>
                         <div className="flex gap-1">
                           <Button variant="ghost" size="sm" onClick={() => openSchedule(s)}><Pencil className="h-4 w-4" /></Button>
                           <ConfirmAction
-                            title="Delete this scheduled report?"
-                            description={`This removes the scheduled report ${s.name}. It will no longer run on its schedule.`}
+                            title={t('pages.reports.deleteTitle')}
+                            description={t('pages.reports.deleteDesc', { name: s.name })}
                             destructive
-                            confirmLabel="Delete"
+                            confirmLabel={t('common.delete')}
                             onConfirm={() => deleteScheduleMutation.mutateAsync(s.id)}
                           >
                             {(open) => (
@@ -298,25 +302,24 @@ export function ReportsPage() {
       {/* Generate Report Dialog */}
       <Dialog open={generateOpen} onOpenChange={setGenerateOpen}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Generate Report</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{t('pages.reports.dialog.generateTitle')}</DialogTitle></DialogHeader>
           <div className="space-y-4">
             <div>
-              <label className="text-sm font-medium">Report Type</label>
+              <label htmlFor="reports-report-type" className="text-sm font-medium">{t('pages.reports.dialog.reportType')}</label>
               <Select value={genForm.report_type} onValueChange={v => setGenForm(f => ({ ...f, report_type: v }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger id="reports-report-type"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="user_access">User Access</SelectItem>
-                  <SelectItem value="compliance">Compliance</SelectItem>
-                  <SelectItem value="entitlement">Entitlement</SelectItem>
-                  <SelectItem value="activity">Activity</SelectItem>
+                  {REPORT_TYPES.map(rt => (
+                    <SelectItem key={rt} value={rt}>{t(`pages.reports.reportTypes.${rt}`)}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
             {genForm.report_type === 'compliance' && (
               <div>
-                <label className="text-sm font-medium">Framework</label>
+                <label htmlFor="reports-framework" className="text-sm font-medium">{t('pages.reports.dialog.framework')}</label>
                 <Select value={genForm.framework} onValueChange={v => setGenForm(f => ({ ...f, framework: v }))}>
-                  <SelectTrigger><SelectValue placeholder="Select framework" /></SelectTrigger>
+                  <SelectTrigger id="reports-framework"><SelectValue placeholder={t('pages.reports.dialog.selectFramework')} /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="SOC2">SOC 2</SelectItem>
                     <SelectItem value="ISO27001">ISO 27001</SelectItem>
@@ -327,9 +330,9 @@ export function ReportsPage() {
               </div>
             )}
             <div>
-              <label className="text-sm font-medium">Format</label>
+              <label htmlFor="reports-format" className="text-sm font-medium">{t('pages.reports.dialog.format')}</label>
               <Select value={genForm.format} onValueChange={v => setGenForm(f => ({ ...f, format: v }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger id="reports-format"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="csv">CSV</SelectItem>
                   <SelectItem value="json">JSON</SelectItem>
@@ -338,8 +341,8 @@ export function ReportsPage() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setGenerateOpen(false)}>Cancel</Button>
-            <Button onClick={() => generateMutation.mutate(genForm)} disabled={generateMutation.isPending}>Generate</Button>
+            <Button variant="outline" onClick={() => setGenerateOpen(false)}>{t('common.cancel')}</Button>
+            <Button onClick={() => generateMutation.mutate(genForm)} disabled={generateMutation.isPending}>{t('pages.reports.dialog.generate')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -347,33 +350,32 @@ export function ReportsPage() {
       {/* Schedule Report Dialog */}
       <Dialog open={scheduleOpen} onOpenChange={setScheduleOpen}>
         <DialogContent>
-          <DialogHeader><DialogTitle>{editSchedule ? 'Edit Schedule' : 'Create Scheduled Report'}</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{t(editSchedule ? 'pages.reports.dialog.editTitle' : 'pages.reports.dialog.createTitle')}</DialogTitle></DialogHeader>
           <div className="space-y-4">
             <div>
-              <label className="text-sm font-medium">Name</label>
-              <Input value={schedForm.name} onChange={e => setSchedForm(f => ({ ...f, name: e.target.value }))} placeholder="Weekly User Access Report" />
+              <label className="text-sm font-medium">{t('pages.reports.dialog.name')}</label>
+              <Input value={schedForm.name} onChange={e => setSchedForm(f => ({ ...f, name: e.target.value }))} placeholder={t('pages.reports.dialog.namePlaceholder')} />
             </div>
             <div>
-              <label className="text-sm font-medium">Report Type</label>
+              <label htmlFor="reports-report-type-2" className="text-sm font-medium">{t('pages.reports.dialog.reportType')}</label>
               <Select value={schedForm.report_type} onValueChange={v => setSchedForm(f => ({ ...f, report_type: v }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger id="reports-report-type-2"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="user_access">User Access</SelectItem>
-                  <SelectItem value="compliance">Compliance</SelectItem>
-                  <SelectItem value="entitlement">Entitlement</SelectItem>
-                  <SelectItem value="activity">Activity</SelectItem>
+                  {REPORT_TYPES.map(rt => (
+                    <SelectItem key={rt} value={rt}>{t(`pages.reports.reportTypes.${rt}`)}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
             <div>
-              <label className="text-sm font-medium">Cron Schedule</label>
+              <label className="text-sm font-medium">{t('pages.reports.dialog.cronSchedule')}</label>
               <Input value={schedForm.schedule} onChange={e => setSchedForm(f => ({ ...f, schedule: e.target.value }))} placeholder="0 0 * * 1" />
-              <p className="text-xs text-muted-foreground mt-1">Cron format: minute hour day month weekday</p>
+              <p className="text-xs text-muted-foreground mt-1">{t('pages.reports.dialog.cronHint')}</p>
             </div>
             <div>
-              <label className="text-sm font-medium">Format</label>
+              <label htmlFor="reports-format-2" className="text-sm font-medium">{t('pages.reports.dialog.format')}</label>
               <Select value={schedForm.format} onValueChange={v => setSchedForm(f => ({ ...f, format: v }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger id="reports-format-2"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="csv">CSV</SelectItem>
                   <SelectItem value="json">JSON</SelectItem>
@@ -382,13 +384,13 @@ export function ReportsPage() {
             </div>
             <label className="flex items-center gap-2 text-sm">
               <input type="checkbox" checked={schedForm.enabled} onChange={e => setSchedForm(f => ({ ...f, enabled: e.target.checked }))} />
-              Enabled
+              {t('pages.reports.dialog.enabled')}
             </label>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setScheduleOpen(false)}>Cancel</Button>
+            <Button variant="outline" onClick={() => setScheduleOpen(false)}>{t('common.cancel')}</Button>
             <Button disabled={!schedForm.name} onClick={handleSaveSchedule}>
-              {editSchedule ? 'Update' : 'Create'}
+              {t(editSchedule ? 'pages.reports.dialog.update' : 'pages.reports.dialog.create')}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -6,11 +6,31 @@ on:
     paths:
       - 'deployments/kubernetes/helm/**'
       - '.github/workflows/helm.yml'
+      # kind-install builds the tools image from this tree and runs `migrate
+      # up` inside the cluster, so a change to any of these changes what the
+      # job proves.
+      - 'deployments/docker/Dockerfile.tools'
+      - 'cmd/migrate/**'
+      - 'cmd/backup/**'
+      - 'internal/migrations/**'
+      - 'migrations/**'
+      - 'scripts/check-chart-images*.sh'
+      - 'scripts/ci-retry.sh'
   pull_request:
     branches: [main]
     paths:
       - 'deployments/kubernetes/helm/**'
       - '.github/workflows/helm.yml'
+      # kind-install builds the tools image from this tree and runs `migrate
+      # up` inside the cluster, so a change to any of these changes what the
+      # job proves.
+      - 'deployments/docker/Dockerfile.tools'
+      - 'cmd/migrate/**'
+      - 'cmd/backup/**'
+      - 'internal/migrations/**'
+      - 'migrations/**'
+      - 'scripts/check-chart-images*.sh'
+      - 'scripts/ci-retry.sh'
   workflow_dispatch:
 
 permissions:
@@ -30,17 +50,318 @@ jobs:
         with:
           version: v3.14.4
 
+      # Both the repo index and the subchart archives come from a CDN that
+      # resets the connection often enough to have turned this job red on
+      # commits that touched no chart. Retrying is not papering over a bug:
+      # nothing in this repository can make someone else's CDN answer, and
+      # ci-retry.sh still exits with helm's own status once it gives up.
       - name: Add chart repos
-        run: helm repo add bitnami https://charts.bitnami.com/bitnami
+        run: bash scripts/ci-retry.sh 3 5 -- helm repo add bitnami https://charts.bitnami.com/bitnami
 
       - name: Build chart dependencies
-        run: helm dependency build "$CHART"
+        run: bash scripts/ci-retry.sh 3 5 -- helm dependency build "$CHART"
 
       - name: Lint
         run: helm lint "$CHART"
 
+      # The bundled PostgreSQL/Redis passwords are `required` (an empty one
+      # rendered a DSN that could not authenticate), so a render has to supply
+      # them. These are placeholders for a manifest that is thrown away.
       - name: Template (default values)
-        run: helm template openidx "$CHART" > /tmp/render-default.yaml
+        run: |
+          helm template openidx "$CHART" \
+            --set secrets.postgresPassword=render-only-not-a-credential \
+            --set secrets.redisPassword=render-only-not-a-credential \
+            --set secrets.jwtSecret=render-only-not-a-credential-000000 \
+            --set secrets.encryptionKey=render-only-not-a-credential32b \
+            > /tmp/render-default.yaml
 
       - name: Template (production values)
         run: helm template openidx "$CHART" -f "$CHART/values-prod.yaml" > /tmp/render-prod.yaml
+
+      # `| default N` on a replica count silently turns an operator's 0 back
+      # into N, because Go templates treat 0 as empty. oauth-service, OPA and
+      # both Ziti workloads did exactly that, and the kind job watched
+      # oauth-service scale 0 -> 2 and crash-loop with every service pinned at
+      # zero. Scaling a service to zero is a legitimate action; assert it.
+      - name: replicaCount 0 means zero
+        run: |
+          set -euo pipefail
+          for svc in identityService governanceService provisioningService \
+                     auditService adminApi oauthService gatewayService \
+                     accessService adminConsole; do
+            got=$(helm template openidx "$CHART" \
+              --set secrets.postgresPassword=render-only-not-a-credential \
+              --set secrets.redisPassword=render-only-not-a-credential \
+              --set secrets.jwtSecret=render-only-not-a-credential-000000 \
+              --set secrets.encryptionKey=render-only-not-a-credential32b \
+              --set "$svc.replicaCount=0" \
+              | grep -c '^  replicas: 0' || true)
+            test "$got" -ge 1 || { echo "$svc.replicaCount=0 did not render replicas: 0"; exit 1; }
+          done
+          echo "every service honours replicaCount 0"
+
+      # The runtime role openidx_app has to exist before migration v53 looks
+      # for it, and the migration Job's own role cannot create it. That is
+      # ordering, and ordering here is one annotation: a bootstrap hook at a
+      # lower weight than the migration hook. Helm completes a weight before
+      # starting the next, so getting these two numbers wrong is the whole
+      # install failing -- silently, in a rendered manifest that looks fine.
+      - name: The bootstrap hook runs before the migration hook
+        run: |
+          set -euo pipefail
+          render() {
+            helm template openidx "$CHART" \
+              --set secrets.postgresPassword=render-only-not-a-credential \
+              --set secrets.redisPassword=render-only-not-a-credential \
+              --set secrets.jwtSecret=render-only-not-a-credential-000000 \
+              --set secrets.encryptionKey=render-only-not-a-credential32b "$@"
+          }
+          # The chain is script -> role -> schema: the ConfigMap must exist
+          # before the Job that mounts it, and the role must exist before the
+          # migration that assumes it. Helm completes a hook weight before
+          # starting the next, so the whole ordering is three annotations --
+          # easy to get silently wrong, and wrong means the install fails.
+          render -s templates/db-bootstrap-job.yaml -s templates/migrate-job.yaml \
+          | python3 -c '
+          import sys, yaml
+          w = {}
+          for doc in yaml.safe_load_all(sys.stdin):
+              if not doc:
+                  continue
+              ann = (doc.get("metadata") or {}).get("annotations") or {}
+              if "helm.sh/hook-weight" in ann:
+                  w[(doc["kind"], doc["metadata"]["name"])] = int(ann["helm.sh/hook-weight"])
+          print("hook weights:", w)
+          cm  = w[("ConfigMap", "openidx-db-bootstrap")]
+          job = w[("Job", "openidx-db-bootstrap")]
+          mig = w[("Job", "openidx-migrate")]
+          assert cm < job, f"the bootstrap script ConfigMap ({cm}) must be created before the Job that mounts it ({job})"
+          assert job < mig, f"the bootstrap Job ({job}) must run before the migration Job ({mig})"
+          print("ordering holds: ConfigMap -> bootstrap Job -> migrate Job")
+          '
+
+          # An external database gets no bootstrap objects: the chart holds no
+          # superuser credential for a server it does not run, and rendering
+          # them would put a Job in the release that could only ever fail.
+          if render --set postgresql.enabled=false | grep -q 'db-bootstrap'; then
+            echo "db-bootstrap rendered with postgresql.enabled=false"; exit 1
+          fi
+          echo "external-database installs skip it"
+
+      # The kubelet expands $(VAR) references in `command` and `args`, and its
+      # escape for a literal dollar is a doubled one -- so a `$$` written there
+      # reaches the container as a single `$`. The bootstrap script carried
+      # v53's `DO $$ ... $$;` in args for one CI round and PostgreSQL answered
+      # `syntax error at or near "$" at character 4`. Nothing at render time
+      # could see it: the manifest was correct, the runtime rewrote it.
+      #
+      # A shell script belongs in a ConfigMap, which is mounted byte for byte.
+      # This fails if one goes back into a command line.
+      - name: No doubled dollar in a container command line
+        run: |
+          set -euo pipefail
+          for values in "" "-f $CHART/values-prod.yaml" "-f $CHART/values-ci.yaml"; do
+            # shellcheck disable=SC2086
+            helm template openidx "$CHART" \
+              --set secrets.postgresPassword=render-only-not-a-credential \
+              --set secrets.redisPassword=render-only-not-a-credential \
+              --set secrets.jwtSecret=render-only-not-a-credential-000000 \
+              --set secrets.encryptionKey=render-only-not-a-credential32b \
+              $values \
+            | python3 -c '
+          import sys, yaml
+          bad = []
+          def walk(o):
+              if isinstance(o, dict):
+                  for c in list(o.get("containers", [])) + list(o.get("initContainers", [])):
+                      for field in ("command", "args"):
+                          for entry in c.get(field) or []:
+                              if "\$\$" in str(entry):
+                                  bad.append((c.get("name"), field))
+                  for v in o.values():
+                      walk(v)
+              elif isinstance(o, list):
+                  for v in o:
+                      walk(v)
+          for doc in yaml.safe_load_all(sys.stdin):
+              walk(doc)
+          if bad:
+              for name, field in bad:
+                  print(f"container {name}: {field} contains $$, which the kubelet rewrites to a single $")
+              sys.exit(1)
+          print("no container command line carries a doubled dollar")
+          '
+          done
+
+  kind-install:
+    name: Install on kind
+    runs-on: ubuntu-latest
+    env:
+      CHART: deployments/kubernetes/helm/openidx
+      NS: openidx-ci
+      RELEASE: openidx
+      TOOLS_IMAGE: ghcr.io/mhmtgngr/openidx/tools:ci
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v5
+        with:
+          version: v3.14.4
+
+      # Before the guard, not after: the guard renders the chart, and rendering
+      # a chart whose subcharts have not been fetched fails with "missing in
+      # charts/ directory" — which is how this job went red on its first run.
+      - name: Add chart repos
+        run: bash scripts/ci-retry.sh 3 5 -- helm repo add bitnami https://charts.bitnami.com/bitnami
+
+      - name: Build chart dependencies
+        run: bash scripts/ci-retry.sh 3 5 -- helm dependency build "$CHART"
+
+      # Cheap and static: catches the two ways this chart has named images that
+      # do not exist, before spending a cluster on finding out.
+      - name: Chart images resolve
+        run: bash scripts/check-chart-images.sh --enforce
+
+      - name: Self-test the image guard
+        run: bash scripts/check-chart-images.test.sh
+
+      - name: Create kind cluster
+        id: kind
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: openidx-ci
+
+      # The one image built from THIS tree. The migration Job runs it, so the
+      # Job succeeding is the proof that this branch's migrations apply to an
+      # empty database — which pulling main's published `latest` could never
+      # show. The other services stay at replicaCount 0 (see values-ci.yaml).
+      - name: Build the tools image (migrate + backup)
+        run: docker build -f deployments/docker/Dockerfile.tools -t "$TOOLS_IMAGE" .
+
+      - name: Load it into the cluster
+        run: kind load docker-image "$TOOLS_IMAGE" --name openidx-ci
+
+      # The bootstrap hook's psql client. Side-loaded rather than left to an
+      # in-cluster pull: it is the first image the install needs, and an
+      # anonymous Docker Hub rate limit there stalls the hook, which stalls
+      # `helm --wait`, which reads as a chart failure.
+      - name: Pre-load the bootstrap psql image
+        run: |
+          set -euo pipefail
+          img=$(helm template openidx "$CHART" --values "$CHART/values-ci.yaml" \
+            -s templates/db-bootstrap-job.yaml \
+            | sed -n 's/^[[:space:]]*image:[[:space:]]*"\{0,1\}\([^"[:space:]]*\)"\{0,1\}[[:space:]]*$/\1/p' | head -1)
+          test -n "$img" || { echo "could not read the bootstrap image from the chart"; exit 1; }
+          echo "bootstrap image: $img"
+          bash scripts/ci-retry.sh 3 5 -- docker pull "$img"
+          kind load docker-image "$img" --name openidx-ci
+
+      # --wait blocks on every Deployment/StatefulSet becoming Ready and on the
+      # post-install migration hook Job succeeding, so a green here already
+      # means the data plane came up and the schema landed.
+      - name: helm install --wait
+        run: |
+          helm upgrade --install "$RELEASE" "$CHART" \
+            --namespace "$NS" --create-namespace \
+            --values "$CHART/values-ci.yaml" \
+            --wait --timeout 12m
+
+      # Each of the four claims the readiness guide makes about this chart,
+      # asserted against the running cluster rather than a rendered manifest.
+      - name: The bootstrap hook Job ran before the migration and succeeded
+        run: |
+          set -euo pipefail
+          succeeded=$(kubectl -n "$NS" get job "$RELEASE-db-bootstrap" -o jsonpath='{.status.succeeded}')
+          test "${succeeded:-0}" -ge 1 || { echo "db-bootstrap Job did not succeed"; exit 1; }
+          # It prints what it left behind; a Job that silently did nothing and
+          # one that created the role have the same exit code.
+          kubectl -n "$NS" logs "job/$RELEASE-db-bootstrap" --tail=5
+          echo "db-bootstrap Job succeeded"
+
+      - name: The migration hook Job ran and succeeded
+        run: |
+          set -euo pipefail
+          succeeded=$(kubectl -n "$NS" get job "$RELEASE-migrate" -o jsonpath='{.status.succeeded}')
+          test "${succeeded:-0}" -ge 1 || { echo "migrate Job did not succeed"; exit 1; }
+          echo "migrate Job succeeded"
+
+      - name: The schema actually landed
+        run: |
+          set -euo pipefail
+          # `migrate up` exiting 0 on an empty database would satisfy the Job;
+          # counting applied versions is what proves it did the work.
+          applied=$(kubectl -n "$NS" exec "statefulset/$RELEASE-postgresql" -- \
+            env PGPASSWORD=ci-postgres-password \
+            psql -U openidx -d openidx -tAc 'SELECT count(*) FROM schema_migrations')
+          echo "applied migrations: $applied"
+          test "$applied" -gt 100 || { echo "expected the full migration set, got $applied"; exit 1; }
+
+      # The migration Job connects as `openidx`, the plain LOGIN role the
+      # PostgreSQL subchart creates -- not a superuser. Two migrations need
+      # more than a plain role has, and both faults are invisible until an
+      # install: v53 creates the openidx_app runtime role (a role without
+      # CREATEROLE cannot, so templates/db-bootstrap-job.yaml creates it
+      # first), and every seed after the v37 belt is refused by FORCE'd RLS
+      # unless the transaction sets app.bypass_rls. The Job succeeding above
+      # already covers the second; this covers the first, because a bootstrap
+      # that silently did nothing would look identical.
+      - name: The least-privileged owner got the runtime role it cannot create
+        run: |
+          set -euo pipefail
+          role=$(kubectl -n "$NS" exec "statefulset/$RELEASE-postgresql" -- \
+            env PGPASSWORD=ci-postgres-password \
+            psql -U openidx -d openidx -tAc \
+            "SELECT rolcanlogin::text || ',' || rolsuper::text || ',' || rolbypassrls::text FROM pg_roles WHERE rolname = 'openidx_app'")
+          test "$role" = "true,false,false" || {
+            echo "openidx_app is '$role', want 'true,false,false' (login, not superuser, not bypassrls)"; exit 1; }
+          echo "openidx_app present and least-privileged"
+
+      - name: OPA answers at the address config.opaUrl names
+        run: |
+          set -euo pipefail
+          # config.opaUrl is http://opa:8281, and the Service is named literally
+          # `opa` so that address resolves without configuration. Assert the
+          # name and port the config depends on, then that it is really serving.
+          port=$(kubectl -n "$NS" get svc opa -o jsonpath='{.spec.ports[0].port}')
+          test "$port" = "8281" || { echo "opa Service is on $port, config.opaUrl says 8281"; exit 1; }
+          kubectl -n "$NS" port-forward svc/opa 8281:8281 >/dev/null 2>&1 &
+          pf=$!
+          trap 'kill $pf 2>/dev/null || true' EXIT
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8281/health >/dev/null 2>&1; then
+              echo "opa:8281 is serving"; exit 0
+            fi
+            sleep 2
+          done
+          echo "opa did not answer /health"; exit 1
+
+      - name: The backup CronJob and NetworkPolicies exist
+        run: |
+          set -euo pipefail
+          kubectl -n "$NS" get cronjob "$RELEASE-backup" >/dev/null
+          echo "backup CronJob present"
+          policies=$(kubectl -n "$NS" get networkpolicy -o name | wc -l)
+          test "$policies" -ge 10 || { echo "expected the NetworkPolicy set, got $policies"; exit 1; }
+          kubectl -n "$NS" get networkpolicy "$RELEASE-default-deny-ingress" >/dev/null
+          echo "$policies NetworkPolicies present, including default-deny-ingress"
+
+      # A first red round should say what broke, not require a second push to
+      # find out.
+      - name: Diagnose
+        if: failure() && steps.kind.conclusion == 'success'
+        run: |
+          kubectl -n "$NS" get all,networkpolicy,secret 2>&1 | head -100 || true
+          echo "===== pods ====="
+          kubectl -n "$NS" describe pods 2>&1 | tail -200 || true
+          echo "===== db-bootstrap job ====="
+          kubectl -n "$NS" describe job "$RELEASE-db-bootstrap" 2>&1 | tail -40 || true
+          kubectl -n "$NS" logs "job/$RELEASE-db-bootstrap" --all-containers --tail=100 2>&1 || true
+          echo "===== migrate job ====="
+          kubectl -n "$NS" describe job "$RELEASE-migrate" 2>&1 | tail -60 || true
+          kubectl -n "$NS" logs "job/$RELEASE-migrate" --all-containers --tail=200 2>&1 || true
+          echo "===== postgres ====="
+          kubectl -n "$NS" logs "statefulset/$RELEASE-postgresql" --tail=120 2>&1 || true
+          echo "===== events ====="
+          kubectl -n "$NS" get events --sort-by=.lastTimestamp 2>&1 | tail -80 || true

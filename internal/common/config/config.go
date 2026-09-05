@@ -70,10 +70,13 @@ type Config struct {
 	EncryptionKey      string `mapstructure:"encryption_key"`
 	CORSAllowedOrigins string `mapstructure:"cors_allowed_origins"`
 
-	// Feature flags
-	EnableMFA          bool `mapstructure:"enable_mfa"`
-	EnableAuditLogging bool `mapstructure:"enable_audit_logging"`
-	EnableRateLimit    bool `mapstructure:"enable_rate_limit"`
+	// EnableRateLimit turns the per-service rate limiter on. It is the only
+	// survivor of a "Feature flags" block that also carried EnableMFA and
+	// EnableAuditLogging: both were bound, defaulted and shipped in
+	// configs/audit-service.yaml, and no line of this codebase ever read
+	// either one. An operator who set ENABLE_MFA=false got MFA. See
+	// retiredSettings below, which now says so out loud.
+	EnableRateLimit bool `mapstructure:"enable_rate_limit"`
 
 	// Rate limiting
 	RateLimitRequests     int  `mapstructure:"rate_limit_requests"`
@@ -230,6 +233,23 @@ type Config struct {
 	// session is auto-suspended in "enforce" mode. Default 80.
 	PAMSessionRiskThreshold int `mapstructure:"pam_session_risk_threshold"`
 
+	// ABACEnforce drives whether the tenant's attribute-based access policies
+	// decide anything. Until this existed they decided nothing anywhere: the
+	// evaluator's only callers were the ABAC Policies page's own "Test" button
+	// and a benchmark, so an admin could author a deny policy, watch the page
+	// confirm it evaluates to deny, and change no one's access. Same tri-state
+	// as the posture and PAM gates:
+	//   "off"     (default) — policies are not consulted; nothing is queried.
+	//   "observe" — evaluate and audit what WOULD be denied; permit.
+	//   "enforce" — evaluate and deny.
+	// Off by default because enforcing policies that have never enforced
+	// anything can lock people out of applications they use today; observe
+	// exists so the audit trail shows exactly whom enforcing would stop before
+	// the flag is flipped. Enforced at the two points the assignment gate uses
+	// (/oauth/authorize and the access proxy), so it covers both the token and
+	// the overlay path.
+	ABACEnforce string `mapstructure:"abac_enforce"`
+
 	// DevAdminBypass, when true, treats every caller as admin across the
 	// access-service admin surface (the inline PAM admin check and the
 	// requireAdminRole gate) — a local-development convenience so a single
@@ -281,16 +301,21 @@ type Config struct {
 	// docs/access-and-login-convergence-design.md.
 	AccessAssignmentEnforce bool `mapstructure:"access_assignment_enforce"`
 
-	// OAuthLoginUI selects which login UI /oauth/authorize sends the browser to.
-	// "server" (the default) preserves today's behaviour exactly: a public
-	// client whose Accept header isn't application/json gets the
-	// server-rendered login page, everyone else is redirected back to their
-	// own redirect_uri with ?login_session=. "spa" sends every client —
-	// public, confidential, native — to the IdP's own /login page instead,
-	// which is what lets a single login UI (and eventually the deletion of the
-	// server-rendered page) work for a native client whose redirect_uri is a
-	// custom scheme it cannot host a page at.
-	OAuthLoginUI string `mapstructure:"oauth_login_ui"`
+	// OAuthLoginURL is where /oauth/authorize sends a browser to sign in.
+	// Empty (the default) means "<issuer>/login".
+	//
+	// It replaces OAUTH_LOGIN_UI, a flag that chose between the SPA login and a
+	// second, server-rendered login page that no longer exists — a flag with
+	// one remaining option is dead configuration. The URL is needed because the
+	// SPA is not always served from the issuer's origin: the production nginx
+	// puts both at openidx.tdv.org, but the reference compose stack has the
+	// issuer at oauth.localtest.me:8446 and the console at localhost:3000, so
+	// deriving the login page from the issuer alone would 404 every sign-in
+	// there.
+	//
+	// Set it to the console's own /login (e.g. https://console.example.com/login).
+	// The login_session query parameter is appended by loginRedirectURL.
+	OAuthLoginURL string `mapstructure:"oauth_login_url"`
 
 	// OpenZiti configuration
 	ZitiEnabled           bool   `mapstructure:"ziti_enabled"`
@@ -762,13 +787,13 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("selfheal_state_dir", "/home/cmit/oidx-runtime/selfheal")
 	v.SetDefault("selfheal_scripts_dir", "scripts/selfheal")
 	v.SetDefault("pam_session_risk_gate", "off")
+	v.SetDefault("abac_enforce", "off")
 	v.SetDefault("pam_session_risk_threshold", 80)
 	v.SetDefault("dev_admin_bypass", false)
 	v.SetDefault("access_api_require_auth", false)
 	v.SetDefault("admin_api_require_auth", false)
 	v.SetDefault("show_all_apps_when_unassigned", false)
 	v.SetDefault("access_assignment_enforce", false)
-	v.SetDefault("oauth_login_ui", "server")
 
 	// Database defaults
 	v.SetDefault("database_url", "postgres://openidx:openidx_secret@localhost:5432/openidx?sslmode=disable")
@@ -780,8 +805,6 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("enable_opa_authz", false)
 
 	// Feature flag defaults
-	v.SetDefault("enable_mfa", true)
-	v.SetDefault("enable_audit_logging", true)
 	v.SetDefault("enable_rate_limit", true)
 
 	// Rate limiting defaults
@@ -1000,13 +1023,14 @@ func bindEnvVars(v *viper.Viper) {
 		"selfheal_state_dir":                  "SELFHEAL_STATE_DIR",
 		"selfheal_scripts_dir":                "SELFHEAL_SCRIPTS_DIR",
 		"pam_session_risk_gate":               "PAM_SESSION_RISK_GATE",
+		"abac_enforce":                        "ABAC_ENFORCE",
 		"pam_session_risk_threshold":          "PAM_SESSION_RISK_THRESHOLD",
 		"dev_admin_bypass":                    "DEV_ADMIN_BYPASS",
 		"access_api_require_auth":             "ACCESS_API_REQUIRE_AUTH",
 		"admin_api_require_auth":              "ADMIN_API_REQUIRE_AUTH",
 		"show_all_apps_when_unassigned":       "SHOW_ALL_APPS_WHEN_UNASSIGNED",
 		"access_assignment_enforce":           "ACCESS_ASSIGNMENT_ENFORCE",
-		"oauth_login_ui":                      "OAUTH_LOGIN_UI",
+		"oauth_login_url":                     "OAUTH_LOGIN_URL",
 		"shutdown_timeout_seconds":            "SHUTDOWN_TIMEOUT_SECONDS",
 		"public_base_url":                     "PUBLIC_BASE_URL",
 		"oauth_issuer":                        "OAUTH_ISSUER",
@@ -1501,12 +1525,73 @@ func (c *Config) ValidateProduction() error {
 			"guacamole_admin_password is the built-in default; set GUACAMOLE_ADMIN_PASSWORD to a unique secret in production")
 	}
 
+	// Critical: DEV_ADMIN_BYPASS treats every caller as an admin across the
+	// access service's admin surface. It is a local-development convenience
+	// and nothing else stops it in production today.
+	if c.DevAdminBypass {
+		criticalIssues = append(criticalIssues,
+			"dev_admin_bypass must be false in production; it treats every caller as an admin on the access-service admin surface")
+	}
+
+	// Critical: a mock SMS provider delivers nothing. With SMS enabled, that
+	// means a factor a user can enrol into, that answers "code sent", and that
+	// strands them at verification.
+	if c.SMS.Enabled && strings.EqualFold(strings.TrimSpace(c.SMS.Provider), "mock") {
+		criticalIssues = append(criticalIssues,
+			"sms.provider is \"mock\" with SMS enabled; the mock provider delivers nothing — configure a real provider or set SMS_ENABLED=false")
+	}
+
 	if len(criticalIssues) > 0 {
 		return fmt.Errorf("production security validation failed:\n  - %s",
 			strings.Join(criticalIssues, "\n  - "))
 	}
 
 	return nil
+}
+
+// ReportModeGates lists the authorization controls that are configured but not
+// enforcing, with the value each currently has.
+//
+// It exists because ValidateProduction checked secrets, TLS, CORS, CSRF and
+// default passwords thoroughly and not one enforcement flag — an install could
+// pass the production gate with assignment enforcement off, ABAC off, OPA off,
+// the PAM session risk gate off and the device posture gate off, which is to
+// say with every authorization control in the product observing rather than
+// deciding. These are NOT errors: shipping in report mode first is the
+// designed rollout, and failing startup for it would punish the safe path. But
+// an operator has to be able to see the list, so the first-run gate and the
+// ops cockpit surface it and RELEASING/DoD can require it be empty.
+func (c *Config) ReportModeGates() []string {
+	var open []string
+	if !c.AccessAssignmentEnforce {
+		open = append(open, "ACCESS_ASSIGNMENT_ENFORCE=false — application assignment is a catalogue, not a grant")
+	}
+	if !strings.EqualFold(strings.TrimSpace(c.ABACEnforce), "enforce") {
+		open = append(open, "ABAC_ENFORCE="+valueOrOff(c.ABACEnforce)+" — attribute policies do not refuse anything")
+	}
+	if !c.EnableOPAAuthz {
+		open = append(open, "ENABLE_OPA_AUTHZ=false — OPA is not in the request path")
+	}
+	if !strings.EqualFold(strings.TrimSpace(c.PAMSessionRiskGate), "enforce") {
+		open = append(open, "PAM_SESSION_RISK_GATE="+valueOrOff(c.PAMSessionRiskGate)+" — risky privileged sessions are scored but never terminated")
+	}
+	if !strings.EqualFold(strings.TrimSpace(c.PostureDeviceTrustGate), "enforce") {
+		open = append(open, "POSTURE_DEVICE_TRUST_GATE="+valueOrOff(c.PostureDeviceTrustGate)+" — device posture never changes overlay reach")
+	}
+	if !c.AccessAPIRequireAuth {
+		open = append(open, "ACCESS_API_REQUIRE_AUTH=false — the access API accepts anonymous callers under APP_ENV=development")
+	}
+	if !c.AdminAPIRequireAuth {
+		open = append(open, "ADMIN_API_REQUIRE_AUTH=false — the admin API accepts anonymous callers under APP_ENV=development")
+	}
+	return open
+}
+
+func valueOrOff(v string) string {
+	if strings.TrimSpace(v) == "" {
+		return "off"
+	}
+	return v
 }
 
 // DebugOTPsEnabled returns true only if explicitly enabled via config.

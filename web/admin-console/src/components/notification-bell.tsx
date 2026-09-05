@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import { Bell, Check } from 'lucide-react'
 import { Button } from './ui/button'
 import {
@@ -23,6 +24,7 @@ interface Notification {
 }
 
 export function NotificationBell() {
+  const { t } = useTranslation()
   const queryClient = useQueryClient()
   const navigate = useNavigate()
 
@@ -87,17 +89,17 @@ export function NotificationBell() {
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-80">
         <DropdownMenuLabel className="flex items-center justify-between">
-          <span>Notifications</span>
+          <span>{t('components.notificationBell.title')}</span>
           {unreadCount > 0 && (
             <button className="text-xs text-blue-600 hover:underline flex items-center gap-1"
               onClick={(e) => { e.preventDefault(); markAllReadMutation.mutate() }}>
-              <Check className="h-3 w-3" />Mark all read
+              <Check className="h-3 w-3" />{t('components.notificationBell.markAllRead')}
             </button>
           )}
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
         {notifications.length === 0 ? (
-          <div className="py-6 text-center text-sm text-muted-foreground">No notifications</div>
+          <div className="py-6 text-center text-sm text-muted-foreground">{t('components.notificationBell.empty')}</div>
         ) : (
           notifications.map(n => (
             <DropdownMenuItem key={n.id} className="flex flex-col items-start p-3 cursor-pointer" onClick={() => handleClick(n)}>
@@ -112,7 +114,7 @@ export function NotificationBell() {
         )}
         <DropdownMenuSeparator />
         <DropdownMenuItem className="justify-center text-sm text-blue-600" onClick={() => navigate('/notification-center')}>
-          View All Notifications
+          {t('components.notificationBell.viewAll')}
         </DropdownMenuItem>
         <DropdownMenuItem className="justify-center text-sm text-muted-foreground" onClick={() => navigate('/notification-preferences')}>
           Manage Preferences

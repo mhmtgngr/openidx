@@ -11,7 +11,6 @@ secrets:
   redisPassword: ""          # REQUIRED
   jwtSecret: ""              # REQUIRED - min 32 chars
   encryptionKey: ""          # REQUIRED - exactly 32 bytes
-  keycloakAdminPassword: ""
   smtpPassword: ""
   # PAM dedicated brokers (pamBroker.enabled). REST admin credentials for the
   # direct + ziti Guacamole brokers, and the brokers' Postgres password.
@@ -34,9 +33,25 @@ externalSecrets:
   readReplica: false
 
 global:
-  # Image namespace. Matches the GHCR pipeline in .github/workflows/docker.yml
-  # which publishes ghcr.io/mhmtgngr/openidx/<service>.
-  imageRegistry: ghcr.io/mhmtgngr/openidx
+  # Image namespace for OpenIDX's OWN images. Matches the GHCR pipeline in
+  # .github/workflows/docker.yml, which publishes
+  # ghcr.io/mhmtgngr/openidx/<service>.
+  # Empty means the chart default (ghcr.io/mhmtgngr/openidx). It is left
+  # empty rather than pre-filled so that an operator who set only the old
+  # `imageRegistry` key still gets their images from it — pre-filling here
+  # would satisfy the lookup first and make that fallback dead code.
+  openidxRegistry: ""
+
+  # Must stay empty. This key belongs to the Bitnami subchart contract
+  # (postgresql, redis, elasticsearch): their `common.images.image` helper
+  # prefers the global over each chart's own image.registry, so any value
+  # here is prefixed onto THEIR images too. It used to hold the OpenIDX
+  # namespace, which rendered the bundled data plane as
+  # ghcr.io/mhmtgngr/openidx/bitnami/postgresql:16.2.0-... — an image that
+  # does not exist, so a default `helm install` could never start Postgres.
+  # Set it only if you mirror the Bitnami images somewhere, and then set
+  # openidxRegistry too. See templates/_helpers.tpl `openidx.imageRegistry`.
+  imageRegistry: ""
   imagePullSecrets: []
   storageClass: ""
   environment: "production"
@@ -44,7 +59,6 @@ global:
 
 # ----- Service URLs (ConfigMap) -----
 config:
-  keycloakUrl: "http://keycloak:8180"
   opaUrl: "http://opa:8281"
   elasticsearchUrl: "http://elasticsearch:9200"
   oauthIssuer: "https://auth.openidx.io"
@@ -437,37 +451,105 @@ adminConsole:
     targetCPUUtilizationPercentage: 80
     targetMemoryUtilizationPercentage: 80
 
-# Keycloak (legacy/optional). OpenIDX ships its own oauthService as the
-# default OIDC provider, so this subchart is disabled by default. Enable it
-# only if you want to front OpenIDX with an external Keycloak.
-keycloak:
-  enabled: false
-  auth:
-    adminUser: admin
-    adminPassword: ""  # Set via secret
-  postgresql:
-    enabled: false  # Use external PostgreSQL
-  externalDatabase:
-    host: ""
-    port: 5432
-    user: keycloak
-    password: ""
-    database: keycloak
-
-# APISIX
-apisix:
-  enabled: true
-  gateway:
-    type: LoadBalancer
-  ingress-controller:
-    enabled: true
-  dashboard:
-    enabled: true
-
-# OPA
+# OPA — the policy engine the governance service consults (config.opaUrl).
+# This renders a real Deployment + Service (templates/opa.yaml); the Service
+# is named literally `opa` so the default opaUrl resolves. Policies load from
+# a ConfigMap you create from the repo's policy bundle, e.g.:
+#   kubectl create configmap opa-policies --from-file=deployments/docker/opa/policies/
+# With policyConfigMap empty, OPA starts with no policies (every query returns
+# undefined) — fine for evaluation, not for enforcing governance rules.
 opa:
   enabled: true
   replicas: 2
+  image: openpolicyagent/opa:0.61.0   # pinned with the compose stack
+  policyConfigMap: ""
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
+# ----- Database migrations (in-chart) -----
+# A Helm hook Job (templates/migrate-job.yaml) runs `migrate up` from the
+# tools image: post-install (after the bundled PostgreSQL exists) and
+# pre-upgrade (schema-first, before new pods roll). Services may crash-loop
+# for a few seconds on a fresh install until the schema lands — that is the
+# Job racing the Deployments, and it converges. Disable only if you run
+# migrations out-of-band.
+migrations:
+  enabled: true
+  image:
+    repository: tools
+    tag: latest
+    pullPolicy: IfNotPresent
+  backoffLimit: 6
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  # The one thing the migrations cannot do for themselves: create the
+  # openidx_app runtime role. Migrations connect as the database OWNER, and a
+  # role without CREATEROLE cannot create a role, so v53's CREATE ROLE fails
+  # and takes the whole install with it. templates/db-bootstrap-job.yaml runs
+  # first (hook-weight -1) as the superuser and creates it; the full reasoning,
+  # including why this is not an initdb script, is in that file's header.
+  #
+  # Only renders with the bundled PostgreSQL. With an external database
+  # (postgresql.enabled=false) the migration DSN must itself be able to
+  # CREATE ROLE, or openidx_app must already exist — see
+  # docs/deployment/kubernetes.md.
+  roleBootstrap:
+    enabled: true
+    # A psql client, nothing more. Docker Official, and 16 matches the
+    # PostgreSQL the subchart pins (16.2). Override it for an air-gapped
+    # registry; any image carrying psql will do.
+    image: postgres:16-alpine
+    pullPolicy: IfNotPresent
+    backoffLimit: 3
+    resources:
+      requests:
+        cpu: 25m
+        memory: 32Mi
+      limits:
+        cpu: 250m
+        memory: 128Mi
+
+# ----- Scheduled database backups -----
+# CronJob running `backup create` from the tools image (cmd/backup: encrypted,
+# retention-pruned, optional S3 offload). Disabled by default because a backup
+# needs a destination decision: either a PVC (pvc.create) or S3 (s3.*).
+# BACKUP_ENCRYPTION_KEY reuses secrets.encryptionKey via the chart secret.
+backup:
+  enabled: false
+  schedule: "0 3 * * *"
+  retentionCount: 7
+  image:
+    repository: tools
+    tag: latest
+    pullPolicy: IfNotPresent
+  pvc:
+    create: true
+    size: 20Gi
+    storageClass: ""
+    accessMode: ReadWriteOnce
+  s3:
+    bucket: ""
+    region: ""
+    endpoint: ""
+    # Secret with BACKUP_S3_ACCESS_KEY / BACKUP_S3_SECRET_KEY keys.
+    credentialsSecret: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
 
 # Database connection options (applied to the generated DATABASE_URL secret)
 database:
@@ -484,16 +566,39 @@ database:
   #                    off). WARNING: applies to ALL services sharing this config —
   #                    keep generous enough for audit/governance reports, and do
   #                    NOT set it so low that legitimate bulk work is aborted.
-  #                    Run migrations out-of-band (they are not part of this chart).
+  #                    The chart's migration Job (migrations.enabled) runs with
+  #                    its own connection and is not subject to this cap.
   connectTimeout: ""
   statementTimeout: ""
 
 # PostgreSQL
 postgresql:
   enabled: true
+  # Bitnami moved every pinned tag out of docker.io/bitnami in August 2025;
+  # the free namespace now serves `latest` only. The tag this chart version
+  # pins (see charts/postgresql) answers 404 there and 200 under
+  # docker.io/bitnamilegacy — the same image, archived coordinates. Without
+  # this override the bundled PostgreSQL never pulls, which `helm lint` and
+  # `helm template` cannot see because the name is only wrong at pull time.
+  # Follow-up: move off Bitnami's free tier rather than tracking its archive.
+  image:
+    repository: bitnamilegacy/postgresql
+  volumePermissions:
+    image:
+      repository: bitnamilegacy/os-shell
   auth:
-    postgresPassword: ""  # Set via secret
+    # The application role. It must be named here or the subchart never
+    # creates it, and DATABASE_URL (templates/secrets.yaml) has always named
+    # `openidx`. Passwords come from the chart's own openidx-datastore-auth
+    # secret so `secrets.postgresPassword` is the single knob; leaving
+    # auth.postgresPassword empty here would make the subchart generate a
+    # random one that the DSN could never match.
+    username: openidx
     database: openidx
+    existingSecret: openidx-datastore-auth
+    secretKeys:
+      adminPasswordKey: postgres-password
+      userPasswordKey: password
   primary:
     persistence:
       size: 20Gi
@@ -501,8 +606,24 @@ postgresql:
 # Redis
 redis:
   enabled: true
+  # Bitnami moved every pinned tag out of docker.io/bitnami in August 2025;
+  # the free namespace now serves `latest` only. The tag this chart version
+  # pins (see charts/redis) answers 404 there and 200 under
+  # docker.io/bitnamilegacy — the same image, archived coordinates. Without
+  # this override the bundled Redis never pulls, which `helm lint` and
+  # `helm template` cannot see because the name is only wrong at pull time.
+  # Follow-up: move off Bitnami's free tier rather than tracking its archive.
+  image:
+    repository: bitnamilegacy/redis
+  volumePermissions:
+    image:
+      repository: bitnamilegacy/os-shell
   auth:
-    password: ""  # Set via secret
+    enabled: true
+    # Same story as PostgreSQL above: an empty password makes the subchart
+    # generate one, and REDIS_URL would then carry a different one.
+    existingSecret: openidx-datastore-auth
+    existingSecretPasswordKey: redis-password
   master:
     persistence:
       size: 5Gi
@@ -515,6 +636,21 @@ redis:
 # Elasticsearch
 elasticsearch:
   enabled: true
+  # Bitnami moved every pinned tag out of docker.io/bitnami in August 2025;
+  # the free namespace now serves `latest` only. The tag this chart version
+  # pins (see charts/elasticsearch) answers 404 there and 200 under
+  # docker.io/bitnamilegacy — the same image, archived coordinates. Without
+  # this override the bundled Elasticsearch never pulls, which `helm lint` and
+  # `helm template` cannot see because the name is only wrong at pull time.
+  # Follow-up: move off Bitnami's free tier rather than tracking its archive.
+  image:
+    repository: bitnamilegacy/elasticsearch
+  volumePermissions:
+    image:
+      repository: bitnamilegacy/os-shell
+  # The kernel-settings init container is a separate image with the same fate.
+  sysctlImage:
+    repository: bitnamilegacy/os-shell
   replicas: 3
   minimumMasterNodes: 2
   volumeClaimTemplate:
@@ -522,14 +658,19 @@ elasticsearch:
       requests:
         storage: 30Gi
 
-# Monitoring
+# Monitoring — assumes a prometheus-operator (kube-prometheus-stack) or
+# compatible CRDs in the cluster; the chart does not deploy Prometheus itself.
+# monitoring.enabled gates the PrometheusRule alert bundle; serviceMonitor
+# gates a ServiceMonitor scraping /metrics on every enabled OpenIDX service
+# (all eight expose it on their HTTP port).
 monitoring:
   enabled: true
-  prometheus:
-    enabled: true
-  grafana:
-    enabled: true
-    adminPassword: ""  # Set via secret
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    scrapeTimeout: 10s
+    # Extra labels for Prometheus instance selection (e.g. release: kube-prometheus-stack)
+    labels: {}
 
   # Alert delivery.
   #

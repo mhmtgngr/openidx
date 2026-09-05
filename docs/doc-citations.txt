@@ -1,0 +1,76 @@
+# Register for scripts/check-docs-drift.sh.
+#
+# The guard fails when a document cites a repo path that is not there, because
+# a path in backticks reads as a fact and a reader who cannot find it assumes
+# they are looking in the wrong place. This file records the citations that are
+# correct anyway, and why.
+#
+# Format, one per line:
+#   allow <repo-path>  <reason>     a path that is cited and does not exist
+#   skip  <glob>       <reason>     a document exempt from the check entirely
+#
+# Two rules keep this register from becoming the place drift hides:
+#   - Every entry needs a reason. A bare path is a parse error.
+#   - An `allow` whose path COMES BACK, or that no document cites any more,
+#     fails the guard. A waiver nobody rechecks is the same defect one level up.
+#
+# `skip` is for documents that are records of a moment -- a dated audit, a
+# merged plan, a shipped design. Making those track the tree would mean
+# rewriting history; the banner at the top is what keeps them safe, and the
+# reason below says so. Prefer `allow` over `skip` whenever the document is
+# still live.
+
+# ---------------------------------------------------------------------------
+# Documents that describe a past moment. Each carries a banner saying so.
+# ---------------------------------------------------------------------------
+skip CHANGELOG.md                      a release log; entries describe the tree as it was at that version
+skip docs/plans/*                      merged implementation plans, kept as the record of what was decided
+skip docs/superpowers/*                design specs from the dark-platform programme, superseded
+skip docs/archive/*                    explicitly archived
+skip docs/ux-audit/*                   a dated UX audit and its plans
+skip docs/selfheal/*                   the self-heal design docs and their plans, dated in the filename
+skip deployments/docker/*.md           build-attempt logs from the 2026-05 identity-service incident
+skip docs/production-audit-2026-07-16.md   a dated audit; its findings are the point, not its paths
+skip docs/architecture-and-ha-review.md    a dated review
+skip docs/architecture/design-patterns-review.md  a dated review
+skip docs/API_CONTRACT_INTEGRITY_AUDIT.md  a dated audit
+skip docs/DEV-BRANCH-SUMMARY.md        a January 2026 branch snapshot, bannered as historical
+skip docs/IMPLEMENTATION_PLAN_PARALLEL.md  the July 2026 parallelisation board, bannered as superseded
+skip docs/v2-multitenancy-design.md    a design doc for work since shipped differently
+skip docs/access-and-login-convergence-design.md  the convergence design; Task 15 has since deleted what it describes
+skip docs/OPENIDX_ZITI_ARCHITECTURE.md the dark-platform architecture doc, citing its own superseded specs
+skip docs/mobile-mfa-and-ziti-posture-access.md   bannered: the API contracts are current, the mobile/src paths are historical
+skip docs/mobile-openziti-integration-guide.md    bannered: the API contracts are current, the mobile/src paths are historical
+skip docs/PROJECT-STATUS.md            bannered as superseded
+skip docs/FEATURE_PRIORITY_PLAN.md     bannered as superseded
+
+# ---------------------------------------------------------------------------
+# Live documents naming something on purpose: a tree that was deleted (and the
+# deletion is the point), or a path that only exists at build or run time.
+# ---------------------------------------------------------------------------
+allow mobile/                          deleted in favour of client/ (Flutter); the readiness guide records the decision
+allow mobile/package-lock.json         same
+allow frontend/                        the standalone e2e harness, folded into web/admin-console/e2e
+allow web/admin-console/keycloak-theme      deleted; OpenIDX is its own IdP and renders its own login
+allow web/admin-console/keycloak-theme/     same, cited with a trailing slash
+allow .github/workflows/mobile-eas-build.yml  deleted with the Expo tree
+allow .github/dependabot.yml           removed in favour of renovate; the guide records why
+allow internal/feature/                deleted: 780 lines, 13 routes, no importer
+allow internal/feature/flag.go         same, cited for its silent memory-store fallback
+allow internal/oauth/store.go          deleted: 539 lines, no non-test caller, broken token-family revocation
+allow api/openapi/organization-service.yaml  deleted: folded into admin-api.yaml, the spec of the binary that serves it
+allow client/lib/api/auth.dart         deleted: a third login pipeline with throwing stubs and no importer
+allow api/mfa.ts                       console-relative (web/admin-console/src/api/mfa.ts); deleted with the MFA hook
+allow api/mfa                          same, cited without the extension
+allow docs/mobile-developer-guide-simple.md  renamed; the guide records the rename
+allow docs/mobile/firebase-fcm-setup.md      replaced by docs/mobile/push-mfa-delivery.md
+allow docs/site                        the mkdocs build output directory; gitignored, so it is absent in a clean checkout and present after a local `mkdocs build` -- the guard reads git, not the filesystem, when deciding whether a waived path came back
+allow docs/README                      a .gitignore pattern, not a file reference
+allow docs/api-reference               a branch-name example in CONTRIBUTING.md, not a path
+allow docs/api/CNAME                   a file the reader creates to serve the API docs on their own domain
+allow deployments/downloads            the AGENT_DOWNLOADS_DIR default; created at runtime, not committed
+allow deployments/android/openidx-agent.apk  a CI build output, attached to the release
+allow client/plugins/openidx_engine/android/libs/engine.aar        a gomobile build output
+allow client/plugins/openidx_engine/ios/Frameworks/Engine.xcframework  a gomobile build output
+allow docs/superpowers/specs/2026-05-15-android-client-design.md   never committed here; agent-android/README.md says so where it used to link it
+allow agent/internal/posture           never existed; the readiness guide names it as one of the two bad citations this guard's first run caught

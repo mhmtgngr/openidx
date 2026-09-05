@@ -173,27 +173,27 @@ func TestInflateAndDecode(t *testing.T) {
 }
 
 func TestGenerateTransientID(t *testing.T) {
-	userID := uuid.New().String()
-	spEntityID := "https://sp.example.com"
-
-	transient1 := generateTransientID(userID, spEntityID)
-	transient2 := generateTransientID(userID, spEntityID)
-
-	// Same user-SP pair should generate the same transient ID
-	if transient1 != transient2 {
-		t.Errorf("transient IDs should be consistent for same user-SP pair: got %s and %s", transient1, transient2)
-	}
-
-	// Different SP should generate different transient ID
-	transient3 := generateTransientID(userID, "https://other.example.com")
-	if transient1 == transient3 {
-		t.Errorf("transient IDs should differ for different SPs: got same %s", transient1)
-	}
-
-	// Different user should generate different transient ID
-	transient4 := generateTransientID(uuid.New().String(), spEntityID)
-	if transient1 == transient4 {
-		t.Errorf("transient IDs should differ for different users: got same %s", transient1)
+	// This test used to assert the opposite — "Same user-SP pair should
+	// generate the same transient ID" — and passed, because the function
+	// returned sha256(userID|spEntityID). That is a STABLE PAIRWISE
+	// identifier, which is what nameid-format:persistent means. A transient
+	// NameID must be unpredictable and unlinkable across assertions; an SP
+	// choosing that format is relying on exactly the property the old
+	// implementation did not have while the metadata advertised it.
+	seen := map[string]bool{}
+	const n = 1000
+	for i := 0; i < n; i++ {
+		id := generateTransientID()
+		if id == "" {
+			t.Fatal("transient NameID is empty")
+		}
+		if len(id) < 32 {
+			t.Fatalf("transient NameID %q is only %d chars; too little entropy to be unguessable", id, len(id))
+		}
+		if seen[id] {
+			t.Fatalf("transient NameID %q repeated within %d calls; it is not transient", id, n)
+		}
+		seen[id] = true
 	}
 }
 
@@ -979,12 +979,9 @@ func BenchmarkBuildSAMLResponse(b *testing.B) {
 }
 
 func BenchmarkGenerateTransientID(b *testing.B) {
-	userID := "user123"
-	spEntityID := "https://sp.example.com"
-
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = generateTransientID(userID, spEntityID)
+		_ = generateTransientID()
 	}
 }
 

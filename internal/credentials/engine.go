@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -13,6 +12,8 @@ import (
 
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/orgctx"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 // vaultPort is the subset of *vault.Service the engine needs.
@@ -67,14 +68,6 @@ func zero(b []byte) {
 // sanitizeLogValue strips CR, LF, and other ASCII control characters from a string before it
 // is written to a log, preventing log-forging via attacker-influenced values (e.g. a connector
 // error that echoes user-provided connector_config).
-func sanitizeLogValue(s string) string {
-	return strings.Map(func(r rune) rune {
-		if r == '\n' || r == '\r' || r == '\t' || r < 0x20 {
-			return -1
-		}
-		return r
-	}, s)
-}
 
 // candidateVault is the minimal vault interface used by runRotation.
 type candidateVault interface {
@@ -531,7 +524,7 @@ func (s *Service) RotateSecret(ctx context.Context, policyID, trigger string) er
 				// characters) before logging to prevent log-forging.
 				s.logger.Warn("credentials: post-rotate cleanup failed (new credential is live; old may linger)",
 					zap.String("run_id", runID),
-					zap.String("error", sanitizeLogValue(cerr.Error())))
+					zap.String("error", logsafe.Clean(cerr.Error())))
 			}
 		}
 	}

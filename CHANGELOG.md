@@ -7,6 +7,614 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+The project-readiness programme (PR #883). One organising defect class: **a
+control that displays without enforcing is a lie** — extended, phase by phase,
+to a spec that describes an eighth of a surface, a documented endpoint that
+404s, and a "release" artifact signed with a debug key.
+
+### Added
+
+- **Tenant isolation on the nine ISPM/AI tables** (migration v138). `ispm_rules`,
+  `ispm_findings`, `ispm_scores`, `ai_agents`, `ai_recommendations`,
+  `bulk_operations`, `enrolled_agents` and `notification_digests` had no
+  `org_id`: one tenant's "Scan" deleted every other tenant's open findings, and
+  the posture score was neither one tenant's nor the install's. All now carry
+  `org_id` under FORCE RLS, with the install-wide unique keys re-scoped and an
+  isolation test per handler file.
+- **The developer portal kept one settings record for the whole installation,
+  and its OAuth playground handed out a live flow's secret to anyone who knew
+  the session's identifier** (migration v156). The developer settings page sets
+  the maximum number of API keys a user may hold, which permissions an API key
+  may carry, the webhook address allowlist, the browser origins allowed to call
+  the API, the default rate limit, and whether sandbox mode is on. There was
+  exactly one such record on the installation, shared by every organization:
+  whichever administrator saved last chose all of it for everyone. Each
+  organization now has its own.
+
+  The console's OAuth playground — the tool for stepping through a sign-in flow
+  by hand — stores the secret that lets that flow's authorization code be
+  exchanged for a token. It was retrievable by session identifier alone: no
+  check of which organization the session belonged to, no check that the person
+  asking was the one who started it, and, unlike every other page in that part
+  of the API, no check that they were an administrator at all. All three checks
+  are now in place.
+
+  **Operators of installations with more than one organization should review
+  their developer settings after upgrading.** The existing record is assigned to
+  the organization of whoever last saved it; every other organization starts
+  from the defaults and should set its own.
+
+  Also recorded, and not yet fixed: none of the developer settings is consulted
+  by anything. No API-key issuance checks the maximum or the permitted
+  permissions, no browser-origin check reads the allowlist, no limiter reads the
+  rate limit. The page has always saved six limits and enforced none of them,
+  which is why sharing the record between organizations has not caused visible
+  harm. Making those values take effect is outstanding work rather than
+  something this release delivers.
+- **Every organization's single sign-on routing was visible to every
+  administrator, and two organizations could not share a domain or an identity
+  provider** (migration v155). A federation rule says which identity provider
+  authenticates a given email domain — the record that decides where someone
+  typing their work address is sent to sign in.
+
+  The administrative list of those rules showed every organization's, not just
+  the viewer's. The check that was meant to confine it sat in a part of the
+  query that decides how to *label* a row rather than whether to *return* it,
+  so it filtered nothing and merely left the provider name blank on the rules
+  belonging to other organizations. Rules could also be edited or deleted by
+  anyone who knew their identifier: an administrator elsewhere on the
+  installation could switch off another organization's SSO for a domain, after
+  which its users would quietly get a password prompt instead, with nothing on
+  the owner's screen to say the routing had changed. And a rule could be
+  created naming an identity provider belonging to a different organization.
+  All of this is now confined to the organization that owns the rule, and a
+  rule can only name a provider from that same organization.
+
+  Two limits that made multi-organization installs impossible are lifted in the
+  same change. An email domain could be registered **once per installation**:
+  whoever claimed it first held it everywhere, and the next organization to try
+  got an unexplained failure. An identity provider's issuer address was
+  likewise unique installation-wide, so two organizations could not both
+  federate to the same provider — two departments on one corporate tenant, or
+  simply both using the same public provider. Each is now unique per
+  organization, and a duplicate within one organization gets a message saying
+  so rather than a generic error.
+
+  **Operators of installations with more than one organization should review
+  their federation rules after upgrading.** Each rule is assigned to the
+  organization of the identity provider it routes to. A rule every
+  administrator could see will now be visible to one.
+
+  Also recorded, and not yet fixed: the custom claim mappings configured per
+  application — "include the user's department in the token as `dept`" — are
+  saved, listed back, and read by nothing. No token has ever carried them. The
+  page's three destination switches (ID token, access token, userinfo) have no
+  consumer behind them. The mappings are now confined to the organization that
+  owns the application, so they can no longer be added to or removed from
+  another organization's applications, but making them actually reach a token
+  is outstanding work rather than something this release delivers.
+- **A second organization could re-aim the rule that disables and deletes
+  accounts** (migration v154). Joiner/mover/leaver automation is two kinds of
+  rule — a workflow that runs on a person's arrival or departure, and a
+  de-provisioning policy that sweeps for stale, disabled or orphaned accounts —
+  plus a log of what each run did. Between them the actions available are: add
+  or remove a role, add or remove a group membership, revoke every session,
+  force a password change, disable the account, and delete the account.
+
+  Everything those rules **do** was already confined to the organization the
+  rule was run in. What the rules **were** belonged to nobody. Any
+  administrator could list every organization's rules, open one, and change
+  both what it looks for and what it does. A policy named "Stale Account
+  Auto-Disable — 90 days" could be turned into "delete anything idle for zero
+  days", which is every account, and handed back unchanged in name. Its owner
+  then runs the rule they have always run, on their own directory, and the
+  confinement of the action is no help at all: the accounts destroyed are
+  theirs. The same reach allowed deleting another organization's offboarding
+  rule outright — after which nothing on their console says the control that
+  used to disable departing staff has stopped existing.
+
+  The run logs were readable across organizations too, and they are not
+  status: each entry names every account the run touched, the action taken
+  against it, and the reason it was selected.
+
+  All four record types now belong to an organization, and every listing,
+  view, edit, deletion and run is limited to the caller's own.
+
+  **Operators of installations with more than one organization should review
+  their lifecycle rules after upgrading.** Rules are assigned to the
+  organization of whoever created them; run logs follow the account they acted
+  on; anything the upgrade cannot attribute goes to the oldest organization. A
+  rule that every administrator could see will now be visible to one. If a
+  second organization had been relying on a rule the first authored — which it
+  was never entitled to — it needs its own.
+
+  Fixed alongside it: a completed policy run was invisible in its own history.
+  The run record leaves the error field empty when nothing went wrong, and the
+  reader could not cope with an empty value, so it skipped the row silently —
+  an administrator opening the history of a policy that had just disabled fifty
+  accounts saw an empty list. The same fault could hide a whole rule from the
+  policy list. Both readers now handle the empty values, and a skipped row is
+  logged instead of disappearing. And running a workflow against an account in
+  another organization is now refused outright rather than recorded as
+  completed work that never happened.
+- **One organization's sign-in rule could weaken the second factor for every
+  organization** (migration v153). A risk policy is a rule the sign-in path
+  consults: when this condition holds, ask for a second factor, ask for a
+  stronger one, refuse the sign-in, or accept these particular factors. The
+  rules carried nothing saying which organization they belonged to, and the
+  sign-in path read all of them and applied every one that matched.
+
+  The damaging direction is the permissive one. When a sign-in looks risky the
+  system narrows the acceptable second factors to the two that resist phishing
+  — a security key or a push approval. A rule that names acceptable factors
+  does not add to that list, it **replaces** it. So a rule created in one
+  organization saying "any factor is acceptable" put one-time codes by SMS and
+  email back into every other organization's high-risk sign-ins. The condition
+  needed to trigger it is not exotic either: "risk score at least 0" is true of
+  every sign-in there has ever been. The same rule with "refuse" instead would
+  have blocked every sign-in on the installation.
+
+  Rules are now owned by an organization and only that organization's rules are
+  consulted, read or written. Listing, viewing, editing, enabling and deleting
+  are all limited to the caller's own.
+
+  **Operators of installations with more than one organization should review
+  their risk policies after upgrading.** These rules had no owner, so the
+  upgrade assigns every existing one to the oldest organization — there is no
+  other information on the record to go by. A rule that had been applying
+  everywhere will now apply in one place. That is the intended direction, since
+  no organization was ever meant to have another's rule applied to its
+  sign-ins, but the rules you meant each organization to have will need
+  re-creating there.
+
+  Fixed alongside it: one rule with an empty description made the sign-in path
+  fail to load **any** rules at all, on every sign-in, for the whole
+  installation. It failed in the safe direction — the path falls back to asking
+  for a second factor — but every refusal, every step-up and every factor
+  restriction an administrator had configured was silently doing nothing. The
+  same table is read elsewhere in the product with the empty value handled
+  properly; this reader had never had it.
+- **A delegated administrative permission followed the person into other
+  organizations, and the permission cache shared it with their colleagues**
+  (migration v152). A delegation record grants one person a named set of
+  administrative powers — "may reveal stored credentials, until this date." It
+  is read by the component that decides whether a request is allowed, and
+  merged into that person's permissions for the request. The record carried
+  nothing saying which organization it belonged to.
+
+  Two lookups sit side by side in that component, and both run with the
+  database's own restrictions deliberately lifted, because at that point in a
+  request the organization has not yet been established and a restricted read
+  would return nothing and refuse everybody. The first lookup limits itself to
+  the caller's organization and its note says so. The second, added later, says
+  it uses the same reasoning — but limits itself to the person, not the
+  organization. So it did not limit itself at all: a delegation granted in one
+  organization applied to that person wherever else they could act.
+
+  The cache made it worse in a different direction. Permissions are cached for
+  five minutes under a key made of the organization and the person's roles, and
+  the delegation lookup was adding its own caller's personal grants to what got
+  stored. Every other person in that organization holding the same roles was
+  then served one individual's delegated powers as their own, for as long as
+  the entry lived, and again on the next miss. Personal grants no longer go
+  into a shared entry: the expensive role lookup is still cached, the
+  delegation lookup runs per request, and entries written by the old code are
+  no longer read.
+
+  The administration API had the same gap on the writing side. Updating a
+  delegation identified it by its identifier alone, and the permission list is
+  one of the things an update can change — so an administrator of one
+  organization could rewrite what another organization's delegation granted,
+  and it would take effect on that person's next request. Deleting had the same
+  shape, and creating accepted any person as the recipient. All of these are
+  now limited to the caller's own organization, creation checks that the
+  recipient, the granting administrator and the stated scope all belong to it,
+  and the list's total count no longer counts every organization's records.
+
+  Not changed, and stated plainly because it is worth a decision rather than an
+  assumption: a delegation records a scope — a group, an application — and
+  nothing consults it. The check that decides a request compares only what is
+  being done, not where, so a delegation scoped to one group grants its powers
+  wherever that power is checked. Narrowing it would take administrative access
+  away from people who have it today, so it is documented rather than changed.
+- **A remote session onto another organization's machine, with that
+  organization's password** (migration v151). A brokered connection record is
+  the definition of a privileged target: which machine, which port, which
+  stored credential is typed into the session on the user's behalf, and whether
+  the session needs an approval, a live supervisor, or a recording. The record
+  carried nothing saying which organization it belonged to.
+
+  The endpoint that opens a session is available to any signed-in user, which
+  is correct — it is how a person launches the access they have been granted.
+  It asked which organization the caller belonged to, refused if there was
+  none, and then looked the target up by its address alone, never using the
+  answer. Everything after that acts on whatever record comes back: the stored
+  credential is fetched with the database's own restrictions deliberately
+  lifted, because the server is the thing that types it in, and a working
+  connection link is handed back. So a user of one organization who knew
+  another organization's route identifier received a live remote desktop or
+  terminal session on that organization's machine, signed in with that
+  organization's credential. The credential store's own protection was intact
+  and beside the point: it had been set aside on purpose, and the unscoped
+  record was what chose which secret to set it aside for.
+
+  The approval and supervision requirements could not have stopped this. Both
+  are checked against records belonging to the caller's own organization, so
+  the caller's own administrator could approve the caller for someone else's
+  machine and the check would pass. A two-person rule that one organization can
+  satisfy alone is not a control. Restricting the connection record is what
+  makes those checks mean something, and it is now restricted and enforced at
+  the database level.
+
+  The list of brokered connections had the same gap in its simplest form — no
+  condition at all, so every organization's internal hostnames, ports and
+  connection settings were readable by any signed-in user. It is now
+  administrator-only and limited to the viewer's own organization; the list end
+  users see for launching their own access is unchanged and shows no
+  infrastructure.
+
+  Removed with it: a connection-token cache table that has been empty on every
+  installation since it was introduced. Nothing read it, nothing called the
+  code that filled it, and the statement meant to write to it referenced a
+  constraint the table does not have, so every attempt failed silently into a
+  log line. A later change widened one of its columns so the tokens it stored
+  would be encrypted; there were never any tokens.
+- **Every organization's remote support history was on every organization's
+  console** (migration v150). A remote support session is an administrator
+  watching or driving an end user's screen. The list of them ran with no
+  condition restricting it to the viewer's own organization — so any
+  administrator could see whose screen had been taken over, by which
+  administrator, when, and whether a recording of it exists, across every
+  organization on the installation. It is now filtered, and the table is
+  enforced at the database level like the rest.
+
+  Turning that enforcement on was not straightforward. The organization column
+  on these rows has been optional since it was added, and the code that starts
+  a session wrote it empty whenever the caller had no organization resolved.
+  Enforcing on an optional column does not restrict those rows — it makes them
+  vanish: the administrator who started such a session could no longer see it,
+  end it, or delete its recording, while the session itself carried on, because
+  the live connection is held in memory and never re-reads the record. The
+  existing rows are therefore attributed to the administrator who started them
+  first, the column is made mandatory, and only then is enforcement switched
+  on. Starting a session without an organization is now refused outright rather
+  than accepted and lost.
+
+  The paths a device uses — answering the consent prompt, asking whether a
+  session is waiting for it, and ending one — are deliberately exempt, because
+  the device authenticates as itself and not as a member of an organization.
+  Without that exemption an end user's machine could never be helped: the
+  administrator would start a session the device never sees. The background job
+  that expires stalled sessions is exempt for the same kind of reason — one it
+  cannot see is one that never ages out.
+- **One tenant could release another tenant's legal hold, and the recording was
+  then deleted** (migration v149). A legal hold marks a session recording as
+  evidence: while one is active, the job that enforces retention must leave the
+  recording alone. Releasing a hold is therefore not a status change — it is
+  what allows the next retention run to delete the recording.
+
+  The release endpoint for remote-support recordings identified the hold by the
+  session it belonged to and nothing else, so an administrator of one
+  organization who knew another organization's session identifier could release
+  that organization's hold. The recording it was protecting was deleted at the
+  next retention run — irreversibly, and with almost nothing to see afterwards:
+  the owning organization finds only a release timestamp attributed to an
+  account that is not theirs. Placing and listing holds were unrestricted in the
+  same way, which also exposed the stated reason for each hold, free text that
+  routinely describes an ongoing investigation.
+
+  The equivalent endpoints for privileged-session recordings did check that the
+  session belonged to the caller, which is how the gap was noticeable at all —
+  two implementations of one control, one guarded and one not. That check was
+  also weaker than it appeared: it had no organization condition of its own and
+  relied entirely on database-level enforcement, which does not apply when the
+  application connects with a privileged database account. Both hold tables now
+  carry an organization, the enforcement applies to them directly, and every
+  endpoint names the organization in its own query rather than delegating.
+
+  The retention sweeps remain deliberately install-wide and now say so where
+  they run: a hold a sweep cannot see reads as no hold at all, so narrowing
+  those queries would turn a retention job into a way of destroying evidence.
+- **Temporary vendor access is under the row-level-security belt, and its usage
+  record has a tenant** (migration v148). A temporary access link grants an
+  outside party SSH, RDP or VNC into an internal host. An earlier migration
+  (v71) had already stopped one tenant from reading or revoking another's links,
+  and recorded why it went no further: the page that redeems a link runs with no
+  signed-in user, so enforcing tenancy in the database would have broken
+  redemption for the vendor, and every management screen was already filtered in
+  code. The first reason no longer holds — the same pattern has since been
+  solved four times over for other single-use secrets, most recently magic
+  links, which redeem exactly this way — so redemption now runs with the
+  enforcement deliberately lifted and the link's own organization carried
+  through, and the links table is enforced like every other.
+
+  The second reason is why the enforcement is worth having. It guards the next
+  query written, not the ones audited when it goes in, and that query was
+  already present: the record of who redeemed a link, from which address and
+  with what browser, had no tenant column at all and was read by link alone —
+  correct only because a separate check happened to run first. It now carries
+  its own organization and is filtered on it.
+
+  Two failures on the redemption path are fixed with it: the use counter and the
+  usage record were both written without checking whether the write succeeded,
+  so an unrecorded connection to an internal host would have gone unnoticed. The
+  background sweep that expires stale links stays deliberately install-wide — a
+  link past its expiry is expired for everyone, and a sweep that missed a tenant
+  would leave a vendor connected — and now says so at the call site instead of
+  being silently reduced to nothing by the new enforcement.
+- **Breach response is per tenant, and its containment now does what it
+  reports** (migration v147). `breach_incidents` and `breach_alerts` — the
+  record of what was detected, which users and sessions it affected and what
+  containment was applied — had no `org_id`. The console's incident list ran
+  with no organization predicate at all, the alert feed filtered only on
+  whether an alert had been acknowledged while each alert names a user, a
+  session and an IP address, and the pattern analysis aggregated the whole
+  install. Both tables now carry `org_id` under FORCE RLS, with existing
+  incidents attributed through the users they name and alerts through their
+  incident.
+
+  The containment itself was the sharper half. Triggering incident response
+  took a bare incident id, while the actions it invokes — disabling the
+  affected users and revoking their sessions — were already scoped to the
+  caller's organization. An administrator of one tenant could therefore trigger
+  response on another tenant's incident, quarantine nobody, and leave that
+  tenant's real incident marked as investigated with containment steps recorded
+  against it. The incident is now scoped too, so the request is refused rather
+  than silently doing nothing.
+
+  Three further failures on the same path are fixed, each of which had been
+  invisible because its error was discarded: the full quarantine wrote a
+  `status` column that does not exist on the users table (every other disable
+  path in the product sets `enabled = false`), so it reported disabling users
+  it had not disabled — in its own tenant, not only across tenants; the update
+  that records what containment ran wrote a `containment_steps` column no
+  migration had ever created, so the quarantine action was never recorded
+  either and the incident list showed `none` for fully quarantined incidents
+  (v147 adds the column); and both list queries discarded row-scan errors and
+  appended a blank row, so a single alert with no session — what the detector
+  writes whenever it has no session id — truncated the whole alert list to one
+  empty entry with no error shown.
+- **The remaining second factors got a tenant** (migration v146). OpenIDX
+  offers six second factors; three of them — TOTP, push and WebAuthn — already
+  carried `org_id` and sat behind the row-level-security belt, and three did
+  not: `mfa_sms`, `mfa_email_otp` and `mfa_phone_call`, along with
+  `mfa_otp_challenges`, which holds the code hash, the recipient (a real phone
+  number or e-mail address) and the requester's IP for every one-time code in
+  flight. The administration console's MFA enrolment report listed all six side
+  by side, three of its subqueries carrying an organization predicate and three
+  not, under a comment recording the asymmetry as a property of the schema. No
+  tenant could read another's rows — every query is keyed on the user, and a
+  user belongs to one organization — so this is depth rather than a fixed
+  disclosure; what it closes is the absence of any structural guarantee that it
+  stays that way, and a challenge whose status and attempt counter were updated
+  by bare id. It also completes a pair v143 left half-done: that migration
+  belted the phone-call challenges without belting the enrolment they are
+  issued against. The enrolment reads on the sign-in path run with the belt
+  deliberately lifted and the tenant in the query instead, because the code
+  that decides whether to demand a second factor reads an invisible enrolment
+  as an absent one — under the belt alone, a user whose only factor is SMS
+  would have signed in without it. The per-user uniqueness on each enrolment is
+  deliberately left alone rather than made per-organization: the user already
+  determines the organization, so a per-organization key would accept strictly
+  more rows, and the extra rows are one user enrolled twice. Existing rows are
+  attributed to their user.
+- **The credentials that stand in for a password got a tenant** (migration
+  v145). `hardware_tokens`, `hardware_token_events`, `mfa_bypass_codes`,
+  `mfa_bypass_audit` and `magic_links` — five ways to authenticate without the
+  password, none of which carried an organization. `hardware_tokens` is an
+  inventory of physical tokens, holding the serial and the HOTP/TOTP seed, and
+  every call site read and wrote it install-wide: the console's inventory page
+  listed every tenant's tokens, and assignment took a bare token id *and* a
+  bare user id, so an administrator could bind a token sitting available in
+  another tenant's inventory to one of their own users — a transfer of a
+  working second factor, not a disclosure of one. Bypass codes are the
+  break-glass credential for getting a user past MFA: revoking one took a bare
+  code id and revoking all of a user's took a bare user id, so one tenant could
+  destroy another's break-glass at the moment it was needed, and the bypass
+  audit log's user filter was optional — the console calls it with no user,
+  which returned every tenant's history of who issued and used one.
+  `serial_number` was UNIQUE across the install and is now unique per
+  organization: unlike a SAML entity id it resolves no tenant, so the
+  install-wide key only let the first registrant veto everybody else and
+  confirmed the existence of hardware another tenant owns. Verification of a
+  bypass code, a hardware token and a magic link runs with the belt lifted and
+  the tenant in the predicate instead, because those paths do not all have an
+  organization resolved yet and an RLS-empty read there would silently retire
+  the factor. Existing rows are attributed to their user, their parent token or
+  code, or the primary organization.
+- **The SAML surface got a tenant** (migration v144). `saml_service_providers`
+  — the registry of federation partners this install acts as a SAML identity
+  provider for, holding their assertion-consumer URL and the certificate the
+  IdP trusts — was listed, counted, fetched, updated, certificate-rotated,
+  metadata-refreshed and deleted install-wide, all by bare id. One tenant's
+  administrator could enumerate another tenant's partners, repoint their
+  assertions at a host of their choosing, or delete their federation.
+  `saml_sessions`, the single-logout bookkeeping, joins it under FORCE RLS.
+  `entity_id` deliberately keeps its install-wide uniqueness, unlike v143's
+  `provider_key`: a SAML entity id is a globally unique URI by specification
+  and it is what resolves the tenant on an inbound request, so a per-organization
+  key would make that lookup ambiguous. That lookup, and the equivalent one on
+  the single-logout path, are documented as spanning organizations for the same
+  reason API-key and route lookups do.
+- **The sign-in tables got a tenant** (migration v143). `social_providers` —
+  the configuration behind the social sign-in buttons — was listed with the
+  organization predicate inside a `LEFT JOIN`'s `ON` clause, where it filters
+  nothing on the driving table, so every tenant's providers were listed to every
+  tenant; get, update and delete then took a bare id with no organization at
+  all. Because the sign-in path reads this table for `allowed_domains` and
+  `auto_create_users`, one tenant could change which e-mail domains may sign in
+  to another tenant's deployment, whether unknown visitors are provisioned
+  accounts there, or delete their sign-in button. `provider_key` was also
+  UNIQUE across the install, so the first tenant to register `google` took the
+  key from everybody else; it is now unique per organization. `trusted_browsers`,
+  `passwordless_preferences`, `user_risk_baselines` and `phone_call_challenges`
+  join it under FORCE RLS: they were keyed by the organization-scoped user, but
+  trusted browsers were updated by bare id and a phone-call challenge could
+  carry no user at all. Existing rows are attributed to the identity provider
+  they extend or to their own user, with the primary organization as fallback.
+- **The unified audit stream got a tenant** (migration v142).
+  `unified_audit_events` — the console's Unified Audit page, the assignment-
+  and ABAC-gate decision records, the agent lifecycle log, the MCP gateway's
+  tool-call log, the Ziti and Guacamole sync and the usage metering rollup —
+  had no `org_id` at all, and `QueryEvents` opened `WHERE 1=1`. Every tenant's
+  admin could read every tenant's audit trail: the enforcement decisions taken
+  on other tenants' applications, their users' actor IPs and, through the query's
+  own `users` JOIN, their users' e-mail addresses; the summary endpoint counted
+  install-wide the same way. The table now carries `org_id` under FORCE RLS and
+  every writer names its tenant; the two external syncs derive it from the route
+  they correlate to. Existing rows are attributed to their own user's
+  organization, else the organization of the route they name, else the primary
+  organization for controller-level events that match neither. Usage metering
+  now reads the event's own `org_id` instead of joining `users`, so overlay
+  traffic with no user attached is billed to the tenant that ran it rather than
+  to an unowned bucket.
+- **The compliance record got a tenant** (migration v141). `admin_audit_log`,
+  `audit_archives` and `audit_retention_policies` had no `org_id` at all, and
+  every handler read them accordingly: the admin log was listed `WHERE 1=1` and
+  fetched by bare id, so one tenant's admin could read another's full
+  administrative history including the before/after state of changes they had
+  no access to make; retention policies were updated and deleted by bare id;
+  and archives were listed, fetched **and restored** by bare id, so a tenant
+  could name another tenant's export and have the product read that file back.
+  All three now carry `org_id` under FORCE RLS, attributed to their own actor's
+  organization where one survives.
+- **The FORCE-RLS belt extended to fifteen more tables** (migration v140):
+  `scheduled_reports`, `detailed_compliance_reports`,
+  `audit_webhook_subscriptions`, `usage_metering_daily`, `email_branding`,
+  `device_trust_settings`, `pam_active_checkouts`,
+  `pam_checkout_authorizations`, `brokered_sessions`, `ssh_ca`,
+  `sod_violations`, `privileged_accounts_discovered`, `entitlement_warehouse`,
+  `upstream_pools` and `upstream_pool_members` carried `org_id` for as long as
+  nine migrations with nothing underneath it, so a single query that forgot its
+  predicate would have crossed tenants silently. Four also get `org_id NOT
+  NULL`: under a belt, a NULL org is a row nobody can see rather than a row
+  that is loudly wrong. `tools/orgscope`'s registers drop from 95 tables to 80.
+- **ABAC actually decides something** — `internal/abac`, `ABAC_ENFORCE=off|observe|enforce`,
+  wired at both enforcement points (the token endpoint and the access proxy).
+  The admin page had authored allow/deny rules that no enforcement point
+  consulted.
+- **A Definition of Done that CI proves**: the smoke stack, the browser journey
+  suite, a `kind` Helm install, `docs` under `--strict`, and the security scans
+  gating rather than reporting.
+- **Governance (IGA) guide page** — the site had PAM and ZTNA and called it four
+  pillars.
+- **`scripts/check-docs-drift.sh`** — no document may cite a repo path that is
+  not there. Its first run found fifty broken citations.
+- **`scripts/check-release-signing.sh`** — a release artifact's name must track
+  the key that signed it.
+- **`VERSION` + `scripts/check-version-sync.sh`** — the tree carried five answers
+  to "what version is this?".
+- Every published OpenAPI spec is proven against its binary's route table in
+  both directions: 445 documented operations became 1,143 of 1,143.
+
+### Fixed
+
+- **The audit trail was not recording.** `audit_events` is behind the FORCE-RLS
+  belt, and the pool sets `app.org_id` at checkout from the request context — but
+  the oauth (SAML/SSO), identity and provisioning services all wrote it from a
+  goroutine on a bare `context.Background()`. Each put the right organization in
+  the row and none put it on the connection, so the policy's `WITH CHECK`
+  refused every insert and the only trace was a WARN log. Two more of the same
+  class were worse: the joiner/mover/leaver policy runner disabled leavers with
+  `UPDATE users ... AND org_id = $2` on a detached context, matching its
+  predicate and affecting zero rows, and bulk operations and security alerts had
+  it too. All now carry the tenant on the context, and
+  `scripts/check-detached-org-writes.sh` fails the build on the next one.
+- **Audit archives came out empty and said they were fine.** `createAuditArchive`
+  runs detached on a bare `context.Background()`, and `audit_events` sits behind
+  the RLS belt — so the pool set no `app.org_id` at checkout, the policy matched
+  nothing, and every archive completed reporting an event count of zero with no
+  error anywhere. The worker now carries the organization that asked for the
+  archive.
+- **Email branding was a shared row.** Both `email_branding` handlers ignored
+  the caller's organization entirely — the read was `ORDER BY created_at LIMIT
+  1` and the write was `(SELECT id FROM organizations LIMIT 1)` — so on a
+  multi-tenant install every admin saw, and every save overwrote, the same
+  single row. Both now scope to the caller's org, and migration v140's policy
+  refuses the old write at the database.
+- The assignment gate, the OPA `deny` path and the SMS mock provider each failed
+  **open**; they now fail closed or refuse to start.
+- Five documented `/access/*` auth endpoints that returned 404 (the served
+  routes are `/access/.auth/*`).
+- Constants dressed as measurements: a literal 365-day uptime, a "refresh" that
+  refreshed nothing, a deterministic SAML "transient" NameID.
+
+### Removed
+
+- The server-rendered login (`GET /oauth/login`, the five `/authorize/mfa*`
+  routes, `hosted_mfa.go`) — a second credential pipeline outside every i18n and
+  accessibility gate this branch built.
+- `internal/feature/`, `internal/oauth/store.go`, `client/lib/api/auth.dart` and
+  the Expo `mobile/` tree: dead code that read as shipped capability.
+
+### Changed
+
+- The README's "70–80% saving" claim — forbidden on the console's landing page
+  by its own test since the truthfulness rewrite — is gone from the README too.
+
+## [1.33.3] - 2026-08-25
+
+_No changelog entries were recorded for this release._
+
+**Why several releases below say that.** `[Unreleased]` was never advanced when
+v1.28.0 was cut, so everything written between v1.27.0 and v1.33.3 piled up
+under one heading — 359 lines that all read as unshipped. The attribution here
+was recovered rather than guessed: `CHANGELOG.md` was touched exactly twice in
+that window (`427592d8`, in v1.28.0, and `ddb2ba3f`, in v1.33.2), so each entry
+belongs to the release containing the commit that added it. The releases in
+between shipped code but wrote nothing here, and saying so is more accurate
+than distributing entries across them by feel.
+
+**There is no v1.30.0.** The version sequence skips it — no tag, no release.
+
+## [1.33.2] - 2026-08-24
+
+### Fixed
+
+- **Android/iOS client no longer boots to a blank white screen.** `main()` ran
+  the desktop boot path on every platform: it awaited
+  `windowManager.ensureInitialized()` (and later `TrayController.init()`), but
+  `window_manager` / `tray_manager` are desktop-only plugins with no method-channel
+  implementation on mobile. The call threw
+  `MissingPluginException(No implementation found for method ensureInitialized on
+  channel window_manager)` **before `runApp()`**, so the app started, painted
+  nothing, and showed no crash dialog — it just sat on white. `main()` now
+  branches on `EngineClientFactory.isMobile`: mobile calls `runApp()` directly
+  (leaving `engineSupervisorProvider` un-overridden so `engineClientProvider`
+  builds the in-process `MobileEngineClient`), while desktop keeps the unchanged
+  window-chrome + tray + sidecar-supervisor path. The rest of the mobile
+  code (`MobileShell`, `SettingsScreen`) was already platform-guarded; `main.dart`
+  was the only unguarded entry point. The Flutter client version also now tracks
+  the release tag (`1.33.2+13302`, was `0.1.0+1`) so the installed build is
+  identifiable on-device.
+
+## [1.33.1] - 2026-08-24
+
+_No changelog entries were recorded for this release (see the note under
+[1.33.3])._
+
+## [1.33.0] - 2026-08-24
+
+_No changelog entries were recorded for this release (see the note under
+[1.33.3])._
+
+## [1.32.0] - 2026-08-24
+
+_No changelog entries were recorded for this release (see the note under
+[1.33.3])._
+
+## [1.31.0] - 2026-08-23
+
+_No changelog entries were recorded for this release (see the note under
+[1.33.3])._
+
+## [1.29.0] - 2026-08-19
+
+_No changelog entries were recorded for this release (see the note under
+[1.33.3])._
+
+## [1.28.0] - 2026-08-18
+
 ### Added
 
 - **Clientless remote access + Quick Links launcher + attended-support consent.**
@@ -181,22 +789,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Android/iOS client no longer boots to a blank white screen.** `main()` ran
-  the desktop boot path on every platform: it awaited
-  `windowManager.ensureInitialized()` (and later `TrayController.init()`), but
-  `window_manager` / `tray_manager` are desktop-only plugins with no method-channel
-  implementation on mobile. The call threw
-  `MissingPluginException(No implementation found for method ensureInitialized on
-  channel window_manager)` **before `runApp()`**, so the app started, painted
-  nothing, and showed no crash dialog — it just sat on white. `main()` now
-  branches on `EngineClientFactory.isMobile`: mobile calls `runApp()` directly
-  (leaving `engineSupervisorProvider` un-overridden so `engineClientProvider`
-  builds the in-process `MobileEngineClient`), while desktop keeps the unchanged
-  window-chrome + tray + sidecar-supervisor path. The rest of the mobile
-  code (`MobileShell`, `SettingsScreen`) was already platform-guarded; `main.dart`
-  was the only unguarded entry point. The Flutter client version also now tracks
-  the release tag (`1.33.2+13302`, was `0.1.0+1`) so the installed build is
-  identifiable on-device.
 
 - **Admin-console unit tests can run again (frontend test env repaired).**
   `vitest.config.ts` requested `environment: 'happy-dom'`, but `happy-dom` was
@@ -2386,7 +2978,42 @@ The first tagged release: a hardened, single-tenant, self-hostable v1.
   reverse-proxy hop-by-hop header stripping, and audit-stream SIEM config
   endpoints.
 
-[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.17.0...HEAD
+
+[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.33.3...HEAD
+[1.33.3]: https://github.com/mhmtgngr/openidx/compare/v1.33.2...v1.33.3
+[1.33.2]: https://github.com/mhmtgngr/openidx/compare/v1.33.1...v1.33.2
+[1.33.1]: https://github.com/mhmtgngr/openidx/compare/v1.33.0...v1.33.1
+[1.33.0]: https://github.com/mhmtgngr/openidx/compare/v1.32.0...v1.33.0
+[1.32.0]: https://github.com/mhmtgngr/openidx/compare/v1.31.0...v1.32.0
+[1.31.0]: https://github.com/mhmtgngr/openidx/compare/v1.29.0...v1.31.0
+[1.29.0]: https://github.com/mhmtgngr/openidx/compare/v1.28.0...v1.29.0
+[1.28.0]: https://github.com/mhmtgngr/openidx/compare/v1.27.0...v1.28.0
+[1.27.0]: https://github.com/mhmtgngr/openidx/compare/v1.26.0...v1.27.0
+[1.26.0]: https://github.com/mhmtgngr/openidx/compare/v1.25.0...v1.26.0
+[1.25.0]: https://github.com/mhmtgngr/openidx/compare/v1.24.11...v1.25.0
+[1.24.11]: https://github.com/mhmtgngr/openidx/compare/v1.24.9...v1.24.11
+[1.24.9]: https://github.com/mhmtgngr/openidx/compare/v1.24.8...v1.24.9
+[1.24.8]: https://github.com/mhmtgngr/openidx/compare/v1.24.7...v1.24.8
+[1.24.7]: https://github.com/mhmtgngr/openidx/compare/v1.24.6...v1.24.7
+[1.24.6]: https://github.com/mhmtgngr/openidx/compare/v1.24.5...v1.24.6
+[1.24.5]: https://github.com/mhmtgngr/openidx/compare/v1.24.4...v1.24.5
+[1.24.4]: https://github.com/mhmtgngr/openidx/compare/v1.24.3...v1.24.4
+[1.24.3]: https://github.com/mhmtgngr/openidx/compare/v1.24.2...v1.24.3
+[1.24.2]: https://github.com/mhmtgngr/openidx/compare/v1.24.1...v1.24.2
+[1.24.1]: https://github.com/mhmtgngr/openidx/compare/v1.24.0...v1.24.1
+[1.24.0]: https://github.com/mhmtgngr/openidx/compare/v1.23.5...v1.24.0
+[1.23.5]: https://github.com/mhmtgngr/openidx/compare/v1.23.4...v1.23.5
+[1.23.4]: https://github.com/mhmtgngr/openidx/compare/v1.23.3...v1.23.4
+[1.23.3]: https://github.com/mhmtgngr/openidx/compare/v1.23.2...v1.23.3
+[1.23.2]: https://github.com/mhmtgngr/openidx/compare/v1.23.1...v1.23.2
+[1.23.1]: https://github.com/mhmtgngr/openidx/compare/v1.23.0...v1.23.1
+[1.23.0]: https://github.com/mhmtgngr/openidx/compare/v1.22.0...v1.23.0
+[1.22.0]: https://github.com/mhmtgngr/openidx/compare/v1.21.1...v1.22.0
+[1.21.1]: https://github.com/mhmtgngr/openidx/compare/v1.21.0...v1.21.1
+[1.21.0]: https://github.com/mhmtgngr/openidx/compare/v1.20.0...v1.21.0
+[1.20.0]: https://github.com/mhmtgngr/openidx/compare/v1.19.0...v1.20.0
+[1.19.0]: https://github.com/mhmtgngr/openidx/compare/v1.18.0...v1.19.0
+[1.18.0]: https://github.com/mhmtgngr/openidx/compare/v1.17.0...v1.18.0
 [1.17.0]: https://github.com/mhmtgngr/openidx/compare/v1.16.1...v1.17.0
 [1.16.1]: https://github.com/mhmtgngr/openidx/compare/v1.16.0...v1.16.1
 [1.16.0]: https://github.com/mhmtgngr/openidx/compare/v1.15.0...v1.16.0
@@ -2407,4 +3034,13 @@ The first tagged release: a hardened, single-tenant, self-hostable v1.
 [1.7.2]: https://github.com/mhmtgngr/openidx/compare/v1.7.1...v1.7.2
 [1.7.1]: https://github.com/mhmtgngr/openidx/compare/v1.7.0...v1.7.1
 [1.7.0]: https://github.com/mhmtgngr/openidx/compare/v1.6.0...v1.7.0
+[1.6.0]: https://github.com/mhmtgngr/openidx/compare/v1.5.0...v1.6.0
+[1.5.0]: https://github.com/mhmtgngr/openidx/compare/v1.4.0...v1.5.0
+[1.4.0]: https://github.com/mhmtgngr/openidx/compare/v1.3.0...v1.4.0
+[1.3.0]: https://github.com/mhmtgngr/openidx/compare/v1.2.0...v1.3.0
+[1.2.0]: https://github.com/mhmtgngr/openidx/compare/v1.1.0...v1.2.0
+[1.1.0]: https://github.com/mhmtgngr/openidx/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/mhmtgngr/openidx/releases/tag/v1.0.0
+
+<!-- [1.24.10] has a section above but no v1.24.10 tag was ever pushed, so it has
+     no compare link. Left as-is rather than invented. -->

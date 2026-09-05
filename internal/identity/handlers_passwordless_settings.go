@@ -144,10 +144,14 @@ func (s *Service) handleGetPasswordlessStats(c *gin.Context) {
 		return
 	}
 
-	// Count today's magic links
+	// Count today's magic links. The QR count immediately below has carried
+	// `AND org_id = $1` all along; this one, on the same card of the same page,
+	// counted the whole install. Two adjacent statistics, one scoped and one
+	// not, is what a missing column looks like from the outside.
 	var magicLinksToday int
 	err = s.db.Pool.QueryRow(ctx,
-		"SELECT COUNT(*) FROM magic_links WHERE created_at >= CURRENT_DATE",
+		"SELECT COUNT(*) FROM magic_links WHERE created_at >= CURRENT_DATE AND org_id = $1",
+		org.ID,
 	).Scan(&magicLinksToday)
 	if err != nil {
 		s.logger.Warn("failed to count magic links", zap.Error(err))

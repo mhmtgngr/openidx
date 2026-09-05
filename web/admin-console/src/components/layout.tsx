@@ -10,19 +10,23 @@ import {
   Search,
   X,
 } from 'lucide-react'
-import { useState, Suspense } from 'react'
+import { useCallback, useState, Suspense } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import { useAuth } from '../lib/auth'
 import { api } from '../lib/api'
 import { useAppStore } from '../lib/store'
 import { roleLevel, ROLE_LEVELS } from '../lib/roles'
 import { filterNavigation, type ViewMode } from '../config/navigation'
 import { CommandPalette } from './command-palette'
+import { LanguageSwitcher } from './language-switcher'
 import { NotificationBell } from './notification-bell'
 import { TenantSelector } from './tenant-selector'
 import { ThemeToggle } from './theme-toggle'
 import { Breadcrumbs } from './breadcrumbs'
 import { ErrorBoundary } from './error-boundary'
+import { IdleTimeoutDialog } from './idle-timeout-dialog'
+import { useIdleTimeout } from '../hooks/use-idle-timeout'
 import { LoadingSpinner } from './ui/loading-spinner'
 import { Badge } from './ui/badge'
 import { Button } from './ui/button'
@@ -38,10 +42,16 @@ import {
 } from './ui/dropdown-menu'
 
 function ZitiStatusIndicator() {
+  const { t } = useTranslation()
   const navigate = useNavigate()
   const { data: zitiStatus } = useQuery({
     queryKey: ['ziti-status-header'],
-    queryFn: () => api.get<{ enabled: boolean; controller_reachable?: boolean; services_count: number; identities_count: number }>('/api/v1/access/ziti/status'),
+    // Counts and controller state are only in the ENABLED shape: with no Ziti
+    // configured the handler answers {enabled:false, message, sdk_ready,
+    // console_url} and nothing else (internal/access/ziti_handlers.go). The
+    // indicator returns null in that case, so declaring them required was a
+    // type that did not describe the wire.
+    queryFn: () => api.get<{ enabled: boolean; controller_reachable?: boolean; services_count?: number; identities_count?: number }>('/api/v1/access/ziti/status'),
     refetchInterval: 30000,
   })
   const { data: browzerStatus } = useQuery({
@@ -57,7 +67,7 @@ function ZitiStatusIndicator() {
     <button
       onClick={() => navigate('/ziti-network')}
       className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-muted transition-colors text-sm"
-      title="Ziti Network Status"
+      title={t('chrome.zitiStatus')}
     >
       <Network className="h-4 w-4 text-blue-600" />
       {zitiStatus.controller_reachable ? (
@@ -77,13 +87,14 @@ function ZitiStatusIndicator() {
 // Console lenses: Administration is the full console, Management the operator
 // slice, Reporting the auditor slice. Options above the user's level are
 // hidden; users below operator get no switcher at all.
-const VIEW_OPTIONS: { mode: ViewMode; label: string; minLevel: number }[] = [
-  { mode: 'admin', label: 'Admin', minLevel: ROLE_LEVELS.admin },
-  { mode: 'management', label: 'Manage', minLevel: ROLE_LEVELS.operator },
-  { mode: 'reporting', label: 'Report', minLevel: ROLE_LEVELS.auditor },
+const VIEW_OPTIONS: { mode: ViewMode; labelKey: string; minLevel: number }[] = [
+  { mode: 'admin', labelKey: 'chrome.views.admin', minLevel: ROLE_LEVELS.admin },
+  { mode: 'management', labelKey: 'chrome.views.manage', minLevel: ROLE_LEVELS.operator },
+  { mode: 'reporting', labelKey: 'chrome.views.report', minLevel: ROLE_LEVELS.auditor },
 ]
 
 function ViewModeSwitcher({ level }: { level: number }) {
+  const { t } = useTranslation()
   const { viewMode, setViewMode } = useAppStore()
   const options = VIEW_OPTIONS.filter((o) => level >= o.minLevel)
   if (level < ROLE_LEVELS.operator) return null
@@ -92,7 +103,7 @@ function ViewModeSwitcher({ level }: { level: number }) {
     <div
       className="flex rounded-lg border bg-muted p-0.5"
       role="group"
-      aria-label="Console view"
+      aria-label={t('chrome.views.groupLabel')}
     >
       {options.map((option) => (
         <button
@@ -100,12 +111,15 @@ function ViewModeSwitcher({ level }: { level: number }) {
           onClick={() => setViewMode(option.mode)}
           className={`flex-1 rounded-md px-2 py-1 text-xs font-medium transition-colors ${
             viewMode === option.mode
-              ? 'bg-background text-blue-700 shadow-sm'
+              ? // bg-background flips with the theme but blue-700 did not:
+                // 2.99:1 on the dark background, on every page that shows
+                // this switcher. blue-300 is the repo's dark step for it.
+                'bg-background text-blue-700 dark:text-blue-300 shadow-sm'
               : 'text-muted-foreground hover:text-foreground'
           }`}
           aria-pressed={viewMode === option.mode}
         >
-          {option.label}
+          {t(option.labelKey)}
         </button>
       ))}
     </div>
@@ -113,6 +127,7 @@ function ViewModeSwitcher({ level }: { level: number }) {
 }
 
 export function Layout() {
+  const { t } = useTranslation()
   const { user, logout, hasRole } = useAuth()
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [mobileOpen, setMobileOpen] = useState(false)
@@ -137,6 +152,44 @@ export function Layout() {
     .map((n) => n[0])
     .join('')
     .toUpperCase() || 'U'
+
+  // Client-side idle lock.
+  //
+  // The server has enforced an idle timeout for a while (internal/oauth/
+  // session_policy.go, session_worker.go): a session past its idle window is
+  // revoked, and the next request fails. What was missing is the half the
+  // user experiences — an unattended console stayed on screen, showing
+  // whatever the last page had loaded, until someone touched it and got an
+  // abrupt 401. The hook and the dialog were both written for this and had
+  // zero importers.
+  //
+  // The value comes from the server, not a constant: GET /oauth/session-info
+  // returns the effective policy for THIS token (global settings plus any
+  // per-application override), so raising the timeout in Settings moves the
+  // lock. It is also readable by any authenticated user, unlike
+  // /api/v1/settings, which matters because this layout wraps the end-user
+  // pages too.
+  const { data: sessionPolicy } = useQuery({
+    queryKey: ['session-info'],
+    queryFn: () => api.get<{ idle_timeout: number; absolute_timeout: number }>('/oauth/session-info'),
+    // A failure here must not lock anyone out of a working console, so the
+    // hook stays disabled until a real value arrives.
+    retry: false,
+    staleTime: 5 * 60 * 1000,
+  })
+
+  // 0 disables the lock, which is the policy's own encoding of "off" and the
+  // right behaviour while the value is still unknown.
+  const idleTimeout = sessionPolicy?.idle_timeout ?? 0
+  const onIdle = useCallback(() => { logout() }, [logout])
+  const { isWarning, remainingTime, resetTimer } = useIdleTimeout({
+    idleTimeout,
+    // Warn for the last minute, or the last fifth of a short window — a
+    // five-minute warning on a four-minute timeout would never not be showing.
+    warningTime: Math.max(30, Math.min(60, Math.floor(idleTimeout / 5))),
+    enabled: idleTimeout > 0,
+    onIdle,
+  })
 
   return (
     <div className="flex h-screen bg-muted">
@@ -168,7 +221,7 @@ export function Layout() {
             variant="ghost"
             size="icon"
             onClick={() => setSidebarOpen(!sidebarOpen)}
-            aria-label="Toggle sidebar"
+            aria-label={t('chrome.toggleSidebar')}
           >
             <Menu className="h-5 w-5" />
           </Button>
@@ -184,15 +237,15 @@ export function Layout() {
                 type="search"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search menu..."
-                aria-label="Search menu"
+                placeholder={t('chrome.searchMenuPlaceholder')}
+                aria-label={t('chrome.searchMenu')}
                 className="h-9 pl-8 pr-8 [&::-webkit-search-cancel-button]:hidden"
               />
               {searching ? (
                 <button
                   onClick={() => setQuery('')}
                   className="absolute right-2 top-2.5 text-muted-foreground hover:text-foreground"
-                  aria-label="Clear menu search"
+                  aria-label={t('chrome.clearSearch')}
                 >
                   <X className="h-4 w-4" />
                 </button>
@@ -208,21 +261,21 @@ export function Layout() {
         {/* Navigation */}
         <nav className="flex-1 overflow-y-auto p-4 space-y-1">
           {groups.length === 0 && sidebarOpen && (
-            <p className="px-3 py-2 text-sm text-muted-foreground">No menu items match.</p>
+            <p className="px-3 py-2 text-sm text-muted-foreground">{t('chrome.noMenuMatches')}</p>
           )}
           {groups.map((group, gIdx) => {
             // While searching, everything relevant stays visible.
             const collapsed = !searching && collapsedDomains.includes(group.id)
             return (
               <div key={group.id}>
-                {group.label && sidebarOpen && (
+                {group.labelKey && sidebarOpen && (
                   <button
                     onClick={() => toggleDomain(group.id)}
                     className="mt-4 flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground hover:bg-muted hover:text-foreground"
                     aria-expanded={!collapsed}
                   >
                     <group.icon className="h-3.5 w-3.5" />
-                    <span className="flex-1 text-left">{group.label}</span>
+                    <span className="flex-1 text-left">{t(group.labelKey)}</span>
                     <ChevronDown
                       className={`h-3.5 w-3.5 transition-transform ${collapsed ? '-rotate-90' : ''}`}
                     />
@@ -232,16 +285,16 @@ export function Layout() {
                 {(!collapsed || !sidebarOpen) &&
                   group.sections.map((section, sIdx) => (
                     <div key={`${group.id}-${sIdx}`}>
-                      {section.label && sidebarOpen && (
+                      {section.labelKey && sidebarOpen && (
                         <div className="px-3 pt-2 pb-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-                          {section.label}
+                          {t(section.labelKey)}
                         </div>
                       )}
                       {section.items.map((item) => (
                         <NavLink
                           key={item.href}
                           to={item.href}
-                          title={sidebarOpen ? undefined : item.name}
+                          title={sidebarOpen ? undefined : t(item.nameKey)}
                           onClick={() => setMobileOpen(false)}
                           className={({ isActive }) =>
                             `flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
@@ -252,7 +305,7 @@ export function Layout() {
                           }
                         >
                           <item.icon className="h-5 w-5 flex-shrink-0" />
-                          {sidebarOpen && <span className="text-sm">{item.name}</span>}
+                          {sidebarOpen && <span className="text-sm">{t(item.nameKey)}</span>}
                         </NavLink>
                       ))}
                     </div>
@@ -283,7 +336,7 @@ export function Layout() {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56">
               <DropdownMenuLabel>
-                <div>My Account</div>
+                <div>{t('chrome.account.myAccount')}</div>
                 {user?.roles && user.roles.length > 0 && (
                   <div className="text-xs font-normal text-muted-foreground mt-0.5">
                     {user.roles.join(', ')}
@@ -293,18 +346,18 @@ export function Layout() {
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={() => navigate('/profile')}>
                 <User className="mr-2 h-4 w-4" />
-                My Profile
+                {t('chrome.account.myProfile')}
               </DropdownMenuItem>
               {isAdmin && (
                 <DropdownMenuItem onClick={() => navigate('/settings')}>
                   <Settings className="mr-2 h-4 w-4" />
-                  Settings
+                  {t('chrome.account.settings')}
                 </DropdownMenuItem>
               )}
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={logout} className="text-red-600">
                 <LogOut className="mr-2 h-4 w-4" />
-                Logout
+                {t('chrome.account.logout')}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -320,13 +373,14 @@ export function Layout() {
             size="icon"
             className="md:hidden"
             onClick={() => setMobileOpen(true)}
-            aria-label="Open navigation"
+            aria-label={t('chrome.openNavigation')}
           >
             <Menu className="h-5 w-5" />
           </Button>
           <div className="flex-1" />
           {isPlatformAdmin && <TenantSelector />}
           {isAdmin && <ZitiStatusIndicator />}
+          <LanguageSwitcher />
           <ThemeToggle />
           <NotificationBell />
         </header>
@@ -355,6 +409,13 @@ export function Layout() {
 
       {/* Global ⌘K / Ctrl-K jump-to-page palette (role-filtered). */}
       <CommandPalette />
+
+      <IdleTimeoutDialog
+        open={isWarning}
+        remainingTime={remainingTime}
+        onKeepAlive={resetTimer}
+        onSignOut={logout}
+      />
     </div>
   )
 }

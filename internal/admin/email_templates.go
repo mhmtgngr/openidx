@@ -10,6 +10,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // EmailTemplate represents an admin-customizable email template
@@ -272,10 +274,19 @@ func (s *Service) handleGetEmailBranding(c *gin.Context) {
 		return
 	}
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "organization context required"})
+		return
+	}
+
+	// Branding is one row per tenant. This used to be `ORDER BY created_at
+	// LIMIT 1` with no org predicate at all, so every tenant was shown the
+	// oldest tenant's branding.
 	var b EmailBranding
-	err := s.db.Pool.QueryRow(c.Request.Context(),
+	err = s.db.Pool.QueryRow(c.Request.Context(),
 		`SELECT id, org_id, logo_url, primary_color, accent_color, header_text, footer_text, created_at, updated_at
-		 FROM email_branding ORDER BY created_at LIMIT 1`,
+		 FROM email_branding WHERE org_id = $1`, org.ID,
 	).Scan(&b.ID, &b.OrgID, &b.LogoURL, &b.PrimaryColor, &b.AccentColor, &b.HeaderText, &b.FooterText, &b.CreatedAt, &b.UpdatedAt)
 	if err != nil {
 		// Return defaults if no branding exists
@@ -307,14 +318,23 @@ func (s *Service) handleUpdateEmailBranding(c *gin.Context) {
 		return
 	}
 
-	_, err := s.db.Pool.Exec(c.Request.Context(),
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "organization context required"})
+		return
+	}
+
+	// The org used to come from `(SELECT id FROM organizations LIMIT 1)`, so
+	// every tenant's save overwrote the oldest tenant's branding row. v140's
+	// RLS policy would now refuse that write outright.
+	_, err = s.db.Pool.Exec(c.Request.Context(),
 		`INSERT INTO email_branding (org_id, logo_url, primary_color, accent_color, header_text, footer_text)
-		 VALUES ((SELECT id FROM organizations LIMIT 1), $1, $2, $3, $4, $5)
+		 VALUES ($1, $2, $3, $4, $5, $6)
 		 ON CONFLICT (org_id) DO UPDATE SET
 		   logo_url = EXCLUDED.logo_url, primary_color = EXCLUDED.primary_color,
 		   accent_color = EXCLUDED.accent_color, header_text = EXCLUDED.header_text,
 		   footer_text = EXCLUDED.footer_text, updated_at = NOW()`,
-		req.LogoURL, req.PrimaryColor, req.AccentColor, req.HeaderText, req.FooterText)
+		org.ID, req.LogoURL, req.PrimaryColor, req.AccentColor, req.HeaderText, req.FooterText)
 	if err != nil {
 		s.logger.Error("Failed to update email branding", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update branding"})

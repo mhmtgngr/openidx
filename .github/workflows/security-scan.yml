@@ -18,20 +18,15 @@ on:
           - secrets
           - sast
           - license
+  # No `paths:` filter. These scans used to run only when a dependency manifest
+  # changed, so a pull request that introduced a hardcoded secret or a SQL
+  # injection in Go source triggered no scan at all — the gate was not merely
+  # non-blocking, it was not running. Secret and SAST scanning is about the code
+  # in the diff, so it runs on every push and every pull request.
   push:
     branches: [main, dev]
-    paths:
-      - '**/go.mod'
-      - '**/go.sum'
-      - '**/package.json'
-      - '**/package-lock.json'
   pull_request:
     branches: [main, dev]
-    paths:
-      - '**/go.mod'
-      - '**/go.sum'
-      - '**/package.json'
-      - '**/package-lock.json'
 
 permissions:
   contents: read
@@ -43,7 +38,16 @@ env:
   REGISTRY: ghcr.io
   IMAGE_PREFIX: ghcr.io/mhmtgngr/openidx
   TRIVY_SEVERITY: 'CRITICAL,HIGH'
-  TRIVY_EXIT_CODE: '0'  # Don't fail on nightly scans
+  # A scanner that cannot fail the run is a report, not a gate (decision D2 in
+  # docs/PROJECT-READINESS-GUIDE.md). This was '0' under the comment "Don't fail
+  # on nightly scans", which is backwards: going red is the entire purpose of a
+  # nightly scan.
+  TRIVY_EXIT_CODE: '1'
+  # Unfixed vulnerabilities are ignored, deliberately. A CRITICAL with no
+  # upstream patch is not something a pull request can act on, and a gate that
+  # demands the impossible gets switched off. It is still reported to the
+  # Security tab through the SARIF upload.
+  TRIVY_IGNORE_UNFIXED: 'true'
 
 jobs:
   nightly-vulnerability-scan:
@@ -65,7 +69,21 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Booting the builder is a Docker Hub pull (moby/buildkit:buildx-stable-1)
+      # and fails on Docker Hub's bad days, which has nothing to do with the
+      # image being scanned. Retried in the same shape as docker.yml so a
+      # registry outage does not read as a nightly security failure.
       - name: Set up Docker Buildx
+        id: buildx
+        continue-on-error: true
+        uses: docker/setup-buildx-action@v4
+
+      - name: Let Docker Hub settle before re-booting the builder
+        if: steps.buildx.outcome == 'failure'
+        run: sleep 30
+
+      - name: Set up Docker Buildx (retry)
+        if: steps.buildx.outcome == 'failure'
         uses: docker/setup-buildx-action@v4
 
       - name: Log in to GHCR
@@ -102,6 +120,7 @@ jobs:
           output: 'trivy-results.sarif'
           severity: ${{ env.TRIVY_SEVERITY }}
           exit-code: ${{ env.TRIVY_EXIT_CODE }}
+          ignore-unfixed: ${{ env.TRIVY_IGNORE_UNFIXED }}
           vuln-type: 'os,library'
           scan-ref: ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:main
 
@@ -142,19 +161,34 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.25'
+          go-version: '1.26'
           cache: true
 
       - name: Install govulncheck
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
 
+      # Blocking on purpose: govulncheck reports only reachable vulnerabilities
+      # (symbol-level), so a failure here is a real call path into a known CVE,
+      # not dependency noise. Verified clean at the time this gate was armed.
+      # tee keeps the report for the artifact upload below even on failure.
       - name: Run govulncheck
         id: vulncheck
         run: |
-          govulncheck ./... | tee govulncheck-report.txt || true
-        continue-on-error: true
+          set -o pipefail
+          govulncheck ./... | tee govulncheck-report.txt
+
+      # The scan above stops at the root module's boundary. The agent is its
+      # own module and ships on endpoints, so it is scanned too — without this
+      # step the gate reported clean while the agent reached 29 stdlib
+      # advisories. Appended to the same report so the artifact carries both.
+      - name: Run govulncheck (agent module)
+        working-directory: agent
+        run: |
+          set -o pipefail
+          govulncheck ./... | tee -a ../govulncheck-report.txt
 
       - name: Upload govulncheck results
+        if: always()
         uses: actions/upload-artifact@v6
         with:
           name: govulncheck-report
@@ -164,16 +198,42 @@ jobs:
       - name: Run go list for dependencies
         run: go list -json -m all > go-deps.json
 
-      - name: Run Trivy filesystem scan
+      # Two passes on purpose. SARIF carries no table, so the first blocking
+      # run of this job failed with a log that said only "exit code 1" —
+      # useless to whoever has to act on it. The SARIF pass therefore never
+      # fails (exit-code 0) and exists to feed the Security tab; the table pass
+      # is the gate and prints what it found.
+      #
+      # scanners: vuln — secret scanning is Gitleaks' job here, with its own
+      # reasoned allowlist. Two scanners answering the same question means two
+      # allowlists to keep true, and Trivy's would be scanning node_modules.
+      - name: Run Trivy filesystem scan (SARIF for the Security tab)
         uses: aquasecurity/trivy-action@master
         with:
           scan-type: 'fs'
           scan-ref: '.'
+          scanners: 'vuln'
           format: 'sarif'
           output: 'trivy-fs-results.sarif'
-          severity: 'CRITICAL,HIGH'
+          severity: ${{ env.TRIVY_SEVERITY }}
+          exit-code: '0'
+          ignore-unfixed: ${{ env.TRIVY_IGNORE_UNFIXED }}
           vuln-type: 'library'
 
+      - name: Run Trivy filesystem scan (the gate)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          scanners: 'vuln'
+          format: 'table'
+          severity: ${{ env.TRIVY_SEVERITY }}
+          exit-code: ${{ env.TRIVY_EXIT_CODE }}
+          ignore-unfixed: ${{ env.TRIVY_IGNORE_UNFIXED }}
+          vuln-type: 'library'
+
+      # always(): the scan step now fails the job on a finding, and the SARIF
+      # is the thing a reviewer needs in order to act on it.
       - name: Upload Trivy FS results to GitHub Security
         uses: github/codeql-action/upload-sarif@v4
         if: always()
@@ -208,28 +268,50 @@ jobs:
         working-directory: ./web/admin-console
         run: npm ci
 
+      # `npm audit --audit-level=high || true` inside a step that also carried
+      # continue-on-error: two swallows on one command, so a HIGH advisory in a
+      # console dependency could never fail anything. The report is still
+      # written first (and uploaded below) so the failing run has the detail
+      # attached; then the same audit decides the step.
       - name: Run npm audit
         working-directory: ./web/admin-console
         run: |
           npm audit --json > npm-audit-report.json || true
-          npm audit --audit-level=high || true
-        continue-on-error: true
+          npm audit --audit-level=high
 
       - name: Upload npm audit results
+        if: always()
         uses: actions/upload-artifact@v6
         with:
           name: npm-audit-report
           path: web/admin-console/npm-audit-report.json
           retention-days: 30
 
-      - name: Run Trivy on package files
+      # Same split as the Go scan above: SARIF for the Security tab, a table
+      # for the gate, so a failure says what it found.
+      - name: Run Trivy on package files (SARIF for the Security tab)
         uses: aquasecurity/trivy-action@master
         with:
           scan-type: 'fs'
           scan-ref: './web/admin-console'
+          scanners: 'vuln'
           format: 'sarif'
           output: 'trivy-npm-results.sarif'
-          severity: 'CRITICAL,HIGH'
+          severity: ${{ env.TRIVY_SEVERITY }}
+          exit-code: '0'
+          ignore-unfixed: ${{ env.TRIVY_IGNORE_UNFIXED }}
+          vuln-type: 'library'
+
+      - name: Run Trivy on package files (the gate)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: './web/admin-console'
+          scanners: 'vuln'
+          format: 'table'
+          severity: ${{ env.TRIVY_SEVERITY }}
+          exit-code: ${{ env.TRIVY_EXIT_CODE }}
+          ignore-unfixed: ${{ env.TRIVY_IGNORE_UNFIXED }}
           vuln-type: 'library'
 
       - name: Upload Trivy npm results to GitHub Security
@@ -250,24 +332,85 @@ jobs:
 
   secret-scan:
     name: Secret Scanning (Gitleaks)
-    if: github.event.inputs.scan_type == 'all' || github.event.inputs.scan_type == 'secrets' || github.event.inputs.scan_type == '' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    # Runs on every push and pull request as well as the schedule: a secret
+    # arrives in a diff, so the diff is when to look.
+    if: github.event.inputs.scan_type == 'all' || github.event.inputs.scan_type == 'secrets' || github.event.inputs.scan_type == '' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
 
-      # gitleaks-action@v2 requires GITLEAKS_LICENSE for organization
-      # repos; without it (or on a personal repo) the step can hard-fail.
-      # Keep the scan running and reporting, but don't let a missing
-      # license red the whole Security Scanning workflow.
-      - name: Run Gitleaks
-        continue-on-error: true
-        uses: gitleaks/gitleaks-action@v3
+      # The official BINARY, not gitleaks-action. The action asks for a
+      # GITLEAKS_LICENSE on organization repos and can hard-fail without one,
+      # which is why the step carried continue-on-error — and a secret scanner
+      # that cannot fail the run reports leaks into a summary nobody reads. The
+      # binary needs no licence, pins a version, and its exit code is the gate.
+      #
+      # `gitleaks dir` scans the working tree rather than history. History is
+      # deliberately out of scope here: a pull request can only be asked to fix
+      # what it contains, and a scan of every past commit fails forever on
+      # anything already rotated. Rotating and purging history is an incident
+      # response, not a merge gate.
+      - name: Install Gitleaks
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+          GITLEAKS_VERSION: 8.28.0
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
+          sudo install -m 0755 /tmp/gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+
+      # --redact keeps the matched value out of the public log; the report
+      # artifact carries what is needed to act on a finding.
+      - name: Run Gitleaks
+        run: |
+          gitleaks dir . \
+            --config .gitleaks.toml \
+            --no-banner \
+            --redact \
+            --report-format json \
+            --report-path gitleaks-report.json
+
+      # The allowlist in .gitleaks.toml is what makes the scan above pass on a
+      # tree that once produced 75 findings. An allowlist can be widened until
+      # it matches everything, at which point the gate is green and blind — and
+      # nothing about a green run distinguishes the two. So: plant a credential
+      # of a shape that must never be allowlisted, and require the scanner to
+      # find it.
+      - name: Prove the allowlist still catches a real secret
+        run: |
+          set -uo pipefail
+          canary=".gitleaks-canary.tmp"
+          # Every credential below is ASSEMBLED AT RUN TIME. Writing them as
+          # literals here would plant three scannable secrets in a file the
+          # scanner reads, and this step would fail the job it is meant to
+          # protect. The prefixes are split for the same reason.
+          rnd() { head -c 96 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c "$1"; }
+          {
+            printf 'token = %s_%s\n'  'gh''p' "$(rnd 36)"
+            printf 'slack = %s-%s-%s-%s\n' 'xo''xb' "$(rnd 12)" "$(rnd 13)" "$(rnd 24)"
+            printf -- '-----%s RSA PRIVATE KEY-----\n' 'BEGIN'
+            rnd 64
+            printf -- '\n-----%s RSA PRIVATE KEY-----\n' 'END'
+          } > "$canary"
+          # Three shapes, so one upstream rule change cannot quietly retire the
+          # check. (An AWS access key id is deliberately not one of them: the
+          # default ruleset does not flag one on its own.)
+          # `|| rc=$?`, not a bare call: GitHub runs `run:` under `bash -e`, so
+          # gitleaks exiting non-zero — which is the whole point here — would
+          # abort the step before the check below could read it.
+          rc=0
+          gitleaks dir . --config .gitleaks.toml --no-banner --redact \
+            --report-format json --report-path canary-report.json >/dev/null 2>&1 || rc=$?
+          found=$(jq 'length' canary-report.json 2>/dev/null || echo 0)
+          rm -f "$canary" canary-report.json
+          if [ "$rc" -eq 0 ]; then
+            echo "::error::gitleaks found none of three planted credentials — .gitleaks.toml has been widened until the scan cannot fail"
+            exit 1
+          fi
+          echo "allowlist still goes red: $found finding(s) on the planted credentials"
 
       - name: Upload Gitleaks report
         if: always()
@@ -277,73 +420,153 @@ jobs:
           path: gitleaks-report.json
           retention-days: 30
 
+      # The report file is written on every run, including a clean one, so
+      # "the file exists" said nothing. Count the findings instead.
       - name: Generate secret scan summary
         if: always()
         run: |
-          echo "### Secret Scan Summary" >> $GITHUB_STEP_SUMMARY
-          echo '' >> $GITHUB_STEP_SUMMARY
+          echo "### Secret Scan Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo '' >> "$GITHUB_STEP_SUMMARY"
           if [ -f gitleaks-report.json ]; then
-            echo 'Gitleaks scan completed. Results uploaded as artifact.' >> $GITHUB_STEP_SUMMARY
+            count=$(jq 'length' gitleaks-report.json 2>/dev/null || echo '?')
+            if [ "$count" = "0" ]; then
+              echo 'No secrets detected.' >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "**$count finding(s).** Values are redacted in the log; the" \
+                   "gitleaks-report artifact has the file and line. A finding is" \
+                   "either a real secret — rotate it, then purge it from history —" \
+                   "or a false positive, which needs an entry in .gitleaks.toml" \
+                   "with a reason." >> "$GITHUB_STEP_SUMMARY"
+            fi
           else
-            echo 'No secrets detected!' >> $GITHUB_STEP_SUMMARY
+            echo 'Gitleaks did not produce a report; the scan step failed before scanning.' >> "$GITHUB_STEP_SUMMARY"
           fi
 
   sast-scan:
     name: SAST Scan (Semgrep)
-    if: github.event.inputs.scan_type == 'all' || github.event.inputs.scan_type == 'sast' || github.event.inputs.scan_type == '' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    if: github.event.inputs.scan_type == 'all' || github.event.inputs.scan_type == 'sast' || github.event.inputs.scan_type == '' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    # The maintained image. returntocorp/semgrep-action@v1 was deprecated
+    # (renamed to semgrep/semgrep) and its flakiness was the stated reason for
+    # continue-on-error — which meant no SAST finding could ever fail this
+    # workflow. Running the CLI in its own container removes both the
+    # deprecation and the setup step that was flaking.
+    container:
+      image: semgrep/semgrep:1.90.0
 
     steps:
       - uses: actions/checkout@v7
 
-      # returntocorp/semgrep-action is deprecated (renamed to
-      # semgrep/semgrep) and can fail to set up cleanly. Keep it
-      # non-blocking so SAST findings are reported without a flaky
-      # action turning the workflow red; migrate to semgrep/semgrep in
-      # a follow-up.
-      - name: Run Semgrep
-        continue-on-error: true
-        uses: returntocorp/semgrep-action@v1
-        with:
-          config: >-
-            p/security-audit
-            p/golang
-            p/javascript
-            p/secrets
-            p/cwe-top-25
-          output: semgrep-report.json
-          output-format: sarif
-          generate-sarif: '1'
+      # --severity=ERROR only. Semgrep's ERROR tier is the "this is a defect"
+      # tier; WARNING and INFO are style and are still written to the SARIF for
+      # the Security tab. Blocking on all three on a codebase this size would
+      # produce a gate nobody can clear, and a gate nobody can clear gets
+      # switched off — which is how this job ended up with continue-on-error in
+      # the first place.
+      # Two passes, for the same reason as Trivy above: a gate that fails with
+      # "exit code 1" and a SARIF file nobody can read from the log is a gate
+      # that gets switched off again. The first pass writes the SARIF and never
+      # fails; the second prints the ERROR-severity findings and is the gate.
+      - name: Run Semgrep (SARIF for the Security tab)
+        run: |
+          set -uo pipefail
+          semgrep scan \
+            --config p/security-audit \
+            --config p/golang \
+            --config p/javascript \
+            --config p/secrets \
+            --config p/cwe-top-25 \
+            --sarif --output semgrep-report.sarif \
+            --metrics=off || true
+
+      - name: Run Semgrep (the gate)
+        run: |
+          set -uo pipefail
+          semgrep scan \
+            --config p/security-audit \
+            --config p/golang \
+            --config p/javascript \
+            --config p/secrets \
+            --config p/cwe-top-25 \
+            --metrics=off \
+            --error --severity=ERROR
+
+      # A `nosemgrep` comment silences the finding for the SCAN — the gate step
+      # above passes — but semgrep still writes the result to the SARIF, tagged
+      # `suppressions: [{"kind": "inSource"}]`. Uploaded as-is, GitHub counted
+      # all five of this branch's suppressed findings as new alerts and the
+      # `Semgrep OSS` check went red on seven consecutive heads, with a number
+      # that never moved no matter what the diff contained: two
+      # detected-bcrypt-hash (the seeded default admin's hash, public by design
+      # and refused by ValidateProduction) and three cookie-missing-secure (the
+      # ZTNA session cookie, whose Secure flag is computed by
+      # sessionCookieSecure rather than written as a literal the rule can see).
+      #
+      # So the upload carries only what is NOT suppressed. This is not a
+      # widening: the gate step runs the full rule set with nothing filtered, a
+      # new finding without a nosemgrep comment still reaches the Security tab
+      # and still fails this check, and the artifact below keeps the COMPLETE
+      # report — suppressed results included — as the record. What changes is
+      # that a finding somebody deliberately silenced in source, with the
+      # reasoning written at the line, is not also carried as an open alert.
+      #
+      # The counts are printed so the next run says which of the two things
+      # happened: "0 suppressed in source" would mean this semgrep no longer
+      # emits the suppressions and the filter is a no-op, not a fix.
+      - name: Drop in-source suppressions from the upload
+        if: always() && hashFiles('semgrep-report.sarif') != ''
+        # python3, not jq: the semgrep image ships the interpreter semgrep
+        # itself runs on and makes no promise about jq.
+        run: |
+          set -euo pipefail
+          python3 - <<'EOF'
+          import json
+          d = json.load(open("semgrep-report.sarif"))
+          total = kept = 0
+          for run in d.get("runs", []):
+              results = run.get("results", [])
+              total += len(results)
+              run["results"] = [r for r in results if not r.get("suppressions")]
+              kept += len(run["results"])
+          json.dump(d, open("semgrep-upload.sarif", "w"))
+          print(f"semgrep results: {total} total, {total - kept} suppressed in source, {kept} uploaded")
+          EOF
 
       # The deprecated Semgrep action may not produce a SARIF file, and
       # SARIF upload needs GitHub code scanning enabled (not guaranteed on
       # forks/personal repos). Keep these non-blocking so a missing report
       # doesn't turn the workflow red — the findings still surface in the
       # step summary / artifact when present.
+      # SARIF upload needs code scanning enabled, which is not guaranteed on
+      # every fork — that one step stays non-blocking, so an unavailable
+      # Security tab cannot mask a real finding OR invent one. The scan step
+      # above is the gate.
       - name: Upload Semgrep results to GitHub Security
         uses: github/codeql-action/upload-sarif@v4
         continue-on-error: true
-        if: always() && hashFiles('semgrep-report.sarif') != ''
+        if: always() && hashFiles('semgrep-upload.sarif') != ''
         with:
-          sarif_file: semgrep-report.sarif
+          sarif_file: semgrep-upload.sarif
           category: 'semgrep-sast'
 
       - name: Upload Semgrep report artifact
         uses: actions/upload-artifact@v6
-        continue-on-error: true
-        if: always() && hashFiles('semgrep-report.json') != ''
+        if: always() && hashFiles('semgrep-report.sarif') != ''
         with:
           name: semgrep-report
-          path: semgrep-report.json
+          path: semgrep-report.sarif
           retention-days: 30
 
       - name: Generate SAST summary
         if: always()
         run: |
-          echo "### SAST Scan Summary" >> $GITHUB_STEP_SUMMARY
-          echo '' >> $GITHUB_STEP_SUMMARY
-          if [ -f semgrep-report.json ]; then
-            echo 'Semgrep scan completed. Results uploaded to Security tab.' >> $GITHUB_STEP_SUMMARY
+          echo "### SAST Scan Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo '' >> "$GITHUB_STEP_SUMMARY"
+          if [ -f semgrep-report.sarif ]; then
+            echo 'Semgrep completed; SARIF uploaded to the Security tab and attached as an artifact.' >> "$GITHUB_STEP_SUMMARY"
+            echo 'The job fails on ERROR-severity findings only; WARNING and INFO are in the SARIF.' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'Semgrep produced no SARIF; the scan did not complete.' >> "$GITHUB_STEP_SUMMARY"
           fi
 
   license-compliance:
@@ -357,12 +580,17 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.25'
+          go-version: '1.26'
 
       - name: Install go-licenses
         run: go install github.com/google/go-licenses@latest
 
-      - name: Check Go licenses
+      # Deliberately informational, unlike the scans above (decision D2 covers
+      # Trivy, Gitleaks, Semgrep and npm-audit). go-licenses classifies by
+      # heuristic and misreads vendored and dual-licensed modules often enough
+      # that blocking on it would mean arguing with the tool, not fixing
+      # licences. The report is published for a human review at release time.
+      - name: Check Go licenses (informational)
         run: |
           go-licenses check ./... --disallowed_types=forbidden,restricted || echo "License check completed with warnings"
           go-licenses save ./... --save_path=./licenses-go || true
@@ -437,9 +665,12 @@ jobs:
             echo "- $(basename $file)" >> $GITHUB_STEP_SUMMARY
           done
 
+      # This is the gate docker.yml defers to ("gating happens in the nightly
+      # Security Scanning workflow") — it must actually fail the run. It used
+      # to carry continue-on-error, which meant no scan result could ever red
+      # this workflow.
       - name: Fail on critical findings (schedule only)
         if: contains(needs.*.result, 'failure')
         run: |
-          echo "One or more security scans failed. Please review the results."
+          echo "One or more security scan jobs failed. Review the job logs and reports above."
           exit 1
-        continue-on-error: true

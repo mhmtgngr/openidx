@@ -279,6 +279,49 @@ describe('AccessRequestsPage', () => {
     expect(submitBtn).not.toBeDisabled()
   })
 
+  // Resource Name is TWO controls: a picker when the resource list came back
+  // with entries, and a free-text input when it did not. The e2e spec assumed
+  // the input, which held only against an empty stack -- against a real one the
+  // input was replaced mid-fill and Playwright waited on a detached element
+  // until the test timed out. This pins the branch the e2e spec now has to
+  // handle, including the accessible name it finds the picker by.
+  it('offers a role picker rather than a free-text name when roles exist', async () => {
+    const user = userEvent.setup()
+    render(<AccessRequestsPage />, { wrapper: createWrapper() })
+    await screen.findByText('Access Requests')
+
+    fireEvent.click(screen.getByRole('button', { name: /request access/i }))
+    await waitFor(() => expect(screen.getByPlaceholderText(/explain why you need access/i)).toBeInTheDocument())
+    // Before a type is chosen there is no list to pick from, so the input is
+    // what is on screen.
+    expect(screen.getByPlaceholderText(/select a resource type first/i)).toBeInTheDocument()
+
+    await user.click(screen.getByRole('combobox', { name: /resource type/i }))
+    await user.click(await screen.findByRole('option', { name: /^role$/i }))
+
+    // The input is gone and the picker has taken its place.
+    await waitFor(() => {
+      expect(screen.queryByPlaceholderText(/enter resource name/i)).not.toBeInTheDocument()
+    })
+    const namePicker = screen.getByRole('combobox', { name: /resource name/i })
+    await user.click(namePicker)
+    await user.click(await screen.findByRole('option', { name: /auditor/i }))
+
+    await user.click(screen.getByRole('combobox', { name: /access duration/i }))
+    await user.click(await screen.findByRole('option', { name: /4 hours/i }))
+    await user.type(screen.getByPlaceholderText(/explain why you need access/i), 'maintenance')
+
+    fireEvent.click(screen.getByRole('button', { name: /submit request/i }))
+    await waitFor(() => expect(api.post).toHaveBeenCalled())
+    const [, payload] = vi.mocked(api.post).mock.calls.find(
+      ([url]) => String(url).endsWith('/governance/requests')
+    ) as [string, Record<string, unknown>]
+    expect(payload.resource_type).toBe('role')
+    // The name the user PICKED, not one they typed.
+    expect(payload.resource_name).toBe('auditor')
+    expect(payload.duration).toBe('4h')
+  })
+
   it('vault_credential create POST includes resource_id', async () => {
     const user = userEvent.setup()
     render(<AccessRequestsPage />, { wrapper: createWrapper() })

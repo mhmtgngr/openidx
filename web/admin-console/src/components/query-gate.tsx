@@ -30,3 +30,35 @@ export function QueryGate<T>({ query, resource, empty, children }: QueryGateProp
   if (empty !== undefined && isEmptyData(data)) return <>{empty}</>
   return <>{children(data)}</>
 }
+
+interface QueryGateAllProps {
+  /**
+   * Every query whose data the children read. Unlike QueryGate this yields no
+   * data — the page reads each `.data` itself — because the point here is the
+   * READ STATE, not the payload.
+   */
+  queries: Array<Pick<UseQueryResult<unknown>, 'isLoading' | 'isError' | 'error'>>
+  /** Human-readable name for the QueryError message, e.g. "the network topology". */
+  resource: string
+  children: ReactNode
+}
+
+/**
+ * QueryGate for a view assembled from several queries.
+ *
+ * A page that renders one picture out of N calls and gates only the first one
+ * is the masking defect with extra steps: the other N-1 fall through `?? []`,
+ * so a 403 on services or a controller that is down draws a clean, believable,
+ * mostly-empty diagram. The operator reads "no services" and it means "we
+ * could not ask". Fail the whole view if ANY of its inputs failed — a diagram
+ * assembled from partial data is not a smaller truth, it is a wrong one.
+ *
+ * Only for views where the parts are one picture. A dashboard of independent
+ * cards wants a gate per card, so one dead subsystem does not blank the rest.
+ */
+export function QueryGateAll({ queries, resource, children }: QueryGateAllProps) {
+  if (queries.some((q) => q.isLoading)) return <LoadingSpinner />
+  const failed = queries.find((q) => q.isError)
+  if (failed) return <QueryError error={failed.error} resource={resource} />
+  return <>{children}</>
+}

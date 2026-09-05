@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Button } from '../ui/button'
 import { Maximize, Square, WifiOff, ExternalLink } from 'lucide-react'
 
@@ -28,6 +29,7 @@ type RelayState = 'connecting' | 'streaming' | 'error' | 'closed'
 const RELAY_FLAG_KEYFRAME = 0x01
 
 export function RelayRenderer({ wsUrl, mode, onEnd, onPopOut, autoFullscreen }: Props) {
+  const { t } = useTranslation()
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const overlayRef = useRef<HTMLDivElement | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
@@ -263,29 +265,37 @@ export function RelayRenderer({ wsUrl, mode, onEnd, onPopOut, autoFullscreen }: 
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <div className="text-sm text-muted-foreground">
-          {state === 'streaming' ? 'Live (relay / Ziti)' : state === 'connecting' ? 'Connecting…' : state === 'error' ? (errorMessage || 'Disconnected') : 'Closed'}
+          {state === 'streaming'
+            ? t('components.relayRenderer.live')
+            : state === 'connecting'
+              ? t('components.relayRenderer.connecting')
+              : state === 'error'
+                ? errorMessage || t('components.relayRenderer.disconnected')
+                : t('components.relayRenderer.closed')}
         </div>
         <div className="flex items-center gap-2">
           {mode === 'interactive' && (
             <>
               <Button variant={controlActive ? 'default' : 'outline'} size="sm" onClick={toggleControl}>
-                {controlActive ? 'Release control' : 'Take control'}
+                {controlActive ? t('components.relayRenderer.releaseControl') : t('components.relayRenderer.takeControl')}
               </Button>
-              <Button variant="outline" size="sm" disabled={!controlActive} onClick={() => sendInput({ event: 'global_action', action: 'back' })}>Back</Button>
-              <Button variant="outline" size="sm" disabled={!controlActive} onClick={() => sendInput({ event: 'global_action', action: 'home' })}>Home</Button>
+              <Button variant="outline" size="sm" disabled={!controlActive} onClick={() => sendInput({ event: 'global_action', action: 'back' })}>{t('components.relayRenderer.back')}</Button>
+              <Button variant="outline" size="sm" disabled={!controlActive} onClick={() => sendInput({ event: 'global_action', action: 'home' })}>{t('components.relayRenderer.home')}</Button>
             </>
           )}
-          <Button variant="outline" size="sm" onClick={enterFullscreen}><Maximize className="mr-1 h-3 w-3" /> Fullscreen</Button>
+          <Button variant="outline" size="sm" onClick={enterFullscreen}><Maximize className="mr-1 h-3 w-3" /> {t('components.relayRenderer.fullscreen')}</Button>
           {onPopOut && (
-            <Button variant="outline" size="sm" onClick={onPopOut} title="Open in a separate window (great for a second monitor)">
-              <ExternalLink className="mr-1 h-3 w-3" /> Pop out
+            <Button variant="outline" size="sm" onClick={onPopOut} title={t('components.relayRenderer.popOutHint')}>
+              <ExternalLink className="mr-1 h-3 w-3" /> {t('components.relayRenderer.popOut')}
             </Button>
           )}
-          <Button variant="destructive" size="sm" onClick={onEnd}><Square className="mr-1 h-3 w-3" /> End session</Button>
+          <Button variant="destructive" size="sm" onClick={onEnd}><Square className="mr-1 h-3 w-3" /> {t('components.relayRenderer.endSession')}</Button>
         </div>
       </div>
       <div
         ref={overlayRef}
+        role="application"
+        aria-label={t('components.relayRenderer.screenLabel')}
         tabIndex={0}
         onPointerDown={onPointerDown}
         onPointerUp={onPointerUp}
@@ -298,8 +308,8 @@ export function RelayRenderer({ wsUrl, mode, onEnd, onPopOut, autoFullscreen }: 
         {state !== 'streaming' && (
           <div className="absolute inset-0 flex items-center justify-center text-white/80 text-sm">
             {state === 'error' ? (
-              <span className="flex items-center gap-2"><WifiOff className="h-4 w-4" /> {errorMessage || 'Disconnected'}</span>
-            ) : state === 'connecting' ? 'Connecting…' : 'Closed'}
+              <span className="flex items-center gap-2"><WifiOff className="h-4 w-4" /> {errorMessage || t('components.relayRenderer.disconnected')}</span>
+            ) : state === 'connecting' ? t('components.relayRenderer.connecting') : t('components.relayRenderer.closed')}
           </div>
         )}
       </div>

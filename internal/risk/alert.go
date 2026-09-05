@@ -224,6 +224,12 @@ func (a *AlertManager) storeAlert(ctx context.Context, alert *Alert) error {
 	if orgID == "" {
 		orgID = "00000000-0000-0000-0000-000000000010"
 	}
+	// ...and the org must reach the CONNECTION too, not only the row.
+	// security_alerts is behind the FORCE-RLS belt and the pool sets
+	// app.org_id at checkout from orgctx, so a write arriving on the
+	// background deliverAlert context was refused by the policy however
+	// correct its org_id column was.
+	ctx = orgctx.With(ctx, orgctx.Org{ID: orgID})
 
 	_, err := a.db.Pool.Exec(ctx,
 		`INSERT INTO security_alerts

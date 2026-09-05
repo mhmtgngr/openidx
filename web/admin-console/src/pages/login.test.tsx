@@ -71,11 +71,18 @@ describe('LoginPage', () => {
     expect(screen.getByText('Identity & Access Management Platform')).toBeInTheDocument()
   })
 
-  it('renders footer links', () => {
+  it('renders footer links that go somewhere real', () => {
     renderWithRouter(<LoginPage />)
-    expect(screen.getByText('Privacy')).toBeInTheDocument()
-    expect(screen.getByText('Terms')).toBeInTheDocument()
-    expect(screen.getByText('Help')).toBeInTheDocument()
+    // The old Privacy/Terms/Help trio was link-styled text with no
+    // destinations; the footer now links to pages that actually exist.
+    expect(screen.getByRole('link', { name: /documentation/i })).toHaveAttribute(
+      'href',
+      expect.stringContaining('mhmtgngr.github.io/openidx'),
+    )
+    expect(screen.getByRole('link', { name: /^security$/i })).toHaveAttribute(
+      'href',
+      expect.stringContaining('SECURITY.md'),
+    )
   })
 
   it('renders powered by footer', () => {

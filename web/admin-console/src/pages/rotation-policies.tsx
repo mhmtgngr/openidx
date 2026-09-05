@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   api,
   VaultSecretMeta,
@@ -41,25 +42,25 @@ import {
   TableRow,
 } from '../components/ui/table'
 import { RefreshCw, Plus, Trash2, Pencil } from 'lucide-react'
+import i18n from '../i18n'
 import { useToast } from '../hooks/use-toast'
 
 function formatInterval(seconds: number): string {
-  if (seconds === 0) return 'manual'
+  if (seconds === 0) return i18n.t('pages.rotationPolicies.manual')
   if (seconds % 86400 === 0) return `${seconds / 86400}d`
   if (seconds % 3600 === 0) return `${seconds / 3600}h`
   if (seconds % 60 === 0) return `${seconds / 60}m`
   return `${seconds}s`
 }
 
-const connectorLabels: Record<string, string> = {
-  directory: 'Directory',
-  generate_only: 'Generate-only',
-  ssh: 'SSH (password)',
-  ssh_key: 'SSH key-pair',
-  postgres: 'PostgreSQL',
-  mysql: 'MySQL',
-  aws_iam: 'AWS IAM',
-  gcp_sa: 'GCP Service Account',
+const CONNECTOR_TYPES = [
+  'directory', 'generate_only', 'ssh', 'ssh_key', 'postgres', 'mysql', 'aws_iam', 'gcp_sa',
+] as const
+
+function connectorLabel(type: string): string {
+  return (CONNECTOR_TYPES as readonly string[]).includes(type)
+    ? i18n.t(`pages.rotationPolicies.connectors.${type}`)
+    : type
 }
 
 const connectorColors: Record<string, string> = {
@@ -80,61 +81,66 @@ const connectorColors: Record<string, string> = {
 type ConnectorFieldType = 'text' | 'number' | 'secret' | 'textarea' | 'select' | 'checkbox'
 interface ConnectorField {
   key: string
-  label: string
+  /** Catalog key under pages.rotationPolicies.fields — never raw English. */
+  labelKey: string
   required: boolean
   type: ConnectorFieldType
   placeholder?: string
-  options?: { value: string; label: string }[]
+  /** Options carry a labelKey for prose and a raw label for protocol values. */
+  options?: { value: string; label?: string; labelKey?: string }[]
   default?: string
 }
 
 // ssh and ssh_key share the exact same config (sshConfigFromMap).
 const SSH_FIELDS: ConnectorField[] = [
-  { key: 'host', label: 'Host', required: true, type: 'text', placeholder: 'ssh.example.com' },
-  { key: 'port', label: 'Port', required: false, type: 'number', placeholder: '22', default: '22' },
-  { key: 'username', label: 'Target username', required: true, type: 'text', placeholder: 'svc-account' },
-  { key: 'admin_secret_id', label: 'Admin secret', required: true, type: 'secret' },
-  { key: 'admin_username', label: 'Admin username', required: true, type: 'text', placeholder: 'root' },
+  { key: 'host', labelKey: 'host', required: true, type: 'text', placeholder: 'ssh.example.com' },
+  { key: 'port', labelKey: 'port', required: false, type: 'number', placeholder: '22', default: '22' },
+  { key: 'username', labelKey: 'username', required: true, type: 'text', placeholder: 'svc-account' },
+  { key: 'admin_secret_id', labelKey: 'adminSecret', required: true, type: 'secret' },
+  { key: 'admin_username', labelKey: 'adminUsername', required: true, type: 'text', placeholder: 'root' },
   {
-    key: 'admin_auth', label: 'Admin auth method', required: false, type: 'select', default: 'password',
-    options: [{ value: 'password', label: 'Password' }, { value: 'private_key', label: 'SSH private key' }],
+    key: 'admin_auth', labelKey: 'adminAuth', required: false, type: 'select', default: 'password',
+    options: [
+      { value: 'password', labelKey: 'adminAuthPassword' },
+      { value: 'private_key', labelKey: 'adminAuthPrivateKey' },
+    ],
   },
-  { key: 'host_key', label: 'Host key (pinned)', required: true, type: 'textarea', placeholder: 'ssh-ed25519 AAAA...' },
+  { key: 'host_key', labelKey: 'hostKey', required: true, type: 'textarea', placeholder: 'ssh-ed25519 AAAA...' },
 ]
 
 const CONNECTOR_FIELDS: Record<string, ConnectorField[]> = {
   ssh: SSH_FIELDS,
   ssh_key: SSH_FIELDS,
   aws_iam: [
-    { key: 'target_user', label: 'IAM user', required: true, type: 'text', placeholder: 'svc-rotated' },
-    { key: 'admin_secret_id', label: 'Admin secret (AWS creds)', required: true, type: 'secret' },
-    { key: 'region', label: 'Region', required: false, type: 'text', placeholder: 'us-east-1', default: 'us-east-1' },
+    { key: 'target_user', labelKey: 'iamUser', required: true, type: 'text', placeholder: 'svc-rotated' },
+    { key: 'admin_secret_id', labelKey: 'adminSecretAws', required: true, type: 'secret' },
+    { key: 'region', labelKey: 'region', required: false, type: 'text', placeholder: 'us-east-1', default: 'us-east-1' },
   ],
   postgres: [
-    { key: 'host', label: 'Host', required: true, type: 'text', placeholder: 'db.example.com' },
-    { key: 'port', label: 'Port', required: false, type: 'number', placeholder: '5432', default: '5432' },
-    { key: 'dbname', label: 'Database', required: true, type: 'text', placeholder: 'appdb' },
+    { key: 'host', labelKey: 'host', required: true, type: 'text', placeholder: 'db.example.com' },
+    { key: 'port', labelKey: 'port', required: false, type: 'number', placeholder: '5432', default: '5432' },
+    { key: 'dbname', labelKey: 'dbname', required: true, type: 'text', placeholder: 'appdb' },
     {
-      key: 'sslmode', label: 'SSL mode', required: false, type: 'select', default: 'require',
+      key: 'sslmode', labelKey: 'sslmode', required: false, type: 'select', default: 'require',
       options: ['disable', 'require', 'verify-ca', 'verify-full'].map((v) => ({ value: v, label: v })),
     },
-    { key: 'admin_secret_id', label: 'Admin secret', required: true, type: 'secret' },
-    { key: 'admin_username', label: 'Admin username', required: true, type: 'text', placeholder: 'postgres' },
-    { key: 'target_role', label: 'Target role', required: true, type: 'text', placeholder: 'app_role' },
+    { key: 'admin_secret_id', labelKey: 'adminSecret', required: true, type: 'secret' },
+    { key: 'admin_username', labelKey: 'adminUsername', required: true, type: 'text', placeholder: 'postgres' },
+    { key: 'target_role', labelKey: 'targetRole', required: true, type: 'text', placeholder: 'app_role' },
   ],
   mysql: [
-    { key: 'host', label: 'Host', required: true, type: 'text', placeholder: 'db.example.com' },
-    { key: 'port', label: 'Port', required: false, type: 'number', placeholder: '3306', default: '3306' },
-    { key: 'dbname', label: 'Database (optional)', required: false, type: 'text', placeholder: 'appdb' },
-    { key: 'tls', label: 'Use TLS', required: false, type: 'checkbox' },
-    { key: 'admin_secret_id', label: 'Admin secret', required: true, type: 'secret' },
-    { key: 'admin_username', label: 'Admin username', required: true, type: 'text', placeholder: 'root' },
-    { key: 'target_user', label: 'Target user', required: true, type: 'text', placeholder: 'app_user' },
-    { key: 'target_host', label: 'Target host', required: false, type: 'text', placeholder: '%', default: '%' },
+    { key: 'host', labelKey: 'host', required: true, type: 'text', placeholder: 'db.example.com' },
+    { key: 'port', labelKey: 'port', required: false, type: 'number', placeholder: '3306', default: '3306' },
+    { key: 'dbname', labelKey: 'dbnameOptional', required: false, type: 'text', placeholder: 'appdb' },
+    { key: 'tls', labelKey: 'tls', required: false, type: 'checkbox' },
+    { key: 'admin_secret_id', labelKey: 'adminSecret', required: true, type: 'secret' },
+    { key: 'admin_username', labelKey: 'adminUsername', required: true, type: 'text', placeholder: 'root' },
+    { key: 'target_user', labelKey: 'targetUser', required: true, type: 'text', placeholder: 'app_user' },
+    { key: 'target_host', labelKey: 'targetHost', required: false, type: 'text', placeholder: '%', default: '%' },
   ],
   gcp_sa: [
-    { key: 'service_account_email', label: 'Service account email', required: true, type: 'text', placeholder: 'rotated@proj.iam.gserviceaccount.com' },
-    { key: 'admin_secret_id', label: 'Admin secret (GCP SA key JSON)', required: true, type: 'secret' },
+    { key: 'service_account_email', labelKey: 'serviceAccountEmail', required: true, type: 'text', placeholder: 'rotated@proj.iam.gserviceaccount.com' },
+    { key: 'admin_secret_id', labelKey: 'adminSecretGcp', required: true, type: 'secret' },
   ],
 }
 
@@ -305,6 +311,7 @@ function formToInput(f: PolicyFormState): VaultRotationPolicyInput {
 }
 
 export function RotationPoliciesPage() {
+  const { t } = useTranslation()
   const queryClient = useQueryClient()
   const { toast } = useToast()
 
@@ -336,10 +343,10 @@ export function RotationPoliciesPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['rotation-policies'] })
       setShowDialog(false)
-      toast({ title: 'Rotation policy created' })
+      toast({ title: t('pages.rotationPolicies.toasts.created') })
     },
     onError: () => {
-      toast({ title: 'Failed to create policy', variant: 'destructive' })
+      toast({ title: t('pages.rotationPolicies.toasts.createFailed'), variant: 'destructive' })
     },
   })
 
@@ -349,10 +356,10 @@ export function RotationPoliciesPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['rotation-policies'] })
       setShowDialog(false)
-      toast({ title: 'Rotation policy updated' })
+      toast({ title: t('pages.rotationPolicies.toasts.updated') })
     },
     onError: () => {
-      toast({ title: 'Failed to update policy', variant: 'destructive' })
+      toast({ title: t('pages.rotationPolicies.toasts.updateFailed'), variant: 'destructive' })
     },
   })
 
@@ -360,7 +367,7 @@ export function RotationPoliciesPage() {
     mutationFn: (id: string) => api.vault.deletePolicy(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['rotation-policies'] })
-      toast({ title: 'Policy deleted' })
+      toast({ title: t('pages.rotationPolicies.toasts.deleted') })
     },
   })
 
@@ -394,14 +401,12 @@ export function RotationPoliciesPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Rotation Policies</h1>
-          <p className="text-muted-foreground">
-            Manage automated credential rotation — admin guarded
-          </p>
+          <h1 className="text-2xl font-bold">{t('nav.items.rotationPolicies')}</h1>
+          <p className="text-muted-foreground">{t('pages.rotationPolicies.subtitle')}</p>
         </div>
         <Button onClick={openCreate}>
           <Plus className="h-4 w-4 mr-2" />
-          New Policy
+          {t('pages.rotationPolicies.newPolicy')}
         </Button>
       </div>
 
@@ -410,7 +415,7 @@ export function RotationPoliciesPage() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <RefreshCw className="h-5 w-5" />
-            Policies ({policies.length})
+            {t('pages.rotationPolicies.list.title', { count: policies.length })}
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -419,19 +424,19 @@ export function RotationPoliciesPage() {
               <LoadingSpinner size="lg" />
             </div>
           ) : isError ? (
-            <QueryError error={error} resource="rotation policies" />
+            <QueryError error={error} resource={t('pages.rotationPolicies.resourceName')} />
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Secret</TableHead>
-                  <TableHead>Connector</TableHead>
-                  <TableHead>Interval</TableHead>
-                  <TableHead>On Checkout</TableHead>
-                  <TableHead>Enabled</TableHead>
-                  <TableHead>Last Status</TableHead>
-                  <TableHead>Last Run</TableHead>
-                  <TableHead>Next Run</TableHead>
+                  <TableHead>{t('pages.rotationPolicies.list.table.secret')}</TableHead>
+                  <TableHead>{t('pages.rotationPolicies.list.table.connector')}</TableHead>
+                  <TableHead>{t('pages.rotationPolicies.list.table.interval')}</TableHead>
+                  <TableHead>{t('pages.rotationPolicies.list.table.onCheckout')}</TableHead>
+                  <TableHead>{t('pages.rotationPolicies.list.table.enabled')}</TableHead>
+                  <TableHead>{t('pages.rotationPolicies.list.table.lastStatus')}</TableHead>
+                  <TableHead>{t('pages.rotationPolicies.list.table.lastRun')}</TableHead>
+                  <TableHead>{t('pages.rotationPolicies.list.table.nextRun')}</TableHead>
                   <TableHead></TableHead>
                 </TableRow>
               </TableHeader>
@@ -441,15 +446,19 @@ export function RotationPoliciesPage() {
                     <TableCell className="font-medium">{secretName(p.secret_id)}</TableCell>
                     <TableCell>
                       <Badge className={connectorColors[p.connector_type] || 'bg-muted text-foreground'}>
-                        {connectorLabels[p.connector_type] || p.connector_type}
+                        {connectorLabel(p.connector_type)}
                       </Badge>
                     </TableCell>
                     <TableCell>{formatInterval(p.interval_seconds)}</TableCell>
                     <TableCell>
                       {p.rotate_on_checkout ? (
-                        <Badge className="bg-purple-100 text-purple-800">yes</Badge>
+                        <Badge className="bg-purple-100 text-purple-800">
+                          {t('pages.rotationPolicies.list.yes')}
+                        </Badge>
                       ) : (
-                        <span className="text-muted-foreground text-sm">no</span>
+                        <span className="text-muted-foreground text-sm">
+                          {t('pages.rotationPolicies.list.no')}
+                        </span>
                       )}
                     </TableCell>
                     <TableCell>
@@ -458,7 +467,9 @@ export function RotationPoliciesPage() {
                           p.enabled ? 'bg-green-100 text-green-800' : 'bg-muted text-foreground'
                         }
                       >
-                        {p.enabled ? 'enabled' : 'disabled'}
+                        {p.enabled
+                          ? t('pages.rotationPolicies.list.enabled')
+                          : t('pages.rotationPolicies.list.disabled')}
                       </Badge>
                     </TableCell>
                     <TableCell>
@@ -506,20 +517,20 @@ export function RotationPoliciesPage() {
                           </AlertDialogTrigger>
                           <AlertDialogContent>
                             <AlertDialogHeader>
-                              <AlertDialogTitle>Delete rotation policy?</AlertDialogTitle>
+                              <AlertDialogTitle>{t('pages.rotationPolicies.confirmDelete.title')}</AlertDialogTitle>
                               <AlertDialogDescription>
-                                This permanently removes the rotation schedule for{' '}
-                                <strong>{secretName(p.secret_id)}</strong>. Rotation history is
-                                retained.
+                                {t('pages.rotationPolicies.confirmDelete.descriptionBefore')}
+                                <strong>{secretName(p.secret_id)}</strong>
+                                {t('pages.rotationPolicies.confirmDelete.descriptionAfter')}
                               </AlertDialogDescription>
                             </AlertDialogHeader>
                             <AlertDialogFooter>
-                              <AlertDialogCancel>Cancel</AlertDialogCancel>
+                              <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
                               <AlertDialogAction
                                 onClick={() => deleteMutation.mutate(p.id)}
                                 className="bg-red-600 hover:bg-red-700"
                               >
-                                Delete
+                                {t('common.delete')}
                               </AlertDialogAction>
                             </AlertDialogFooter>
                           </AlertDialogContent>
@@ -531,7 +542,7 @@ export function RotationPoliciesPage() {
                 {policies.length === 0 && (
                   <TableRow>
                     <TableCell colSpan={9} className="text-center text-muted-foreground py-8">
-                      No rotation policies yet
+                      {t('pages.rotationPolicies.list.empty')}
                     </TableCell>
                   </TableRow>
                 )}
@@ -546,19 +557,21 @@ export function RotationPoliciesPage() {
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>
-              {editingPolicy ? 'Edit Rotation Policy' : 'New Rotation Policy'}
+              {editingPolicy
+                ? t('pages.rotationPolicies.dialog.editTitle')
+                : t('pages.rotationPolicies.dialog.createTitle')}
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             {/* Secret */}
             <div>
-              <label className="text-sm font-medium">Secret *</label>
+              <label htmlFor="rotation-policies-secret" className="text-sm font-medium">{t('pages.rotationPolicies.dialog.secret')}</label>
               <Select
                 value={form.secretId}
                 onValueChange={(v) => setForm((f) => ({ ...f, secretId: v }))}
               >
-                <SelectTrigger className="mt-1" data-testid="secret-select">
-                  <SelectValue placeholder="Select a secret" />
+                <SelectTrigger id="rotation-policies-secret" className="mt-1" data-testid="secret-select">
+                  <SelectValue placeholder={t('pages.rotationPolicies.dialog.secretPlaceholder')} />
                 </SelectTrigger>
                 <SelectContent>
                   {secrets.map((s) => (
@@ -572,25 +585,22 @@ export function RotationPoliciesPage() {
 
             {/* Connector type */}
             <div>
-              <label className="text-sm font-medium">Connector Type *</label>
+              <label htmlFor="rotation-policies-connector-type" className="text-sm font-medium">{t('pages.rotationPolicies.dialog.connectorType')}</label>
               <Select
                 value={form.connectorType}
                 onValueChange={(v) =>
                   setForm((f) => ({ ...f, connectorType: v, connectorConfig: seedConnectorConfig(v) }))
                 }
               >
-                <SelectTrigger className="mt-1" data-testid="connector-select">
+                <SelectTrigger id="rotation-policies-connector-type" className="mt-1" data-testid="connector-select">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="directory">Directory</SelectItem>
-                  <SelectItem value="generate_only">Generate-only</SelectItem>
-                  <SelectItem value="ssh">SSH (password)</SelectItem>
-                  <SelectItem value="ssh_key">SSH key-pair</SelectItem>
-                  <SelectItem value="postgres">PostgreSQL</SelectItem>
-                  <SelectItem value="mysql">MySQL</SelectItem>
-                  <SelectItem value="aws_iam">AWS IAM</SelectItem>
-                  <SelectItem value="gcp_sa">GCP Service Account</SelectItem>
+                  {CONNECTOR_TYPES.map((c) => (
+                    <SelectItem key={c} value={c}>
+                      {t(`pages.rotationPolicies.connectors.${c}`)}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -599,20 +609,20 @@ export function RotationPoliciesPage() {
             {form.connectorType === 'directory' && (
               <>
                 <div>
-                  <label className="text-sm font-medium">Directory ID *</label>
+                  <label className="text-sm font-medium">{t('pages.rotationPolicies.dialog.directoryId')}</label>
                   <Input
                     className="mt-1"
-                    placeholder="e.g. dir-abc123"
+                    placeholder={t('pages.rotationPolicies.dialog.directoryIdPlaceholder')}
                     value={form.directoryId}
                     onChange={(e) => setForm((f) => ({ ...f, directoryId: e.target.value }))}
                     data-testid="directory-id-input"
                   />
                 </div>
                 <div>
-                  <label className="text-sm font-medium">Username *</label>
+                  <label className="text-sm font-medium">{t('pages.rotationPolicies.dialog.username')}</label>
                   <Input
                     className="mt-1"
-                    placeholder="e.g. svc-account"
+                    placeholder={t('pages.rotationPolicies.dialog.usernamePlaceholder')}
                     value={form.username}
                     onChange={(e) => setForm((f) => ({ ...f, username: e.target.value }))}
                     data-testid="username-input"
@@ -643,9 +653,9 @@ export function RotationPoliciesPage() {
 
             {/* Interval */}
             <div>
-              <label className="text-sm font-medium">Rotation Interval (0 = manual)</label>
+              <label htmlFor="rotation-policies-interval" className="text-sm font-medium">{t('pages.rotationPolicies.dialog.interval')}</label>
               <div className="flex gap-2 mt-1">
-                <Input
+                <Input id="rotation-policies-interval"
                   type="number"
                   min={0}
                   className="flex-1"
@@ -658,14 +668,14 @@ export function RotationPoliciesPage() {
                   value={form.intervalUnit}
                   onValueChange={(v) => setForm((f) => ({ ...f, intervalUnit: v as IntervalUnit }))}
                 >
-                  <SelectTrigger className="w-32">
+                  <SelectTrigger aria-label={t('pages.rotationPolicies.intervalUnitLabel')} className="w-32">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="seconds">seconds</SelectItem>
-                    <SelectItem value="minutes">minutes</SelectItem>
-                    <SelectItem value="hours">hours</SelectItem>
-                    <SelectItem value="days">days</SelectItem>
+                    <SelectItem value="seconds">{t('pages.rotationPolicies.dialog.units.seconds')}</SelectItem>
+                    <SelectItem value="minutes">{t('pages.rotationPolicies.dialog.units.minutes')}</SelectItem>
+                    <SelectItem value="hours">{t('pages.rotationPolicies.dialog.units.hours')}</SelectItem>
+                    <SelectItem value="days">{t('pages.rotationPolicies.dialog.units.days')}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -681,16 +691,16 @@ export function RotationPoliciesPage() {
                 className="h-4 w-4"
               />
               <label htmlFor="rotateOnCheckout" className="text-sm font-medium">
-                Rotate on checkout
+                {t('pages.rotationPolicies.dialog.rotateOnCheckout')}
               </label>
             </div>
 
             {/* Generation policy */}
             <div className="space-y-2 border rounded-lg p-3">
-              <p className="text-sm font-medium">Generation Policy</p>
+              <p className="text-sm font-medium">{t('pages.rotationPolicies.dialog.generation')}</p>
               <div>
-                <label className="text-xs text-muted-foreground">Length</label>
-                <Input
+                <label htmlFor="rotation-policies-length" className="text-xs text-muted-foreground">{t('pages.rotationPolicies.dialog.length')}</label>
+                <Input id="rotation-policies-length"
                   type="number"
                   min={8}
                   max={256}
@@ -704,12 +714,12 @@ export function RotationPoliciesPage() {
               <div className="flex gap-4">
                 {(
                   [
-                    ['genUpper', 'Uppercase'],
-                    ['genLower', 'Lowercase'],
-                    ['genDigits', 'Digits'],
-                    ['genSymbols', 'Symbols'],
+                    ['genUpper', 'upper'],
+                    ['genLower', 'lower'],
+                    ['genDigits', 'digits'],
+                    ['genSymbols', 'symbols'],
                   ] as const
-                ).map(([key, label]) => (
+                ).map(([key, labelKey]) => (
                   <label key={key} className="flex items-center gap-1 text-sm">
                     <input
                       type="checkbox"
@@ -719,7 +729,7 @@ export function RotationPoliciesPage() {
                       }
                       className="h-4 w-4"
                     />
-                    {label}
+                    {t(`pages.rotationPolicies.dialog.charsets.${labelKey}`)}
                   </label>
                 ))}
               </div>
@@ -735,7 +745,7 @@ export function RotationPoliciesPage() {
                 className="h-4 w-4"
               />
               <label htmlFor="enabled" className="text-sm font-medium">
-                Enabled
+                {t('pages.rotationPolicies.dialog.enabled')}
               </label>
             </div>
 
@@ -746,11 +756,11 @@ export function RotationPoliciesPage() {
             >
               {isPending
                 ? editingPolicy
-                  ? 'Saving...'
-                  : 'Creating...'
+                  ? t('pages.rotationPolicies.dialog.saving')
+                  : t('pages.rotationPolicies.dialog.creating')
                 : editingPolicy
-                ? 'Save Changes'
-                : 'Create Policy'}
+                ? t('pages.rotationPolicies.dialog.save')
+                : t('pages.rotationPolicies.dialog.create')}
             </Button>
           </div>
         </DialogContent>
@@ -770,7 +780,9 @@ function ConnectorFieldInput({
   secrets: VaultSecretMeta[]
   onChange: (val: string) => void
 }) {
-  const label = `${field.label}${field.required ? ' *' : ''}`
+  const { t } = useTranslation()
+  const fieldLabel = t(`pages.rotationPolicies.fields.${field.labelKey}`)
+  const label = `${fieldLabel}${field.required ? ' *' : ''}`
   const testId = `cc-${field.key}`
 
   if (field.type === 'secret') {
@@ -779,7 +791,7 @@ function ConnectorFieldInput({
         <label htmlFor={testId} className="text-sm font-medium">{label}</label>
         <Select value={value} onValueChange={onChange}>
           <SelectTrigger id={testId} className="mt-1" data-testid={testId}>
-            <SelectValue placeholder="Select a secret" />
+            <SelectValue placeholder={t('pages.rotationPolicies.fields.selectSecret')} />
           </SelectTrigger>
           <SelectContent>
             {secrets.map((s) => (
@@ -804,7 +816,7 @@ function ConnectorFieldInput({
           <SelectContent>
             {(field.options ?? []).map((o) => (
               <SelectItem key={o.value} value={o.value}>
-                {o.label}
+                {o.labelKey ? t(`pages.rotationPolicies.fields.${o.labelKey}`) : o.label}
               </SelectItem>
             ))}
           </SelectContent>
@@ -841,7 +853,7 @@ function ConnectorFieldInput({
           data-testid={testId}
         />
         <label htmlFor={testId} className="text-sm font-medium">
-          {field.label}
+          {fieldLabel}
         </label>
       </div>
     )

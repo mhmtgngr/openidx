@@ -1,5 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { Trans, useTranslation } from 'react-i18next'
 import { api } from '../lib/api'
+import { useToast } from '../hooks/use-toast'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
 import { Button } from '../components/ui/button'
@@ -44,7 +46,21 @@ interface PostureRule {
   enabled: boolean
   severity: string
   thresholds: Record<string, number>
+  /**
+   * Whether the scan engine has code for this check_type. A rule row can
+   * exist for a check that never runs (the pre-v138 seed shipped six), and
+   * rendering that as Enabled/Disabled would put a live-looking toggle on
+   * something the scan ignores.
+   */
+  implemented: boolean
 }
+
+/**
+ * The severities the scanner assigns, worst first. The summary card labels
+ * them in title case and a finding's own badge in lowercase; both shapes
+ * resolve off this one list, so they cannot come to mean different sets.
+ */
+const SEVERITIES = ['critical', 'high', 'medium', 'low'] as const
 
 const severityColors: Record<string, string> = {
   critical: 'bg-red-100 text-red-800 border-red-200',
@@ -71,11 +87,14 @@ function ScoreGauge({ score }: { score: number }) {
 }
 
 function CategoryScore({ name, score }: { name: string; score: number }) {
+  const { t } = useTranslation()
   const color = score >= 80 ? 'bg-green-500' : score >= 60 ? 'bg-yellow-500' : 'bg-red-500'
   return (
     <div className="space-y-1">
       <div className="flex justify-between text-sm">
-        <span className="capitalize">{name}</span>
+        <span className="capitalize">
+          {t(`pages.ispm.categories.${name}`, { defaultValue: name })}
+        </span>
         <span className="font-medium">{score}%</span>
       </div>
       <div className="h-2 bg-muted rounded-full">
@@ -87,6 +106,8 @@ function CategoryScore({ name, score }: { name: string; score: number }) {
 
 export function ISPMDashboardPage() {
   const queryClient = useQueryClient()
+  const { toast } = useToast()
+  const { t } = useTranslation()
 
   const { data: score, isLoading, isError, error } = useQuery<PostureScore>({
     queryKey: ['ispm-score'],
@@ -117,6 +138,8 @@ export function ISPMDashboardPage() {
   })
 
   const dismissMutation = useMutation({
+    // The reason is stored on the finding for whoever reviews it later, so
+    // it is sent as written rather than in the operator's current language.
     mutationFn: (id: string) => api.post(`/api/v1/ispm/findings/${id}/dismiss`, { reason: 'False positive' }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['ispm-findings'] })
@@ -124,11 +147,29 @@ export function ISPMDashboardPage() {
     },
   })
 
+  // The server answers with what it actually did, and only a real state
+  // change resolves the finding. Surfacing that verbatim is the point: this
+  // button used to mark every finding remediated and lower the open count
+  // whether or not anything happened, so "remediated" on screen meant nothing.
   const remediateMutation = useMutation({
-    mutationFn: (id: string) => api.post(`/api/v1/ispm/findings/${id}/remediate`, {}),
-    onSuccess: () => {
+    mutationFn: (id: string) =>
+      api.post<{ message: string; resolved: boolean }>(`/api/v1/ispm/findings/${id}/remediate`, {}),
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['ispm-findings'] })
       queryClient.invalidateQueries({ queryKey: ['ispm-score'] })
+      toast({
+        title: data.resolved
+          ? t('pages.ispm.findings.remediatedTitle')
+          : t('pages.ispm.findings.stillOpenTitle'),
+        description: data.message,
+      })
+    },
+    onError: (err: Error) => {
+      toast({
+        title: t('pages.ispm.findings.remediateFailed'),
+        description: err.message,
+        variant: 'destructive',
+      })
     },
   })
 
@@ -137,7 +178,7 @@ export function ISPMDashboardPage() {
   }
 
   if (isError) {
-    return <QueryError error={error} resource="the security posture dashboard" />
+    return <QueryError error={error} resource={t('pages.ispm.resource')} />
   }
 
   const findings = findingsData?.data || []
@@ -148,16 +189,16 @@ export function ISPMDashboardPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Identity Security Posture</h1>
-          <p className="text-muted-foreground">Monitor and improve your organization's identity security hygiene</p>
+          <h1 className="text-2xl font-bold">{t('pages.ispm.title')}</h1>
+          <p className="text-muted-foreground">{t('pages.ispm.subtitle')}</p>
         </div>
         <Button onClick={() => scanMutation.mutate()} disabled={scanMutation.isPending}>
           <RefreshCw className={`h-4 w-4 mr-2 ${scanMutation.isPending ? 'animate-spin' : ''}`} />
-          {scanMutation.isPending ? 'Scanning...' : 'Run Scan'}
+          {scanMutation.isPending ? t('pages.ispm.scanning') : t('pages.ispm.scan')}
         </Button>
       </div>
 
-      <RelatedLinks links={[{ to: '/zero-trust', label: 'Zero Trust Access' }]} />
+      <RelatedLinks links={[{ to: '/zero-trust', label: t('nav.items.zeroTrustAccess') }]} />
 
       {/* Score Overview */}
       {score && (
@@ -165,12 +206,14 @@ export function ISPMDashboardPage() {
           <Card className="md:col-span-1">
             <CardContent className="pt-6 text-center">
               <ScoreGauge score={score.overall_score} />
-              <p className="mt-3 font-medium">Overall Posture Score</p>
+              <p className="mt-3 font-medium">{t('pages.ispm.overallScore')}</p>
               <p className="text-sm text-muted-foreground">{score.snapshot_date}</p>
             </CardContent>
           </Card>
           <Card className="md:col-span-1">
-            <CardHeader><CardTitle className="text-base">Category Breakdown</CardTitle></CardHeader>
+            <CardHeader>
+              <CardTitle className="text-base">{t('pages.ispm.categoryBreakdown')}</CardTitle>
+            </CardHeader>
             <CardContent className="space-y-3">
               {Object.entries(score.category_scores).map(([cat, val]) => (
                 <CategoryScore key={cat} name={cat} score={val} />
@@ -178,27 +221,21 @@ export function ISPMDashboardPage() {
             </CardContent>
           </Card>
           <Card className="md:col-span-1">
-            <CardHeader><CardTitle className="text-base">Open Findings</CardTitle></CardHeader>
+            <CardHeader>
+              <CardTitle className="text-base">{t('pages.ispm.openFindings')}</CardTitle>
+            </CardHeader>
             <CardContent>
               <div className="space-y-2">
-                <div className="flex justify-between items-center">
-                  <Badge className={severityColors.critical}>Critical</Badge>
-                  <span className="font-bold text-lg">{score.critical_findings}</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <Badge className={severityColors.high}>High</Badge>
-                  <span className="font-bold text-lg">{score.high_findings}</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <Badge className={severityColors.medium}>Medium</Badge>
-                  <span className="font-bold text-lg">{score.medium_findings}</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <Badge className={severityColors.low}>Low</Badge>
-                  <span className="font-bold text-lg">{score.low_findings}</span>
-                </div>
+                {SEVERITIES.map((s) => (
+                  <div key={s} className="flex justify-between items-center">
+                    <Badge className={severityColors[s]}>
+                      {t(`pages.ispm.severityLabels.${s}`)}
+                    </Badge>
+                    <span className="font-bold text-lg">{score[`${s}_findings`]}</span>
+                  </div>
+                ))}
                 <div className="border-t pt-2 flex justify-between items-center">
-                  <span className="font-medium">Total</span>
+                  <span className="font-medium">{t('pages.ispm.total')}</span>
                   <span className="font-bold text-xl">{score.total_findings}</span>
                 </div>
               </div>
@@ -210,14 +247,19 @@ export function ISPMDashboardPage() {
       {/* Trend Chart */}
       {trends.length > 1 && (
         <Card>
-          <CardHeader><CardTitle className="flex items-center gap-2"><TrendingUp className="h-5 w-5" />Score Trend</CardTitle></CardHeader>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <TrendingUp className="h-5 w-5" />
+              {t('pages.ispm.trend')}
+            </CardTitle>
+          </CardHeader>
           <CardContent>
             <div className="flex items-end gap-1 h-32">
-              {trends.slice(-30).reverse().map((t, i) => {
-                const color = t.overall_score >= 80 ? 'bg-green-500' : t.overall_score >= 60 ? 'bg-yellow-500' : 'bg-red-500'
+              {trends.slice(-30).reverse().map((point, i) => {
+                const color = point.overall_score >= 80 ? 'bg-green-500' : point.overall_score >= 60 ? 'bg-yellow-500' : 'bg-red-500'
                 return (
-                  <div key={i} className="flex-1 flex flex-col items-center" title={`${t.date}: ${t.overall_score}`}>
-                    <div className={`w-full rounded-t ${color}`} style={{ height: `${t.overall_score}%` }} />
+                  <div key={i} className="flex-1 flex flex-col items-center" title={`${point.date}: ${point.overall_score}`}>
+                    <div className={`w-full rounded-t ${color}`} style={{ height: `${point.overall_score}%` }} />
                   </div>
                 )
               })}
@@ -233,7 +275,10 @@ export function ISPMDashboardPage() {
       {/* Findings Table */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2"><AlertTriangle className="h-5 w-5" />Active Findings ({findings.length})</CardTitle>
+          <CardTitle className="flex items-center gap-2">
+            <AlertTriangle className="h-5 w-5" />
+            {t('pages.ispm.findings.title', { n: findings.length })}
+          </CardTitle>
         </CardHeader>
         <CardContent>
           <div className="divide-y">
@@ -241,21 +286,45 @@ export function ISPMDashboardPage() {
               <div key={f.id} className="py-3 flex items-start justify-between">
                 <div className="flex-1">
                   <div className="flex items-center gap-2 mb-1">
-                    <Badge className={severityColors[f.severity] || ''}>{f.severity}</Badge>
-                    <Badge variant="outline" className={categoryColors[f.category] || ''}>{f.category}</Badge>
+                    <Badge className={severityColors[f.severity] || ''}>
+                      {t(`pages.ispm.severities.${f.severity}`, { defaultValue: f.severity })}
+                    </Badge>
+                    <Badge variant="outline" className={categoryColors[f.category] || ''}>
+                      {t(`pages.ispm.categories.${f.category}`, { defaultValue: f.category })}
+                    </Badge>
                     <span className="text-xs text-muted-foreground">{new Date(f.created_at).toLocaleDateString()}</span>
                   </div>
+                  {/* Title, description and entity name are the scanner's own. */}
                   <p className="font-medium text-sm">{f.title}</p>
                   <p className="text-xs text-muted-foreground mt-0.5">{f.description}</p>
                   {f.affected_entity_name && (
-                    <p className="text-xs mt-1">Affected: <span className="font-medium">{f.affected_entity_name}</span> ({f.affected_entity_type})</p>
+                    <p className="text-xs mt-1">
+                      <Trans
+                        i18nKey="pages.ispm.findings.affected"
+                        values={{
+                          name: f.affected_entity_name,
+                          type: f.affected_entity_type,
+                        }}
+                        components={[<span key="0" className="font-medium" />]}
+                      />
+                    </p>
                   )}
                 </div>
                 <div className="flex gap-1 ml-4">
-                  <Button size="sm" variant="outline" onClick={() => remediateMutation.mutate(f.id)} title="Auto-remediate">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => remediateMutation.mutate(f.id)}
+                    title={t('pages.ispm.findings.remediate')}
+                  >
                     <Wrench className="h-3 w-3" />
                   </Button>
-                  <Button size="sm" variant="ghost" onClick={() => dismissMutation.mutate(f.id)} title="Dismiss">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => dismissMutation.mutate(f.id)}
+                    title={t('pages.ispm.findings.dismiss')}
+                  >
                     <X className="h-3 w-3" />
                   </Button>
                 </div>
@@ -264,7 +333,7 @@ export function ISPMDashboardPage() {
             {findings.length === 0 && (
               <div className="py-8 text-center text-muted-foreground">
                 <CheckCircle className="h-8 w-8 mx-auto mb-2 text-green-500" />
-                <p>No open findings - your posture looks great!</p>
+                <p>{t('pages.ispm.findings.empty')}</p>
               </div>
             )}
           </div>
@@ -273,7 +342,12 @@ export function ISPMDashboardPage() {
 
       {/* Rules Configuration */}
       <Card>
-        <CardHeader><CardTitle className="flex items-center gap-2"><Eye className="h-5 w-5" />Posture Check Rules ({rules.length})</CardTitle></CardHeader>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Eye className="h-5 w-5" />
+            {t('pages.ispm.rules.title', { n: rules.length })}
+          </CardTitle>
+        </CardHeader>
         <CardContent>
           <div className="divide-y">
             {rules.map((r) => (
@@ -281,12 +355,24 @@ export function ISPMDashboardPage() {
                 <div>
                   <div className="flex items-center gap-2">
                     <p className="font-medium text-sm">{r.name}</p>
-                    <Badge className={severityColors[r.severity] || ''} variant="outline">{r.severity}</Badge>
-                    <Badge variant="outline" className={categoryColors[r.category] || ''}>{r.category}</Badge>
+                    <Badge className={severityColors[r.severity] || ''} variant="outline">
+                      {t(`pages.ispm.severities.${r.severity}`, { defaultValue: r.severity })}
+                    </Badge>
+                    <Badge variant="outline" className={categoryColors[r.category] || ''}>
+                      {t(`pages.ispm.categories.${r.category}`, { defaultValue: r.category })}
+                    </Badge>
                   </div>
                   <p className="text-xs text-muted-foreground">{r.description}</p>
                 </div>
-                <Badge variant={r.enabled ? 'default' : 'secondary'}>{r.enabled ? 'Enabled' : 'Disabled'}</Badge>
+                {r.implemented ? (
+                  <Badge variant={r.enabled ? 'default' : 'secondary'}>
+                    {r.enabled ? t('pages.ispm.rules.enabled') : t('pages.ispm.rules.disabled')}
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="text-muted-foreground">
+                    {t('pages.ispm.rules.notImplemented')}
+                  </Badge>
+                )}
               </div>
             ))}
           </div>

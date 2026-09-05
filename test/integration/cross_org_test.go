@@ -60,7 +60,13 @@ func integrationDB(t *testing.T) *pgxpool.Pool {
 // non-superuser master role, where the policies do apply; this role reproduces
 // that. The role is created idempotently via the (superuser) admin pool and
 // granted only what the belt assertions need (SELECT on users/organizations).
-func rlsRolePool(t *testing.T, admin *pgxpool.Pool) *pgxpool.Pool {
+//
+// extraTables are granted on top of the fixed list below. A caller that probes a
+// table it did not name gets "permission denied", which reads as a belt failure
+// and is not one -- so TestRLSBeltTables derives its argument from its own case
+// table rather than keeping a second list in step by hand. That is exactly how
+// six v140 cases came to fail here on a grant nobody had added.
+func rlsRolePool(t *testing.T, admin *pgxpool.Pool, extraTables ...string) *pgxpool.Pool {
 	t.Helper()
 	ctx := context.Background()
 	const roleName = "openidx_rls_test"
@@ -89,9 +95,18 @@ END $$;`, roleName, roleName, rolePass, roleName, rolePass))
 		`GRANT SELECT ON attestation_items TO ` + roleName,
 		`GRANT SELECT ON jit_grants TO ` + roleName,
 		`GRANT SELECT ON request_approval_chains TO ` + roleName,
+		// v138 — ISPM + AI tenant isolation
+		`GRANT SELECT ON ispm_findings TO ` + roleName,
+		`GRANT SELECT ON ispm_rules TO ` + roleName,
+		`GRANT SELECT ON ai_agents TO ` + roleName,
+		`GRANT SELECT ON ai_recommendations TO ` + roleName,
 	} {
 		_, err := admin.Exec(ctx, stmt)
 		require.NoError(t, err, "grant to RLS test role: %s", stmt)
+	}
+	for _, tbl := range extraTables {
+		_, err := admin.Exec(ctx, `GRANT SELECT, INSERT ON `+tbl+` TO `+roleName)
+		require.NoError(t, err, "grant to RLS test role: %s", tbl)
 	}
 
 	// Build the role's DSN by swapping the userinfo on the admin DSN.
@@ -409,6 +424,270 @@ func TestRLSBeltTables(t *testing.T) {
 		{"oauth_clients", `INSERT INTO oauth_clients (client_id, name, type, org_id) VALUES ('tbelt-oc-` + suffix + `','tbelt client','confidential',$1)`},
 		{"audit_events", `INSERT INTO audit_events (event_type, category, action, outcome, org_id) VALUES ('tbelt','test','probe','success',$1)`},
 		{"attestation_campaigns", `INSERT INTO attestation_campaigns (name, campaign_type, org_id) VALUES ('tbelt-att-` + suffix + `','role_certification',$1)`},
+		// v138 — the tables internal/admin used to read and mutate across
+		// tenants by bare id. The belt is what stops a query that forgets its
+		// org predicate from seeing another tenant's posture findings, rules,
+		// AI agents or recommendations.
+		{"ispm_findings", `INSERT INTO ispm_findings (check_type, severity, category, title, org_id) VALUES ('tbelt','low','accounts','tbelt finding',$1)`},
+		{"ispm_rules", `INSERT INTO ispm_rules (name, category, check_type, org_id) VALUES ('tbelt rule','accounts','tbelt-` + suffix + `',$1)`},
+		{"ai_agents", `INSERT INTO ai_agents (name, org_id) VALUES ('tbelt-agent-` + suffix + `',$1)`},
+		{"ai_recommendations", `INSERT INTO ai_recommendations (recommendation_type, category, title, org_id) VALUES ('tbelt','security','tbelt rec',$1)`},
+		// v140 — a spread across the fifteen tables that carried org_id for as
+		// long as nine migrations without the belt underneath it. email_branding
+		// is the one that was actually leaking: both its handlers ignored the
+		// caller's org entirely, so every tenant read and overwrote the same row.
+		{"email_branding", `INSERT INTO email_branding (header_text, org_id) VALUES ('tbelt brand',$1)`},
+		{"scheduled_reports", `INSERT INTO scheduled_reports (name, report_type, schedule, org_id) VALUES ('tbelt-rep-` + suffix + `','soc2','0 0 * * *',$1)`},
+		{"brokered_sessions", `INSERT INTO brokered_sessions (user_id, target, principal, org_id) VALUES (gen_random_uuid(),'tbelt.example.test','root',$1)`},
+		{"ssh_ca", `INSERT INTO ssh_ca (public_key, vault_secret_id, org_id) VALUES ('ssh-ed25519 tbelt',gen_random_uuid(),$1)`},
+		{"entitlement_warehouse", `INSERT INTO entitlement_warehouse (user_id, entitlement_type, entitlement_id, source, org_id) VALUES (gen_random_uuid(),'role','tbelt-ent','direct',$1)`},
+		{"upstream_pools", `INSERT INTO upstream_pools (name, org_id) VALUES ('tbelt-pool-` + suffix + `',$1)`},
+		// v141 — the compliance record. The admin log was listed WHERE 1=1 and
+		// fetched by bare id; archives were listed, fetched AND restored by bare
+		// id, so a tenant could name another tenant's export and have the
+		// product read that file back for them.
+		{"admin_audit_log", `INSERT INTO admin_audit_log (action, target_type, org_id) VALUES ('tbelt.probe','settings',$1)`},
+		{"audit_archives", `INSERT INTO audit_archives (name, org_id) VALUES ('tbelt-arch-` + suffix + `',$1)`},
+		{"audit_retention_policies", `INSERT INTO audit_retention_policies (name, retention_days, org_id) VALUES ('tbelt-ret-` + suffix + `',30,$1)`},
+		// v142 — the busiest audit surface in the product, and the one that was
+		// actually being read across tenants: QueryEvents opened WHERE 1=1, so
+		// the console's Unified Audit page showed every tenant's enforcement
+		// decisions, actor IPs and (through its users JOIN) e-mail addresses to
+		// every tenant's admin.
+		{"unified_audit_events", `INSERT INTO unified_audit_events (source, event_type, org_id) VALUES ('tbelt','tbelt.probe',$1)`},
+		// v143 — the sign-in tables. social_providers is the live one: its list
+		// query put the org predicate inside a LEFT JOIN's ON clause, which
+		// filters nothing on the driving table, and get/update/delete then took
+		// a bare id. The other four were keyed by the org-scoped user_id, so the
+		// belt is depth — except where trusted_browsers was updated by bare id
+		// and phone_call_challenges carried a nullable user.
+		//
+		// trusted_browsers and user_risk_baselines carry a NOT NULL / primary-key
+		// FK to users, so their probe row has to bring its own user along: a CTE
+		// creates one in the same org and the insert reads its id back.
+		{"social_providers", `INSERT INTO social_providers (provider_key, display_name, org_id) VALUES ('tbelt-` + suffix + `','tbelt provider',$1)`},
+		{"trusted_browsers", `WITH u AS (
+			INSERT INTO users (username, email, enabled, org_id)
+			VALUES ('tbelt-tb-` + suffix + `','tbelt-tb-` + suffix + `@example.test',true,$1) RETURNING id)
+			INSERT INTO trusted_browsers (user_id, browser_hash, expires_at, org_id)
+			SELECT u.id,'tbelt-` + suffix + `',NOW() + INTERVAL '1 day',$1 FROM u`},
+		{"passwordless_preferences", `INSERT INTO passwordless_preferences (user_id, org_id) VALUES (NULL,$1)`},
+		{"user_risk_baselines", `WITH u AS (
+			INSERT INTO users (username, email, enabled, org_id)
+			VALUES ('tbelt-rb-` + suffix + `','tbelt-rb-` + suffix + `@example.test',true,$1) RETURNING id)
+			INSERT INTO user_risk_baselines (user_id, org_id) SELECT u.id,$1 FROM u`},
+		{"phone_call_challenges", `INSERT INTO phone_call_challenges (phone_number, code_hash, expires_at, org_id) VALUES ('+900000000','x',NOW() + INTERVAL '1 hour',$1)`},
+		// v144 — the SAML surface. saml_service_providers holds the federation
+		// partners' ACS URLs and certificates and was listed, counted, fetched,
+		// updated and deleted install-wide, so one tenant could repoint another
+		// tenant's assertions. entity_id stays UNIQUE across the install on
+		// purpose (it is what resolves the tenant on an inbound request), which
+		// is why the probe row's is suffixed rather than per-org.
+		{"saml_service_providers", `INSERT INTO saml_service_providers (name, entity_id, acs_url, org_id) VALUES ('tbelt sp','https://tbelt-` + suffix + `.example.test/metadata','https://tbelt-` + suffix + `.example.test/acs',$1)`},
+		{"saml_sessions", `WITH u AS (
+			INSERT INTO users (username, email, enabled, org_id)
+			VALUES ('tbelt-saml-` + suffix + `','tbelt-saml-` + suffix + `@example.test',true,$1) RETURNING id)
+			INSERT INTO saml_sessions (user_id, sp_id, sp_entity_id, session_index, name_id, name_id_format, expires_at, org_id)
+			SELECT u.id, gen_random_uuid(), 'https://tbelt-` + suffix + `.example.test/metadata','idx-` + suffix + `','tbelt@example.test','emailAddress',NOW() + INTERVAL '1 hour',$1 FROM u`},
+		// v145 — the credentials that stand in for a password. hardware_tokens
+		// is the live one: every call site took a bare id, so an administrator
+		// of one tenant could enumerate another's inventory and, worse, bind a
+		// token sitting available there to one of their own users. Unlike the
+		// v143 per-user tables, an inventory row exists before any user does,
+		// which is why its probe needs no CTE and its serial is suffixed
+		// per-probe rather than per-org — v145 re-scoped that key to
+		// (org_id, serial_number), the opposite call from v144's entity_id,
+		// because a serial resolves no tenant.
+		{"hardware_tokens", `INSERT INTO hardware_tokens (serial_number, name, token_type, secret_key, org_id) VALUES ('tbelt-` + suffix + `','tbelt token','oath-hotp','x',$1)`},
+		{"hardware_token_events", `WITH t AS (
+			INSERT INTO hardware_tokens (serial_number, name, token_type, secret_key, org_id)
+			VALUES ('tbelt-evt-` + suffix + `','tbelt token','oath-hotp','x',$1) RETURNING id)
+			INSERT INTO hardware_token_events (token_id, event_type, org_id) SELECT t.id,'tbelt.probe',$1 FROM t`},
+		// generated_by is NOT NULL and references users, so the bypass probes
+		// bring their own administrator along the way v143's per-user rows do.
+		{"mfa_bypass_codes", `WITH u AS (
+			INSERT INTO users (username, email, enabled, org_id)
+			VALUES ('tbelt-bc-` + suffix + `','tbelt-bc-` + suffix + `@example.test',true,$1) RETURNING id)
+			INSERT INTO mfa_bypass_codes (user_id, code_hash, reason, generated_by, valid_until, org_id)
+			SELECT u.id,'x','tbelt probe',u.id,NOW() + INTERVAL '1 hour',$1 FROM u`},
+		{"mfa_bypass_audit", `INSERT INTO mfa_bypass_audit (id, action, org_id) VALUES (gen_random_uuid(),'tbelt.probe',$1)`},
+		{"magic_links", `WITH u AS (
+			INSERT INTO users (username, email, enabled, org_id)
+			VALUES ('tbelt-ml-` + suffix + `','tbelt-ml-` + suffix + `@example.test',true,$1) RETURNING id)
+			INSERT INTO magic_links (user_id, email, token_hash, expires_at, org_id)
+			SELECT u.id,'tbelt-ml-` + suffix + `@example.test','x',NOW() + INTERVAL '1 hour',$1 FROM u`},
+		// v146 — the four second factors the belt had skipped while mfa_totp,
+		// mfa_push_devices and mfa_webauthn already carried org_id. Each is
+		// UNIQUE(user_id), so the probe brings its own user rather than
+		// colliding with one an earlier case made; that UNIQUE is deliberately
+		// NOT re-scoped to (org_id, user_id), because user_id already
+		// determines org_id and the per-org key would additionally accept one
+		// user enrolled in two organizations.
+		{"mfa_sms", `WITH u AS (
+			INSERT INTO users (username, email, enabled, org_id)
+			VALUES ('tbelt-sms-` + suffix + `','tbelt-sms-` + suffix + `@example.test',true,$1) RETURNING id)
+			INSERT INTO mfa_sms (user_id, phone_number, country_code, org_id)
+			SELECT u.id,'5550000000','+1',$1 FROM u`},
+		{"mfa_email_otp", `WITH u AS (
+			INSERT INTO users (username, email, enabled, org_id)
+			VALUES ('tbelt-eotp-` + suffix + `','tbelt-eotp-` + suffix + `@example.test',true,$1) RETURNING id)
+			INSERT INTO mfa_email_otp (user_id, email_address, org_id)
+			SELECT u.id,'tbelt-eotp-` + suffix + `@example.test',$1 FROM u`},
+		{"mfa_phone_call", `WITH u AS (
+			INSERT INTO users (username, email, enabled, org_id)
+			VALUES ('tbelt-pc-` + suffix + `','tbelt-pc-` + suffix + `@example.test',true,$1) RETURNING id)
+			INSERT INTO mfa_phone_call (user_id, phone_number, country_code, org_id)
+			SELECT u.id,'5550000001','+1',$1 FROM u`},
+		{"mfa_otp_challenges", `WITH u AS (
+			INSERT INTO users (username, email, enabled, org_id)
+			VALUES ('tbelt-otpc-` + suffix + `','tbelt-otpc-` + suffix + `@example.test',true,$1) RETURNING id)
+			INSERT INTO mfa_otp_challenges (user_id, method, recipient, code_hash, expires_at, org_id)
+			SELECT u.id,'sms','+15550000002','x',NOW() + INTERVAL '5 minutes',$1 FROM u`},
+
+		// v147 — the breach response record. An incident names its users in
+		// affected_user_ids (a TEXT[] of users.id values), so it needs a real
+		// user to name; the alert hangs off the incident.
+		{"breach_incidents", `WITH u AS (
+			INSERT INTO users (username, email, enabled, org_id)
+			VALUES ('tbelt-bi-` + suffix + `','tbelt-bi-` + suffix + `@example.test',true,$1) RETURNING id)
+			INSERT INTO breach_incidents (type, severity, status, title, affected_user_ids, first_detected_at, confidence, quarantine_action, org_id)
+			SELECT 'credential_stuffing','critical','detected','tbelt-` + suffix + `',ARRAY[u.id::text],NOW(),0.9,'none',$1 FROM u`},
+		{"breach_alerts", `WITH i AS (
+			INSERT INTO breach_incidents (type, severity, status, title, affected_user_ids, first_detected_at, confidence, quarantine_action, org_id)
+			VALUES ('credential_stuffing','high','detected','tbelt-ba-` + suffix + `',ARRAY[]::text[],NOW(),0.8,'none',$1) RETURNING id)
+			INSERT INTO breach_alerts (incident_id, type, severity, message, ip_address, org_id)
+			SELECT i.id,'credential_stuffing','high','tbelt-ba-` + suffix + `','203.0.113.4',$1 FROM i`},
+
+		// v148 — PAM temporary vendor access. temp_access_links has carried
+		// org_id since v71, which deliberately left the belt off; the usage row
+		// is new here. A usage row needs a link, so it brings its own.
+		// created_by is NOT NULL on temp_access_links (v54) and carries no FK,
+		// so a literal uuid is enough; a link that fails to insert here would
+		// show up as the bypass count assertion failing, not as a seed error,
+		// because bypassExec swallows its own.
+		{"temp_access_links", `INSERT INTO temp_access_links
+			(token, name, protocol, target_host, target_port, username, created_by, expires_at, status, org_id)
+			VALUES ('tbelt-tal-` + suffix + `','tbelt link','ssh','internal.corp',22,'vendor',
+				'00000000-0000-0000-0000-0000000000f1',NOW() + INTERVAL '1 day','active',$1)`},
+		{"temp_access_usage", `WITH l AS (
+			INSERT INTO temp_access_links (token, name, protocol, target_host, target_port, username, created_by, expires_at, status, org_id)
+			VALUES ('tbelt-tau-` + suffix + `','tbelt usage link','ssh','internal.corp',22,'vendor',
+				'00000000-0000-0000-0000-0000000000f1',NOW() + INTERVAL '1 day','active',$1) RETURNING id)
+			INSERT INTO temp_access_usage (link_id, ip_address, user_agent, connected_at, org_id)
+			SELECT l.id,'203.0.113.5','tbelt-ua',NOW(),$1 FROM l`},
+
+		// v149 — the legal holds. Each FKs to its own session table, so each
+		// brings its own session; the hold is what keeps a recording out of the
+		// retention sweep's purge list.
+		{"recording_legal_holds", `WITH s AS (
+			INSERT INTO remote_support_sessions (agent_id, status, mode, org_id)
+			VALUES ('tbelt-rslh-` + suffix + `','ended','view',$1) RETURNING id)
+			INSERT INTO recording_legal_holds (session_id, reason, org_id)
+			SELECT s.id,'tbelt hold ` + suffix + `',$1 FROM s`},
+		{"guacamole_recording_legal_holds", `WITH s AS (
+			INSERT INTO guacamole_sessions (connection_id, status, org_id)
+			VALUES (gen_random_uuid(),'ended',$1) RETURNING id)
+			INSERT INTO guacamole_recording_legal_holds (session_id, reason, org_id)
+			SELECT s.id,'tbelt guac hold ` + suffix + `',$1 FROM s`},
+
+		// v150 — an administrator watching or driving an end user's screen.
+		{"remote_support_sessions", `INSERT INTO remote_support_sessions
+			(agent_id, status, mode, org_id)
+			VALUES ('tbelt-rss-` + suffix + `','ended','view',$1)`},
+
+		// v151 — the PAM broker's target definitions: which host, which port,
+		// and which vault secret gets injected into the session. The connect
+		// handler read this row by route id alone and then used its
+		// vault_secret_id under a deliberate bypass, so the row is what decided
+		// whose credential was typed into whose machine.
+		{"guacamole_connections", `INSERT INTO guacamole_connections
+			(guacamole_connection_id, protocol, hostname, port, org_id)
+			VALUES ('tbelt-gc-` + suffix + `','rdp','10.0.0.7',3389,$1)`},
+
+		// v152 — delegated administration. The policy enforcement point reads
+		// this table under a deliberate bypass, so the belt is the second layer
+		// behind the predicate rather than the first; it is here because a
+		// query that forgets the predicate on a table like this does not leak a
+		// record, it grants a permission.
+		{"admin_delegations", `WITH u AS (
+			INSERT INTO users (org_id, username, email, enabled)
+			VALUES ($1,'tbelt-dlg-` + suffix + `','tbelt-dlg-` + suffix + `@example.test',true) RETURNING id)
+			INSERT INTO admin_delegations (org_id, delegate_id, delegated_by, scope_type, scope_id, permissions, enabled)
+			SELECT $1, u.id, u.id, 'organization', $1, '["vault:reveal"]'::jsonb, true FROM u`},
+
+		// v153 — the login risk policies. The read the login path makes is
+		// bypassed by nothing, so this belt is a real second layer behind the
+		// predicate: a query here that forgets its tenant does not leak a row,
+		// it applies another organization's rule to this organization's login.
+		{"risk_policies", `INSERT INTO risk_policies
+			(name, enabled, priority, conditions, actions, org_id)
+			VALUES ('tbelt-risk-` + suffix + `', true, 1, '{"risk_score_min": 0}'::jsonb,
+				'{"require_mfa": true}'::jsonb, $1)`},
+
+		// v154 — the joiner/mover/leaver automation. Two rules and two logs.
+		// Every action these rules take was already scoped; the rules were not,
+		// so the belt here guards the thing that AIMS the deletion rather than
+		// the deletion itself. The logs carry usernames and the reason each
+		// account was acted on, which makes them personal data and not status.
+		{"lifecycle_workflows", `INSERT INTO lifecycle_workflows
+			(name, event_type, actions, org_id)
+			VALUES ('tbelt-wf-` + suffix + `', 'joiner', '[]'::jsonb, $1)`},
+
+		{"lifecycle_policies", `INSERT INTO lifecycle_policies
+			(name, policy_type, conditions, actions, org_id)
+			VALUES ('tbelt-lcp-` + suffix + `', 'stale_account_disable',
+				'{"inactive_days": 90}'::jsonb, '{"action": "disable"}'::jsonb, $1)`},
+
+		{"lifecycle_executions", `WITH w AS (
+			INSERT INTO lifecycle_workflows (name, event_type, actions, org_id)
+			VALUES ('tbelt-wfx-` + suffix + `', 'leaver', '[]'::jsonb, $1) RETURNING id),
+			u AS (
+			INSERT INTO users (org_id, username, email, enabled)
+			VALUES ($1,'tbelt-lce-` + suffix + `','tbelt-lce-` + suffix + `@example.test',true) RETURNING id)
+			INSERT INTO lifecycle_executions (workflow_id, user_id, trigger_type, status, org_id)
+			SELECT w.id, u.id, 'manual', 'completed', $1 FROM w, u`},
+
+		{"lifecycle_policy_executions", `WITH p AS (
+			INSERT INTO lifecycle_policies (name, policy_type, conditions, actions, org_id)
+			VALUES ('tbelt-lcpx-` + suffix + `', 'stale_account_disable',
+				'{"inactive_days": 90}'::jsonb, '{"action": "disable"}'::jsonb, $1) RETURNING id)
+			INSERT INTO lifecycle_policy_executions (policy_id, status, users_scanned, org_id)
+			SELECT p.id, 'completed', 0, $1 FROM p`},
+
+		// v155 — the federation configuration. The admin list of this table
+		// wrote its tenant condition into a LEFT JOIN, where it filtered
+		// nothing; the belt is what makes the boundary hold regardless of how
+		// the next query happens to be written.
+		{"federation_rules", `WITH ip AS (
+			INSERT INTO identity_providers (org_id, name, provider_type, issuer_url, client_id, client_secret)
+			VALUES ($1, 'tbelt-idp-` + suffix + `', 'oidc', 'https://idp.example.test',
+				'tbelt-idp-cid-` + suffix + `', 'x') RETURNING id)
+			INSERT INTO federation_rules (name, email_domain, provider_id, enabled, org_id)
+			SELECT 'tbelt-fr-` + suffix + `', 'tbelt-` + suffix + `.example.test', ip.id, true, $1 FROM ip`},
+
+		{"custom_claims_mappings", `WITH a AS (
+			INSERT INTO applications (org_id, name, client_id, type)
+			VALUES ($1, 'tbelt-app-` + suffix + `', 'tbelt-cid-` + suffix + `', 'web') RETURNING id)
+			INSERT INTO custom_claims_mappings (application_id, claim_name, source_type, source_value, org_id)
+			SELECT a.id, 'tbelt-claim-` + suffix + `', 'user_attribute', 'department', $1 FROM a`},
+
+		// v156 — the developer portal. The settings row was keyed on the
+		// literal 'global' and unique across the installation; the playground
+		// session holds the PKCE verifier that lets a live authorization code
+		// be redeemed.
+		{"developer_settings", `INSERT INTO developer_settings (setting_key, setting_value, org_id)
+			VALUES ('tbelt-` + suffix + `', '{"rate_limit_default":100}'::jsonb, $1)`},
+
+		{"oauth_playground_sessions", `INSERT INTO oauth_playground_sessions
+			(client_id, state, code_verifier, code_challenge, redirect_uri, org_id)
+			VALUES ('tbelt-pg-` + suffix + `', 'st', 'verifier', 'challenge',
+				'https://console.example.test/callback', $1)`},
+	}
+
+	// One list, not two: the role is granted exactly the tables the cases probe.
+	probed := make([]string, 0, len(cases))
+	for _, c := range cases {
+		probed = append(probed, c.table)
 	}
 
 	for _, c := range cases {
@@ -418,7 +697,7 @@ func TestRLSBeltTables(t *testing.T) {
 			bypassExec(t, admin, c.insertSQL, orgB)
 			t.Cleanup(func() { bypassExec(t, admin, "DELETE FROM "+c.table+" WHERE org_id = $1", orgB) })
 
-			pool := rlsRolePool(t, admin)
+			pool := rlsRolePool(t, admin, probed...)
 			defer pool.Close()
 			conn, err := pool.Acquire(ctx)
 			require.NoError(t, err)

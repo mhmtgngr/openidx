@@ -37,7 +37,6 @@ func (m *mockIdentityService) GetUser(ctx context.Context, id string) (*identity
 type TestOIDCContext struct {
 	T               *testing.T
 	Service         *Service
-	Store           *Store
 	MiniRedis       *miniredis.Miniredis
 	RedisClient     *redis.Client
 	RedisWrapper    *database.RedisClient
@@ -109,7 +108,6 @@ func NewTestOIDCContext(t *testing.T) *TestOIDCContext {
 	}
 
 	// Create store
-	store := NewStore(redisWrapper, logger)
 
 	// Create cleanup function
 	cleanup := func() {
@@ -120,7 +118,6 @@ func NewTestOIDCContext(t *testing.T) *TestOIDCContext {
 	return &TestOIDCContext{
 		T:               t,
 		Service:         svc,
-		Store:           store,
 		MiniRedis:       mini,
 		RedisClient:     redisClient,
 		RedisWrapper:    redisWrapper,
@@ -174,33 +171,6 @@ func (ctx *TestOIDCContext) SetupTestScopes() map[string]string {
 		"address":        "User postal address",
 		"offline_access": "Refresh token issuance",
 	}
-}
-
-// StoreTestAuthCode stores a test authorization code in Redis
-func (ctx *TestOIDCContext) StoreTestAuthCode(code, clientID, userID string) error {
-	ctx.Store.StoreAuthorizationCode(context.Background(), &StoredAuthorizationCode{
-		Code:        code,
-		ClientID:    clientID,
-		UserID:      userID,
-		RedirectURI: "https://example.com/callback",
-		Scope:       "openid profile email",
-		ExpiresAt:   time.Now().Add(10 * time.Minute),
-		CreatedAt:   time.Now(),
-	}, 0)
-	return nil
-}
-
-// StoreTestAccessToken stores a test access token in Redis
-func (ctx *TestOIDCContext) StoreTestAccessToken(token, clientID, userID, scope string) error {
-	ctx.Store.StoreAccessToken(context.Background(), &AccessTokenData{
-		Token:     token,
-		ClientID:  clientID,
-		UserID:    userID,
-		Scope:     scope,
-		ExpiresAt: time.Now().Add(time.Hour),
-		CreatedAt: time.Now(),
-	}, 0)
-	return nil
 }
 
 // FastForward advances time in the mock Redis for TTL testing

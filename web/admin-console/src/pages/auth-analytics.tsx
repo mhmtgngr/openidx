@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import {
   Activity, ShieldCheck, Users, KeyRound, Globe, Clock, XCircle, TrendingUp, TrendingDown,
 } from 'lucide-react'
@@ -46,14 +47,16 @@ interface AuthDashboard {
   }>
 }
 
-const periodLabels: Record<string, string> = {
-  '24h': 'Last 24 Hours',
-  '7d': 'Last 7 Days',
-  '30d': 'Last 30 Days',
-  '90d': 'Last 90 Days',
+const PERIODS = ['24h', '7d', '30d', '90d'] as const
+const periodKeys: Record<string, string> = {
+  '24h': 'h24',
+  '7d': 'd7',
+  '30d': 'd30',
+  '90d': 'd90',
 }
 
 export function AuthAnalyticsPage() {
+  const { t } = useTranslation()
   const [period, setPeriod] = useState('7d')
 
   const { data, isLoading, isError, error } = useQuery<{ dashboard: AuthDashboard }>({
@@ -108,12 +111,12 @@ export function AuthAnalyticsPage() {
     )
   }
 
-  if (isError) return <QueryError error={error} resource="authentication analytics" />
+  if (isError) return <QueryError error={error} resource={t('pages.authAnalytics.resourceName')} />
 
   if (!dashboard) {
     return (
       <div className="text-center py-12 text-muted-foreground">
-        No authentication analytics data available
+        {t('pages.authAnalytics.noData')}
       </div>
     )
   }
@@ -135,32 +138,30 @@ export function AuthAnalyticsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Authentication Analytics</h1>
-          <p className="text-muted-foreground">
-            Authentication patterns, MFA usage, and security insights
-          </p>
+          <h1 className="text-2xl font-bold tracking-tight">{t('pages.authAnalytics.title')}</h1>
+          <p className="text-muted-foreground">{t('pages.authAnalytics.subtitle')}</p>
         </div>
         <Select value={period} onValueChange={setPeriod}>
-          <SelectTrigger className="w-[180px]">
+          <SelectTrigger aria-label={t('common.periodLabel')} className="w-[180px]">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {Object.entries(periodLabels).map(([value, label]) => (
+            {PERIODS.map((value) => (
               <SelectItem key={value} value={value}>
-                {label}
+                {t(`common.periods.${periodKeys[value]}`)}
               </SelectItem>
             ))}
           </SelectContent>
         </Select>
       </div>
 
-      <RelatedLinks links={[{ to: '/login-analytics', label: 'Login Analytics' }]} />
+      <RelatedLinks links={[{ to: '/login-analytics', label: t('nav.items.loginAnalytics') }]} />
 
       {/* Stat Cards */}
       <div className="grid gap-4 md:grid-cols-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Logins</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('pages.authAnalytics.stats.totalLogins')}</CardTitle>
             <Activity className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -168,15 +169,17 @@ export function AuthAnalyticsPage() {
               {dashboard.total_logins.toLocaleString()}
             </div>
             <p className="text-xs text-muted-foreground mt-1">
-              {dashboard.successful_logins.toLocaleString()} successful,{' '}
-              {dashboard.failed_logins.toLocaleString()} failed
+              {t('pages.authAnalytics.stats.totalLoginsHint', {
+                success: dashboard.successful_logins.toLocaleString(),
+                failed: dashboard.failed_logins.toLocaleString(),
+              })}
             </p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Success Rate</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('pages.authAnalytics.stats.successRate')}</CardTitle>
             {parseFloat(successRate) >= 95 ? (
               <TrendingUp className="h-4 w-4 text-green-600" />
             ) : (
@@ -202,20 +205,22 @@ export function AuthAnalyticsPage() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">MFA Usage Rate</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('pages.authAnalytics.stats.mfaRate')}</CardTitle>
             <ShieldCheck className="h-4 w-4 text-blue-500" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{mfaRate}%</div>
             <p className="text-xs text-muted-foreground mt-1">
-              {dashboard.mfa_usage_count.toLocaleString()} MFA-protected logins
+              {t('pages.authAnalytics.stats.mfaHint', {
+                n: dashboard.mfa_usage_count.toLocaleString(),
+              })}
             </p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Active Users</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('pages.authAnalytics.stats.activeUsers')}</CardTitle>
             <Users className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -223,7 +228,7 @@ export function AuthAnalyticsPage() {
               {dashboard.active_users.toLocaleString()}
             </div>
             <p className="text-xs text-muted-foreground mt-1">
-              Unique users in period
+              {t('pages.authAnalytics.stats.activeUsersHint')}
             </p>
           </CardContent>
         </Card>
@@ -236,9 +241,9 @@ export function AuthAnalyticsPage() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <KeyRound className="h-5 w-5" />
-              Login Method Breakdown
+              {t('pages.authAnalytics.methods.title')}
             </CardTitle>
-            <CardDescription>Distribution of authentication methods used</CardDescription>
+            <CardDescription>{t('pages.authAnalytics.methods.description')}</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
@@ -260,7 +265,7 @@ export function AuthAnalyticsPage() {
                   </div>
                 ))
               ) : (
-                <p className="text-center text-muted-foreground py-4">No method data available</p>
+                <p className="text-center text-muted-foreground py-4">{t('pages.authAnalytics.methods.empty')}</p>
               )}
             </div>
           </CardContent>
@@ -271,18 +276,18 @@ export function AuthAnalyticsPage() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Globe className="h-5 w-5" />
-              Top Countries
+              {t('pages.authAnalytics.geo.title')}
             </CardTitle>
-            <CardDescription>Login activity by geographic region</CardDescription>
+            <CardDescription>{t('pages.authAnalytics.geo.description')}</CardDescription>
           </CardHeader>
           <CardContent>
             {dashboard.geo_top_countries?.length > 0 ? (
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Country</TableHead>
-                    <TableHead className="text-right">Logins</TableHead>
-                    <TableHead className="text-right">Failed</TableHead>
+                    <TableHead>{t('pages.authAnalytics.geo.table.country')}</TableHead>
+                    <TableHead className="text-right">{t('pages.authAnalytics.geo.table.logins')}</TableHead>
+                    <TableHead className="text-right">{t('pages.authAnalytics.geo.table.failed')}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -306,7 +311,7 @@ export function AuthAnalyticsPage() {
                 </TableBody>
               </Table>
             ) : (
-              <p className="text-center text-muted-foreground py-4">No geographic data available</p>
+              <p className="text-center text-muted-foreground py-4">{t('pages.authAnalytics.geo.empty')}</p>
             )}
           </CardContent>
         </Card>
@@ -319,9 +324,9 @@ export function AuthAnalyticsPage() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Clock className="h-5 w-5" />
-              Hourly Activity Pattern
+              {t('pages.authAnalytics.hourly.title')}
             </CardTitle>
-            <CardDescription>Login volume by hour of day (UTC)</CardDescription>
+            <CardDescription>{t('pages.authAnalytics.hourly.description')}</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="flex items-end gap-1 h-40">
@@ -331,7 +336,10 @@ export function AuthAnalyticsPage() {
                   <div
                     key={hour.hour}
                     className="flex-1 flex flex-col items-center"
-                    title={`${hour.hour}:00 - ${hour.count} logins`}
+                    title={t('pages.authAnalytics.hourly.tooltip', {
+                      hour: hour.hour,
+                      count: hour.count,
+                    })}
                   >
                     <div
                       className="w-full bg-blue-500 rounded-t transition-all hover:bg-primary"
@@ -350,7 +358,7 @@ export function AuthAnalyticsPage() {
               })}
             </div>
             <p className="text-xs text-muted-foreground text-center mt-3">
-              Hour of Day (UTC)
+              {t('pages.authAnalytics.hourly.axis')}
             </p>
           </CardContent>
         </Card>
@@ -360,9 +368,9 @@ export function AuthAnalyticsPage() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <XCircle className="h-5 w-5 text-red-500" />
-              Recent Failed Logins
+              {t('pages.authAnalytics.failed.title')}
             </CardTitle>
-            <CardDescription>Last 10 failed authentication attempts</CardDescription>
+            <CardDescription>{t('pages.authAnalytics.failed.description')}</CardDescription>
           </CardHeader>
           <CardContent>
             {dashboard.recent_failed_logins?.length > 0 ? (
@@ -391,7 +399,7 @@ export function AuthAnalyticsPage() {
               </div>
             ) : (
               <p className="text-center text-muted-foreground py-4">
-                No recent failed logins
+                {t('pages.authAnalytics.failed.empty')}
               </p>
             )}
           </CardContent>

@@ -91,9 +91,6 @@ The raw OpenAPI 3.0 specifications are available in the parent directory:
 - `audit-service.yaml` - Audit Service
 - `admin-api.yaml` - Admin API
 - `access-service.yaml` - Access Service
-- `portal-service.yaml` - Portal Service
-- `notifications-service.yaml` - Notifications Service
-- `organization-service.yaml` - Organization Service
 
 ## Code Examples
 

@@ -7,6 +7,34 @@ just clear a token — it revokes the subject's sessions, which the access-proxy
 and continuous-verify enforce to **cut the user off the Ziti overlay**. First OSS
 SSF/CAEP with native network termination.
 
+!!! info "API-only today"
+
+    Stream management ships as a **documented API**, not a console screen — a
+    ratified post-GA decision, recorded so nobody goes hunting for a page that
+    is not there. Everything below is served, routed and tested (including
+    tenant isolation); the only missing piece is the admin UI. Subscribe a
+    receiver with a POST:
+
+    ```bash
+    curl -X POST https://oauth.openidx.example.com/ssf/streams \
+      -H "Authorization: Bearer $TOKEN" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "description": "Downstream SaaS receiver",
+        "aud": "https://saas.example.com",
+        "delivery_endpoint": "https://saas.example.com/ssf/events",
+        "delivery_auth": "Bearer <receiver-token>",
+        "events_requested": [
+          "https://schemas.openid.net/secevent/caep/event-type/session-revoked"
+        ],
+        "status": "enabled"
+      }'
+    ```
+
+    Then `GET /ssf/streams` to list, `DELETE /ssf/streams/{id}` to unsubscribe,
+    and `POST /ssf/streams/{id}/verify` to send a verification event and prove
+    the receiver is reachable before you rely on it.
+
 ## Two directions
 
 ```

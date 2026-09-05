@@ -16,6 +16,8 @@ import (
 
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/orgctx"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 // AuthContext represents the current authentication context of a session
@@ -116,9 +118,11 @@ func (s *continuousAuthService) CalculateSessionRisk(ctx context.Context, sessio
 	timeRisk := s.calculateTimeRisk(ctx, authCtx)
 	totalRisk += timeRisk * s.config.RiskFactors["session_age"]
 
-	// 2. Location/IP risk
-	geoRisk := s.calculateGeoRisk(ctx, authCtx)
-	totalRisk += geoRisk * s.config.RiskFactors["geo_anomaly"]
+	// 2. Source-address change. The RiskFactors key stays "geo_anomaly" so a
+	// deployment's tuned weights keep working, but what is measured is an
+	// address change, not geography — see calculateIPChangeRisk.
+	ipChangeRisk := s.calculateIPChangeRisk(ctx, authCtx)
+	totalRisk += ipChangeRisk * s.config.RiskFactors["geo_anomaly"]
 
 	// 3. Device fingerprint risk
 	deviceRisk := s.calculateDeviceRisk(ctx, authCtx)
@@ -157,7 +161,7 @@ func (s *continuousAuthService) CalculateSessionRisk(ctx context.Context, sessio
 	`, sessionID, risk.OverallRisk, risk.RiskLevel, risk.ActionRequired,
 		[]byte("{}"), previousRisk, risk.RiskDelta, org.ID); err != nil {
 		s.logger.Warn("failed to store session risk history",
-			zap.String("session_id", sanitizeLogValue(sessionID)), zap.Error(err))
+			zap.String("session_id", logsafe.Clean(sessionID)), zap.Error(err))
 	}
 
 	return risk, nil
@@ -297,8 +301,11 @@ func (s *continuousAuthService) calculateTimeRisk(ctx context.Context, authCtx *
 	return 0
 }
 
-func (s *continuousAuthService) calculateGeoRisk(ctx context.Context, authCtx *AuthContext) float64 {
-	// Check for impossible travel
+// calculateIPChangeRisk scores a change of source address between sessions.
+// It was called calculateGeoRisk and documented as impossible-travel
+// detection, which it has never been — see the comment at its return.
+func (s *continuousAuthService) calculateIPChangeRisk(ctx context.Context, authCtx *AuthContext) float64 {
+	// Most recent session from this user, other than this one.
 	var previousIP string
 	var previousTime time.Time
 	s.db.Pool.QueryRow(ctx, `
@@ -308,14 +315,29 @@ func (s *continuousAuthService) calculateGeoRisk(ctx context.Context, authCtx *A
 	`, authCtx.UserID, authCtx.SessionID).Scan(&previousIP, &previousTime)
 
 	if previousIP != "" && authCtx.IPAddress != previousIP {
-		// Calculate distance and speed
-		// This would integrate with a GeoIP service
-		// For now, return moderate risk for IP change
-		return 15
+		// A changed source address between two sessions, which is a real
+		// signal and is what this function measures.
+		//
+		// It is NOT impossible-travel detection, and the name and comment used
+		// to say it was ("Check for impossible travel" / "Calculate distance
+		// and speed"). Distance and speed need coordinates for both addresses,
+		// which needs a GeoIP lookup: GEOIP_SERVICE_URL exists in config
+		// (config.go GeoIPServiceURL) and no client consults it, so the
+		// factor scored a flat 15 for any address change and was labelled as
+		// geography. Until a GeoIP client exists, this contributes the
+		// address-change signal under its own name and claims nothing about
+		// travel.
+		return ipChangeRiskScore
 	}
 
 	return 0
 }
+
+// ipChangeRiskScore is the weight of "this session started from a different
+// address than the last one". Modest on purpose: a phone moving between wifi
+// and cellular changes address constantly, so on its own it must not push a
+// session over a gate.
+const ipChangeRiskScore = 15
 
 func (s *continuousAuthService) calculateDeviceRisk(ctx context.Context, authCtx *AuthContext) float64 {
 	// Check against known_devices — the table device trust actually lives in.

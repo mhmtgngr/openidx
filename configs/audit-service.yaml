@@ -41,8 +41,6 @@ encryption_key: ${ENCRYPTION_KEY:dev-encryption-key-32bytes}
 cors_allowed_origins: ${CORS_ALLOWED_ORIGINS:*}
 
 # Feature flags
-enable_mfa: ${ENABLE_MFA:true}
-enable_audit_logging: ${ENABLE_AUDIT_LOGGING:true}
 enable_rate_limit: ${ENABLE_RATE_LIMIT:true}
 
 # Rate limiting

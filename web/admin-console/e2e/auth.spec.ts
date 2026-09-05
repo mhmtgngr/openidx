@@ -416,13 +416,13 @@ test.describe('Session Management', () => {
       });
     });
 
-    // Set auth token in localStorage
-    await page.evaluate(() => {
-      localStorage.setItem('auth_tokens', JSON.stringify({
-        access_token: 'test-token',
-        refresh_token: 'test-refresh',
-      }));
-    });
+    // The signed-in storageState from auth.setup.ts is the session; there is
+    // nothing to fake here. What stood in this place threw on every run:
+    // page.evaluate reaches into the CURRENT document, and a fresh page is
+    // still on about:blank, whose origin is opaque -- "SecurityError: Failed
+    // to read the 'localStorage' property from 'Window'". It also wrote
+    // `auth_tokens`, a key lib/auth.tsx has never read (it reads `token` and
+    // `refresh_token`), so even on a real origin it authenticated nothing.
 
     await page.goto('/dashboard');
     await expect(new DashboardPage(page).pageTitle).toBeVisible();

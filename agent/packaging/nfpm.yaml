@@ -13,7 +13,15 @@ vendor: OpenIDX
 homepage: https://openidx.tdv.org
 license: Apache-2.0
 contents:
-  - src: ./dist/openidx-agent-linux-${ARCH}
+  # A fixed path, not ./dist/openidx-agent-linux-${ARCH}: nfpm expands
+  # environment variables in a known set of top-level fields (name, arch,
+  # version, maintainer, ...) and NOT inside `contents`, so the glob was taken
+  # literally and every invocation died with
+  #   glob failed: ./dist/openidx-agent-linux-${ARCH}: no matching files
+  # -- which nobody saw, because no workflow ever ran `make package-linux`.
+  # The Makefile stages the arch-specific binary to this path before calling
+  # nfpm.
+  - src: ./dist/openidx-agent-linux
     dst: /usr/local/bin/openidx-agent
     file_info:
       mode: 0755

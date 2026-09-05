@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 // enqueueNetworkRevocation records a circuit-severance intent for the given
@@ -23,7 +25,7 @@ func (s *Service) enqueueNetworkRevocation(ctx context.Context, userID, orgID, r
 		orgID, userID, reason)
 	if err != nil {
 		s.logger.Warn("failed to enqueue network revocation",
-			zap.String("user_id", sanitizeForLog(userID)), zap.String("reason", reason), zap.Error(err))
+			zap.String("user_id", logsafe.Clean(userID)), zap.String("reason", reason), zap.Error(err))
 	}
 }
 
@@ -40,7 +42,7 @@ func (s *Service) enqueueNetworkGrant(ctx context.Context, userID, orgID, reques
 		orgID, userID, requestID, attribute, expiresAt)
 	if err != nil {
 		s.logger.Warn("failed to enqueue network grant",
-			zap.String("user_id", sanitizeForLog(userID)), zap.String("attribute", sanitizeForLog(attribute)), zap.Error(err))
+			zap.String("user_id", logsafe.Clean(userID)), zap.String("attribute", logsafe.Clean(attribute)), zap.Error(err))
 	}
 }
 
@@ -56,7 +58,7 @@ func (s *Service) enqueueNetworkAttributeRemoval(ctx context.Context, userID, or
 		orgID, userID, reason, attribute)
 	if err != nil {
 		s.logger.Warn("failed to enqueue network attribute removal",
-			zap.String("user_id", sanitizeForLog(userID)), zap.String("attribute", sanitizeForLog(attribute)), zap.Error(err))
+			zap.String("user_id", logsafe.Clean(userID)), zap.String("attribute", logsafe.Clean(attribute)), zap.Error(err))
 	}
 }
 

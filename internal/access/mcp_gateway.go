@@ -271,11 +271,15 @@ func (s *Service) auditMCP(ctx context.Context, clientID, subject, server, tool,
 	details, _ := json.Marshal(map[string]interface{}{
 		"client_id": clientID, "server": server, "tool": tool, "outcome": outcome,
 	})
-	//orgscope:ignore MCP gateway audit; agent identity is the OAuth client_id/subject on the token, not an org-scoped row
+	// The tool call belongs to the tenant whose gateway served it. Machine
+	// identity (client_id / subject) is not a substitute: two tenants can both
+	// run an MCP server, and before v142 each could read the other's tool-call
+	// log off the audit page.
+	orgID, _ := orgctx.AuditOrgID(ctx)
 	_, _ = s.db.Pool.Exec(ctx, `
-        INSERT INTO unified_audit_events (id, source, event_type, user_id, details, created_at)
-        VALUES (gen_random_uuid(), 'mcp', $1, NULLIF($2,'')::uuid, $3, NOW())`,
-		"mcp.tool."+outcome, subject, details)
+        INSERT INTO unified_audit_events (id, org_id, source, event_type, user_id, details, created_at)
+        VALUES (gen_random_uuid(), $1, 'mcp', $2, NULLIF($3,'')::uuid, $4, NOW())`,
+		orgID, "mcp.tool."+outcome, subject, details)
 }
 
 // --- helpers ---

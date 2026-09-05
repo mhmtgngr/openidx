@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import {
   Search,
@@ -66,14 +67,9 @@ interface ApiResponse {
 // Constants
 // ---------------------------------------------------------------------------
 
-const SERVICE_GROUPS = [
-  { id: 'identity', label: 'Identity' },
-  { id: 'oauth', label: 'OAuth' },
-  { id: 'governance', label: 'Governance' },
-  { id: 'audit', label: 'Audit' },
-  { id: 'admin', label: 'Admin' },
-  { id: 'provisioning', label: 'Provisioning' },
-] as const
+// The services the catalog endpoint groups by. Labels resolve through the
+// catalog at render rather than being frozen here at import time.
+const SERVICE_GROUPS = ['identity', 'oauth', 'governance', 'audit', 'admin', 'provisioning'] as const
 
 const METHOD_COLORS: Record<string, string> = {
   GET: 'bg-green-100 text-green-800 border-green-200',
@@ -88,13 +84,14 @@ const METHOD_COLORS: Record<string, string> = {
 // ---------------------------------------------------------------------------
 
 export function ApiExplorerPage() {
+  const { t } = useTranslation()
   const { toast } = useToast()
 
   // State
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedEndpoint, setSelectedEndpoint] = useState<ApiEndpoint | null>(null)
   const [expandedServices, setExpandedServices] = useState<Set<string>>(
-    new Set(SERVICE_GROUPS.map((s) => s.id))
+    new Set(SERVICE_GROUPS)
   )
   const [pathParamValues, setPathParamValues] = useState<Record<string, string>>({})
   const [queryParamValues, setQueryParamValues] = useState<Record<string, string>>({})
@@ -161,7 +158,7 @@ export function ApiExplorerPage() {
         try {
           body = JSON.parse(bodyText)
         } catch {
-          throw new Error('Invalid JSON body')
+          throw new Error(t('pages.apiExplorer.invalidJson'))
         }
       }
 
@@ -197,7 +194,7 @@ export function ApiExplorerPage() {
     },
     onError: (error: Error) => {
       toast({
-        title: 'Request Failed',
+        title: t('pages.apiExplorer.requestFailed'),
         description: error.message,
         variant: 'destructive',
       })
@@ -248,7 +245,10 @@ export function ApiExplorerPage() {
 
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text)
-    toast({ title: 'Copied', description: 'Copied to clipboard.' })
+    toast({
+      title: t('pages.apiExplorer.copied'),
+      description: t('pages.apiExplorer.copiedDesc'),
+    })
   }
 
   // ---------------------------------------------------------------------------
@@ -258,8 +258,8 @@ export function ApiExplorerPage() {
   if (isLoading) {
     return (
       <div className="space-y-6">
-        <h1 className="text-3xl font-bold tracking-tight">API Explorer</h1>
-        <p className="text-center py-8">Loading API endpoints...</p>
+        <h1 className="text-3xl font-bold tracking-tight">{t('pages.apiExplorer.title')}</h1>
+        <p className="text-center py-8">{t('pages.apiExplorer.loading')}</p>
       </div>
     )
   }
@@ -267,8 +267,8 @@ export function ApiExplorerPage() {
   if (isError) {
     return (
       <div className="space-y-6">
-        <h1 className="text-3xl font-bold tracking-tight">API Explorer</h1>
-        <QueryError error={error} resource="API endpoints" />
+        <h1 className="text-3xl font-bold tracking-tight">{t('pages.apiExplorer.title')}</h1>
+        <QueryError error={error} resource={t('pages.apiExplorer.resource')} />
       </div>
     )
   }
@@ -277,10 +277,8 @@ export function ApiExplorerPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">API Explorer</h1>
-          <p className="text-muted-foreground">
-            Browse, test, and generate code for OpenIDX API endpoints
-          </p>
+          <h1 className="text-3xl font-bold tracking-tight">{t('pages.apiExplorer.title')}</h1>
+          <p className="text-muted-foreground">{t('pages.apiExplorer.subtitle')}</p>
         </div>
       </div>
 
@@ -290,7 +288,7 @@ export function ApiExplorerPage() {
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
-              placeholder="Search endpoints..."
+              placeholder={t('pages.apiExplorer.searchPlaceholder')}
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="pl-9"
@@ -299,14 +297,14 @@ export function ApiExplorerPage() {
 
           <div className="border rounded-lg overflow-y-auto max-h-[calc(100vh-300px)]">
             {SERVICE_GROUPS.map((group) => {
-              const serviceEndpoints = groupedEndpoints[group.id] || []
+              const serviceEndpoints = groupedEndpoints[group] || []
               if (searchTerm && serviceEndpoints.length === 0) return null
-              const isExpanded = expandedServices.has(group.id)
+              const isExpanded = expandedServices.has(group)
 
               return (
-                <div key={group.id}>
+                <div key={group}>
                   <button
-                    onClick={() => toggleService(group.id)}
+                    onClick={() => toggleService(group)}
                     className="w-full flex items-center gap-2 px-3 py-2 text-sm font-semibold hover:bg-muted/50 border-b"
                   >
                     {isExpanded ? (
@@ -314,7 +312,7 @@ export function ApiExplorerPage() {
                     ) : (
                       <ChevronRight className="h-4 w-4" />
                     )}
-                    {group.label}
+                    {t(`pages.apiExplorer.services.${group}`)}
                     <span className="ml-auto text-xs text-muted-foreground">
                       {serviceEndpoints.length}
                     </span>
@@ -349,7 +347,7 @@ export function ApiExplorerPage() {
           {!selectedEndpoint ? (
             <Card>
               <CardContent className="py-16 text-center text-muted-foreground">
-                Select an endpoint from the sidebar to explore it.
+                {t('pages.apiExplorer.selectPrompt')}
               </CardContent>
             </Card>
           ) : (
@@ -370,7 +368,7 @@ export function ApiExplorerPage() {
                   <CardDescription>{selectedEndpoint.description}</CardDescription>
                   {selectedEndpoint.scopes.length > 0 && (
                     <div className="flex items-center gap-2 mt-2">
-                      <span className="text-xs text-muted-foreground">Scopes:</span>
+                      <span className="text-xs text-muted-foreground">{t('pages.apiExplorer.scopes')}</span>
                       {selectedEndpoint.scopes.map((scope) => (
                         <Badge key={scope} variant="secondary" className="text-xs">
                           {scope}
@@ -384,13 +382,13 @@ export function ApiExplorerPage() {
               {/* Try It section */}
               <Card>
                 <CardHeader>
-                  <CardTitle className="text-base">Try It</CardTitle>
+                  <CardTitle className="text-base">{t('pages.apiExplorer.tryIt')}</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   {/* Path parameters */}
                   {selectedEndpoint.path_params.length > 0 && (
                     <div className="space-y-2">
-                      <label className="text-sm font-medium">Path Parameters</label>
+                      <label className="text-sm font-medium">{t('pages.apiExplorer.pathParams')}</label>
                       <div className="grid gap-2 md:grid-cols-2">
                         {selectedEndpoint.path_params.map((param) => (
                           <div key={param.name} className="space-y-1">
@@ -419,7 +417,7 @@ export function ApiExplorerPage() {
                   {/* Query parameters */}
                   {selectedEndpoint.query_params.length > 0 && (
                     <div className="space-y-2">
-                      <label className="text-sm font-medium">Query Parameters</label>
+                      <label className="text-sm font-medium">{t('pages.apiExplorer.queryParams')}</label>
                       <div className="grid gap-2 md:grid-cols-2">
                         {selectedEndpoint.query_params.map((param) => (
                           <div key={param.name} className="space-y-1">
@@ -449,7 +447,7 @@ export function ApiExplorerPage() {
                   {/* Request body */}
                   {selectedEndpoint.has_body && (
                     <div className="space-y-2">
-                      <label className="text-sm font-medium">Request Body (JSON)</label>
+                      <label className="text-sm font-medium">{t('pages.apiExplorer.requestBody')}</label>
                       <Textarea
                         className="font-mono text-xs min-h-[120px]"
                         placeholder='{ "key": "value" }'
@@ -468,7 +466,9 @@ export function ApiExplorerPage() {
                     ) : (
                       <Send className="mr-2 h-4 w-4" />
                     )}
-                    {sendRequestMutation.isPending ? 'Sending...' : 'Send Request'}
+                    {sendRequestMutation.isPending
+                      ? t('pages.apiExplorer.sending')
+                      : t('pages.apiExplorer.send')}
                   </Button>
                 </CardContent>
               </Card>
@@ -478,7 +478,7 @@ export function ApiExplorerPage() {
                 <Card>
                   <CardHeader>
                     <div className="flex items-center justify-between">
-                      <CardTitle className="text-base">Response</CardTitle>
+                      <CardTitle className="text-base">{t('pages.apiExplorer.response')}</CardTitle>
                       <div className="flex items-center gap-3 text-sm">
                         <Badge
                           variant={apiResponse.status < 400 ? 'default' : 'destructive'}
@@ -486,7 +486,7 @@ export function ApiExplorerPage() {
                           {apiResponse.status}
                         </Badge>
                         <span className="text-muted-foreground">
-                          {apiResponse.duration_ms}ms
+                          {t('pages.apiExplorer.durationMs', { n: apiResponse.duration_ms })}
                         </span>
                         <Button
                           variant="ghost"
@@ -494,7 +494,7 @@ export function ApiExplorerPage() {
                           onClick={() => copyToClipboard(apiResponse.body)}
                         >
                           <Copy className="h-3 w-3 mr-1" />
-                          Copy
+                          {t('pages.apiExplorer.copy')}
                         </Button>
                       </div>
                     </div>
@@ -502,12 +502,12 @@ export function ApiExplorerPage() {
                   <CardContent>
                     <details className="mb-3">
                       <summary className="text-xs text-muted-foreground cursor-pointer">
-                        Response Headers
+                        {t('pages.apiExplorer.responseHeaders')}
                       </summary>
                       <pre className="mt-1 text-xs bg-muted rounded p-2 overflow-x-auto">
                         {Object.entries(apiResponse.headers)
                           .map(([k, v]) => `${k}: ${v}`)
-                          .join('\n') || '(none)'}
+                          .join('\n') || t('pages.apiExplorer.noHeaders')}
                       </pre>
                     </details>
                     <pre className="text-xs bg-muted rounded p-3 overflow-x-auto max-h-96">
@@ -521,9 +521,10 @@ export function ApiExplorerPage() {
               {codeSamples && (
                 <Card>
                   <CardHeader>
-                    <CardTitle className="text-base">Code Samples</CardTitle>
+                    <CardTitle className="text-base">{t('pages.apiExplorer.codeSamples')}</CardTitle>
                   </CardHeader>
                   <CardContent>
+                    {/* Language and tool names, so the tab labels stay raw. */}
                     <Tabs defaultValue="curl">
                       <TabsList>
                         <TabsTrigger value="curl">cURL</TabsTrigger>

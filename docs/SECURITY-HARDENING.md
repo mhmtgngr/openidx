@@ -10,7 +10,9 @@ the logs.
 
 You can use this file in two ways:
 
-1. As a deployment checklist for a single-tenant production install.
+1. As a deployment checklist for a production install (single- or
+   multi-tenant; the tenant boundary itself is covered by
+   [SECURITY-TENANCY.md](./SECURITY-TENANCY.md)).
 2. As a reference for what the validator already enforces, so you don't
    have to re-derive it from the source.
 
@@ -65,6 +67,19 @@ refuses them.
 | Knob | Required value | Notes |
 |---|---|---|
 | `DEBUG_OTP_IN_RESPONSE` | `false` | Setting this to `true` returns OTP codes in API responses; **never** acceptable in production. |
+
+### Seeded default admin (DB-backed startup gate, not a config knob)
+
+The v10 seed migration creates `admin@openidx.local` with the published
+default password `Admin@123`. `ValidateProduction()` cannot see database
+state, so this one is enforced by a separate startup gate:
+`identity.EnsureDefaultAdminRotated`
+(`internal/identity/default_admin_gate.go`), called from the
+identity-service and oauth-service mains after migrations. In production
+both services **refuse to start** while an enabled account still
+authenticates with that password (a *disabled* seeded admin only warns).
+Rotate it via the console (**Users → admin → Set password**) or
+`POST /api/v1/identity/users/:id/set-password`.
 
 ---
 

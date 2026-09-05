@@ -51,8 +51,8 @@ func TestGuacLegalHoldBlocksPurge(t *testing.T) {
 
 	// Active hold → the sweep must NOT purge.
 	if _, err := db.Pool.Exec(ctx,
-		`INSERT INTO guacamole_recording_legal_holds (session_id, reason) VALUES ($1::uuid, 'litigation')`,
-		sessionID); err != nil {
+		`INSERT INTO guacamole_recording_legal_holds (session_id, reason, org_id) VALUES ($1::uuid, 'litigation', $2::uuid)`,
+		sessionID, defaultOrg); err != nil {
 		t.Fatalf("place hold: %v", err)
 	}
 	h.sweepExpiredGuacRecordings(ctx)

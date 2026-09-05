@@ -9,9 +9,15 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
-
-	"github.com/openidx/openidx/internal/common/orgctx"
 )
+
+// Every handler here is tenant-scoped. ai_recommendations and
+// recommendation_history had no org_id until migration v138; the generator
+// was already org-aware (it seeds from org-scoped queries) but the read/act
+// side addressed rows by bare id, so any tenant admin could list, accept,
+// dismiss and "apply" every other tenant's recommendations. Each query now
+// carries the org as an explicit predicate; the FORCE-RLS policy v138 added
+// is the belt underneath.
 
 // Recommendation represents an AI-generated access recommendation
 type Recommendation struct {
@@ -39,6 +45,10 @@ func (s *Service) handleListRecommendations(c *gin.Context) {
 	if !requireAdmin(c) {
 		return
 	}
+	org, ok := requireOrg(c)
+	if !ok {
+		return
+	}
 	ctx := c.Request.Context()
 
 	category := c.DefaultQuery("category", "")
@@ -48,9 +58,9 @@ func (s *Service) handleListRecommendations(c *gin.Context) {
 	query := `SELECT id, recommendation_type, category, title, description, impact, effort,
 		affected_entities, suggested_action, supporting_data, status,
 		COALESCE(dismissed_reason, ''), applied_at, applied_by, created_at, updated_at
-		FROM ai_recommendations WHERE 1=1`
-	args := []interface{}{}
-	argIdx := 1
+		FROM ai_recommendations WHERE org_id = $1`
+	args := []interface{}{org.ID}
+	argIdx := 2
 
 	if status != "" {
 		query += fmt.Sprintf(" AND status = $%d", argIdx)
@@ -92,6 +102,10 @@ func (s *Service) handleGetRecommendation(c *gin.Context) {
 	if !requireAdmin(c) {
 		return
 	}
+	org, ok := requireOrg(c)
+	if !ok {
+		return
+	}
 	ctx := c.Request.Context()
 	id := c.Param("id")
 
@@ -100,7 +114,7 @@ func (s *Service) handleGetRecommendation(c *gin.Context) {
 		SELECT id, recommendation_type, category, title, description, impact, effort,
 			affected_entities, suggested_action, supporting_data, status,
 			COALESCE(dismissed_reason, ''), applied_at, applied_by, created_at, updated_at
-		FROM ai_recommendations WHERE id = $1`, id,
+		FROM ai_recommendations WHERE id = $1 AND org_id = $2`, id, org.ID,
 	).Scan(&r.ID, &r.RecommendationType, &r.Category, &r.Title, &r.Description,
 		&r.Impact, &r.Effort, &r.AffectedEntities, &r.SuggestedAction, &r.SupportingData,
 		&r.Status, &r.DismissedReason, &r.AppliedAt, &r.AppliedBy, &r.CreatedAt, &r.UpdatedAt)
@@ -112,7 +126,7 @@ func (s *Service) handleGetRecommendation(c *gin.Context) {
 	// Fetch history
 	histRows, err := s.db.Pool.Query(ctx, `
 		SELECT id, previous_status, new_status, changed_by, COALESCE(reason, ''), created_at
-		FROM recommendation_history WHERE recommendation_id = $1 ORDER BY created_at DESC`, id)
+		FROM recommendation_history WHERE recommendation_id = $1 AND org_id = $2 ORDER BY created_at DESC`, id, org.ID)
 	history := []map[string]interface{}{}
 	if err == nil {
 		defer histRows.Close()
@@ -136,6 +150,10 @@ func (s *Service) handleAcceptRecommendation(c *gin.Context) {
 	if !requireAdmin(c) {
 		return
 	}
+	org, ok := requireOrg(c)
+	if !ok {
+		return
+	}
 	ctx := c.Request.Context()
 	id := c.Param("id")
 	userID, _ := c.Get("user_id")
@@ -143,20 +161,24 @@ func (s *Service) handleAcceptRecommendation(c *gin.Context) {
 
 	tag, err := s.db.Pool.Exec(ctx, `
 		UPDATE ai_recommendations SET status = 'accepted', updated_at = NOW()
-		WHERE id = $1 AND status = 'pending'`, id)
+		WHERE id = $1 AND org_id = $2 AND status = 'pending'`, id, org.ID)
 	if err != nil || tag.RowsAffected() == 0 {
 		c.JSON(http.StatusNotFound, gin.H{"error": "recommendation not found or not pending"})
 		return
 	}
 
-	s.db.Pool.Exec(ctx, `INSERT INTO recommendation_history (recommendation_id, previous_status, new_status, changed_by)
-		VALUES ($1, 'pending', 'accepted', $2)`, id, uid)
+	s.db.Pool.Exec(ctx, `INSERT INTO recommendation_history (org_id, recommendation_id, previous_status, new_status, changed_by)
+		VALUES ($1, $2, 'pending', 'accepted', $3)`, org.ID, id, uid)
 
 	c.JSON(http.StatusOK, gin.H{"message": "recommendation accepted"})
 }
 
 func (s *Service) handleDismissRecommendation(c *gin.Context) {
 	if !requireAdmin(c) {
+		return
+	}
+	org, ok := requireOrg(c)
+	if !ok {
 		return
 	}
 	ctx := c.Request.Context()
@@ -171,20 +193,33 @@ func (s *Service) handleDismissRecommendation(c *gin.Context) {
 
 	tag, err := s.db.Pool.Exec(ctx, `
 		UPDATE ai_recommendations SET status = 'dismissed', dismissed_reason = $1, updated_at = NOW()
-		WHERE id = $2 AND status = 'pending'`, req.Reason, id)
+		WHERE id = $2 AND org_id = $3 AND status = 'pending'`, req.Reason, id, org.ID)
 	if err != nil || tag.RowsAffected() == 0 {
 		c.JSON(http.StatusNotFound, gin.H{"error": "recommendation not found or not pending"})
 		return
 	}
 
-	s.db.Pool.Exec(ctx, `INSERT INTO recommendation_history (recommendation_id, previous_status, new_status, changed_by, reason)
-		VALUES ($1, 'pending', 'dismissed', $2, $3)`, id, uid, req.Reason)
+	s.db.Pool.Exec(ctx, `INSERT INTO recommendation_history (org_id, recommendation_id, previous_status, new_status, changed_by, reason)
+		VALUES ($1, $2, 'pending', 'dismissed', $3, $4)`, org.ID, id, uid, req.Reason)
 
 	c.JSON(http.StatusOK, gin.H{"message": "recommendation dismissed"})
 }
 
+// applyOutcome is what applying a recommendation actually did. Applied is the
+// only thing that may move the row to status='applied'.
+type applyOutcome struct {
+	Action  string `json:"action"`
+	Message string `json:"message"`
+	Count   int    `json:"count,omitempty"`
+	Applied bool   `json:"applied"`
+}
+
 func (s *Service) handleApplyRecommendation(c *gin.Context) {
 	if !requireAdmin(c) {
+		return
+	}
+	org, ok := requireOrg(c)
+	if !ok {
 		return
 	}
 	ctx := c.Request.Context()
@@ -194,53 +229,152 @@ func (s *Service) handleApplyRecommendation(c *gin.Context) {
 
 	var r Recommendation
 	err := s.db.Pool.QueryRow(ctx, `
-		SELECT id, recommendation_type, suggested_action FROM ai_recommendations WHERE id = $1 AND status IN ('pending', 'accepted')`, id,
-	).Scan(&r.ID, &r.RecommendationType, &r.SuggestedAction)
+		SELECT id, recommendation_type, affected_entities FROM ai_recommendations
+		WHERE id = $1 AND org_id = $2 AND status IN ('pending', 'accepted')`, id, org.ID,
+	).Scan(&r.ID, &r.RecommendationType, &r.AffectedEntities)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "recommendation not found or already resolved"})
 		return
 	}
 
-	// Apply based on type
-	result := map[string]interface{}{"type": r.RecommendationType}
-	switch r.RecommendationType {
-	case "permission_right_sizing":
-		result["action"] = "permissions_flagged_for_review"
-		result["message"] = "Affected permissions have been flagged for the next access review cycle"
-	case "mfa_enrollment":
-		result["action"] = "mfa_reminders_queued"
-		result["message"] = "MFA enrollment reminders have been queued for affected users"
-	case "stale_account_cleanup":
-		result["action"] = "accounts_disabled"
-		result["message"] = "Stale accounts have been disabled pending review"
-	case "policy_tightening":
-		result["action"] = "policy_draft_created"
-		result["message"] = "A draft policy has been created for review"
-	default:
-		result["action"] = "manual_review_required"
-		result["message"] = "This recommendation requires manual implementation"
+	out := s.applyRecommendation(ctx, org.ID, r)
+
+	if !out.Applied {
+		// Nothing changed, so the row does not move. Saying "applied" here is
+		// what this endpoint used to do for all four of its cases: it reported
+		// "Stale accounts have been disabled pending review" and set
+		// status='applied' while disabling nobody, which left the console
+		// showing a resolved recommendation over an unchanged install.
+		c.JSON(http.StatusNotImplemented, gin.H{
+			"error":   out.Message,
+			"action":  out.Action,
+			"applied": false,
+		})
+		return
 	}
 
-	s.db.Pool.Exec(ctx, `
+	if _, err := s.db.Pool.Exec(ctx, `
 		UPDATE ai_recommendations SET status = 'applied', applied_at = NOW(), applied_by = $1, updated_at = NOW()
-		WHERE id = $2`, uid, id)
-	s.db.Pool.Exec(ctx, `INSERT INTO recommendation_history (recommendation_id, previous_status, new_status, changed_by)
-		VALUES ($1, 'accepted', 'applied', $2)`, id, uid)
+		WHERE id = $2 AND org_id = $3`, uid, id, org.ID); err != nil {
+		s.logger.Error("failed to mark recommendation applied", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "the action was performed but could not be recorded"})
+		return
+	}
+	s.db.Pool.Exec(ctx, `INSERT INTO recommendation_history (org_id, recommendation_id, previous_status, new_status, changed_by, reason)
+		VALUES ($1, $2, 'accepted', 'applied', $3, $4)`, org.ID, id, uid, out.Message)
 
-	c.JSON(http.StatusOK, gin.H{"message": "recommendation applied", "result": result})
+	c.JSON(http.StatusOK, gin.H{"message": out.Message, "applied": true, "result": out})
+}
+
+// applyRecommendation performs the action a recommendation type means, and
+// says truthfully whether anything happened.
+//
+// Only two of the six types have a primitive behind them. The other four
+// return Applied=false and the handler answers 501 with the reason, rather
+// than the previous behaviour of composing a sentence in the past tense
+// ("Affected permissions have been flagged for the next access review cycle")
+// and writing status='applied' over an install where nothing had changed.
+func (s *Service) applyRecommendation(ctx context.Context, orgID string, r Recommendation) applyOutcome {
+	switch r.RecommendationType {
+	case "mfa_enrollment":
+		ids := affectedUserIDs(r.AffectedEntities)
+		if len(ids) == 0 {
+			return applyOutcome{Action: "no_targets", Message: "the recommendation names no users to remind"}
+		}
+		tag, err := s.db.Pool.Exec(ctx, `
+			INSERT INTO notifications (user_id, channel, type, title, body, metadata, org_id)
+			SELECT id, 'in_app', 'security', $2, $3, jsonb_build_object('source', 'ai_recommendation'), org_id
+			FROM users WHERE id = ANY($1::uuid[]) AND org_id = $4 AND enabled = true`,
+			ids,
+			"Set up multi-factor authentication",
+			"Your account has no second factor. Add one from Security settings to keep access to your applications.",
+			orgID)
+		if err != nil {
+			s.logger.Error("apply recommendation: MFA reminders failed", zap.Error(err))
+			return applyOutcome{Action: "failed", Message: "could not queue the MFA reminders"}
+		}
+		return applyOutcome{
+			Action:  "mfa_reminders_sent",
+			Message: fmt.Sprintf("%d MFA enrolment reminder(s) sent", tag.RowsAffected()),
+			Count:   int(tag.RowsAffected()),
+			Applied: true,
+		}
+
+	case "stale_account_cleanup":
+		// The generator stores a count rather than ids for this type, so the
+		// set is recomputed here with the same predicate. That also means an
+		// account that has logged in since the recommendation was raised is
+		// no longer disabled by applying it.
+		tag, err := s.db.Pool.Exec(ctx, `
+			UPDATE users SET enabled = false, updated_at = NOW()
+			WHERE org_id = $1 AND enabled = true
+			AND (last_login_at IS NULL OR last_login_at < NOW() - INTERVAL '90 days')`, orgID)
+		if err != nil {
+			s.logger.Error("apply recommendation: stale account cleanup failed", zap.Error(err))
+			return applyOutcome{Action: "failed", Message: "could not disable the stale accounts"}
+		}
+		return applyOutcome{
+			Action:  "accounts_disabled",
+			Message: fmt.Sprintf("%d stale account(s) disabled", tag.RowsAffected()),
+			Count:   int(tag.RowsAffected()),
+			Applied: true,
+		}
+
+	case "permission_right_sizing":
+		return applyOutcome{
+			Action: "manual_action_required",
+			Message: "applying this automatically is not implemented: downgrading a role is a governance " +
+				"decision. Use Roles to change the assignment, or open an access review for the named users.",
+		}
+	case "policy_tightening":
+		return applyOutcome{
+			Action: "manual_action_required",
+			Message: "applying this automatically is not implemented: no policy is created from a " +
+				"recommendation. Create the conditional access policy on the Access Policies page.",
+		}
+	case "agent_permission_scoping":
+		return applyOutcome{
+			Action: "manual_action_required",
+			Message: "applying this automatically is not implemented: reducing an agent's scope removes " +
+				"permissions it may still use. Adjust them on the AI Agents page.",
+		}
+	default:
+		return applyOutcome{
+			Action:  "manual_action_required",
+			Message: fmt.Sprintf("no automatic action exists for %q", r.RecommendationType),
+		}
+	}
+}
+
+// affectedUserIDs pulls the user ids out of a recommendation's
+// affected_entities array, ignoring the {"type":"summary","count":N} shape the
+// aggregate recommendations use.
+func affectedUserIDs(raw json.RawMessage) []string {
+	var entities []struct {
+		Type string `json:"type"`
+		ID   string `json:"id"`
+	}
+	if err := json.Unmarshal(raw, &entities); err != nil {
+		return nil
+	}
+	var out []string
+	for _, e := range entities {
+		if e.Type == "user" && e.ID != "" {
+			out = append(out, e.ID)
+		}
+	}
+	return out
 }
 
 func (s *Service) handleGenerateRecommendations(c *gin.Context) {
 	if !requireAdmin(c) {
 		return
 	}
-	ctx := c.Request.Context()
-
-	org, err := orgctx.From(ctx)
-	if err != nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+	org, ok := requireOrg(c)
+	if !ok {
 		return
 	}
+	ctx := c.Request.Context()
 
 	generated := 0
 
@@ -275,7 +409,7 @@ func (s *Service) handleGenerateRecommendations(c *gin.Context) {
 				"action": "downgrade_role", "from": "admin", "to": "user",
 				"reason": "No admin activity in 30 days",
 			})
-			if s.createRecommendation(ctx, "permission_right_sizing", "security",
+			if s.createRecommendation(ctx, org.ID, "permission_right_sizing", "security",
 				fmt.Sprintf("%d users have admin roles but no admin activity", len(entities)),
 				"These users have elevated privileges they haven't used in the last 30 days. Consider downgrading their roles to follow the principle of least privilege.",
 				"high", "low", entitiesJSON, actionJSON) {
@@ -312,7 +446,7 @@ func (s *Service) handleGenerateRecommendations(c *gin.Context) {
 			actionJSON, _ := json.Marshal(map[string]interface{}{
 				"action": "enforce_mfa", "methods": []string{"totp", "webauthn", "push"},
 			})
-			if s.createRecommendation(ctx, "mfa_enrollment", "security",
+			if s.createRecommendation(ctx, org.ID, "mfa_enrollment", "security",
 				fmt.Sprintf("%d active users have no MFA configured", len(entities)),
 				"These frequently active users don't have any MFA method enabled, creating a significant security risk.",
 				"high", "medium", entitiesJSON, actionJSON) {
@@ -336,7 +470,7 @@ func (s *Service) handleGenerateRecommendations(c *gin.Context) {
 		entitiesJSON, _ := json.Marshal([]map[string]interface{}{
 			{"type": "summary", "count": staleCount},
 		})
-		if s.createRecommendation(ctx, "stale_account_cleanup", "governance",
+		if s.createRecommendation(ctx, org.ID, "stale_account_cleanup", "governance",
 			fmt.Sprintf("%d accounts inactive for 90+ days", staleCount),
 			"These accounts have not been used in over 90 days and should be reviewed for deactivation to reduce attack surface.",
 			"medium", "low", entitiesJSON, actionJSON) {
@@ -361,7 +495,7 @@ func (s *Service) handleGenerateRecommendations(c *gin.Context) {
 		entitiesJSON, _ := json.Marshal([]map[string]interface{}{
 			{"type": "summary", "count": unprotectedApps},
 		})
-		if s.createRecommendation(ctx, "policy_tightening", "compliance",
+		if s.createRecommendation(ctx, org.ID, "policy_tightening", "compliance",
 			fmt.Sprintf("%d applications have no access policy", unprotectedApps),
 			"These applications lack conditional access policies, meaning any authenticated user can access them without additional controls.",
 			"medium", "medium", entitiesJSON, actionJSON) {
@@ -375,11 +509,11 @@ func (s *Service) handleGenerateRecommendations(c *gin.Context) {
 		SELECT a.id, a.name, COUNT(p.id) AS perm_count,
 			COUNT(DISTINCT act.resource_type) AS used_resources
 		FROM ai_agents a
-		LEFT JOIN ai_agent_permissions p ON a.id = p.agent_id
-		LEFT JOIN ai_agent_activity act ON a.id = act.agent_id AND act.created_at > NOW() - INTERVAL '30 days'
-		WHERE a.status = 'active'
+		LEFT JOIN ai_agent_permissions p ON a.id = p.agent_id AND p.org_id = a.org_id
+		LEFT JOIN ai_agent_activity act ON a.id = act.agent_id AND act.org_id = a.org_id AND act.created_at > NOW() - INTERVAL '30 days'
+		WHERE a.org_id = $1 AND a.status = 'active'
 		GROUP BY a.id, a.name
-		HAVING COUNT(p.id) > COUNT(DISTINCT act.resource_type) * 2`)
+		HAVING COUNT(p.id) > COUNT(DISTINCT act.resource_type) * 2`, org.ID)
 	if err != nil {
 		s.logger.Warn("recommendations: agent-scoping query failed", zap.Error(err))
 	} else {
@@ -399,7 +533,7 @@ func (s *Service) handleGenerateRecommendations(c *gin.Context) {
 			actionJSON, _ := json.Marshal(map[string]interface{}{
 				"action": "scope_reduction", "reason": "Unused permissions detected",
 			})
-			if s.createRecommendation(ctx, "agent_permission_scoping", "security",
+			if s.createRecommendation(ctx, org.ID, "agent_permission_scoping", "security",
 				fmt.Sprintf("%d AI agents have over-broad permissions", len(entities)),
 				"These AI agents have more permissions than they actively use. Consider reducing their scope.",
 				"medium", "low", entitiesJSON, actionJSON) {
@@ -432,7 +566,7 @@ func (s *Service) handleGenerateRecommendations(c *gin.Context) {
 		})
 		// Carry the supporting data through createRecommendation so we don't need a
 		// second UPDATE (Postgres does not accept ORDER BY/LIMIT on a plain UPDATE).
-		if s.createRecommendationWithSupport(ctx, "compliance_gap", "compliance",
+		if s.createRecommendationWithSupport(ctx, org.ID, "compliance_gap", "compliance",
 			fmt.Sprintf("MFA adoption at %d%% - below 90%% compliance target", mfaAdoptionPct),
 			"SOC 2, ISO 27001, and NIST frameworks recommend MFA adoption above 90% for all users.",
 			"high", "medium", json.RawMessage(`[]`), actionJSON, supportJSON) {
@@ -447,12 +581,16 @@ func (s *Service) handleRecommendationStats(c *gin.Context) {
 	if !requireAdmin(c) {
 		return
 	}
+	org, ok := requireOrg(c)
+	if !ok {
+		return
+	}
 	ctx := c.Request.Context()
 
 	result := make(map[string]interface{})
 
 	// Counts by status
-	statusRows, err := s.db.Pool.Query(ctx, "SELECT status, COUNT(*) FROM ai_recommendations GROUP BY status")
+	statusRows, err := s.db.Pool.Query(ctx, "SELECT status, COUNT(*) FROM ai_recommendations WHERE org_id = $1 GROUP BY status", org.ID)
 	if err == nil {
 		defer statusRows.Close()
 		byStatus := map[string]int{}
@@ -466,7 +604,7 @@ func (s *Service) handleRecommendationStats(c *gin.Context) {
 	}
 
 	// Counts by category
-	catRows, err := s.db.Pool.Query(ctx, "SELECT category, COUNT(*) FROM ai_recommendations WHERE status = 'pending' GROUP BY category")
+	catRows, err := s.db.Pool.Query(ctx, "SELECT category, COUNT(*) FROM ai_recommendations WHERE org_id = $1 AND status = 'pending' GROUP BY category", org.ID)
 	if err == nil {
 		defer catRows.Close()
 		byCat := map[string]int{}
@@ -481,8 +619,8 @@ func (s *Service) handleRecommendationStats(c *gin.Context) {
 
 	// Acceptance rate
 	var totalResolved, accepted int
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM ai_recommendations WHERE status IN ('accepted', 'applied', 'dismissed')").Scan(&totalResolved)
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM ai_recommendations WHERE status IN ('accepted', 'applied')").Scan(&accepted)
+	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM ai_recommendations WHERE org_id = $1 AND status IN ('accepted', 'applied', 'dismissed')", org.ID).Scan(&totalResolved)
+	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM ai_recommendations WHERE org_id = $1 AND status IN ('accepted', 'applied')", org.ID).Scan(&accepted)
 	if totalResolved > 0 {
 		result["acceptance_rate"] = float64(accepted) / float64(totalResolved) * 100
 	} else {
@@ -492,7 +630,7 @@ func (s *Service) handleRecommendationStats(c *gin.Context) {
 	result["total_accepted"] = accepted
 
 	// Impact by category
-	impactRows, err := s.db.Pool.Query(ctx, "SELECT category, impact, COUNT(*) FROM ai_recommendations GROUP BY category, impact ORDER BY category")
+	impactRows, err := s.db.Pool.Query(ctx, "SELECT category, impact, COUNT(*) FROM ai_recommendations WHERE org_id = $1 GROUP BY category, impact ORDER BY category", org.ID)
 	if err == nil {
 		defer impactRows.Close()
 		impactMap := []map[string]interface{}{}
@@ -510,31 +648,33 @@ func (s *Service) handleRecommendationStats(c *gin.Context) {
 
 // --- Helper ---
 
-// createRecommendation inserts a pending recommendation unless an identical
-// pending one already exists. It returns true only when a row was actually
-// written, so the generate handler counts real inserts rather than attempts.
-// Any DB error is logged (previously it was silently swallowed, which made the
-// endpoint report "generated: N" while persisting nothing).
-func (s *Service) createRecommendation(ctx context.Context, recType, category, title, description, impact, effort string, entities, action json.RawMessage) bool {
-	return s.createRecommendationWithSupport(ctx, recType, category, title, description, impact, effort, entities, action, nil)
+// createRecommendation inserts a pending recommendation for orgID unless an
+// identical pending one already exists in that org. It returns true only when
+// a row was actually written, so the generate handler counts real inserts
+// rather than attempts. Any DB error is logged (previously it was silently
+// swallowed, which made the endpoint report "generated: N" while persisting
+// nothing).
+func (s *Service) createRecommendation(ctx context.Context, orgID, recType, category, title, description, impact, effort string, entities, action json.RawMessage) bool {
+	return s.createRecommendationWithSupport(ctx, orgID, recType, category, title, description, impact, effort, entities, action, nil)
 }
 
 // createRecommendationWithSupport is createRecommendation plus an optional
 // supporting_data payload written in the same statement. The SELECT operands are
 // explicitly cast so Postgres can deduce parameter types even when the row is
 // filtered out by NOT EXISTS (an untyped SELECT of only bind params otherwise
-// fails with "inconsistent types deduced for parameter").
-func (s *Service) createRecommendationWithSupport(ctx context.Context, recType, category, title, description, impact, effort string, entities, action, support json.RawMessage) bool {
+// fails with "inconsistent types deduced for parameter"). The dedupe is per
+// org: the same title in another tenant is a different recommendation.
+func (s *Service) createRecommendationWithSupport(ctx context.Context, orgID, recType, category, title, description, impact, effort string, entities, action, support json.RawMessage) bool {
 	if support == nil {
 		support = json.RawMessage(`{}`)
 	}
 	tag, err := s.db.Pool.Exec(ctx, `
-		INSERT INTO ai_recommendations (recommendation_type, category, title, description, impact, effort, affected_entities, suggested_action, supporting_data)
-		SELECT $1::varchar, $2::varchar, $3::varchar, $4::text, $5::varchar, $6::varchar, $7::jsonb, $8::jsonb, $9::jsonb
+		INSERT INTO ai_recommendations (org_id, recommendation_type, category, title, description, impact, effort, affected_entities, suggested_action, supporting_data)
+		SELECT $10::uuid, $1::varchar, $2::varchar, $3::varchar, $4::text, $5::varchar, $6::varchar, $7::jsonb, $8::jsonb, $9::jsonb
 		WHERE NOT EXISTS (
-			SELECT 1 FROM ai_recommendations WHERE recommendation_type = $1 AND title = $3 AND status = 'pending'
+			SELECT 1 FROM ai_recommendations WHERE org_id = $10::uuid AND recommendation_type = $1 AND title = $3 AND status = 'pending'
 		)`,
-		recType, category, title, description, impact, effort, entities, action, support)
+		recType, category, title, description, impact, effort, entities, action, support, orgID)
 	if err != nil {
 		s.logger.Error("failed to insert recommendation",
 			zap.String("type", recType), zap.String("title", title), zap.Error(err))

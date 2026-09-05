@@ -43,12 +43,10 @@ type GuacamoleClient struct {
 	httpClient    *resilience.ResilientHTTPClient
 	db            *database.PostgresDB
 	logger        *zap.Logger
-	// tokenCipher encrypts the pooled Guacamole session token at rest (write-only
-	// DB copy; the in-memory pool holds plaintext for reuse).
+	// tokenCipher encrypts the per-user broker account password at rest
+	// (guacamole_users.encrypted_password).
 	tokenCipher *secretcrypt.Cipher
 
-	// Connection pool
-	pool           *ConnectionPool
 	activeSessions int
 
 	// perUserIdentities enables the per-user broker identity path (PAM hardening):
@@ -76,33 +74,6 @@ type GuacConnection struct {
 	RecordSession         bool              `json:"record_session"`
 	CreatedAt             time.Time         `json:"created_at"`
 	UpdatedAt             time.Time         `json:"updated_at"`
-}
-
-// ConnectionPool manages reusable Guacamole connection tokens
-type ConnectionPool struct {
-	maxConnections int
-	idleTimeout    time.Duration
-	connections    map[string]*PooledConnection
-}
-
-// PooledConnection represents a pooled Guacamole connection token
-type PooledConnection struct {
-	Token        string    `json:"token"`
-	ConnectionID string    `json:"connection_id"`
-	UserID       string    `json:"user_id"`
-	CreatedAt    time.Time `json:"created_at"`
-	LastUsedAt   time.Time `json:"last_used_at"`
-	UseCount     int       `json:"use_count"`
-	ExpiresAt    time.Time `json:"expires_at"`
-}
-
-// NewConnectionPool creates a new connection pool
-func NewConnectionPool(maxConnections int, idleTimeout time.Duration) *ConnectionPool {
-	return &ConnectionPool{
-		maxConnections: maxConnections,
-		idleTimeout:    idleTimeout,
-		connections:    make(map[string]*PooledConnection),
-	}
 }
 
 // NewGuacamoleClient creates and authenticates the "direct" PAM session broker
@@ -154,7 +125,7 @@ func newGuacamoleClient(cfg *config.Config, db *database.PostgresDB, logger *zap
 
 	tokenCipher, err := secretcrypt.New(cfg.EncryptionKey)
 	if err != nil {
-		logger.Warn("Guacamole pool tokens will NOT be encrypted at rest; set a 32-byte ENCRYPTION_KEY to enable", zap.Error(err))
+		logger.Warn("Guacamole per-user broker passwords will NOT be encrypted at rest; set a 32-byte ENCRYPTION_KEY to enable", zap.Error(err))
 		tokenCipher = secretcrypt.NewNoop()
 	}
 
@@ -462,27 +433,51 @@ func (gc *GuacamoleClient) GetConnectionURL(connID string) string {
 
 // ---- Database operations for tracking Guacamole connections ----
 
-// SaveGuacConnection persists a Guacamole connection mapping to the database
+// SaveGuacConnection persists a Guacamole connection mapping to the database.
+//
+// org_id is taken from the request context rather than a parameter: this is
+// only ever reached from provisionGuacamoleForRoute while an administrator is
+// creating or updating a route in their own tenant, and a brokered connection
+// with no tenant is the row v151 exists to make impossible. Since v151 the
+// column is NOT NULL and the belt's WITH CHECK would reject a mismatch anyway;
+// refusing here says why instead of surfacing a constraint violation.
 func (gc *GuacamoleClient) SaveGuacConnection(ctx context.Context, routeID, connID, protocol, hostname string, port int, params map[string]string) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return fmt.Errorf("cannot save guacamole connection mapping without an organization: %w", err)
+	}
 	paramsJSON, _ := json.Marshal(params)
 
-	_, err := gc.db.Pool.Exec(ctx,
-		`INSERT INTO guacamole_connections (route_id, guacamole_connection_id, protocol, hostname, port, parameters, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+	tag, err := gc.db.Pool.Exec(ctx,
+		`INSERT INTO guacamole_connections (route_id, org_id, guacamole_connection_id, protocol, hostname, port, parameters, created_at, updated_at)
+		 VALUES ($1, $7, $2, $3, $4, $5, $6, NOW(), NOW())
 		 ON CONFLICT (route_id) DO UPDATE SET
-		   guacamole_connection_id=$2, protocol=$3, hostname=$4, port=$5, parameters=$6, updated_at=NOW()`,
-		routeID, connID, protocol, hostname, port, paramsJSON)
+		   guacamole_connection_id=$2, protocol=$3, hostname=$4, port=$5, parameters=$6, updated_at=NOW()
+		 WHERE guacamole_connections.org_id = $7`,
+		routeID, connID, protocol, hostname, port, paramsJSON, org.ID)
 	if err != nil {
 		return fmt.Errorf("failed to save guacamole connection mapping: %w", err)
+	}
+	// DO UPDATE ... WHERE that matches nothing is not an error in Postgres, it
+	// is a silent no-op: the route would keep pointing at whatever connection
+	// it had before while the caller is told the provisioning succeeded. Only
+	// a row belonging to another organization can land here.
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("guacamole connection for route %s belongs to another organization", routeID)
 	}
 	return nil
 }
 
-// DeleteGuacConnectionByRoute removes the Guacamole connection mapping for a route
+// DeleteGuacConnectionByRoute removes the Guacamole connection mapping for a route.
 func (gc *GuacamoleClient) DeleteGuacConnectionByRoute(ctx context.Context, routeID string) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return fmt.Errorf("cannot deprovision a guacamole connection without an organization: %w", err)
+	}
+
 	var connID string
-	err := gc.db.Pool.QueryRow(ctx,
-		"SELECT guacamole_connection_id FROM guacamole_connections WHERE route_id=$1", routeID).
+	err = gc.db.Pool.QueryRow(ctx,
+		"SELECT guacamole_connection_id FROM guacamole_connections WHERE route_id=$1 AND org_id=$2", routeID, org.ID).
 		Scan(&connID)
 	if err != nil {
 		return nil // no connection to delete
@@ -492,15 +487,25 @@ func (gc *GuacamoleClient) DeleteGuacConnectionByRoute(ctx context.Context, rout
 	gc.DeleteConnection(connID)
 
 	// Delete from database
-	gc.db.Pool.Exec(ctx, "DELETE FROM guacamole_connections WHERE route_id=$1", routeID)
+	if _, err := gc.db.Pool.Exec(ctx,
+		"DELETE FROM guacamole_connections WHERE route_id=$1 AND org_id=$2", routeID, org.ID); err != nil {
+		return fmt.Errorf("failed to delete guacamole connection mapping: %w", err)
+	}
 	return nil
 }
 
-// ListGuacConnections returns all tracked Guacamole connections
+// ListGuacConnections returns the calling organization's tracked Guacamole
+// connections. Before v151 this had no WHERE clause and the table had no belt,
+// so it returned every tenant's hostnames, ports and connection parameters to
+// any authenticated caller.
 func (gc *GuacamoleClient) ListGuacConnections(ctx context.Context) ([]GuacConnection, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("organization context required to list guacamole connections: %w", err)
+	}
 	rows, err := gc.db.Pool.Query(ctx,
 		`SELECT id, route_id, guacamole_connection_id, protocol, hostname, port, parameters, created_at, updated_at
-		 FROM guacamole_connections ORDER BY created_at DESC`)
+		 FROM guacamole_connections WHERE org_id = $1 ORDER BY created_at DESC`, org.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query guacamole connections: %w", err)
 	}
@@ -593,6 +598,17 @@ func (s *Service) handleGuacamoleConnect(c *gin.Context) {
 	}
 
 	// Load the connection row including PAM config columns.
+	//
+	// The org predicate is the whole security of this handler. Before v151 this
+	// read by route_id alone: it resolved the caller's organization, refused
+	// when there was none, and then never used it. Everything below acts on
+	// whatever row came back — the vault secret is read under bypass-RLS and
+	// injected, and a connect URL is returned — so any authenticated user who
+	// knew another tenant's route id got a live session onto that tenant's host
+	// with that tenant's credential. The approval and moderation gates cannot
+	// substitute for this: both key on the connection id and read tables belted
+	// to the CALLER's organization, so a request opened against another tenant's
+	// connection is approved at home and passes.
 	var connectionPK, connID, protocol, hostname, secretID, injectUser string
 	var port int
 	var requireApproval, recordSession, requireModerator bool
@@ -600,7 +616,7 @@ func (s *Service) handleGuacamoleConnect(c *gin.Context) {
 		`SELECT id, guacamole_connection_id, protocol, hostname, port,
 		        COALESCE(vault_secret_id::text,''), COALESCE(inject_username,''),
 		        require_approval, record_session, require_moderator
-		 FROM guacamole_connections WHERE route_id=$1`, routeID).
+		 FROM guacamole_connections WHERE route_id=$1 AND org_id=$2`, routeID, org.ID).
 		Scan(&connectionPK, &connID, &protocol, &hostname, &port,
 			&secretID, &injectUser, &requireApproval, &recordSession, &requireModerator)
 	if err != nil {
@@ -747,12 +763,15 @@ func (s *Service) handleSetGuacCredential(c *gin.Context) {
 		return
 	}
 
-	// Verify the route belongs to this org (guacamole_connections has no org_id; scope via proxy_routes).
+	// Verify the connection belongs to this org. The proxy_routes join predates
+	// v151, when guacamole_connections had no tenant of its own; it is kept
+	// because the route's org_id is the authority the connection's was
+	// backfilled from, so agreeing with it is the stronger check.
 	var exists bool
 	err = s.db.Pool.QueryRow(ctx,
 		`SELECT EXISTS(SELECT 1 FROM guacamole_connections gc
 		              JOIN proxy_routes pr ON pr.id = gc.route_id
-		              WHERE gc.route_id = $1 AND pr.org_id = $2)`,
+		              WHERE gc.route_id = $1 AND gc.org_id = $2 AND pr.org_id = $2)`,
 		routeID, org.ID).Scan(&exists)
 	if err != nil {
 		s.logger.Error("handleSetGuacCredential: route lookup failed", zap.Error(err))
@@ -782,7 +801,6 @@ func (s *Service) handleSetGuacCredential(c *gin.Context) {
 		}
 	}
 
-	// guacamole_connections has no org_id; uniqueness is enforced by route_id.
 	_, err = s.db.Pool.Exec(ctx,
 		`UPDATE guacamole_connections
 		    SET vault_secret_id  = NULLIF($1, '')::uuid,
@@ -790,8 +808,8 @@ func (s *Service) handleSetGuacCredential(c *gin.Context) {
 		        require_approval = $3,
 		        record_session   = $4,
 		        updated_at       = NOW()
-		  WHERE route_id = $5`,
-		req.VaultSecretID, req.InjectUsername, req.RequireApproval, req.RecordSession, routeID)
+		  WHERE route_id = $5 AND org_id = $6`,
+		req.VaultSecretID, req.InjectUsername, req.RequireApproval, req.RecordSession, routeID, org.ID)
 	if err != nil {
 		s.logger.Error("handleSetGuacCredential: update failed", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update connection credential"})
@@ -864,110 +882,6 @@ func (s *Service) deprovisionGuacamoleForRoute(ctx context.Context, routeID stri
 		s.logger.Warn("Failed to deprovision guacamole connection",
 			zap.String("route_id", routeID), zap.Error(err))
 	}
-}
-
-// ---- Connection Pooling Methods ----
-
-// GetPooledConnection returns a reusable connection token from the pool
-func (gc *GuacamoleClient) GetPooledConnection(ctx context.Context, connID, userID string) (*PooledConnection, error) {
-	if gc.pool == nil {
-		gc.pool = NewConnectionPool(100, 15*time.Minute)
-	}
-
-	key := connID + ":" + userID
-
-	// Check for existing pooled connection
-	if conn, exists := gc.pool.connections[key]; exists {
-		if time.Now().Before(conn.ExpiresAt) && time.Since(conn.LastUsedAt) < gc.pool.idleTimeout {
-			conn.LastUsedAt = time.Now()
-			conn.UseCount++
-			gc.logger.Debug("Reusing pooled connection",
-				zap.String("connection_id", connID),
-				zap.Int("use_count", conn.UseCount))
-			return conn, nil
-		}
-		// Expired or idle, remove from pool
-		delete(gc.pool.connections, key)
-	}
-
-	// Create new connection token
-	token, err := gc.createConnectionToken(connID)
-	if err != nil {
-		return nil, err
-	}
-
-	conn := &PooledConnection{
-		Token:        token,
-		ConnectionID: connID,
-		UserID:       userID,
-		CreatedAt:    time.Now(),
-		LastUsedAt:   time.Now(),
-		UseCount:     1,
-		ExpiresAt:    time.Now().Add(30 * time.Minute),
-	}
-
-	// Save to pool
-	gc.pool.connections[key] = conn
-
-	// Persist to database for durability
-	gc.savePooledConnection(ctx, conn)
-
-	gc.logger.Debug("Created new pooled connection",
-		zap.String("connection_id", connID))
-
-	return conn, nil
-}
-
-func (gc *GuacamoleClient) createConnectionToken(connID string) (string, error) {
-	// For Guacamole, we use the auth token which is already obtained
-	// The actual connection URL will include the token
-	return gc.authToken, nil
-}
-
-func (gc *GuacamoleClient) savePooledConnection(ctx context.Context, conn *PooledConnection) {
-	// Encrypt the session token in the at-rest DB copy. The in-memory pool keeps
-	// the plaintext for reuse; this column is never read back (write-only), so a
-	// DB dump can't yield usable session tokens.
-	encToken, err := gc.tokenCipher.Encrypt(conn.Token)
-	if err != nil {
-		gc.logger.Warn("Failed to encrypt pooled connection token", zap.Error(err))
-		return
-	}
-	_, err = gc.db.Pool.Exec(ctx, `
-		INSERT INTO guacamole_connection_pool (connection_id, token, user_id, created_at, last_used_at, use_count, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		ON CONFLICT (connection_id) DO UPDATE SET
-			token = $2, last_used_at = $5, use_count = $6, expires_at = $7
-	`, conn.ConnectionID, encToken, conn.UserID, conn.CreatedAt, conn.LastUsedAt, conn.UseCount, conn.ExpiresAt)
-	if err != nil {
-		gc.logger.Warn("Failed to save pooled connection", zap.Error(err))
-	}
-}
-
-// CleanupExpiredConnections removes expired connections from the pool
-func (gc *GuacamoleClient) CleanupExpiredConnections(ctx context.Context) int {
-	if gc.pool == nil {
-		return 0
-	}
-
-	now := time.Now()
-	removed := 0
-
-	for key, conn := range gc.pool.connections {
-		if now.After(conn.ExpiresAt) || now.Sub(conn.LastUsedAt) > gc.pool.idleTimeout {
-			delete(gc.pool.connections, key)
-			removed++
-		}
-	}
-
-	// Also cleanup database
-	gc.db.Pool.Exec(ctx, `DELETE FROM guacamole_connection_pool WHERE expires_at < NOW()`)
-
-	if removed > 0 {
-		gc.logger.Info("Cleaned up expired connections", zap.Int("removed", removed))
-	}
-
-	return removed
 }
 
 // GetActiveSessionCount returns the number of active sessions

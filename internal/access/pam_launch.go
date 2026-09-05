@@ -27,6 +27,8 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 // remoteAppSecretArgRE matches credential-looking tokens in a RemoteApp
@@ -375,7 +377,7 @@ func (s *Service) launchPamSession(
 	target, err := s.resolvePamLaunchTarget(ctx, orgID, entry)
 	if err != nil {
 		s.logger.Warn("launchPamSession: credential resolution failed",
-			zap.String("entry_id", scrubLogValue(entry.ID)), zap.Error(err))
+			zap.String("entry_id", logsafe.Clean(entry.ID)), zap.Error(err))
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		return nil, false
 	}
@@ -432,7 +434,7 @@ func (s *Service) launchPamSession(
 	connID, err := s.ensureGuacConnection(ctx, connName, existingConnID, protocol, dialHost, dialPort, params, broker, persistConnID)
 	if err != nil {
 		s.logger.Error("launchPamSession: guacamole connection failed",
-			zap.String("entry_id", scrubLogValue(entry.ID)), zap.Error(err))
+			zap.String("entry_id", logsafe.Clean(entry.ID)), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to prepare session"})
 		return nil, false
 	}
@@ -693,7 +695,7 @@ func (s *Service) decidePamRequest(c *gin.Context, newStatus, auditAction string
 		newStatus, approverID, requestID, org.ID)
 	if err != nil {
 		s.logger.Error("decidePamRequest: update failed",
-			zap.String("request_id", scrubLogValue(requestID)), zap.Error(err))
+			zap.String("request_id", logsafe.Clean(requestID)), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update request"})
 		return
 	}

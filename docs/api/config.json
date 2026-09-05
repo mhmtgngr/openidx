@@ -1,11 +1,11 @@
 {
   "title": "OpenIDX API Reference",
   "description": "Interactive API documentation for OpenIDX Zero Trust Access Platform",
-  "version": "0.1.0",
+  "version": "1.34.0",
   "specs": {
     "identity-service": {
       "name": "Identity Service",
-      "description": "User, group, role, MFA, and identity provider management",
+      "description": "Users, groups, roles, MFA and identity providers, plus the self-service portal and notification routes the same binary mounts",
       "port": 8001,
       "spec": "identity-service.yaml",
       "base_url": "/api/v1/identity"
@@ -40,7 +40,7 @@
     },
     "admin-api": {
       "name": "Admin API",
-      "description": "Dashboard, system settings, application management, directory integrations",
+      "description": "The whole administration surface: dashboard and settings, users, applications and SSO, directories, MFA, the credential vault, governance, ISPM, AI, privacy, audit archival, analytics, notifications, organizations and tenants",
       "port": 8005,
       "spec": "admin-api.yaml",
       "base_url": "/api/v1"
@@ -51,27 +51,6 @@
       "port": 8007,
       "spec": "access-service.yaml",
       "base_url": "/api/v1/access"
-    },
-    "portal-service": {
-      "name": "Self-Service Portal",
-      "description": "Self-service portal for application access and group membership requests",
-      "port": 8001,
-      "spec": "portal-service.yaml",
-      "base_url": "/api/v1/portal"
-    },
-    "notifications-service": {
-      "name": "Notifications Service",
-      "description": "User notification management and preferences",
-      "port": 8001,
-      "spec": "notifications-service.yaml",
-      "base_url": "/api/v1/notifications"
-    },
-    "organization-service": {
-      "name": "Organization Service",
-      "description": "Organization and member management",
-      "port": 8005,
-      "spec": "organization-service.yaml",
-      "base_url": "/api/v1/organization"
     }
   },
   "servers": {

@@ -37,7 +37,7 @@ spec:
       {{- end }}
       containers:
         - name: access-service
-          image: "{{ .Values.global.imageRegistry }}/{{ .Values.accessService.image.repository }}:{{ .Values.accessService.image.tag }}"
+          image: "{{ include "openidx.imageRegistry" . }}/{{ .Values.accessService.image.repository }}:{{ .Values.accessService.image.tag }}"
           imagePullPolicy: {{ .Values.accessService.image.pullPolicy }}
           {{- include "openidx.preStopHook" . | nindent 10 }}
           ports:

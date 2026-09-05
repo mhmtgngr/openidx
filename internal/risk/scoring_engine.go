@@ -50,7 +50,7 @@ func (s *Service) GetUserRiskProfile(ctx context.Context, userID string) (*UserR
 		SELECT typical_login_hours, typical_countries, typical_ips,
 		       avg_risk_score, login_count, last_updated_at
 		FROM user_risk_baselines
-		WHERE user_id = $1
+		WHERE user_id = $1 AND org_id = (SELECT org_id FROM users WHERE id = $1)
 	`, userID).Scan(&hoursJSON, &countriesJSON, &ipsJSON,
 		&profile.AvgRiskScore, &profile.LoginCount, &profile.LastUpdatedAt)
 
@@ -234,8 +234,8 @@ func (s *Service) UpdateUserRiskBaseline(ctx context.Context, userID string) err
 
 	// Upsert into user_risk_baselines
 	_, err = s.db.Pool.Exec(ctx, `
-		INSERT INTO user_risk_baselines (user_id, typical_login_hours, typical_countries, typical_ips, avg_risk_score, login_count, last_updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, NOW())
+		INSERT INTO user_risk_baselines (user_id, org_id, typical_login_hours, typical_countries, typical_ips, avg_risk_score, login_count, last_updated_at)
+		VALUES ($1, (SELECT org_id FROM users WHERE id = $1), $2, $3, $4, $5, $6, NOW())
 		ON CONFLICT (user_id) DO UPDATE SET
 			typical_login_hours = EXCLUDED.typical_login_hours,
 			typical_countries = EXCLUDED.typical_countries,

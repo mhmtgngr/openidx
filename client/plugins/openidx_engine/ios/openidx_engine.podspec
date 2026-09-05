@@ -25,5 +25,23 @@ Pod::Spec.new do |s|
   # stages it before `pod install`.
   s.vendored_frameworks = 'Frameworks/Engine.xcframework'
 
+  # libresolv, for the Go toolchain the engine will eventually be built with.
+  #
+  # go1.26's darwin resolver calls res_9_ninit / res_9_nsearch / res_9_nclose,
+  # which live in libresolv. A gomobile static framework does not declare that
+  # link requirement itself, so raising the mobile workflows' GO_VERSION to
+  # 1.26 broke `flutter build ios` on exactly those three undefined symbols —
+  # a green job turned red by a version bump that nothing in this plugin
+  # needed. Both workflows went back to 1.25.x and `agent/go.mod` deliberately
+  # pins a patched 1.25 toolchain, so nothing here needs libresolv *today*.
+  #
+  # Declaring it now anyway: it costs an unused system-library reference on
+  # 1.25 (libresolv ships in the iOS SDK), and it means the next person who
+  # has a reason to move the agent module to 1.26 does not have to rediscover
+  # this from three undefined symbols. CocoaPods folds s.libraries into the
+  # aggregate target's OTHER_LDFLAGS, so the app link — where the symbols
+  # actually surface — gets the flag, not just this pod.
+  s.libraries = 'resolv'
+
   s.pod_target_xcconfig = { 'DEFINES_MODULE' => 'YES' }
 end

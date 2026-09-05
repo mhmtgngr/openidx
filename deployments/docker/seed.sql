@@ -71,71 +71,86 @@ INSERT INTO posture_check_types (id, name, description, category, parameters) VA
 ('a0000000-0000-0000-0000-000000000005', 'process_check', 'Running Process Check', 'endpoint', '{"os_type": "", "path": "", "hashes": []}')
 ON CONFLICT (id) DO NOTHING;
 
--- Risk policies
+-- Risk policies (default org)
+--
 -- Explicit ids pinned so re-applying the seed is idempotent: risk_policies has no
 -- unique key other than the id PK, so a bare ON CONFLICT (on the auto-generated id)
 -- would never collide and would duplicate all rows on every re-apply.
-INSERT INTO risk_policies (id, name, description, priority, conditions, actions) VALUES
-(
-    'f1000000-0000-0000-0000-000000000001',
-    'New Device MFA',
-    'Require MFA when logging in from a new device',
-    100,
-    '{"new_device": true}',
-    '{"require_mfa": true, "mfa_methods": ["any"]}'
-),
-(
-    'f1000000-0000-0000-0000-000000000002',
-    'New Location MFA',
-    'Require MFA when logging in from a new location',
-    90,
-    '{"new_location": true}',
-    '{"require_mfa": true, "mfa_methods": ["any"]}'
-),
-(
-    'f1000000-0000-0000-0000-000000000003',
-    'High Risk Score',
-    'Require strong MFA for high-risk logins',
-    80,
-    '{"risk_score_min": 50}',
-    '{"require_mfa": true, "mfa_methods": ["webauthn", "push"], "step_up": true}'
-),
-(
-    'f1000000-0000-0000-0000-000000000004',
-    'Impossible Travel',
-    'Block or require step-up auth for impossible travel',
-    70,
-    '{"impossible_travel": true}',
-    '{"require_mfa": true, "mfa_methods": ["webauthn", "push"], "step_up": true, "notify_admin": true}'
-),
-(
-    'f1000000-0000-0000-0000-000000000005',
-    'Blocked IP',
-    'Deny access from blocked IP addresses',
-    60,
-    '{"ip_blocked": true}',
-    '{"deny": true, "notify_admin": true}'
-)
+--
+-- org_id is named explicitly. Migration v153 made risk_policies per-tenant with
+-- NOT NULL and no column DEFAULT (the register programme does not add defaults --
+-- a default is how a row acquires a tenant it was never given), so unlike the
+-- v36-era scoped tables above, an INSERT that omits org_id fails rather than
+-- landing in the default org. These are starter rules for the default
+-- organization; another organization gets its own, and one organization's rules
+-- no longer apply to another organization's logins.
+INSERT INTO risk_policies (id, org_id, name, description, priority, conditions, actions)
+SELECT v.id::uuid, o.id, v.name, v.description, v.priority, v.conditions::jsonb, v.actions::jsonb
+FROM organizations o
+CROSS JOIN (VALUES
+    (
+        'f1000000-0000-0000-0000-000000000001',
+        'New Device MFA',
+        'Require MFA when logging in from a new device',
+        100,
+        '{"new_device": true}',
+        '{"require_mfa": true, "mfa_methods": ["any"]}'
+    ),
+    (
+        'f1000000-0000-0000-0000-000000000002',
+        'New Location MFA',
+        'Require MFA when logging in from a new location',
+        90,
+        '{"new_location": true}',
+        '{"require_mfa": true, "mfa_methods": ["any"]}'
+    ),
+    (
+        'f1000000-0000-0000-0000-000000000003',
+        'High Risk Score',
+        'Require strong MFA for high-risk logins',
+        80,
+        '{"risk_score_min": 50}',
+        '{"require_mfa": true, "mfa_methods": ["webauthn", "push"], "step_up": true}'
+    ),
+    (
+        'f1000000-0000-0000-0000-000000000004',
+        'Impossible Travel',
+        'Block or require step-up auth for impossible travel',
+        70,
+        '{"impossible_travel": true}',
+        '{"require_mfa": true, "mfa_methods": ["webauthn", "push"], "step_up": true, "notify_admin": true}'
+    ),
+    (
+        'f1000000-0000-0000-0000-000000000005',
+        'Blocked IP',
+        'Deny access from blocked IP addresses',
+        60,
+        '{"ip_blocked": true}',
+        '{"deny": true, "notify_admin": true}'
+    )
+) AS v(id, name, description, priority, conditions, actions)
+WHERE o.slug = 'default'
 ON CONFLICT (id) DO NOTHING;
 
--- ISPM rules
-INSERT INTO ispm_rules (id, name, description, category, check_type, severity, thresholds) VALUES
-('a0000000-0000-0000-0000-000000000001', 'MFA Adoption Check', 'Detects users without MFA enabled', 'authentication', 'mfa_adoption', 'high', '{"min_adoption_pct": 90}'),
-('a0000000-0000-0000-0000-000000000002', 'Stale Account Detection', 'Finds users not logged in for extended period', 'accounts', 'stale_accounts', 'medium', '{"inactive_days": 90}'),
-('a0000000-0000-0000-0000-000000000003', 'Over-Privileged Users', 'Detects admin users who rarely use admin features', 'authorization', 'over_privileged', 'high', '{"unused_days": 30}'),
-('a0000000-0000-0000-0000-000000000004', 'Weak Password Detection', 'Finds accounts with passwords older than policy', 'authentication', 'weak_passwords', 'medium', '{"max_age_days": 90}'),
-('a0000000-0000-0000-0000-000000000005', 'Orphaned Permissions', 'Permissions for disabled users or deleted groups', 'authorization', 'orphaned_permissions', 'medium', '{}'),
-('a0000000-0000-0000-0000-000000000006', 'Shadow Admin Detection', 'Users with admin-equivalent access without admin role', 'authorization', 'shadow_admin', 'critical', '{}'),
-('a0000000-0000-0000-0000-000000000007', 'Shared Account Detection', 'Accounts with concurrent sessions from different IPs', 'accounts', 'shared_accounts', 'high', '{"max_concurrent_ips": 2}'),
-('a0000000-0000-0000-0000-000000000008', 'Dormant Permissions', 'Granted permissions unused for extended period', 'authorization', 'dormant_permissions', 'low', '{"unused_days": 30}'),
-('a0000000-0000-0000-0000-000000000009', 'Policy Gap Detection', 'Applications without conditional access policies', 'compliance', 'policy_gaps', 'medium', '{}'),
-('a0000000-0000-0000-0000-00000000000a', 'MFA Bypass Risk', 'Users with only weak MFA methods (SMS/email)', 'authentication', 'mfa_bypass_risk', 'high', '{}')
-ON CONFLICT DO NOTHING;
+-- ISPM rules: NOT seeded here any more. ispm_rules is per-tenant since
+-- migration v138 (org_id NOT NULL, FORCE RLS), so a single install-wide seed row
+-- cannot belong to every organization. The admin service seeds each org's rule
+-- set on first use from the checks the scan engine actually implements
+-- (internal/admin/ispm.go, postureCheckDefs / ensureDefaultRules). The old seed
+-- listed ten rules of which six had no check behind them; those are gone with it.
 
--- Lifecycle policies
-INSERT INTO lifecycle_policies (id, name, description, policy_type, conditions, actions, enabled, schedule) VALUES
-('d0000000-0000-0000-0000-000000000001', 'Stale Account Auto-Disable', 'Automatically disable accounts that have not logged in for 90 days', 'stale_account_disable', '{"inactive_days": 90}'::jsonb, '{"action": "disable", "notify_user": true}'::jsonb, false, 'daily'),
-('d0000000-0000-0000-0000-000000000002', 'Disabled Account Cleanup', 'Delete accounts that have been disabled for 180 days', 'disabled_account_cleanup', '{"disabled_days": 180}'::jsonb, '{"action": "delete", "notify_admin": true}'::jsonb, false, 'weekly')
+-- Lifecycle policies. Per-tenant since migration v154 (org_id NOT NULL, FORCE
+-- RLS), so these name the default organization rather than belonging to none:
+-- they are starter rules for that organization, and another organization
+-- authors its own. Both ship disabled -- one of them deletes accounts.
+INSERT INTO lifecycle_policies (id, org_id, name, description, policy_type, conditions, actions, enabled, schedule)
+SELECT v.id::uuid, o.id, v.name, v.description, v.policy_type, v.conditions::jsonb, v.actions::jsonb, false, v.schedule
+FROM organizations o
+CROSS JOIN (VALUES
+  ('d0000000-0000-0000-0000-000000000001', 'Stale Account Auto-Disable', 'Automatically disable accounts that have not logged in for 90 days', 'stale_account_disable', '{"inactive_days": 90}', '{"action": "disable", "notify_user": true}', 'daily'),
+  ('d0000000-0000-0000-0000-000000000002', 'Disabled Account Cleanup', 'Delete accounts that have been disabled for 180 days', 'disabled_account_cleanup', '{"disabled_days": 180}', '{"action": "delete", "notify_admin": true}', 'weekly')
+) AS v(id, name, description, policy_type, conditions, actions, schedule)
+WHERE o.slug = 'default'
 ON CONFLICT (id) DO NOTHING;
 
 -- Tenant branding (default org)

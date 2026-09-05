@@ -5,6 +5,7 @@ import { CheckCircle2, Circle, X, Rocket } from 'lucide-react'
 
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from './ui/card'
 import { api } from '../lib/api'
+import { useTranslation } from 'react-i18next'
 
 const DISMISS_KEY = 'oidx.getting_started_dismissed'
 
@@ -24,6 +25,7 @@ interface ZitiStatus {
  * (persisted in localStorage). Render only on admin surfaces.
  */
 export function GettingStarted() {
+  const { t } = useTranslation()
   const [dismissed, setDismissed] = useState(() => localStorage.getItem(DISMISS_KEY) === '1')
 
   // Cheap admin reads; length is all we need to know a step is done.
@@ -55,29 +57,29 @@ export function GettingStarted() {
   const len = (v: unknown): number => (Array.isArray(v) ? v.length : 0)
   const steps = [
     {
-      title: 'Register your first application',
-      description: 'Add an app so users have something to sign in to.',
+      title: t('components.gettingStarted.steps.app.title'),
+      description: t('components.gettingStarted.steps.app.description'),
       link: '/applications',
       done: len(apps) > 0,
       required: true,
     },
     {
-      title: 'Connect a directory or invite users',
-      description: 'Sync users from LDAP/AD/SCIM, or add them manually.',
+      title: t('components.gettingStarted.steps.directory.title'),
+      description: t('components.gettingStarted.steps.directory.description'),
       link: '/directories',
       done: len(directories) > 0,
       required: true,
     },
     {
-      title: 'Configure sign-in',
-      description: 'Add an identity provider (Google, Microsoft, SAML/OIDC).',
+      title: t('components.gettingStarted.steps.signIn.title'),
+      description: t('components.gettingStarted.steps.signIn.description'),
       link: '/identity-providers',
       done: len(idps) > 0,
       required: true,
     },
     {
-      title: 'Set up the Zero Trust Network',
-      description: 'Optional: stand up the OpenZiti overlay for private access.',
+      title: t('components.gettingStarted.steps.ziti.title'),
+      description: t('components.gettingStarted.steps.ziti.description'),
       link: '/ziti-setup',
       done: !!ziti?.enabled && !!ziti?.controller_reachable,
       required: false,
@@ -100,16 +102,16 @@ export function GettingStarted() {
         <div>
           <CardTitle className="flex items-center gap-2 text-base">
             <Rocket className="h-5 w-5 text-blue-600" />
-            Get started with OpenIDX
+            {t('components.gettingStarted.title')}
           </CardTitle>
           <CardDescription>
-            {completed} of {steps.length} steps done — finish setting up your platform.
+            {t('components.gettingStarted.progress', { completed, total: steps.length })}
           </CardDescription>
         </div>
         <button
           onClick={dismiss}
           className="text-muted-foreground hover:text-foreground"
-          aria-label="Dismiss getting started"
+          aria-label={t('components.gettingStarted.dismiss')}
         >
           <X className="h-4 w-4" />
         </button>

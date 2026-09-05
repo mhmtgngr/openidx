@@ -1,8 +1,15 @@
 openapi: 3.0.3
 info:
   title: OpenIDX Identity Service
-  description: User, group, role, MFA, and identity provider management.
-  version: 0.1.0
+  description: |
+    User, group, role, MFA, and identity provider management.
+
+    Every route cmd/identity-service mounts appears here, and nothing that is not
+    mounted does: test/openapi/spec_census_test.go compares this file against the
+    live route table in both directions. Operations carry an `x-openidx-handler`
+    extension naming the Go handler that serves them; where a payload shape is not
+    yet pinned the body is shown as a free-form JSON object rather than invented.
+  version: 1.34.0
   license:
     name: Apache 2.0
     url: https://www.apache.org/licenses/LICENSE-2.0
@@ -15,19 +22,31 @@ security:
   - bearerAuth: []
 
 tags:
-  - name: Users
-  - name: Self-Service
+  - name: Analytics
+  - name: Biometric
+  - name: Device Trust Requests
+  - name: Device Trust Settings
   - name: Groups
-  - name: Roles
-  - name: Permissions
-  - name: Sessions
+  - name: Hardware Tokens
   - name: Identity Providers
-  - name: MFA - TOTP
-  - name: MFA - WebAuthn
+  - name: Lifecycle
+  - name: MFA
+  - name: MFA - Email
   - name: MFA - Push
   - name: MFA - SMS
-  - name: MFA - Email
+  - name: MFA - TOTP
+  - name: MFA - WebAuthn
+  - name: Notifications
+  - name: Passwordless
+  - name: Permissions
   - name: Public
+  - name: Risk Analytics
+  - name: Roles
+  - name: Self-Service
+  - name: Self-Service Portal
+  - name: Sessions
+  - name: User Self-Service
+  - name: Users
 
 paths:
   # --- Public (no auth) ---
@@ -191,7 +210,39 @@ paths:
       tags: [Users]
       summary: List users
       operationId: listUsers
-      parameters:
+      responses:
+    BadRequest:
+      description: The request was malformed or failed validation
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: No valid bearer token was presented
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: The caller is authenticated but not permitted
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: No such resource in the caller's organization
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    ServerError:
+      description: The request could not be completed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  parameters:
         - name: offset
           in: query
           schema:
@@ -1735,6 +1786,2795 @@ paths:
         '204':
           description: Invitation deleted
 
+  /api/v1/identity/analytics/logins:
+    get:
+      tags: [Analytics]
+      summary: Get login analytics
+      operationId: getLoginAnalytics
+      x-openidx-handler: internal/identity.(*Service).handleGetLoginAnalytics
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/biometric/authenticators:
+    get:
+      tags: [Biometric]
+      summary: Get platform authenticators
+      operationId: getPlatformAuthenticators
+      x-openidx-handler: internal/identity.(*Service).handleGetPlatformAuthenticators
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/biometric/disable-only:
+    post:
+      tags: [Biometric]
+      summary: Disable biometric only
+      operationId: disableBiometricOnly
+      x-openidx-handler: internal/identity.(*Service).handleDisableBiometricOnly
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/biometric/enable-only:
+    post:
+      tags: [Biometric]
+      summary: Enable biometric only
+      operationId: enableBiometricOnly
+      x-openidx-handler: internal/identity.(*Service).handleEnableBiometricOnly
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/biometric/policies:
+    get:
+      tags: [Biometric]
+      summary: List biometric policies
+      operationId: listBiometricPolicies
+      x-openidx-handler: internal/identity.(*Service).handleListBiometricPolicies
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [Biometric]
+      summary: Create biometric policy
+      operationId: createBiometricPolicy
+      x-openidx-handler: internal/identity.(*Service).handleCreateBiometricPolicy
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/biometric/policies/{policy_id}:
+    parameters:
+      - name: policy_id
+        in: path
+        required: true
+        schema:
+          type: string
+    delete:
+      tags: [Biometric]
+      summary: Delete biometric policy
+      operationId: deleteBiometricPolicy
+      x-openidx-handler: internal/identity.(*Service).handleDeleteBiometricPolicy
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    put:
+      tags: [Biometric]
+      summary: Update biometric policy
+      operationId: updateBiometricPolicy
+      x-openidx-handler: internal/identity.(*Service).handleUpdateBiometricPolicy
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/biometric/preferences:
+    get:
+      tags: [Biometric]
+      summary: Get biometric preferences
+      operationId: getBiometricPreferences
+      x-openidx-handler: internal/identity.(*Service).handleGetBiometricPreferences
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    put:
+      tags: [Biometric]
+      summary: Update biometric preferences
+      operationId: updateBiometricPreferences
+      x-openidx-handler: internal/identity.(*Service).handleUpdateBiometricPreferences
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/device-trust-requests:
+    get:
+      tags: [Device Trust Requests]
+      summary: List device trust requests
+      operationId: listDeviceTrustRequests
+      x-openidx-handler: internal/identity.(*Service).handleListDeviceTrustRequests
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/device-trust-requests/bulk-approve:
+    post:
+      tags: [Device Trust Requests]
+      summary: Bulk approve device trust
+      operationId: bulkApproveDeviceTrust
+      x-openidx-handler: internal/identity.(*Service).handleBulkApproveDeviceTrust
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/device-trust-requests/bulk-reject:
+    post:
+      tags: [Device Trust Requests]
+      summary: Bulk reject device trust
+      operationId: bulkRejectDeviceTrust
+      x-openidx-handler: internal/identity.(*Service).handleBulkRejectDeviceTrust
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/device-trust-requests/pending-count:
+    get:
+      tags: [Device Trust Requests]
+      summary: Get pending trust count
+      operationId: getPendingTrustCount
+      x-openidx-handler: internal/identity.(*Service).handleGetPendingTrustCount
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/device-trust-requests/{request_id}/approve:
+    parameters:
+      - name: request_id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [Device Trust Requests]
+      summary: Approve device trust
+      operationId: approveDeviceTrust
+      x-openidx-handler: internal/identity.(*Service).handleApproveDeviceTrust
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/device-trust-requests/{request_id}/reject:
+    parameters:
+      - name: request_id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [Device Trust Requests]
+      summary: Reject device trust
+      operationId: rejectDeviceTrust
+      x-openidx-handler: internal/identity.(*Service).handleRejectDeviceTrust
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/device-trust-settings:
+    get:
+      tags: [Device Trust Settings]
+      summary: Get device trust settings
+      operationId: getDeviceTrustSettings
+      x-openidx-handler: internal/identity.(*Service).handleGetDeviceTrustSettings
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    put:
+      tags: [Device Trust Settings]
+      summary: Update device trust settings
+      operationId: updateDeviceTrustSettings
+      x-openidx-handler: internal/identity.(*Service).handleUpdateDeviceTrustSettings
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/hardware-tokens:
+    get:
+      tags: [Hardware Tokens]
+      summary: List hardware tokens
+      operationId: listHardwareTokens
+      x-openidx-handler: internal/identity.(*Service).handleListHardwareTokens
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [Hardware Tokens]
+      summary: Create hardware token
+      operationId: createHardwareToken
+      x-openidx-handler: internal/identity.(*Service).handleCreateHardwareToken
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/hardware-tokens/{token_id}:
+    parameters:
+      - name: token_id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [Hardware Tokens]
+      summary: Get hardware token
+      operationId: getHardwareToken
+      x-openidx-handler: internal/identity.(*Service).handleGetHardwareToken
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/hardware-tokens/{token_id}/assign:
+    parameters:
+      - name: token_id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [Hardware Tokens]
+      summary: Assign hardware token
+      operationId: assignHardwareToken
+      x-openidx-handler: internal/identity.(*Service).handleAssignHardwareToken
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/hardware-tokens/{token_id}/events:
+    parameters:
+      - name: token_id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [Hardware Tokens]
+      summary: Get token events
+      operationId: getTokenEvents
+      x-openidx-handler: internal/identity.(*Service).handleGetTokenEvents
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/hardware-tokens/{token_id}/report-lost:
+    parameters:
+      - name: token_id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [Hardware Tokens]
+      summary: Report token lost
+      operationId: reportTokenLost
+      x-openidx-handler: internal/identity.(*Service).handleReportTokenLost
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/hardware-tokens/{token_id}/revoke:
+    parameters:
+      - name: token_id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [Hardware Tokens]
+      summary: Revoke hardware token
+      operationId: revokeHardwareToken
+      x-openidx-handler: internal/identity.(*Service).handleRevokeHardwareToken
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/hardware-tokens/{token_id}/unassign:
+    parameters:
+      - name: token_id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [Hardware Tokens]
+      summary: Unassign hardware token
+      operationId: unassignHardwareToken
+      x-openidx-handler: internal/identity.(*Service).handleUnassignHardwareToken
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/lifecycle/executions:
+    get:
+      tags: [Lifecycle]
+      summary: List lifecycle executions
+      operationId: listLifecycleExecutions
+      x-openidx-handler: internal/identity.(*Service).handleListLifecycleExecutions
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/lifecycle/executions/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    get:
+      tags: [Lifecycle]
+      summary: Get lifecycle execution
+      operationId: getLifecycleExecution
+      x-openidx-handler: internal/identity.(*Service).handleGetLifecycleExecution
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/lifecycle/workflows:
+    get:
+      tags: [Lifecycle]
+      summary: List lifecycle workflows
+      operationId: listLifecycleWorkflows
+      x-openidx-handler: internal/identity.(*Service).handleListLifecycleWorkflows
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [Lifecycle]
+      summary: Create lifecycle workflow
+      operationId: createLifecycleWorkflow
+      x-openidx-handler: internal/identity.(*Service).handleCreateLifecycleWorkflow
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/lifecycle/workflows/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    delete:
+      tags: [Lifecycle]
+      summary: Delete lifecycle workflow
+      operationId: deleteLifecycleWorkflow
+      x-openidx-handler: internal/identity.(*Service).handleDeleteLifecycleWorkflow
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    get:
+      tags: [Lifecycle]
+      summary: Get lifecycle workflow
+      operationId: getLifecycleWorkflow
+      x-openidx-handler: internal/identity.(*Service).handleGetLifecycleWorkflow
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    put:
+      tags: [Lifecycle]
+      summary: Update lifecycle workflow
+      operationId: updateLifecycleWorkflow
+      x-openidx-handler: internal/identity.(*Service).handleUpdateLifecycleWorkflow
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/lifecycle/workflows/{id}/execute:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    post:
+      tags: [Lifecycle]
+      summary: Execute lifecycle workflow
+      operationId: executeLifecycleWorkflow
+      x-openidx-handler: internal/identity.(*Service).handleExecuteLifecycleWorkflow
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/mfa/bypass-codes:
+    get:
+      tags: [MFA]
+      summary: List bypass codes
+      operationId: listBypassCodes
+      x-openidx-handler: internal/identity.(*Service).handleListBypassCodes
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [MFA]
+      summary: Generate bypass code
+      operationId: generateBypassCode
+      x-openidx-handler: internal/identity.(*Service).handleGenerateBypassCode
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/mfa/bypass-codes/audit:
+    get:
+      tags: [MFA]
+      summary: Get bypass audit log
+      operationId: getBypassAuditLog
+      x-openidx-handler: internal/identity.(*Service).handleGetBypassAuditLog
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/mfa/bypass-codes/verify:
+    post:
+      tags: [MFA]
+      summary: Verify bypass code
+      operationId: verifyBypassCode
+      x-openidx-handler: internal/identity.(*Service).handleVerifyBypassCode
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/mfa/bypass-codes/{code_id}:
+    parameters:
+      - name: code_id
+        in: path
+        required: true
+        schema:
+          type: string
+    delete:
+      tags: [MFA]
+      summary: Revoke bypass code
+      operationId: revokeBypassCode
+      x-openidx-handler: internal/identity.(*Service).handleRevokeBypassCode
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/mfa/email/verify:
+    post:
+      tags: [MFA]
+      summary: Verify email OTP enrollment
+      operationId: verifyEmailOTPEnrollment
+      x-openidx-handler: internal/identity.(*Service).handleVerifyEmailOTPEnrollment
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/mfa/hardware-token:
+    get:
+      tags: [MFA]
+      summary: Get user hardware token
+      operationId: getUserHardwareToken
+      x-openidx-handler: internal/identity.(*Service).handleGetUserHardwareToken
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/mfa/hardware-token/verify:
+    post:
+      tags: [MFA]
+      summary: Verify hardware token
+      operationId: verifyHardwareToken
+      x-openidx-handler: internal/identity.(*Service).handleVerifyHardwareToken
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/mfa/phone:
+    delete:
+      tags: [MFA]
+      summary: Delete phone call
+      operationId: deletePhoneCall
+      x-openidx-handler: internal/identity.(*Service).handleDeletePhoneCall
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/mfa/phone/callback:
+    post:
+      tags: [MFA]
+      summary: Request callback
+      operationId: requestCallback
+      x-openidx-handler: internal/identity.(*Service).handleRequestCallback
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/mfa/phone/enroll:
+    post:
+      tags: [MFA]
+      summary: Enroll phone call
+      operationId: enrollPhoneCall
+      x-openidx-handler: internal/identity.(*Service).handleEnrollPhoneCall
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/mfa/phone/status:
+    get:
+      tags: [MFA]
+      summary: Get phone call status
+      operationId: getPhoneCallStatus
+      x-openidx-handler: internal/identity.(*Service).handleGetPhoneCallStatus
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/mfa/phone/verify:
+    post:
+      tags: [MFA]
+      summary: Verify phone call enrollment
+      operationId: verifyPhoneCallEnrollment
+      x-openidx-handler: internal/identity.(*Service).handleVerifyPhoneCallEnrollment
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/mfa/push/devices:
+    post:
+      tags: [MFA]
+      summary: Register push device
+      operationId: registerPushDevice2
+      x-openidx-handler: internal/identity.(*Service).handleRegisterPushDevice
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/mfa/push/enroll/complete:
+    post:
+      tags: [MFA]
+      summary: Complete push enrollment
+      operationId: completePushEnrollment
+      x-openidx-handler: internal/identity.(*Service).handleCompletePushEnrollment
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/mfa/push/enroll/start:
+    post:
+      tags: [MFA]
+      summary: Start push enrollment
+      operationId: startPushEnrollment
+      x-openidx-handler: internal/identity.(*Service).handleStartPushEnrollment
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/notifications:
+    get:
+      tags: [Notifications]
+      summary: Get notifications
+      operationId: getNotifications
+      x-openidx-handler: internal/notifications.(*Service).handleGetNotifications
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/notifications/digest:
+    get:
+      tags: [Notifications]
+      summary: Get digest settings
+      operationId: getDigestSettings
+      x-openidx-handler: internal/notifications.(*Service).handleGetDigestSettings
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    put:
+      tags: [Notifications]
+      summary: Update digest settings
+      operationId: updateDigestSettings
+      x-openidx-handler: internal/notifications.(*Service).handleUpdateDigestSettings
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/notifications/history:
+    get:
+      tags: [Notifications]
+      summary: Get notification history
+      operationId: getNotificationHistory
+      x-openidx-handler: internal/notifications.(*Service).handleGetNotificationHistory
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/notifications/mark-all-read:
+    post:
+      tags: [Notifications]
+      summary: Mark all as read
+      operationId: markAllAsRead
+      x-openidx-handler: internal/notifications.(*Service).handleMarkAllAsRead
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/notifications/mark-read:
+    post:
+      tags: [Notifications]
+      summary: Mark as read
+      operationId: markAsRead
+      x-openidx-handler: internal/notifications.(*Service).handleMarkAsRead
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/notifications/preferences:
+    get:
+      tags: [Notifications]
+      summary: Get preferences
+      operationId: getPreferences
+      x-openidx-handler: internal/notifications.(*Service).handleGetPreferences
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    put:
+      tags: [Notifications]
+      summary: Update preferences
+      operationId: updatePreferences
+      x-openidx-handler: internal/notifications.(*Service).handleUpdatePreferences
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/notifications/push-config:
+    get:
+      tags: [Notifications]
+      summary: Get push config
+      operationId: getPushConfig
+      x-openidx-handler: internal/notifications.(*Service).handleGetPushConfig
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/notifications/unread-count:
+    get:
+      tags: [Notifications]
+      summary: Get unread count
+      operationId: getUnreadCount
+      x-openidx-handler: internal/notifications.(*Service).handleGetUnreadCount
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/notifications/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    delete:
+      tags: [Notifications]
+      summary: Delete notification
+      operationId: deleteNotification
+      x-openidx-handler: internal/notifications.(*Service).handleDeleteNotification
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/passwordless/magic-link:
+    post:
+      tags: [Passwordless]
+      summary: Create magic link
+      operationId: createMagicLink
+      x-openidx-handler: internal/identity.(*Service).handleCreateMagicLink
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/passwordless/magic-link/test:
+    post:
+      tags: [Passwordless]
+      summary: Test magic link
+      operationId: testMagicLink
+      x-openidx-handler: internal/identity.(*Service).handleTestMagicLink
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/passwordless/magic-link/verify:
+    post:
+      tags: [Passwordless]
+      summary: Verify magic link
+      operationId: verifyMagicLink
+      x-openidx-handler: internal/identity.(*Service).handleVerifyMagicLink
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/passwordless/preferences:
+    get:
+      tags: [Passwordless]
+      summary: Get passwordless preferences
+      operationId: getPasswordlessPreferences
+      x-openidx-handler: internal/identity.(*Service).handleGetPasswordlessPreferences
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    put:
+      tags: [Passwordless]
+      summary: Update passwordless preferences
+      operationId: updatePasswordlessPreferences
+      x-openidx-handler: internal/identity.(*Service).handleUpdatePasswordlessPreferences
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/passwordless/qr-login:
+    post:
+      tags: [Passwordless]
+      summary: Create qr login session
+      operationId: createQRLoginSession
+      x-openidx-handler: internal/identity.(*Service).handleCreateQRLoginSession
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/passwordless/qr-login/approve:
+    post:
+      tags: [Passwordless]
+      summary: Approve qr login
+      operationId: approveQRLogin
+      x-openidx-handler: internal/identity.(*Service).handleApproveQRLogin
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/passwordless/qr-login/poll:
+    get:
+      tags: [Passwordless]
+      summary: Poll qr login session
+      operationId: pollQRLoginSession
+      x-openidx-handler: internal/identity.(*Service).handlePollQRLoginSession
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/passwordless/qr-login/reject:
+    post:
+      tags: [Passwordless]
+      summary: Reject qr login
+      operationId: rejectQRLogin
+      x-openidx-handler: internal/identity.(*Service).handleRejectQRLogin
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/passwordless/qr-login/scan:
+    post:
+      tags: [Passwordless]
+      summary: Scan qr login
+      operationId: scanQRLogin
+      x-openidx-handler: internal/identity.(*Service).handleScanQRLogin
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/passwordless/settings:
+    get:
+      tags: [Passwordless]
+      summary: Get passwordless settings
+      operationId: getPasswordlessSettings
+      x-openidx-handler: internal/identity.(*Service).handleGetPasswordlessSettings
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    patch:
+      tags: [Passwordless]
+      summary: Patch passwordless settings
+      operationId: patchPasswordlessSettings
+      x-openidx-handler: internal/identity.(*Service).handlePatchPasswordlessSettings
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    put:
+      tags: [Passwordless]
+      summary: Update passwordless settings
+      operationId: updatePasswordlessSettings
+      x-openidx-handler: internal/identity.(*Service).handleUpdatePasswordlessSettings
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/passwordless/stats:
+    get:
+      tags: [Passwordless]
+      summary: Get passwordless stats
+      operationId: getPasswordlessStats
+      x-openidx-handler: internal/identity.(*Service).handleGetPasswordlessStats
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/portal/access-overview:
+    get:
+      tags: [Self-Service Portal]
+      summary: Get access overview
+      operationId: getAccessOverview
+      x-openidx-handler: internal/portal.(*Service).handleGetAccessOverview
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/portal/applications:
+    get:
+      tags: [Self-Service Portal]
+      summary: Get my applications
+      operationId: getMyApplications
+      x-openidx-handler: internal/portal.(*Service).handleGetMyApplications
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/portal/applications/{id}/assignments:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    get:
+      tags: [Self-Service Portal]
+      summary: List app assignments
+      operationId: listAppAssignments
+      x-openidx-handler: internal/portal.(*Service).handleListAppAssignments
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [Self-Service Portal]
+      summary: Create app assignment
+      operationId: createAppAssignment
+      x-openidx-handler: internal/portal.(*Service).handleCreateAppAssignment
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/portal/applications/{id}/assignments/{pid}:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+      - name: pid
+        in: path
+        required: true
+        schema:
+          type: string
+    delete:
+      tags: [Self-Service Portal]
+      summary: Delete app assignment
+      operationId: deleteAppAssignment
+      x-openidx-handler: internal/portal.(*Service).handleDeleteAppAssignment
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/portal/devices:
+    get:
+      tags: [Self-Service Portal]
+      summary: Get my devices
+      operationId: getMyDevices
+      x-openidx-handler: internal/portal.(*Service).handleGetMyDevices
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [Self-Service Portal]
+      summary: Register device
+      operationId: registerDevice
+      x-openidx-handler: internal/portal.(*Service).handleRegisterDevice
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/portal/devices/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    delete:
+      tags: [Self-Service Portal]
+      summary: Delete device
+      operationId: deleteDevice
+      x-openidx-handler: internal/portal.(*Service).handleDeleteDevice
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    put:
+      tags: [Self-Service Portal]
+      summary: Update device
+      operationId: updateDevice
+      x-openidx-handler: internal/portal.(*Service).handleUpdateDevice
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/portal/devices/{id}/trust:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    post:
+      tags: [Self-Service Portal]
+      summary: Request device trust
+      operationId: requestDeviceTrust
+      x-openidx-handler: internal/portal.(*Service).handleRequestDeviceTrust
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/portal/groups/available:
+    get:
+      tags: [Self-Service Portal]
+      summary: Get available groups
+      operationId: getAvailableGroups
+      x-openidx-handler: internal/portal.(*Service).handleGetAvailableGroups
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/portal/groups/request:
+    post:
+      tags: [Self-Service Portal]
+      summary: Request group join
+      operationId: requestGroupJoin
+      x-openidx-handler: internal/portal.(*Service).handleRequestGroupJoin
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/portal/groups/requests:
+    get:
+      tags: [Self-Service Portal]
+      summary: Get my group requests
+      operationId: getMyGroupRequests
+      x-openidx-handler: internal/portal.(*Service).handleGetMyGroupRequests
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/portal/groups/requests/{id}/review:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    post:
+      tags: [Self-Service Portal]
+      summary: Review group request
+      operationId: reviewGroupRequest
+      x-openidx-handler: internal/portal.(*Service).handleReviewGroupRequest
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/portal/security-insights:
+    get:
+      tags: [Self-Service Portal]
+      summary: Get security insights
+      operationId: getSecurityInsights
+      x-openidx-handler: internal/portal.(*Service).handleGetSecurityInsights
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/risk/evaluate:
+    post:
+      tags: [Risk Analytics]
+      summary: Evaluate risk
+      operationId: evaluateRisk
+      x-openidx-handler: internal/identity.(*Service).handleEvaluateRisk
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/risk/login-history:
+    get:
+      tags: [Risk Analytics]
+      summary: Get login history
+      operationId: getLoginHistory
+      x-openidx-handler: internal/identity.(*Service).handleGetLoginHistory
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/risk/policies:
+    get:
+      tags: [Risk Analytics]
+      summary: List risk policies
+      operationId: listRiskPolicies
+      x-openidx-handler: internal/identity.(*Service).handleListRiskPolicies
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [Risk Analytics]
+      summary: Create risk policy
+      operationId: createRiskPolicy
+      x-openidx-handler: internal/identity.(*Service).handleCreateRiskPolicy
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/risk/policies/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    delete:
+      tags: [Risk Analytics]
+      summary: Delete risk policy
+      operationId: deleteRiskPolicy
+      x-openidx-handler: internal/identity.(*Service).handleDeleteRiskPolicy
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    get:
+      tags: [Risk Analytics]
+      summary: Get risk policy
+      operationId: getRiskPolicy
+      x-openidx-handler: internal/identity.(*Service).handleGetRiskPolicy
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    put:
+      tags: [Risk Analytics]
+      summary: Update risk policy
+      operationId: updateRiskPolicy
+      x-openidx-handler: internal/identity.(*Service).handleUpdateRiskPolicy
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/risk/policies/{id}/toggle:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    patch:
+      tags: [Risk Analytics]
+      summary: Toggle risk policy
+      operationId: toggleRiskPolicy
+      x-openidx-handler: internal/identity.(*Service).handleToggleRiskPolicy
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/risk/stats:
+    get:
+      tags: [Risk Analytics]
+      summary: Get risk stats
+      operationId: getRiskStats
+      x-openidx-handler: internal/identity.(*Service).handleGetRiskStats
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/users/me/mfa/status:
+    get:
+      tags: [User Self-Service]
+      summary: Get my MFA status
+      operationId: getMyMFAStatus
+      x-openidx-handler: internal/identity.(*Service).handleGetMyMFAStatus
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/users/me/password-info:
+    get:
+      tags: [User Self-Service]
+      summary: Get password info
+      operationId: getPasswordInfo
+      x-openidx-handler: internal/identity.(*Service).handleGetPasswordInfo
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/users/me/sessions:
+    get:
+      tags: [User Self-Service]
+      summary: Get my sessions
+      operationId: getMySessions
+      x-openidx-handler: internal/identity.(*Service).handleGetMySessions
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/users/{id}/bypass-codes:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    delete:
+      tags: [Users]
+      summary: Revoke all bypass codes
+      operationId: revokeAllBypassCodes
+      x-openidx-handler: internal/identity.(*Service).handleRevokeAllBypassCodes
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/users/{id}/set-password:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    post:
+      tags: [Users]
+      summary: Admin set password
+      operationId: adminSetPassword
+      x-openidx-handler: internal/identity.(*Service).handleAdminSetPassword
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
 components:
   securitySchemes:
     bearerAuth:
@@ -1752,6 +4592,15 @@ components:
         format: uuid
 
   schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+          description: A short machine-readable reason
+        error_description:
+          type: string
+          description: Operator-facing detail, when the handler has one
     User:
       type: object
       properties:

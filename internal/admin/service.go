@@ -4,6 +4,7 @@ package admin
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -189,6 +190,7 @@ type BrandingSettings struct {
 // AdminDelegation represents a delegated admin permission assignment
 type AdminDelegation struct {
 	ID              string     `json:"id"`
+	OrgID           string     `json:"org_id,omitempty"`
 	DelegateID      string     `json:"delegate_id"`
 	DelegateName    string     `json:"delegate_name,omitempty"`
 	DelegatedBy     string     `json:"delegated_by"`
@@ -1407,9 +1409,22 @@ func (s *Service) handleTestSMS(c *gin.Context) {
 	// Force enabled for test
 	cfg := req.Settings.ToConfig()
 	cfg.Enabled = true
+	// AllowMock stays false here whatever the environment. The point of this
+	// button is to prove a real message reaches a real phone; the mock
+	// provider logs and returns nil, so it used to answer "Test SMS sent
+	// successfully" while sending nothing — a test that cannot fail is worse
+	// than no test.
+	cfg.AllowMock = false
 
 	smsService, err := sms.NewService(cfg, s.logger)
 	if err != nil {
+		if errors.Is(err, sms.ErrMockProviderNotAllowed) {
+			c.JSON(http.StatusNotImplemented, gin.H{
+				"error":   "the mock provider does not deliver messages; choose a real SMS provider before testing",
+				"success": false,
+			})
+			return
+		}
 		c.JSON(400, gin.H{"error": fmt.Sprintf("failed to create SMS service: %v", err), "success": false})
 		return
 	}
@@ -3307,11 +3322,27 @@ func (s *Service) handleUpdateEntitlementMetadata(c *gin.Context) {
 
 // ── Admin Delegation service methods ──────────────────────────────────────────
 
-// CreateDelegation creates a new admin delegation
+// CreateDelegation creates a new admin delegation.
+//
+// Every party to the row is checked against the caller's organization first.
+// This used to insert whatever delegate_id arrived in the request body, and the
+// enforcement point read the table with no tenant term (migration v152), so an
+// administrator of one tenant could grant administrative permissions to another
+// tenant's user. A delegation that points out of its own tenant is not a row
+// worth keeping, so it is refused rather than written and filtered later.
 func (s *Service) CreateDelegation(ctx context.Context, d *AdminDelegation) error {
 	s.logger.Info("Creating admin delegation", zap.String("delegate_id", d.DelegateID), zap.String("scope_type", d.ScopeType))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return fmt.Errorf("organization context required to create a delegation: %w", err)
+	}
+	if err := s.delegationPartiesInOrg(ctx, org.ID, d); err != nil {
+		return err
+	}
+
 	d.ID = uuid.New().String()
+	d.OrgID = org.ID
 	d.CreatedAt = time.Now()
 	d.UpdatedAt = time.Now()
 
@@ -3321,13 +3352,65 @@ func (s *Service) CreateDelegation(ctx context.Context, d *AdminDelegation) erro
 	}
 
 	_, err = s.db.Pool.Exec(ctx, `
-		INSERT INTO admin_delegations (id, delegate_id, delegated_by, scope_type, scope_id, permissions, enabled, expires_at, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-	`, d.ID, d.DelegateID, d.DelegatedBy, d.ScopeType, d.ScopeID, permJSON, d.Enabled, d.ExpiresAt, d.CreatedAt, d.UpdatedAt)
+		INSERT INTO admin_delegations (id, org_id, delegate_id, delegated_by, scope_type, scope_id, permissions, enabled, expires_at, created_at, updated_at)
+		VALUES ($1, $11, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+	`, d.ID, d.DelegateID, d.DelegatedBy, d.ScopeType, d.ScopeID, permJSON, d.Enabled, d.ExpiresAt, d.CreatedAt, d.UpdatedAt, org.ID)
 	if err != nil {
 		return fmt.Errorf("failed to create delegation: %w", err)
 	}
 
+	return nil
+}
+
+// delegationPartiesInOrg refuses a delegation whose delegate, grantor or scope
+// belongs to another organization. The scope check mirrors the CASE in
+// ListDelegations, which already resolves scope names org-scoped -- so before
+// v152 an out-of-org scope produced a delegation the console displayed with a
+// blank scope name and the enforcement point honoured anyway.
+func (s *Service) delegationPartiesInOrg(ctx context.Context, orgID string, d *AdminDelegation) error {
+	var ok bool
+	if err := s.db.Pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM users WHERE id = $1 AND org_id = $2)`,
+		d.DelegateID, orgID).Scan(&ok); err != nil {
+		return fmt.Errorf("failed to verify the delegate: %w", err)
+	}
+	if !ok {
+		return fmt.Errorf("the delegate is not a member of this organization")
+	}
+	if d.DelegatedBy != "" {
+		if err := s.db.Pool.QueryRow(ctx,
+			`SELECT EXISTS(SELECT 1 FROM users WHERE id = $1 AND org_id = $2)`,
+			d.DelegatedBy, orgID).Scan(&ok); err != nil {
+			return fmt.Errorf("failed to verify the grantor: %w", err)
+		}
+		if !ok {
+			return fmt.Errorf("the granting administrator is not a member of this organization")
+		}
+	}
+
+	var scopeQuery string
+	switch d.ScopeType {
+	case "group":
+		scopeQuery = `SELECT EXISTS(SELECT 1 FROM groups WHERE id = $1 AND org_id = $2)`
+	case "role":
+		scopeQuery = `SELECT EXISTS(SELECT 1 FROM roles WHERE id = $1 AND org_id = $2)`
+	case "application":
+		scopeQuery = `SELECT EXISTS(SELECT 1 FROM applications WHERE id = $1 AND org_id = $2)`
+	case "organization":
+		// An organization-scoped delegation may only name the caller's own.
+		if d.ScopeID != orgID {
+			return fmt.Errorf("an organization-scoped delegation must name this organization")
+		}
+		return nil
+	default:
+		return fmt.Errorf("unknown delegation scope type %q", d.ScopeType)
+	}
+	if err := s.db.Pool.QueryRow(ctx, scopeQuery, d.ScopeID, orgID).Scan(&ok); err != nil {
+		return fmt.Errorf("failed to verify the delegation scope: %w", err)
+	}
+	if !ok {
+		return fmt.Errorf("the %s named as the delegation scope is not in this organization", d.ScopeType)
+	}
 	return nil
 }
 
@@ -3340,7 +3423,7 @@ func (s *Service) ListDelegations(ctx context.Context, offset, limit int, scopeT
 		return nil, 0, err
 	}
 
-	countQuery := "SELECT COUNT(*) FROM admin_delegations"
+	countQuery := "SELECT COUNT(*) FROM admin_delegations ad"
 	dataQuery := `
 		SELECT ad.id, ad.delegate_id,
 			COALESCE(u1.first_name || ' ' || u1.last_name, u1.username, '') as delegate_name,
@@ -3360,15 +3443,17 @@ func (s *Service) ListDelegations(ctx context.Context, offset, limit int, scopeT
 		LEFT JOIN users u2 ON u2.id = ad.delegated_by AND u2.org_id = $1
 	`
 
-	// org.ID is referenced as $1 in dataQuery (scoped JOINs/subqueries); the
-	// countQuery touches only the unscoped admin_delegations table, so it uses
-	// its own arg slice without org.ID and its own placeholder numbering.
-	conditions := []string{}
+	// org.ID is $1 in BOTH queries now. The count used to run over the whole
+	// table -- its own comment said so, "the countQuery touches only the
+	// unscoped admin_delegations table" -- so the console's paging total was
+	// every tenant's delegations while the page itself showed one tenant's.
+	// Since v152 the table carries org_id and both carry the predicate.
+	conditions := []string{"ad.org_id = $1"}
 	args := []interface{}{org.ID}
 	argCount := 2
-	countConditions := []string{}
-	countArgs := []interface{}{}
-	countArgCount := 1
+	countConditions := []string{"ad.org_id = $1"}
+	countArgs := []interface{}{org.ID}
+	countArgCount := 2
 
 	if scopeType != "" {
 		conditions = append(conditions, fmt.Sprintf("ad.scope_type = $%d", argCount))
@@ -3380,14 +3465,8 @@ func (s *Service) ListDelegations(ctx context.Context, offset, limit int, scopeT
 		// not advanced further (the count query has no LIMIT/OFFSET).
 	}
 
-	whereClause := ""
-	if len(conditions) > 0 {
-		whereClause = " WHERE " + strings.Join(conditions, " AND ")
-	}
-	countWhereClause := ""
-	if len(countConditions) > 0 {
-		countWhereClause = " WHERE " + strings.Join(countConditions, " AND ")
-	}
+	whereClause := " WHERE " + strings.Join(conditions, " AND ")
+	countWhereClause := " WHERE " + strings.Join(countConditions, " AND ")
 
 	var total int
 	if err := s.db.Pool.QueryRow(ctx, countQuery+countWhereClause, countArgs...).Scan(&total); err != nil {
@@ -3468,7 +3547,7 @@ func (s *Service) GetDelegation(ctx context.Context, id string) (*AdminDelegatio
 		FROM admin_delegations ad
 		LEFT JOIN users u1 ON u1.id = ad.delegate_id AND u1.org_id = $2
 		LEFT JOIN users u2 ON u2.id = ad.delegated_by AND u2.org_id = $2
-		WHERE ad.id = $1
+		WHERE ad.id = $1 AND ad.org_id = $2
 	`, id, org.ID).Scan(&d.ID, &d.DelegateID, &d.DelegateName, &d.DelegatedBy, &d.DelegatedByName,
 		&d.ScopeType, &d.ScopeID, &scopeName, &permJSON, &d.Enabled, &d.ExpiresAt, &d.CreatedAt, &d.UpdatedAt)
 	if err != nil {
@@ -3490,6 +3569,16 @@ func (s *Service) GetDelegation(ctx context.Context, id string) (*AdminDelegatio
 // UpdateDelegation updates mutable fields on an admin delegation
 func (s *Service) UpdateDelegation(ctx context.Context, id string, updates map[string]interface{}) error {
 	s.logger.Info("Updating admin delegation", zap.String("id", id))
+
+	// `permissions` is one of the fields this builds a SET for, and the WHERE
+	// used to be `id = $N` alone -- so an administrator of one tenant could
+	// rewrite the permission list on another tenant's delegation, which the
+	// enforcement point then honoured because its own read carried no tenant
+	// term either (migration v152).
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return fmt.Errorf("organization context required to update a delegation: %w", err)
+	}
 
 	setParts := []string{}
 	args := []interface{}{}
@@ -3543,9 +3632,9 @@ func (s *Service) UpdateDelegation(ctx context.Context, id string, updates map[s
 	}
 
 	setParts = append(setParts, "updated_at = NOW()")
-	query := fmt.Sprintf("UPDATE admin_delegations SET %s WHERE id = $%d",
-		strings.Join(setParts, ", "), argCount)
-	args = append(args, id)
+	query := fmt.Sprintf("UPDATE admin_delegations SET %s WHERE id = $%d AND org_id = $%d",
+		strings.Join(setParts, ", "), argCount, argCount+1)
+	args = append(args, id, org.ID)
 
 	result, err := s.db.Pool.Exec(ctx, query, args...)
 	if err != nil {
@@ -3558,11 +3647,18 @@ func (s *Service) UpdateDelegation(ctx context.Context, id string, updates map[s
 	return nil
 }
 
-// DeleteDelegation removes an admin delegation by ID
+// DeleteDelegation removes an admin delegation by ID, within the caller's
+// organization.
 func (s *Service) DeleteDelegation(ctx context.Context, id string) error {
 	s.logger.Info("Deleting admin delegation", zap.String("id", id))
 
-	result, err := s.db.Pool.Exec(ctx, "DELETE FROM admin_delegations WHERE id = $1", id)
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return fmt.Errorf("organization context required to delete a delegation: %w", err)
+	}
+
+	result, err := s.db.Pool.Exec(ctx,
+		"DELETE FROM admin_delegations WHERE id = $1 AND org_id = $2", id, org.ID)
 	if err != nil {
 		return fmt.Errorf("failed to delete delegation: %w", err)
 	}

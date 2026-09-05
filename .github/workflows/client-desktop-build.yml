@@ -11,10 +11,14 @@ on:
     paths:
       - "client/**"
       - ".github/workflows/client-desktop-build.yml"
+      - "scripts/ci-prime-cocoapods.sh"
+      - "scripts/ci-retry.sh"
   pull_request:
     paths:
       - "client/**"
       - ".github/workflows/client-desktop-build.yml"
+      - "scripts/ci-prime-cocoapods.sh"
+      - "scripts/ci-retry.sh"
   workflow_dispatch:
 
 concurrency:
@@ -47,12 +51,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Linux desktop toolchain (GTK + ninja) required by `flutter build linux`.
+      # Linux desktop toolchain required by `flutter build linux`. GTK + ninja +
+      # clang are the SDK's own baseline; the rest are what the plugins declare
+      # REQUIRED in their CMakeLists, each of which stops the configure step
+      # dead at "The following required packages were not found" before a single
+      # object is compiled:
+      #   libsecret-1-dev + libjsoncpp-dev -> flutter_secure_storage_linux
+      #   libayatana-appindicator3-dev     -> tray_manager (the system tray)
       - name: Install Linux desktop build deps
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build libgtk-3-dev clang cmake pkg-config
+          sudo apt-get install -y ninja-build libgtk-3-dev clang cmake pkg-config \
+            libsecret-1-dev libjsoncpp-dev libayatana-appindicator3-dev
         working-directory: ${{ github.workspace }}
 
       - name: Set up Flutter
@@ -82,13 +93,47 @@ jobs:
       # copy it next to the built executable, or into the app's bin/ directory,
       # so the supervisor can spawn it). Left as a no-op for the scaffold.
       - name: Bundle openidx-agent sidecar (placeholder)
-        run: echo "TODO: fetch + stage openidx-agent sidecar for ${{ matrix.platform }}"
+        # Block scalar, not a plain one: `run: echo "TODO: ...` is invalid YAML
+        # (a plain scalar may not contain ": "), and GitHub answered by failing
+        # the whole workflow before it scheduled a single job -- a run with no
+        # jobs, named after the file, red on every push since #814. Nothing was
+        # building the desktop client and the red check said nothing about why.
+        run: |
+          echo "TODO: fetch + stage openidx-agent sidecar for ${{ matrix.platform }}"
+
+      # `flutter build macos` shells out to CocoaPods, which reaches
+      # cdn.cocoapods.org before a line is compiled. Creating that spec source
+      # here, with a retry, keeps a bad minute at somebody else's CDN from
+      # arriving ninety seconds into the build as a git error about a URL that
+      # is not a repository. scripts/ci-prime-cocoapods.sh carries the log of
+      # the run this is named after.
+      #
+      # `runner.os`, not `matrix.os == 'macos-latest'`: the label in the matrix
+      # is going to be bumped to a pinned `macos-N` one day, and a condition
+      # spelled against the label would stop matching without anything going
+      # red -- the priming would just quietly stop happening. Linux and Windows
+      # have no CocoaPods and the script no-ops there anyway; the condition is
+      # for the reader.
+      - name: Prime the CocoaPods spec source
+        if: runner.os == 'macOS'
+        working-directory: ${{ github.workspace }}
+        run: bash scripts/ci-prime-cocoapods.sh
 
       - name: Build
+        env:
+          # local_auth_windows still includes <experimental/coroutine>, which
+          # MSVC 14.51's STL turns into a hard error (C2338 / STL1011) telling
+          # you to define this macro "to suppress this error for now". It is a
+          # third-party plugin header, so there is nothing to fix in this tree;
+          # cl.exe picks up extra flags from CL, and the variable is empty on
+          # the other two runners, so this is Windows-only without an `if:`.
+          CL: ${{ matrix.os == 'windows-latest' && '/D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS' || '' }}
         run: flutter build ${{ matrix.build_target }} --release
 
+      # Success only. Under `if: always()` a failed configure still matched the
+      # glob and published a 114 MB half-built tree under the same name a real
+      # build gets -- an artifact that looks shippable and is not.
       - name: Upload build artifact
-        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: openidx-client-${{ matrix.platform }}

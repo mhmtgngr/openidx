@@ -7,7 +7,12 @@ metadata:
     {{- include "openidx.labels" . | nindent 4 }}
     app.kubernetes.io/component: oauth-service
 spec:
-  replicas: {{ .Values.oauthService.replicaCount | default 2 }}
+  # `| default N` would be wrong here: Go templates treat 0 as empty, so an
+  # operator scaling this to zero silently got N back — which is how the
+  # kind-install job, whose values-ci.yaml sets every service to 0, still
+  # watched oauth-service scale 0 -> 2 and crash-loop. `dig` returns the value
+  # when the key is present, including 0, and the default only when absent.
+  replicas: {{ dig "replicaCount" 2 (.Values.oauthService | default dict) }}
   {{- include "openidx.rollingStrategy" . | nindent 2 }}
   selector:
     matchLabels:
@@ -37,7 +42,7 @@ spec:
       {{- end }}
       containers:
         - name: oauth-service
-          image: "{{ .Values.global.imageRegistry }}/{{ .Values.oauthService.image.repository | default "oauth-service" }}:{{ .Values.oauthService.image.tag | default "latest" }}"
+          image: "{{ include "openidx.imageRegistry" . }}/{{ .Values.oauthService.image.repository | default "oauth-service" }}:{{ .Values.oauthService.image.tag | default "latest" }}"
           imagePullPolicy: {{ .Values.oauthService.image.pullPolicy | default "IfNotPresent" }}
           {{- include "openidx.preStopHook" . | nindent 10 }}
           ports:

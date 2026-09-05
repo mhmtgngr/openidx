@@ -1,4 +1,7 @@
 import '@testing-library/jest-dom'
+// Initialize the i18n singleton so components using useTranslation() render
+// real (English-fallback) strings under test, matching main.tsx.
+import '../i18n'
 import { vi, afterEach } from 'vitest'
 import { cleanup } from '@testing-library/react'
 import userEvent, { PointerEventsCheckLevel } from '@testing-library/user-event'

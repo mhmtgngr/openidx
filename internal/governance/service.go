@@ -22,6 +22,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/abac"
 	"github.com/openidx/openidx/internal/auth"
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
@@ -2637,6 +2638,12 @@ type ABACEvaluationResult struct {
 	Allowed  bool   `json:"allowed"`
 	Reason   string `json:"reason,omitempty"`
 	PolicyID string `json:"policy_id,omitempty"`
+	// Matched reports whether any policy applied; Mode is the configured
+	// ABAC_ENFORCE state. Both are surfaced so the page cannot imply that a
+	// policy which matched nothing, or which is evaluated in "off" mode,
+	// affects any real decision.
+	Matched bool   `json:"matched"`
+	Mode    string `json:"mode"`
 }
 
 // CreateABACPolicy creates a new ABAC policy
@@ -2741,12 +2748,16 @@ func (s *Service) ListABACPolicies(ctx context.Context, resourceType string, off
 
 // GetABACPolicy retrieves a single ABAC policy by ID
 func (s *Service) GetABACPolicy(ctx context.Context, id string) (*ABACPolicy, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
 	var p ABACPolicy
 	var conditionsJSON []byte
-	err := s.db.Pool.QueryRow(ctx, `
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT id, name, description, resource_type, resource_id, conditions, effect, priority, enabled, created_at, updated_at
-		FROM abac_policies WHERE id = $1
-	`, id).Scan(
+		FROM abac_policies WHERE id = $1 AND org_id = $2
+	`, id, org.ID).Scan(
 		&p.ID, &p.Name, &p.Description, &p.ResourceType, &p.ResourceID,
 		&conditionsJSON, &p.Effect, &p.Priority, &p.Enabled, &p.CreatedAt, &p.UpdatedAt,
 	)
@@ -2766,6 +2777,10 @@ func (s *Service) GetABACPolicy(ctx context.Context, id string) (*ABACPolicy, er
 
 // UpdateABACPolicy updates an existing ABAC policy
 func (s *Service) UpdateABACPolicy(ctx context.Context, policy *ABACPolicy) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
 	s.logger.Info("Updating ABAC policy", zap.String("policy_id", policy.ID))
 
 	now := time.Now()
@@ -2780,9 +2795,9 @@ func (s *Service) UpdateABACPolicy(ctx context.Context, policy *ABACPolicy) erro
 		UPDATE abac_policies
 		SET name = $2, description = $3, resource_type = $4, resource_id = $5,
 			conditions = $6, effect = $7, priority = $8, enabled = $9, updated_at = $10
-		WHERE id = $1
+		WHERE id = $1 AND org_id = $11
 	`, policy.ID, policy.Name, policy.Description, policy.ResourceType, policy.ResourceID,
-		conditionsJSON, policy.Effect, policy.Priority, policy.Enabled, now)
+		conditionsJSON, policy.Effect, policy.Priority, policy.Enabled, now, org.ID)
 	if err != nil {
 		return fmt.Errorf("failed to update ABAC policy: %w", err)
 	}
@@ -2795,9 +2810,13 @@ func (s *Service) UpdateABACPolicy(ctx context.Context, policy *ABACPolicy) erro
 
 // DeleteABACPolicy deletes an ABAC policy by ID
 func (s *Service) DeleteABACPolicy(ctx context.Context, id string) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
 	s.logger.Info("Deleting ABAC policy", zap.String("policy_id", id))
 
-	result, err := s.db.Pool.Exec(ctx, "DELETE FROM abac_policies WHERE id = $1", id)
+	result, err := s.db.Pool.Exec(ctx, "DELETE FROM abac_policies WHERE id = $1 AND org_id = $2", id, org.ID)
 	if err != nil {
 		return fmt.Errorf("failed to delete ABAC policy: %w", err)
 	}
@@ -2807,200 +2826,42 @@ func (s *Service) DeleteABACPolicy(ctx context.Context, id string) error {
 	return nil
 }
 
-// EvaluateABACPolicies evaluates all matching ABAC policies for a given request
+// EvaluateABACPolicies is the ABAC Policies page's "Test" button, and it now
+// runs the SAME evaluator the enforcement points do (internal/abac). That was
+// the whole defect: this function used to BE the evaluator and had no other
+// caller, so the page confirmed a decision nothing in the product would ever
+// make. Keeping it as a wrapper rather than a second implementation is what
+// stops the page and the enforcement points drifting apart again.
 func (s *Service) EvaluateABACPolicies(ctx context.Context, req ABACEvaluationRequest) ABACEvaluationResult {
+	orgID := ""
+	if org, err := orgctx.From(ctx); err == nil {
+		orgID = org.ID
+	}
 	s.logger.Info("Evaluating ABAC policies",
 		zap.String("resource_type", req.ResourceType),
 		zap.String("resource_id", req.ResourceID))
 
-	// Query all enabled ABAC policies matching the resource type, ordered by priority DESC
-	rows, err := s.db.Pool.Query(ctx, `
-		SELECT id, name, conditions, effect, priority
-		FROM abac_policies
-		WHERE enabled = true
-			AND resource_type IN ($1, '*')
-			AND (resource_id IS NULL OR resource_id = '' OR resource_id = $2)
-		ORDER BY priority DESC
-	`, req.ResourceType, req.ResourceID)
-	if err != nil {
-		// Fail closed: a policy decision point that cannot read its policies must
-		// deny, not allow. Returning "allowed" here would tell any enforcement
-		// point consuming this decision to permit the action precisely when the
-		// evaluation could not run.
-		s.logger.Error("Failed to query ABAC policies for evaluation; failing closed", zap.Error(err))
-		return ABACEvaluationResult{Allowed: false, Reason: "policy evaluation error, failing closed"}
-	}
-	defer rows.Close()
-
-	var denyMatch *ABACEvaluationResult
-	var allowMatch *ABACEvaluationResult
-
-	for rows.Next() {
-		var policyID, name, effect string
-		var conditionsJSON []byte
-		var priority int
-		if err := rows.Scan(&policyID, &name, &conditionsJSON, &effect, &priority); err != nil {
-			s.logger.Warn("Failed to scan ABAC policy during evaluation", zap.Error(err))
-			continue
-		}
-
-		var conditions []ABACCondition
-		if len(conditionsJSON) > 0 {
-			if err := json.Unmarshal(conditionsJSON, &conditions); err != nil {
-				s.logger.Warn("Failed to parse ABAC conditions during evaluation", zap.String("policy_id", policyID), zap.Error(err))
-				continue
-			}
-		}
-
-		// Evaluate all conditions — all must match for the policy to apply
-		allMatch := true
-		for _, cond := range conditions {
-			if !evaluateABACCondition(cond, req.UserAttributes) {
-				allMatch = false
-				break
-			}
-		}
-
-		if allMatch {
-			if effect == "deny" {
-				denyMatch = &ABACEvaluationResult{
-					Allowed:  false,
-					Reason:   fmt.Sprintf("denied by policy: %s", name),
-					PolicyID: policyID,
-				}
-				// Deny takes immediate precedence
-				break
-			}
-			if allowMatch == nil && effect == "allow" {
-				allowMatch = &ABACEvaluationResult{
-					Allowed:  true,
-					Reason:   fmt.Sprintf("allowed by policy: %s", name),
-					PolicyID: policyID,
-				}
-			}
-		}
-	}
-
-	// Deny overrides allow
-	if denyMatch != nil {
-		return *denyMatch
-	}
-
-	// If at least one allow policy matched, return allowed
-	if allowMatch != nil {
-		return *allowMatch
-	}
-
-	// Default: allowed (fail-open in dev mode)
-	return ABACEvaluationResult{Allowed: true, Reason: "no matching policies, default allow"}
-}
-
-// evaluateABACCondition evaluates a single ABAC condition against user attributes
-func evaluateABACCondition(cond ABACCondition, attrs map[string]interface{}) bool {
-	attrVal, exists := attrs[cond.Attribute]
-	if !exists {
-		return false
-	}
-
-	switch cond.Operator {
-	case "eq":
-		return fmt.Sprintf("%v", attrVal) == fmt.Sprintf("%v", cond.Value)
-
-	case "neq":
-		return fmt.Sprintf("%v", attrVal) != fmt.Sprintf("%v", cond.Value)
-
-	case "in":
-		return evalIn(attrVal, cond.Value)
-
-	case "not_in":
-		return !evalIn(attrVal, cond.Value)
-
-	case "gt":
-		a, b, ok := toFloat64Pair(attrVal, cond.Value)
-		return ok && a > b
-
-	case "gte":
-		a, b, ok := toFloat64Pair(attrVal, cond.Value)
-		return ok && a >= b
-
-	case "lt":
-		a, b, ok := toFloat64Pair(attrVal, cond.Value)
-		return ok && a < b
-
-	case "lte":
-		a, b, ok := toFloat64Pair(attrVal, cond.Value)
-		return ok && a <= b
-
-	case "between":
-		return evalBetween(attrVal, cond.Value)
-
-	case "contains":
-		return strings.Contains(fmt.Sprintf("%v", attrVal), fmt.Sprintf("%v", cond.Value))
-
-	default:
-		return false
+	res := abac.Evaluate(ctx, s.db, orgID, abac.EvaluationRequest{
+		UserAttributes: req.UserAttributes,
+		ResourceType:   req.ResourceType,
+		ResourceID:     req.ResourceID,
+	})
+	return ABACEvaluationResult{
+		Allowed:  res.Allowed,
+		Reason:   res.Reason,
+		PolicyID: res.PolicyID,
+		Matched:  res.Matched,
+		Mode:     string(abac.ParseMode(s.abacMode())),
 	}
 }
 
-// evalIn checks if attrVal is one of the values in the list
-func evalIn(attrVal interface{}, condValue interface{}) bool {
-	list, ok := condValue.([]interface{})
-	if !ok {
-		return false
+// abacMode reports the configured ABAC_ENFORCE value, so the page can tell an
+// admin whether the policy they are testing decides anything yet.
+func (s *Service) abacMode() string {
+	if s.config == nil {
+		return string(abac.ModeOff)
 	}
-	attrStr := fmt.Sprintf("%v", attrVal)
-	for _, v := range list {
-		if fmt.Sprintf("%v", v) == attrStr {
-			return true
-		}
-	}
-	return false
-}
-
-// evalBetween checks if attrVal is between [min, max]
-func evalBetween(attrVal interface{}, condValue interface{}) bool {
-	list, ok := condValue.([]interface{})
-	if !ok || len(list) != 2 {
-		return false
-	}
-	a, minOk := toFloat64(attrVal)
-	minVal, minValOk := toFloat64(list[0])
-	maxVal, maxValOk := toFloat64(list[1])
-	if !minOk || !minValOk || !maxValOk {
-		return false
-	}
-	return a >= minVal && a <= maxVal
-}
-
-// toFloat64Pair converts two values to float64 for numeric comparison
-func toFloat64Pair(a, b interface{}) (float64, float64, bool) {
-	af, aOk := toFloat64(a)
-	bf, bOk := toFloat64(b)
-	return af, bf, aOk && bOk
-}
-
-// toFloat64 converts a value to float64
-func toFloat64(v interface{}) (float64, bool) {
-	switch val := v.(type) {
-	case float64:
-		return val, true
-	case float32:
-		return float64(val), true
-	case int:
-		return float64(val), true
-	case int64:
-		return float64(val), true
-	case json.Number:
-		f, err := val.Float64()
-		return f, err == nil
-	case string:
-		f, err := strconv.ParseFloat(val, 64)
-		return f, err == nil
-	default:
-		// Try converting via string representation
-		f, err := strconv.ParseFloat(fmt.Sprintf("%v", v), 64)
-		return f, err == nil
-	}
+	return s.config.ABACEnforce
 }
 
 // --- ABAC HTTP Handlers ---

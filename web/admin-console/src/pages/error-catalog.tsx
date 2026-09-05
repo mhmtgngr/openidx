@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import {
   Search,
   Copy,
@@ -42,13 +43,12 @@ interface ErrorEntry {
 // Constants
 // ---------------------------------------------------------------------------
 
-const CATEGORIES = [
-  { value: '', label: 'All Categories' },
-  { value: 'auth', label: 'Authentication' },
-  { value: 'resource', label: 'Resource' },
-  { value: 'validation', label: 'Validation' },
-  { value: 'system', label: 'System' },
-] as const
+/**
+ * The categories the error registry assigns. The filter names them in
+ * title case and a row's badge in lowercase, and both resolve off this one
+ * list, so the filter cannot come to offer a set the rows do not use.
+ */
+const CATEGORIES = ['auth', 'resource', 'validation', 'system'] as const
 
 const CATEGORY_COLORS: Record<string, string> = {
   auth: 'bg-yellow-100 text-yellow-800 border-yellow-200',
@@ -68,6 +68,7 @@ const HTTP_STATUS_COLORS: Record<string, string> = {
 
 export function ErrorCatalogPage() {
   const { toast } = useToast()
+  const { t } = useTranslation()
 
   const [searchTerm, setSearchTerm] = useState('')
   const [categoryFilter, setCategoryFilter] = useState('')
@@ -113,7 +114,10 @@ export function ErrorCatalogPage() {
 
   const copyErrorCode = (code: string) => {
     navigator.clipboard.writeText(code)
-    toast({ title: 'Copied', description: `Error code "${code}" copied to clipboard.` })
+    toast({
+      title: t('common.copied'),
+      description: t('pages.errorCatalog.copied', { code }),
+    })
   }
 
   const httpStatusColor = (status: number) => {
@@ -129,9 +133,11 @@ export function ErrorCatalogPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Error Catalog</h1>
+          <h1 className="text-3xl font-bold tracking-tight">
+            {t('nav.items.errorCatalog')}
+          </h1>
           <p className="text-muted-foreground">
-            Reference of all error codes, descriptions, and resolution hints
+            {t('pages.errorCatalog.subtitle')}
           </p>
         </div>
       </div>
@@ -143,7 +149,7 @@ export function ErrorCatalogPage() {
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="Search by error code or description..."
+                placeholder={t('pages.errorCatalog.searchPlaceholder')}
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="pl-9"
@@ -152,20 +158,25 @@ export function ErrorCatalogPage() {
             <div className="flex items-center gap-2">
               <Filter className="h-4 w-4 text-muted-foreground" />
               <select
+                aria-label={t('pages.errorCatalog.categoryFilterLabel')}
                 value={categoryFilter}
                 onChange={(e) => setCategoryFilter(e.target.value)}
                 className="flex h-10 rounded-md border border-input bg-background px-3 py-2 text-sm"
               >
+                <option value="">{t('pages.errorCatalog.allCategories')}</option>
                 {CATEGORIES.map((cat) => (
-                  <option key={cat.value} value={cat.value}>
-                    {cat.label}
+                  <option key={cat} value={cat}>
+                    {t(`pages.errorCatalog.categoryOptions.${cat}`)}
                   </option>
                 ))}
               </select>
             </div>
           </div>
           <p className="text-xs text-muted-foreground mt-2">
-            {filteredErrors.length} of {errors.length} error codes shown
+            {t('pages.errorCatalog.shown', {
+              shown: filteredErrors.length,
+              total: errors.length,
+            })}
           </p>
         </CardContent>
       </Card>
@@ -174,23 +185,27 @@ export function ErrorCatalogPage() {
       <Card>
         <CardContent className="p-0">
           {isLoading ? (
-            <p className="text-center py-8 text-muted-foreground">Loading error catalog...</p>
+            <p className="text-center py-8 text-muted-foreground">
+              {t('pages.errorCatalog.loading')}
+            </p>
           ) : isError ? (
-            <QueryError error={error} resource="the error catalog" />
+            <QueryError error={error} resource={t('pages.errorCatalog.resource')} />
           ) : filteredErrors.length === 0 ? (
             <div className="text-center py-12">
               <AlertCircle className="h-10 w-10 mx-auto text-muted-foreground mb-3" />
-              <p className="text-muted-foreground">No error codes match your search.</p>
+              <p className="text-muted-foreground">
+                {t('pages.errorCatalog.empty')}
+              </p>
             </div>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-8" />
-                  <TableHead>Error Code</TableHead>
-                  <TableHead className="w-24">HTTP Status</TableHead>
-                  <TableHead className="w-32">Category</TableHead>
-                  <TableHead>Description</TableHead>
+                  <TableHead>{t('pages.errorCatalog.colCode')}</TableHead>
+                  <TableHead className="w-24">{t('pages.errorCatalog.colStatus')}</TableHead>
+                  <TableHead className="w-32">{t('pages.errorCatalog.colCategory')}</TableHead>
+                  <TableHead>{t('pages.errorCatalog.colDescription')}</TableHead>
                   <TableHead className="w-12" />
                 </TableRow>
               </TableHeader>
@@ -214,6 +229,9 @@ export function ErrorCatalogPage() {
                             <ChevronRight className="h-4 w-4 text-muted-foreground" />
                           )}
                         </TableCell>
+                        {/* The code, its status, description and resolution are
+                            the registry's own text: an operator matches them
+                            against a log line or quotes them in a ticket. */}
                         <TableCell>
                           <code className="text-sm font-mono font-semibold">{err.code}</code>
                         </TableCell>
@@ -230,7 +248,9 @@ export function ErrorCatalogPage() {
                           <span
                             className={`inline-block text-xs font-medium px-2 py-0.5 rounded-full border ${catColor}`}
                           >
-                            {err.category}
+                            {t(`pages.errorCatalog.categories.${err.category}`, {
+                              defaultValue: err.category,
+                            })}
                           </span>
                         </TableCell>
                         <TableCell className="text-sm">{err.description}</TableCell>
@@ -251,7 +271,9 @@ export function ErrorCatalogPage() {
                         <TableRow key={`${err.code}-detail`}>
                           <TableCell colSpan={6} className="bg-muted/30">
                             <div className="p-3 space-y-2">
-                              <h4 className="text-sm font-semibold">Resolution</h4>
+                              <h4 className="text-sm font-semibold">
+                                {t('pages.errorCatalog.resolution')}
+                              </h4>
                               <p className="text-sm text-muted-foreground leading-relaxed">
                                 {err.resolution}
                               </p>

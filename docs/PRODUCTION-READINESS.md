@@ -1,7 +1,12 @@
 # OpenIDX Production Readiness
 
 **Refreshed:** 2026-06-08 (commit `bd2faa4`, branch `main`)
-**Released version:** v1.0.0 (2026-05-22)
+**Last release:** v1.33.3 (2026-08-25) — `git ls-remote --tags origin` is the
+authority; this line said v1.0.0 for eight releases because nothing compared
+it to anything.
+**In development:** the version in [`VERSION`](../VERSION) at the repo root,
+which `scripts/check-version-sync.sh` holds the console, the Helm chart's
+appVersion, the Flutter client and all ten OpenAPI specs to.
 **Verdict:** **Ready to deploy as a hardened, self-hosted IAM/ZTNA platform — single- or multi-tenant.** Multi-tenancy (app-layer `org_id` scoping + Postgres RLS belt) landed in v1.6–v1.8; see [DEPLOYMENT.md §4b](./DEPLOYMENT.md#step-4b--multi-tenancy-and-row-level-security-v16). A handful of integration-test failures track real but narrow product gaps (documented in §6) — they do not block a production install, but the affected flows should be exercised manually until follow-up PRs land.
 
 ---
@@ -55,7 +60,7 @@ Supporting binaries: `cmd/migrate` (schema migrations), `cmd/backup` (backup + r
 ### 2.3 OAuth 2.0 / OpenID Connect Provider
 
 - Grants: `authorization_code` (with PKCE S256, required for public clients), `refresh_token`, `client_credentials`.
-- Discovery endpoint, JWKS (RS256, key rotation supported via `internal/oauth/keys.go`).
+- Discovery endpoint, JWKS (RS256, key rotation supported via `internal/oauth/jwks.go` and `signer.go`).
 - Token revocation (RFC 7009) — access + refresh tokens, with per-token blacklist *and* per-user "revoke everything before now" marker enforced at `/oauth/userinfo` (PR #112).
 - OIDC RP-initiated logout (`/oauth/logout?id_token_hint=…`), logout-all.
 - Refresh-token rotation + replay detection (token family revocation).
@@ -264,7 +269,6 @@ any more, and `test-integration` is in the Required Checks `needs:` list
 |---|---|---|
 | The Ziti controller admin password uses a local AES-256-GCM encrypter rather than `internal/common/secretcrypt` | No KEK rotation for that one secret | Format is authenticated and test-pinned (`internal/access/secret_cipher.go`). Consolidating needs the stored value re-encrypted under a tagged format first — a data migration, not a refactor; `secretcrypt` passes untagged input through unchanged and would otherwise hand the base64 blob to a controller login as the password. |
 | Password hashing is bcrypt (cost 12), not Argon2id | Offline-cracking cost is lower than a memory-hard KDF's | One policy and one cost throughout (`internal/identity/passwords.go`). Adopting Argon2id needs bcrypt verification plus rehash-on-login; the unreachable Argon2id service that could not verify a single real bcrypt hash was deleted in #637 rather than left looking like coverage. |
-| `internal/oauth/oidc.go`'s `OIDCProvider` is unreachable | Nothing at runtime — `/userinfo` routes to `Service.handleUserInfo` | Dead, not wrong. Removing it also removes ~950 lines of tests and touches the shared OIDC test harness, so it is its own change. |
 | RFC 8628 device authorization grant not implemented | CLI / TV / input-constrained clients | Not advertised in discovery, so no client negotiates it. |
 | LDAP referral chasing absent | Multi-domain AD forests where the search base returns referrals | Point the connector at a global catalog, or configure one directory per domain. |
 

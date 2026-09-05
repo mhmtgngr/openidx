@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { Search, CornerDownLeft } from 'lucide-react'
 
 import { useAuth } from '../lib/auth'
@@ -21,6 +22,7 @@ import {
  * so it only ever offers pages the signed-in user is actually allowed to open.
  */
 export function CommandPalette() {
+  const { t, i18n } = useTranslation()
   const { user } = useAuth()
   const { viewMode } = useAppStore()
   const navigate = useNavigate()
@@ -47,9 +49,11 @@ export function CommandPalette() {
     const scored = items
       .map((item) => ({ item, score: scoreNavItem(item, q) }))
       .filter((r) => r.score > 0)
-    scored.sort((a, b) => b.score - a.score || a.item.name.localeCompare(b.item.name))
+    scored.sort((a, b) => b.score - a.score || t(a.item.nameKey).localeCompare(t(b.item.nameKey)))
     return scored.slice(0, 20).map((r) => r.item)
-  }, [items, query])
+    // scoreNavItem matches translated names, so recompute on language change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, query, i18n.resolvedLanguage])
 
   // Global ⌘K / Ctrl-K toggle. Reset state when opening (in the handler, not an
   // effect) so the palette always shows a fresh, empty query.
@@ -113,7 +117,7 @@ export function CommandPalette() {
       onMouseDown={() => setOpen(false)}
       role="dialog"
       aria-modal="true"
-      aria-label="Command palette"
+      aria-label={t('palette.ariaLabel')}
     >
       <div
         className="w-full max-w-xl overflow-hidden rounded-xl bg-white shadow-2xl dark:bg-gray-900"
@@ -129,9 +133,9 @@ export function CommandPalette() {
               setActive(0)
             }}
             onKeyDown={onInputKey}
-            placeholder="Jump to a page… (type a name or keyword)"
+            placeholder={t('palette.placeholder')}
             className="h-12 w-full bg-transparent text-sm outline-none placeholder:text-gray-400"
-            aria-label="Search pages"
+            aria-label={t('palette.searchPages')}
           />
           <kbd className="hidden rounded border px-1.5 py-0.5 text-[10px] text-gray-400 sm:inline">
             esc
@@ -140,7 +144,7 @@ export function CommandPalette() {
 
         <div ref={listRef} className="max-h-[50vh] overflow-y-auto p-2">
           {results.length === 0 ? (
-            <p className="px-3 py-8 text-center text-sm text-gray-400">No pages match “{query}”.</p>
+            <p className="px-3 py-8 text-center text-sm text-gray-400">{t('palette.noMatch', { query })}</p>
           ) : (
             results.map((item, i) => {
               const Icon = item.icon
@@ -155,8 +159,8 @@ export function CommandPalette() {
                   }`}
                 >
                   <Icon className="h-4 w-4 shrink-0 text-gray-400" />
-                  <span className="flex-1 truncate">{item.name}</span>
-                  <span className="text-xs text-gray-400">{item.domainLabel}</span>
+                  <span className="flex-1 truncate">{t(item.nameKey)}</span>
+                  <span className="text-xs text-gray-400">{t(item.domainLabelKey)}</span>
                   {i === active && <CornerDownLeft className="h-3.5 w-3.5 text-gray-400" />}
                 </button>
               )

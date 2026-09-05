@@ -3,6 +3,14 @@
 -- Insert default admin user (password: Admin@123)
 -- bcrypt hash generated with cost 12 for "Admin@123"
 INSERT INTO users (id, username, email, password_hash, first_name, last_name, enabled, email_verified)
+-- The default admin's bcrypt hash. It is public by design: it is the
+-- documented first-run credential (Admin@123), the setup gate refuses to
+-- let the console out of first-run until it is changed, and
+-- ValidateProduction() refuses to start a production process that still
+-- has it. A scanner cannot know any of that, so the rule is silenced HERE,
+-- at the line, by id -- not by excluding the file, which would also stop
+-- catching a real credential pasted into the same migration.
+-- nosemgrep: generic.secrets.security.detected-bcrypt-hash.detected-bcrypt-hash
 VALUES ('00000000-0000-0000-0000-000000000001', 'admin', 'admin@openidx.local', '$2b$12$oX..0F6dHbNip8vASE5VdOgXiBfyqRZ768PU5vArjeOMxG5MGEEdq', 'System', 'Admin', true, true)
 ON CONFLICT (id) DO NOTHING;
 

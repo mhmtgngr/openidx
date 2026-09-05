@@ -2,16 +2,24 @@ package admin
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	apperrors "github.com/openidx/openidx/internal/common/errors"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
+
+// isUniqueViolation reports whether err is a Postgres 23505 unique_violation.
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+}
 
 // SocialProvider represents a social/external identity provider configuration
 type SocialProvider struct {
@@ -94,6 +102,13 @@ func (s *Service) handleListSocialProviders(c *gin.Context) {
 		return
 	}
 
+	// The org predicate has to be in the WHERE clause. It used to sit only in
+	// the LEFT JOIN's ON, which decides whether the joined identity_providers
+	// row contributes and filters NOTHING on social_providers -- so this listed
+	// every tenant's sign-in providers to every tenant, with the org check
+	// blanking out nothing but the idp_name column of the ones that belonged to
+	// somebody else. It is kept in the ON clause too: a provider must not be
+	// labelled with an identity provider from another org.
 	rows, err := s.db.Pool.Query(c.Request.Context(),
 		`SELECT sp.id, COALESCE(sp.provider_id::text, ''), sp.provider_key, sp.display_name, sp.icon_url,
 		        sp.button_color, sp.button_text, sp.auto_create_users, sp.auto_link_by_email,
@@ -102,6 +117,7 @@ func (s *Service) handleListSocialProviders(c *gin.Context) {
 		        COALESCE(ip.name, '') as idp_name
 		 FROM social_providers sp
 		 LEFT JOIN identity_providers ip ON sp.provider_id = ip.id AND ip.org_id = $1
+		 WHERE sp.org_id = $1
 		 ORDER BY sp.sort_order`, org.ID)
 	if err != nil {
 		respondError(c, s.logger, apperrors.Internal("Failed to list social providers", err))
@@ -165,14 +181,20 @@ func (s *Service) handleCreateSocialProvider(c *gin.Context) {
 		providerIDArg = req.ProviderID
 	}
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	var id string
-	err := s.db.Pool.QueryRow(c.Request.Context(),
-		`INSERT INTO social_providers (provider_id, provider_key, display_name, icon_url,
+	err = s.db.Pool.QueryRow(c.Request.Context(),
+		`INSERT INTO social_providers (org_id, provider_id, provider_key, display_name, icon_url,
 		  button_color, button_text, auto_create_users, auto_link_by_email,
 		  default_role, allowed_domains, attribute_mapping, enabled, sort_order)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		 RETURNING id`,
-		providerIDArg, req.ProviderKey, req.DisplayName, req.IconURL,
+		org.ID, providerIDArg, req.ProviderKey, req.DisplayName, req.IconURL,
 		req.ButtonColor, req.ButtonText, req.AutoCreateUsers, req.AutoLinkByEmail,
 		req.DefaultRole, req.AllowedDomains, req.AttributeMapping, req.Enabled, req.SortOrder,
 	).Scan(&id)
@@ -189,14 +211,20 @@ func (s *Service) handleGetSocialProvider(c *gin.Context) {
 		return
 	}
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	id := c.Param("id")
 	var p SocialProvider
-	err := s.db.Pool.QueryRow(c.Request.Context(),
+	err = s.db.Pool.QueryRow(c.Request.Context(),
 		`SELECT id, COALESCE(provider_id::text, ''), provider_key, display_name, icon_url,
 		        button_color, button_text, auto_create_users, auto_link_by_email,
 		        default_role, allowed_domains, attribute_mapping, enabled,
 		        sort_order, created_at, updated_at
-		 FROM social_providers WHERE id = $1`, id,
+		 FROM social_providers WHERE id = $1 AND org_id = $2`, id, org.ID,
 	).Scan(&p.ID, &p.ProviderID, &p.ProviderKey, &p.DisplayName, &p.IconURL,
 		&p.ButtonColor, &p.ButtonText, &p.AutoCreateUsers, &p.AutoLinkByEmail,
 		&p.DefaultRole, &p.AllowedDomains, &p.AttributeMapping, &p.Enabled,
@@ -299,11 +327,21 @@ func (s *Service) handleUpdateSocialProvider(c *gin.Context) {
 		argIdx++
 	}
 
-	args = append(args, id)
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
+	args = append(args, id, org.ID)
 	// SECURITY: Column names in 'sets' are hardcoded string literals from the if-blocks above,
 	// not user input. This is safe from SQL injection.
-	query := fmt.Sprintf("UPDATE social_providers SET %s WHERE id = $%d",
-		joinStrings(sets, ", "), argIdx)
+	//
+	// The org predicate makes the RowsAffected()==0 below mean "not yours or not
+	// there" rather than only "not there": without it this edited another
+	// tenant's sign-in button by id.
+	query := fmt.Sprintf("UPDATE social_providers SET %s WHERE id = $%d AND org_id = $%d",
+		joinStrings(sets, ", "), argIdx, argIdx+1)
 
 	tag, err := s.db.Pool.Exec(c.Request.Context(), query, args...)
 	if err != nil {
@@ -322,9 +360,15 @@ func (s *Service) handleDeleteSocialProvider(c *gin.Context) {
 		return
 	}
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	id := c.Param("id")
 	tag, err := s.db.Pool.Exec(c.Request.Context(),
-		"DELETE FROM social_providers WHERE id = $1", id)
+		"DELETE FROM social_providers WHERE id = $1 AND org_id = $2", id, org.ID)
 	if err != nil {
 		respondError(c, s.logger, apperrors.Internal("Failed to delete social provider", err))
 		return
@@ -349,6 +393,13 @@ func (s *Service) handleListFederationRules(c *gin.Context) {
 		return
 	}
 
+	// The LEFT JOIN below fetches a display name; it does NOT scope. A left
+	// join keeps every row of the left table and nulls the right side, so
+	// `ip.org_id = $1` sitting in its ON clause filtered nothing and this list
+	// returned every organization's rules with an empty provider name on the
+	// foreign ones. The login path's version of the same query is an inner
+	// join, which is why that one was safe. The tenant term belongs in a WHERE
+	// clause on the table being listed.
 	rows, err := s.db.Pool.Query(c.Request.Context(),
 		`SELECT fr.id, fr.name, fr.email_domain, fr.provider_id,
 		        COALESCE(ip.name, '') as provider_name,
@@ -356,6 +407,7 @@ func (s *Service) handleListFederationRules(c *gin.Context) {
 		        fr.created_at, fr.updated_at
 		 FROM federation_rules fr
 		 LEFT JOIN identity_providers ip ON fr.provider_id = ip.id AND ip.org_id = $1
+		 WHERE fr.org_id = $1
 		 ORDER BY fr.priority, fr.email_domain`, org.ID)
 	if err != nil {
 		respondError(c, s.logger, apperrors.Internal("Failed to list federation rules", err))
@@ -384,6 +436,12 @@ func (s *Service) handleCreateFederationRule(c *gin.Context) {
 		return
 	}
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	var req struct {
 		Name         string          `json:"name"`
 		EmailDomain  string          `json:"email_domain"`
@@ -398,14 +456,27 @@ func (s *Service) handleCreateFederationRule(c *gin.Context) {
 		return
 	}
 
+	if !s.providerInOrg(c, req.ProviderID, org.ID) {
+		respondError(c, nil, apperrors.BadRequest("Identity provider not found in this organization"))
+		return
+	}
+
 	var id string
-	err := s.db.Pool.QueryRow(c.Request.Context(),
-		`INSERT INTO federation_rules (name, email_domain, provider_id, priority, auto_redirect, enabled, metadata)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7)
+	err = s.db.Pool.QueryRow(c.Request.Context(),
+		`INSERT INTO federation_rules (name, email_domain, provider_id, priority, auto_redirect, enabled, metadata, org_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		 RETURNING id`,
-		req.Name, req.EmailDomain, req.ProviderID, req.Priority, req.AutoRedirect, req.Enabled, req.Metadata,
+		req.Name, req.EmailDomain, req.ProviderID, req.Priority, req.AutoRedirect, req.Enabled, req.Metadata, org.ID,
 	).Scan(&id)
 	if err != nil {
+		// email_domain is unique per organization since v155. Say which case
+		// this is: until then a second tenant registering a domain the first
+		// already held got a bare 500 with no hint that the name was taken.
+		if isUniqueViolation(err) {
+			respondError(c, nil, apperrors.BadRequest(
+				"A federation rule for this email domain already exists in this organization"))
+			return
+		}
 		respondError(c, s.logger, apperrors.Internal("Failed to create federation rule", err))
 		return
 	}
@@ -413,8 +484,42 @@ func (s *Service) handleCreateFederationRule(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"id": id, "message": "Federation rule created"})
 }
 
+// providerInOrg reports whether an identity provider belongs to the caller's
+// tenant. A federation rule names the provider that will authenticate a domain,
+// so an unvalidated provider_id lets one organization point a rule at another's
+// sign-in configuration.
+func (s *Service) providerInOrg(c *gin.Context, providerID, orgID string) bool {
+	if providerID == "" {
+		return false
+	}
+	var one int
+	err := s.db.Pool.QueryRow(c.Request.Context(),
+		"SELECT 1 FROM identity_providers WHERE id = $1 AND org_id = $2", providerID, orgID).Scan(&one)
+	return err == nil
+}
+
+// applicationInOrg reports whether an application belongs to the caller's
+// tenant. The custom-claims routes take the application id from the URL, so
+// without this a tenant could attach claim mappings to an application it
+// cannot even see.
+func (s *Service) applicationInOrg(c *gin.Context, appID, orgID string) bool {
+	if appID == "" {
+		return false
+	}
+	var one int
+	err := s.db.Pool.QueryRow(c.Request.Context(),
+		"SELECT 1 FROM applications WHERE id = $1 AND org_id = $2", appID, orgID).Scan(&one)
+	return err == nil
+}
+
 func (s *Service) handleUpdateFederationRule(c *gin.Context) {
 	if !requireAdmin(c) {
+		return
+	}
+
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
 		return
 	}
 
@@ -430,6 +535,13 @@ func (s *Service) handleUpdateFederationRule(c *gin.Context) {
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		respondError(c, nil, apperrors.BadRequest("Invalid request body"))
+		return
+	}
+
+	// Re-pointing a rule at another organization's provider is the same defect
+	// as creating one that way.
+	if req.ProviderID != nil && !s.providerInOrg(c, *req.ProviderID, org.ID) {
+		respondError(c, nil, apperrors.BadRequest("Identity provider not found in this organization"))
 		return
 	}
 
@@ -474,11 +586,11 @@ func (s *Service) handleUpdateFederationRule(c *gin.Context) {
 		argIdx++
 	}
 
-	args = append(args, id)
+	args = append(args, id, org.ID)
 	// SECURITY: Column names in 'sets' are hardcoded string literals from the if-blocks above,
 	// not user input. This is safe from SQL injection.
-	query := fmt.Sprintf("UPDATE federation_rules SET %s WHERE id = $%d",
-		joinStrings(sets, ", "), argIdx)
+	query := fmt.Sprintf("UPDATE federation_rules SET %s WHERE id = $%d AND org_id = $%d",
+		joinStrings(sets, ", "), argIdx, argIdx+1)
 
 	tag, err := s.db.Pool.Exec(c.Request.Context(), query, args...)
 	if err != nil {
@@ -497,9 +609,17 @@ func (s *Service) handleDeleteFederationRule(c *gin.Context) {
 		return
 	}
 
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
+	// Deleting another organization's rule is quiet: the domain simply stops
+	// being federated and its users fall back to a password prompt.
 	id := c.Param("id")
 	tag, err := s.db.Pool.Exec(c.Request.Context(),
-		"DELETE FROM federation_rules WHERE id = $1", id)
+		"DELETE FROM federation_rules WHERE id = $1 AND org_id = $2", id, org.ID)
 	if err != nil {
 		respondError(c, s.logger, apperrors.Internal("Failed to delete federation rule", err))
 		return
@@ -595,13 +715,19 @@ func (s *Service) handleListCustomClaims(c *gin.Context) {
 		return
 	}
 
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	appID := c.Param("id")
 	rows, err := s.db.Pool.Query(c.Request.Context(),
 		`SELECT id, application_id, claim_name, source_type, source_value,
 		        claim_type, include_in_id_token, include_in_access_token,
 		        include_in_userinfo, condition, enabled, created_at, updated_at
-		 FROM custom_claims_mappings WHERE application_id = $1
-		 ORDER BY claim_name`, appID)
+		 FROM custom_claims_mappings WHERE application_id = $1 AND org_id = $2
+		 ORDER BY claim_name`, appID, org.ID)
 	if err != nil {
 		respondError(c, s.logger, apperrors.Internal("Failed to list custom claims", err))
 		return
@@ -629,7 +755,22 @@ func (s *Service) handleCreateCustomClaim(c *gin.Context) {
 		return
 	}
 
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
+	// A claim mapping decides what an application is told about the person
+	// signing in, so attaching one to an application in another tenant is the
+	// sharp end of this table -- currently blunted only by the fact that
+	// nothing reads these rows (see the v155 header).
 	appID := c.Param("id")
+	if !s.applicationInOrg(c, appID, org.ID) {
+		respondError(c, nil, apperrors.NotFound("Application"))
+		return
+	}
+
 	var req struct {
 		ClaimName            string          `json:"claim_name"`
 		SourceType           string          `json:"source_type"`
@@ -649,12 +790,12 @@ func (s *Service) handleCreateCustomClaim(c *gin.Context) {
 	var id string
 	err := s.db.Pool.QueryRow(c.Request.Context(),
 		`INSERT INTO custom_claims_mappings (application_id, claim_name, source_type, source_value,
-		  claim_type, include_in_id_token, include_in_access_token, include_in_userinfo, condition, enabled)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		  claim_type, include_in_id_token, include_in_access_token, include_in_userinfo, condition, enabled, org_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		 RETURNING id`,
 		appID, req.ClaimName, req.SourceType, req.SourceValue,
 		req.ClaimType, req.IncludeInIDToken, req.IncludeInAccessToken,
-		req.IncludeInUserinfo, req.Condition, req.Enabled,
+		req.IncludeInUserinfo, req.Condition, req.Enabled, org.ID,
 	).Scan(&id)
 	if err != nil {
 		respondError(c, s.logger, apperrors.Internal("Failed to create custom claim", err))
@@ -666,6 +807,12 @@ func (s *Service) handleCreateCustomClaim(c *gin.Context) {
 
 func (s *Service) handleUpdateCustomClaim(c *gin.Context) {
 	if !requireAdmin(c) {
+		return
+	}
+
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
 		return
 	}
 
@@ -737,11 +884,11 @@ func (s *Service) handleUpdateCustomClaim(c *gin.Context) {
 		argIdx++
 	}
 
-	args = append(args, claimID)
+	args = append(args, claimID, org.ID)
 	// SECURITY: Column names in 'sets' are hardcoded string literals from the if-blocks above,
 	// not user input. This is safe from SQL injection.
-	query := fmt.Sprintf("UPDATE custom_claims_mappings SET %s WHERE id = $%d",
-		joinStrings(sets, ", "), argIdx)
+	query := fmt.Sprintf("UPDATE custom_claims_mappings SET %s WHERE id = $%d AND org_id = $%d",
+		joinStrings(sets, ", "), argIdx, argIdx+1)
 
 	tag, err := s.db.Pool.Exec(c.Request.Context(), query, args...)
 	if err != nil {
@@ -760,9 +907,15 @@ func (s *Service) handleDeleteCustomClaim(c *gin.Context) {
 		return
 	}
 
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	claimID := c.Param("claimId")
 	tag, err := s.db.Pool.Exec(c.Request.Context(),
-		"DELETE FROM custom_claims_mappings WHERE id = $1", claimID)
+		"DELETE FROM custom_claims_mappings WHERE id = $1 AND org_id = $2", claimID, org.ID)
 	if err != nil {
 		respondError(c, s.logger, apperrors.Internal("Failed to delete custom claim", err))
 		return

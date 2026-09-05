@@ -1,0 +1,39 @@
+{{- if and .Values.monitoring.enabled .Values.monitoring.serviceMonitor.enabled }}
+# One ServiceMonitor for the whole platform: every enabled OpenIDX service
+# exposes Prometheus metrics at /metrics on its HTTP port, and every chart
+# Service names that port `http`, so a single label-selected monitor covers
+# the fleet (and picks up services you enable later without edits).
+# Requires the prometheus-operator CRDs (kube-prometheus-stack).
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "openidx.fullname" . }}
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    {{- with .Values.monitoring.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "openidx.selectorLabels" . | nindent 6 }}
+    # Only the Go services expose /metrics; admin-console (nginx), opa and
+    # the PAM broker would be permanently-down targets if swept in.
+    matchExpressions:
+      - key: app.kubernetes.io/component
+        operator: In
+        values:
+          - identity-service
+          - governance-service
+          - provisioning-service
+          - audit-service
+          - admin-api
+          - oauth-service
+          - gateway-service
+          - access-service
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: {{ .Values.monitoring.serviceMonitor.interval | default "30s" }}
+      scrapeTimeout: {{ .Values.monitoring.serviceMonitor.scrapeTimeout | default "10s" }}
+{{- end }}

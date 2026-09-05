@@ -81,7 +81,9 @@ describe('WindowsAppsPage', () => {
       host_state: [{ host_entry_id: 'h1', allow_unlisted_remote_programs: true }],
     })
     renderPage()
-    expect(await screen.findByText(/allow unlisted programs/i)).toBeInTheDocument()
+    // "allows" for one host, "allow" for several — the catalog carries both
+    // plural forms, and this assertion is about the banner being shown at all.
+    expect(await screen.findByText(/allows? unlisted programs/i)).toBeInTheDocument()
   })
 
   it('launches an app and opens the connect URL', async () => {

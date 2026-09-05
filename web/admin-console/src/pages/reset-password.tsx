@@ -1,13 +1,16 @@
 import { useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { Shield, ArrowLeft, Loader2, CheckCircle, AlertCircle } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card'
 import { Input } from '../components/ui/input'
 import { Label } from '../components/ui/label'
 import { baseURL } from '../lib/api'
+import { AuthCardFooter, PoweredBy } from '../components/auth-card-footer'
 
 export function ResetPasswordPage() {
+  const { t } = useTranslation()
   const [searchParams] = useSearchParams()
   const token = searchParams.get('token') || ''
   const [password, setPassword] = useState('')
@@ -23,12 +26,12 @@ export function ResetPasswordPage() {
     setViolations([])
 
     if (password !== confirmPassword) {
-      setError('Passwords do not match')
+      setError(t('pages.resetPassword.mismatch'))
       return
     }
 
     if (password.length < 8) {
-      setError('Password must be at least 8 characters')
+      setError(t('pages.resetPassword.tooShort'))
       return
     }
 
@@ -47,12 +50,13 @@ export function ResetPasswordPage() {
         setSuccess(true)
       } else if (data.violations) {
         setViolations(data.violations)
-        setError('Password does not meet the requirements:')
+        setError(t('pages.resetPassword.violationsIntro'))
       } else {
-        setError(data.error || 'Failed to reset password. The link may be expired.')
+        // The API's own error text when it sends one.
+        setError(data.error || t('pages.resetPassword.failed'))
       }
     } catch {
-      setError('Unable to connect to the server. Please try again.')
+      setError(t('pages.resetPassword.offline'))
     } finally {
       setIsSubmitting(false)
     }
@@ -64,13 +68,15 @@ export function ResetPasswordPage() {
         <Card className="w-full max-w-md shadow-xl">
           <CardContent className="pt-6">
             <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-md">
-              <AlertCircle className="h-4 w-4 text-red-600 flex-shrink-0" />
-              <p className="text-sm text-red-600">Invalid or missing reset token.</p>
+              <AlertCircle className="h-4 w-4 text-red-700 flex-shrink-0" />
+              <p className="text-sm text-red-700">
+                {t('pages.resetPassword.invalidToken')}
+              </p>
             </div>
             <Link to="/login" className="block mt-4">
               <Button variant="ghost" className="w-full">
                 <ArrowLeft className="mr-2 h-4 w-4" />
-                Back to login
+                {t('pages.resetPassword.backToLogin')}
               </Button>
             </Link>
           </CardContent>
@@ -93,7 +99,7 @@ export function ResetPasswordPage() {
               OpenIDX
             </CardTitle>
             <CardDescription className="text-base mt-2">
-              Set a new password
+              {t('pages.resetPassword.title')}
             </CardDescription>
           </div>
         </CardHeader>
@@ -104,12 +110,12 @@ export function ResetPasswordPage() {
               <div className="flex items-center gap-2 p-3 bg-green-50 border border-green-200 rounded-md">
                 <CheckCircle className="h-4 w-4 text-green-600 flex-shrink-0" />
                 <p className="text-sm text-green-700">
-                  Your password has been reset successfully. You can now sign in with your new password.
+                  {t('pages.resetPassword.success')}
                 </p>
               </div>
               <Link to="/login">
                 <Button className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700" size="lg">
-                  Go to Login
+                  {t('pages.resetPassword.goToLogin')}
                 </Button>
               </Link>
             </div>
@@ -118,11 +124,13 @@ export function ResetPasswordPage() {
               {(error || violations.length > 0) && (
                 <div className="p-3 bg-red-50 border border-red-200 rounded-md">
                   <div className="flex items-center gap-2">
-                    <AlertCircle className="h-4 w-4 text-red-600 flex-shrink-0" />
-                    <p className="text-sm text-red-600">{error}</p>
+                    <AlertCircle className="h-4 w-4 text-red-700 flex-shrink-0" />
+                    {/* Either one of this page's own messages or the API's. */}
+                    <p className="text-sm text-red-700">{error}</p>
                   </div>
                   {violations.length > 0 && (
-                    <ul className="mt-2 ml-6 list-disc text-sm text-red-600 space-y-1">
+                    <ul className="mt-2 ml-6 list-disc text-sm text-red-700 space-y-1">
+                      {/* Each violation is composed by the password policy. */}
                       {violations.map((v, i) => <li key={i}>{v}</li>)}
                     </ul>
                   )}
@@ -130,11 +138,11 @@ export function ResetPasswordPage() {
               )}
 
               <div className="space-y-2">
-                <Label htmlFor="password">New Password</Label>
+                <Label htmlFor="password">{t('pages.resetPassword.newPassword')}</Label>
                 <Input
                   id="password"
                   type="password"
-                  placeholder="Enter new password"
+                  placeholder={t('pages.resetPassword.newPasswordPlaceholder')}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
@@ -144,11 +152,13 @@ export function ResetPasswordPage() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="confirm-password">Confirm Password</Label>
+                <Label htmlFor="confirm-password">
+                  {t('pages.resetPassword.confirmPassword')}
+                </Label>
                 <Input
                   id="confirm-password"
                   type="password"
-                  placeholder="Confirm new password"
+                  placeholder={t('pages.resetPassword.confirmPasswordPlaceholder')}
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   required
@@ -165,38 +175,28 @@ export function ResetPasswordPage() {
                 {isSubmitting ? (
                   <span className="flex items-center gap-2">
                     <Loader2 className="h-4 w-4 animate-spin" />
-                    Resetting...
+                    {t('pages.resetPassword.submitting')}
                   </span>
                 ) : (
-                  'Reset Password'
+                  t('pages.resetPassword.submit')
                 )}
               </Button>
 
               <Link to="/login">
                 <Button type="button" variant="ghost" className="w-full">
                   <ArrowLeft className="mr-2 h-4 w-4" />
-                  Back to login
+                  {t('pages.resetPassword.backToLogin')}
                 </Button>
               </Link>
             </form>
           )}
         </CardContent>
 
-        <div className="px-6 py-4 bg-muted border-t border-border rounded-b-lg">
-          <div className="flex items-center justify-center gap-4 text-xs text-muted-foreground">
-            <span>Privacy</span>
-            <span>•</span>
-            <span>Terms</span>
-            <span>•</span>
-            <span>Help</span>
-          </div>
-        </div>
+        <AuthCardFooter />
       </Card>
 
       <div className="absolute bottom-4 text-center w-full">
-        <p className="text-sm text-muted-foreground">
-          Powered by <span className="font-semibold text-foreground">OpenIDX</span>
-        </p>
+        <PoweredBy />
       </div>
     </div>
   )

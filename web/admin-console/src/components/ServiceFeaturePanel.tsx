@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Shield, Globe, Monitor, Loader2, AlertCircle, CheckCircle2, XCircle } from 'lucide-react'
 import { Button } from './ui/button'
@@ -56,21 +57,23 @@ const FeatureIcon = ({ feature }: { feature: string }) => {
 }
 
 const HealthBadge = ({ status }: { status: string }) => {
+  const { t } = useTranslation()
   switch (status) {
     case 'healthy':
-      return <Badge variant="default" className="bg-green-500"><CheckCircle2 className="h-3 w-3 mr-1" />Healthy</Badge>
+      return <Badge variant="default" className="bg-green-500"><CheckCircle2 className="h-3 w-3 mr-1" />{t('pages.proxyRoutes.serviceFeatures.health.healthy')}</Badge>
     case 'degraded':
-      return <Badge variant="default" className="bg-yellow-500"><AlertCircle className="h-3 w-3 mr-1" />Degraded</Badge>
+      return <Badge variant="default" className="bg-yellow-500"><AlertCircle className="h-3 w-3 mr-1" />{t('pages.proxyRoutes.serviceFeatures.health.degraded')}</Badge>
     case 'unhealthy':
-      return <Badge variant="destructive"><XCircle className="h-3 w-3 mr-1" />Unhealthy</Badge>
+      return <Badge variant="destructive"><XCircle className="h-3 w-3 mr-1" />{t('pages.proxyRoutes.serviceFeatures.health.unhealthy')}</Badge>
     default:
-      return <Badge variant="secondary">Unknown</Badge>
+      return <Badge variant="secondary">{t('pages.proxyRoutes.serviceFeatures.health.unknown')}</Badge>
   }
 }
 
 export function ServiceFeaturePanel({ routeId, routeType, onUpdate }: ServiceFeaturePanelProps) {
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const { t } = useTranslation()
   const [configModal, setConfigModal] = useState<string | null>(null)
   const [featureConfig, setFeatureConfig] = useState({
     ziti_service_name: '',
@@ -97,12 +100,15 @@ export function ServiceFeaturePanel({ routeId, routeType, onUpdate }: ServiceFea
     },
     onSuccess: (_, { feature }) => {
       queryClient.invalidateQueries({ queryKey: ['service-status', routeId] })
-      toast({ title: 'Feature Enabled', description: `${feature} has been enabled on this service.` })
+      toast({
+        title: t('pages.proxyRoutes.serviceFeatures.featureEnabled'),
+        description: t('pages.proxyRoutes.serviceFeatures.featureEnabledDesc', { feature }),
+      })
       setConfigModal(null)
       onUpdate?.()
     },
     onError: (error: Error) => {
-      toast({ title: 'Error', description: error.message, variant: 'destructive' })
+      toast({ title: t('common.error'), description: error.message, variant: 'destructive' })
     },
   })
 
@@ -112,11 +118,14 @@ export function ServiceFeaturePanel({ routeId, routeType, onUpdate }: ServiceFea
     },
     onSuccess: (_, feature) => {
       queryClient.invalidateQueries({ queryKey: ['service-status', routeId] })
-      toast({ title: 'Feature Disabled', description: `${feature} has been disabled.` })
+      toast({
+        title: t('pages.proxyRoutes.serviceFeatures.featureDisabled'),
+        description: t('pages.proxyRoutes.serviceFeatures.featureDisabledDesc', { feature }),
+      })
       onUpdate?.()
     },
     onError: (error: Error) => {
-      toast({ title: 'Error', description: error.message, variant: 'destructive' })
+      toast({ title: t('common.error'), description: error.message, variant: 'destructive' })
     },
   })
 
@@ -157,11 +166,11 @@ export function ServiceFeaturePanel({ routeId, routeType, onUpdate }: ServiceFea
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            Features
+            {t('pages.proxyRoutes.serviceFeatures.title')}
             {serviceStatus && <HealthBadge status={serviceStatus.overall_health} />}
           </CardTitle>
           <CardDescription>
-            Enable or disable integration features for this service
+            {t('pages.proxyRoutes.serviceFeatures.description')}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -170,9 +179,9 @@ export function ServiceFeaturePanel({ routeId, routeType, onUpdate }: ServiceFea
             <div className="flex items-center gap-3">
               <FeatureIcon feature="ziti" />
               <div>
-                <div className="font-medium">OpenZiti Zero Trust</div>
+                <div className="font-medium">{t('pages.proxyRoutes.serviceFeatures.ziti')}</div>
                 <div className="text-sm text-muted-foreground">
-                  Route traffic through secure Ziti overlay network
+                  {t('pages.proxyRoutes.serviceFeatures.zitiDesc')}
                 </div>
               </div>
             </div>
@@ -180,7 +189,7 @@ export function ServiceFeaturePanel({ routeId, routeType, onUpdate }: ServiceFea
               {features.ziti?.enabled && (
                 <HealthBadge status={features.ziti.health_status} />
               )}
-              <Switch
+              <Switch aria-label={t('pages.proxyRoutes.serviceFeatures.ziti')}
                 checked={features.ziti?.enabled || false}
                 onCheckedChange={() => handleToggle('ziti', features.ziti?.enabled || false)}
                 disabled={enableFeature.isPending || disableFeature.isPending}
@@ -193,9 +202,9 @@ export function ServiceFeaturePanel({ routeId, routeType, onUpdate }: ServiceFea
             <div className="flex items-center gap-3">
               <FeatureIcon feature="browzer" />
               <div>
-                <div className="font-medium">BrowZer</div>
+                <div className="font-medium">{t('pages.proxyRoutes.serviceFeatures.browzer')}</div>
                 <div className="text-sm text-muted-foreground">
-                  Enable browser-native Ziti access (requires Ziti)
+                  {t('pages.proxyRoutes.serviceFeatures.browzerDesc')}
                 </div>
               </div>
             </div>
@@ -203,7 +212,7 @@ export function ServiceFeaturePanel({ routeId, routeType, onUpdate }: ServiceFea
               {features.browzer?.enabled && (
                 <HealthBadge status={features.browzer.health_status} />
               )}
-              <Switch
+              <Switch aria-label={t('pages.proxyRoutes.serviceFeatures.browzer')}
                 checked={features.browzer?.enabled || false}
                 onCheckedChange={() => handleToggle('browzer', features.browzer?.enabled || false)}
                 disabled={!features.ziti?.enabled || enableFeature.isPending || disableFeature.isPending}
@@ -217,9 +226,9 @@ export function ServiceFeaturePanel({ routeId, routeType, onUpdate }: ServiceFea
               <div className="flex items-center gap-3">
                 <FeatureIcon feature="guacamole" />
                 <div>
-                  <div className="font-medium">Guacamole Remote Access</div>
+                  <div className="font-medium">{t('pages.proxyRoutes.serviceFeatures.guacamole')}</div>
                   <div className="text-sm text-muted-foreground">
-                    Clientless {routeType.toUpperCase()} access through browser
+                    {t('pages.proxyRoutes.serviceFeatures.guacamoleDesc', { protocol: routeType.toUpperCase() })}
                   </div>
                 </div>
               </div>
@@ -227,7 +236,7 @@ export function ServiceFeaturePanel({ routeId, routeType, onUpdate }: ServiceFea
                 {features.guacamole?.enabled && (
                   <HealthBadge status={features.guacamole.health_status} />
                 )}
-                <Switch
+                <Switch aria-label={t('pages.proxyRoutes.serviceFeatures.guacamole')}
                   checked={features.guacamole?.enabled || false}
                   onCheckedChange={() => handleToggle('guacamole', features.guacamole?.enabled || false)}
                   disabled={enableFeature.isPending || disableFeature.isPending}
@@ -240,6 +249,7 @@ export function ServiceFeaturePanel({ routeId, routeType, onUpdate }: ServiceFea
           {Object.values(features).map((feature) =>
             feature.error_message && feature.enabled && (
               <div key={feature.id} className="p-3 bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded-lg">
+                {/* Feature name and message are the server's own strings. */}
                 <div className="flex items-center gap-2 text-red-600 dark:text-red-400">
                   <AlertCircle className="h-4 w-4" />
                   <span className="font-medium">{feature.feature_name}:</span>
@@ -256,35 +266,36 @@ export function ServiceFeaturePanel({ routeId, routeType, onUpdate }: ServiceFea
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
-              Configure {configModal === 'ziti' ? 'OpenZiti' : 'Guacamole'}
+              {/* The integration's product name stays untranslated. */}
+              {t('pages.proxyRoutes.serviceFeatures.configure', { feature: configModal === 'ziti' ? 'OpenZiti' : 'Guacamole' })}
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             {configModal === 'ziti' && (
               <>
                 <div>
-                  <Label>Service Name (optional)</Label>
+                  <Label>{t('pages.proxyRoutes.serviceFeatures.zitiServiceName')}</Label>
                   <Input
                     value={featureConfig.ziti_service_name}
                     onChange={(e) => setFeatureConfig({ ...featureConfig, ziti_service_name: e.target.value })}
-                    placeholder="Auto-generated if empty"
+                    placeholder={t('pages.proxyRoutes.serviceFeatures.zitiServiceNamePlaceholder')}
                   />
                 </div>
                 <div>
-                  <Label>Target Host (optional)</Label>
+                  <Label>{t('pages.proxyRoutes.serviceFeatures.targetHost')}</Label>
                   <Input
                     value={featureConfig.ziti_host}
                     onChange={(e) => setFeatureConfig({ ...featureConfig, ziti_host: e.target.value })}
-                    placeholder="Uses route's remote_host if empty"
+                    placeholder={t('pages.proxyRoutes.serviceFeatures.targetHostPlaceholder')}
                   />
                 </div>
                 <div>
-                  <Label>Target Port (optional)</Label>
+                  <Label>{t('pages.proxyRoutes.serviceFeatures.targetPort')}</Label>
                   <Input
                     type="number"
                     value={featureConfig.ziti_port || ''}
                     onChange={(e) => setFeatureConfig({ ...featureConfig, ziti_port: parseInt(e.target.value) || 0 })}
-                    placeholder="Uses route's remote_port if empty"
+                    placeholder={t('pages.proxyRoutes.serviceFeatures.targetPortPlaceholder')}
                   />
                 </div>
               </>
@@ -292,7 +303,7 @@ export function ServiceFeaturePanel({ routeId, routeType, onUpdate }: ServiceFea
             {configModal === 'guacamole' && (
               <>
                 <div>
-                  <Label>Protocol</Label>
+                  <Label>{t('pages.proxyRoutes.serviceFeatures.protocol')}</Label>
                   <Input
                     value={featureConfig.guacamole_protocol}
                     onChange={(e) => setFeatureConfig({ ...featureConfig, guacamole_protocol: e.target.value })}
@@ -300,15 +311,15 @@ export function ServiceFeaturePanel({ routeId, routeType, onUpdate }: ServiceFea
                   />
                 </div>
                 <div>
-                  <Label>Host (optional)</Label>
+                  <Label>{t('pages.proxyRoutes.serviceFeatures.host')}</Label>
                   <Input
                     value={featureConfig.guacamole_host}
                     onChange={(e) => setFeatureConfig({ ...featureConfig, guacamole_host: e.target.value })}
-                    placeholder="Uses route's remote_host if empty"
+                    placeholder={t('pages.proxyRoutes.serviceFeatures.targetHostPlaceholder')}
                   />
                 </div>
                 <div>
-                  <Label>Port (optional)</Label>
+                  <Label>{t('pages.proxyRoutes.serviceFeatures.port')}</Label>
                   <Input
                     type="number"
                     value={featureConfig.guacamole_port || ''}
@@ -317,20 +328,20 @@ export function ServiceFeaturePanel({ routeId, routeType, onUpdate }: ServiceFea
                   />
                 </div>
                 <div>
-                  <Label>Username (optional)</Label>
+                  <Label>{t('pages.proxyRoutes.serviceFeatures.username')}</Label>
                   <Input
                     value={featureConfig.guacamole_username}
                     onChange={(e) => setFeatureConfig({ ...featureConfig, guacamole_username: e.target.value })}
-                    placeholder="For pre-configured connections"
+                    placeholder={t('pages.proxyRoutes.serviceFeatures.preconfiguredPlaceholder')}
                   />
                 </div>
                 <div>
-                  <Label>Password (optional)</Label>
+                  <Label>{t('pages.proxyRoutes.serviceFeatures.password')}</Label>
                   <Input
                     type="password"
                     value={featureConfig.guacamole_password}
                     onChange={(e) => setFeatureConfig({ ...featureConfig, guacamole_password: e.target.value })}
-                    placeholder="For pre-configured connections"
+                    placeholder={t('pages.proxyRoutes.serviceFeatures.preconfiguredPlaceholder')}
                   />
                 </div>
               </>
@@ -338,11 +349,11 @@ export function ServiceFeaturePanel({ routeId, routeType, onUpdate }: ServiceFea
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setConfigModal(null)}>
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button onClick={handleEnableWithConfig} disabled={enableFeature.isPending}>
               {enableFeature.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-              Enable
+              {t('pages.proxyRoutes.serviceFeatures.enable')}
             </Button>
           </DialogFooter>
         </DialogContent>

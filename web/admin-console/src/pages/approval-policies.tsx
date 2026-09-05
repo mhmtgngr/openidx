@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import { Plus, Pencil, Trash2, ShieldCheck } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
@@ -31,6 +32,7 @@ interface ApprovalPolicy {
 export function ApprovalPoliciesPage() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const { t } = useTranslation()
   const [editOpen, setEditOpen] = useState(false)
   const [editPolicy, setEditPolicy] = useState<ApprovalPolicy | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<ApprovalPolicy | null>(null)
@@ -53,10 +55,10 @@ export function ApprovalPoliciesPage() {
     mutationFn: (body: Record<string, unknown>) => api.post('/api/v1/governance/approval-policies', body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['approval-policies'] })
-      toast({ title: editPolicy ? 'Policy updated' : 'Policy created' })
+      toast({ title: editPolicy ? t('pages.approvalPolicies.toasts.updated') : t('pages.approvalPolicies.toasts.created') })
       setEditOpen(false)
     },
-    onError: () => toast({ title: 'Failed to save policy', variant: 'destructive' }),
+    onError: () => toast({ title: t('pages.approvalPolicies.toasts.saveFailed'), variant: 'destructive' }),
   })
 
   const updateMutation = useMutation({
@@ -64,17 +66,17 @@ export function ApprovalPoliciesPage() {
       api.put(`/api/v1/governance/approval-policies/${id}`, body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['approval-policies'] })
-      toast({ title: 'Policy updated' })
+      toast({ title: t('pages.approvalPolicies.toasts.updated') })
       setEditOpen(false)
     },
-    onError: () => toast({ title: 'Failed to update policy', variant: 'destructive' }),
+    onError: () => toast({ title: t('pages.approvalPolicies.toasts.updateFailed'), variant: 'destructive' }),
   })
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => api.delete(`/api/v1/governance/approval-policies/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['approval-policies'] })
-      toast({ title: 'Policy deleted' })
+      toast({ title: t('pages.approvalPolicies.toasts.deleted') })
       setDeleteTarget(null)
     },
   })
@@ -102,7 +104,7 @@ export function ApprovalPoliciesPage() {
     try {
       steps = JSON.parse(form.approval_steps)
     } catch {
-      toast({ title: 'Invalid JSON in approval steps', variant: 'destructive' })
+      toast({ title: t('pages.approvalPolicies.toasts.invalidJson'), variant: 'destructive' })
       return
     }
 
@@ -127,36 +129,36 @@ export function ApprovalPoliciesPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Approval Policies</h1>
-          <p className="text-muted-foreground">Define approval workflows for access requests</p>
+          <h1 className="text-3xl font-bold tracking-tight">{t('nav.items.approvalPolicies')}</h1>
+          <p className="text-muted-foreground">{t('pages.approvalPolicies.subtitle')}</p>
         </div>
-        <Button onClick={openCreate}><Plus className="mr-2 h-4 w-4" />Create Policy</Button>
+        <Button onClick={openCreate}><Plus className="mr-2 h-4 w-4" />{t('pages.approvalPolicies.createPolicy')}</Button>
       </div>
 
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2"><ShieldCheck className="h-5 w-5" />Policies</CardTitle>
+          <CardTitle className="flex items-center gap-2"><ShieldCheck className="h-5 w-5" />{t('pages.approvalPolicies.cardTitle')}</CardTitle>
         </CardHeader>
         <CardContent>
-          {isLoading ? <p className="text-center py-8 text-muted-foreground">Loading...</p> :
-           isError ? <QueryError error={error} resource="approval policies" /> :
-           policies.length === 0 ? <p className="text-center py-8 text-muted-foreground">No policies defined</p> : (
+          {isLoading ? <p className="text-center py-8 text-muted-foreground">{t('pages.approvalPolicies.loading')}</p> :
+           isError ? <QueryError error={error} resource={t('pages.approvalPolicies.resourceName')} /> :
+           policies.length === 0 ? <p className="text-center py-8 text-muted-foreground">{t('pages.approvalPolicies.empty')}</p> : (
             <Table>
               <TableHeader><TableRow>
-                <TableHead>Name</TableHead><TableHead>Resource Type</TableHead>
-                <TableHead>Steps</TableHead><TableHead>Max Wait</TableHead>
-                <TableHead>Status</TableHead><TableHead>Created</TableHead><TableHead>Actions</TableHead>
+                <TableHead>{t('pages.approvalPolicies.table.name')}</TableHead><TableHead>{t('pages.approvalPolicies.table.resourceType')}</TableHead>
+                <TableHead>{t('pages.approvalPolicies.table.steps')}</TableHead><TableHead>{t('pages.approvalPolicies.table.maxWait')}</TableHead>
+                <TableHead>{t('pages.approvalPolicies.table.status')}</TableHead><TableHead>{t('pages.approvalPolicies.table.created')}</TableHead><TableHead>{t('pages.approvalPolicies.table.actions')}</TableHead>
               </TableRow></TableHeader>
               <TableBody>
                 {policies.map(p => (
                   <TableRow key={p.id}>
                     <TableCell className="font-medium">{p.name}</TableCell>
                     <TableCell><Badge variant="outline">{p.resource_type}</Badge></TableCell>
-                    <TableCell>{p.approval_steps?.length || 0} steps</TableCell>
-                    <TableCell>{p.max_wait_hours}h</TableCell>
+                    <TableCell>{t('pages.approvalPolicies.stepCount', { n: p.approval_steps?.length || 0 })}</TableCell>
+                    <TableCell>{t('pages.approvalPolicies.waitHours', { n: p.max_wait_hours })}</TableCell>
                     <TableCell>
                       <Badge variant={p.enabled ? 'default' : 'secondary'}>
-                        {p.enabled ? 'Enabled' : 'Disabled'}
+                        {p.enabled ? t('pages.approvalPolicies.enabled') : t('pages.approvalPolicies.disabled')}
                       </Badge>
                     </TableCell>
                     <TableCell>{formatDate(p.created_at)}</TableCell>
@@ -181,31 +183,31 @@ export function ApprovalPoliciesPage() {
       {/* Create/Edit Dialog */}
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
         <DialogContent className="max-w-lg">
-          <DialogHeader><DialogTitle>{editPolicy ? 'Edit Policy' : 'Create Approval Policy'}</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{editPolicy ? t('pages.approvalPolicies.dialog.editTitle') : t('pages.approvalPolicies.dialog.createTitle')}</DialogTitle></DialogHeader>
           <div className="space-y-4">
             <div>
-              <label className="text-sm font-medium">Name</label>
-              <Input value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} placeholder="Policy name" />
+              <label className="text-sm font-medium">{t('pages.approvalPolicies.dialog.name')}</label>
+              <Input value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} placeholder={t('pages.approvalPolicies.dialog.namePlaceholder')} />
             </div>
             <div>
-              <label className="text-sm font-medium">Resource Type</label>
+              <label htmlFor="approval-policies-resource-type" className="text-sm font-medium">{t('pages.approvalPolicies.dialog.resourceType')}</label>
               <Select value={form.resource_type} onValueChange={v => setForm(p => ({ ...p, resource_type: v }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger id="approval-policies-resource-type"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="role">Role</SelectItem>
-                  <SelectItem value="group">Group</SelectItem>
-                  <SelectItem value="application">Application</SelectItem>
+                  <SelectItem value="role">{t('pages.approvalPolicies.dialog.typeRole')}</SelectItem>
+                  <SelectItem value="group">{t('pages.approvalPolicies.dialog.typeGroup')}</SelectItem>
+                  <SelectItem value="application">{t('pages.approvalPolicies.dialog.typeApplication')}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <div>
-              <label className="text-sm font-medium">Max Wait Hours</label>
-              <Input type="number" value={form.max_wait_hours}
+              <label htmlFor="approval-policies-max-wait-hours" className="text-sm font-medium">{t('pages.approvalPolicies.dialog.maxWaitHours')}</label>
+              <Input id="approval-policies-max-wait-hours" type="number" value={form.max_wait_hours}
                 onChange={e => setForm(p => ({ ...p, max_wait_hours: parseInt(e.target.value) || 72 }))} />
             </div>
             <div>
-              <label className="text-sm font-medium">Approval Steps (JSON)</label>
-              <textarea className="w-full rounded-md border p-2 font-mono text-sm" rows={4}
+              <label htmlFor="approval-policies-steps" className="text-sm font-medium">{t('pages.approvalPolicies.dialog.steps')}</label>
+              <textarea id="approval-policies-steps" className="w-full rounded-md border p-2 font-mono text-sm" rows={4}
                 value={form.approval_steps}
                 onChange={e => setForm(p => ({ ...p, approval_steps: e.target.value }))} />
               <p className="text-xs text-muted-foreground mt-1">
@@ -215,14 +217,14 @@ export function ApprovalPoliciesPage() {
             <label className="flex items-center gap-2 text-sm">
               <input type="checkbox" checked={form.enabled}
                 onChange={e => setForm(p => ({ ...p, enabled: e.target.checked }))} />
-              Enabled
+              {t('pages.approvalPolicies.dialog.enabled')}
             </label>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setEditOpen(false)}>Cancel</Button>
+            <Button variant="outline" onClick={() => setEditOpen(false)}>{t('common.cancel')}</Button>
             <Button disabled={!form.name || createMutation.isPending || updateMutation.isPending}
               onClick={handleSave}>
-              {editPolicy ? 'Update' : 'Create'}
+              {editPolicy ? t('pages.approvalPolicies.dialog.update') : t('pages.approvalPolicies.dialog.create')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -232,15 +234,15 @@ export function ApprovalPoliciesPage() {
       <AlertDialog open={!!deleteTarget} onOpenChange={open => !open && setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete Policy</AlertDialogTitle>
+            <AlertDialogTitle>{t('pages.approvalPolicies.deleteDialog.title')}</AlertDialogTitle>
             <AlertDialogDescription>
-              Delete &quot;{deleteTarget?.name}&quot;? This cannot be undone.
+              {t('pages.approvalPolicies.deleteDialog.description', { name: deleteTarget?.name ?? '' })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}>
-              Delete
+              {t('common.delete')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

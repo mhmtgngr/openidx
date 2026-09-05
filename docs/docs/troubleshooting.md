@@ -55,9 +55,6 @@ If services can't validate tokens:
 ```bash
 # Check JWKS endpoint
 curl http://localhost:8006/.well-known/jwks.json
-
-# Check Keycloak (if using Keycloak auth)
-curl http://localhost:8180/realms/openidx/protocol/openid-connect/certs
 ```
 
 The JWKS cache has a 1-hour TTL. Restart the service to clear the cache.
@@ -145,5 +142,5 @@ npm install
 
 ## Getting Help
 
-- [GitHub Issues](https://github.com/openidx/openidx/issues) — bug reports and feature requests
-- [Security Issues](https://github.com/openidx/openidx/blob/main/SECURITY.md) — report via security@openidx.io
+- [GitHub Issues](https://github.com/mhmtgngr/openidx/issues) — bug reports and feature requests
+- [Security Issues](https://github.com/mhmtgngr/openidx/blob/main/SECURITY.md) — report via security@openidx.io

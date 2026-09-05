@@ -102,42 +102,6 @@ services:
       retries: 5
     networks:
       - openidx-network
-
-  #---------------------------------------------------------------------------
-  # Keycloak - Identity Provider
-  #---------------------------------------------------------------------------
-
-  keycloak:
-    image: quay.io/keycloak/keycloak:23.0
-    container_name: openidx-keycloak
-    command: start-dev --import-realm
-    environment:
-      KC_DB: postgres
-      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
-      KC_DB_USERNAME: openidx
-      KC_DB_PASSWORD: ${POSTGRES_PASSWORD:-openidx_secret}
-      KC_HOSTNAME_URL: http://localhost:8180
-      KC_HOSTNAME_STRICT: "false"
-      KC_HOSTNAME_STRICT_BACKCHANNEL: "false"
-      KC_HTTP_PORT: 8180
-      KEYCLOAK_ADMIN: admin
-      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
-    volumes:
-      - ./keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
-      - ./keycloak/themes:/opt/keycloak/themes:ro
-    ports:
-      - "8180:8180"
-    depends_on:
-      postgres:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/8180'"]
-      interval: 30s
-      timeout: 10s
-      retries: 10
-    networks:
-      - openidx-network
-
   #---------------------------------------------------------------------------
   # API Gateway - Apache APISIX
   #---------------------------------------------------------------------------

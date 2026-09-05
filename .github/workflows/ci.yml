@@ -13,7 +13,7 @@ permissions:
   checks: write
 
 env:
-  GO_VERSION: '1.25'
+  GO_VERSION: '1.26'
   CACHE_VERSION: v1
 
 jobs:
@@ -64,6 +64,132 @@ jobs:
         run: bash scripts/check-shell-prose.test.sh
       - name: Scan shell scripts
         run: bash scripts/check-shell-prose.sh
+      - name: Verify the docs-drift guard can go red
+        # Same mutation discipline: it must flag a citation that does not
+        # resolve AND stay green on globs, brace sets, elisions and Go symbols
+        # -- a guard that flags `internal/oauth/**` gets switched off.
+        run: bash scripts/check-docs-drift.test.sh
+      - name: No document may cite a path that is not there
+        run: bash scripts/check-docs-drift.sh --enforce
+      - name: Verify the detached-write guard can go red
+        # Same discipline again: it must flag a background pool call with no
+        # tenant AND stay green on conn.Close, a direct pgx.Connect outside the
+        # app pool, and a context that never reaches the database.
+        run: bash scripts/check-detached-org-writes.test.sh
+      - name: A detached database call must name its tenant
+        run: bash scripts/check-detached-org-writes.sh --enforce
+
+  # CI jobs here used to go red on other people's outages -- a Docker Hub 502
+  # on a base-image manifest, a reset connection to the chart CDN, a Docker Hub
+  # auth timeout while BOOTING THE BUILDER, and cdn.cocoapods.org declining the
+  # probe that decides whether it is a CDN, so CocoaPods tried to `git clone` it
+  # and the macOS client build died on `fatal: repository
+  # 'https://cdn.cocoapods.org/' not found` -- every one of them before a line
+  # of this repo was compiled, on commits that changed nothing related. Those
+  # steps now retry, and the retries are load-bearing enough to need guarding
+  # four ways: a retry wrapper that swallows the final exit code turns every
+  # red into a slow green; a duplicated block that drifts makes the second
+  # attempt run something the first never tried; `continue-on-error` with no
+  # retry left consuming it is a step that simply fails in silence; and a
+  # macOS Flutter build added without the CocoaPods priming step is exposed
+  # again from the day it lands. None of the four would be visible in a passing
+  # run, which is exactly why they are gates.
+  #
+  # A fifth belongs here because it is the same failure wearing CI's own
+  # clothes: `go test -race` without an explicit `-timeout` inherits a
+  # ten-minute per-package default meant for uninstrumented tests, so on a slow
+  # runner the Race Detector check goes red with no data race in it at all --
+  # a control reporting a diagnosis it did not make.
+  ci-resilience-guards:
+    name: Retries can still go red
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Verify the retry wrapper preserves failure
+        run: bash scripts/ci-retry.test.sh
+      - name: Verify the drift guard works
+        run: bash scripts/check-docker-retry-drift.test.sh
+      - name: A retried step must stay identical and never fail silently
+        run: bash scripts/check-docker-retry-drift.sh
+      - name: Verify the CocoaPods priming survives a blip and not an outage
+        # The prime is a retry like the others, so it carries the same risk:
+        # a `|| true` added to "stop the macOS job being flaky" would make
+        # every CDN outage look like a healthy prime. The suite fails if it
+        # ever exits 0 on a command that never succeeded.
+        run: bash scripts/ci-prime-cocoapods.test.sh
+      - name: Verify the CocoaPods priming guard can go red
+        # Same mutation discipline as the guards above: it must flag a macOS
+        # Flutter build with no priming step AND one that primes after the
+        # build, and stay green on Android legs and on prose that merely names
+        # a macOS runner.
+        run: bash scripts/check-macos-pod-priming.test.sh
+      - name: A macOS Flutter build must create its spec source first
+        run: bash scripts/check-macos-pod-priming.sh
+      - name: Verify the race-timeout guard can go red
+        # Same mutation discipline: it must flag a bare `-race`, including one
+        # split across a line continuation where the first line looks complete,
+        # and stay green on both spellings of the flag and on a commented-out
+        # example.
+        run: bash scripts/check-race-timeout.test.sh
+      - name: A race run must choose its own timeout
+        run: bash scripts/check-race-timeout.sh
+
+  # The files under .github/ decide what CI runs and who reviews it, and both
+  # had defects that made them describe a process that was not happening.
+  #
+  # A workflow GitHub cannot parse takes ITSELF out of CI: it does not skip the
+  # file, it creates a run named after the file path, schedules zero jobs, and
+  # marks it failed. client-desktop-build.yml shipped that way in #814
+  # (`run: echo "TODO: ..."`, a plain scalar containing ": ") and the desktop
+  # client went unbuilt on every commit since, behind a red check with no job
+  # and no log to read.
+  #
+  # CODEOWNERS named eighteen @openidx/* teams in a repository under a personal
+  # namespace, which cannot have teams — so under code-owner review either
+  # every rule no-ops or every PR is unclearable. And the required-checks
+  # aggregate listed seven of this workflow's jobs; every guard added since,
+  # plus the frontend tests, could go red without Required Checks noticing.
+  github-config:
+    name: GitHub config is runnable
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Verify the workflow guard can go red
+        run: bash scripts/check-workflows-parse.test.sh
+      - name: Every workflow must be one GitHub can run
+        run: bash scripts/check-workflows-parse.sh
+      - name: Verify the CODEOWNERS guard can go red
+        run: bash scripts/check-codeowners.test.sh
+      - name: CODEOWNERS must name owners that can review
+        run: bash scripts/check-codeowners.sh
+      - name: Verify the required-checks guard can go red
+        run: bash scripts/check-required-checks.test.sh
+      - name: Every CI job must be required or declared informational
+        run: bash scripts/check-required-checks.sh
+      - name: Verify the version-sync guard can go red
+        run: bash scripts/check-version-sync.test.sh
+      - name: Every artifact declares the version in VERSION
+        run: bash scripts/check-version-sync.sh --enforce
+      - name: Verify the release-signing guard can go red
+        run: bash scripts/check-release-signing.test.sh
+      - name: A release artifact must not claim a signature it lacks
+        run: bash scripts/check-release-signing.sh --enforce
+
+  # The README's quick start is two commands, and nothing had ever run either
+  # of them: generate-secrets.sh aborted on SIGPIPE, it omitted two variables
+  # compose declares required, and compose could not see the .env it wrote.
+  # Three separate stoppers in the first thing a new operator does, all of them
+  # invisible because no job exercised the path.
+  first-run:
+    name: The documented first run works
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Run the README quick start and check compose resolves
+        run: bash scripts/check-first-run.test.sh
 
   ui-safety-guards:
     name: UI safety guards
@@ -77,12 +203,18 @@ jobs:
           bash scripts/check-destructive-confirm.test.sh
           bash scripts/check-no-raw-neutral-literals.test.sh
           bash scripts/check-no-handrolled-tables.test.sh
+          bash scripts/check-keyboard-reachable.test.sh
+          bash scripts/check-control-names.test.sh
+          bash scripts/check-e2e-suite.test.sh
       - name: Enforce UI safety guards
         run: |
           bash scripts/check-query-error-coverage.sh --enforce
           bash scripts/check-destructive-confirm.sh --enforce
           bash scripts/check-no-raw-neutral-literals.sh --enforce
           bash scripts/check-no-handrolled-tables.sh --enforce
+          bash scripts/check-keyboard-reachable.sh --enforce
+          bash scripts/check-control-names.sh --enforce
+          bash scripts/check-e2e-suite.sh --enforce
 
   # The self-heal loop is the ONLY thing allowed to restart box services on its
   # own, so its collectors, ledger dedup, and (most importantly) the remediator
@@ -246,7 +378,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        go-version: ['1.25']
+        go-version: ['1.26']
 
     steps:
       - uses: actions/checkout@v7
@@ -400,7 +532,10 @@ jobs:
           # Keep this a hard failure: it is the fast, per-package signal, and
           # it is the only job that runs with the Postgres/Redis services
           # attached, so it covers tests test-race cannot.
-          go test -v -race -coverprofile=coverage_${{ steps.cov.outputs.slug }}.out -covermode=atomic ./${{ matrix.package }}/...
+          # -timeout for the same reason test-race carries one: Go's default
+          # ten minutes per package is a bound for uninstrumented tests, and
+          # under -race it stops distinguishing a hang from a slow runner.
+          go test -v -race -timeout 20m -coverprofile=coverage_${{ steps.cov.outputs.slug }}.out -covermode=atomic ./${{ matrix.package }}/...
 
       # Upload whatever coverage was produced even when the tests failed, so a
       # red run still yields a coverage artifact to inspect.
@@ -515,6 +650,18 @@ jobs:
           # run; the rate-limit middleware itself is still exercised.
           export RATE_LIMIT_AUTH_REQUESTS=10000
           export RATE_LIMIT_REQUESTS=10000
+          # The Definition of Done's posture (§6.2): assignment is a GRANT, not
+          # a catalogue. Every existing test keeps passing under it because the
+          # gate only denies when the application row has require_assignment=true
+          # (migration v137, default false), and no seeded application sets it —
+          # enforced_posture_test.go creates one that does. Before this, nothing
+          # in test/ or .github/ mentioned this variable at all, so the flip the
+          # DoD turns on had never been exercised.
+          export ACCESS_ASSIGNMENT_ENFORCE=true
+          # There is one login UI and it is not served by this process. The
+          # harness never follows the redirect; the enforced-posture test only
+          # asserts the Location it points at.
+          export OAUTH_LOGIN_URL=http://localhost:3000/login
 
           /tmp/identity-service > /tmp/identity.log 2>&1 &
           IDENTITY_PID=$!
@@ -556,6 +703,9 @@ jobs:
           go test -v -tags=integration -timeout=20m ./test/integration/...
 
   # Benchmark regression detection
+  # status-check: informational — publishes a comparison comment; a slower
+  # benchmark is a report to read, not a reason to block a merge, and the
+  # numbers move with the runner it landed on.
   benchmark:
     name: Benchmarks
     runs-on: ubuntu-latest
@@ -664,12 +814,39 @@ jobs:
             ${{ runner.os }}-go-build-${{ env.GO_VERSION }}-
             ${{ runner.os }}-go-build-
 
+      # Formatting is gated here, with the toolchain go.mod pins, rather than by
+      # golangci-lint's gofmt formatter. golangci-lint's gofmt is whatever the
+      # linter BINARY was built with (v2.13.2 = go1.27), which is not the Go
+      # that builds this module -- and gofmt's alignment heuristics changed
+      # between the two, so the linter demanded a layout `gofmt -w` never
+      # produces here. This step can only ever ask for what a contributor's own
+      # gofmt gives them.
+      - name: gofmt
+        run: |
+          # Scope: the packages of THIS module, which is what golangci-lint's
+          # formatter covered -- a like-for-like swap, not a wider gate. `./...`
+          # deliberately stops at agent/ (its own module, its own Go version,
+          # and it vendors third_party/ sources that must not be reformatted).
+          mapfile -t dirs < <(go list -f '{{.Dir}}' ./...)
+          unformatted="$(gofmt -l "${dirs[@]}")"
+          if [ -n "$unformatted" ]; then
+            echo "Not gofmt-clean under $(go version):"
+            echo "$unformatted"
+            echo
+            echo "Fix with: gofmt -w <file>..."
+            exit 1
+          fi
+          echo "gofmt clean under $(go version) across ${#dirs[@]} packages"
+
       - name: Run golangci-lint
-        # v7 of the action runs golangci-lint v2, which is built with a recent
-        # enough Go to analyze this go1.25 module (v1 cannot).
+        # v7+ of the action runs golangci-lint v2, which is built with a recent
+        # enough Go to analyze this go1.26 module (v1 cannot). The pin must stay
+        # ahead of the module's go directive: a linter built with an older Go
+        # refuses the module outright ('language version ... is lower than the
+        # targeted Go version'). v2.13.2 ships built with go1.27.
         uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.12.2
+          version: v2.13.2
 
   # orgscope is the v2.0-multi-tenancy static helper: it walks
   # internal/ looking for SQL statements that target a scoped table
@@ -699,15 +876,21 @@ jobs:
           rc=$?
           set -e
           count=$(tail -n1 orgscope.err 2>/dev/null | grep -oE '^orgscope: [0-9]+' | awk '{print $2}' || echo "?")
+          # The census is the tenant-boundary state of the whole schema. Print
+          # it in the summary so a drifting classification is visible on the PR
+          # that causes it, not a release later.
+          go run ./tools/orgscope -census > census.out 2> census.err || true
           {
-            echo "## orgscope — possible org-unscoped queries"
+            echo "## orgscope — tenant boundary"
             echo
-            echo "**Finding count:** ${count}"
+            echo "**Blocking findings:** ${count}"
+            echo
+            echo "$(tail -n1 census.err)"
             echo
             if [ "$rc" -ne 0 ]; then
-              echo "❌ **Gate failed** — every query touching a tenant-scoped table must filter/populate org_id (or carry an //orgscope:ignore <reason>)."
+              echo "❌ **Gate failed** — either a table is not classified (see tools/orgscope/scoped.go) or a query touching a tenant-scoped table does not filter/populate org_id (or carry an //orgscope:ignore <reason>)."
             else
-              echo "✅ No unscoped tenant queries."
+              echo "✅ Every table is classified and no unscoped tenant query was found."
             fi
             echo
             echo "### Findings"
@@ -718,6 +901,14 @@ jobs:
               echo "... (truncated; $(wc -l < orgscope.out) lines total)"
             fi
             echo '```'
+            echo
+            echo "<details><summary>Table census</summary>"
+            echo
+            echo '```'
+            cat census.out
+            echo '```'
+            echo
+            echo "</details>"
           } >> "$GITHUB_STEP_SUMMARY"
           # Propagate the tool's exit code — non-zero fails the build.
           exit $rc
@@ -755,7 +946,19 @@ jobs:
           go install golang.org/x/vuln/cmd/govulncheck@latest
           govulncheck ./...
 
+      # `./...` stops at the module boundary, so this gate never looked at the
+      # agent — its own module — and reported "0 reachable vulnerabilities"
+      # while the agent's stdlib carried 29 the agent's own code reached. It
+      # ships on endpoints, so it gets exactly the same blocking gate.
+      - name: Run govulncheck (agent module)
+        working-directory: agent
+        run: govulncheck ./...
+
   # Coverage reporting with codecov
+  # status-check: informational — uploads to an external service, so its
+  # result depends on codecov being reachable rather than on this repository
+  # being correct. The tests it summarises are required jobs in their own
+  # right (test-unit, test-race).
   coverage-report:
     name: Coverage Report
     runs-on: ubuntu-latest
@@ -836,12 +1039,39 @@ jobs:
   # Race detector — enforces that `go test -race ./...` is clean. The test-unit
   # job runs -race per package but swallows failures with `|| true` (it exists
   # for coverage collection), so it can't catch races; this job does.
+  #
+  # THE TIMEOUT IS EXPLICIT ON PURPOSE, and it is the fix for a red tick that
+  # said "Race Detector" and meant something else. This job failed with:
+  #
+  #   FAIL github.com/openidx/openidx/internal/access  600.077s
+  #
+  # 600s is Go's DEFAULT per-package timeout, not a race report. There was no
+  # `WARNING: DATA RACE` anywhere in the log — just the panic dump `go test`
+  # prints when a package runs out of time, some fifty goroutines deep, of
+  # which forty-eight were parked in `testing.(*T).Parallel` behind the one
+  # serial test still running. The commit it landed on changed no Go code at
+  # all (two shell scripts, three workflows and a doc paragraph), and the same
+  # package was green under -race on the commit before it.
+  #
+  # That default is calibrated for uninstrumented tests. Under -race everything
+  # costs several times more, and internal/access starts a fresh Postgres
+  # container per database-backed test on top of that; the same run measured
+  # internal/identity at 379s and internal/admin at 283s, so the package that
+  # crossed the line was simply the one closest to it. With a ten-minute bound,
+  # "this runner was slow" and "this test hung" produce the identical failure,
+  # and the check reports the diagnosis it did not make.
+  #
+  # 20m keeps a genuine hang catchable -- more than three times the slowest
+  # legitimate package here -- while removing the false signal, and the job's
+  # own timeout-minutes remains the outer bound. The underlying cost (a
+  # container per test rather than per package) is worth attacking separately;
+  # it is not what makes this check lie.
   test-race:
     name: Race Detector
     runs-on: ubuntu-latest
     needs: detect-changes
     if: needs.detect-changes.outputs.go_changed == 'true'
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
 
@@ -852,18 +1082,398 @@ jobs:
           cache: true
 
       - name: Run race detector
-        run: go test -race ./...
+        run: go test -race -timeout 20m ./...
 
-  # Required status checks
+  # The Definition of Done's §6.1 exit test, which nothing had ever run.
+  #
+  # scripts/smoke-test.sh has existed since long before this branch, wired to a
+  # Makefile target and to no workflow, under the belief that it needed a Docker
+  # daemon. It does not: what it needs is the eight services listening on their
+  # ports, and building them with `go build` and starting them as processes is
+  # the same harness test-integration already uses for two of them.
+  #
+  # Running it for the first time found two dead assertions, now fixed in the
+  # script: it authenticated with a client_credentials token and expected to
+  # list users, which has been a 403 since the admin API became deny-by-default
+  # (the check now asserts the refusal, and does the admin work with a real
+  # login); and Phase 4 needed a console to be served at all.
+  #
+  # Elasticsearch is deliberately absent: audit-service starts and answers
+  # without it, so the smoke stack stays two dependencies rather than three.
+  # Ziti, BrowZer and continuous verification are off — none is reachable from a
+  # runner, and the smoke test is about the core stack coming up.
+  smoke:
+    name: The stack answers end to end
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.go_changed == 'true' || needs.detect-changes.outputs.frontend_changed == 'true'
+    timeout-minutes: 25
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: openidx
+          POSTGRES_USER: openidx
+          POSTGRES_PASSWORD: smoke_secret
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U openidx"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgres://openidx:smoke_secret@localhost:5432/openidx?sslmode=disable
+      REDIS_URL: redis://localhost:6379
+      APP_ENV: development
+      DEFAULT_ORG_FALLBACK: "true"
+      DEFAULT_ORG_ID: 00000000-0000-0000-0000-000000000010
+      JWT_SECRET: smoke-test-jwt-secret-not-for-production
+      ACCESS_SESSION_SECRET: smoke-test-access-session-secret-000
+      # 32 bytes: governance-service, admin-api and access-service refuse to
+      # start without a vault keyring, by design (fail-closed).
+      ENCRYPTION_KEY: "0123456789abcdef0123456789abcdef"
+      OAUTH_ISSUER: http://localhost:8006
+      OAUTH_JWKS_URL: http://localhost:8006/.well-known/jwks.json
+      OAUTH_LOGIN_URL: http://localhost:3000/login
+      ZITI_ENABLED: "false"
+      BROWZER_ENABLED: "false"
+      CONTINUOUS_VERIFY_ENABLED: "false"
+      OPENIDX_ENABLE_RATE_LIMIT: "false"
+      GIN_MODE: release
+      LOG_LEVEL: warn
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/admin-console/package-lock.json
+
+      - name: Migrate the database
+        run: go run ./cmd/migrate up
+
+      - name: Build the services
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/smoke-bin
+          for s in identity-service governance-service provisioning-service \
+                   audit-service admin-api oauth-service access-service gateway-service; do
+            go build -o "/tmp/smoke-bin/$s" "./cmd/$s"
+          done
+
+      - name: Build the admin console
+        working-directory: web/admin-console
+        run: |
+          npm ci
+          npm run build
+
+      - name: Start the stack
+        run: |
+          set -uo pipefail
+          mkdir -p /tmp/smoke-logs
+          for s in identity-service governance-service provisioning-service \
+                   audit-service admin-api oauth-service access-service gateway-service; do
+            nohup "/tmp/smoke-bin/$s" > "/tmp/smoke-logs/$s.log" 2>&1 &
+            echo "$s pid=$!"
+          done
+          # The console is a static bundle; the smoke test only asks whether it
+          # is being served, so any static server will do.
+          ( cd web/admin-console/dist && nohup python3 -m http.server 3000 --bind 127.0.0.1 > /tmp/smoke-logs/console.log 2>&1 & )
+
+      - name: Wait for the stack
+        run: |
+          set -uo pipefail
+          for i in $(seq 1 90); do
+            ready=1
+            for p in 8001 8002 8003 8004 8005 8006 8007 8008 3000; do
+              curl -sf "http://localhost:$p/health" >/dev/null 2>&1 || \
+                { [ "$p" = "3000" ] && curl -sf "http://localhost:3000/" >/dev/null 2>&1; } || ready=0
+            done
+            if [ "$ready" = "1" ]; then
+              echo "stack ready after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::the stack did not come up within 90s"
+          for f in /tmp/smoke-logs/*.log; do
+            echo "::group::$f"; tail -40 "$f"; echo "::endgroup::"
+          done
+          exit 1
+
+      - name: Run the smoke test
+        env:
+          GATEWAY_URL: http://localhost:8008
+          OAUTH_URL: http://localhost:8006
+          SMOKE_TOKEN_OUT: /tmp/smoke-admin-token
+        run: make smoke-test
+
+      # The console declares, at each api.get<{...}>() site, the response keys
+      # it is going to read. tools/contractcheck diffs those declarations
+      # against what the running services actually return: a key the backend
+      # stopped sending is a page that renders undefined/NaN with every request
+      # answering 200, which no status code and no type-check can catch.
+      #
+      # -local because CI has no edge router: the tool routes each path to the
+      # service APISIX would forward it to. Against one base URL instead, 54 of
+      # 76 endpoints answer 404 and the run reports a wall of "unverified".
+      - name: Frontend/backend response shapes agree
+        run: go run ./tools/contractcheck -probe -local -token-file /tmp/smoke-admin-token
+
+      - name: Service logs
+        if: always()
+        run: |
+          for f in /tmp/smoke-logs/*.log; do
+            echo "::group::$f"; tail -60 "$f"; echo "::endgroup::"
+          done
+
+  # The Playwright suite, against a real stack.
+  #
+  # It had never run anywhere: no workflow invoked it, and it could not have
+  # passed if one had. playwright.config.ts declared no `setup` project and no
+  # storageState, and `auth.setup.ts` does not match Playwright's default
+  # testMatch -- so the sign-in step never executed and every "authenticated"
+  # spec ran signed out. (The specs that deliberately want no session say so
+  # with `test.use({ storageState: { cookies: [], origins: [] } })`, which only
+  # makes sense against an authenticated default.) The setup also typed a
+  # password, `admin123`, that matches nothing; the seeded admin is Admin@123.
+  #
+  # CORRECTION to what this comment said before: it claimed the suite was then
+  # green at 418 passed / 0 failed. It is not, and never was — that number was
+  # read off a truncated tail of a local run, and the first CI run of this job
+  # went red with well over a hundred failures. Running the suite for the first
+  # time is what surfaced them, which is the point of running it; what was
+  # wrong was the claim, not the job.
+  #
+  # Three of the causes were mechanical and are fixed in the specs themselves
+  # (a `page.evaluate(localStorage…)` in beforeEach, which throws on the
+  # about:blank a fresh page starts on; a hand-assembled `mock-signature` JWT
+  # that overwrote the real session with one the backend rejects; a goto of
+  # /audit/audit-dashboard, a route App.tsx does not register). What is left is
+  # a long tail of specs written against a MOCKED console: fixture users no
+  # seed creates, DOM shapes the components no longer have.
+  #
+  # So this job runs the register in web/admin-console/e2e/suite.txt, which
+  # names every spec file as `run` or as `hold <reason>`. The held ones are not
+  # deleted and not `test.skip`'d — `npm run test:e2e` still runs the lot — and
+  # scripts/check-e2e-suite.sh (self-tested, wired into UI safety guards) fails
+  # if a spec file is missing from the register, if a hold carries no reason,
+  # or if a listed file is renamed away. An exclusion nobody can see is how a
+  # gate stops covering things quietly; this one has to be read to be changed.
+  e2e:
+    name: The console's journeys work in a browser
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.go_changed == 'true' || needs.detect-changes.outputs.frontend_changed == 'true'
+    timeout-minutes: 35
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: openidx
+          POSTGRES_USER: openidx
+          POSTGRES_PASSWORD: e2e_secret
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U openidx"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgres://openidx:e2e_secret@localhost:5432/openidx?sslmode=disable
+      REDIS_URL: redis://localhost:6379
+      APP_ENV: development
+      DEFAULT_ORG_FALLBACK: "true"
+      DEFAULT_ORG_ID: 00000000-0000-0000-0000-000000000010
+      JWT_SECRET: e2e-test-jwt-secret-not-for-production
+      ACCESS_SESSION_SECRET: e2e-test-access-session-secret-0000
+      ENCRYPTION_KEY: "0123456789abcdef0123456789abcdef"
+      OAUTH_ISSUER: http://localhost:8006
+      OAUTH_JWKS_URL: http://localhost:8006/.well-known/jwks.json
+      # The console IS the login UI, and the seeded admin-console client
+      # registers http://localhost:3000/login -- which is why the dev server
+      # binds 3000 with strictPort.
+      OAUTH_LOGIN_URL: http://localhost:3000/login
+      ZITI_ENABLED: "false"
+      BROWZER_ENABLED: "false"
+      CONTINUOUS_VERIFY_ENABLED: "false"
+      OPENIDX_ENABLE_RATE_LIMIT: "false"
+      GIN_MODE: release
+      LOG_LEVEL: warn
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/admin-console/package-lock.json
+
+      - name: Migrate the database
+        run: go run ./cmd/migrate up
+
+      - name: Build the services
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/e2e-bin
+          for s in identity-service governance-service provisioning-service \
+                   audit-service admin-api oauth-service access-service gateway-service; do
+            go build -o "/tmp/e2e-bin/$s" "./cmd/$s"
+          done
+
+      - name: Install console dependencies
+        working-directory: web/admin-console
+        run: npm ci
+
+      - name: Install Chromium
+        working-directory: web/admin-console
+        run: npx playwright install --with-deps chromium
+
+      - name: Start the stack
+        run: |
+          set -uo pipefail
+          mkdir -p /tmp/e2e-logs
+          for s in identity-service governance-service provisioning-service \
+                   audit-service admin-api oauth-service access-service gateway-service; do
+            nohup "/tmp/e2e-bin/$s" > "/tmp/e2e-logs/$s.log" 2>&1 &
+            echo "$s pid=$!"
+          done
+
+      - name: Wait for the stack
+        run: |
+          set -uo pipefail
+          for i in $(seq 1 90); do
+            ready=1
+            for p in 8001 8002 8003 8004 8005 8006 8007 8008; do
+              curl -sf "http://localhost:$p/health" >/dev/null 2>&1 || ready=0
+            done
+            if [ "$ready" = "1" ]; then
+              echo "stack ready after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::the stack did not come up within 90s"
+          for f in /tmp/e2e-logs/*.log; do
+            echo "::group::$f"; tail -40 "$f"; echo "::endgroup::"
+          done
+          exit 1
+
+      # PLAYWRIGHT_BASE_URL is deliberately NOT set: that is the signal for
+      # playwright.config.ts to start `npm run dev` itself on :3000, so the
+      # console reaches every service through Vite's proxy (which mirrors the
+      # deployed edge route table) rather than sending the whole API surface to
+      # one of them.
+      - name: Run the browser journeys
+        working-directory: web/admin-console
+        run: |
+          set -euo pipefail
+          mapfile -t specs < <(awk '$1 == "run" { print $2 }' e2e/suite.txt)
+          echo "running ${#specs[@]} registered spec file(s)"
+          npx playwright test --project=chromium "${specs[@]}"
+        env:
+          CI: "true"
+
+      - name: Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: web/admin-console/playwright-report
+          retention-days: 7
+
+      - name: Service logs
+        if: always()
+        run: |
+          for f in /tmp/e2e-logs/*.log; do
+            echo "::group::$f"; tail -60 "$f"; echo "::endgroup::"
+          done
+
+  # Required status checks.
+  #
+  # `needs` is the ONLY list. It used to be written twice — once here and once
+  # as a hand-maintained bash array below — and the two had drifted: the array
+  # named seven jobs, so test-frontend and every guard job this repository has
+  # added since (first-run, ui-safety-guards, selfheal, shell-prose,
+  # ci-resilience-guards, fault-matrix, field-fix-scoreboard,
+  # no-internal-topology, github-config) could go red without Required Checks
+  # noticing. The loop below now walks toJSON(needs), so adding a job to
+  # `needs` is the whole change, and scripts/check-required-checks.sh fails the
+  # build if a job in this workflow is in neither `needs` nor the informational
+  # register.
   status-check:
     name: Required Checks
+    needs:
+      - build-matrix
+      - ci-resilience-guards
+      - detect-changes
+      - e2e
+      - fault-matrix
+      - field-fix-scoreboard
+      - first-run
+      - github-config
+      - lint
+      - no-internal-topology
+      - orgscope
+      - selfheal
+      - shell-prose
+      - smoke
+      - test-frontend
+      - test-integration
+      - test-race
+      - test-unit
+      - ui-safety-guards
+      - vulnerability-check
     runs-on: ubuntu-latest
-    needs: [build-matrix, lint, test-unit, test-race, vulnerability-check, test-integration, orgscope]
     if: always()
     timeout-minutes: 5
 
     steps:
       - name: Check all required jobs passed
+        env:
+          # The results of every job in `needs`, as {"job": {"result": ...}}.
+          NEEDS: ${{ toJSON(needs) }}
         run: |
           # A gated job that detect-changes skipped (e.g. a docs-only or
           # frontend-only PR where go_changed=false) reports result
@@ -873,23 +1483,23 @@ jobs:
           # red on every PR that didn't touch Go code, defeating the
           # change-detection optimization entirely.
           failed=0
-          for jr in \
-            "build-matrix=${{ needs.build-matrix.result }}" \
-            "lint=${{ needs.lint.result }}" \
-            "test-unit=${{ needs.test-unit.result }}" \
-            "test-race=${{ needs.test-race.result }}" \
-            "vulnerability-check=${{ needs.vulnerability-check.result }}" \
-            "test-integration=${{ needs.test-integration.result }}" \
-            "orgscope=${{ needs.orgscope.result }}"; do
-            name="${jr%%=*}"
-            result="${jr#*=}"
-            if [[ "$result" != "success" && "$result" != "skipped" ]]; then
-              echo "Required check '$name' did not pass: $result"
-              failed=1
-            fi
-          done
+          checked=0
+          while IFS=$'\t' read -r name result; do
+            checked=$((checked + 1))
+            case "$result" in
+              success|skipped) ;;
+              *) echo "Required check '$name' did not pass: $result"; failed=1 ;;
+            esac
+          done < <(printf '%s' "$NEEDS" | jq -r 'to_entries | sort_by(.key)[] | "\(.key)\t\(.value.result // "missing")"')
+          if [[ "$checked" -eq 0 ]]; then
+            # An empty needs object means the expression did not expand —
+            # passing on zero checks is exactly the silent hole this job is
+            # supposed to close.
+            echo "No job results to check: the needs list did not expand"
+            exit 1
+          fi
           if [[ "$failed" -ne 0 ]]; then
             echo "Required checks failed"
             exit 1
           fi
-          echo "All required checks passed (success or skipped)"
+          echo "All $checked required checks passed (success or skipped)"

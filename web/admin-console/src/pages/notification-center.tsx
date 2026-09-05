@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import { Bell, Check, Trash2, Mail, Shield, Eye, Clock, Settings } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
@@ -7,6 +8,7 @@ import { Button } from '../components/ui/button'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { QueryError } from '../components/query-error'
 import { api } from '../lib/api'
+import i18n from '../i18n'
 import { ConfirmAction } from '../components/confirm-action'
 import { useToast } from '../hooks/use-toast'
 
@@ -43,12 +45,12 @@ function digestRecordsToSettings(records: DigestRecord[]): DigestSettings {
 
 type FilterTab = 'all' | 'unread' | 'security' | 'access' | 'system'
 
-const FILTER_TABS: { key: FilterTab; label: string }[] = [
-  { key: 'all', label: 'All' },
-  { key: 'unread', label: 'Unread' },
-  { key: 'security', label: 'Security' },
-  { key: 'access', label: 'Access' },
-  { key: 'system', label: 'System' },
+const FILTER_TABS: { key: FilterTab; labelKey: string }[] = [
+  { key: 'all', labelKey: 'pages.notifications.tabs.all' },
+  { key: 'unread', labelKey: 'pages.notifications.tabs.unread' },
+  { key: 'security', labelKey: 'pages.notifications.tabs.security' },
+  { key: 'access', labelKey: 'pages.notifications.tabs.access' },
+  { key: 'system', labelKey: 'pages.notifications.tabs.system' },
 ]
 
 function getNotificationIcon(type: string) {
@@ -72,16 +74,17 @@ function formatRelativeTime(dateStr: string): string {
   const diffHours = Math.floor(diffMinutes / 60)
   const diffDays = Math.floor(diffHours / 24)
 
-  if (diffSeconds < 60) return 'just now'
-  if (diffMinutes < 60) return `${diffMinutes} minute${diffMinutes !== 1 ? 's' : ''} ago`
-  if (diffHours < 24) return `${diffHours} hour${diffHours !== 1 ? 's' : ''} ago`
-  if (diffDays < 7) return `${diffDays} day${diffDays !== 1 ? 's' : ''} ago`
+  if (diffSeconds < 60) return i18n.t('pages.notifications.time.justNow')
+  if (diffMinutes < 60) return i18n.t('pages.notifications.time.minuteAgo', { count: diffMinutes })
+  if (diffHours < 24) return i18n.t('pages.notifications.time.hourAgo', { count: diffHours })
+  if (diffDays < 7) return i18n.t('pages.notifications.time.dayAgo', { count: diffDays })
   return date.toLocaleDateString()
 }
 
 export function NotificationCenterPage() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const { t } = useTranslation()
   const [activeFilter, setActiveFilter] = useState<FilterTab>('all')
   const [digestDirty, setDigestDirty] = useState(false)
   const [localDigest, setLocalDigest] = useState<DigestSettings | null>(null)
@@ -108,9 +111,9 @@ export function NotificationCenterPage() {
       api.post('/api/v1/notifications/mark-read', { notification_ids: ids }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['notification-history'] })
-      toast({ title: 'Notification marked as read' })
+      toast({ title: t('pages.notifications.toasts.markedRead') })
     },
-    onError: () => toast({ title: 'Failed to mark as read', variant: 'destructive' }),
+    onError: () => toast({ title: t('pages.notifications.toasts.markReadFailed'), variant: 'destructive' }),
   })
 
   // Mark all as read mutation
@@ -124,9 +127,9 @@ export function NotificationCenterPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['notification-history'] })
-      toast({ title: 'All notifications marked as read' })
+      toast({ title: t('pages.notifications.toasts.allMarkedRead') })
     },
-    onError: () => toast({ title: 'Failed to mark all as read', variant: 'destructive' }),
+    onError: () => toast({ title: t('pages.notifications.toasts.markAllFailed'), variant: 'destructive' }),
   })
 
   // Delete mutation
@@ -134,9 +137,9 @@ export function NotificationCenterPage() {
     mutationFn: (id: string) => api.delete(`/api/v1/notifications/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['notification-history'] })
-      toast({ title: 'Notification deleted' })
+      toast({ title: t('pages.notifications.toasts.deleted') })
     },
-    onError: () => toast({ title: 'Failed to delete notification', variant: 'destructive' }),
+    onError: () => toast({ title: t('pages.notifications.toasts.deleteFailed'), variant: 'destructive' }),
   })
 
   // Save digest settings mutation - sends separate requests for daily and weekly
@@ -155,11 +158,11 @@ export function NotificationCenterPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['notification-digest'] })
-      toast({ title: 'Digest settings saved' })
+      toast({ title: t('pages.notifications.toasts.digestSaved') })
       setDigestDirty(false)
       setLocalDigest(null)
     },
-    onError: () => toast({ title: 'Failed to save digest settings', variant: 'destructive' }),
+    onError: () => toast({ title: t('pages.notifications.toasts.digestSaveFailed'), variant: 'destructive' }),
   })
 
   // Filter notifications based on active tab
@@ -192,8 +195,8 @@ export function NotificationCenterPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Notification Center</h1>
-          <p className="text-muted-foreground">View and manage your notifications</p>
+          <h1 className="text-3xl font-bold tracking-tight">{t('pages.notifications.title')}</h1>
+          <p className="text-muted-foreground">{t('pages.notifications.subtitle')}</p>
         </div>
         {unreadCount > 0 && (
           <Button
@@ -202,7 +205,7 @@ export function NotificationCenterPage() {
             disabled={markAllReadMutation.isPending}
           >
             <Check className="mr-2 h-4 w-4" />
-            {markAllReadMutation.isPending ? 'Marking...' : `Mark All Read (${unreadCount})`}
+            {markAllReadMutation.isPending ? t('pages.notifications.marking') : t('pages.notifications.markAllRead', { n: unreadCount })}
           </Button>
         )}
       </div>
@@ -219,7 +222,7 @@ export function NotificationCenterPage() {
                 : 'text-muted-foreground hover:text-foreground hover:bg-muted'
             }`}
           >
-            {tab.label}
+            {t(tab.labelKey)}
             {tab.key === 'unread' && unreadCount > 0 && (
               <Badge className="ml-2 bg-blue-100 text-blue-800 text-xs">{unreadCount}</Badge>
             )}
@@ -231,25 +234,25 @@ export function NotificationCenterPage() {
       <Card>
         <CardHeader>
           <CardTitle className="text-lg">
-            {activeFilter === 'all' ? 'All Notifications' : `${activeFilter.charAt(0).toUpperCase() + activeFilter.slice(1)} Notifications`}
+            {t(`pages.notifications.listTitles.${activeFilter}`)}
           </CardTitle>
         </CardHeader>
         <CardContent>
           {notificationsLoading ? (
             <div className="flex flex-col items-center justify-center py-12">
               <LoadingSpinner size="lg" />
-              <p className="mt-4 text-sm text-muted-foreground">Loading notifications...</p>
+              <p className="mt-4 text-sm text-muted-foreground">{t('pages.notifications.loading')}</p>
             </div>
           ) : notificationsIsError ? (
-            <QueryError error={notificationsError} resource="notifications" />
+            <QueryError error={notificationsError} resource={t('pages.notifications.resourceName')} />
           ) : filteredNotifications.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
               <Bell className="h-12 w-12 text-muted-foreground/40 mb-3" />
-              <p className="font-medium">No notifications</p>
+              <p className="font-medium">{t('pages.notifications.empty')}</p>
               <p className="text-sm">
                 {activeFilter === 'unread'
-                  ? 'You have read all your notifications'
-                  : 'Notifications will appear here when events occur'}
+                  ? t('pages.notifications.emptyUnreadHint')
+                  : t('pages.notifications.emptyHint')}
               </p>
             </div>
           ) : (
@@ -260,7 +263,13 @@ export function NotificationCenterPage() {
                   <div
                     key={notification.id}
                     className={`flex items-start gap-4 p-4 rounded-lg border transition-colors ${
-                      notification.read ? 'bg-background' : 'bg-blue-50/50 border-blue-200'
+                      notification.read
+                        ? 'bg-background'
+                        : // A light tint with no dark variant composites to
+                          // mid-grey over the dark background: body text fell
+                          // to 1.56:1 there. Same pairing the audit dashboard
+                          // already uses.
+                          'bg-blue-50/50 border-blue-200 dark:bg-blue-950/20 dark:border-blue-800'
                     }`}
                   >
                     {/* Unread indicator */}
@@ -314,7 +323,7 @@ export function NotificationCenterPage() {
                           variant="ghost"
                           size="sm"
                           className="h-8 w-8 p-0"
-                          title="Mark as read"
+                          title={t('pages.notifications.actions.markRead')}
                           onClick={() => markReadMutation.mutate([notification.id])}
                           disabled={markReadMutation.isPending}
                         >
@@ -322,10 +331,10 @@ export function NotificationCenterPage() {
                         </Button>
                       )}
                       <ConfirmAction
-                        title="Delete this notification?"
-                        description="This permanently removes the notification. This cannot be undone."
+                        title={t('pages.notifications.deleteDialog.title')}
+                        description={t('pages.notifications.deleteDialog.description')}
                         destructive
-                        confirmLabel="Delete"
+                        confirmLabel={t('pages.notifications.deleteDialog.confirm')}
                         onConfirm={() => deleteMutation.mutateAsync(notification.id)}
                       >
                         {(open) => (
@@ -333,7 +342,7 @@ export function NotificationCenterPage() {
                             variant="ghost"
                             size="sm"
                             className="h-8 w-8 p-0"
-                            title="Delete"
+                            title={t('pages.notifications.actions.delete')}
                             onClick={open}
                             disabled={deleteMutation.isPending}
                           >
@@ -356,14 +365,14 @@ export function NotificationCenterPage() {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Settings className="h-5 w-5 text-muted-foreground" />
-              <CardTitle className="text-lg">Digest Settings</CardTitle>
+              <CardTitle className="text-lg">{t('pages.notifications.digest.title')}</CardTitle>
             </div>
             <Button
               size="sm"
               onClick={() => saveDigestMutation.mutate(currentDigest)}
               disabled={!digestDirty || saveDigestMutation.isPending}
             >
-              {saveDigestMutation.isPending ? 'Saving...' : 'Save Settings'}
+              {saveDigestMutation.isPending ? t('pages.notifications.digest.saving') : t('pages.notifications.digest.save')}
             </Button>
           </div>
         </CardHeader>
@@ -371,22 +380,22 @@ export function NotificationCenterPage() {
           {digestLoading ? (
             <div className="flex items-center justify-center py-8">
               <LoadingSpinner size="sm" />
-              <p className="ml-2 text-sm text-muted-foreground">Loading digest settings...</p>
+              <p className="ml-2 text-sm text-muted-foreground">{t('pages.notifications.digest.loading')}</p>
             </div>
           ) : digestIsError ? (
-            <QueryError error={digestError} resource="digest settings" />
+            <QueryError error={digestError} resource={t('pages.notifications.digestResourceName')} />
           ) : (
             <div className="space-y-4">
               <p className="text-sm text-muted-foreground">
-                Configure email digests to receive a summary of your notifications.
+                {t('pages.notifications.digest.description')}
               </p>
               <div className="space-y-3">
                 {/* Daily Digest Toggle */}
                 <div className="flex items-center justify-between p-4 rounded-lg border">
                   <div>
-                    <p className="font-medium text-sm">Daily Digest</p>
+                    <p className="font-medium text-sm">{t('pages.notifications.digest.dailyTitle')}</p>
                     <p className="text-xs text-muted-foreground">
-                      Receive a daily summary of all notifications every morning
+                      {t('pages.notifications.digest.dailyDesc')}
                     </p>
                   </div>
                   <button
@@ -406,9 +415,9 @@ export function NotificationCenterPage() {
                 {/* Weekly Digest Toggle */}
                 <div className="flex items-center justify-between p-4 rounded-lg border">
                   <div>
-                    <p className="font-medium text-sm">Weekly Digest</p>
+                    <p className="font-medium text-sm">{t('pages.notifications.digest.weeklyTitle')}</p>
                     <p className="text-xs text-muted-foreground">
-                      Receive a weekly summary every Monday with highlights from the past week
+                      {t('pages.notifications.digest.weeklyDesc')}
                     </p>
                   </div>
                   <button

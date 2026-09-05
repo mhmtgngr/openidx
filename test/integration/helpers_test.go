@@ -277,9 +277,10 @@ func getAdminToken(t *testing.T) string {
 func doAdminLogin() (string, error) {
 	verifier, challenge := pkcePair()
 
-	// Step 1: /oauth/authorize — request a code with PKCE. Public clients
-	// render an HTML page unless we set Accept: application/json, in which
-	// case the server hands back { "login_session": "..." } instead.
+	// Step 1: /oauth/authorize — request a code with PKCE. Every client is now
+	// 302'd to the one login UI (OAUTH_LOGIN_URL) with ?login_session=...;
+	// httpClient does not follow redirects, so extractLoginSession reads that
+	// value out of the Location header.
 	authURL := fmt.Sprintf(
 		"%s/oauth/authorize?response_type=code&client_id=%s&redirect_uri=%s&scope=openid+profile+email&code_challenge=%s&code_challenge_method=S256",
 		oauthURL, clientID, url.QueryEscape(redirectURI), challenge,
@@ -438,15 +439,16 @@ func deleteTestUser(t *testing.T, userID string) {
 }
 
 // beginAuthorizeForLogin issues GET /oauth/authorize for the seeded
-// admin-console (public) client with `Accept: application/json` and an S256
-// PKCE challenge, returning the `login_session` the test must POST back to
-// /oauth/login and the matching PKCE verifier the test will need at the
-// token-exchange step.
+// admin-console (public) client with an S256 PKCE challenge, returning the
+// `login_session` the test must POST back to /oauth/login and the matching
+// PKCE verifier the test will need at the token-exchange step.
 //
-// Public clients without the JSON Accept header now get a rendered HTML 200
-// (the SPA login page) instead of a 302, and the seeded admin-console client
-// requires PKCE — inline test flows that hard-coded `require.Equal(302, ...)`
-// and skipped `code_verifier` therefore broke at step 1.
+// The Accept: application/json header is vestigial: authorize used to render
+// an HTML login page for public clients unless it was set. That page is gone
+// and every client is now 302'd to the one login UI, so the header changes
+// nothing — the login_session is read from the Location header either way.
+// The seeded admin-console client requires PKCE, so inline test flows that
+// skipped `code_verifier` broke at the token step.
 func beginAuthorizeForLogin(t *testing.T, scope string, extra url.Values) (loginSession, codeVerifier string) {
 	t.Helper()
 	verifier, challenge := pkcePair()

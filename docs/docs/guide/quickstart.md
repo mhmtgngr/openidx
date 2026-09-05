@@ -4,22 +4,22 @@ Get OpenIDX running locally in a few steps.
 
 ## Prerequisites
 
-- [Go 1.22+](https://go.dev/dl/)
-- [Node.js 18+](https://nodejs.org/)
 - [Docker](https://docs.docker.com/get-docker/) and Docker Compose
+- [Go 1.26+](https://go.dev/dl/) and [Node.js 20+](https://nodejs.org/) — only for building from source
 - [Make](https://www.gnu.org/software/make/)
+- **Hardware floor**: the full stack is ~39 containers — plan on ≥ 8–10 GB RAM
 
 ## 1. Clone & Generate Secrets
 
 ```bash
-git clone https://github.com/openidx/openidx.git
+git clone https://github.com/mhmtgngr/openidx.git
 cd openidx
 
-# Generate a .env file with random secrets
+# Generate a .env file with random secrets — compose refuses to start without them
 ./scripts/generate-secrets.sh
 ```
 
-This creates a `.env` file with cryptographically random passwords for PostgreSQL, Redis, Keycloak, JWT signing, and encryption.
+This creates a `.env` file with cryptographically random passwords for PostgreSQL, Redis, Grafana, JWT signing, and encryption.
 
 ## 2. Start Infrastructure
 
@@ -27,13 +27,7 @@ This creates a `.env` file with cryptographically random passwords for PostgreSQ
 make dev-infra
 ```
 
-This starts PostgreSQL, Redis, Elasticsearch, Keycloak, APISIX, etcd, OPA, Prometheus, and Grafana via Docker Compose.
-
-Wait for all containers to become healthy:
-
-```bash
-docker compose -f deployments/docker/docker-compose.infra.yml ps
-```
+This starts PostgreSQL, Redis, Elasticsearch, APISIX, etcd, and OPA via Docker Compose.
 
 ## 3. Start Services
 
@@ -41,7 +35,7 @@ docker compose -f deployments/docker/docker-compose.infra.yml ps
 make dev
 ```
 
-This builds and starts all 7 backend services. Alternatively, start services individually:
+This starts the full stack from `deployments/docker/docker-compose.yml`, including all 8 backend services. Alternatively, build from source and start services individually:
 
 ```bash
 go run ./cmd/identity-service
@@ -60,7 +54,22 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-## 5. Verify
+## 5. First Login
+
+Sign in with the seeded admin — this is the authoritative first-login
+credential:
+
+| Field | Value |
+|---|---|
+| Username | `admin` (email `admin@openidx.local`) |
+| Password | `Admin@123` |
+
+**Rotate this password immediately** (Console: **Users → admin → Set
+password**). This is not optional for production: the identity and oauth
+services refuse to start with `APP_ENV=production` while the seeded
+default password still authenticates.
+
+## 6. Verify
 
 Check that services are healthy:
 
@@ -87,13 +96,14 @@ curl http://localhost:8006/.well-known/openid-configuration
 | Admin API | [http://localhost:8005](http://localhost:8005) |
 | OAuth Service | [http://localhost:8006](http://localhost:8006) |
 | API Gateway (APISIX) | [http://localhost:8088](http://localhost:8088) |
-| Keycloak | [http://localhost:8180](http://localhost:8180) |
 | Prometheus | [http://localhost:9090](http://localhost:9090) |
-| Grafana | [http://localhost:3001](http://localhost:3001) |
+| Grafana | [http://localhost:3001](http://localhost:3001) (admin / `$GRAFANA_ADMIN_PASSWORD` from your `.env`) |
 
 ## Next Steps
 
+- [Concepts](concepts.md) — one product, four pillars: the mental model
 - [Architecture Overview](architecture.md) — understand how the services fit together
+- [Privileged Access](privileged-access.md) and [Zero Trust Network](network-access.md) — the PAM and ZTNA pillars
 - [Configuration Reference](configuration.md) — customize settings via environment variables
 - [Docker Deployment](../deployment/docker.md) — run the full stack with Docker Compose
 - [API Reference](../api/overview.md) — explore all API endpoints

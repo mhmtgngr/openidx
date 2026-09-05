@@ -117,7 +117,7 @@ var crossPillarSchema = []string{
 	`CREATE TABLE IF NOT EXISTS proxy_routes (
 		id UUID PRIMARY KEY, name VARCHAR(255), ziti_enabled BOOLEAN DEFAULT false)`,
 	`CREATE TABLE IF NOT EXISTS guacamole_connections (
-		id UUID PRIMARY KEY, route_id UUID, protocol VARCHAR(20))`,
+		id UUID PRIMARY KEY, route_id UUID, org_id UUID, protocol VARCHAR(20))`,
 	`CREATE TABLE IF NOT EXISTS guacamole_sessions (
 		id UUID PRIMARY KEY, org_id UUID, connection_id UUID, user_id UUID,
 		guac_session_uuid VARCHAR(255), started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -142,7 +142,7 @@ var crossPillarSchema = []string{
 	`CREATE TABLE IF NOT EXISTS known_devices (
 		id UUID PRIMARY KEY, user_id UUID, org_id UUID, trusted BOOLEAN DEFAULT false)`,
 	`CREATE TABLE IF NOT EXISTS unified_audit_events (
-		id UUID PRIMARY KEY, source VARCHAR(50), event_type VARCHAR(100),
+		id UUID PRIMARY KEY, org_id UUID NOT NULL, source VARCHAR(50), event_type VARCHAR(100),
 		route_id UUID, user_id UUID, actor_ip VARCHAR(45), details JSONB DEFAULT '{}',
 		created_at TIMESTAMPTZ DEFAULT NOW())`,
 }
@@ -200,7 +200,7 @@ func TestUserAccessMap_CrossPillar(t *testing.T) {
 		  VALUES (gen_random_uuid(),$1,$2,'break-glass',NOW()+'2h','active')`, []any{testUser, testOrg}},
 		// PAM session riding a Ziti-enabled route.
 		{`INSERT INTO proxy_routes (id, name, ziti_enabled) VALUES ($1,'prod-jumphost',true)`, []any{routeID}},
-		{`INSERT INTO guacamole_connections (id, route_id, protocol) VALUES ($1,$2,'ssh')`, []any{connID, routeID}},
+		{`INSERT INTO guacamole_connections (id, route_id, org_id, protocol) VALUES ($1,$2,$3,'ssh')`, []any{connID, routeID, testOrg}},
 		{`INSERT INTO guacamole_sessions (id, org_id, connection_id, user_id, guac_session_uuid, status)
 		  VALUES (gen_random_uuid(),$1,$2,$3,'guac-uuid-1','active')`, []any{testOrg, connID, testUser}},
 		// Ziti identity carrying the group attribute; a Dial policy matching it.
@@ -214,10 +214,10 @@ func TestUserAccessMap_CrossPillar(t *testing.T) {
 		  VALUES (gen_random_uuid(),'agent-1','linux','active','compliant',$1)`, []any{testUser}},
 		{`INSERT INTO known_devices (id, user_id, org_id, trusted) VALUES (gen_random_uuid(),$1,$2,true)`,
 			[]any{testUser, testOrg}},
-		{`INSERT INTO unified_audit_events (id, source, event_type, user_id)
-		  VALUES (gen_random_uuid(),'ziti','circuit.created',$1)`, []any{testUser}},
-		{`INSERT INTO unified_audit_events (id, source, event_type, user_id)
-		  VALUES (gen_random_uuid(),'guacamole','session.started',$1)`, []any{testUser}},
+		{`INSERT INTO unified_audit_events (id, org_id, source, event_type, user_id)
+		  VALUES (gen_random_uuid(),$2,'ziti','circuit.created',$1)`, []any{testUser, testOrg}},
+		{`INSERT INTO unified_audit_events (id, org_id, source, event_type, user_id)
+		  VALUES (gen_random_uuid(),$2,'guacamole','session.started',$1)`, []any{testUser, testOrg}},
 	}
 	for _, s := range seed {
 		if _, err := db.Pool.Exec(ctx, s.sql, s.args...); err != nil {

@@ -17,6 +17,8 @@ import (
 
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/orgctx"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 // BreachType represents the type of identity breach detected
@@ -155,7 +157,24 @@ type ibdrService struct {
 }
 
 // DetectBreachAttempt analyzes an authentication attempt for breach indicators
+//
+// TENANCY (v147). An incident is a record ABOUT a user, and the containment it
+// leads to is org-scoped already: executeFullQuarantine and revokeUserSessions
+// both write `... AND org_id = $2`. So an incident raised in one tenant against
+// another tenant's user could never be contained — the quarantine would match
+// zero rows and report success. The tenant is therefore resolved up front and
+// the user has to be in it; the incident is stamped with that organization.
 func (s *ibdrService) DetectBreachAttempt(ctx context.Context, userID, ipAddress, userAgent, sessionID string) (*BreachIncident, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("breach detection requires an organization context: %w", err)
+	}
+	var confirmedUserID string
+	if err := s.db.Pool.QueryRow(ctx,
+		`SELECT id::text FROM users WHERE id = $1 AND org_id = $2`, userID, org.ID).Scan(&confirmedUserID); err != nil {
+		return nil, fmt.Errorf("user %s is not in this organization: %w", logsafe.Clean(userID), err)
+	}
+
 	indicators := s.collectIndicators(ctx, userID, ipAddress, userAgent)
 
 	// Analyze for different breach types
@@ -193,21 +212,25 @@ func (s *ibdrService) DetectBreachAttempt(ctx context.Context, userID, ipAddress
 	incident.Indicators = indicatorsJSON
 
 	// Store incident
-	_, err := s.db.Pool.Exec(ctx, `
+	_, err = s.db.Pool.Exec(ctx, `
 		INSERT INTO breach_incidents (id, type, severity, status, title, description, affected_user_ids,
 			affected_sessions, detection_method, first_detected_at, last_activity_at, confidence,
-			indicators, quarantine_action, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), NOW())
+			indicators, quarantine_action, org_id, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW(), NOW())
 	`, incident.ID, incident.Type, incident.Severity, incident.Status,
 		incident.Title, incident.Description, incident.AffectedUserIDs,
 		incident.AffectedSessions, incident.DetectionMethod, incident.FirstDetectedAt,
-		incident.LastActivityAt, incident.Confidence, incident.Indicators, incident.QuarantineAction)
+		incident.LastActivityAt, incident.Confidence, incident.Indicators, incident.QuarantineAction,
+		org.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to store incident: %w", err)
 	}
 
 	// Create alert
-	s.createAlert(ctx, incident)
+	if err := s.createAlert(ctx, incident, org.ID); err != nil {
+		s.logger.Error("breach detection: failed to raise alert for incident",
+			zap.String("incident_id", logsafe.Clean(incident.ID)), zap.Error(err))
+	}
 
 	// Auto-contain if configured
 	if s.config.AutoContainment {
@@ -218,14 +241,26 @@ func (s *ibdrService) DetectBreachAttempt(ctx context.Context, userID, ipAddress
 }
 
 // TriggerIncidentResponse initiates incident response actions
+//
+// TENANCY (v147). This function used to take a BARE incident id. The actions it
+// invokes were already org-scoped, so triggering response on another tenant's
+// incident disabled nobody and revoked nothing — and still flipped that
+// tenant's incident to 'investigating' and recorded containment steps against
+// it. A containment that reports success and contains nothing is worse than
+// either half alone, so the RECORD is scoped too and the trigger REFUSES.
 func (s *ibdrService) TriggerIncidentResponse(ctx context.Context, incidentID, actorID string, autoContain bool) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return fmt.Errorf("incident response requires an organization context: %w", err)
+	}
+
 	// Get incident
 	var incident BreachIncident
 	var indicators []byte
-	err := s.db.Pool.QueryRow(ctx, `
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT id, type, severity, status, affected_user_ids, affected_sessions, quarantine_action, indicators
-		FROM breach_incidents WHERE id = $1
-	`, incidentID).Scan(&incident.ID, &incident.Type, &incident.Severity,
+		FROM breach_incidents WHERE id = $1 AND org_id = $2
+	`, incidentID, org.ID).Scan(&incident.ID, &incident.Type, &incident.Severity,
 		&incident.Status, &incident.AffectedUserIDs, &incident.AffectedSessions,
 		&incident.QuarantineAction, &indicators)
 	if err != nil {
@@ -234,8 +269,10 @@ func (s *ibdrService) TriggerIncidentResponse(ctx context.Context, incidentID, a
 
 	// Update status
 	incident.Status = StatusInvestigating
-	_, _ = s.db.Pool.Exec(ctx, `UPDATE breach_incidents SET status = $1, updated_at = NOW() WHERE id = $2`,
-		StatusInvestigating, incidentID)
+	if _, err := s.db.Pool.Exec(ctx, `UPDATE breach_incidents SET status = $1, updated_at = NOW() WHERE id = $2 AND org_id = $3`,
+		StatusInvestigating, incidentID, org.ID); err != nil {
+		return fmt.Errorf("could not mark incident %s as investigating: %w", logsafe.Clean(incidentID), err)
+	}
 
 	// Execute containment based on severity and type
 	actions := []string{}
@@ -248,36 +285,69 @@ func (s *ibdrService) TriggerIncidentResponse(ctx context.Context, incidentID, a
 		// Partial quarantine
 		actions = s.executePartialQuarantine(ctx, &incident, actorID)
 	case BreachSeverityMedium:
-		// Monitoring and session revocation
-		actions = []string{"revoke_sessions", "enable_monitoring"}
-		s.revokeUserSessions(ctx, incident.AffectedUserIDs)
+		// Monitoring and session revocation. This branch used to assign the two
+		// action strings FIRST and then call revokeUserSessions, discarding its
+		// result — and nothing at all implemented "enable_monitoring". Both
+		// steps are now recorded only if they happened.
+		if err := s.revokeUserSessions(ctx, incident.AffectedUserIDs); err != nil {
+			s.logger.Error("medium containment: session revocation failed", zap.Error(err))
+		} else {
+			actions = append(actions, "revoke_sessions")
+		}
+		actions = append(actions, s.recordEnhancedMonitoring(ctx, &incident, actorID)...)
 	}
 
 	incident.ContainmentSteps = actions
 	incident.QuarantineAction = determineQuarantineAction(actions)
 	incident.UpdatedAt = time.Now()
 
-	// Update incident
+	// Update incident.
+	//
+	// This UPDATE has failed on every call since v62: it writes a
+	// containment_steps column that internal/migrations never created, and
+	// `_, _ =` threw the error away — so quarantine_action was never recorded
+	// either and the console's incident list read 'none' for incidents that had
+	// been fully quarantined. v147 adds the column; the error is now returned,
+	// because a containment whose record was not written is exactly the thing
+	// this handler must not report as a clean success.
 	stepsJSON, _ := json.Marshal(actions)
-	_, _ = s.db.Pool.Exec(ctx, `
+	if _, err := s.db.Pool.Exec(ctx, `
 		UPDATE breach_incidents
 		SET containment_steps = $1, quarantine_action = $2, updated_at = NOW()
-		WHERE id = $3
-	`, stepsJSON, incident.QuarantineAction, incidentID)
+		WHERE id = $3 AND org_id = $4
+	`, stepsJSON, incident.QuarantineAction, incidentID, org.ID); err != nil {
+		return fmt.Errorf("containment ran (%v) but the incident record could not be updated: %w",
+			actions, err)
+	}
 
 	return nil
 }
 
 // GetBreachAlerts retrieves active breach alerts
 func (s *ibdrService) GetBreachAlerts(ctx context.Context, includeAcknowledged bool) ([]BreachAlert, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("breach alerts require an organization context: %w", err)
+	}
+	// `acknowledged = $1 OR $1 = true` is a filter, not a tenant filter; each row
+	// names a user, a session and an IP address.
+	//
+	// Every text column on this table is nullable, and createAlert leaves
+	// session_id NULL for any incident with no affected session — which is every
+	// incident where the detector had no session id to hand. Scanning a NULL
+	// into a string fails, and the loop discarded that error and appended the
+	// zero value anyway; pgx closes the rows on a scan error, so ONE such alert
+	// truncated the whole list and handed the operator a single blank row.
+	// COALESCE the nullable columns and report what does not scan.
 	rows, err := s.db.Pool.Query(ctx, `
-		SELECT id, incident_id, type, severity, message, user_id, session_id, ip_address,
-			created_at, acknowledged, acked_at, acked_by
+		SELECT id, COALESCE(incident_id::text, ''), COALESCE(type, ''), COALESCE(severity, ''),
+			COALESCE(message, ''), COALESCE(user_id::text, ''), COALESCE(session_id, ''),
+			COALESCE(ip_address, ''), created_at, acknowledged, acked_at, acked_by
 		FROM breach_alerts
-		WHERE acknowledged = $1 OR $1 = true
+		WHERE org_id = $2 AND (acknowledged = $1 OR $1 = true)
 		ORDER BY created_at DESC
 		LIMIT 100
-	`, includeAcknowledged)
+	`, includeAcknowledged, org.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -286,25 +356,32 @@ func (s *ibdrService) GetBreachAlerts(ctx context.Context, includeAcknowledged b
 	alerts := []BreachAlert{}
 	for rows.Next() {
 		var alert BreachAlert
-		rows.Scan(&alert.ID, &alert.IncidentID, &alert.Type, &alert.Severity,
+		if err := rows.Scan(&alert.ID, &alert.IncidentID, &alert.Type, &alert.Severity,
 			&alert.Message, &alert.UserID, &alert.SessionID, &alert.IPAddress,
-			&alert.CreatedAt, &alert.Acknowledged, &alert.AckedAt, &alert.AckedBy)
+			&alert.CreatedAt, &alert.Acknowledged, &alert.AckedAt, &alert.AckedBy); err != nil {
+			return nil, fmt.Errorf("scan breach alert: %w", err)
+		}
 		alerts = append(alerts, alert)
 	}
 
-	return alerts, nil
+	return alerts, rows.Err()
 }
 
 // AnalyzeBreachPatterns analyzes historical breach patterns
 func (s *ibdrService) AnalyzeBreachPatterns(ctx context.Context, timeWindow time.Duration) (map[string]interface{}, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("breach pattern analysis requires an organization context: %w", err)
+	}
+
 	// Get breach statistics
 	rows, err := s.db.Pool.Query(ctx, `
-		SELECT type, severity, COUNT(*) as count
+		SELECT COALESCE(type, ''), COALESCE(severity, ''), COUNT(*) as count
 		FROM breach_incidents
-		WHERE created_at > NOW() - $1::interval
+		WHERE created_at > NOW() - $1::interval AND org_id = $2
 		GROUP BY type, severity
 		ORDER BY count DESC
-	`, fmt.Sprintf("%d seconds", int(timeWindow.Seconds())))
+	`, fmt.Sprintf("%d seconds", int(timeWindow.Seconds())), org.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -317,9 +394,14 @@ func (s *ibdrService) AnalyzeBreachPatterns(ctx context.Context, timeWindow time
 		var breachType BreachType
 		var severity BreachSeverity
 		var count int
-		rows.Scan(&breachType, &severity, &count)
+		if err := rows.Scan(&breachType, &severity, &count); err != nil {
+			return nil, fmt.Errorf("scan breach pattern row: %w", err)
+		}
 		byType[breachType] += count
 		bySeverity[severity] += count
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 
 	return map[string]interface{}{
@@ -457,7 +539,10 @@ func (s *ibdrService) generateDescription(breachType BreachType, indicators []Br
 	}
 }
 
-func (s *ibdrService) createAlert(ctx context.Context, incident *BreachIncident) error {
+// createAlert raises the real-time alert for an incident. The organization is
+// passed in rather than re-read from the context: the alert belongs to the
+// incident's tenant, and the two must never disagree.
+func (s *ibdrService) createAlert(ctx context.Context, incident *BreachIncident, orgID string) error {
 	alert := &BreachAlert{
 		ID:         uuid.New().String(),
 		IncidentID: incident.ID,
@@ -475,10 +560,10 @@ func (s *ibdrService) createAlert(ctx context.Context, incident *BreachIncident)
 	}
 
 	_, err := s.db.Pool.Exec(ctx, `
-		INSERT INTO breach_alerts (id, incident_id, type, severity, message, user_id, session_id, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+		INSERT INTO breach_alerts (id, incident_id, type, severity, message, user_id, session_id, org_id, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
 	`, alert.ID, alert.IncidentID, alert.Type, alert.Severity,
-		alert.Message, alert.UserID, alert.SessionID)
+		alert.Message, alert.UserID, alert.SessionID, orgID)
 
 	return err
 }
@@ -486,19 +571,46 @@ func (s *ibdrService) createAlert(ctx context.Context, incident *BreachIncident)
 func (s *ibdrService) executeFullQuarantine(ctx context.Context, incident *BreachIncident, actorID string) []string {
 	actions := []string{}
 
-	org, _ := orgctx.From(ctx)
+	org, orgErr := orgctx.From(ctx)
+	if orgErr != nil {
+		s.logger.Error("full quarantine: no org in context; nothing was contained", zap.Error(orgErr))
+		return actions
+	}
 
-	// Disable affected user accounts
+	// Disable affected user accounts.
+	//
+	// This wrote `SET status = 'quarantined'` until v147. There is no status
+	// column on users — no migration creates one, and every other disable path
+	// in the product (identity/service.go, deprovisioning.go, ispm.go,
+	// ssf_receiver.go) writes `enabled = false`. The UPDATE therefore errored on
+	// every call, the error was discarded by `_, _ =`, and the action was
+	// appended anyway: a critical-severity quarantine reported disabled_user_<id>
+	// for each affected user, set quarantine_action = 'full', and disabled
+	// nobody — in its OWN tenant, not only across tenants. The action is now
+	// appended only when a row actually changed.
 	for _, userID := range incident.AffectedUserIDs {
-		_, _ = s.db.Pool.Exec(ctx, `
-			UPDATE users SET status = 'quarantined', updated_at = NOW() WHERE id = $1 AND org_id = $2
+		tag, err := s.db.Pool.Exec(ctx, `
+			UPDATE users SET enabled = false, updated_at = NOW() WHERE id = $1 AND org_id = $2
 		`, userID, org.ID)
+		if err != nil {
+			s.logger.Error("full quarantine: failed to disable user",
+				zap.String("user_id", logsafe.Clean(userID)), zap.Error(err))
+			continue
+		}
+		if tag.RowsAffected() == 0 {
+			s.logger.Warn("full quarantine: no such user in this organization; not disabled",
+				zap.String("user_id", logsafe.Clean(userID)))
+			continue
+		}
 		actions = append(actions, fmt.Sprintf("disabled_user_%s", userID))
 	}
 
 	// Revoke all sessions
-	s.revokeUserSessions(ctx, incident.AffectedUserIDs)
-	actions = append(actions, "revoked_all_sessions")
+	if err := s.revokeUserSessions(ctx, incident.AffectedUserIDs); err != nil {
+		s.logger.Error("full quarantine: session revocation failed", zap.Error(err))
+	} else {
+		actions = append(actions, "revoked_all_sessions")
+	}
 
 	// Block IPs if available
 	for _, sessionID := range incident.AffectedSessions {
@@ -519,25 +631,38 @@ func (s *ibdrService) executePartialQuarantine(ctx context.Context, incident *Br
 	actions := []string{}
 
 	// Revoke affected sessions only
-	s.revokeUserSessions(ctx, incident.AffectedUserIDs)
-	actions = append(actions, "revoked_sessions")
+	if err := s.revokeUserSessions(ctx, incident.AffectedUserIDs); err != nil {
+		s.logger.Error("partial quarantine: session revocation failed", zap.Error(err))
+	} else {
+		actions = append(actions, "revoked_sessions")
+	}
 
-	// Record enhanced monitoring as a durable audit event. The old INSERT
-	// targeted a user_monitoring table no migration creates and discarded the
-	// error, so the "enhanced monitoring" action silently did nothing.
+	return append(actions, s.recordEnhancedMonitoring(ctx, incident, actorID)...)
+}
+
+// recordEnhancedMonitoring writes the enhanced-monitoring step as a durable
+// audit event and returns one action string per user it actually recorded.
+//
+// The original INSERT targeted a user_monitoring table no migration creates and
+// discarded the error, so the "enhanced monitoring" action silently did
+// nothing. It is shared by the high (partial quarantine) and medium branches,
+// which had two copies of the same claim and one implementation between them.
+func (s *ibdrService) recordEnhancedMonitoring(ctx context.Context, incident *BreachIncident, actorID string) []string {
+	actions := []string{}
+
 	org, orgErr := orgctx.From(ctx)
 	for _, userID := range incident.AffectedUserIDs {
 		if orgErr != nil {
-			s.logger.Warn("partial quarantine: no org in context; enhanced-monitoring not recorded",
-				zap.String("user_id", sanitizeLogValue(userID)), zap.Error(orgErr))
+			s.logger.Warn("containment: no org in context; enhanced-monitoring not recorded",
+				zap.String("user_id", logsafe.Clean(userID)), zap.Error(orgErr))
 			continue
 		}
 		if _, err := s.db.Pool.Exec(ctx, `
 			INSERT INTO audit_events (id, event_type, category, action, outcome, actor_id, actor_ip, target_id, target_type, details, created_at, org_id)
 			VALUES (gen_random_uuid(), 'security', 'ibdr', 'user.enhanced_monitoring', 'success', $1, '0.0.0.0', $2, 'user', $3, NOW(), $4)
 		`, actorID, userID, fmt.Sprintf(`{"incident_id":%q,"level":"enhanced"}`, incident.ID), org.ID); err != nil {
-			s.logger.Error("partial quarantine: failed to record enhanced monitoring",
-				zap.String("user_id", sanitizeLogValue(userID)), zap.Error(err))
+			s.logger.Error("containment: failed to record enhanced monitoring",
+				zap.String("user_id", logsafe.Clean(userID)), zap.Error(err))
 			continue
 		}
 		actions = append(actions, fmt.Sprintf("enhanced_monitoring_%s", userID))
@@ -546,13 +671,26 @@ func (s *ibdrService) executePartialQuarantine(ctx context.Context, incident *Br
 	return actions
 }
 
-func (s *ibdrService) revokeUserSessions(ctx context.Context, userIDs []string) {
-	org, _ := orgctx.From(ctx)
-	for _, userID := range userIDs {
-		_, _ = s.db.Pool.Exec(ctx, `
-			UPDATE sessions SET revoked = true, revoked_at = NOW() WHERE user_id = $1 AND org_id = $2
-		`, userID, org.ID)
+// revokeUserSessions revokes every live session of the named users in the
+// caller's organization. It returns an error rather than swallowing one: the
+// caller records "revoked_all_sessions" as a containment step, and a step that
+// is recorded whether or not it ran is not a containment record.
+//
+// Revoking zero sessions is not a failure — a user with nothing live has
+// nothing to revoke — so only a query error is reported.
+func (s *ibdrService) revokeUserSessions(ctx context.Context, userIDs []string) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return fmt.Errorf("session revocation requires an organization context: %w", err)
 	}
+	for _, userID := range userIDs {
+		if _, err := s.db.Pool.Exec(ctx, `
+			UPDATE sessions SET revoked = true, revoked_at = NOW() WHERE user_id = $1 AND org_id = $2
+		`, userID, org.ID); err != nil {
+			return fmt.Errorf("revoke sessions for user %s: %w", logsafe.Clean(userID), err)
+		}
+	}
+	return nil
 }
 
 func (s *ibdrService) blockIPAddress(ctx context.Context, ipAddress string) {
@@ -567,7 +705,7 @@ func (s *ibdrService) blockIPAddress(ctx context.Context, ipAddress string) {
 		SET threat_type = 'breach_response', reason = EXCLUDED.reason, is_active = true
 	`, ipAddress); err != nil {
 		s.logger.Error("breach response: failed to block IP",
-			zap.String("ip_address", sanitizeLogValue(ipAddress)), zap.Error(err))
+			zap.String("ip_address", logsafe.Clean(ipAddress)), zap.Error(err))
 	}
 }
 
@@ -656,12 +794,26 @@ func (s *Service) handleIBDRIncidents(c *gin.Context) {
 	}
 	ctx := c.Request.Context()
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "organization context required"})
+		return
+	}
+
+	// Every column here except id is nullable, and a NULL scanned into a string
+	// fails: pgx closes the rows on a scan error, so one incident with a NULL
+	// title truncated the list at that row. The error was discarded and the zero
+	// value appended, so the console showed a short list ending in a blank row
+	// and no error at all.
 	rows, err := s.db.Pool.Query(ctx, `
-		SELECT id, type, severity, status, title, description, first_detected_at, confidence, quarantine_action
+		SELECT id, COALESCE(type, ''), COALESCE(severity, ''), COALESCE(status, ''),
+			COALESCE(title, ''), COALESCE(description, ''), COALESCE(first_detected_at, created_at),
+			COALESCE(confidence, 0), COALESCE(quarantine_action, 'none')
 		FROM breach_incidents
+		WHERE org_id = $1
 		ORDER BY first_detected_at DESC
 		LIMIT 100
-	`)
+	`, org.ID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list incidents"})
 		return
@@ -671,10 +823,19 @@ func (s *Service) handleIBDRIncidents(c *gin.Context) {
 	incidents := []BreachIncident{}
 	for rows.Next() {
 		var inc BreachIncident
-		rows.Scan(&inc.ID, &inc.Type, &inc.Severity, &inc.Status,
+		if err := rows.Scan(&inc.ID, &inc.Type, &inc.Severity, &inc.Status,
 			&inc.Title, &inc.Description, &inc.FirstDetectedAt,
-			&inc.Confidence, &inc.QuarantineAction)
+			&inc.Confidence, &inc.QuarantineAction); err != nil {
+			s.logger.Error("failed to scan breach incident", zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list incidents"})
+			return
+		}
 		incidents = append(incidents, inc)
+	}
+	if err := rows.Err(); err != nil {
+		s.logger.Error("failed to read breach incidents", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list incidents"})
+		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{"data": incidents})

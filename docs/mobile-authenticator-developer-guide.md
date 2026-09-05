@@ -1,21 +1,29 @@
 # OpenIDX Mobile Authenticator — Developer Guide
 
+> **The React Native / Expo app this guide was written against has been
+> deleted.** The mobile client is the Flutter app in [`client/`](../client),
+> which drives the same Go engine as the desktop agent (`agent/mobile`), so
+> posture and OpenZiti are one implementation rather than two. Every API
+> contract, endpoint, payload and sequence below is still current — that is why
+> this document is kept — and the file citations now point into `client/`,
+> `agent/` or the backend rather than at the deleted Expo tree.
+
 **Audience:** a mobile developer building the OpenIDX authenticator app (OAuth/OIDC
 login, TOTP, push-approval MFA, passkeys) **and** the "connect to applications"
 experience (zero-trust access to internal apps).
 
-**TL;DR:** most of this already exists. There is a **feature-complete React Native +
-Expo app in [`mobile/`](../mobile)** that is `tsc`-clean and wired to the live
-backend. Your job is mostly to (1) finish two backend-adjacent gaps (real push
-delivery, native Ziti `dial()`), (2) do the build/release plumbing (EAS, real bundle
-ids, domain-association files), and (3) extend UX. This guide is the single source of
-truth for the API contract and the app's current state, with exact `file:line`
-citations into the backend so you can verify everything yourself.
+**TL;DR:** most of this already exists. The shipping client is the **Flutter app in
+[`client/`](../client)**, which drives the Go engine (`agent/mobile`) through the
+`openidx_engine` plugin — so login, enrolment, posture and OpenZiti are the desktop
+agent's implementation, not a parallel one. Your job is UX and the release plumbing
+(§8), not a rebuild. This guide is the single source of truth for the **API
+contract**, with exact `file:line` citations into the backend so you can verify
+everything yourself; §1 says what the app does today.
 
 > Companion docs already in the repo:
-> - [`mobile/HANDOFF.md`](../mobile/HANDOFF.md) — accounts/secrets/build handoff.
+> - [`client/README.md`](../client/README.md) — the app's own architecture notes.
 > - [`docs/remote-access-lifecycle-scenarios.md`](./remote-access-lifecycle-scenarios.md) — the zero-trust access model.
-> - [`mobile/modules/ziti/README.md`](../mobile/modules/ziti/README.md) — the native OpenZiti module.
+> - [`docs/mobile/push-mfa-delivery.md`](./mobile/push-mfa-delivery.md) — how push MFA reaches the phone, and what re-adding a provider SDK would take.
 
 Everything below marked **[verified]** was exercised live against
 `https://openidx.tdv.org` while writing this guide.
@@ -40,47 +48,55 @@ Three build tiers (from `docs/remote-access-lifecycle-scenarios.md:167-199`):
 - **MVP** — login + push approvals + TOTP + "My Access". No Ziti SDK. **(built)**
 - **Phase 2** — browse/request PAM connections; open brokered Guacamole/BrowZer
   sessions in an in-app WebView. **(built)**
-- **Phase 3** — embed the mobile Ziti SDK so the phone is a first-class overlay
-  endpoint; native SSH/RDP clients dial over the overlay. **(scaffolded — the one real
-  code TODO)**
+- **Phase 3** — the phone is a first-class overlay endpoint; native SSH/RDP clients
+  dial over the overlay. **(built — the Go engine's Ziti stack, the same one the
+  desktop agent runs; see §7)**
 
 ---
 
 ## 1. Current state of the app (start here, don't rebuild)
 
-Stack: **React Native 0.86 + Expo SDK 57, TypeScript (strict), expo-router**, TanStack
-Query, axios. Routes live under **`mobile/src/app/`** (not `mobile/app`).
+Stack: **Flutter (Dart), Riverpod, dio**, over the **Go engine** — `agent/mobile`
+bound with `gomobile` and consumed through the `openidx_engine` plugin. That is the
+architectural fact everything else follows from: posture, enrolment, OpenZiti and the
+OAuth session are the *same implementation the desktop agent runs*, not a second one
+written in Dart. Code lives under `client/lib/`; see [`client/README.md`](../client/README.md).
 
-**Already complete and `tsc`-clean** (see `mobile/HANDOFF.md`):
-
-| Area | Files | Status |
+| Area | Where | Status |
 |---|---|---|
-| OAuth PKCE login (browser) | `mobile/src/lib/auth.tsx`, `oauth.ts`, `pkce.ts` | ✅ |
-| Native passkey login (usernameless) | `mobile/src/features/mfa/passkey.ts` | ✅ (needs domain-assoc files) |
-| Token storage / refresh / 401 interceptor | `mobile/src/lib/{secureStore.ts,api.ts,auth.tsx}` | ✅ |
-| TOTP enroll/verify/disable | `mobile/src/features/mfa/totp.ts`, `app/(app)/security/totp.tsx` | ✅ |
-| **Push MFA approve (number-match)** | `mobile/src/features/mfa/push.ts`, `app/(app)/approve/[challengeId].tsx` | ✅ poll-based (real push = TODO) |
-| Step-up re-auth | `mobile/src/features/mfa/stepup.ts` | ✅ (API layer) |
-| Approvals inbox | `mobile/src/features/approvals/`, `app/(app)/approvals/*` | ✅ |
-| My Access | `mobile/src/features/myaccess/`, `app/(app)/my-access.tsx` | ✅ |
-| Notifications | `mobile/src/features/notifications/`, `app/(app)/notifications.tsx` | ✅ |
-| Biometric app-lock | `mobile/src/app/(app)/_layout.tsx` | ✅ |
-| PAM browse/request/launch (Guacamole WebView) | `mobile/src/features/pam/`, `app/(app)/pam/*` | ✅ |
-| Device enrollment + posture | `mobile/src/features/ziti/{device,posture}.ts`, `app/(app)/security/device.tsx` | ✅ |
-| **OpenZiti native `dial()` loopback proxy** | `mobile/modules/ziti/*`, `src/features/ziti/native.ts` | 🚧 **scaffolded** |
+| OAuth login | `lib/ui/screens/login_screen.dart` → engine `loginStart` / `login` | ✅ |
+| Deep-link callback (`openidx://oauth-callback`) | `lib/mobile/{deep_links,oauth_login_handler}.dart` | ✅ |
+| Token storage / refresh / 401 | engine-owned; `lib/api/api_client.dart` sources the bearer from it | ✅ |
+| TOTP codes (offline) | `lib/features/totp.dart`, `lib/ui/screens/mobile/authenticator_screen.dart` | ✅ RFC 6238, tested |
+| Push MFA approve (number-match) | `lib/ui/screens/mobile/push_approve_screen.dart`, `lib/mobile/push_token_service.dart` | ✅ over ntfy |
+| QR login approval | `lib/ui/screens/mobile/qr_login_approve_screen.dart` | ✅ |
+| Approvals inbox | `lib/ui/screens/mobile/approvals_screen.dart`, `lib/api/governance.dart` | ✅ |
+| My Access | `lib/ui/screens/my_access_screen.dart`, `lib/api/{access,portal}.dart` | ✅ |
+| Notifications | `lib/ui/screens/mobile/notifications_screen.dart`, `lib/api/notifications.dart` | ✅ |
+| Biometric app-lock | `lib/mobile/app_lock.dart` | ✅ tested |
+| Device enrolment + posture | engine (`agent/mobile`), `lib/ui/screens/enroll_screen.dart` | ✅ |
+| OpenZiti overlay | engine — the same Ziti SDK the desktop agent uses | ✅ |
 
-**Not done (your work):**
-1. **OpenZiti native `dial()`** — `mobile/modules/ziti/ios/OidxZitiModule.swift` and
-   `.../android/.../OidxZitiModule.kt` both `reject("not_implemented")` on `dial()`.
-   `enroll()/status()/serviceAvailable()` are written. See §7.
-2. **Real push delivery** — currently poll-based; backend FCM/APNs senders need work
-   (§4.4). Not blocking for dev.
-3. **Build/release plumbing** — `eas init`, real `ios.bundleIdentifier` /
-   `android.package` (placeholder `com.anonymous.openidxmobile`), domain-association
-   files for passkeys (§8).
+**Passkeys are not a Dart code path and should not become one.** On mobile the engine
+hands the authorize URL to the system browser, so passkeys, MFA and step-up run in the
+browser against the same server flow the console uses. A Dart re-implementation
+(`lib/api/auth.dart`) existed until v1.34.0 with its two platform seams left as stubs
+that threw, no test and no caller; it was deleted rather than finished, because two
+credential pipelines that can disagree is the hazard, not the missing feature.
 
-Run it: `cd mobile && npm install && npx expo start` — but passkeys and the Ziti module
-need a **dev-client / EAS build** (Expo Go can't load native modules).
+**Known gaps:**
+1. **Push delivery is ntfy-only on the client.** The backend also carries FCM HTTP v1
+   and APNs senders (`internal/identity/pushmfa_providers.go`) for operators who
+   provision one; the client half is deliberately not shipped. See §4.5 and
+   [`docs/mobile/push-mfa-delivery.md`](./mobile/push-mfa-delivery.md).
+2. **iOS ships unsigned.** CI builds and packages an `.ipa`; signing needs an Apple
+   distribution certificate and provisioning profile — maintainer credentials. See §8.
+3. **The Android release APK is debug-signed until an upload keystore is configured**
+   in CI, and its filename says `-debugsigned` while that is true. See §8.
+
+Run it: `cd client && flutter pub get && flutter run`. The engine has to be built
+first — `client-mobile-build.yml` shows the `gomobile bind` invocation for each
+platform.
 
 ---
 
@@ -100,29 +116,42 @@ The backend ships a public PKCE client for exactly this app
 | access-token TTL | `3600` s (1 h) |
 | refresh-token TTL | `2592000` s (30 d) |
 
-App-side config resolves from `expo-constants` `extra` (per EAS profile) with
-reference-box defaults (`mobile/src/config.ts`):
-```ts
-API_BASE_URL       = extra.apiBaseUrl   ?? 'https://openidx.tdv.org'
-OAUTH_BASE_URL     = `${API_BASE_URL}/oauth`
-OAUTH_CLIENT_ID    = extra.oauthClientId ?? 'openidx-mobile'
-OAUTH_REDIRECT_URI = 'openidx://oauth-callback'    // must match app.json `scheme: openidx`
-OAUTH_SCOPES       = 'openid profile email offline_access'
+There is no compiled-in backend URL. The app learns it from **enrolment**: the
+engine reports `server_url` in its status, and `backendBaseUrlProvider`
+(`client/lib/state/api_providers.dart:33`) reads it, so the HTTP journeys are empty
+until the device is enrolled and point at whatever deployment enrolled it. The engine
+owns the client id, the redirect and the PKCE exchange:
+
 ```
-To point at your own backend, override `extra.apiBaseUrl` / `oauthClientId` in
-`app.json` (or per-profile in `eas.json`), and seed an equivalent client there.
+backend base URL  = the engine's status.server_url (set at enrolment)
+client_id         = openidx-mobile        (seeded by migration v84)
+redirect_uri      = openidx://oauth-callback   (must match the app's URL scheme)
+scopes            = openid profile email offline_access
+```
+
+Seed an equivalent client on your own backend if you change `client_id`.
 
 ---
 
 ## 3. Login (OAuth 2.0 Authorization Code + PKCE)
 
-Two paths ship; **the native path is recommended** because the browser `/oauth/authorize`
-flow server-renders HTML that a native app can't cleanly intercept
-(`internal/oauth/service.go:1322-1325`).
+Two paths are contracted, and **the Flutter client takes the browser one**: the
+engine mints the authorize URL and hands it to the system browser, so MFA, step-up and
+passkeys run in the server's own flow rather than a second implementation on the
+phone.
+
+> A note on an earlier version of this section: it recommended the native path
+> because `/oauth/authorize` "server-renders HTML a native app can't cleanly
+> intercept". That page was deleted in v1.34.0 — `/oauth/authorize` redirects to the
+> SPA login now, and there is no server-rendered credential form left to intercept.
+> The native path below is still contracted and still works; it is documented as the
+> contract a fully native client would meet, not as what this client does.
 
 ### 3.1 Native login (JSON, no browser hop) — recommended
 
-This is what `mobile/src/features/mfa/passkey.ts` + `mobile/src/lib/oauth.ts` implement.
+The Flutter client does not implement this natively: the engine opens the system
+browser, so the server's own passkey flow runs there. The sequence is documented
+because it is the contract a native client would have to meet.
 
 **Step 1 — mint a login session.** `POST /oauth/native/login-init`
 (`internal/oauth/handlers_passwordless.go:160`):
@@ -184,10 +213,11 @@ code_verifier=<the PKCE verifier>
 > **Gotcha (verified live):** the `code` inside `redirect_url` is URL-encoded (it ends
 > with `%3D` for `=`). You **must URL-decode** it before sending to `/oauth/token`, or
 > you get `{"error":"invalid_grant"}`. The app already handles this
-> (`mobile/src/features/mfa/passkey.ts` parses with a regex then decodes).
+> (a native client must parse and base64url-decode the challenge itself).
 
 ### 3.2 Browser login (fallback)
-`mobile/src/lib/auth.tsx` `loginWithBrowser` uses `expo-auth-session` against
+`client/lib/ui/screens/login_screen.dart` opens the engine's authorize URL with
+`url_launcher` against
 `authorizationEndpoint = ${OAUTH_BASE_URL}/authorize/v2` and
 `tokenEndpoint = ${OAUTH_BASE_URL}/token`, with `usePKCE: true`. Used automatically when
 passkeys aren't supported.
@@ -200,9 +230,9 @@ passkeys aren't supported.
   Refresh tokens **rotate** — persist the new one each time
   (`internal/oauth/service.go:3047-3068`). The grant re-checks the user is still enabled
   and the session isn't revoked (kill-switch, `service.go:2995-3017`).
-- **Store tokens in the OS keystore** (`expo-secure-store`) as the app does
-  (`mobile/src/lib/secureStore.ts`: `oidx.access_token`, `oidx.refresh_token`,
-  `oidx.token_exp`).
+- **Store tokens in the OS keystore.** On mobile the engine owns them; the Dart
+  side keeps a `flutter_secure_storage` store (`client/lib/api/token_store.dart`)
+  used on desktop and as the fallback.
 - **Revoke**: `POST /oauth/revoke` form `token=…`. **Logout**: `POST /oauth/logout`
   (Bearer or `id_token_hint`); **logout everywhere**: `POST /oauth/logout-all`.
 - `.well-known/openid-configuration` **[verified]** returns
@@ -235,7 +265,9 @@ Algorithm is **explicit in the emitted URI [verified]**:
 - **Verify** — `POST /api/v1/identity/mfa/totp/verify` `{ "code": "123456" }` →
   `{ "valid": true }` (`service.go:3985`).
 - **Status** — `GET .../mfa/totp/status`; **Disable** — `DELETE .../mfa/totp`.
-- App code: `mobile/src/features/mfa/totp.ts`, UI `app/(app)/security/totp.tsx`.
+- App code: `client/lib/features/totp.dart` (RFC 6238, unit-tested against the RFC
+  vectors in `client/test/totp_test.dart`), UI
+  `client/lib/ui/screens/mobile/authenticator_screen.dart`.
 
 ### 4.2 Push approval (number-match) — the flagship authenticator feature
 
@@ -253,7 +285,7 @@ The number is **2 digits (10–99)**; the challenge times out after
 ```
 Re-registering the same `device_token` updates the row (idempotent). Until real push is
 wired, the app registers a stable per-install UUID as `device_token`
-(`mobile/src/features/mfa/push.ts`).
+(`client/lib/mobile/push_token_service.dart`).
 
 **Approve/deny a challenge (number-match)** —
 `POST /api/v1/identity/mfa/push/verify` (`handlers_mfa.go:272`):
@@ -273,7 +305,7 @@ wired, the app registers a stable per-install UUID as `device_token`
 
 List/remove devices: `GET .../mfa/push/devices`, `DELETE .../mfa/push/devices/:id`.
 
-App code: `mobile/src/features/mfa/push.ts`; approve screen
+App code: `client/lib/mobile/push_token_service.dart`; approve screen
 `app/(app)/approve/[challengeId].tsx`; deep link **`openidx://approve/<challengeId>`**
 (the shape a real push notification will carry).
 
@@ -288,7 +320,8 @@ standard `go-webauthn` JSON — pass straight to the platform WebAuthn API.
 RP config: `OPENIDX_WEBAUTHN_RP_ID` (must be your associated domain, e.g.
 `openidx.tdv.org`), `OPENIDX_WEBAUTHN_RP_ORIGINS`
 (`internal/common/config/config.go:350-355`). App code:
-`mobile/src/features/mfa/passkey.ts`, UI `app/(app)/security/passkeys.tsx`.
+not implemented in the client — passkey enrolment and management happen in the
+console or in the browser the engine opens.
 
 ### 4.4 MFA at login (step-up) & how the app drives it
 When `/oauth/login` returns `mfa_required:true` + `mfa_session` (§3.1), call one of:
@@ -306,7 +339,7 @@ When `/oauth/login` returns `mfa_required:true` + `mfa_session` (§3.1), call on
 - **SMS/email** — `POST /oauth/mfa-send-otp` `{ "mfa_session","method":"sms" }` then
   `/oauth/mfa-verify`.
 
-App code: `mobile/src/features/mfa/stepup.ts`.
+App code: server-side; the browser the engine opens drives step-up.
 
 `GET /api/v1/identity/mfa/methods` **[verified]** returns which factors a user has
 enabled, e.g. `{"enabled_count":1,"methods":{"push":true,"totp":false,…},"mfa_enabled":true}`.
@@ -322,8 +355,10 @@ delivery needs work** before it works unattended in prod:
 - For dev/testing: set `PushMFA.AutoApprove` (dev only) or just **poll the challenge and
   approve via `/mfa/push/verify` directly** (which the app already does).
 
-**Recommended first backend task for the mobile effort:** rewrite the FCM path to HTTP
-v1 and add APNs provider-token auth, then wire `expo-notifications` on the app side so
+**Where this stands:** the FCM HTTP v1 and APNs provider-token senders exist
+(`internal/identity/pushmfa_providers.go`); the client half is deliberately not
+shipped, and the phone subscribes to its per-user ntfy topic instead. Adding a
+provider SDK on the app side would
 `openidx://approve/<challengeId>` arrives as a real notification.
 
 ---
@@ -359,7 +394,7 @@ Credentials are injected **server-side** and never touch the phone
    `503 {"code":"ziti_broker_unconfigured"|"ziti_unavailable"}`.
 4. **End** — `POST /api/v1/access/pam/sessions/:id/end`.
 
-App code: `mobile/src/features/pam/api.ts`, screens `app/(app)/pam/*` (session rendered
+App code: `client/lib/api/access.dart`, `client/lib/ui/screens/my_access_screen.dart` (session rendered
 in a `react-native-webview`).
 
 ### 5.2 BrowZer clientless (browser) access — ✅ implemented, zero native integration
@@ -410,60 +445,77 @@ The phone can enroll as a managed device and report posture, which drives device
 - **Report posture** — `POST /api/v1/access/ziti/posture/device`
   `{ "identity_id":"<ziti_id>", "posture": {…screen-lock, root/jailbreak, os_version…} }`
   → health report `{ overall_passed, score, … }` (`ziti_fabric_handlers.go:427-457`).
-  The app collects signals in `mobile/src/features/ziti/posture.ts`.
+  The engine collects the signals (`agent/internal/checks`, surfaced through `agent/mobile/mobile.go`'s `Posture()`), shared with desktop.
 - **My devices** — `GET /api/v1/access/my-devices`.
 - Trust is granted admin-side; it flips `known_devices.trusted=true` and re-adds the
   `#device-trusted` Ziti attribute on the next sync
   (`internal/access/device_trust.go:14-40`).
 
-App code: `mobile/src/features/ziti/device.ts`, UI `app/(app)/security/device.tsx`.
+App code: the engine (`agent/mobile`), UI `client/lib/ui/screens/enroll_screen.dart`.
 
 ---
 
-## 7. The native OpenZiti module (`mobile/modules/ziti/`)
+## 7. OpenZiti on the phone — the engine, not a second SDK
 
-A local Expo native module (`OidxZiti`) autolinked at prebuild. iOS wraps **CZiti**
-(`ios/OidxZitiModule.swift`), Android wraps **ziti-android**
-(`android/.../OidxZitiModule.kt`). TS surface in `modules/ziti/index.ts`, optional
-wrapper in `src/features/ziti/native.ts` (app runs fine when the module is absent).
+There is no separate mobile Ziti module to finish. The overlay is the Go engine's:
+`agent/mobile` is bound with `gomobile` (an `.aar` for Android, an `.xcframework`
+for iOS) and exposed to Dart through `client/plugins/openidx_engine`. It is the same
+`agent/internal/ziti` the desktop agent runs, including `dialer.go`'s `Bridge()` —
+so a service dialled on the phone and a service dialled on a laptop go through one
+implementation, and a fix to either is a fix to both.
 
-**Done:** `enroll(jwt)`, `status()`, `serviceAvailable(name)` + keychain/keystore
-identity persistence.
+That is the whole argument for the Flutter-over-Go shape. The alternative that used
+to be scaffolded here — a Swift `CZiti` wrapper and a Kotlin `ziti-android` wrapper,
+both with `dial()` returning `reject("not_implemented")` — would have been a third
+Ziti client to keep in step with the other two.
 
-**TODO (the single real code gap):** `dial(service)` on **both** platforms currently
-`reject("not_implemented")`. It must open a Ziti connection to the named service and
-**bridge it to a `127.0.0.1:<port>` loopback socket** the WebView/SSH client connects to
-(mirror `agent/internal/ziti/dialer.go` `Bridge()`), returning `host:port`.
-
-**Before first build:** pin exact `CZiti` (iOS, `~> 1.4` placeholder) and `ziti-android`
-(`0.30.+`) versions, verify the `// MARK: SDK` / `// SDK:` calls, then
-`npx expo prebuild` + `eas build --profile development`. See
-[`mobile/modules/ziti/README.md`](../mobile/modules/ziti/README.md).
+The bind commands live in `.github/workflows/client-mobile-build.yml`
+(`gomobile bind -target=android …` / `-target=ios …`); reproduce them locally to
+build the engine before `flutter run`.
 
 ---
 
-## 8. Build & release (from `mobile/HANDOFF.md`)
+## 8. Build & release
 
-**This repo's build host is a headless Linux VM** — no macOS (no iOS builds) and no KVM
-(no Android emulator). All real builds go through **EAS cloud** (CI workflow
-`.github/workflows/mobile-eas-build.yml`) or your own Mac / KVM machine. Expo Go **cannot**
-load `react-native-passkeys` or `OidxZiti` — you need a **dev-client / EAS build**.
+CI builds both platforms on every change to `client/**`
+(`.github/workflows/client-mobile-build.yml`: `flutter analyze`, `flutter test`, an
+Android APK and an unsigned iOS build) and publishes release artifacts on a `v*` tag
+(`.github/workflows/client-mobile-release.yml`).
 
-Checklist:
-1. Accounts: Expo (+`EXPO_TOKEN` GitHub secret), Apple Developer ($99/yr, iOS),
-   Google Play ($25, store), Firebase FCM project + APNs `.p8` key (real push).
-2. `cd mobile && npx eas init` (writes a real `extra.eas.projectId` — commit it).
-3. Set real `ios.bundleIdentifier` / `android.package` in `app.json` (replace
-   `com.anonymous.openidxmobile`).
-4. **Domain-association files** for native passkeys (host at your RP domain, e.g.
-   `openidx.tdv.org`):
-   - iOS `/.well-known/apple-app-site-association` (`webcredentials: <TEAMID>.<bundleid>`)
-     + `associatedDomains` in app config.
-   - Android `/.well-known/assetlinks.json` (package + signing-cert SHA-256).
-5. Verify deep links resolve on device: `openidx://oauth-callback` (OAuth),
+**What ships today, and under what name:**
+
+| Artifact | Signed with | Name |
+|---|---|---|
+| Android APK | the upload keystore, when `ANDROID_KEYSTORE_BASE64` and its three companions are set | `openidx-agent-android-<tag>.apk` |
+| Android APK | Flutter's debug key, when they are not | `openidx-agent-android-<tag>-debugsigned.apk` |
+| iOS archive | nothing — unsigned | `openidx-agent-ios-<tag>-unsigned.ipa` |
+
+The suffix is not cosmetic. A debug-signed APK is rejected by the Play Store, and
+every device that installs one must uninstall before a properly signed build can
+replace it, because the signing key changed. `scripts/check-release-signing.sh` (run
+in CI, self-tested by `check-release-signing.test.sh`) fails the build if the
+artifact name and the key that signed it can ever come apart — including if the
+`apksigner` verification that rejects `CN=Android Debug` is removed.
+
+**Maintainer actions to get a store-ready build:**
+1. **Android upload keystore.** Generate one
+   (`keytool -genkey -v -keystore upload-keystore.jks -keyalg RSA -keysize 2048
+   -validity 10000 -alias upload`), then set four repository secrets:
+   `ANDROID_KEYSTORE_BASE64` (`base64 -w0 upload-keystore.jks`),
+   `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`. The
+   release job signs and drops the suffix on the next tag; set all four or none —
+   a partial set fails the job rather than quietly debug-signing.
+2. **iOS signing.** An Apple Developer account, a distribution certificate and a
+   provisioning profile. Re-sign `openidx-agent-ios-<tag>-unsigned.ipa` and upload
+   with `xcrun altool` / Transporter. Keep the bundle identifier stable across
+   releases.
+3. **Domain-association files**, if you want passkeys usable from the phone's
+   browser without a redirect: host `/.well-known/apple-app-site-association`
+   (`webcredentials: <TEAMID>.<bundleid>`) and `/.well-known/assetlinks.json`
+   (package + signing-cert SHA-256) at your issuer's domain. Both are already
+   served by `oauth-service` — see §9.
+4. **Verify deep links on device:** `openidx://oauth-callback` (OAuth) and
    `openidx://approve/<id>` (push approve).
-6. Trigger the "Mobile EAS Build" GitHub Action, or
-   `eas build -p android --profile preview`.
 
 ---
 
@@ -498,15 +550,17 @@ Checklist:
 1. **Run the app** against `https://openidx.tdv.org` with a test user; log in, enroll
    TOTP, register the push device, approve a challenge (poll-based). Everything above is
    already wired — confirm it end to end first.
-2. **Ship the MVP**: EAS init, real bundle ids, domain-association files → a dev-client
-   build that does login + push approve + TOTP + My Access.
-3. **Close the push gap**: FCM HTTP v1 + APNs provider-token on the backend
-   (`internal/identity/pushmfa.go`), then `expo-notifications` on the app so
-   `openidx://approve/<id>` arrives as a real notification.
+2. **Get a distributable build**: the Android upload keystore and the Apple signing
+   material (§8). Until they exist CI still publishes both artifacts — named for what
+   they are — so nothing is blocked on them but store distribution.
+3. **Decide the push transport**: ntfy is the shipped one and needs nothing; if you
+   want FCM/APNs, the backend senders are written
+   (`internal/identity/pushmfa_providers.go`) and the app side is the work —
+   see [`docs/mobile/push-mfa-delivery.md`](./mobile/push-mfa-delivery.md).
 4. **Phase 2 app-connect**: the PAM/Guacamole WebView + BrowZer URL paths already work —
    polish the UX.
-5. **Phase 3 native overlay**: implement `OidxZiti.dial()` (loopback bridge, mirror
-   `agent/internal/ziti/dialer.go`), pin SDK versions, ship native SSH/RDP over Ziti.
+5. **Native overlay** is already the engine's (`agent/internal/ziti`, §7); what is
+   left there is UX — surfacing dialled services and their health in the app.
 
 ---
 

@@ -10,24 +10,13 @@ import { test, expect } from '@playwright/test'
  * 4. Prevents Cross-Site WebSocket Hijacking (CSWSH) attacks
  */
 test.describe('Audit Stream WebSocket Origin Validation', () => {
-  test.beforeEach(async ({ page, context }) => {
-    // Mock authentication
-    const mockPayload = {
-      sub: 'test-user-id',
-      email: 'admin@openidx.local',
-      name: 'Test Admin',
-      roles: ['admin'],
-      exp: Math.floor(Date.now() / 1000) + 3600,
-    }
-    const header = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
-    const payload = btoa(JSON.stringify(mockPayload))
-    const mockToken = `${header}.${payload}.mock-signature`
-
-    // Set auth token in context before navigating
-    await context.addInitScript((token) => {
-      localStorage.setItem('token', token)
-      localStorage.setItem('refresh_token', 'mock-refresh-token')
-    }, mockToken)
+  test.beforeEach(async ({ page }) => {
+    // The signed-in storageState from auth.setup.ts is the session. What
+    // stood here overwrote it with a hand-assembled JWT ending in
+    // `mock-signature`: btoa() emits standard base64, JWT requires base64url,
+    // so identity-service logged "token is malformed: could not base64 decode
+    // claim" on every request and the console bounced back to /login. The
+    // route mocks below still stand in for the API; the SESSION has to be real.
 
     // Mock REST API for initial events
     await page.route('**/api/v1/audit/events*', async (route) => {
@@ -66,7 +55,7 @@ test.describe('Audit Stream WebSocket Origin Validation', () => {
       })
     })
 
-    await page.goto('/audit/audit-dashboard')
+    await page.goto('/audit/dashboard')
 
     // Click connect button
     const connectButton = page.getByRole('button', { name: /connect/i })
@@ -94,7 +83,7 @@ test.describe('Audit Stream WebSocket Origin Validation', () => {
       })
     })
 
-    await page.goto('/audit/audit-dashboard')
+    await page.goto('/audit/dashboard')
 
     const connectButton = page.getByRole('button', { name: /connect/i })
     await connectButton.click()
@@ -121,7 +110,7 @@ test.describe('Audit Stream WebSocket Origin Validation', () => {
       })
     })
 
-    await page.goto('/audit/audit-dashboard')
+    await page.goto('/audit/dashboard')
 
     const connectButton = page.getByRole('button', { name: /connect/i })
     await connectButton.click()
@@ -159,7 +148,7 @@ test.describe('Audit Stream WebSocket Origin Validation', () => {
       }
     })
 
-    await page.goto('/audit/audit-dashboard')
+    await page.goto('/audit/dashboard')
 
     const connectButton = page.getByRole('button', { name: /connect/i })
     await connectButton.click()
@@ -197,7 +186,7 @@ test.describe('Audit Stream WebSocket Origin Validation', () => {
       })
     })
 
-    await page.goto('/audit/audit-dashboard')
+    await page.goto('/audit/dashboard')
 
     const connectButton = page.getByRole('button', { name: /connect/i })
     await connectButton.click()
@@ -228,7 +217,7 @@ test.describe('Audit Stream WebSocket Origin Validation', () => {
       window.__APP_ENV__ = 'production'
     })
 
-    await page.goto('/audit/audit-dashboard')
+    await page.goto('/audit/dashboard')
 
     const connectButton = page.getByRole('button', { name: /connect/i })
     await connectButton.click()
@@ -237,23 +226,10 @@ test.describe('Audit Stream WebSocket Origin Validation', () => {
     await expect(page.getByText(/wildcard.*not.*allowed|production/i)).toBeVisible({ timeout: 5000 })
   })
 
-  test('should allow subdomain wildcard patterns', async ({ page, context }) => {
-    // Mock authentication
-    const mockPayload = {
-      sub: 'test-user-id',
-      email: 'admin@openidx.local',
-      name: 'Test Admin',
-      roles: ['admin'],
-      exp: Math.floor(Date.now() / 1000) + 3600,
-    }
-    const header = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
-    const payload = btoa(JSON.stringify(mockPayload))
-    const mockToken = `${header}.${payload}.mock-signature`
-
-    await context.addInitScript((token) => {
-      localStorage.setItem('token', token)
-      localStorage.setItem('refresh_token', 'mock-refresh-token')
-    }, mockToken)
+  test('should allow subdomain wildcard patterns', async ({ page }) => {
+    // Session comes from the signed-in storageState (auth.setup.ts); the
+    // hand-assembled `mock-signature` JWT that stood here was rejected by the
+    // backend on every request. See the note at the top of this file.
 
     // Mock REST API for initial events
     await page.route('**/api/v1/audit/events*', async (route) => {
@@ -316,7 +292,7 @@ test.describe('Audit Stream WebSocket Origin Validation', () => {
       }
     })
 
-    await page.goto('/audit/audit-dashboard')
+    await page.goto('/audit/dashboard')
 
     // Set the mock origin to a subdomain
     await page.evaluate(() => {
@@ -336,23 +312,10 @@ test.describe('Audit Stream WebSocket Origin Validation', () => {
     await expect(page.getByText(/connected|streaming/i)).toBeVisible({ timeout: 5000 })
   })
 
-  test('should handle multiple allowed origins', async ({ page, context }) => {
-    // Mock authentication
-    const mockPayload = {
-      sub: 'test-user-id',
-      email: 'admin@openidx.local',
-      name: 'Test Admin',
-      roles: ['admin'],
-      exp: Math.floor(Date.now() / 1000) + 3600,
-    }
-    const header = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
-    const payload = btoa(JSON.stringify(mockPayload))
-    const mockToken = `${header}.${payload}.mock-signature`
-
-    await context.addInitScript((token) => {
-      localStorage.setItem('token', token)
-      localStorage.setItem('refresh_token', 'mock-refresh-token')
-    }, mockToken)
+  test('should handle multiple allowed origins', async ({ page }) => {
+    // Session comes from the signed-in storageState (auth.setup.ts); the
+    // hand-assembled `mock-signature` JWT that stood here was rejected by the
+    // backend on every request. See the note at the top of this file.
 
     // Mock REST API
     await page.route('**/api/v1/audit/events*', async (route) => {
@@ -402,7 +365,7 @@ test.describe('Audit Stream WebSocket Origin Validation', () => {
       }
     })
 
-    await page.goto('/audit/audit-dashboard')
+    await page.goto('/audit/dashboard')
 
     // Set the mock origin to one of the allowed origins
     await page.evaluate(() => {
@@ -440,7 +403,7 @@ test.describe('Audit Stream WebSocket Origin Validation', () => {
       })
     })
 
-    await page.goto('/audit/audit-dashboard')
+    await page.goto('/audit/dashboard')
 
     // Attempt connection multiple times
     const connectButton = page.getByRole('button', { name: /connect/i })
@@ -479,7 +442,7 @@ test.describe('Audit Stream WebSocket Origin Validation', () => {
       })
     })
 
-    await page.goto('/audit/audit-dashboard')
+    await page.goto('/audit/dashboard')
 
     const connectButton = page.getByRole('button', { name: /connect/i })
     await connectButton.click()
@@ -535,7 +498,7 @@ test.describe('Audit Stream WebSocket Origin Validation', () => {
       })
     })
 
-    await page.goto('/audit/audit-dashboard')
+    await page.goto('/audit/dashboard')
 
     const connectButton = page.getByRole('button', { name: /connect/i })
     await connectButton.click()
@@ -583,7 +546,7 @@ test.describe('Audit Stream WebSocket Origin Validation', () => {
       }
     })
 
-    await page.goto('/audit/audit-dashboard')
+    await page.goto('/audit/dashboard')
 
     const connectButton = page.getByRole('button', { name: /connect/i })
     await connectButton.click()
@@ -617,7 +580,7 @@ test.describe('Audit Stream WebSocket Origin Validation', () => {
       }
     })
 
-    await page.goto('/audit/audit-dashboard')
+    await page.goto('/audit/dashboard')
 
     const connectButton = page.getByRole('button', { name: /connect/i })
     await connectButton.click()
@@ -641,22 +604,10 @@ test.describe('Audit Stream WebSocket Origin Validation', () => {
  * These tests specifically target security scenarios
  */
 test.describe('WebSocket Origin Security - Edge Cases', () => {
-  test.beforeEach(async ({ page, context }) => {
-    const mockPayload = {
-      sub: 'test-user-id',
-      email: 'admin@openidx.local',
-      name: 'Test Admin',
-      roles: ['admin'],
-      exp: Math.floor(Date.now() / 1000) + 3600,
-    }
-    const header = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
-    const payload = btoa(JSON.stringify(mockPayload))
-    const mockToken = `${header}.${payload}.mock-signature`
-
-    await context.addInitScript((token) => {
-      localStorage.setItem('token', token)
-      localStorage.setItem('refresh_token', 'mock-refresh-token')
-    }, mockToken)
+  test.beforeEach(async ({ page }) => {
+    // Session comes from the signed-in storageState (auth.setup.ts); the
+    // hand-assembled `mock-signature` JWT that stood here was rejected by the
+    // backend on every request. See the note at the top of this file.
 
     await page.route('**/api/v1/audit/events*', async (route) => {
       await route.fulfill({
@@ -721,7 +672,7 @@ test.describe('WebSocket Origin Security - Edge Cases', () => {
       })
     })
 
-    await page.goto('/audit/audit-dashboard')
+    await page.goto('/audit/dashboard')
 
     const connectButton = page.getByRole('button', { name: /connect/i })
     await connectButton.click()
@@ -773,7 +724,7 @@ test.describe('WebSocket Origin Security - Edge Cases', () => {
       })
     })
 
-    await page.goto('/audit/audit-dashboard')
+    await page.goto('/audit/dashboard')
 
     const connectButton = page.getByRole('button', { name: /connect/i })
     await connectButton.click()
@@ -825,7 +776,7 @@ test.describe('WebSocket Origin Security - Edge Cases', () => {
       })
     })
 
-    await page.goto('/audit/audit-dashboard')
+    await page.goto('/audit/dashboard')
 
     const connectButton = page.getByRole('button', { name: /connect/i })
     await connectButton.click()

@@ -1,10 +1,6 @@
 # OpenIDX - Open Source Zero Trust Access Platform
 
 <p align="center">
-  <img src="docs/images/openidx-logo.svg" alt="OpenIDX Logo" width="200"/>
-</p>
-
-<p align="center">
   <strong>Enterprise-grade Identity & Access Management for the Modern Era</strong>
 </p>
 
@@ -25,8 +21,10 @@ capabilities that are usually four separate products — **identity (IAM),
 governance (IGA), privileged access (PAM), and a zero-trust network plane
 (ZTNA)** — in one self-hostable platform over one PostgreSQL database. It is
 built to replace a stack of Microsoft Entra ID, Okta, SailPoint, CyberArk, and
-Zscaler/NetFoundry at a fraction of the cost — a **70–80% saving** against the
-stacked per-user pricing of those tools.
+Zscaler/NetFoundry. It is self-hosted and Apache-2.0, so what it costs is your
+infrastructure and your operators rather than a per-user licence — what that
+works out to against your current stack depends on your seat counts and
+contracts, and nobody here has measured yours.
 
 Because the IdP, the policy engine, the PAM broker, and the OpenZiti network
 overlay share one control plane, a single decision propagates end-to-end: an
@@ -107,51 +105,68 @@ not as a multi-connector integration project.
 
 ### Prerequisites
 - Docker & Docker Compose
-- Go 1.25+
-- Node.js 20+
-- kubectl (for Kubernetes deployment)
+- Go 1.26+ and Node.js 20+ (only for building from source)
+- kubectl + Helm (for Kubernetes deployment)
+- **Hardware floor**: the full stack is ~39 containers (Postgres,
+  Elasticsearch, OpenZiti, Guacamole, observability, 8 Go services…) —
+  plan on **≥ 8–10 GB RAM** and 4+ cores for a complete single-box install.
 
-### Local Development
+### Docker Compose (the supported quick start)
 
 ```bash
 # Clone the repository
-git clone https://github.com/openidx/openidx.git
+git clone https://github.com/mhmtgngr/openidx.git
 cd openidx
 
-# Start infrastructure services
-make dev-infra
+# Generate a .env with random secrets (compose refuses to start without them)
+./scripts/generate-secrets.sh
 
-# Start all services
-make dev
+# Start everything (compose files live under deployments/docker/)
+docker compose -f deployments/docker/docker-compose.yml up -d
 
-# Access the admin console
-open http://localhost:3000
+# Watch it come up
+docker compose -f deployments/docker/docker-compose.yml logs -f
 ```
 
-### Docker Compose
+Then open http://localhost:3000 and sign in with the seeded admin —
+**`admin` / `Admin@123` — and rotate that password immediately** (see
+[First Login](docs/GETTING-STARTED.md#1-first-login)). In production the
+identity and oauth services refuse to start while the default still works.
+
+For a production single-VM install, layer the hardened overlay:
+`-f deployments/docker/docker-compose.yml -f deployments/docker/docker-compose.prod.yml`
+(see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)).
+
+### Local development (services on the host)
 
 ```bash
-# Start everything
-docker-compose up -d
-
-# View logs
-docker-compose logs -f
-
-# Stop services
-docker-compose down
+make dev-infra   # infrastructure only (Postgres, Redis, Elasticsearch…)
+make dev         # or: full stack via the base compose file
 ```
 
 ### Kubernetes
 
-```bash
-# Add Helm repository
-helm repo add openidx https://charts.openidx.io
+Each tagged release publishes the Helm chart to GHCR as a cosign-signed
+OCI artifact (chart version = release version; see the
+[releases page](https://github.com/mhmtgngr/openidx/releases) for
+available versions and [docs/RELEASING.md](docs/RELEASING.md) for
+signature verification):
 
-# Install OpenIDX
-helm install openidx openidx/openidx \
-  --namespace openidx \
-  --create-namespace \
-  --values values.yaml
+```bash
+helm install openidx oci://ghcr.io/mhmtgngr/openidx/charts/openidx \
+  --version <X.Y.Z> --namespace openidx --create-namespace
+```
+
+The chart runs database migrations itself (a post-install/pre-upgrade
+hook Job) and deploys OPA for the policy engine; read
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) before using it. To install
+from source instead, run `helm dependency update` first for the bundled
+PostgreSQL/Redis/Elasticsearch:
+
+```bash
+helm install openidx ./deployments/kubernetes/helm/openidx \
+  --namespace openidx --create-namespace \
+  -f deployments/kubernetes/helm/openidx/values-prod.yaml
 ```
 
 ## Architecture
@@ -207,13 +222,15 @@ openidx/
 
 ## Documentation
 
-- [Getting Started Guide](docs/getting-started.md)
-- [Architecture Overview](docs/architecture.md)
-- [API Reference](docs/api-reference.md)
-- [Configuration Guide](docs/configuration.md)
-- [Deployment Guide](docs/deployment.md)
+- [Getting Started Guide](docs/GETTING-STARTED.md) — quick start and **first login**
+- [Project Readiness Guide](docs/PROJECT-READINESS-GUIDE.md) — the user-perspective state of the platform, next steps, and controls
+- [Production Readiness](docs/PRODUCTION-READINESS.md) — can I deploy this, and how
+- [Deployment Guide](docs/DEPLOYMENT.md)
+- [Zero Trust Architecture](docs/zero-trust-architecture.md) and [How Network Access Works](docs/how-network-access-works.md)
+- [How IAM ⇄ PAM ⇄ Ziti Interrelate](docs/IAM_PAM_ZITI_INTERRELATION.md)
 - [Zero Trust Network: Easy Ziti Deployment](docs/ZITI_EASY_DEPLOYMENT.md)
-- [Security Best Practices](docs/security.md)
+- [Security Hardening Checklist](docs/SECURITY-HARDENING.md) and [Tenancy Trust Boundary](docs/SECURITY-TENANCY.md)
+- [API Reference](docs/api/README.md)
 
 ## Status & Roadmap
 
@@ -266,7 +283,7 @@ new buyer-tier features; the Apache-2.0 core is committed to staying Apache-2.0.
 
 - 📖 [Documentation](https://docs.openidx.io)
 - 💬 [Discord Community](https://discord.gg/openidx)
-- 🐛 [Issue Tracker](https://github.com/openidx/openidx/issues)
+- 🐛 [Issue Tracker](https://github.com/mhmtgngr/openidx/issues)
 - 📧 [Email Support](mailto:support@openidx.io)
 
 ---

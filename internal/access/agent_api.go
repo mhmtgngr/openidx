@@ -23,6 +23,8 @@ import (
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/orgctx"
 	"github.com/openidx/openidx/internal/common/pushenroll"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 // AgentAPIHandler handles HTTP endpoints for agent communication.
@@ -110,10 +112,15 @@ func (h *AgentAPIHandler) logAuditEventToDB(ctx context.Context, action, agentID
 	// users.id, and unified_audit_events.user_id has an FK to users, so passing
 	// the agent_id here fails the constraint (the event was silently dropped).
 	// The agent_id is preserved in details.agent_id above.
+	//
+	// The org comes from the request. An agent enrolling before it belongs to
+	// anyone has none, and falls back to the primary org rather than losing the
+	// record — the same trade the rest of the unified stream makes.
+	orgID, _ := orgctx.AuditOrgID(ctx)
 	_, err := h.db.Pool.Exec(ctx, `
-		INSERT INTO unified_audit_events (id, source, event_type, user_id, details, created_at)
-		VALUES ($1, 'access-service', $2, NULL, $3, NOW())
-	`, uuid.New().String(), action, detailsJSON)
+		INSERT INTO unified_audit_events (id, org_id, source, event_type, user_id, details, created_at)
+		VALUES ($1, $2, 'access-service', $3, NULL, $4, NOW())
+	`, uuid.New().String(), orgID, action, detailsJSON)
 	if err != nil {
 		h.logger.Warn("logAuditEventToDB: failed to persist audit event",
 			zap.String("action", action),
@@ -1040,7 +1047,7 @@ func (h *AgentAPIHandler) applyPostureDeviceTrust(ctx context.Context, agentID, 
 	attrs, err := h.zm.GetIdentityRoleAttributes(rctx, zitiID)
 	if err != nil {
 		h.logger.Debug("posture tier: read identity attributes failed",
-			zap.String("ziti_id", sanitizeForLog(zitiID)), zap.Error(err))
+			zap.String("ziti_id", logsafe.Clean(zitiID)), zap.Error(err))
 		return
 	}
 	next, changed := deviceTrustAttrs(attrs, wantTrusted)
@@ -1051,7 +1058,7 @@ func (h *AgentAPIHandler) applyPostureDeviceTrust(ctx context.Context, agentID, 
 	if mode == "observe" {
 		h.logger.Info("posture tier (observe): would change device-trust",
 			zap.String("agent_id", agentID),
-			zap.String("ziti_id", sanitizeForLog(zitiID)),
+			zap.String("ziti_id", logsafe.Clean(zitiID)),
 			zap.Bool("grant", wantTrusted),
 			zap.String("compliance", complianceStatus))
 		return
@@ -1059,12 +1066,12 @@ func (h *AgentAPIHandler) applyPostureDeviceTrust(ctx context.Context, agentID, 
 
 	if err := h.zm.PatchIdentityRoleAttributes(rctx, zitiID, next); err != nil {
 		h.logger.Warn("posture tier: patch identity attributes failed",
-			zap.String("ziti_id", sanitizeForLog(zitiID)), zap.Error(err))
+			zap.String("ziti_id", logsafe.Clean(zitiID)), zap.Error(err))
 		return
 	}
 	h.logger.Info("posture tier: device-trust updated",
 		zap.String("agent_id", agentID),
-		zap.String("ziti_id", sanitizeForLog(zitiID)),
+		zap.String("ziti_id", logsafe.Clean(zitiID)),
 		zap.Bool("granted", wantTrusted),
 		zap.String("compliance", complianceStatus))
 }
@@ -1720,7 +1727,7 @@ func (h *AgentAPIHandler) HandleAgentPosture(c *gin.Context) {
 		 WHERE agent_id = $1
 		 ORDER BY check_type, reported_at DESC`, agentID)
 	if err != nil {
-		h.logger.Warn("HandleAgentPosture: query failed", zap.String("agent_id", sanitizeForLog(agentID)), zap.Error(err))
+		h.logger.Warn("HandleAgentPosture: query failed", zap.String("agent_id", logsafe.Clean(agentID)), zap.Error(err))
 		c.JSON(http.StatusOK, resp)
 		return
 	}

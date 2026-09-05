@@ -24,6 +24,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/abac"
 	"github.com/openidx/openidx/internal/appaccess"
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
@@ -31,6 +32,8 @@ import (
 	"github.com/openidx/openidx/internal/common/orgctx"
 	"github.com/openidx/openidx/internal/common/secretcrypt"
 	"github.com/openidx/openidx/internal/vault"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 // ProxyRoute represents a configured proxy route
@@ -627,8 +630,15 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// Policy DSL validation
 		api.POST("/routes/validate-policy", svc.handleValidatePolicy)
 
-		// Guacamole remote access
-		api.GET("/guacamole/connections", svc.handleListGuacamoleConnections)
+		// Guacamole remote access. The connection list is broker internals —
+		// hostname, port, protocol and the injected connection parameters of
+		// every brokered target — so it carries the same adminOnly gate as the
+		// app-publishing routes below, and for the same reason. The end-user
+		// launcher reads /guacamole/my-connections instead, which returns the
+		// PAM flags without the infrastructure. Connect stays open to any
+		// authenticated user: launching a session the caller is entitled to is
+		// the end-user path, and v151 gave it the org predicate it was missing.
+		api.GET("/guacamole/connections", adminOnly, svc.handleListGuacamoleConnections)
 		api.POST("/guacamole/connections/:routeId/connect", svc.handleGuacamoleConnect)
 		api.PUT("/guacamole/connections/:routeId/credential", svc.requireAdminRole(), svc.handleSetGuacCredential)
 
@@ -1806,12 +1816,16 @@ func (s *Service) handleCallback(c *gin.Context) {
 	}
 
 	// Set session cookie with SameSite=Lax for CSRF protection
+	// The Secure flag is computed, not a literal, so the scanner cannot see it;
+	// sessionCookieSecure (session_cookie.go) sets it from the request's real
+	// transport and is covered by session_cookie_test.go.
+	// nosemgrep: go.lang.security.audit.net.cookie-missing-secure.cookie-missing-secure
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     "_openidx_proxy_session",
 		Value:    session.SessionToken,
 		MaxAge:   session.AbsoluteTimeout(),
 		Path:     "/",
-		Secure:   s.config.IsProduction(),
+		Secure:   sessionCookieSecure(c, s.config),
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 	})
@@ -1961,12 +1975,16 @@ func (s *Service) handleLogout(c *gin.Context) {
 		}
 	}
 
+	// The Secure flag is computed, not a literal, so the scanner cannot see it;
+	// sessionCookieSecure (session_cookie.go) sets it from the request's real
+	// transport and is covered by session_cookie_test.go.
+	// nosemgrep: go.lang.security.audit.net.cookie-missing-secure.cookie-missing-secure
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     "_openidx_proxy_session",
 		Value:    "",
 		MaxAge:   -1,
 		Path:     "/",
-		Secure:   s.config.IsProduction(),
+		Secure:   sessionCookieSecure(c, s.config),
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 	})
@@ -2204,6 +2222,15 @@ func (s *Service) handleProxy(c *gin.Context) {
 			return
 		}
 
+		// ABAC overlay. The tenant's attribute policies are the second half of
+		// the same rollout: authored on the ABAC Policies page, enforced here
+		// and at /oauth/authorize, staged through ABAC_ENFORCE=off|observe|
+		// enforce exactly like ACCESS_ASSIGNMENT_ENFORCE. With the flag off
+		// this costs no query.
+		if !s.abacGateAllows(c, route, session.UserID, appOrgID, appID) {
+			return
+		}
+
 		// Context-aware access evaluation
 		accessCtx, ctxErr := s.buildAccessContext(c, route, session)
 		if ctxErr != nil {
@@ -2258,7 +2285,9 @@ func (s *Service) handleProxy(c *gin.Context) {
 		return
 	}
 
-	proxy := httputil.NewSingleHostReverseProxy(target)
+	proxy := &httputil.ReverseProxy{
+		Rewrite: proxyRewrite(target, route, session, c.ClientIP()),
+	}
 
 	// Use Ziti transport if the route has Ziti enabled and ZitiManager is available
 	if route.ZitiEnabled && route.ZitiServiceName != "" && s.ziti() != nil && s.ziti().IsInitialized() {
@@ -2266,36 +2295,6 @@ func (s *Service) handleProxy(c *gin.Context) {
 		s.logger.Debug("Proxying through Ziti overlay",
 			zap.String("service", route.ZitiServiceName),
 			zap.String("route", route.Name))
-	}
-
-	proxy.Director = func(req *http.Request) {
-		req.URL.Scheme = target.Scheme
-		req.URL.Host = target.Host
-		req.URL.Path = singleJoiningSlash(target.Path, c.Request.URL.Path)
-		req.URL.RawQuery = c.Request.URL.RawQuery
-
-		if route.PreserveHost {
-			req.Host = c.Request.Host
-		} else {
-			req.Host = target.Host
-		}
-
-		// Inject identity headers
-		if session != nil {
-			req.Header.Set("X-Forwarded-User", session.UserID)
-			req.Header.Set("X-Forwarded-Email", session.Email)
-			req.Header.Set("X-Forwarded-Name", session.Name)
-			req.Header.Set("X-Forwarded-Roles", strings.Join(session.Roles, ","))
-		}
-
-		req.Header.Set("X-Forwarded-For", c.ClientIP())
-		req.Header.Set("X-Forwarded-Proto", "http")
-		req.Header.Set("X-Real-IP", c.ClientIP())
-
-		// Custom headers
-		for k, v := range route.CustomHeaders {
-			req.Header.Set(k, v)
-		}
 	}
 
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
@@ -3296,6 +3295,108 @@ func hasAnyRole(userRoles, requiredRoles []string) bool {
 	return false
 }
 
+// proxyOwnedHeaders are the headers these proxies assert *about* the caller.
+//
+// The standard library deletes Forwarded and the X-Forwarded-{For,Host,Proto}
+// trio from the outbound request on the Rewrite path, but it knows nothing
+// about these, and an upstream cannot tell a header the proxy vouched for
+// from one the caller typed. So every one of them is deleted before the
+// verified values are written — including on the paths that write none, which
+// is where the hole was: a route with require_auth false, or an overlay
+// connection whose Ziti identity did not resolve, forwarded the caller's own
+// X-Forwarded-User straight through to an upstream that has no reason to
+// doubt it.
+var proxyOwnedHeaders = []string{
+	"X-Forwarded-User",
+	"X-Forwarded-Email",
+	"X-Forwarded-Name",
+	"X-Forwarded-Roles",
+	"X-Ziti-Identity",
+	"X-Real-IP",
+}
+
+// proxyRewrite builds the ReverseProxy.Rewrite hook for one proxied request.
+//
+// It replaces a Director, and the change is not only that Director is
+// deprecated as of Go 1.26. Under Director the standard library hands the
+// upstream the CLIENT'S OWN forwarding headers: it never deletes Forwarded,
+// X-Forwarded-Host or X-Forwarded-Proto, and it folds the inbound
+// X-Forwarded-For into the outbound one. A request arriving at this ZTNA data
+// path with
+//
+//	X-Forwarded-For: 9.9.9.9
+//	X-Forwarded-Host: evil.example.com
+//	Forwarded: for=9.9.9.9
+//
+// reached the upstream with X-Forwarded-Host and Forwarded intact, and with
+// X-Forwarded-For reading "<resolved client>, <peer>" — the same address
+// twice whenever there is no front proxy. An upstream that generates absolute
+// URLs from X-Forwarded-Host, or reads the leftmost X-Forwarded-For entry as
+// "the real client", was being fed attacker-controlled provenance by a proxy
+// whose entire job is to be the thing the upstream can trust.
+//
+// Rewrite deletes Forwarded and all three X-Forwarded-* headers before this
+// func runs, so every value set below is one this proxy determined itself.
+// ProxyRequest.SetXForwarded is deliberately NOT used: it takes the raw peer
+// out of In.RemoteAddr, whereas clientIP is gin's resolved address, which
+// honours the deployment's trusted-proxy list — the whole point of
+// configuring one.
+//
+// It takes everything it needs as arguments so the forwarding contract is
+// testable without a Service, a database or a gin engine. The headers an
+// upstream receives from this path are a security boundary, and a boundary
+// that can only be exercised end to end does not get exercised.
+//
+// session may be nil, for a route that does not require auth.
+func proxyRewrite(target *url.URL, route *ProxyRoute, session *ProxySession, clientIP string) func(*httputil.ProxyRequest) {
+	return func(pr *httputil.ProxyRequest) {
+		pr.Out.URL.Scheme = target.Scheme
+		pr.Out.URL.Host = target.Host
+		pr.Out.URL.Path = singleJoiningSlash(target.Path, pr.In.URL.Path)
+		// RawQuery is left exactly as the standard library prepared it. On the
+		// Rewrite path it has already been stripped of unparsable parameters,
+		// which is the request-smuggling guard the Director path never applied;
+		// re-assigning the inbound query here would throw that away.
+
+		if route.PreserveHost {
+			pr.Out.Host = pr.In.Host
+		} else {
+			pr.Out.Host = target.Host
+		}
+
+		// Identity, from the verified session and nowhere else. The caller's
+		// own copies go first, so an unauthenticated route cannot forward one.
+		for _, h := range proxyOwnedHeaders {
+			pr.Out.Header.Del(h)
+		}
+		if session != nil {
+			pr.Out.Header.Set("X-Forwarded-User", session.UserID)
+			pr.Out.Header.Set("X-Forwarded-Email", session.Email)
+			pr.Out.Header.Set("X-Forwarded-Name", session.Name)
+			pr.Out.Header.Set("X-Forwarded-Roles", strings.Join(session.Roles, ","))
+		}
+
+		// Provenance, all of it this proxy's own observation of the request.
+		pr.Out.Header.Set("X-Forwarded-For", clientIP)
+		pr.Out.Header.Set("X-Real-IP", clientIP)
+		pr.Out.Header.Set("X-Forwarded-Host", pr.In.Host)
+		// The old code hardcoded "http" here, which was wrong for a direct-TLS
+		// deployment. Behind a TLS-terminating load balancer In.TLS is nil and
+		// the answer is still "http", exactly as before.
+		if pr.In.TLS != nil {
+			pr.Out.Header.Set("X-Forwarded-Proto", "https")
+		} else {
+			pr.Out.Header.Set("X-Forwarded-Proto", "http")
+		}
+
+		// Operator-configured headers last, so a route can deliberately
+		// override anything above.
+		for k, v := range route.CustomHeaders {
+			pr.Out.Header.Set(k, v)
+		}
+	}
+}
+
 func singleJoiningSlash(a, b string) string {
 	aslash := strings.HasSuffix(a, "/")
 	bslash := strings.HasPrefix(b, "/")
@@ -3306,4 +3407,74 @@ func singleJoiningSlash(a, b string) string {
 		return a + "/" + b
 	}
 	return a + b
+}
+
+// abacGateAllows applies the tenant's attribute-based policies to a proxied
+// request. Returns true when the request may proceed; false means a 403 has
+// already been written, matching the assignment gate's contract above it.
+func (s *Service) abacGateAllows(c *gin.Context, route *ProxyRoute, userID, orgID, appID string) bool {
+	if s.config == nil {
+		return true
+	}
+	mode := abac.ParseMode(s.config.ABACEnforce)
+	if mode == abac.ModeOff || orgID == "" {
+		return true
+	}
+	ctx := c.Request.Context()
+
+	attrs, err := abac.SubjectAttributes(ctx, s.db, userID, orgID)
+	if err != nil {
+		s.logger.Warn("abac gate: subject attributes unavailable",
+			logsafe.String("user_id", userID), zap.Error(err))
+	}
+
+	allow, wouldDeny, res := abac.Gate(ctx, s.db, orgID, mode, abac.EvaluationRequest{
+		UserAttributes: attrs,
+		ResourceType:   "application",
+		ResourceID:     appID,
+	})
+	if wouldDeny {
+		s.recordABACDecision(ctx, route, userID, appID, c.ClientIP(), res.PolicyID, res.Reason, !allow)
+	}
+	if !allow {
+		s.logger.Info("abac gate denied proxy request",
+			logsafe.String("user_id", userID),
+			logsafe.String("application_id", appID),
+			logsafe.String("policy_id", res.PolicyID))
+		c.JSON(http.StatusForbidden, gin.H{"error": "denied by policy", "reason": res.Reason})
+		return false
+	}
+	return true
+}
+
+// recordABACDecision is recordAssignmentDecision's counterpart for the ABAC
+// gate: same table, same canonical details keys, written on BOTH the observe
+// and enforce branches so enforcement is never quieter than report mode.
+func (s *Service) recordABACDecision(ctx context.Context, route *ProxyRoute, userID, appID, actorIP, policyID, policyReason string, enforced bool) {
+	eventType := appaccess.ABACDecisionEventType(enforced)
+
+	var routeID, routeName string
+	if route != nil {
+		routeID, routeName = route.ID, route.Name
+	}
+	details := appaccess.ABACDecisionDetails(appaccess.EnforcementPointProxy, userID, appID, policyID, policyReason, enforced,
+		map[string]interface{}{"route": routeName})
+
+	if s.auditService == nil {
+		s.logger.Warn("abac decision not recorded: unified audit service unavailable",
+			logsafe.String("event_type", eventType),
+			logsafe.String("user_id", userID),
+			logsafe.String("application_id", appID),
+			zap.Bool("enforced", enforced))
+		return
+	}
+	if err := s.auditService.RecordEvent(ctx, appaccess.SourceProxy, eventType,
+		routeID, userID, actorIP, details); err != nil {
+		s.logger.Warn("abac decision not recorded: unified audit write failed",
+			logsafe.String("event_type", eventType),
+			logsafe.String("user_id", userID),
+			logsafe.String("application_id", appID),
+			zap.Bool("enforced", enforced),
+			zap.Error(err))
+	}
 }

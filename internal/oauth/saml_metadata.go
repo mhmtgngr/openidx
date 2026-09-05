@@ -11,6 +11,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // IdPMetadata represents the complete SAML IdP Metadata XML structure
@@ -364,16 +366,24 @@ func (s *Service) StoreSAMLMetadata(ctx context.Context, spID string, metadataXM
 		certificate = spMetadata.SPSSODescriptor.KeyDescriptors[0].KeyInfo.X509Data.X509Certificate
 	}
 
-	// Update the SP record with the metadata info
-	_, err := s.db.Pool.Exec(ctx, `
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
+	// Update the SP record with the metadata info. This rewrites entity_id, the
+	// ACS URL and the certificate from a document fetched over the network, so
+	// a bare id here let a refresh triggered in one tenant repoint another
+	// tenant's assertions.
+	_, err = s.db.Pool.Exec(ctx, `
 		UPDATE saml_service_providers
 		SET entity_id = $1,
 		    acs_url = COALESCE($2, acs_url),
 		    certificate = COALESCE($3, certificate),
 		    metadata_xml = $4,
 		    updated_at = NOW()
-		WHERE id = $5
-	`, spMetadata.EntityID, acsURL, certificate, metadataXML, spID)
+		WHERE id = $5 AND org_id = $6
+	`, spMetadata.EntityID, acsURL, certificate, metadataXML, spID, org.ID)
 
 	return err
 }

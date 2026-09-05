@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -109,6 +110,7 @@ export function UserProfilePage() {
 
   const { toast } = useToast()
   const queryClient = useQueryClient()
+  const { t } = useTranslation()
 
   const { data: profile, isLoading, isError, error } = useQuery({
     queryKey: ['user-profile'],
@@ -129,10 +131,10 @@ export function UserProfilePage() {
       api.put<UserProfile>('/api/v1/identity/users/me', updates),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['user-profile'] })
-      toast({ title: 'Success', description: 'Profile updated successfully' })
+      toast({ title: t('common.success'), description: t('pages.profile.toasts.profileUpdated') })
     },
     onError: () => {
-      toast({ title: 'Error', description: 'Failed to update profile', variant: 'destructive' })
+      toast({ title: t('common.error'), description: t('pages.profile.toasts.profileUpdateFailed'), variant: 'destructive' })
     },
   })
 
@@ -142,7 +144,7 @@ export function UserProfilePage() {
       setMfaSetup({ ...response, backupCodes: [] })
     },
     onError: () => {
-      toast({ title: 'Error', description: 'Failed to setup MFA', variant: 'destructive' })
+      toast({ title: t('common.error'), description: t('pages.profile.toasts.mfaSetupFailed'), variant: 'destructive' })
     },
   })
 
@@ -153,7 +155,7 @@ export function UserProfilePage() {
       queryClient.invalidateQueries({ queryKey: ['user-profile'] })
       setMfaSetup(prev => prev ? { ...prev, backupCodes: response.backupCodes || [] } : null)
       setShowBackupCodes(true)
-      toast({ title: 'Success', description: 'MFA enabled successfully' })
+      toast({ title: t('common.success'), description: t('pages.profile.toasts.mfaEnabled') })
     },
     onError: (e: unknown) => {
       // Surface the backend's real reason so the user can tell "expired setup,
@@ -161,10 +163,10 @@ export function UserProfilePage() {
       const msg = e instanceof Error ? e.message : ''
       const expired = /expired|not initiated|start setup/i.test(msg)
       toast({
-        title: expired ? 'Setup expired' : 'Invalid verification code',
+        title: expired ? t('pages.profile.mfa.setupExpiredTitle') : t('pages.profile.mfa.invalidVerifyTitle'),
         description: expired
-          ? 'The setup timed out. Click "Setup MFA" again, re-scan the new QR/secret, then enter a fresh code.'
-          : 'That code was not accepted. Make sure your device clock is correct and enter the current 6-digit code (it changes every 30s).',
+          ? t('pages.profile.mfa.setupExpiredDesc')
+          : t('pages.profile.mfa.invalidVerifyDesc'),
         variant: 'destructive',
       })
     },
@@ -174,10 +176,10 @@ export function UserProfilePage() {
     mutationFn: () => api.post<void>('/api/v1/identity/users/me/mfa/disable'),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['user-profile'] })
-      toast({ title: 'Success', description: 'MFA disabled successfully' })
+      toast({ title: t('common.success'), description: t('pages.profile.toasts.mfaDisabled') })
     },
     onError: () => {
-      toast({ title: 'Error', description: 'Failed to disable MFA', variant: 'destructive' })
+      toast({ title: t('common.error'), description: t('pages.profile.toasts.mfaDisableFailed'), variant: 'destructive' })
     },
   })
 
@@ -191,11 +193,11 @@ export function UserProfilePage() {
       api.post<void>('/api/v1/identity/users/me/change-password', { currentPassword, newPassword }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['password-info'] })
-      toast({ title: 'Success', description: passwordInfo?.is_ldap ? 'Active Directory password changed successfully' : 'Password changed successfully' })
+      toast({ title: t('common.success'), description: passwordInfo?.is_ldap ? t('pages.profile.toasts.adPasswordChanged') : t('pages.profile.toasts.passwordChanged') })
     },
     onError: (error: Error & { response?: { data?: { error?: string } } }) => {
-      const message = error?.response?.data?.error || 'Failed to change password'
-      toast({ title: 'Error', description: message, variant: 'destructive' })
+      const message = error?.response?.data?.error || t('pages.profile.toasts.passwordChangeFailed')
+      toast({ title: t('common.error'), description: message, variant: 'destructive' })
     },
   })
 
@@ -235,10 +237,10 @@ export function UserProfilePage() {
       api.post('/api/v1/identity/mfa/sms/enroll', data),
     onSuccess: () => {
       setSmsEnrollStep('verify')
-      toast({ title: 'Code Sent', description: 'A verification code has been sent to your phone.' })
+      toast({ title: t('pages.profile.toasts.codeSent'), description: t('pages.profile.toasts.codeSentPhone') })
     },
     onError: () => {
-      toast({ title: 'Error', description: 'Failed to send verification code.', variant: 'destructive' })
+      toast({ title: t('common.error'), description: t('pages.profile.toasts.codeSendFailed'), variant: 'destructive' })
     },
   })
 
@@ -250,10 +252,10 @@ export function UserProfilePage() {
       setSmsEnrollStep('idle')
       setPhoneNumber('')
       setSmsVerifyCode('')
-      toast({ title: 'SMS MFA Enabled', description: 'Your phone has been verified for SMS authentication.' })
+      toast({ title: t('pages.profile.toasts.smsEnabled'), description: t('pages.profile.toasts.smsEnabledDesc') })
     },
     onError: () => {
-      toast({ title: 'Error', description: 'Invalid verification code.', variant: 'destructive' })
+      toast({ title: t('common.error'), description: t('pages.profile.toasts.invalidCode'), variant: 'destructive' })
     },
   })
 
@@ -261,10 +263,10 @@ export function UserProfilePage() {
     mutationFn: () => api.delete('/api/v1/identity/mfa/sms'),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['mfa-methods'] })
-      toast({ title: 'SMS MFA Disabled', description: 'SMS authentication has been removed.' })
+      toast({ title: t('pages.profile.toasts.smsDisabled'), description: t('pages.profile.toasts.smsDisabledDesc') })
     },
     onError: () => {
-      toast({ title: 'Error', description: 'Failed to disable SMS MFA.', variant: 'destructive' })
+      toast({ title: t('common.error'), description: t('pages.profile.toasts.smsDisableFailed'), variant: 'destructive' })
     },
   })
 
@@ -273,10 +275,10 @@ export function UserProfilePage() {
     mutationFn: () => api.post('/api/v1/identity/mfa/email/enroll'),
     onSuccess: () => {
       setEmailOtpEnrollStep('verify')
-      toast({ title: 'Code Sent', description: 'A verification code has been sent to your email.' })
+      toast({ title: t('pages.profile.toasts.codeSent'), description: t('pages.profile.toasts.codeSentEmail') })
     },
     onError: () => {
-      toast({ title: 'Error', description: 'Failed to send verification code.', variant: 'destructive' })
+      toast({ title: t('common.error'), description: t('pages.profile.toasts.codeSendFailed'), variant: 'destructive' })
     },
   })
 
@@ -287,10 +289,10 @@ export function UserProfilePage() {
       queryClient.invalidateQueries({ queryKey: ['mfa-methods'] })
       setEmailOtpEnrollStep('idle')
       setEmailOtpCode('')
-      toast({ title: 'Email OTP Enabled', description: 'Your email has been verified for OTP authentication.' })
+      toast({ title: t('pages.profile.toasts.emailEnabled'), description: t('pages.profile.toasts.emailEnabledDesc') })
     },
     onError: () => {
-      toast({ title: 'Error', description: 'Invalid verification code.', variant: 'destructive' })
+      toast({ title: t('common.error'), description: t('pages.profile.toasts.invalidCode'), variant: 'destructive' })
     },
   })
 
@@ -298,10 +300,10 @@ export function UserProfilePage() {
     mutationFn: () => api.delete('/api/v1/identity/mfa/email'),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['mfa-methods'] })
-      toast({ title: 'Email OTP Disabled', description: 'Email OTP authentication has been removed.' })
+      toast({ title: t('pages.profile.toasts.emailDisabled'), description: t('pages.profile.toasts.emailDisabledDesc') })
     },
     onError: () => {
-      toast({ title: 'Error', description: 'Failed to disable Email OTP.', variant: 'destructive' })
+      toast({ title: t('common.error'), description: t('pages.profile.toasts.emailDisableFailed'), variant: 'destructive' })
     },
   })
 
@@ -311,10 +313,10 @@ export function UserProfilePage() {
       api.delete(`/api/v1/identity/trusted-browsers/${browserId}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['trusted-browsers'] })
-      toast({ title: 'Browser Revoked', description: 'The trusted browser has been removed.' })
+      toast({ title: t('pages.profile.toasts.browserRevoked'), description: t('pages.profile.toasts.browserRevokedDesc') })
     },
     onError: () => {
-      toast({ title: 'Error', description: 'Failed to revoke browser.', variant: 'destructive' })
+      toast({ title: t('common.error'), description: t('pages.profile.toasts.browserRevokeFailed'), variant: 'destructive' })
     },
   })
 
@@ -322,10 +324,10 @@ export function UserProfilePage() {
     mutationFn: () => api.delete('/api/v1/identity/trusted-browsers'),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['trusted-browsers'] })
-      toast({ title: 'All Browsers Revoked', description: 'All trusted browsers have been removed.' })
+      toast({ title: t('pages.profile.toasts.allBrowsersRevoked'), description: t('pages.profile.toasts.allBrowsersRevokedDesc') })
     },
     onError: () => {
-      toast({ title: 'Error', description: 'Failed to revoke browsers.', variant: 'destructive' })
+      toast({ title: t('common.error'), description: t('pages.profile.toasts.browsersRevokeFailed'), variant: 'destructive' })
     },
   })
 
@@ -345,10 +347,10 @@ export function UserProfilePage() {
       setNewTokenScopes([])
       setNewTokenExpiry('')
       queryClient.invalidateQueries({ queryKey: ['access-tokens'] })
-      toast({ title: 'Token Created', description: 'Your new access token has been created.' })
+      toast({ title: t('pages.profile.toasts.tokenCreated'), description: t('pages.profile.toasts.tokenCreatedDesc') })
     },
     onError: () => {
-      toast({ title: 'Error', description: 'Failed to create access token.', variant: 'destructive' })
+      toast({ title: t('common.error'), description: t('pages.profile.toasts.tokenCreateFailed'), variant: 'destructive' })
     },
   })
 
@@ -357,10 +359,10 @@ export function UserProfilePage() {
       api.delete(`/api/v1/identity/users/me/tokens/${tokenId}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['access-tokens'] })
-      toast({ title: 'Token Revoked', description: 'The access token has been revoked.' })
+      toast({ title: t('pages.profile.toasts.tokenRevoked'), description: t('pages.profile.toasts.tokenRevokedDesc') })
     },
     onError: () => {
-      toast({ title: 'Error', description: 'Failed to revoke token.', variant: 'destructive' })
+      toast({ title: t('common.error'), description: t('pages.profile.toasts.tokenRevokeFailed'), variant: 'destructive' })
     },
   })
 
@@ -376,10 +378,10 @@ export function UserProfilePage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['user-consents'] })
       setRevokeConsentClientId(null)
-      toast({ title: 'Access Revoked', description: 'The application no longer has access to your account.' })
+      toast({ title: t('pages.profile.toasts.consentRevoked'), description: t('pages.profile.toasts.consentRevokedDesc') })
     },
     onError: () => {
-      toast({ title: 'Error', description: 'Failed to revoke application access.', variant: 'destructive' })
+      toast({ title: t('common.error'), description: t('pages.profile.toasts.consentRevokeFailed'), variant: 'destructive' })
     },
   })
 
@@ -398,10 +400,10 @@ export function UserProfilePage() {
     mutationFn: (sessionId: string) => api.delete(`/api/v1/identity/sessions/${sessionId}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['sessions'] })
-      toast({ title: 'Session revoked' })
+      toast({ title: t('pages.profile.toasts.sessionRevoked') })
     },
     onError: () => {
-      toast({ title: 'Error', description: 'Failed to revoke session', variant: 'destructive' })
+      toast({ title: t('common.error'), description: t('pages.profile.toasts.sessionRevokeFailed'), variant: 'destructive' })
     },
   })
 
@@ -417,11 +419,11 @@ export function UserProfilePage() {
       }
     },
     onSuccess: () => {
-      toast({ title: 'Signed out everywhere', description: 'All sessions have been revoked. You will be redirected to sign in.' })
+      toast({ title: t('pages.profile.toasts.signedOutAll'), description: t('pages.profile.toasts.signedOutAllDesc') })
       queryClient.invalidateQueries({ queryKey: ['sessions'] })
     },
     onError: () => {
-      toast({ title: 'Error', description: 'Failed to sign out of all devices', variant: 'destructive' })
+      toast({ title: t('common.error'), description: t('pages.profile.toasts.signOutAllFailed'), variant: 'destructive' })
     },
   })
 
@@ -434,13 +436,13 @@ export function UserProfilePage() {
   }
 
   if (isError) {
-    return <QueryError error={error} resource="your profile" />
+    return <QueryError error={error} resource={t('pages.profile.resourceName')} />
   }
 
   if (!profile) {
     return (
       <div className="text-center py-8">
-        <p className="text-muted-foreground">Failed to load profile</p>
+        <p className="text-muted-foreground">{t('pages.profile.loadFailed')}</p>
       </div>
     )
   }
@@ -449,8 +451,8 @@ export function UserProfilePage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold">My Profile</h1>
-          <p className="text-muted-foreground">Manage your account settings and security preferences</p>
+          <h1 className="text-3xl font-bold">{t('nav.items.myProfile')}</h1>
+          <p className="text-muted-foreground">{t('pages.profile.subtitle')}</p>
         </div>
       </div>
 
@@ -458,39 +460,39 @@ export function UserProfilePage() {
         <TabsList>
           <TabsTrigger value="profile" className="flex items-center gap-2">
             <User className="h-4 w-4" />
-            Profile
+            {t('pages.profile.tabs.profile')}
           </TabsTrigger>
           <TabsTrigger value="security" className="flex items-center gap-2">
             <Shield className="h-4 w-4" />
-            Security
+            {t('pages.profile.tabs.security')}
           </TabsTrigger>
           <TabsTrigger value="sessions" className="flex items-center gap-2">
             <Monitor className="h-4 w-4" />
-            Sessions
+            {t('pages.profile.tabs.sessions')}
             {sessions && sessions.length > 0 && (
               <Badge variant="secondary" className="ml-1">{sessions.length}</Badge>
             )}
           </TabsTrigger>
           <TabsTrigger value="access-tokens" className="flex items-center gap-2">
             <KeyRound className="h-4 w-4" />
-            Access Tokens
+            {t('pages.profile.tabs.tokens')}
           </TabsTrigger>
           <TabsTrigger value="authorized-apps" className="flex items-center gap-2">
             <AppWindow className="h-4 w-4" />
-            Authorized Apps
+            {t('pages.profile.tabs.apps')}
           </TabsTrigger>
         </TabsList>
 
         <TabsContent value="profile" className="space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle>Personal Information</CardTitle>
-              <CardDescription>Update your personal details</CardDescription>
+              <CardTitle>{t('pages.profile.personal.title')}</CardTitle>
+              <CardDescription>{t('pages.profile.personal.hint')}</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label htmlFor="firstName">First Name</Label>
+                  <Label htmlFor="firstName">{t('pages.profile.personal.firstName')}</Label>
                   <Input
                     id="firstName"
                     value={firstName}
@@ -498,7 +500,7 @@ export function UserProfilePage() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="lastName">Last Name</Label>
+                  <Label htmlFor="lastName">{t('pages.profile.personal.lastName')}</Label>
                   <Input
                     id="lastName"
                     value={lastName}
@@ -507,7 +509,7 @@ export function UserProfilePage() {
                 </div>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="email">Email</Label>
+                <Label htmlFor="email">{t('pages.profile.personal.email')}</Label>
                 <div className="flex items-center gap-2">
                   <Input
                     id="email"
@@ -518,7 +520,7 @@ export function UserProfilePage() {
                   {profile.emailVerified && (
                     <Badge variant="secondary" className="flex items-center gap-1">
                       <Mail className="h-3 w-3" />
-                      Verified
+                      {t('pages.profile.personal.verified')}
                     </Badge>
                   )}
                 </div>
@@ -529,7 +531,7 @@ export function UserProfilePage() {
                   checked={profile.enabled}
                   onCheckedChange={(checked) => updateProfileMutation.mutate({ enabled: checked })}
                 />
-                <Label htmlFor="email-notifications">Account Enabled</Label>
+                <Label htmlFor="email-notifications">{t('pages.profile.personal.accountEnabled')}</Label>
               </div>
               <Button
                 onClick={() => updateProfileMutation.mutate({
@@ -540,7 +542,7 @@ export function UserProfilePage() {
                 disabled={updateProfileMutation.isPending}
               >
                 {updateProfileMutation.isPending ? <LoadingSpinner size="sm" /> : null}
-                Update Profile
+                {t('pages.profile.personal.update')}
               </Button>
             </CardContent>
           </Card>
@@ -549,29 +551,29 @@ export function UserProfilePage() {
         <TabsContent value="security" className="space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle>Multi-Factor Authentication</CardTitle>
-              <CardDescription>Add an extra layer of security to your account</CardDescription>
+              <CardTitle>{t('pages.profile.mfa.title')}</CardTitle>
+              <CardDescription>{t('pages.profile.mfa.hint')}</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <Smartphone className="h-5 w-5" />
                   <div>
-                    <p className="font-medium">Authenticator App</p>
+                    <p className="font-medium">{t('pages.profile.mfa.totpTitle')}</p>
                     <p className="text-sm text-muted-foreground">
-                      Use an authenticator app to generate verification codes
+                      {t('pages.profile.mfa.totpDesc')}
                     </p>
                   </div>
                 </div>
                 {profile.mfaEnabled ? (
                   <Badge variant="secondary" className="flex items-center gap-1">
                     <Shield className="h-3 w-3" />
-                    Enabled
+                    {t('pages.profile.mfa.enabled')}
                   </Badge>
                 ) : (
                   <Button onClick={() => setupMFAMutation.mutate()} variant="outline" disabled={setupMFAMutation.isPending}>
                     <Key className="h-4 w-4 mr-2" />
-                    Setup MFA
+                    {t('pages.profile.mfa.setup')}
                   </Button>
                 )}
               </div>
@@ -580,19 +582,19 @@ export function UserProfilePage() {
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
                     <Button variant="destructive" disabled={disableMFAMutation.isPending}>
-                      Disable MFA
+                      {t('pages.profile.mfa.disable')}
                     </Button>
                   </AlertDialogTrigger>
                   <AlertDialogContent>
                     <AlertDialogHeader>
-                      <AlertDialogTitle>Disable Multi-Factor Authentication?</AlertDialogTitle>
+                      <AlertDialogTitle>{t('pages.profile.mfa.disableTitle')}</AlertDialogTitle>
                       <AlertDialogDescription>
-                        This will remove the extra security layer from your account. Are you sure you want to continue?
+                        {t('pages.profile.mfa.disableDesc')}
                       </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
-                      <AlertDialogCancel>Cancel</AlertDialogCancel>
-                      <AlertDialogAction onClick={() => disableMFAMutation.mutate()}>Disable MFA</AlertDialogAction>
+                      <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+                      <AlertDialogAction onClick={() => disableMFAMutation.mutate()}>{t('pages.profile.mfa.disable')}</AlertDialogAction>
                     </AlertDialogFooter>
                   </AlertDialogContent>
                 </AlertDialog>
@@ -601,8 +603,8 @@ export function UserProfilePage() {
               {mfaSetup && (
                 <Card className="border-orange-200">
                   <CardHeader>
-                    <CardTitle className="text-orange-900">Setup Authenticator</CardTitle>
-                    <CardDescription>Scan QR code or enter secret manually</CardDescription>
+                    <CardTitle className="text-orange-900">{t('pages.profile.mfa.setupTitle')}</CardTitle>
+                    <CardDescription>{t('pages.profile.mfa.setupHint')}</CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-6">
                     <div className="flex justify-center bg-background p-8 rounded-lg border">
@@ -615,7 +617,7 @@ export function UserProfilePage() {
                     </div>
 
                     <div className="space-y-2">
-                      <Label className="text-base font-semibold">Or Enter Secret Manually:</Label>
+                      <Label className="text-base font-semibold">{t('pages.profile.mfa.manualLabel')}</Label>
                       <div className="bg-muted p-4 rounded-lg">
                         <code className="text-sm break-all font-mono select-all cursor-pointer" onClick={(e) => {
                           const text = (e.currentTarget as HTMLElement).textContent
@@ -623,18 +625,18 @@ export function UserProfilePage() {
                         }}>
                           {mfaSetup.secret}
                         </code>
-                        <p className="text-xs text-muted-foreground mt-2">Click to copy</p>
+                        <p className="text-xs text-muted-foreground mt-2">{t('pages.profile.mfa.clickToCopy')}</p>
                       </div>
                       <p className="text-sm text-muted-foreground">
-                        If QR code scanning fails, open your authenticator app and choose "Enter setup key" or "Manual entry", then paste this secret.
+                        {t('pages.profile.mfa.manualHint')}
                       </p>
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="mfa-code">Verification Code</Label>
+                      <Label htmlFor="mfa-code">{t('pages.profile.mfa.codeLabel')}</Label>
                       <Input
                         id="mfa-code"
-                        placeholder="Enter 6-digit code"
+                        placeholder={t('pages.profile.mfa.codePlaceholder')}
                         type="text"
                         maxLength={6}
                         pattern="\d*"
@@ -655,8 +657,8 @@ export function UserProfilePage() {
                           enableMFAMutation.mutate(mfaCode)
                         } else {
                           toast({
-                            title: 'Invalid Code',
-                            description: 'Please enter a 6-digit verification code',
+                            title: t('pages.profile.mfa.invalidCodeTitle'),
+                            description: t('pages.profile.mfa.invalidCodeDesc'),
                             variant: 'destructive'
                           })
                         }
@@ -665,7 +667,7 @@ export function UserProfilePage() {
                       size="lg"
                       disabled={enableMFAMutation.isPending}
                     >
-                      Verify & Enable MFA
+                      {t('pages.profile.mfa.verifyEnable')}
                     </Button>
                   </CardContent>
                 </Card>
@@ -674,8 +676,8 @@ export function UserProfilePage() {
               {showBackupCodes && mfaSetup?.backupCodes && (
                 <Card className="border-blue-200">
                   <CardHeader>
-                    <CardTitle className="text-blue-900">Backup Codes</CardTitle>
-                    <CardDescription>Save these codes in a safe place</CardDescription>
+                    <CardTitle className="text-blue-900">{t('pages.profile.mfa.backupTitle')}</CardTitle>
+                    <CardDescription>{t('pages.profile.mfa.backupHint')}</CardDescription>
                   </CardHeader>
                   <CardContent>
                     <div className="grid grid-cols-2 gap-2 font-mono text-sm">
@@ -692,7 +694,7 @@ export function UserProfilePage() {
                       }}
                       className="w-full mt-4"
                     >
-                      I've Saved My Backup Codes
+                      {t('pages.profile.mfa.backupSaved')}
                     </Button>
                   </CardContent>
                 </Card>
@@ -704,9 +706,9 @@ export function UserProfilePage() {
                   <div className="flex items-center gap-3">
                     <Phone className="h-5 w-5" />
                     <div>
-                      <p className="font-medium">SMS Authentication</p>
+                      <p className="font-medium">{t('pages.profile.sms.title')}</p>
                       <p className="text-sm text-muted-foreground">
-                        Receive verification codes via text message
+                        {t('pages.profile.sms.desc')}
                       </p>
                     </div>
                   </div>
@@ -714,22 +716,22 @@ export function UserProfilePage() {
                     <div className="flex items-center gap-2">
                       <Badge variant="secondary" className="flex items-center gap-1">
                         <Check className="h-3 w-3" />
-                        Enabled
+                        {t('pages.profile.mfa.enabled')}
                       </Badge>
                       <AlertDialog>
                         <AlertDialogTrigger asChild>
-                          <Button variant="destructive" size="sm">Remove</Button>
+                          <Button variant="destructive" size="sm">{t('pages.profile.sms.remove')}</Button>
                         </AlertDialogTrigger>
                         <AlertDialogContent>
                           <AlertDialogHeader>
-                            <AlertDialogTitle>Remove SMS Authentication?</AlertDialogTitle>
+                            <AlertDialogTitle>{t('pages.profile.sms.removeTitle')}</AlertDialogTitle>
                             <AlertDialogDescription>
-                              You will no longer be able to use SMS codes for authentication.
+                              {t('pages.profile.sms.removeDesc')}
                             </AlertDialogDescription>
                           </AlertDialogHeader>
                           <AlertDialogFooter>
-                            <AlertDialogCancel>Cancel</AlertDialogCancel>
-                            <AlertDialogAction onClick={() => deleteSMSMutation.mutate()}>Remove</AlertDialogAction>
+                            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+                            <AlertDialogAction onClick={() => deleteSMSMutation.mutate()}>{t('pages.profile.sms.remove')}</AlertDialogAction>
                           </AlertDialogFooter>
                         </AlertDialogContent>
                       </AlertDialog>
@@ -737,7 +739,7 @@ export function UserProfilePage() {
                   ) : (
                     <Button variant="outline" onClick={() => setSmsEnrollStep('enter-phone')}>
                       <Phone className="h-4 w-4 mr-2" />
-                      Setup SMS
+                      {t('pages.profile.sms.setup')}
                     </Button>
                   )}
                 </div>
@@ -745,13 +747,13 @@ export function UserProfilePage() {
                 {smsEnrollStep === 'enter-phone' && (
                   <Card className="mt-4 border-orange-200">
                     <CardHeader>
-                      <CardTitle className="text-orange-900">Setup SMS Authentication</CardTitle>
-                      <CardDescription>Enter your phone number to receive codes</CardDescription>
+                      <CardTitle className="text-orange-900">{t('pages.profile.sms.enrollTitle')}</CardTitle>
+                      <CardDescription>{t('pages.profile.sms.enrollHint')}</CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
                       <div className="flex gap-2">
                         <div className="w-24">
-                          <Label htmlFor="country-code">Country</Label>
+                          <Label htmlFor="country-code">{t('pages.profile.sms.country')}</Label>
                           <Input
                             id="country-code"
                             value={countryCode}
@@ -760,7 +762,7 @@ export function UserProfilePage() {
                           />
                         </div>
                         <div className="flex-1">
-                          <Label htmlFor="phone-number">Phone Number</Label>
+                          <Label htmlFor="phone-number">{t('pages.profile.sms.phone')}</Label>
                           <Input
                             id="phone-number"
                             value={phoneNumber}
@@ -777,13 +779,13 @@ export function UserProfilePage() {
                             setPhoneNumber('')
                           }}
                         >
-                          Cancel
+                          {t('common.cancel')}
                         </Button>
                         <Button
                           onClick={() => enrollSMSMutation.mutate({ phone_number: phoneNumber, country_code: countryCode })}
                           disabled={enrollSMSMutation.isPending || !phoneNumber}
                         >
-                          {enrollSMSMutation.isPending ? <LoadingSpinner size="sm" /> : 'Send Code'}
+                          {enrollSMSMutation.isPending ? <LoadingSpinner size="sm" /> : t('pages.profile.sms.sendCode')}
                         </Button>
                       </div>
                     </CardContent>
@@ -793,12 +795,12 @@ export function UserProfilePage() {
                 {smsEnrollStep === 'verify' && (
                   <Card className="mt-4 border-orange-200">
                     <CardHeader>
-                      <CardTitle className="text-orange-900">Verify Your Phone</CardTitle>
-                      <CardDescription>Enter the 6-digit code sent to your phone</CardDescription>
+                      <CardTitle className="text-orange-900">{t('pages.profile.sms.verifyTitle')}</CardTitle>
+                      <CardDescription>{t('pages.profile.sms.verifyHint')}</CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
                       <div className="space-y-2">
-                        <Label htmlFor="sms-code">Verification Code</Label>
+                        <Label htmlFor="sms-code">{t('pages.profile.mfa.codeLabel')}</Label>
                         <Input
                           id="sms-code"
                           value={smsVerifyCode}
@@ -816,13 +818,13 @@ export function UserProfilePage() {
                             setSmsVerifyCode('')
                           }}
                         >
-                          Cancel
+                          {t('common.cancel')}
                         </Button>
                         <Button
                           onClick={() => verifySMSMutation.mutate(smsVerifyCode)}
                           disabled={verifySMSMutation.isPending || smsVerifyCode.length !== 6}
                         >
-                          {verifySMSMutation.isPending ? <LoadingSpinner size="sm" /> : 'Verify & Enable'}
+                          {verifySMSMutation.isPending ? <LoadingSpinner size="sm" /> : t('pages.profile.sms.verifyEnable')}
                         </Button>
                       </div>
                     </CardContent>
@@ -836,9 +838,9 @@ export function UserProfilePage() {
                   <div className="flex items-center gap-3">
                     <Mail className="h-5 w-5" />
                     <div>
-                      <p className="font-medium">Email OTP</p>
+                      <p className="font-medium">{t('pages.profile.emailOtp.title')}</p>
                       <p className="text-sm text-muted-foreground">
-                        Receive verification codes via email
+                        {t('pages.profile.emailOtp.desc')}
                       </p>
                     </div>
                   </div>
@@ -846,22 +848,22 @@ export function UserProfilePage() {
                     <div className="flex items-center gap-2">
                       <Badge variant="secondary" className="flex items-center gap-1">
                         <Check className="h-3 w-3" />
-                        Enabled
+                        {t('pages.profile.mfa.enabled')}
                       </Badge>
                       <AlertDialog>
                         <AlertDialogTrigger asChild>
-                          <Button variant="destructive" size="sm">Remove</Button>
+                          <Button variant="destructive" size="sm">{t('pages.profile.sms.remove')}</Button>
                         </AlertDialogTrigger>
                         <AlertDialogContent>
                           <AlertDialogHeader>
-                            <AlertDialogTitle>Remove Email OTP?</AlertDialogTitle>
+                            <AlertDialogTitle>{t('pages.profile.emailOtp.removeTitle')}</AlertDialogTitle>
                             <AlertDialogDescription>
-                              You will no longer be able to use email codes for authentication.
+                              {t('pages.profile.emailOtp.removeDesc')}
                             </AlertDialogDescription>
                           </AlertDialogHeader>
                           <AlertDialogFooter>
-                            <AlertDialogCancel>Cancel</AlertDialogCancel>
-                            <AlertDialogAction onClick={() => deleteEmailOTPMutation.mutate()}>Remove</AlertDialogAction>
+                            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+                            <AlertDialogAction onClick={() => deleteEmailOTPMutation.mutate()}>{t('pages.profile.sms.remove')}</AlertDialogAction>
                           </AlertDialogFooter>
                         </AlertDialogContent>
                       </AlertDialog>
@@ -869,7 +871,7 @@ export function UserProfilePage() {
                   ) : (
                     <Button variant="outline" onClick={() => enrollEmailOTPMutation.mutate()}>
                       <Mail className="h-4 w-4 mr-2" />
-                      Setup Email OTP
+                      {t('pages.profile.emailOtp.setup')}
                     </Button>
                   )}
                 </div>
@@ -877,12 +879,12 @@ export function UserProfilePage() {
                 {emailOtpEnrollStep === 'verify' && (
                   <Card className="mt-4 border-orange-200">
                     <CardHeader>
-                      <CardTitle className="text-orange-900">Verify Your Email</CardTitle>
-                      <CardDescription>Enter the 6-digit code sent to {profile?.email}</CardDescription>
+                      <CardTitle className="text-orange-900">{t('pages.profile.emailOtp.verifyTitle')}</CardTitle>
+                      <CardDescription>{t('pages.profile.emailOtp.verifyHint', { email: profile?.email ?? '' })}</CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
                       <div className="space-y-2">
-                        <Label htmlFor="email-otp-code">Verification Code</Label>
+                        <Label htmlFor="email-otp-code">{t('pages.profile.mfa.codeLabel')}</Label>
                         <Input
                           id="email-otp-code"
                           value={emailOtpCode}
@@ -900,13 +902,13 @@ export function UserProfilePage() {
                             setEmailOtpCode('')
                           }}
                         >
-                          Cancel
+                          {t('common.cancel')}
                         </Button>
                         <Button
                           onClick={() => verifyEmailOTPMutation.mutate(emailOtpCode)}
                           disabled={verifyEmailOTPMutation.isPending || emailOtpCode.length !== 6}
                         >
-                          {verifyEmailOTPMutation.isPending ? <LoadingSpinner size="sm" /> : 'Verify & Enable'}
+                          {verifyEmailOTPMutation.isPending ? <LoadingSpinner size="sm" /> : t('pages.profile.sms.verifyEnable')}
                         </Button>
                       </div>
                     </CardContent>
@@ -921,27 +923,27 @@ export function UserProfilePage() {
             <CardHeader>
               <div className="flex items-center justify-between">
                 <div>
-                  <CardTitle>Trusted Browsers</CardTitle>
-                  <CardDescription>Browsers where MFA can be skipped</CardDescription>
+                  <CardTitle>{t('pages.profile.browsers.title')}</CardTitle>
+                  <CardDescription>{t('pages.profile.browsers.hint')}</CardDescription>
                 </div>
                 {trustedBrowsers && trustedBrowsers.filter(b => b.active).length > 0 && (
                   <AlertDialog>
                     <AlertDialogTrigger asChild>
                       <Button variant="destructive" size="sm">
-                        Revoke All
+                        {t('pages.profile.browsers.revokeAll')}
                       </Button>
                     </AlertDialogTrigger>
                     <AlertDialogContent>
                       <AlertDialogHeader>
-                        <AlertDialogTitle>Revoke All Trusted Browsers?</AlertDialogTitle>
+                        <AlertDialogTitle>{t('pages.profile.browsers.revokeAllTitle')}</AlertDialogTitle>
                         <AlertDialogDescription>
-                          You will need to complete MFA on all browsers again.
+                          {t('pages.profile.browsers.revokeAllDesc')}
                         </AlertDialogDescription>
                       </AlertDialogHeader>
                       <AlertDialogFooter>
-                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
                         <AlertDialogAction onClick={() => revokeAllBrowsersMutation.mutate()}>
-                          Revoke All
+                          {t('pages.profile.browsers.revokeAll')}
                         </AlertDialogAction>
                       </AlertDialogFooter>
                     </AlertDialogContent>
@@ -953,8 +955,8 @@ export function UserProfilePage() {
               {!trustedBrowsers || trustedBrowsers.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground">
                   <Globe className="h-12 w-12 mx-auto mb-3 opacity-40" />
-                  <p>No trusted browsers</p>
-                  <p className="text-sm">Complete MFA and choose to trust your browser</p>
+                  <p>{t('pages.profile.browsers.empty')}</p>
+                  <p className="text-sm">{t('pages.profile.browsers.emptyHint')}</p>
                 </div>
               ) : (
                 <div className="space-y-3">
@@ -970,11 +972,11 @@ export function UserProfilePage() {
                         <div>
                           <p className="font-medium">{browser.name}</p>
                           <p className="text-xs text-muted-foreground">
-                            {browser.ip_address} • Trusted {new Date(browser.trusted_at).toLocaleDateString()}
+                            {browser.ip_address} • {t('pages.profile.browsers.trustedAt', { date: new Date(browser.trusted_at).toLocaleDateString() })}
                           </p>
                           {!browser.active && (
                             <Badge variant="secondary" className="mt-1">
-                              {browser.revoked ? 'Revoked' : 'Expired'}
+                              {browser.revoked ? t('pages.trustedBrowsers.badges.revoked') : t('pages.trustedBrowsers.badges.expired')}
                             </Badge>
                           )}
                         </div>
@@ -998,32 +1000,32 @@ export function UserProfilePage() {
 
           <Card>
             <CardHeader>
-              <CardTitle>Change Password</CardTitle>
+              <CardTitle>{t('pages.profile.password.title')}</CardTitle>
               <CardDescription>
                 {passwordInfo?.is_azure_ad
-                  ? 'Your password is managed by Azure Active Directory'
+                  ? t('pages.profile.password.azureManaged')
                   : passwordInfo?.is_ldap
-                  ? 'Your password is managed by Active Directory'
-                  : 'Update your account password'}
+                  ? t('pages.profile.password.ldapManaged')
+                  : t('pages.profile.password.hint')}
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               {passwordInfo?.is_azure_ad && (
                 <div className="flex items-center gap-2 p-3 bg-purple-50 dark:bg-purple-950 rounded-md text-sm text-purple-700 dark:text-purple-300">
                   <Shield className="h-4 w-4 flex-shrink-0" />
-                  <span>Your account is managed by Azure Active Directory. To change your password, use the Azure AD portal or your organization&apos;s self-service password reset.</span>
+                  <span>{t('pages.profile.password.azureNote')}</span>
                 </div>
               )}
               {passwordInfo?.is_ldap && (
                 <div className="flex items-center gap-2 p-3 bg-blue-50 dark:bg-blue-950 rounded-md text-sm text-blue-700 dark:text-blue-300">
                   <Shield className="h-4 w-4 flex-shrink-0" />
-                  <span>Changes will be applied directly to your Active Directory account. Your organization&apos;s password policy applies.</span>
+                  <span>{t('pages.profile.password.ldapNote')}</span>
                 </div>
               )}
               {!passwordInfo?.is_azure_ad && (
                 <>
                   <div className="space-y-2">
-                    <Label htmlFor="current-password">Current Password</Label>
+                    <Label htmlFor="current-password">{t('pages.profile.password.current')}</Label>
                     <Input
                       id="current-password"
                       type="password"
@@ -1032,7 +1034,7 @@ export function UserProfilePage() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="new-password">New Password</Label>
+                    <Label htmlFor="new-password">{t('pages.profile.password.newPassword')}</Label>
                     <Input
                       id="new-password"
                       type="password"
@@ -1041,7 +1043,7 @@ export function UserProfilePage() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="confirm-password">Confirm New Password</Label>
+                    <Label htmlFor="confirm-password">{t('pages.profile.password.confirm')}</Label>
                     <Input
                       id="confirm-password"
                       type="password"
@@ -1053,8 +1055,8 @@ export function UserProfilePage() {
                     onClick={() => {
                       if (newPassword !== confirmPassword) {
                         toast({
-                          title: 'Error',
-                          description: 'Passwords do not match',
+                          title: t('common.error'),
+                          description: t('pages.profile.password.mismatch'),
                           variant: 'destructive'
                         })
                         return
@@ -1073,7 +1075,7 @@ export function UserProfilePage() {
                     }}
                     disabled={changePasswordMutation.isPending}
                   >
-                    {passwordInfo?.is_ldap ? 'Change AD Password' : 'Change Password'}
+                    {passwordInfo?.is_ldap ? t('pages.profile.password.changeAd') : t('pages.profile.password.change')}
                   </Button>
                 </>
               )}
@@ -1086,8 +1088,8 @@ export function UserProfilePage() {
             <CardHeader>
               <div className="flex items-center justify-between">
                 <div>
-                  <CardTitle>Active Sessions</CardTitle>
-                  <CardDescription>Manage your active sessions across devices</CardDescription>
+                  <CardTitle>{t('pages.profile.sessions.title')}</CardTitle>
+                  <CardDescription>{t('pages.profile.sessions.hint')}</CardDescription>
                 </div>
                 {sessions && sessions.length > 0 && (
                   <div className="flex items-center gap-2">
@@ -1098,20 +1100,20 @@ export function UserProfilePage() {
                           size="sm"
                           disabled={logoutAllMutation.isPending}
                         >
-                          Sign Out Everywhere
+                          {t('pages.profile.sessions.signOutEverywhere')}
                         </Button>
                       </AlertDialogTrigger>
                       <AlertDialogContent>
                         <AlertDialogHeader>
-                          <AlertDialogTitle>Sign out of all devices?</AlertDialogTitle>
+                          <AlertDialogTitle>{t('pages.profile.sessions.signOutTitle')}</AlertDialogTitle>
                           <AlertDialogDescription>
-                            This will revoke all your active sessions and refresh tokens across all devices. You will need to sign in again on each device.
+                            {t('pages.profile.sessions.signOutDesc')}
                           </AlertDialogDescription>
                         </AlertDialogHeader>
                         <AlertDialogFooter>
-                          <AlertDialogCancel>Cancel</AlertDialogCancel>
+                          <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
                           <AlertDialogAction onClick={() => logoutAllMutation.mutate()}>
-                            Sign Out Everywhere
+                            {t('pages.profile.sessions.signOutEverywhere')}
                           </AlertDialogAction>
                         </AlertDialogFooter>
                       </AlertDialogContent>
@@ -1124,7 +1126,7 @@ export function UserProfilePage() {
                       }}
                       disabled={revokeSessionMutation.isPending}
                     >
-                      Revoke All Sessions
+                      {t('pages.profile.sessions.revokeAllSessions')}
                     </Button>
                   </div>
                 )}
@@ -1137,18 +1139,18 @@ export function UserProfilePage() {
                 </div>
               ) : !sessions || sessions.length === 0 ? (
                 <div className="text-center py-8">
-                  <p className="text-muted-foreground">No active sessions</p>
+                  <p className="text-muted-foreground">{t('pages.profile.sessions.empty')}</p>
                 </div>
               ) : (
                 <Table className="text-sm">
                     <TableHeader>
                       <TableRow className="border-b">
-                        <TableHead className="text-left py-2 px-2 font-medium">IP Address</TableHead>
-                        <TableHead className="text-left py-2 px-2 font-medium">User Agent</TableHead>
-                        <TableHead className="text-left py-2 px-2 font-medium">Started</TableHead>
-                        <TableHead className="text-left py-2 px-2 font-medium">Last Seen</TableHead>
-                        <TableHead className="text-left py-2 px-2 font-medium">Expires</TableHead>
-                        <TableHead className="text-left py-2 px-2 font-medium">Actions</TableHead>
+                        <TableHead className="text-left py-2 px-2 font-medium">{t('pages.profile.sessions.table.ip')}</TableHead>
+                        <TableHead className="text-left py-2 px-2 font-medium">{t('pages.profile.sessions.table.userAgent')}</TableHead>
+                        <TableHead className="text-left py-2 px-2 font-medium">{t('pages.profile.sessions.table.started')}</TableHead>
+                        <TableHead className="text-left py-2 px-2 font-medium">{t('pages.profile.sessions.table.lastSeen')}</TableHead>
+                        <TableHead className="text-left py-2 px-2 font-medium">{t('pages.profile.sessions.table.expires')}</TableHead>
+                        <TableHead className="text-left py-2 px-2 font-medium">{t('pages.profile.sessions.table.actions')}</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -1174,7 +1176,7 @@ export function UserProfilePage() {
                               onClick={() => revokeSessionMutation.mutate(session.id)}
                               disabled={revokeSessionMutation.isPending}
                             >
-                              Revoke
+                              {t('pages.profile.sessions.revoke')}
                             </Button>
                           </TableCell>
                         </TableRow>
@@ -1193,7 +1195,7 @@ export function UserProfilePage() {
                 <div className="flex items-start gap-3">
                   <AlertTriangle className="h-5 w-5 text-amber-600 mt-0.5 shrink-0" />
                   <div className="space-y-2 flex-1">
-                    <p className="font-medium text-amber-900">Copy this token now. You won't be able to see it again.</p>
+                    <p className="font-medium text-amber-900">{t('pages.profile.tokens.bannerCopy')}</p>
                     <div className="flex items-center gap-2">
                       <code className="flex-1 bg-background border border-amber-200 px-3 py-2 rounded text-sm font-mono break-all select-all">
                         {createdRawToken}
@@ -1203,7 +1205,7 @@ export function UserProfilePage() {
                         size="sm"
                         onClick={() => {
                           navigator.clipboard.writeText(createdRawToken)
-                          toast({ title: 'Copied', description: 'Token copied to clipboard.' })
+                          toast({ title: t('pages.profile.tokens.copied'), description: t('pages.profile.tokens.copiedDesc') })
                         }}
                       >
                         <Copy className="h-4 w-4" />
@@ -1215,7 +1217,7 @@ export function UserProfilePage() {
                       onClick={() => setCreatedRawToken(null)}
                       className="text-amber-700"
                     >
-                      Dismiss
+                      {t('pages.profile.tokens.dismiss')}
                     </Button>
                   </div>
                 </div>
@@ -1227,12 +1229,12 @@ export function UserProfilePage() {
             <CardHeader>
               <div className="flex items-center justify-between">
                 <div>
-                  <CardTitle>Personal Access Tokens</CardTitle>
-                  <CardDescription>Tokens for API access and automation</CardDescription>
+                  <CardTitle>{t('pages.profile.tokens.title')}</CardTitle>
+                  <CardDescription>{t('pages.profile.tokens.hint')}</CardDescription>
                 </div>
                 <Button onClick={() => setShowCreateToken(true)} disabled={showCreateToken}>
                   <Plus className="h-4 w-4 mr-2" />
-                  Create Token
+                  {t('pages.profile.tokens.create')}
                 </Button>
               </div>
             </CardHeader>
@@ -1241,20 +1243,20 @@ export function UserProfilePage() {
               {showCreateToken && (
                 <Card className="mb-6 border-blue-200">
                   <CardHeader>
-                    <CardTitle className="text-base">Create New Token</CardTitle>
+                    <CardTitle className="text-base">{t('pages.profile.tokens.createTitle')}</CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-4">
                     <div className="space-y-2">
-                      <Label htmlFor="token-name">Token Name</Label>
+                      <Label htmlFor="token-name">{t('pages.profile.tokens.nameLabel')}</Label>
                       <Input
                         id="token-name"
-                        placeholder="e.g., CI/CD Pipeline, CLI Tool"
+                        placeholder={t('pages.profile.tokens.namePlaceholder')}
                         value={newTokenName}
                         onChange={(e) => setNewTokenName(e.target.value)}
                       />
                     </div>
                     <div className="space-y-2">
-                      <Label>Scopes</Label>
+                      <Label>{t('pages.profile.tokens.scopes')}</Label>
                       <div className="flex items-center gap-6">
                         {['read', 'write', 'admin'].map((scope) => (
                           <div key={scope} className="flex items-center gap-2">
@@ -1271,7 +1273,7 @@ export function UserProfilePage() {
                       </div>
                     </div>
                     <div className="space-y-2">
-                      <Label htmlFor="token-expiry">Expiry Date (optional)</Label>
+                      <Label htmlFor="token-expiry">{t('pages.profile.tokens.expiryLabel')}</Label>
                       <Input
                         id="token-expiry"
                         type="date"
@@ -1289,16 +1291,16 @@ export function UserProfilePage() {
                           setNewTokenExpiry('')
                         }}
                       >
-                        Cancel
+                        {t('common.cancel')}
                       </Button>
                       <Button
                         onClick={() => {
                           if (!newTokenName.trim()) {
-                            toast({ title: 'Error', description: 'Token name is required.', variant: 'destructive' })
+                            toast({ title: t('common.error'), description: t('pages.profile.tokens.nameRequired'), variant: 'destructive' })
                             return
                           }
                           if (newTokenScopes.length === 0) {
-                            toast({ title: 'Error', description: 'Select at least one scope.', variant: 'destructive' })
+                            toast({ title: t('common.error'), description: t('pages.profile.tokens.scopeRequired'), variant: 'destructive' })
                             return
                           }
                           createTokenMutation.mutate({
@@ -1310,7 +1312,7 @@ export function UserProfilePage() {
                         disabled={createTokenMutation.isPending}
                       >
                         {createTokenMutation.isPending ? <LoadingSpinner size="sm" /> : null}
-                        Create Token
+                        {t('pages.profile.tokens.create')}
                       </Button>
                     </div>
                   </CardContent>
@@ -1325,21 +1327,21 @@ export function UserProfilePage() {
               ) : !accessTokens || accessTokens.length === 0 ? (
                 <div className="text-center py-8">
                   <KeyRound className="h-12 w-12 mx-auto mb-3 opacity-40" />
-                  <p className="text-muted-foreground">No access tokens</p>
-                  <p className="text-sm text-muted-foreground">Create a token to access the API programmatically.</p>
+                  <p className="text-muted-foreground">{t('pages.profile.tokens.empty')}</p>
+                  <p className="text-sm text-muted-foreground">{t('pages.profile.tokens.emptyHint')}</p>
                 </div>
               ) : (
                 <Table className="text-sm">
                     <TableHeader>
                       <TableRow className="border-b">
-                        <TableHead className="text-left py-2 px-2 font-medium">Name</TableHead>
-                        <TableHead className="text-left py-2 px-2 font-medium">Prefix</TableHead>
-                        <TableHead className="text-left py-2 px-2 font-medium">Scopes</TableHead>
-                        <TableHead className="text-left py-2 px-2 font-medium">Created</TableHead>
-                        <TableHead className="text-left py-2 px-2 font-medium">Last Used</TableHead>
-                        <TableHead className="text-left py-2 px-2 font-medium">Expires</TableHead>
-                        <TableHead className="text-left py-2 px-2 font-medium">Status</TableHead>
-                        <TableHead className="text-left py-2 px-2 font-medium">Actions</TableHead>
+                        <TableHead className="text-left py-2 px-2 font-medium">{t('pages.profile.tokens.table.name')}</TableHead>
+                        <TableHead className="text-left py-2 px-2 font-medium">{t('pages.profile.tokens.table.prefix')}</TableHead>
+                        <TableHead className="text-left py-2 px-2 font-medium">{t('pages.profile.tokens.table.scopes')}</TableHead>
+                        <TableHead className="text-left py-2 px-2 font-medium">{t('pages.profile.tokens.table.created')}</TableHead>
+                        <TableHead className="text-left py-2 px-2 font-medium">{t('pages.profile.tokens.table.lastUsed')}</TableHead>
+                        <TableHead className="text-left py-2 px-2 font-medium">{t('pages.profile.tokens.table.expires')}</TableHead>
+                        <TableHead className="text-left py-2 px-2 font-medium">{t('pages.profile.tokens.table.status')}</TableHead>
+                        <TableHead className="text-left py-2 px-2 font-medium">{t('pages.profile.tokens.table.actions')}</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -1362,12 +1364,12 @@ export function UserProfilePage() {
                           <TableCell className="py-2 px-2 whitespace-nowrap">
                             {token.last_used_at
                               ? new Date(token.last_used_at).toLocaleDateString()
-                              : 'Never'}
+                              : t('pages.profile.tokens.never')}
                           </TableCell>
                           <TableCell className="py-2 px-2 whitespace-nowrap">
                             {token.expires_at
                               ? new Date(token.expires_at).toLocaleDateString()
-                              : 'Never'}
+                              : t('pages.profile.tokens.never')}
                           </TableCell>
                           <TableCell className="py-2 px-2">
                             <Badge
@@ -1382,21 +1384,20 @@ export function UserProfilePage() {
                               <AlertDialog>
                                 <AlertDialogTrigger asChild>
                                   <Button variant="destructive" size="sm">
-                                    Revoke
+                                    {t('pages.profile.tokens.revoke')}
                                   </Button>
                                 </AlertDialogTrigger>
                                 <AlertDialogContent>
                                   <AlertDialogHeader>
-                                    <AlertDialogTitle>Revoke Access Token?</AlertDialogTitle>
+                                    <AlertDialogTitle>{t('pages.profile.tokens.revokeTitle')}</AlertDialogTitle>
                                     <AlertDialogDescription>
-                                      This will permanently revoke the token "{token.name}". Any applications
-                                      using this token will lose access immediately.
+                                      {t('pages.profile.tokens.revokeDesc', { name: token.name })}
                                     </AlertDialogDescription>
                                   </AlertDialogHeader>
                                   <AlertDialogFooter>
-                                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                    <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
                                     <AlertDialogAction onClick={() => revokeTokenMutation.mutate(token.id)}>
-                                      Revoke Token
+                                      {t('pages.profile.tokens.revokeConfirm')}
                                     </AlertDialogAction>
                                   </AlertDialogFooter>
                                 </AlertDialogContent>
@@ -1415,8 +1416,8 @@ export function UserProfilePage() {
         <TabsContent value="authorized-apps" className="space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle>Authorized Applications</CardTitle>
-              <CardDescription>Applications you have granted access to your account</CardDescription>
+              <CardTitle>{t('pages.profile.apps.title')}</CardTitle>
+              <CardDescription>{t('pages.profile.apps.hint')}</CardDescription>
             </CardHeader>
             <CardContent>
               {consentsLoading ? (
@@ -1426,9 +1427,9 @@ export function UserProfilePage() {
               ) : !userConsents || userConsents.length === 0 ? (
                 <div className="text-center py-8">
                   <AppWindow className="h-12 w-12 mx-auto mb-3 opacity-40" />
-                  <p className="text-muted-foreground">No authorized applications</p>
+                  <p className="text-muted-foreground">{t('pages.profile.apps.empty')}</p>
                   <p className="text-sm text-muted-foreground">
-                    When you sign in to third-party applications using OpenIDX, they will appear here.
+                    {t('pages.profile.apps.emptyHint')}
                   </p>
                 </div>
               ) : (
@@ -1460,9 +1461,9 @@ export function UserProfilePage() {
                             ))}
                           </div>
                           <p className="text-xs text-muted-foreground">
-                            Authorized {new Date(consent.authorized_at).toLocaleDateString()}
+                            {t('pages.profile.apps.authorizedAt', { date: new Date(consent.authorized_at).toLocaleDateString() })}
                             {consent.last_used_at && (
-                              <> &middot; Last used {new Date(consent.last_used_at).toLocaleDateString()}</>
+                              <> &middot; {t('pages.profile.apps.lastUsed', { date: new Date(consent.last_used_at).toLocaleDateString() })}</>
                             )}
                           </p>
                         </div>
@@ -1479,24 +1480,22 @@ export function UserProfilePage() {
                             size="sm"
                             onClick={() => setRevokeConsentClientId(consent.client_id)}
                           >
-                            Revoke Access
+                            {t('pages.profile.apps.revokeAccess')}
                           </Button>
                         </AlertDialogTrigger>
                         <AlertDialogContent>
                           <AlertDialogHeader>
-                            <AlertDialogTitle>Revoke Application Access?</AlertDialogTitle>
+                            <AlertDialogTitle>{t('pages.profile.apps.revokeTitle')}</AlertDialogTitle>
                             <AlertDialogDescription>
-                              This will revoke {consent.client_name}'s access to your account.
-                              The application will no longer be able to act on your behalf.
-                              You can re-authorize it later if needed.
+                              {t('pages.profile.apps.revokeDesc', { name: consent.client_name })}
                             </AlertDialogDescription>
                           </AlertDialogHeader>
                           <AlertDialogFooter>
-                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
                             <AlertDialogAction
                               onClick={() => revokeConsentMutation.mutate(consent.client_id)}
                             >
-                              Revoke Access
+                              {t('pages.profile.apps.revokeAccess')}
                             </AlertDialogAction>
                           </AlertDialogFooter>
                         </AlertDialogContent>

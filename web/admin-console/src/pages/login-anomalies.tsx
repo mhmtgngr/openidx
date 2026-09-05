@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import { Activity, ShieldAlert, Users, BarChart3, Clock, Globe, Monitor } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
@@ -49,10 +50,10 @@ interface UserRiskProfile {
 }
 
 const riskScoreBadge = (score: number) => {
-  if (score >= 90) return { label: 'Critical', className: 'bg-red-100 text-red-800' }
-  if (score >= 70) return { label: 'High', className: 'bg-orange-100 text-orange-800' }
-  if (score >= 30) return { label: 'Medium', className: 'bg-yellow-100 text-yellow-800' }
-  return { label: 'Low', className: 'bg-green-100 text-green-800' }
+  if (score >= 90) return { labelKey: 'critical', className: 'bg-red-100 text-red-800' }
+  if (score >= 70) return { labelKey: 'high', className: 'bg-orange-100 text-orange-800' }
+  if (score >= 30) return { labelKey: 'medium', className: 'bg-yellow-100 text-yellow-800' }
+  return { labelKey: 'low', className: 'bg-green-100 text-green-800' }
 }
 
 const avgScoreColor = (score: number) => {
@@ -62,6 +63,7 @@ const avgScoreColor = (score: number) => {
 }
 
 export default function LoginAnomalies() {
+  const { t } = useTranslation()
   const [days, setDays] = useState('7')
   const [minScore, setMinScore] = useState('50')
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null)
@@ -121,21 +123,21 @@ export default function LoginAnomalies() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold tracking-tight">Login Anomalies</h1>
-        <p className="text-muted-foreground">Monitor login risk scores and detect anomalous authentication patterns</p>
+        <h1 className="text-3xl font-bold tracking-tight">{t('nav.items.loginAnomalies')}</h1>
+        <p className="text-muted-foreground">{t('pages.loginAnomalies.subtitle')}</p>
       </div>
 
       {/* Summary Cards */}
       {overviewLoading ? (
         <div className="flex flex-col items-center justify-center py-12">
           <LoadingSpinner size="lg" />
-          <p className="mt-4 text-sm text-muted-foreground">Loading risk overview...</p>
+          <p className="mt-4 text-sm text-muted-foreground">{t('pages.loginAnomalies.overviewLoading')}</p>
         </div>
       ) : (
         <div className="grid gap-4 md:grid-cols-4">
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium">Average Risk Score</CardTitle>
+              <CardTitle className="text-sm font-medium">{t('pages.loginAnomalies.stats.avgRisk')}</CardTitle>
             </CardHeader>
             <CardContent>
               <div className={`text-2xl font-bold ${avgScoreColor(overview?.avg_risk_score || 0)}`}>
@@ -145,7 +147,7 @@ export default function LoginAnomalies() {
           </Card>
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium">High-Risk Logins (7d)</CardTitle>
+              <CardTitle className="text-sm font-medium">{t('pages.loginAnomalies.stats.highRisk7d')}</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold text-red-600">{overview?.high_risk_count || 0}</div>
@@ -153,7 +155,7 @@ export default function LoginAnomalies() {
           </Card>
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium">Total Logins (7d)</CardTitle>
+              <CardTitle className="text-sm font-medium">{t('pages.loginAnomalies.stats.total7d')}</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">{overview?.total_logins_7d || 0}</div>
@@ -161,14 +163,22 @@ export default function LoginAnomalies() {
           </Card>
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium">Risk Distribution</CardTitle>
+              <CardTitle className="text-sm font-medium">{t('pages.loginAnomalies.stats.distribution')}</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="flex flex-wrap gap-2">
-                <Badge className="bg-green-100 text-green-800">Low: {overview?.risk_distribution?.low || 0}</Badge>
-                <Badge className="bg-yellow-100 text-yellow-800">Med: {overview?.risk_distribution?.medium || 0}</Badge>
-                <Badge className="bg-orange-100 text-orange-800">High: {overview?.risk_distribution?.high || 0}</Badge>
-                <Badge className="bg-red-100 text-red-800">Crit: {overview?.risk_distribution?.critical || 0}</Badge>
+                <Badge className="bg-green-100 text-green-800">
+                  {t('pages.loginAnomalies.distribution.low', { n: overview?.risk_distribution?.low || 0 })}
+                </Badge>
+                <Badge className="bg-yellow-100 text-yellow-800">
+                  {t('pages.loginAnomalies.distribution.medium', { n: overview?.risk_distribution?.medium || 0 })}
+                </Badge>
+                <Badge className="bg-orange-100 text-orange-800">
+                  {t('pages.loginAnomalies.distribution.high', { n: overview?.risk_distribution?.high || 0 })}
+                </Badge>
+                <Badge className="bg-red-100 text-red-800">
+                  {t('pages.loginAnomalies.distribution.critical', { n: overview?.risk_distribution?.critical || 0 })}
+                </Badge>
               </div>
             </CardContent>
           </Card>
@@ -180,28 +190,32 @@ export default function LoginAnomalies() {
         <CardContent className="pt-6">
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2">
-              <span className="text-sm font-medium">Days:</span>
+              <label htmlFor="anomaly-days" className="text-sm font-medium">{t('pages.loginAnomalies.filters.days')}</label>
               <Select value={days} onValueChange={setDays}>
-                <SelectTrigger className="w-[120px]"><SelectValue placeholder="Days" /></SelectTrigger>
+                <SelectTrigger id="anomaly-days" className="w-[120px]">
+                  <SelectValue placeholder={t('pages.loginAnomalies.filters.daysPlaceholder')} />
+                </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="1">1 day</SelectItem>
-                  <SelectItem value="3">3 days</SelectItem>
-                  <SelectItem value="7">7 days</SelectItem>
-                  <SelectItem value="14">14 days</SelectItem>
-                  <SelectItem value="30">30 days</SelectItem>
+                  {[1, 3, 7, 14, 30].map((d) => (
+                    <SelectItem key={d} value={String(d)}>
+                      {t('pages.loginAnomalies.filters.day', { count: d })}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-sm font-medium">Min Risk Score:</span>
+              <label htmlFor="anomaly-min-score" className="text-sm font-medium">{t('pages.loginAnomalies.filters.minScore')}</label>
               <Select value={minScore} onValueChange={setMinScore}>
-                <SelectTrigger className="w-[120px]"><SelectValue placeholder="Min Score" /></SelectTrigger>
+                <SelectTrigger id="anomaly-min-score" className="w-[120px]">
+                  <SelectValue placeholder={t('pages.loginAnomalies.filters.minScorePlaceholder')} />
+                </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="0">0+</SelectItem>
-                  <SelectItem value="30">30+</SelectItem>
-                  <SelectItem value="50">50+</SelectItem>
-                  <SelectItem value="70">70+</SelectItem>
-                  <SelectItem value="90">90+</SelectItem>
+                  {[0, 30, 50, 70, 90].map((s) => (
+                    <SelectItem key={s} value={String(s)}>
+                      {t('pages.loginAnomalies.filters.scorePlus', { n: s })}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -212,34 +226,34 @@ export default function LoginAnomalies() {
       {/* Recent Anomalies Table */}
       <Card>
         <CardHeader>
-          <CardTitle>Recent Anomalies</CardTitle>
+          <CardTitle>{t('pages.loginAnomalies.recent.title')}</CardTitle>
         </CardHeader>
         <CardContent>
           {anomaliesLoading ? (
             <div className="flex flex-col items-center justify-center py-12">
               <LoadingSpinner size="lg" />
-              <p className="mt-4 text-sm text-muted-foreground">Loading anomalies...</p>
+              <p className="mt-4 text-sm text-muted-foreground">{t('pages.loginAnomalies.recent.loading')}</p>
             </div>
           ) : anomaliesError ? (
-            <QueryError error={anomaliesErrorObj} resource="login anomalies" />
+            <QueryError error={anomaliesErrorObj} resource={t('pages.loginAnomalies.resourceName')} />
           ) : anomalies.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
               <Activity className="h-12 w-12 text-muted-foreground/40 mb-3" />
-              <p className="font-medium">No anomalies found</p>
-              <p className="text-sm">Login anomalies matching your filters will appear here</p>
+              <p className="font-medium">{t('pages.loginAnomalies.recent.empty')}</p>
+              <p className="text-sm">{t('pages.loginAnomalies.recent.emptyHint')}</p>
             </div>
           ) : (
             <div className="rounded-md border">
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>User</TableHead>
-                    <TableHead>IP Address</TableHead>
-                    <TableHead>Location</TableHead>
-                    <TableHead>Risk Score</TableHead>
-                    <TableHead>Auth Methods</TableHead>
-                    <TableHead>Time</TableHead>
-                    <TableHead>Status</TableHead>
+                    <TableHead>{t('pages.loginAnomalies.table.user')}</TableHead>
+                    <TableHead>{t('pages.loginAnomalies.table.ip')}</TableHead>
+                    <TableHead>{t('pages.loginAnomalies.table.location')}</TableHead>
+                    <TableHead>{t('pages.loginAnomalies.table.riskScore')}</TableHead>
+                    <TableHead>{t('pages.loginAnomalies.table.authMethods')}</TableHead>
+                    <TableHead>{t('pages.loginAnomalies.table.time')}</TableHead>
+                    <TableHead>{t('pages.loginAnomalies.table.status')}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -251,7 +265,12 @@ export default function LoginAnomalies() {
                         <TableCell className="font-mono text-sm">{a.ip_address}</TableCell>
                         <TableCell>{a.location}</TableCell>
                         <TableCell>
-                          <Badge className={risk.className}>{a.risk_score} - {risk.label}</Badge>
+                          <Badge className={risk.className}>
+                            {t('pages.loginAnomalies.scoreBadge', {
+                              score: a.risk_score,
+                              label: t(`pages.loginAnomalies.levels.${risk.labelKey}`),
+                            })}
+                          </Badge>
                         </TableCell>
                         <TableCell>
                           <div className="flex flex-wrap gap-1">
@@ -263,9 +282,9 @@ export default function LoginAnomalies() {
                         <TableCell className="text-sm text-muted-foreground">{formatDate(a.created_at)}</TableCell>
                         <TableCell>
                           {a.success ? (
-                            <Badge className="bg-green-100 text-green-800">Success</Badge>
+                            <Badge className="bg-green-100 text-green-800">{t('pages.loginAnomalies.success')}</Badge>
                           ) : (
-                            <Badge className="bg-red-100 text-red-800">Failed</Badge>
+                            <Badge className="bg-red-100 text-red-800">{t('pages.loginAnomalies.failed')}</Badge>
                           )}
                         </TableCell>
                       </TableRow>
@@ -282,56 +301,60 @@ export default function LoginAnomalies() {
       <Dialog open={!!selectedUserId} onOpenChange={open => !open && setSelectedUserId(null)}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>User Risk Profile - {userProfile?.username || 'Loading...'}</DialogTitle>
+            <DialogTitle>
+              {t('pages.loginAnomalies.profile.title', {
+                username: userProfile?.username || t('pages.loginAnomalies.profile.loadingName'),
+              })}
+            </DialogTitle>
           </DialogHeader>
           {profileLoading ? (
             <div className="flex flex-col items-center justify-center py-8">
               <LoadingSpinner size="lg" />
-              <p className="mt-4 text-sm text-muted-foreground">Loading user profile...</p>
+              <p className="mt-4 text-sm text-muted-foreground">{t('pages.loginAnomalies.profile.loading')}</p>
             </div>
           ) : userProfile ? (
             <div className="space-y-6">
               {/* Baseline Info */}
               <div className="space-y-3">
-                <h3 className="text-sm font-semibold">Baseline Profile</h3>
+                <h3 className="text-sm font-semibold">{t('pages.loginAnomalies.profile.baseline')}</h3>
                 <div className="grid grid-cols-2 gap-3 text-sm">
                   <div className="flex items-start gap-2">
                     <Clock className="h-4 w-4 mt-0.5 text-muted-foreground" />
                     <div>
-                      <p className="font-medium">Typical Login Hours</p>
+                      <p className="font-medium">{t('pages.loginAnomalies.profile.typicalHours')}</p>
                       <p className="text-muted-foreground">
                         {userProfile.baseline.typical_login_hours.length > 0
                           ? userProfile.baseline.typical_login_hours.map(h => `${h}:00`).join(', ')
-                          : 'No data'}
+                          : t('pages.loginAnomalies.profile.noData')}
                       </p>
                     </div>
                   </div>
                   <div className="flex items-start gap-2">
                     <Globe className="h-4 w-4 mt-0.5 text-muted-foreground" />
                     <div>
-                      <p className="font-medium">Typical Countries</p>
+                      <p className="font-medium">{t('pages.loginAnomalies.profile.typicalCountries')}</p>
                       <p className="text-muted-foreground">
                         {userProfile.baseline.typical_countries.length > 0
                           ? userProfile.baseline.typical_countries.join(', ')
-                          : 'No data'}
+                          : t('pages.loginAnomalies.profile.noData')}
                       </p>
                     </div>
                   </div>
                   <div className="flex items-start gap-2">
                     <Monitor className="h-4 w-4 mt-0.5 text-muted-foreground" />
                     <div>
-                      <p className="font-medium">Typical IPs</p>
+                      <p className="font-medium">{t('pages.loginAnomalies.profile.typicalIps')}</p>
                       <p className="text-muted-foreground font-mono text-xs">
                         {userProfile.baseline.typical_ips.length > 0
                           ? userProfile.baseline.typical_ips.join(', ')
-                          : 'No data'}
+                          : t('pages.loginAnomalies.profile.noData')}
                       </p>
                     </div>
                   </div>
                   <div className="flex items-start gap-2">
                     <BarChart3 className="h-4 w-4 mt-0.5 text-muted-foreground" />
                     <div>
-                      <p className="font-medium">Avg Risk Score</p>
+                      <p className="font-medium">{t('pages.loginAnomalies.profile.avgRisk')}</p>
                       <p className={avgScoreColor(userProfile.baseline.avg_risk_score)}>
                         {userProfile.baseline.avg_risk_score.toFixed(1)}
                       </p>
@@ -340,26 +363,26 @@ export default function LoginAnomalies() {
                 </div>
                 <div className="flex items-center gap-2 text-sm">
                   <Users className="h-4 w-4 text-muted-foreground" />
-                  <span className="font-medium">Total Logins:</span>
+                  <span className="font-medium">{t('pages.loginAnomalies.profile.totalLogins')}</span>
                   <span className="text-muted-foreground">{userProfile.baseline.login_count}</span>
                 </div>
               </div>
 
               {/* Recent Logins */}
               <div className="space-y-3">
-                <h3 className="text-sm font-semibold">Recent Logins</h3>
+                <h3 className="text-sm font-semibold">{t('pages.loginAnomalies.profile.recentLogins')}</h3>
                 {userProfile.recent_logins.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No recent logins</p>
+                  <p className="text-sm text-muted-foreground">{t('pages.loginAnomalies.profile.noRecent')}</p>
                 ) : (
                   <div className="rounded-md border">
                     <Table>
                       <TableHeader>
                         <TableRow>
-                          <TableHead>IP Address</TableHead>
-                          <TableHead>Location</TableHead>
-                          <TableHead>Risk</TableHead>
-                          <TableHead>Status</TableHead>
-                          <TableHead>Time</TableHead>
+                          <TableHead>{t('pages.loginAnomalies.profile.table.ip')}</TableHead>
+                          <TableHead>{t('pages.loginAnomalies.profile.table.location')}</TableHead>
+                          <TableHead>{t('pages.loginAnomalies.profile.table.risk')}</TableHead>
+                          <TableHead>{t('pages.loginAnomalies.profile.table.status')}</TableHead>
+                          <TableHead>{t('pages.loginAnomalies.profile.table.time')}</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -374,9 +397,9 @@ export default function LoginAnomalies() {
                               </TableCell>
                               <TableCell>
                                 {login.success ? (
-                                  <Badge className="bg-green-100 text-green-800">Success</Badge>
+                                  <Badge className="bg-green-100 text-green-800">{t('pages.loginAnomalies.success')}</Badge>
                                 ) : (
-                                  <Badge className="bg-red-100 text-red-800">Failed</Badge>
+                                  <Badge className="bg-red-100 text-red-800">{t('pages.loginAnomalies.failed')}</Badge>
                                 )}
                               </TableCell>
                               <TableCell className="text-sm text-muted-foreground">{formatDate(login.created_at)}</TableCell>
@@ -392,7 +415,7 @@ export default function LoginAnomalies() {
           ) : (
             <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
               <ShieldAlert className="h-12 w-12 text-muted-foreground/40 mb-3" />
-              <p className="font-medium">Unable to load user profile</p>
+              <p className="font-medium">{t('pages.loginAnomalies.profile.unavailable')}</p>
             </div>
           )}
         </DialogContent>

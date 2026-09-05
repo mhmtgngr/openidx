@@ -10,6 +10,8 @@ import (
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 // This file implements the persistence layer for OUTBOUND SCIM provisioning:
@@ -345,12 +347,12 @@ func (s *Service) fanOutUserChange(ctx context.Context, orgID, localID, operatio
 	n, err := s.EnqueueUserOp(ctx, orgID, localID, operation, snap)
 	if err != nil {
 		s.logger.Warn("outbound SCIM fan-out failed (will be recovered by full sync)",
-			zap.String("op", operation), zap.String("user_id", scrubLogValue(localID)), zap.Error(err))
+			zap.String("op", operation), zap.String("user_id", logsafe.Clean(localID)), zap.Error(err))
 		return
 	}
 	if n > 0 {
 		s.logger.Info("outbound SCIM fan-out enqueued",
-			zap.String("op", operation), zap.String("user_id", scrubLogValue(localID)), zap.Int("targets", n))
+			zap.String("op", operation), zap.String("user_id", logsafe.Clean(localID)), zap.Int("targets", n))
 	}
 }
 

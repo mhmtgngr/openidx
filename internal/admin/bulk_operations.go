@@ -121,9 +121,14 @@ func (s *Service) handleCreateBulkOperation(c *gin.Context) {
 }
 
 func (s *Service) executeBulkOperation(orgID, opID, opType string, userIDs []string, params json.RawMessage) {
-	// Use timeout context for bulk operation execution. The org was captured from
-	// the request in the handler and is threaded in so every mutation stays scoped.
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	// The org must travel on the CONTEXT, not only as an argument. Every table
+	// touched below is behind the FORCE-RLS belt, and the pool sets app.org_id
+	// at checkout from orgctx -- on a bare context.Background it is empty, so
+	// reads return nothing and writes are refused. The orgID parameter was
+	// already threaded here for the SQL predicates; this puts it where the
+	// database can see it too.
+	ctx, cancel := context.WithTimeout(
+		orgctx.With(context.Background(), orgctx.Org{ID: orgID}), 15*time.Minute)
 	defer cancel()
 	successCount := 0
 	errorCount := 0

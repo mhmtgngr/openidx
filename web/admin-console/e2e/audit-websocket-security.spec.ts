@@ -11,23 +11,10 @@ import { test, expect } from '@playwright/test'
  */
 
 test.describe('Audit WebSocket Security - Origin Validation', () => {
-  test.beforeEach(async ({ page, context }) => {
-    // Mock authentication
-    const mockPayload = {
-      sub: 'test-user-id',
-      email: 'admin@openidx.local',
-      name: 'Test Admin',
-      roles: ['admin'],
-      exp: Math.floor(Date.now() / 1000) + 3600,
-    }
-    const header = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
-    const payload = btoa(JSON.stringify(mockPayload))
-    const mockToken = `${header}.${payload}.mock-signature`
-
-    await context.addInitScript((token) => {
-      localStorage.setItem('token', token)
-      localStorage.setItem('refresh_token', 'mock-refresh-token')
-    }, mockToken)
+  test.beforeEach(async ({ page }) => {
+    // Session comes from the signed-in storageState (auth.setup.ts); the
+    // hand-assembled `mock-signature` JWT that stood here was rejected by the
+    // backend on every request. See the note at the top of this file.
 
     // Mock API responses
     await page.route('**/api/v1/audit/events*', async (route) => {
@@ -53,7 +40,7 @@ test.describe('Audit WebSocket Security - Origin Validation', () => {
   })
 
   test('should display current origin information', async ({ page }) => {
-    await page.goto('/audit/audit-dashboard')
+    await page.goto('/audit/dashboard')
 
     // The page should display information about the current origin
     // This helps administrators verify they're connecting from an allowed origin
@@ -79,7 +66,7 @@ test.describe('Audit WebSocket Security - Origin Validation', () => {
       })
     })
 
-    await page.goto('/audit/audit-dashboard')
+    await page.goto('/audit/dashboard')
 
     // Try to connect
     const connectButton = page.getByRole('button', { name: /connect/i })
@@ -100,7 +87,7 @@ test.describe('Audit WebSocket Security - Origin Validation', () => {
   })
 
   test('should display connection status changes', async ({ page }) => {
-    await page.goto('/audit/audit-dashboard')
+    await page.goto('/audit/dashboard')
 
     // Initial state should be disconnected
     const initialStatus = page.getByText(/disconnected/i)
@@ -134,7 +121,7 @@ test.describe('Audit WebSocket Security - Origin Validation', () => {
       })
     })
 
-    await page.goto('/audit/audit-dashboard')
+    await page.goto('/audit/dashboard')
 
     // The client should have received and stored the allowed origins
     // This would be visible in the connection status or settings
@@ -149,23 +136,10 @@ test.describe('Audit WebSocket Security - Origin Validation', () => {
 })
 
 test.describe('Audit WebSocket Security - Connection States', () => {
-  test.beforeEach(async ({ page, context }) => {
-    // Mock authentication
-    const mockPayload = {
-      sub: 'test-user-id',
-      email: 'admin@openidx.local',
-      name: 'Test Admin',
-      roles: ['admin'],
-      exp: Math.floor(Date.now() / 1000) + 3600,
-    }
-    const header = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
-    const payload = btoa(JSON.stringify(mockPayload))
-    const mockToken = `${header}.${payload}.mock-signature`
-
-    await context.addInitScript((token) => {
-      localStorage.setItem('token', token)
-      localStorage.setItem('refresh_token', 'mock-refresh-token')
-    }, mockToken)
+  test.beforeEach(async ({ page }) => {
+    // Session comes from the signed-in storageState (auth.setup.ts); the
+    // hand-assembled `mock-signature` JWT that stood here was rejected by the
+    // backend on every request. See the note at the top of this file.
 
     // Mock API responses
     await page.route('**/api/v1/audit/events*', async (route) => {
@@ -191,7 +165,7 @@ test.describe('Audit WebSocket Security - Connection States', () => {
   })
 
   test('should transition through connection states correctly', async ({ page }) => {
-    await page.goto('/audit/audit-dashboard')
+    await page.goto('/audit/dashboard')
 
     // Initial state: disconnected
     await expect(page.getByText(/disconnected/i)).toBeVisible()
@@ -222,7 +196,7 @@ test.describe('Audit WebSocket Security - Connection States', () => {
       })
     })
 
-    await page.goto('/audit/audit-dashboard')
+    await page.goto('/audit/dashboard')
 
     const connectButton = page.getByRole('button', { name: /connect/i })
     await connectButton.click()
@@ -260,7 +234,7 @@ test.describe('Audit WebSocket Security - Connection States', () => {
       }
     })
 
-    await page.goto('/audit/audit-dashboard')
+    await page.goto('/audit/dashboard')
 
     // First connection attempt (fails)
     const connectButton = page.getByRole('button', { name: /connect/i })
@@ -285,23 +259,10 @@ test.describe('Audit WebSocket Security - Connection States', () => {
 })
 
 test.describe('Audit WebSocket Security - Error Messages', () => {
-  test.beforeEach(async ({ page, context }) => {
-    // Mock authentication
-    const mockPayload = {
-      sub: 'test-user-id',
-      email: 'admin@openidx.local',
-      name: 'Test Admin',
-      roles: ['admin'],
-      exp: Math.floor(Date.now() / 1000) + 3600,
-    }
-    const header = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
-    const payload = btoa(JSON.stringify(mockPayload))
-    const mockToken = `${header}.${payload}.mock-signature`
-
-    await context.addInitScript((token) => {
-      localStorage.setItem('token', token)
-      localStorage.setItem('refresh_token', 'mock-refresh-token')
-    }, mockToken)
+  test.beforeEach(async ({ page }) => {
+    // Session comes from the signed-in storageState (auth.setup.ts); the
+    // hand-assembled `mock-signature` JWT that stood here was rejected by the
+    // backend on every request. See the note at the top of this file.
 
     // Mock API responses
     await page.route('**/api/v1/audit/events*', async (route) => {
@@ -343,7 +304,7 @@ test.describe('Audit WebSocket Security - Error Messages', () => {
       })
     })
 
-    await page.goto('/audit/audit-dashboard')
+    await page.goto('/audit/dashboard')
 
     const connectButton = page.getByRole('button', { name: /connect/i })
     await connectButton.click()
@@ -364,7 +325,7 @@ test.describe('Audit WebSocket Security - Error Messages', () => {
       await route.abort('failed')
     })
 
-    await page.goto('/audit/audit-dashboard')
+    await page.goto('/audit/dashboard')
 
     const connectButton = page.getByRole('button', { name: /connect/i })
     await connectButton.click()
@@ -384,7 +345,7 @@ test.describe('Audit WebSocket Security - Error Messages', () => {
       await route.abort('failed')
     })
 
-    await page.goto('/audit/audit-dashboard')
+    await page.goto('/audit/dashboard')
 
     const connectButton = page.getByRole('button', { name: /connect/i })
     await connectButton.click()
@@ -405,23 +366,10 @@ test.describe('Audit WebSocket Security - Error Messages', () => {
 })
 
 test.describe('Audit WebSocket Security - UI Feedback', () => {
-  test.beforeEach(async ({ page, context }) => {
-    // Mock authentication
-    const mockPayload = {
-      sub: 'test-user-id',
-      email: 'admin@openidx.local',
-      name: 'Test Admin',
-      roles: ['admin'],
-      exp: Math.floor(Date.now() / 1000) + 3600,
-    }
-    const header = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
-    const payload = btoa(JSON.stringify(mockPayload))
-    const mockToken = `${header}.${payload}.mock-signature`
-
-    await context.addInitScript((token) => {
-      localStorage.setItem('token', token)
-      localStorage.setItem('refresh_token', 'mock-refresh-token')
-    }, mockToken)
+  test.beforeEach(async ({ page }) => {
+    // Session comes from the signed-in storageState (auth.setup.ts); the
+    // hand-assembled `mock-signature` JWT that stood here was rejected by the
+    // backend on every request. See the note at the top of this file.
 
     // Mock API responses
     await page.route('**/api/v1/audit/events*', async (route) => {
@@ -447,7 +395,7 @@ test.describe('Audit WebSocket Security - UI Feedback', () => {
   })
 
   test('should have visual indicator for connection state', async ({ page }) => {
-    await page.goto('/audit/audit-dashboard')
+    await page.goto('/audit/dashboard')
 
     // Look for visual connection indicators
     const statusIndicator = page.locator('[data-testid="connection-status"], .connection-status, .status-indicator')
@@ -459,7 +407,7 @@ test.describe('Audit WebSocket Security - UI Feedback', () => {
   })
 
   test('should show help text or tooltip for origin validation', async ({ page }) => {
-    await page.goto('/audit/audit-dashboard')
+    await page.goto('/audit/dashboard')
 
     // Look for help elements near connection controls
     const helpIcon = page.getByRole('button').filter({ hasText: /help|\?/i })
@@ -471,7 +419,7 @@ test.describe('Audit WebSocket Security - UI Feedback', () => {
   })
 
   test('should display security-related information to admins', async ({ page }) => {
-    await page.goto('/audit/audit-dashboard')
+    await page.goto('/audit/dashboard')
 
     // Look for security-related text
     const securityPatterns = [
@@ -496,29 +444,16 @@ test.describe('Audit WebSocket Security - UI Feedback', () => {
 })
 
 test.describe('Audit WebSocket Security - Integration', () => {
-  test('should work with real WebSocket when server is available', async ({ page, context }) => {
+  test('should work with real WebSocket when server is available', async ({ page }) => {
     // Skip this test if no server is configured
     test.skip(process.env.CI === 'true', 'Skipping in CI - requires running server')
 
-    // Mock authentication
-    const mockPayload = {
-      sub: 'test-user-id',
-      email: 'admin@openidx.local',
-      name: 'Test Admin',
-      roles: ['admin'],
-      exp: Math.floor(Date.now() / 1000) + 3600,
-    }
-    const header = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
-    const payload = btoa(JSON.stringify(mockPayload))
-    const mockToken = `${header}.${payload}.mock-signature`
-
-    await context.addInitScript((token) => {
-      localStorage.setItem('token', token)
-      localStorage.setItem('refresh_token', 'mock-refresh-token')
-    }, mockToken)
+    // Session comes from the signed-in storageState (auth.setup.ts); the
+    // hand-assembled `mock-signature` JWT that stood here was rejected by the
+    // backend on every request. See the note at the top of this file.
 
     // Don't mock the WebSocket endpoint - let it try to connect for real
-    await page.goto('/audit/audit-dashboard')
+    await page.goto('/audit/dashboard')
 
     const connectButton = page.getByRole('button', { name: /connect/i })
 

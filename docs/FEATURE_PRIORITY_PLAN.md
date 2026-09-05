@@ -1,17 +1,18 @@
 # OpenIDX Feature Priority Implementation Plan
 
-> **⚠️ Superseded (2026-07-10).** For the current, code-verified market gap
-> analysis and the phased "ultimate product" roadmap (IAM · IGA · PAM · ZTNA),
-> see **[`ULTIMATE_PRODUCT_PLAN.md`](./ULTIMATE_PRODUCT_PLAN.md)** and
-> **[`MARKET_GAP_ANALYSIS_2026.md`](./MARKET_GAP_ANALYSIS_2026.md)**. The note
-> below remains accurate: this early wishlist is historical context.
+> **⚠️ Superseded.** This early wishlist is historical context — every
+> "must implement" feature below shipped long ago. An earlier revision of
+> this banner pointed at `ULTIMATE_PRODUCT_PLAN.md` and
+> `MARKET_GAP_ANALYSIS_2026.md`, documents that were never committed. The
+> current, code-verified roadmap and gap register is
+> **[PROJECT-READINESS-GUIDE.md](./PROJECT-READINESS-GUIDE.md)**.
 
 > **⚠️ Status note (2026-05-20): much of this plan is already implemented.**
 > This was an early competitor-analysis wishlist. As of now, the "critical"
 > features below are **shipped**, not pending:
 > - **Passwordless / WebAuthn-FIDO2** — built (`internal/identity` WebAuthn
 >   handlers, `mfa_webauthn` tables, admin Security Keys page).
-> - **Push notification MFA** — built (`internal/mfa` push, `mfa_push_*`
+> - **Push notification MFA** — built (`internal/identity/pushmfa.go`, `mfa_push_*`
 >   tables, admin Push Devices page).
 > - **Adaptive / risk-based auth** — built (`internal/risk`, admin Risk
 >   Policies / Risk Dashboard / Login Anomalies pages).

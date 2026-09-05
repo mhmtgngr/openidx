@@ -25,10 +25,6 @@ OpenIDX services are configured via environment variables. All services share a 
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `KEYCLOAK_URL` | Keycloak base URL | `http://localhost:8180` |
-| `KEYCLOAK_REALM` | Keycloak realm name | `openidx` |
-| `KEYCLOAK_CLIENT_ID` | Keycloak client ID | `openidx-api` |
-| `KEYCLOAK_ADMIN_PASSWORD` | Keycloak admin console password | — |
 | `JWT_SECRET` | Secret for JWT signing (min 32 chars) | — |
 | `ENCRYPTION_KEY` | AES-256 key (exactly 32 bytes) | — |
 
@@ -37,6 +33,7 @@ OpenIDX services are configured via environment variables. All services share a 
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `OAUTH_ISSUER` | OAuth issuer URL | `http://localhost:8006` |
+| `OAUTH_LOGIN_URL` | Absolute URL of the login page `/oauth/authorize` redirects to. Set it when the console is not on the issuer's origin. | `<OAUTH_ISSUER>/login` |
 | `OAUTH_JWKS_URL` | JWKS endpoint URL | — |
 
 ### External Services
@@ -52,7 +49,6 @@ OpenIDX services are configured via environment variables. All services share a 
 | `VITE_API_URL` | API gateway URL for frontend | `http://localhost:8088` |
 | `VITE_OAUTH_URL` | OAuth service URL for frontend | `http://localhost:8006` |
 | `VITE_OAUTH_CLIENT_ID` | OAuth client ID for admin console | `admin-console` |
-| `VITE_AUTH_PROVIDER` | Auth provider: `openidx` or `keycloak` | `openidx` |
 
 ### Observability
 

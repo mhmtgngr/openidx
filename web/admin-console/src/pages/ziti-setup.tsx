@@ -5,6 +5,7 @@
 // an install advisor (what must be installed for THIS deployment), and
 // per-route next-hop advice that mirrors exactly what the reconciler does.
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import {
@@ -105,19 +106,27 @@ interface SetupStatus {
 
 // ─── Status visuals ──────────────────────────────────────────────────────────
 
-const STATUS_META: Record<string, { icon: typeof CheckCircle2; className: string; label: string }> = {
-  complete: { icon: CheckCircle2, className: 'text-green-600', label: 'Complete' },
-  warning: { icon: AlertTriangle, className: 'text-amber-500', label: 'Warning' },
-  action_needed: { icon: ArrowRightCircle, className: 'text-blue-500', label: 'Action needed' },
-  error: { icon: XCircle, className: 'text-red-500', label: 'Error' },
-  blocked: { icon: Lock, className: 'text-muted-foreground', label: 'Blocked' },
-  optional: { icon: MinusCircle, className: 'text-muted-foreground', label: 'Optional' },
+// Module-level, so it carries the catalog key rather than English; the key is
+// the backend's own status enum.
+const STATUS_META: Record<string, { icon: typeof CheckCircle2; className: string; labelKey: string }> = {
+  complete: { icon: CheckCircle2, className: 'text-green-600', labelKey: 'complete' },
+  warning: { icon: AlertTriangle, className: 'text-amber-500', labelKey: 'warning' },
+  action_needed: { icon: ArrowRightCircle, className: 'text-blue-500', labelKey: 'action_needed' },
+  error: { icon: XCircle, className: 'text-red-500', labelKey: 'error' },
+  blocked: { icon: Lock, className: 'text-muted-foreground', labelKey: 'blocked' },
+  optional: { icon: MinusCircle, className: 'text-muted-foreground', labelKey: 'optional' },
 }
 
 function StatusIcon({ status, className = 'h-5 w-5' }: { status: string; className?: string }) {
+  const { t } = useTranslation()
   const meta = STATUS_META[status] ?? STATUS_META.optional
   const Icon = meta.icon
-  return <Icon className={`${className} ${meta.className}`} aria-label={meta.label} />
+  return (
+    <Icon
+      className={`${className} ${meta.className}`}
+      aria-label={t(`pages.zitiSetup.statuses.${meta.labelKey}`)}
+    />
+  )
 }
 
 function statusBadgeClass(status: string): string {
@@ -157,6 +166,7 @@ interface TopoNode {
 }
 
 function TopoColumn({ title, icon: Icon, nodes }: { title: string; icon: typeof Globe; nodes: TopoNode[] }) {
+  const { t } = useTranslation()
   return (
     <div className="flex min-w-[9.5rem] flex-1 flex-col gap-2">
       <div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -177,7 +187,7 @@ function TopoColumn({ title, icon: Icon, nodes }: { title: string; icon: typeof 
         </div>
       ))}
       {nodes.length === 0 && (
-        <div className="rounded-lg border border-dashed px-3 py-2 text-xs text-muted-foreground">none yet</div>
+        <div className="rounded-lg border border-dashed px-3 py-2 text-xs text-muted-foreground">{t('pages.zitiSetup.topology.none')}</div>
       )}
     </div>
   )
@@ -194,6 +204,7 @@ function TopoArrow() {
 // TopologyStrip draws the data path left→right: who connects, through what,
 // governed by which control plane, to reach which applications.
 function TopologyStrip({ data }: { data: SetupStatus }) {
+  const { t } = useTranslation()
   const routes = data.routes ?? []
   const routers = data.routers ?? []
   const step = (id: string) => data.steps.find((s) => s.id === id)
@@ -205,17 +216,17 @@ function TopologyStrip({ data }: { data: SetupStatus }) {
   const clients: TopoNode[] = []
   if (browzerRoutes > 0 || comp('browzer')?.status === 'complete') {
     clients.push({
-      label: 'Browser (BrowZer)',
-      sub: `${browzerRoutes} web app(s), nothing installed`,
+      label: t('pages.zitiSetup.topology.browser'),
+      sub: t('pages.zitiSetup.topology.browserSub', { n: browzerRoutes }),
       ok: comp('browzer')?.status === 'complete',
     })
   }
   clients.push({
-    label: 'Tunneler / Agent',
+    label: t('pages.zitiSetup.topology.tunneler'),
     sub:
       identityRoutes > 0
-        ? `needed for ${identityRoutes} identity-mode app(s)`
-        : 'Ziti Desktop/Mobile Edge, OpenIDX Agent',
+        ? t('pages.zitiSetup.topology.tunnelerNeeded', { n: identityRoutes })
+        : t('pages.zitiSetup.topology.tunnelerIdle'),
     ok: null,
   })
 
@@ -225,14 +236,14 @@ function TopologyStrip({ data }: { data: SetupStatus }) {
     ok: r.isOnline,
   }))
   if (routers.length > 3) {
-    routerNodes.push({ label: `+${routers.length - 3} more`, ok: null })
+    routerNodes.push({ label: t('pages.zitiSetup.topology.andMore', { n: routers.length - 3 }), ok: null })
   }
 
   const controllerOK = step('controller')?.status === 'complete'
   const proxyOK = step('access_proxy')?.status === 'complete'
   const controlNodes: TopoNode[] = [
-    { label: 'Ziti Controller', sub: 'policies · identities', ok: controllerOK },
-    { label: 'OpenIDX access-proxy', sub: 'identity headers', ok: proxyOK },
+    { label: 'Ziti Controller', sub: t('pages.zitiSetup.topology.controllerSub'), ok: controllerOK },
+    { label: 'OpenIDX access-proxy', sub: t('pages.zitiSetup.topology.proxySub'), ok: proxyOK },
   ]
 
   const appNodes: TopoNode[] = routes.slice(0, 3).map((r) => ({
@@ -241,7 +252,7 @@ function TopologyStrip({ data }: { data: SetupStatus }) {
     ok: r.reconcile_state === 'synced' ? true : r.reconcile_state.startsWith('error') ? false : null,
   }))
   if (routes.length > 3) {
-    appNodes.push({ label: `+${routes.length - 3} more`, ok: null })
+    appNodes.push({ label: t('pages.zitiSetup.topology.andMore', { n: routes.length - 3 }), ok: null })
   }
 
   return (
@@ -249,19 +260,19 @@ function TopologyStrip({ data }: { data: SetupStatus }) {
       <CardHeader className="pb-3">
         <CardTitle className="flex items-center gap-2 text-base">
           <Network className="h-4 w-4" />
-          Network at a glance
+          {t('pages.zitiSetup.topology.title')}
         </CardTitle>
       </CardHeader>
       <CardContent>
         <div className="overflow-x-auto">
           <div className="flex min-w-[44rem] items-start gap-1">
-            <TopoColumn title="Clients" icon={Laptop} nodes={clients} />
+            <TopoColumn title={t('pages.zitiSetup.topology.clients')} icon={Laptop} nodes={clients} />
             <TopoArrow />
-            <TopoColumn title="Edge Routers" icon={RouterIcon} nodes={routerNodes} />
+            <TopoColumn title={t('pages.zitiSetup.topology.edgeRouters')} icon={RouterIcon} nodes={routerNodes} />
             <TopoArrow />
-            <TopoColumn title="Control Plane" icon={ServerCog} nodes={controlNodes} />
+            <TopoColumn title={t('pages.zitiSetup.topology.controlPlane')} icon={ServerCog} nodes={controlNodes} />
             <TopoArrow />
-            <TopoColumn title="Applications" icon={AppWindow} nodes={appNodes} />
+            <TopoColumn title={t('pages.zitiSetup.topology.applications')} icon={AppWindow} nodes={appNodes} />
           </div>
         </div>
       </CardContent>
@@ -272,6 +283,7 @@ function TopologyStrip({ data }: { data: SetupStatus }) {
 // ─── Setup checklist ─────────────────────────────────────────────────────────
 
 function SetupStepRow({ step, index }: { step: SetupStep; index: number }) {
+  const { t } = useTranslation()
   return (
     <li className="relative flex gap-4 pb-8 last:pb-0">
       {/* vertical connector */}
@@ -287,7 +299,7 @@ function SetupStepRow({ step, index }: { step: SetupStep; index: number }) {
         <div className="flex flex-wrap items-center gap-2">
           <span className="font-medium">{step.title}</span>
           <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusBadgeClass(step.status)}`}>
-            {(STATUS_META[step.status] ?? STATUS_META.optional).label}
+            {t(`pages.zitiSetup.statuses.${(STATUS_META[step.status] ?? STATUS_META.optional).labelKey}`)}
           </span>
         </div>
         <p className="text-sm text-muted-foreground">{step.description}</p>
@@ -310,18 +322,20 @@ function SetupStepRow({ step, index }: { step: SetupStep; index: number }) {
 
 // ─── Install advisor ─────────────────────────────────────────────────────────
 
-function requiredBadge(required: SetupComponent['required']) {
+function RequiredBadge({ required }: { required: SetupComponent['required'] }) {
+  const { t } = useTranslation()
   switch (required) {
     case 'required':
-      return <Badge className="bg-red-100 text-red-700 hover:bg-red-100">Required</Badge>
+      return <Badge className="bg-red-100 text-red-700 hover:bg-red-100">{t('pages.zitiSetup.required.required')}</Badge>
     case 'conditional':
-      return <Badge className="bg-amber-100 text-amber-700 hover:bg-amber-100">Needed for your setup</Badge>
+      return <Badge className="bg-amber-100 text-amber-700 hover:bg-amber-100">{t('pages.zitiSetup.required.conditional')}</Badge>
     default:
-      return <Badge variant="outline">Optional</Badge>
+      return <Badge variant="outline">{t('pages.zitiSetup.required.optional')}</Badge>
   }
 }
 
 function ComponentCard({ comp }: { comp: SetupComponent }) {
+  const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   return (
     <Card>
@@ -331,7 +345,7 @@ function ComponentCard({ comp }: { comp: SetupComponent }) {
             <StatusIcon status={comp.status} className="h-4 w-4" />
             <span className="font-medium">{comp.name}</span>
           </div>
-          {requiredBadge(comp.required)}
+          <RequiredBadge required={comp.required} />
         </div>
         <p className="mt-2 text-sm text-muted-foreground">{comp.role}</p>
         {comp.detail && <p className="mt-1 text-xs text-muted-foreground">{comp.detail}</p>}
@@ -342,7 +356,7 @@ function ComponentCard({ comp }: { comp: SetupComponent }) {
             onClick={() => setOpen(!open)}
           >
             {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-            How to install
+            {t('pages.zitiSetup.howToInstall')}
           </button>
         )}
         {open && comp.install && (
@@ -361,18 +375,25 @@ function ComponentCard({ comp }: { comp: SetupComponent }) {
 
 // ─── Route advice table ──────────────────────────────────────────────────────
 
-function reconcileBadge(state: string) {
-  if (state === 'synced') return <Badge className="bg-green-100 text-green-700 hover:bg-green-100">synced</Badge>
+// The `title` keeps the raw state so the exact backend string stays
+// inspectable even when the badge shows a translated summary.
+function ReconcileBadge({ state }: { state: string }) {
+  const { t } = useTranslation()
+  if (state === 'synced')
+    return <Badge className="bg-green-100 text-green-700 hover:bg-green-100">{t('pages.zitiSetup.routes.synced')}</Badge>
   if (state.startsWith('error'))
     return (
       <Badge className="bg-red-100 text-red-700 hover:bg-red-100" title={state}>
-        error
+        {t('pages.zitiSetup.routes.error')}
       </Badge>
     )
+  if (state === 'route_disabled')
+    return <Badge variant="outline">{t('pages.zitiSetup.routes.routeDisabled')}</Badge>
   return <Badge variant="outline">{state.split('_').join(' ')}</Badge>
 }
 
 function RouteRow({ route }: { route: RouteAdvice }) {
+  const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const autoCorrected = route.stored_mode !== route.effective_mode
   return (
@@ -400,7 +421,10 @@ function RouteRow({ route }: { route: RouteAdvice }) {
           {autoCorrected && (
             <span
               className="ml-1.5 inline-flex items-center text-amber-500"
-              title={`Stored as '${route.stored_mode}', applied as '${route.effective_mode}'`}
+              title={t('pages.zitiSetup.routes.autoCorrected', {
+                stored: route.stored_mode,
+                effective: route.effective_mode,
+              })}
             >
               <AlertTriangle className="h-3.5 w-3.5" />
             </span>
@@ -409,22 +433,22 @@ function RouteRow({ route }: { route: RouteAdvice }) {
         <TableCell className="max-w-[16rem] truncate text-sm text-muted-foreground" title={route.to_url}>
           {route.to_url}
         </TableCell>
-        <TableCell>{reconcileBadge(route.route_enabled ? route.reconcile_state : 'route_disabled')}</TableCell>
+        <TableCell><ReconcileBadge state={route.route_enabled ? route.reconcile_state : 'route_disabled'} /></TableCell>
       </TableRow>
       {open && (
         <TableRow className="bg-muted/30 hover:bg-muted/30">
           <TableCell colSpan={4} className="space-y-3 py-4">
             <div>
-              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Data path</div>
+              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('pages.zitiSetup.routes.dataPath')}</div>
               <p className="mt-1 font-mono text-xs">{route.next_hop}</p>
             </div>
             <div>
-              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Client side</div>
+              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('pages.zitiSetup.routes.clientSide')}</div>
               <p className="mt-1 text-sm">{route.client_side}</p>
             </div>
             {route.requirements && route.requirements.length > 0 && (
               <div>
-                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Requires</div>
+                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('pages.zitiSetup.routes.requires')}</div>
                 <ul className="mt-1 list-inside list-disc space-y-0.5 text-sm">
                   {route.requirements.map((r, i) => (
                     <li key={i}>{r}</li>
@@ -458,6 +482,7 @@ function RouteRow({ route }: { route: RouteAdvice }) {
 // ─── Page ────────────────────────────────────────────────────────────────────
 
 export function ZitiSetupPage() {
+  const { t } = useTranslation()
   const {
     data,
     isLoading,
@@ -475,9 +500,9 @@ export function ZitiSetupPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Network Setup</h1>
+          <h1 className="text-3xl font-bold tracking-tight">{t('pages.zitiSetup.title')}</h1>
           <p className="text-muted-foreground">
-            Everything needed to run your zero-trust network — what's done, what's missing, and what to install.
+            {t('pages.zitiSetup.subtitle')}
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -488,27 +513,27 @@ export function ZitiSetupPage() {
               }`}
             >
               <Shield className="h-4 w-4" />
-              {data.ready ? 'Network ready' : data.summary}
+              {data.ready ? t('pages.zitiSetup.networkReady') : data.summary}
             </span>
           )}
           {data?.console_url && (
             <Button variant="outline" size="sm" asChild>
               <a href={data.console_url} target="_blank" rel="noreferrer">
                 <ExternalLink className="mr-1.5 h-4 w-4" />
-                Ziti Console
+                {t('pages.zitiSetup.zitiConsole')}
               </a>
             </Button>
           )}
           <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isFetching}>
             <RefreshCw className={`mr-1.5 h-4 w-4 ${isFetching ? 'animate-spin' : ''}`} />
-            Refresh
+            {t('pages.zitiSetup.refresh')}
           </Button>
         </div>
       </div>
 
-      {isLoading && <p className="text-sm text-muted-foreground">Loading network state…</p>}
+      {isLoading && <p className="text-sm text-muted-foreground">{t('pages.zitiSetup.loading')}</p>}
 
-      {isError && <QueryError error={error} resource="the network setup status" />}
+      {isError && <QueryError error={error} resource={t('pages.zitiSetup.resourceName')} />}
 
       {data && (
         <>
@@ -517,7 +542,7 @@ export function ZitiSetupPage() {
           <div className="grid gap-6 lg:grid-cols-5">
             <Card className="lg:col-span-3">
               <CardHeader>
-                <CardTitle className="text-base">Setup checklist</CardTitle>
+                <CardTitle className="text-base">{t('pages.zitiSetup.checklist')}</CardTitle>
               </CardHeader>
               <CardContent>
                 <ol>
@@ -530,7 +555,7 @@ export function ZitiSetupPage() {
 
             <div className="space-y-4 lg:col-span-2">
               <h2 className="text-sm font-medium uppercase tracking-wide text-muted-foreground">
-                What you need to install
+                {t('pages.zitiSetup.installHeading')}
               </h2>
               {data.components.map((comp) => (
                 <ComponentCard key={comp.id} comp={comp} />
@@ -540,28 +565,27 @@ export function ZitiSetupPage() {
 
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Your applications on the network</CardTitle>
+              <CardTitle className="text-base">{t('pages.zitiSetup.routes.title')}</CardTitle>
               <p className="text-sm text-muted-foreground">
-                Per route: the hosting mode actually applied, the full data path, and what each side needs. Click a
-                row for details.
+                {t('pages.zitiSetup.routes.subtitle')}
               </p>
             </CardHeader>
             <CardContent>
               {(data.routes ?? []).length === 0 ? (
                 <div className="rounded-lg border border-dashed py-8 text-center text-sm text-muted-foreground">
-                  No Ziti-enabled routes yet.{' '}
+                  {t('pages.zitiSetup.routes.emptyPrefix')}{' '}
                   <Link to="/proxy-routes" className="font-medium text-primary underline-offset-2 hover:underline">
-                    Expose your first app →
+                    {t('pages.zitiSetup.routes.emptyCta')}
                   </Link>
                 </div>
               ) : (
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Route</TableHead>
-                      <TableHead>Mode</TableHead>
-                      <TableHead>Upstream</TableHead>
-                      <TableHead>State</TableHead>
+                      <TableHead>{t('pages.zitiSetup.routes.route')}</TableHead>
+                      <TableHead>{t('pages.zitiSetup.routes.mode')}</TableHead>
+                      <TableHead>{t('pages.zitiSetup.routes.upstream')}</TableHead>
+                      <TableHead>{t('pages.zitiSetup.routes.state')}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>

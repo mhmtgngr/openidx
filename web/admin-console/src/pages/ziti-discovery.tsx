@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { Trans, useTranslation } from 'react-i18next'
 import { Search, Import, RefreshCw, CheckCircle2, Shield, Loader2 } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -52,6 +53,7 @@ interface BulkImportResult {
 export function ZitiDiscoveryPage() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const { t } = useTranslation()
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [importModal, setImportModal] = useState(false)
@@ -76,12 +78,20 @@ export function ZitiDiscoveryPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['ziti-discovery'] })
       queryClient.invalidateQueries({ queryKey: ['proxy-routes'] })
-      toast({ title: 'Service Imported', description: 'The Ziti service has been imported as a proxy route.' })
+      toast({
+        title: t('pages.zitiDiscovery.toasts.imported'),
+        description: t('pages.zitiDiscovery.toasts.importedDesc'),
+      })
       setSingleImport(null)
       setImportConfig({ route_name: '', from_url: '', description: '' })
     },
     onError: (error: Error) => {
-      toast({ title: 'Import Failed', description: error.message, variant: 'destructive' })
+      // The message is the API's own, so it is surfaced verbatim.
+      toast({
+        title: t('pages.zitiDiscovery.toasts.importFailed'),
+        description: error.message,
+        variant: 'destructive',
+      })
     },
   })
 
@@ -93,14 +103,23 @@ export function ZitiDiscoveryPage() {
       queryClient.invalidateQueries({ queryKey: ['ziti-discovery'] })
       queryClient.invalidateQueries({ queryKey: ['proxy-routes'] })
       toast({
-        title: 'Bulk Import Complete',
-        description: `Imported ${data.total_imported} services. ${data.total_failed} failed.`,
+        title: t('pages.zitiDiscovery.toasts.bulkComplete'),
+        description: t('pages.zitiDiscovery.toasts.bulkSummary', {
+          imported: t('pages.zitiDiscovery.toasts.bulkImported', {
+            count: data.total_imported,
+          }),
+          failed: t('pages.zitiDiscovery.toasts.bulkFailed', { n: data.total_failed }),
+        }),
       })
       setSelected(new Set())
       setImportModal(false)
     },
     onError: (error: Error) => {
-      toast({ title: 'Bulk Import Failed', description: error.message, variant: 'destructive' })
+      toast({
+        title: t('pages.zitiDiscovery.toasts.bulkFailedTitle'),
+        description: error.message,
+        variant: 'destructive',
+      })
     },
   })
 
@@ -144,15 +163,15 @@ export function ZitiDiscoveryPage() {
         <div>
           <h1 className="text-3xl font-bold flex items-center gap-2">
             <Shield className="h-8 w-8 text-purple-500" />
-            Ziti Service Discovery
+            {t('pages.zitiDiscovery.title')}
           </h1>
           <p className="text-muted-foreground mt-1">
-            Discover and import existing Ziti services into OpenIDX
+            {t('pages.zitiDiscovery.subtitle')}
           </p>
         </div>
         <Button variant="outline" onClick={() => refetch()}>
           <RefreshCw className="h-4 w-4 mr-2" />
-          Refresh
+          {t('common.refresh')}
         </Button>
       </div>
 
@@ -160,19 +179,19 @@ export function ZitiDiscoveryPage() {
       <div className="grid gap-4 md:grid-cols-3">
         <Card>
           <CardHeader className="pb-2">
-            <CardDescription>Total Services</CardDescription>
+            <CardDescription>{t('pages.zitiDiscovery.stats.total')}</CardDescription>
             <CardTitle className="text-2xl">{data?.discovered_services?.length || 0}</CardTitle>
           </CardHeader>
         </Card>
         <Card>
           <CardHeader className="pb-2">
-            <CardDescription>Already Managed</CardDescription>
+            <CardDescription>{t('pages.zitiDiscovery.stats.managed')}</CardDescription>
             <CardTitle className="text-2xl text-green-600">{data?.already_managed || 0}</CardTitle>
           </CardHeader>
         </Card>
         <Card>
           <CardHeader className="pb-2">
-            <CardDescription>Available to Import</CardDescription>
+            <CardDescription>{t('pages.zitiDiscovery.stats.available')}</CardDescription>
             <CardTitle className="text-2xl text-primary">{data?.available_for_import || 0}</CardTitle>
           </CardHeader>
         </Card>
@@ -186,7 +205,7 @@ export function ZitiDiscoveryPage() {
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
-                  placeholder="Search services..."
+                  placeholder={t('pages.zitiDiscovery.searchPlaceholder')}
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   className="pl-9"
@@ -198,7 +217,7 @@ export function ZitiDiscoveryPage() {
               disabled={selected.size === 0}
             >
               <Import className="h-4 w-4 mr-2" />
-              Import Selected ({selected.size})
+              {t('pages.zitiDiscovery.importSelected', { n: selected.size })}
             </Button>
           </div>
         </CardContent>
@@ -212,29 +231,39 @@ export function ZitiDiscoveryPage() {
               <LoadingSpinner />
             </div>
           ) : isError ? (
-            <QueryError error={error} resource="discovered Ziti services" />
+            <QueryError error={error} resource={t('pages.zitiDiscovery.resource')} />
           ) : (
             <Table>
                 <TableHeader className="bg-muted">
                   <TableRow>
                     <TableHead className="w-12 p-4">
-                      <Checkbox
+                      <Checkbox aria-label={t('common.selectAll')}
                         checked={selected.size === importableServices.length && importableServices.length > 0}
                         onCheckedChange={selectAll}
                       />
                     </TableHead>
-                    <TableHead className="text-left p-4 font-medium">Service Name</TableHead>
-                    <TableHead className="text-left p-4 font-medium">Protocol</TableHead>
-                    <TableHead className="text-left p-4 font-medium">Host:Port</TableHead>
-                    <TableHead className="text-left p-4 font-medium">Status</TableHead>
-                    <TableHead className="text-left p-4 font-medium">Actions</TableHead>
+                    <TableHead className="text-left p-4 font-medium">
+                      {t('pages.zitiDiscovery.colName')}
+                    </TableHead>
+                    <TableHead className="text-left p-4 font-medium">
+                      {t('pages.zitiDiscovery.colProtocol')}
+                    </TableHead>
+                    <TableHead className="text-left p-4 font-medium">
+                      {t('pages.zitiDiscovery.colHostPort')}
+                    </TableHead>
+                    <TableHead className="text-left p-4 font-medium">
+                      {t('pages.zitiDiscovery.colStatus')}
+                    </TableHead>
+                    <TableHead className="text-left p-4 font-medium">
+                      {t('pages.zitiDiscovery.colActions')}
+                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody className="divide-y">
                   {filteredServices.map((service) => (
                     <TableRow key={service.ziti_id} className="hover:bg-muted/50">
                       <TableCell className="p-4">
-                        <Checkbox
+                        <Checkbox aria-label={t('pages.zitiDiscovery.selectService', { name: service.name })}
                           checked={selected.has(service.ziti_id)}
                           onCheckedChange={() => toggleService(service.ziti_id)}
                           disabled={!service.can_import}
@@ -244,6 +273,8 @@ export function ZitiDiscoveryPage() {
                         <div className="font-medium">{service.name}</div>
                         <div className="text-xs text-muted-foreground font-mono">{service.ziti_id}</div>
                       </TableCell>
+                      {/* Protocol and host:port are the service as the
+                          controller reports it, so both render as sent. */}
                       <TableCell className="p-4">
                         <Badge variant="secondary">{service.protocol || 'tcp'}</Badge>
                       </TableCell>
@@ -254,11 +285,11 @@ export function ZitiDiscoveryPage() {
                         {service.managed_by_openidx ? (
                           <Badge className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
                             <CheckCircle2 className="h-3 w-3 mr-1" />
-                            Managed
+                            {t('pages.zitiDiscovery.managed')}
                           </Badge>
                         ) : (
                           <Badge variant="secondary">
-                            Available
+                            {t('pages.zitiDiscovery.available')}
                           </Badge>
                         )}
                       </TableCell>
@@ -277,7 +308,7 @@ export function ZitiDiscoveryPage() {
                             }}
                           >
                             <Import className="h-4 w-4 mr-1" />
-                            Import
+                            {t('pages.zitiDiscovery.import')}
                           </Button>
                         )}
                       </TableCell>
@@ -286,7 +317,7 @@ export function ZitiDiscoveryPage() {
                   {filteredServices.length === 0 && (
                     <TableRow>
                       <TableCell colSpan={6} className="p-8 text-center text-muted-foreground">
-                        No services found
+                        {t('pages.zitiDiscovery.empty')}
                       </TableCell>
                     </TableRow>
                   )}
@@ -300,7 +331,7 @@ export function ZitiDiscoveryPage() {
       <Dialog open={singleImport !== null} onOpenChange={() => setSingleImport(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Import Ziti Service</DialogTitle>
+            <DialogTitle>{t('pages.zitiDiscovery.single.title')}</DialogTitle>
           </DialogHeader>
           {singleImport && (
             <div className="space-y-4">
@@ -309,15 +340,16 @@ export function ZitiDiscoveryPage() {
                 <div className="text-sm text-muted-foreground font-mono">{singleImport.ziti_id}</div>
               </div>
               <div>
-                <Label>Route Name</Label>
+                <Label>{t('pages.zitiDiscovery.single.routeName')}</Label>
                 <Input
                   value={importConfig.route_name}
                   onChange={(e) => setImportConfig({ ...importConfig, route_name: e.target.value })}
-                  placeholder="Enter route name"
+                  placeholder={t('pages.zitiDiscovery.single.routeNamePlaceholder')}
                 />
               </div>
               <div>
-                <Label>URL Path</Label>
+                <Label>{t('pages.zitiDiscovery.single.urlPath')}</Label>
+                {/* The sample path teaches the format a route accepts. */}
                 <Input
                   value={importConfig.from_url}
                   onChange={(e) => setImportConfig({ ...importConfig, from_url: e.target.value })}
@@ -325,22 +357,22 @@ export function ZitiDiscoveryPage() {
                 />
               </div>
               <div>
-                <Label>Description (optional)</Label>
+                <Label>{t('pages.zitiDiscovery.single.description')}</Label>
                 <Input
                   value={importConfig.description}
                   onChange={(e) => setImportConfig({ ...importConfig, description: e.target.value })}
-                  placeholder="Enter description"
+                  placeholder={t('pages.zitiDiscovery.single.descriptionPlaceholder')}
                 />
               </div>
             </div>
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setSingleImport(null)}>
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button onClick={handleSingleImport} disabled={importService.isPending}>
               {importService.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-              Import
+              {t('pages.zitiDiscovery.import')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -350,26 +382,30 @@ export function ZitiDiscoveryPage() {
       <Dialog open={importModal} onOpenChange={setImportModal}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Confirm Bulk Import</DialogTitle>
+            <DialogTitle>{t('pages.zitiDiscovery.bulk.title')}</DialogTitle>
           </DialogHeader>
           <div className="py-4">
             <p>
-              You are about to import <strong>{selected.size}</strong> Ziti services as proxy routes.
+              <Trans
+                i18nKey="pages.zitiDiscovery.bulk.confirm"
+                count={selected.size}
+                components={[<strong key="0" />]}
+              />
             </p>
             <p className="text-sm text-muted-foreground mt-2">
-              Each service will be created with default settings. You can customize them later.
+              {t('pages.zitiDiscovery.bulk.note')}
             </p>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setImportModal(false)}>
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button
               onClick={() => bulkImport.mutate(Array.from(selected))}
               disabled={bulkImport.isPending}
             >
               {bulkImport.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-              Import {selected.size} Services
+              {t('pages.zitiDiscovery.bulk.submit', { count: selected.size })}
             </Button>
           </DialogFooter>
         </DialogContent>

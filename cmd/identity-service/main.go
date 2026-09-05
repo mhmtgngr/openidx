@@ -99,6 +99,15 @@ func main() {
 		migrations.MustAutoMigrate(context.Background(), db.Pool, log)
 	}
 
+	// The seed migration ships admin@openidx.local with a published default
+	// password. ValidateProductionConfig cannot see database state, so this
+	// runs after migrations: production refuses to serve while it still works.
+	if cfg.IsProduction() {
+		if err := identity.EnsureDefaultAdminRotated(context.Background(), db, log); err != nil {
+			log.Fatal("Default-credential validation failed", zap.Error(err))
+		}
+	}
+
 	// Initialize Redis connection
 	// Export DB pool saturation gauges (openidx_db_connections{state=...}).
 	metrics.NewTracedPool(db.Pool, "identity-service").StartPoolStatsCollector(context.Background())
@@ -230,10 +239,18 @@ func main() {
 		MutlucellAPIKey:    cfg.SMS.MutlucellAPIKey,
 		MutlucellSender:    cfg.SMS.MutlucellSender,
 	}
+	// The mock provider delivers nothing, so outside development it counts as
+	// not configured rather than as a provider — otherwise SMS_ENABLED=true
+	// alone yields an enrollable factor that says "code sent" and sends
+	// nothing (see sms.ErrMockProviderNotAllowed).
+	smsConfig.AllowMock = cfg.IsDevelopment()
+	// A broken SMS config (e.g. a typo'd provider name) leaves the factor
+	// unwired: the identity service then answers SMS MFA requests with 501
+	// "not configured" instead of pretending via a fallback mock.
 	smsService, err := sms.NewService(smsConfig, log)
 	if err != nil {
-		log.Error("Failed to initialize SMS service, falling back to mock", zap.Error(err))
-		smsService, _ = sms.NewService(sms.DefaultConfig(), log)
+		log.Error("Failed to initialize SMS service; SMS MFA will refuse until fixed", zap.Error(err))
+		smsService = nil
 	}
 
 	// Start background workers
@@ -249,7 +266,12 @@ func main() {
 	identityService.SetWebhookService(webhookService)
 	identityService.SetAnomalyDetector(&anomalyDetectorAdapter{riskService: riskService})
 	identityService.SetRiskService(riskService)
-	identityService.SetSMSProvider(smsService)
+	// Guarded: assigning a nil *sms.Service through the interface would make
+	// the provider non-nil (a nil-wrapping interface) and defeat the
+	// not-configured gate.
+	if smsService != nil {
+		identityService.SetSMSProvider(smsService)
+	}
 
 	// Start SMS config watcher (polls DB every 30s for admin console changes)
 	go identityService.StartSMSConfigWatcher(bgCtx, 30*time.Second)

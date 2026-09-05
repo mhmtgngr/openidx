@@ -1,5 +1,14 @@
 # OpenIDX Testing Guide
 
+> ⚠️ **STALE — kept for history.** This manual smoke-test walkthrough dates
+> from the Keycloak era: it points at a Keycloak admin UI, gets tokens from
+> Keycloak realms, and suggests realm-based multi-tenancy — none of which
+> exist in OpenIDX today (the IdP is OpenIDX's own OAuth/OIDC service, and
+> tenancy is FORCE row-level security). For how to write and run tests, use
+> **[TESTING_GUIDE.md](./TESTING_GUIDE.md)**; for the automated suites, use
+> `make test` / `make test-integration`; for first login and manual
+> verification, use [docs/GETTING-STARTED.md](./docs/GETTING-STARTED.md).
+
 This guide provides comprehensive testing steps for the OpenIDX Zero Trust Access Platform when running locally.
 
 ## Prerequisites

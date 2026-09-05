@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import {
   Brain,
   RefreshCw,
@@ -97,16 +98,16 @@ const severityBadge = (severity: string) => {
   }
 }
 
-const anomalyTypeLabel: Record<string, string> = {
-  new_service_access: 'New Service Access',
-  off_hours_access: 'Off-Hours Activity',
-  dormant_identity_active: 'Dormant Identity Reactivated',
-  session_spike: 'Session Spike',
-}
+/**
+ * `off_hours_access` -> `off hours access`, the fallback for a detector
+ * output or a risk level the catalog has not seen yet.
+ */
+const prettifyWireValue = (value: string) => value.replace(/_/g, ' ')
 
 export function ZitiAIInsightsPage() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const { t } = useTranslation()
 
   const { data: insights, isLoading, isError, error } = useQuery({
     queryKey: ['ziti-ai-insights'],
@@ -134,12 +135,24 @@ export function ZitiAIInsightsPage() {
     onSuccess: (result) => {
       invalidateAll()
       toast({
-        title: 'Analysis Complete',
-        description: `${result.observations} observations analyzed, ${result.new_anomalies} new anomalies detected.`,
+        title: t('pages.zitiAiInsights.toasts.analysisComplete'),
+        description: t('pages.zitiAiInsights.toasts.analysisSummary', {
+          observations: t('pages.zitiAiInsights.toasts.analysisObservations', {
+            count: result.observations,
+          }),
+          anomalies: t('pages.zitiAiInsights.toasts.analysisAnomalies', {
+            count: result.new_anomalies,
+          }),
+        }),
       })
     },
     onError: (error: Error) => {
-      toast({ title: 'Analysis Failed', description: error.message, variant: 'destructive' })
+      // The API message is server-composed, so it is surfaced verbatim.
+      toast({
+        title: t('pages.zitiAiInsights.toasts.analysisFailed'),
+        description: error.message,
+        variant: 'destructive',
+      })
     },
   })
 
@@ -148,7 +161,11 @@ export function ZitiAIInsightsPage() {
       api.post(`/api/v1/access/ziti/ai/anomalies/${id}/status`, { status }),
     onSuccess: () => invalidateAll(),
     onError: (error: Error) => {
-      toast({ title: 'Update Failed', description: error.message, variant: 'destructive' })
+      toast({
+        title: t('pages.zitiAiInsights.toasts.updateFailed'),
+        description: error.message,
+        variant: 'destructive',
+      })
     },
   })
 
@@ -159,10 +176,17 @@ export function ZitiAIInsightsPage() {
       }),
     onSuccess: () => {
       invalidateAll()
-      toast({ title: 'Identity Quarantined', description: 'Role attributes severed and sessions terminated.' })
+      toast({
+        title: t('pages.zitiAiInsights.toasts.quarantined'),
+        description: t('pages.zitiAiInsights.toasts.quarantinedDesc'),
+      })
     },
     onError: (error: Error) => {
-      toast({ title: 'Quarantine Failed', description: error.message, variant: 'destructive' })
+      toast({
+        title: t('pages.zitiAiInsights.toasts.quarantineFailed'),
+        description: error.message,
+        variant: 'destructive',
+      })
     },
   })
 
@@ -171,12 +195,30 @@ export function ZitiAIInsightsPage() {
       api.post(`/api/v1/access/ziti/ai/identities/${identityId}/unquarantine`, {}),
     onSuccess: () => {
       invalidateAll()
-      toast({ title: 'Identity Restored', description: 'Saved role attributes have been restored.' })
+      toast({
+        title: t('pages.zitiAiInsights.toasts.restored'),
+        description: t('pages.zitiAiInsights.toasts.restoredDesc'),
+      })
     },
     onError: (error: Error) => {
-      toast({ title: 'Restore Failed', description: error.message, variant: 'destructive' })
+      toast({
+        title: t('pages.zitiAiInsights.toasts.restoreFailed'),
+        description: error.message,
+        variant: 'destructive',
+      })
     },
   })
+
+  // The overlay's subject kinds are wire values. Resolving them in one
+  // place keeps the fallback honest (a kind the catalog has not seen still
+  // reads as itself) and lets the `user` case name the source directory.
+  const subjectKindLabel = (risk: IdentityRisk) => {
+    const kind = risk.subject_kind || 'service'
+    if (kind === 'user' && risk.source) {
+      return t('pages.zitiAiInsights.subjectFromSource', { source: risk.source })
+    }
+    return t(`pages.zitiAiInsights.subjectKinds.${kind}`, { defaultValue: kind })
+  }
 
   const features = insights?.controller_features
 
@@ -189,7 +231,7 @@ export function ZitiAIInsightsPage() {
   }
 
   if (isError) {
-    return <QueryError error={error} resource="Ziti AI insights" />
+    return <QueryError error={error} resource={t('pages.zitiAiInsights.resource')} />
   }
 
   return (
@@ -198,11 +240,9 @@ export function ZitiAIInsightsPage() {
         <div>
           <h1 className="text-3xl font-bold flex items-center gap-2">
             <Brain className="h-8 w-8 text-purple-500" />
-            Ziti AI Insights
+            {t('pages.zitiAiInsights.title')}
           </h1>
-          <p className="text-muted-foreground mt-1">
-            Behavioral anomaly detection, identity risk scoring and policy hygiene for the zero-trust overlay
-          </p>
+          <p className="text-muted-foreground mt-1">{t('pages.zitiAiInsights.subtitle')}</p>
         </div>
         <Button onClick={() => runAnalysis.mutate()} disabled={runAnalysis.isPending}>
           {runAnalysis.isPending ? (
@@ -210,7 +250,7 @@ export function ZitiAIInsightsPage() {
           ) : (
             <RefreshCw className="h-4 w-4 mr-2" />
           )}
-          Run Analysis
+          {t('pages.zitiAiInsights.runAnalysis')}
         </Button>
       </div>
 
@@ -218,7 +258,7 @@ export function ZitiAIInsightsPage() {
       <div className="grid gap-4 md:grid-cols-4">
         <Card>
           <CardHeader className="pb-2">
-            <CardDescription>Identities at Risk</CardDescription>
+            <CardDescription>{t('pages.zitiAiInsights.summary.atRisk')}</CardDescription>
             <CardTitle className="text-2xl text-orange-600">
               {insights?.identities_at_risk ?? 0}
               <span className="text-sm font-normal text-muted-foreground"> / {insights?.identities_total ?? 0}</span>
@@ -227,28 +267,35 @@ export function ZitiAIInsightsPage() {
         </Card>
         <Card>
           <CardHeader className="pb-2">
-            <CardDescription>Open Anomalies</CardDescription>
+            <CardDescription>{t('pages.zitiAiInsights.summary.openAnomalies')}</CardDescription>
             <CardTitle className="text-2xl text-red-600">{insights?.open_anomalies ?? 0}</CardTitle>
           </CardHeader>
         </Card>
         <Card>
           <CardHeader className="pb-2">
-            <CardDescription>Recommendations</CardDescription>
+            <CardDescription>{t('pages.zitiAiInsights.summary.recommendations')}</CardDescription>
             <CardTitle className="text-2xl text-primary">{insights?.recommendation_count ?? 0}</CardTitle>
           </CardHeader>
         </Card>
         <Card>
           <CardHeader className="pb-2">
             <CardDescription className="flex items-center gap-1">
-              <Server className="h-3 w-3" /> Controller
+              <Server className="h-3 w-3" /> {t('pages.zitiAiInsights.summary.controller')}
             </CardDescription>
-            <CardTitle className="text-2xl">{features?.version || 'unknown'}</CardTitle>
+            <CardTitle className="text-2xl">
+              {features?.version || t('pages.zitiAiInsights.summary.unknownVersion')}
+            </CardTitle>
             {features && (
               <div className="flex flex-wrap gap-1 pt-1">
+                {/* HA and OIDC are acronyms the controller uses itself. */}
                 {features.ha_controllers && <Badge variant="secondary">HA</Badge>}
                 {features.oidc_auth && <Badge variant="secondary">OIDC</Badge>}
-                {features.jwt_session_auth && <Badge variant="secondary">JWT Auth</Badge>}
-                {features.granular_permissions && <Badge variant="secondary">Granular Perms</Badge>}
+                {features.jwt_session_auth && (
+                  <Badge variant="secondary">{t('pages.zitiAiInsights.summary.jwtAuth')}</Badge>
+                )}
+                {features.granular_permissions && (
+                  <Badge variant="secondary">{t('pages.zitiAiInsights.summary.granularPerms')}</Badge>
+                )}
               </div>
             )}
           </CardHeader>
@@ -261,10 +308,11 @@ export function ZitiAIInsightsPage() {
           <CardHeader>
             <CardTitle className="text-base flex items-center gap-2">
               <AlertTriangle className="h-4 w-4 text-yellow-600" />
-              OpenZiti Upgrade Advisories
+              {t('pages.zitiAiInsights.advisoriesTitle')}
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
+            {/* Composed by the controller-capability probe, shown as sent. */}
             {features.advisories.map((advisory, i) => (
               <p key={i} className="text-sm text-muted-foreground">
                 {advisory}
@@ -279,19 +327,29 @@ export function ZitiAIInsightsPage() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <ShieldAlert className="h-5 w-5 text-red-500" />
-            Open Anomalies
+            {t('pages.zitiAiInsights.anomalies.title')}
           </CardTitle>
-          <CardDescription>Deviations from each identity's learned behavioral baseline</CardDescription>
+          <CardDescription>{t('pages.zitiAiInsights.anomalies.desc')}</CardDescription>
         </CardHeader>
         <CardContent className="p-0">
           <Table>
               <TableHeader className="bg-muted">
                 <TableRow>
-                  <TableHead className="text-left p-4 font-medium">Identity</TableHead>
-                  <TableHead className="text-left p-4 font-medium">Anomaly</TableHead>
-                  <TableHead className="text-left p-4 font-medium">Severity</TableHead>
-                  <TableHead className="text-left p-4 font-medium">Detected</TableHead>
-                  <TableHead className="text-left p-4 font-medium">Actions</TableHead>
+                  <TableHead className="text-left p-4 font-medium">
+                    {t('pages.zitiAiInsights.anomalies.colIdentity')}
+                  </TableHead>
+                  <TableHead className="text-left p-4 font-medium">
+                    {t('pages.zitiAiInsights.anomalies.colAnomaly')}
+                  </TableHead>
+                  <TableHead className="text-left p-4 font-medium">
+                    {t('pages.zitiAiInsights.anomalies.colSeverity')}
+                  </TableHead>
+                  <TableHead className="text-left p-4 font-medium">
+                    {t('pages.zitiAiInsights.anomalies.colDetected')}
+                  </TableHead>
+                  <TableHead className="text-left p-4 font-medium">
+                    {t('pages.zitiAiInsights.anomalies.colActions')}
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody className="divide-y">
@@ -301,9 +359,17 @@ export function ZitiAIInsightsPage() {
                       <div className="font-medium">{anomaly.identity_name || anomaly.identity_id}</div>
                       <div className="text-xs text-muted-foreground font-mono">{anomaly.identity_id}</div>
                     </TableCell>
-                    <TableCell className="p-4">{anomalyTypeLabel[anomaly.anomaly_type] || anomaly.anomaly_type}</TableCell>
                     <TableCell className="p-4">
-                      <Badge className={severityBadge(anomaly.severity)}>{anomaly.severity}</Badge>
+                      {t(`pages.zitiAiInsights.anomalyTypes.${anomaly.anomaly_type}`, {
+                        defaultValue: prettifyWireValue(anomaly.anomaly_type),
+                      })}
+                    </TableCell>
+                    <TableCell className="p-4">
+                      <Badge className={severityBadge(anomaly.severity)}>
+                        {t(`pages.zitiAiInsights.severities.${anomaly.severity}`, {
+                          defaultValue: prettifyWireValue(anomaly.severity),
+                        })}
+                      </Badge>
                     </TableCell>
                     <TableCell className="p-4 text-sm text-muted-foreground">
                       {new Date(anomaly.detected_at).toLocaleString()}
@@ -314,14 +380,14 @@ export function ZitiAIInsightsPage() {
                         variant="outline"
                         onClick={() => updateAnomaly.mutate({ id: anomaly.id, status: 'acknowledged' })}
                       >
-                        Acknowledge
+                        {t('pages.zitiAiInsights.anomalies.acknowledge')}
                       </Button>
                       <Button
                         size="sm"
                         variant="outline"
                         onClick={() => updateAnomaly.mutate({ id: anomaly.id, status: 'resolved' })}
                       >
-                        Resolve
+                        {t('pages.zitiAiInsights.anomalies.resolve')}
                       </Button>
                     </TableCell>
                   </TableRow>
@@ -329,7 +395,7 @@ export function ZitiAIInsightsPage() {
                 {(anomalies || []).length === 0 && (
                   <TableRow>
                     <TableCell colSpan={5} className="p-8 text-center text-muted-foreground">
-                      No open anomalies — run an analysis to check the fabric against learned baselines
+                      {t('pages.zitiAiInsights.anomalies.empty')}
                     </TableCell>
                   </TableRow>
                 )}
@@ -343,21 +409,29 @@ export function ZitiAIInsightsPage() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <ShieldCheck className="h-5 w-5 text-orange-500" />
-            Identity Risk
+            {t('pages.zitiAiInsights.risk.title')}
           </CardTitle>
-          <CardDescription>
-            Fused score from open anomalies, posture failures, enrollment and dormancy signals
-          </CardDescription>
+          <CardDescription>{t('pages.zitiAiInsights.risk.desc')}</CardDescription>
         </CardHeader>
         <CardContent className="p-0">
           <Table>
               <TableHeader className="bg-muted">
                 <TableRow>
-                  <TableHead className="text-left p-4 font-medium">Identity</TableHead>
-                  <TableHead className="text-left p-4 font-medium">Score</TableHead>
-                  <TableHead className="text-left p-4 font-medium">Level</TableHead>
-                  <TableHead className="text-left p-4 font-medium">Signals</TableHead>
-                  <TableHead className="text-left p-4 font-medium">Actions</TableHead>
+                  <TableHead className="text-left p-4 font-medium">
+                    {t('pages.zitiAiInsights.risk.colIdentity')}
+                  </TableHead>
+                  <TableHead className="text-left p-4 font-medium">
+                    {t('pages.zitiAiInsights.risk.colScore')}
+                  </TableHead>
+                  <TableHead className="text-left p-4 font-medium">
+                    {t('pages.zitiAiInsights.risk.colLevel')}
+                  </TableHead>
+                  <TableHead className="text-left p-4 font-medium">
+                    {t('pages.zitiAiInsights.risk.colSignals')}
+                  </TableHead>
+                  <TableHead className="text-left p-4 font-medium">
+                    {t('pages.zitiAiInsights.risk.colActions')}
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody className="divide-y">
@@ -371,15 +445,7 @@ export function ZitiAIInsightsPage() {
                       <div className="font-medium">{risk.subject || risk.identity_name || risk.identity_id}</div>
                       <div className="text-xs text-muted-foreground">
                         {risk.email ? `${risk.email} · ` : ''}
-                        {risk.subject_kind === 'user'
-                          ? risk.source
-                            ? `person (${risk.source})`
-                            : 'person'
-                          : risk.subject_kind === 'agent'
-                            ? 'device agent'
-                            : risk.subject_kind === 'unresolved'
-                              ? 'account not visible here'
-                              : risk.subject_kind || 'service'}
+                        {subjectKindLabel(risk)}
                       </div>
                       <div className="text-xs text-muted-foreground font-mono">
                           {/* Only show the fabric name when the row is led by
@@ -390,8 +456,13 @@ export function ZitiAIInsightsPage() {
                     </TableCell>
                     <TableCell className="p-4 font-mono">{risk.score}</TableCell>
                     <TableCell className="p-4">
-                      <Badge className={severityBadge(risk.level)}>{risk.level}</Badge>
+                      <Badge className={severityBadge(risk.level)}>
+                        {t(`pages.zitiAiInsights.severities.${risk.level}`, {
+                          defaultValue: prettifyWireValue(risk.level),
+                        })}
+                      </Badge>
                     </TableCell>
+                    {/* Signal names are composed by the risk scorer. */}
                     <TableCell className="p-4 text-sm text-muted-foreground">
                       {risk.signals?.length ? risk.signals.join(', ') : '—'}
                     </TableCell>
@@ -403,15 +474,17 @@ export function ZitiAIInsightsPage() {
                           onClick={() => unquarantine.mutate(risk.identity_id)}
                           disabled={unquarantine.isPending}
                         >
-                          Restore Access
+                          {t('pages.zitiAiInsights.risk.restore')}
                         </Button>
                       ) : (
                         <ConfirmAction
-                          title="Quarantine this identity?"
-                          description={`Quarantining "${risk.subject || risk.identity_name}" severs its Ziti role attributes and immediately terminates all active sessions, cutting this identity off the network. Access can be restored afterward, but any in-flight sessions are lost.`}
+                          title={t('pages.zitiAiInsights.risk.confirmTitle')}
+                          description={t('pages.zitiAiInsights.risk.confirmDesc', {
+                            name: risk.subject || risk.identity_name,
+                          })}
                           destructive
                           requireReason
-                          confirmLabel="Quarantine"
+                          confirmLabel={t('pages.zitiAiInsights.risk.quarantine')}
                           onConfirm={(reason) =>
                             quarantine.mutateAsync({ identityId: risk.identity_id, reason: reason! })
                           }
@@ -423,7 +496,7 @@ export function ZitiAIInsightsPage() {
                               onClick={open}
                               disabled={quarantine.isPending}
                             >
-                              Quarantine
+                              {t('pages.zitiAiInsights.risk.quarantine')}
                             </Button>
                           )}
                         </ConfirmAction>
@@ -434,7 +507,7 @@ export function ZitiAIInsightsPage() {
                 {(insights?.top_risks || []).length === 0 && (
                   <TableRow>
                     <TableCell colSpan={5} className="p-8 text-center text-muted-foreground">
-                      No identities found
+                      {t('pages.zitiAiInsights.risk.empty')}
                     </TableCell>
                   </TableRow>
                 )}
@@ -448,15 +521,20 @@ export function ZitiAIInsightsPage() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Lightbulb className="h-5 w-5 text-blue-500" />
-            Policy Hygiene Recommendations
+            {t('pages.zitiAiInsights.recommendations.title')}
           </CardTitle>
-          <CardDescription>Over-permissive policies, unused services and stale enrollments</CardDescription>
+          <CardDescription>{t('pages.zitiAiInsights.recommendations.desc')}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
           {(recommendations || []).map((rec, i) => (
             <div key={i} className="flex items-start gap-3 p-3 border rounded-lg">
-              <Badge className={severityBadge(rec.severity)}>{rec.severity}</Badge>
+              <Badge className={severityBadge(rec.severity)}>
+                {t(`pages.zitiAiInsights.severities.${rec.severity}`, {
+                  defaultValue: prettifyWireValue(rec.severity),
+                })}
+              </Badge>
               <div className="flex-1">
+                {/* Title, description and action are composed server-side. */}
                 <div className="font-medium">
                   {rec.title}
                   {rec.target_name && (
@@ -465,13 +543,18 @@ export function ZitiAIInsightsPage() {
                 </div>
                 <p className="text-sm text-muted-foreground mt-1">{rec.description}</p>
                 <p className="text-sm mt-1">
-                  <span className="font-medium">Suggested action:</span> {rec.action}
+                  <span className="font-medium">
+                    {t('pages.zitiAiInsights.recommendations.suggestedAction')}
+                  </span>{' '}
+                  {rec.action}
                 </p>
               </div>
             </div>
           ))}
           {(recommendations || []).length === 0 && (
-            <p className="py-6 text-center text-muted-foreground">No recommendations — the fabric looks healthy</p>
+            <p className="py-6 text-center text-muted-foreground">
+              {t('pages.zitiAiInsights.recommendations.empty')}
+            </p>
           )}
         </CardContent>
       </Card>

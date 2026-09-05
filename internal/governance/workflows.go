@@ -15,6 +15,8 @@ import (
 	"github.com/openidx/openidx/internal/auth"
 	"github.com/openidx/openidx/internal/common/orgctx"
 	"github.com/openidx/openidx/internal/vault"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 // AccessRequest represents a request for access to a role, group, or application
@@ -590,6 +592,33 @@ func (s *Service) handleApproveRequest(c *gin.Context) {
 		return
 	}
 
+	// Four eyes, enforced where the decision is made.
+	//
+	// createApprovalRows already excludes the requester when it expands a
+	// role- or group-based approver step, and that is the right place to
+	// PREVENT the row. It is not the only way one arrives: an
+	// escalate_to target is inserted without that check (request.go), a
+	// policy step may name the requester explicitly, the no-policy fallback
+	// inserts a fixed admin id, and rows written before that guard existed are
+	// still in the table. Every one of those routes ends here, so this is where
+	// the rule has to hold. A 403 rather than a 404: the approval row exists,
+	// it is the caller who may not act on it.
+	var requesterID string
+	switch err := s.db.Pool.QueryRow(c.Request.Context(),
+		`SELECT requester_id FROM access_requests WHERE id = $1 AND org_id = $2`, id, org.ID,
+	).Scan(&requesterID); {
+	case err == pgx.ErrNoRows:
+		c.JSON(http.StatusNotFound, gin.H{"error": "Access request not found"})
+		return
+	case err != nil:
+		s.logger.Error("Failed to load request for approval", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to approve request"})
+		return
+	case requesterID == approverID:
+		c.JSON(http.StatusForbidden, gin.H{"error": "you cannot approve your own access request"})
+		return
+	}
+
 	now := time.Now()
 
 	result, err := s.db.Pool.Exec(c.Request.Context(),
@@ -633,14 +662,33 @@ func (s *Service) handleApproveRequest(c *gin.Context) {
 		err = s.db.Pool.QueryRow(c.Request.Context(),
 			`SELECT id, requester_id, resource_type, resource_id, resource_name, status FROM access_requests WHERE id = $1 AND org_id = $2`, id, org.ID,
 		).Scan(&request.ID, &request.RequesterID, &request.ResourceType, &request.ResourceID, &request.ResourceName, &request.Status)
-		if err == nil {
-			if fulfillErr := s.fulfillRequest(c.Request.Context(), &request); fulfillErr != nil {
-				s.logger.Error("Failed to fulfill approved request", zap.Error(fulfillErr))
-			}
+		if err != nil {
+			s.logger.Error("Failed to reload approved request for fulfillment", zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": "approval recorded, but the request could not be read back to grant the access"})
+			return
 		}
+		if fulfillErr := s.fulfillRequest(c.Request.Context(), &request); fulfillErr != nil {
+			// The approval stands — a decision was made and is recorded — but
+			// the access does NOT exist, and the request stays at 'approved'
+			// rather than reaching 'fulfilled'. Saying "approved successfully"
+			// here told the approver the grant had happened; the commonest way
+			// to land in this branch is the SoD gate refusing the role, which
+			// is a policy answer they need to read, not a line in a server log.
+			s.logger.Error("Failed to fulfill approved request",
+				zap.String("request_id", id), zap.Error(fulfillErr))
+			c.JSON(http.StatusConflict, gin.H{
+				"error":   "approval recorded, but the access was not granted",
+				"status":  "approved",
+				"details": fulfillErr.Error(),
+			})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"message": "Request approved and fulfilled", "status": "fulfilled"})
+		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Request approved successfully"})
+	c.JSON(http.StatusOK, gin.H{"message": "Approval recorded; the request is still awaiting other approvers", "status": "pending"})
 }
 
 // handleDenyRequest denies an access request
@@ -1359,7 +1407,7 @@ func (s *Service) handleReturnCredential(c *gin.Context) {
 		 VALUES (gen_random_uuid(), 'access', 'provisioning', 'jit_credential.checkout_returned', 'success', $1, '0.0.0.0', $2, 'vault_credential', $3, NOW(), $4)`,
 		userID, resourceID, string(retDetails), org.ID); err != nil {
 		s.logger.Warn("Failed to write jit_credential.checkout_returned audit event",
-			zap.String("request_id", sanitizeForLog(reqID)), zap.Error(err))
+			zap.String("request_id", logsafe.Clean(reqID)), zap.Error(err))
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "returned"})
 }

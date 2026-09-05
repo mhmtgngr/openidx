@@ -17,6 +17,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // SAMLServiceProvider represents a registered Service Provider
@@ -124,53 +126,46 @@ func (s *Service) handleListSAMLServiceProviders(c *gin.Context) {
 
 	offset := (page - 1) * pageSize
 
-	// Build query
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
+	// Build query. The org predicate is $1 and always present, which also makes
+	// the count simple: before v144 this listed and counted every tenant's
+	// federation partners, and the count branch had to guess whether the caller
+	// had passed a search term to decide which args to reuse.
 	query := `SELECT id, name, description, entity_id, acs_url, slo_url, metadata_url,
 	          certificate, name_id_format, attribute_mappings, want_assertions_signed,
 	          encryption_enabled, enabled, created_at, updated_at, last_used_at
 	          FROM saml_service_providers`
 	countQuery := `SELECT COUNT(*) FROM saml_service_providers`
 
-	args := []interface{}{}
-	whereClause := ""
+	args := []interface{}{org.ID}
+	whereClause := " WHERE org_id = $1"
 
 	if enabledOnly {
-		whereClause = " WHERE enabled = true"
+		whereClause += " AND enabled = true"
 	}
 
 	if search != "" {
-		if whereClause == "" {
-			whereClause = " WHERE"
-		} else {
-			whereClause += " AND"
-		}
-		whereClause += " (name ILIKE $1 OR description ILIKE $1 OR entity_id ILIKE $1)"
-		searchPattern := "%" + search + "%"
-		args = append(args, searchPattern)
+		whereClause += " AND (name ILIKE $2 OR description ILIKE $2 OR entity_id ILIKE $2)"
+		args = append(args, "%"+search+"%")
 	}
 
-	query += whereClause + " ORDER BY name ASC LIMIT $" + fmt.Sprint(len(args)+1) + " OFFSET $" + fmt.Sprint(len(args)+2)
 	countQuery += whereClause
+	countArgs := append([]interface{}(nil), args...)
 
+	query += whereClause + " ORDER BY name ASC LIMIT $" + fmt.Sprint(len(args)+1) + " OFFSET $" + fmt.Sprint(len(args)+2)
 	args = append(args, pageSize, offset)
 
 	// Get total count
 	var total int64
-	if len(args) > 2 {
-		countArgs := args[:len(args)-2]
-		err := s.db.Pool.QueryRow(c.Request.Context(), countQuery, countArgs...).Scan(&total)
-		if err != nil {
-			s.logger.Error("Failed to count SAML service providers", zap.Error(err))
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list service providers"})
-			return
-		}
-	} else {
-		err := s.db.Pool.QueryRow(c.Request.Context(), countQuery).Scan(&total)
-		if err != nil {
-			s.logger.Error("Failed to count SAML service providers", zap.Error(err))
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list service providers"})
-			return
-		}
+	if err := s.db.Pool.QueryRow(c.Request.Context(), countQuery, countArgs...).Scan(&total); err != nil {
+		s.logger.Error("Failed to count SAML service providers", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list service providers"})
+		return
 	}
 
 	// Query providers
@@ -264,9 +259,15 @@ func (s *Service) handleCreateSAMLServiceProvider(c *gin.Context) {
 		req.NameIDFormat = NameIDFormatEmail
 	}
 
-	// Check for duplicate entity ID
+	// Check for duplicate entity ID -- INSTALL-WIDE, on purpose. A SAML entity
+	// id is a globally unique URI by specification, and it is what resolves the
+	// tenant on an incoming AuthnRequest, so two tenants registering the same
+	// one would make that lookup ambiguous. Scoping this check by org would let
+	// them, and the conflict would surface as somebody else's single sign-on
+	// arriving at the wrong tenant. Bypassed so it can see the whole install.
 	var exists bool
-	err := s.db.Pool.QueryRow(c.Request.Context(),
+	err := s.db.Pool.QueryRow(orgctx.WithBypassRLS(c.Request.Context()),
+		//orgscope:ignore entity_id is globally unique by the SAML specification and is the key that resolves the tenant on an incoming request; this duplicate check must span orgs or two tenants could claim the same one
 		"SELECT EXISTS(SELECT 1 FROM saml_service_providers WHERE entity_id = $1)",
 		req.EntityID).Scan(&exists)
 	if err == nil && exists {
@@ -353,12 +354,20 @@ func (s *Service) handleRotateSPCertificate(c *gin.Context) {
 		return
 	}
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	now := time.Now()
+	// Replacing a partner's certificate decides whose requests this IdP will
+	// trust, so the bare id this used to take was the sharpest edge on the table.
 	result, err := s.db.Pool.Exec(c.Request.Context(), `
 		UPDATE saml_service_providers
 		SET certificate = $1, updated_at = $2
-		WHERE id = $3
-	`, req.Certificate, now, spID)
+		WHERE id = $3 AND org_id = $4
+	`, req.Certificate, now, spID, org.ID)
 
 	if err != nil {
 		s.logger.Error("Failed to rotate SP certificate", zap.Error(err), zap.String("id", spID))
@@ -470,18 +479,23 @@ func (s *Service) handleImportSAMLMetadata(c *gin.Context) {
 
 // getSAMLServiceProviderByID retrieves an SP by ID
 func (s *Service) getSAMLServiceProviderByID(ctx context.Context, id string) (*SAMLServiceProvider, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	var sp SAMLServiceProvider
 	var sloURL, metadataURL, certificate *string
 	var attrMappingsJSON []byte
 	var lastUsedAt *time.Time
 
-	err := s.db.Pool.QueryRow(ctx, `
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT id, name, COALESCE(description, ''), entity_id, acs_url, slo_url, metadata_url,
 		       certificate, name_id_format, attribute_mappings, want_assertions_signed,
 		       encryption_enabled, enabled, created_at, updated_at, last_used_at
 		FROM saml_service_providers
-		WHERE id = $1
-	`, id).Scan(&sp.ID, &sp.Name, &sp.Description, &sp.EntityID, &sp.ACSURL, &sloURL,
+		WHERE id = $1 AND org_id = $2
+	`, id, org.ID).Scan(&sp.ID, &sp.Name, &sp.Description, &sp.EntityID, &sp.ACSURL, &sloURL,
 		&metadataURL, &certificate, &sp.NameIDFormat, &attrMappingsJSON,
 		&sp.WantAssertionsSigned, &sp.EncryptionEnabled, &sp.Enabled,
 		&sp.CreatedAt, &sp.UpdatedAt, &lastUsedAt)
@@ -516,7 +530,14 @@ func (s *Service) getSAMLServiceProviderByEntityID(ctx context.Context, entityID
 	var attrMappingsJSON []byte
 	var lastUsedAt *time.Time
 
-	err := s.db.Pool.QueryRow(ctx, `
+	// PRE-TENANT-RESOLUTION. An incoming AuthnRequest names an entity id and
+	// nothing else; the SP this finds is what tells the IdP whose request it is.
+	// Scoping this by app.org_id would mean it could never succeed on a request
+	// that has not been resolved yet -- and the resolution is what it is for.
+	// Same class as api-key-by-hash and route-by-host, which
+	// TestPreResolutionLookupsUnderRLS pins.
+	//orgscope:ignore pre-tenant-resolution lookup: entity_id is globally unique by the SAML specification and identifies the tenant, so this must span orgs
+	err := s.db.Pool.QueryRow(orgctx.WithBypassRLS(ctx), `
 		SELECT id, name, COALESCE(description, ''), entity_id, acs_url, slo_url, metadata_url,
 		       certificate, name_id_format, attribute_mappings, want_assertions_signed,
 		       encryption_enabled, enabled, created_at, updated_at, last_used_at
@@ -558,13 +579,18 @@ func (s *Service) createSAMLServiceProvider(ctx context.Context, req *CreateSAML
 	attrMappingsJSON, _ := json.Marshal(req.AttributeMappings)
 	now := time.Now()
 
-	_, err := s.db.Pool.Exec(ctx, `
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = s.db.Pool.Exec(ctx, `
 		INSERT INTO saml_service_providers (
-			id, name, description, entity_id, acs_url, slo_url, metadata_url,
+			id, org_id, name, description, entity_id, acs_url, slo_url, metadata_url,
 			certificate, name_id_format, attribute_mappings, want_assertions_signed,
 			encryption_enabled, enabled, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-	`, id, req.Name, req.Description, req.EntityID, req.ACSURL, req.SLOURL,
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+	`, id, org.ID, req.Name, req.Description, req.EntityID, req.ACSURL, req.SLOURL,
 		req.MetadataURL, req.Certificate, req.NameIDFormat, attrMappingsJSON,
 		req.WantAssertionsSigned, req.EncryptionEnabled, enabled, now, now)
 
@@ -704,8 +730,14 @@ func (s *Service) updateSAMLServiceProvider(ctx context.Context, id string, req 
 	// Table name + WHERE column are package-literal strings. The
 	// SET clause comes from setClauses, every entry of which has been
 	// allow-listed by buildUpdateClause.
+	updOrg, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+	args = append(args, updOrg.ID)
 	query := "UPDATE saml_service_providers SET " + strings.Join(setClauses, ", ") +
-		" WHERE id = $" + strconv.Itoa(len(args))
+		" WHERE id = $" + strconv.Itoa(len(args)-1) +
+		" AND org_id = $" + strconv.Itoa(len(args))
 
 	_, err = s.db.Pool.Exec(ctx, query, args...)
 	if err != nil {
@@ -736,7 +768,12 @@ func derefBool(p *bool) bool {
 
 // deleteSAMLServiceProvider deletes an SP
 func (s *Service) deleteSAMLServiceProvider(ctx context.Context, id string) error {
-	result, err := s.db.Pool.Exec(ctx, "DELETE FROM saml_service_providers WHERE id = $1", id)
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+	result, err := s.db.Pool.Exec(ctx,
+		"DELETE FROM saml_service_providers WHERE id = $1 AND org_id = $2", id, org.ID)
 	if err != nil {
 		return err
 	}

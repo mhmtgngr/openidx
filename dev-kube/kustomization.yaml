@@ -15,7 +15,6 @@ resources:
   - namespace.yaml
   - pv-local.yaml
   - pvc-local.yaml
-  - secrets-env.yaml
   - configmap.yaml
   - postgres.yaml
   - redis.yaml

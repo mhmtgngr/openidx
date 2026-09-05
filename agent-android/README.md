@@ -2,9 +2,14 @@
 
 Unified Android client for the OpenIDX endpoint-agent system. Bundles
 enrollment, posture, kiosk lockdown, and remote-support in a single APK
-(`com.openidx.agent`). See
-[`docs/superpowers/specs/2026-05-15-android-client-design.md`](../docs/superpowers/specs/2026-05-15-android-client-design.md)
-for the design.
+(`com.openidx.agent`). This README is the design: the module map below and
+the build instructions are the whole of it. (An earlier revision pointed at
+`docs/superpowers/specs/2026-05-15-android-client-design.md`, which was never
+committed to this repository.)
+
+This is the **agent** — enrolment and posture for a managed device. The
+**end-user** mobile app, with the MFA authenticator and the portal, is the
+Flutter client in [`client/`](../client).
 
 ## Modules
 

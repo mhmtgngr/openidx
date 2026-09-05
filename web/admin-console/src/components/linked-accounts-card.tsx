@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { Button } from './ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card'
 import { api } from '../lib/api'
+import { useTranslation } from 'react-i18next'
 
 // Linked sign-in accounts.
 //
@@ -41,6 +42,7 @@ function formatWhen(value: string | null): string {
 }
 
 export function LinkedAccountsCard() {
+  const { t } = useTranslation()
   const queryClient = useQueryClient()
   const [busyProvider, setBusyProvider] = useState<string | null>(null)
   const [problem, setProblem] = useState<string | null>(null)
@@ -81,7 +83,7 @@ export function LinkedAccountsCard() {
       setProblem(null)
       queryClient.invalidateQueries({ queryKey: ['my-identity-links'] })
     },
-    onError: () => setProblem('Could not remove that account. Please try again.'),
+    onError: () => setProblem(t('components.linkedAccounts.removeFailed')),
   })
 
   // Starting a link hands back an authorization URL rather than redirecting, so
@@ -98,9 +100,9 @@ export function LinkedAccountsCard() {
         window.location.href = res.authorization_url
         return
       }
-      setProblem('Could not start sign-in with that account.')
+      setProblem(t('components.linkedAccounts.startFailed'))
     } catch {
-      setProblem('Could not start sign-in with that account.')
+      setProblem(t('components.linkedAccounts.startFailed'))
     } finally {
       setBusyProvider(null)
     }
@@ -129,7 +131,7 @@ export function LinkedAccountsCard() {
         )}
 
         {isLoading ? (
-          <p className="text-sm text-muted-foreground">Loading…</p>
+          <p className="text-sm text-muted-foreground">{t('common.loading')}</p>
         ) : linked.length === 0 ? (
           <p className="text-sm text-muted-foreground">
             You sign in with your work account only. Connect another account below to use it as an
@@ -144,7 +146,7 @@ export function LinkedAccountsCard() {
               >
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium">
-                    {link.provider_name ?? 'Connected account'}
+                    {link.provider_name ?? t('components.linkedAccounts.fallbackName')}
                   </p>
                   <p className="truncate text-xs text-muted-foreground">
                     {link.external_email ?? link.display_name ?? 'connected'} · last used{' '}

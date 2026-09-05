@@ -95,10 +95,11 @@ func runSQLFile(ctx *CommandContext, dbURL, file string) error {
 
 func printSeedData() {
 	fmt.Println("\n📋 Seed data created:")
-	fmt.Println("   Admin user:     admin@openidx.local / admin123")
-	fmt.Println("   Test user:      user@openidx.local / user123")
-	fmt.Println("   Test roles:     Admin, User, Auditor")
-	fmt.Println("   Test policies:  Default access policies")
+	fmt.Println("   Admin user:     admin@openidx.local / Admin@123  ← rotate before production;")
+	fmt.Println("                   the identity/oauth services refuse to start in production")
+	fmt.Println("                   while this default password still works")
+	fmt.Println("   Demo users:     jsmith, jdoe, bwilson, amartin (no passwords set)")
+	fmt.Println("   Test roles:     admin, user, manager, auditor, developer")
 }
 
 const dbTimeout = 30 * 1000000000 // 30 seconds in nanoseconds
