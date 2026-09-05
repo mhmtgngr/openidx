@@ -79,10 +79,6 @@ var needsScoping = map[string]string{
 	"breach_alerts":          "alerts naming user_id, session_id and IP (v62)",
 
 	// MFA and credentials — the most sensitive per-user rows in the product.
-	"mfa_sms":               "per-user SMS factor enrolment",
-	"mfa_email_otp":         "per-user email factor enrolment",
-	"mfa_phone_call":        "per-user voice factor enrolment",
-	"mfa_otp_challenges":    "live OTP challenges per user",
 	"biometric_preferences": "per-user biometric settings",
 	"biometric_policies":    "org policy over authenticator types",
 	"auth_contexts":         "live per-session auth context and risk (v62)",

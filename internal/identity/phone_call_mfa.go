@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/openidx/openidx/internal/common/orgctx"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -53,15 +54,15 @@ func (s *Service) EnrollPhoneCall(ctx context.Context, userID, phoneNumber, coun
 
 	// Check if already enrolled
 	var existing string
-	err := s.db.Pool.QueryRow(ctx,
-		"SELECT id FROM mfa_phone_call WHERE user_id = $1", userID,
+	err := s.db.Pool.QueryRow(orgctx.WithBypassRLS(ctx),
+		"SELECT id FROM mfa_phone_call WHERE user_id = $1 AND org_id = (SELECT org_id FROM users WHERE id = $1)", userID,
 	).Scan(&existing)
 	if err == nil {
 		// Update existing enrollment
-		_, err = s.db.Pool.Exec(ctx,
+		_, err = s.db.Pool.Exec(orgctx.WithBypassRLS(ctx),
 			`UPDATE mfa_phone_call
 			SET phone_number = $1, country_code = $2, verified = false
-			WHERE user_id = $3`,
+			WHERE user_id = $3 AND org_id = (SELECT org_id FROM users WHERE id = $3)`,
 			phoneNumber, countryCode, userID,
 		)
 		if err != nil {
@@ -69,9 +70,9 @@ func (s *Service) EnrollPhoneCall(ctx context.Context, userID, phoneNumber, coun
 		}
 	} else {
 		// Create new enrollment
-		_, err = s.db.Pool.Exec(ctx,
-			`INSERT INTO mfa_phone_call (id, user_id, phone_number, country_code, verified, enabled, voice_language, created_at)
-			VALUES ($1, $2, $3, $4, false, true, 'en-US', NOW())`,
+		_, err = s.db.Pool.Exec(orgctx.WithBypassRLS(ctx),
+			`INSERT INTO mfa_phone_call (id, org_id, user_id, phone_number, country_code, verified, enabled, voice_language, created_at)
+			VALUES ($1, (SELECT org_id FROM users WHERE id = $2), $2, $3, $4, false, true, 'en-US', NOW())`,
 			uuid.New().String(), userID, phoneNumber, countryCode,
 		)
 		if err != nil {
@@ -211,8 +212,8 @@ func (s *Service) VerifyPhoneCallChallenge(ctx context.Context, userID, code str
 	)
 
 	// Mark enrollment as verified
-	s.db.Pool.Exec(ctx,
-		"UPDATE mfa_phone_call SET verified = true, last_used_at = NOW() WHERE user_id = $1",
+	s.db.Pool.Exec(orgctx.WithBypassRLS(ctx),
+		"UPDATE mfa_phone_call SET verified = true, last_used_at = NOW() WHERE user_id = $1 AND org_id = (SELECT org_id FROM users WHERE id = $1)",
 		userID,
 	)
 
@@ -224,11 +225,11 @@ func (s *Service) GetPhoneCallEnrollment(ctx context.Context, userID string) (*P
 	query := `
 		SELECT id, user_id, phone_number, country_code, verified, enabled, voice_language, created_at, last_used_at
 		FROM mfa_phone_call
-		WHERE user_id = $1
+		WHERE user_id = $1 AND org_id = (SELECT org_id FROM users WHERE id = $1)
 	`
 
 	var e PhoneCallEnrollment
-	err := s.db.Pool.QueryRow(ctx, query, userID).Scan(
+	err := s.db.Pool.QueryRow(orgctx.WithBypassRLS(ctx), query, userID).Scan(
 		&e.ID, &e.UserID, &e.PhoneNumber, &e.CountryCode, &e.Verified, &e.Enabled,
 		&e.VoiceLanguage, &e.CreatedAt, &e.LastUsedAt,
 	)
@@ -244,7 +245,8 @@ func (s *Service) GetPhoneCallEnrollment(ctx context.Context, userID string) (*P
 
 // DeletePhoneCallEnrollment removes phone call MFA
 func (s *Service) DeletePhoneCallEnrollment(ctx context.Context, userID string) error {
-	_, err := s.db.Pool.Exec(ctx, "DELETE FROM mfa_phone_call WHERE user_id = $1", userID)
+	_, err := s.db.Pool.Exec(orgctx.WithBypassRLS(ctx),
+		"DELETE FROM mfa_phone_call WHERE user_id = $1 AND org_id = (SELECT org_id FROM users WHERE id = $1)", userID)
 	return err
 }
 
@@ -252,8 +254,8 @@ func (s *Service) DeletePhoneCallEnrollment(ctx context.Context, userID string) 
 func (s *Service) RequestCallback(ctx context.Context, userID string) (*PhoneCallChallenge, error) {
 	// Get user's enrolled phone
 	var phoneNumber, countryCode string
-	err := s.db.Pool.QueryRow(ctx,
-		"SELECT phone_number, country_code FROM mfa_phone_call WHERE user_id = $1 AND verified = true",
+	err := s.db.Pool.QueryRow(orgctx.WithBypassRLS(ctx),
+		"SELECT phone_number, country_code FROM mfa_phone_call WHERE user_id = $1 AND verified = true AND org_id = (SELECT org_id FROM users WHERE id = $1)",
 		userID,
 	).Scan(&phoneNumber, &countryCode)
 	if err != nil {

@@ -59,11 +59,18 @@ type UserMFAStatus struct {
 // mfaStatusColumns derives per-user MFA enrollment flags from the real
 // enrollment tables. user_mfa_methods was a view only legacy SQL files defined
 // — the migration runner never creates it, so every handler reading it failed.
-// mfa_sms/mfa_email_otp have no org_id column; the others are org-belted.
+// Since v146 all six factor tables carry org_id and sit behind the belt. Until
+// then three of them did and three did not, and this SELECT listed all six
+// side by side with the difference visible in the SQL — three carrying
+// `AND x.org_id = $1` and three not — under a comment recording the asymmetry
+// as a property of the schema rather than the gap in the belt it was. Every
+// one of these subqueries is correlated to `u`, which the outer query already
+// scopes, so the counts were right; what was missing was the structural
+// guarantee that they stay right.
 const mfaStatusColumns = `
 	EXISTS (SELECT 1 FROM mfa_totp t WHERE t.user_id = u.id AND t.org_id = $1 AND t.enabled) AS totp_enabled,
-	EXISTS (SELECT 1 FROM mfa_sms sm WHERE sm.user_id = u.id AND sm.enabled AND sm.verified) AS sms_enabled,
-	EXISTS (SELECT 1 FROM mfa_email_otp e WHERE e.user_id = u.id AND e.enabled) AS email_otp_enabled,
+	EXISTS (SELECT 1 FROM mfa_sms sm WHERE sm.user_id = u.id AND sm.org_id = $1 AND sm.enabled AND sm.verified) AS sms_enabled,
+	EXISTS (SELECT 1 FROM mfa_email_otp e WHERE e.user_id = u.id AND e.org_id = $1 AND e.enabled) AS email_otp_enabled,
 	EXISTS (SELECT 1 FROM mfa_push_devices p WHERE p.user_id = u.id AND p.org_id = $1 AND p.enabled) AS push_enabled,
 	EXISTS (SELECT 1 FROM mfa_webauthn w WHERE w.user_id = u.id AND w.org_id = $1) AS webauthn_enabled`
 

@@ -1821,6 +1821,57 @@ class this whole program exists for.
    empty user filter", "org B's user could not spend its own bypass code".
    v145 applied, rolled back (the serial's install-wide UNIQUE restored) and
    re-applied. `TestRLSBeltTables` 31/31.
+
+   **Batch 8 shipped (migration v146, `needsScoping` 45 → 41; registers 64 →
+   60): the second factors that were left half-scoped.** OpenIDX offers six
+   second factors. Three — `mfa_totp`, `mfa_push_devices`, `mfa_webauthn` —
+   carried `org_id` and sat behind the belt. Three did not, and neither did
+   `mfa_otp_challenges`. The asymmetry was not hidden: `mfa_management.go`
+   lists all six in one `SELECT`, three of them carrying `AND x.org_id = $1`
+   and three not, under a comment recording it as a property of the schema. It
+   was a gap in the belt wearing a fact's clothes. This also finished a pair
+   v143 left half-done — that migration belted `phone_call_challenges` without
+   belting `mfa_phone_call`, the enrolment they are issued against.
+
+   Every query is keyed on `user_id` and a user belongs to one organization, so
+   **this batch is depth, not a live hole** — the v143 `trusted_browsers` case,
+   not the v145 `hardware_tokens` one, and worth saying plainly rather than
+   dressing up. What earns it a place is `mfa_otp_challenges`: the code hash,
+   the recipient (a real phone number or e-mail) and the requester's IP for
+   every OTP in flight, with no tenant column at all, and a status and attempt
+   counter updated by bare id.
+
+   **The hazard here was the belt itself, and it points the opposite way from
+   v145.** `evaluateMFA` decides whether to demand a second factor by asking
+   each enrolment table in turn, **discarding the error**, and reading a nil
+   result as "not enrolled". Under FORCE RLS on a connection that has not
+   resolved an organization — which the sign-in path does not always have —
+   that read returns nothing, indistinguishable from a user who never enrolled.
+   For a user whose *only* factor is SMS, the naive belt would not have locked
+   them out; **it would have signed them in with no second factor at all.**
+   v145's `HasActiveBypassCode` had the identical mechanism pointing the safe
+   way round, which is exactly why the direction has to be checked each time
+   instead of assumed. So these reads run bypassed with the tenant in the
+   predicate, and `TestMFAFactorSurvivesAnOrglessRead` pins it.
+
+   **`UNIQUE(user_id)` stays, and it is the third case in the taxonomy.** v143
+   re-scoped `provider_key` (an install-wide key let the first tenant take a
+   name from everybody); v144 kept `entity_id` (the key resolves the tenant);
+   here the key is neither — `user_id` already *determines* `org_id`, so
+   `UNIQUE(user_id)` and `UNIQUE(org_id, user_id)` accept exactly the same rows
+   **except** that the second also permits one user to hold two enrolments in
+   two organizations, which is not a tenancy feature but a corrupt row. The
+   narrower constraint is the stronger one. Re-scoping a unique key is not a
+   step in this programme's recipe; it is a judgement, and `v146_test.go`
+   records this one as a negative assertion.
+
+   Proven on Postgres 16: the fail-open check plus the stamping and
+   predicate-is-load-bearing checks, red against a decorative predicate (`AND
+   org_id IS NOT NULL`) and a hardcoded stamp. The identity-package tests
+   deliberately state what they cannot prove — their pool is a superuser, so
+   RLS never applies there; the belt's own half is proved under the
+   NOSUPERUSER role by `TestRLSBeltTables`, now 35/35. v146 applied, rolled
+   back and re-applied.
 4. ✅ **OPA `deny` enforced** — *shipped.* — `internal/common/middleware/opa.go`: abort
    unless `Allow && len(Deny)==0`; `authz.rego:15-19`'s "any authenticated
    user may GET anything" removed; `policies/access_control.rego`
@@ -3449,7 +3500,7 @@ that holds it rather than by the commit that wrote it.
 |---|---|---|
 | 1 · journeys verified | ☐ | J1 ✅ the `smoke` and `first-run` jobs (P6.2); J2 ✅ `test/integration/{auth_flows,mfa_flow,passwordless}_test.go`; J3 ✅ `test/integration/enforced_posture_test.go` (P6.1); ☐ **J6 has no automated proof** — `e2e/access-reviews-flow.spec.ts` is still on the `hold` side of `e2e/suite.txt`; ☐ **J7 needs a leaver integration case**; J4/J5/J8 stay scripted operator drills (`tools/darkprobe`, `make dr-game-day`) to be filed under `docs/evidence/` (P8.4) |
 | 2 · enforced posture, legacy login gone | ◐ | code ✅ — the server-rendered login is deleted and `internal/oauth/routes_legacy_login_test.go` fails if any of it returns (P6.1); ops ☐ — rollout Task 16 is the operator's, on a live deployment |
-| 3 · every control enforces | ◐ | P5.1–5.11 ✅ (tenant isolation, the inverted orgscope lint, OPA `deny`, ABAC at both PEPs, the honest Apply/Remediate, SMS, multi-IdP, the fail-closed gate, `ValidateProduction`, the faked measurements); ◐ the P5.3b register programme — batch 1 (v140) belted fifteen tables and fixed `email_branding`'s cross-tenant read *and* write; batch 2 (v141) scoped the compliance record and fixed an archive worker that was silently producing empty archives; batches 4–7 (v142–v145) took the unified audit stream, the sign-in tables, the SAML surface and the password-substitute credentials; **64** still ride `needsScoping`/`needsBelt` waivers |
+| 3 · every control enforces | ◐ | P5.1–5.11 ✅ (tenant isolation, the inverted orgscope lint, OPA `deny`, ABAC at both PEPs, the honest Apply/Remediate, SMS, multi-IdP, the fail-closed gate, `ValidateProduction`, the faked measurements); ◐ the P5.3b register programme — batch 1 (v140) belted fifteen tables and fixed `email_branding`'s cross-tenant read *and* write; batch 2 (v141) scoped the compliance record and fixed an archive worker that was silently producing empty archives; batches 4–8 (v142–v146) took the unified audit stream, the sign-in tables, the SAML surface, the password-substitute credentials and the four second factors the belt had skipped; **60** still ride `needsScoping`/`needsBelt` waivers |
 | 4 · first run / first login / four pillars from the docs | ✅ | first run ✅ the `smoke` and `first-run` jobs (P6.2); first login ✅ one authoritative credential in `GETTING-STARTED.md`, with the `USER_GUIDE.md` and `CONTRIBUTING.md` copies pointing at it rather than repeating it (P8.1); four pillars ✅ `guide/governance.md` was the missing one (P8.1) |
 | 5 · one story + auditor artifacts | ✅ | threat model and control mapping exist; docs sweep 3 ✅ and the docs-drift guard ✅ (`check-docs-drift.sh`, enforced in CI, so a document cannot cite a path that is not there); `docs/evidence/` ✅ (P8.4) |
 | 6 · releases current, signed, Helm proven | ◐ | signing ✅ `release.yml` (cosign) and, since P7.5, an Android artifact whose name tracks the key that signed it; Helm ✅ the `kind` install job (P6.4); versions ✅ `VERSION` + `check-version-sync.sh` (P8.3); CHANGELOG ✅ every release attributed from the commit that wrote its entry, 61 compare links that resolve (P8.2); ☐ v1.34.0 is not cut — the maintainer's |

@@ -51,7 +51,8 @@ func TestUserMFAStatus_RealTables(t *testing.T) {
 	// Real enrollments. A disabled TOTP row on u2 must NOT count.
 	exec(`INSERT INTO mfa_totp (user_id, secret, enabled, org_id) VALUES ($1, 'sec1', true, $2)`, u1, orgA)
 	exec(`INSERT INTO mfa_totp (user_id, secret, enabled, org_id) VALUES ($1, 'sec2', false, $2)`, u2, orgA)
-	exec(`INSERT INTO mfa_sms (user_id, phone_number, country_code, verified, enabled) VALUES ($1, '+15551234567', '+1', true, true)`, u2)
+	// org_id since v146: mfa_sms joined the belt with the other five factors.
+	exec(`INSERT INTO mfa_sms (user_id, phone_number, country_code, verified, enabled, org_id) VALUES ($1, '+15551234567', '+1', true, true, $2)`, u2, orgA)
 	exec(`INSERT INTO mfa_backup_codes (user_id, code_hash, used, org_id) VALUES ($1, 'h1', false, $2)`, u2, orgA)
 	exec(`INSERT INTO mfa_backup_codes (user_id, code_hash, used, org_id) VALUES ($1, 'h2', true, $2)`, u2, orgA)
 	exec(`INSERT INTO mfa_webauthn (user_id, credential_id, public_key, org_id) VALUES ($1, 'cred-u3', 'pk', $2)`, u3, orgB)

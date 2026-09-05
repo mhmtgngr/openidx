@@ -14,8 +14,26 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/common/orgctx"
 	"github.com/openidx/openidx/internal/sms"
 )
+
+// TENANCY IN THIS FILE.
+//
+// Since v146 mfa_sms, mfa_email_otp and mfa_otp_challenges sit behind the
+// FORCE RLS belt, and every query below lifts it deliberately. The reason is
+// not convenience: internal/oauth/mfa_policy.go asks these tables whether the
+// user has a second factor, on the sign-in path, on a connection that has not
+// always resolved an organization — and it discards the error and reads an
+// empty result as "not enrolled". A belt that returns nothing there does not
+// lock the user out; it signs them in WITHOUT the factor they enrolled.
+//
+// What makes the bypass safe is the same fact throughout: every handler in
+// handlers_otp.go takes `user_id` from the authenticated session
+// (c.GetString("user_id")), never from a path parameter, so no caller can name
+// another tenant's user. The org term in each predicate ties the row to that
+// user's own organization, so the tenancy lives in the SQL where it can be
+// read, rather than on a connection setting that may or may not be set.
 
 // SMSEnrollment represents SMS MFA enrollment data
 type SMSEnrollment struct {
@@ -191,11 +209,11 @@ func (s *Service) GetSMSEnrollment(ctx context.Context, userID string) (*SMSEnro
 		SELECT id, user_id, phone_number, country_code, verified, enabled,
 		       created_at, verified_at, last_used_at
 		FROM mfa_sms
-		WHERE user_id = $1
+		WHERE user_id = $1 AND org_id = (SELECT org_id FROM users WHERE id = $1)
 	`
 
 	var enrollment SMSEnrollment
-	err := s.db.Pool.QueryRow(ctx, query, userID).Scan(
+	err := s.db.Pool.QueryRow(orgctx.WithBypassRLS(ctx), query, userID).Scan(
 		&enrollment.ID,
 		&enrollment.UserID,
 		&enrollment.PhoneNumber,
@@ -215,8 +233,8 @@ func (s *Service) GetSMSEnrollment(ctx context.Context, userID string) (*SMSEnro
 
 // DeleteSMSEnrollment removes SMS MFA for a user
 func (s *Service) DeleteSMSEnrollment(ctx context.Context, userID string) error {
-	query := `DELETE FROM mfa_sms WHERE user_id = $1`
-	result, err := s.db.Pool.Exec(ctx, query, userID)
+	query := `DELETE FROM mfa_sms WHERE user_id = $1 AND org_id = (SELECT org_id FROM users WHERE id = $1)`
+	result, err := s.db.Pool.Exec(orgctx.WithBypassRLS(ctx), query, userID)
 	if err != nil {
 		return fmt.Errorf("failed to delete SMS enrollment: %w", err)
 	}
@@ -324,11 +342,11 @@ func (s *Service) GetEmailOTPEnrollment(ctx context.Context, userID string) (*Em
 	query := `
 		SELECT id, user_id, email_address, enabled, created_at, last_used_at
 		FROM mfa_email_otp
-		WHERE user_id = $1
+		WHERE user_id = $1 AND org_id = (SELECT org_id FROM users WHERE id = $1)
 	`
 
 	var enrollment EmailOTPEnrollment
-	err := s.db.Pool.QueryRow(ctx, query, userID).Scan(
+	err := s.db.Pool.QueryRow(orgctx.WithBypassRLS(ctx), query, userID).Scan(
 		&enrollment.ID,
 		&enrollment.UserID,
 		&enrollment.EmailAddress,
@@ -345,8 +363,8 @@ func (s *Service) GetEmailOTPEnrollment(ctx context.Context, userID string) (*Em
 
 // DeleteEmailOTPEnrollment removes Email OTP MFA for a user
 func (s *Service) DeleteEmailOTPEnrollment(ctx context.Context, userID string) error {
-	query := `DELETE FROM mfa_email_otp WHERE user_id = $1`
-	result, err := s.db.Pool.Exec(ctx, query, userID)
+	query := `DELETE FROM mfa_email_otp WHERE user_id = $1 AND org_id = (SELECT org_id FROM users WHERE id = $1)`
+	result, err := s.db.Pool.Exec(orgctx.WithBypassRLS(ctx), query, userID)
 	if err != nil {
 		return fmt.Errorf("failed to delete Email OTP enrollment: %w", err)
 	}
@@ -544,10 +562,10 @@ func (s *Service) verifyOTPCode(ctx context.Context, userID, method, code string
 
 func (s *Service) storeSMSEnrollment(ctx context.Context, enrollment *SMSEnrollment) error {
 	query := `
-		INSERT INTO mfa_sms (id, user_id, phone_number, country_code, verified, enabled, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO mfa_sms (id, org_id, user_id, phone_number, country_code, verified, enabled, created_at)
+		VALUES ($1, (SELECT org_id FROM users WHERE id = $2), $2, $3, $4, $5, $6, $7)
 	`
-	_, err := s.db.Pool.Exec(ctx, query,
+	_, err := s.db.Pool.Exec(orgctx.WithBypassRLS(ctx), query,
 		enrollment.ID,
 		enrollment.UserID,
 		enrollment.PhoneNumber,
@@ -560,12 +578,13 @@ func (s *Service) storeSMSEnrollment(ctx context.Context, enrollment *SMSEnrollm
 }
 
 func (s *Service) updateSMSEnrollment(ctx context.Context, enrollment *SMSEnrollment) error {
+	//orgscope:ignore enrolment id came from the caller's own GetSMSEnrollment read, which is scoped by the session user's org
 	query := `
 		UPDATE mfa_sms
 		SET phone_number = $1, country_code = $2, verified = $3, enabled = $4, verified_at = $5
 		WHERE id = $6
 	`
-	_, err := s.db.Pool.Exec(ctx, query,
+	_, err := s.db.Pool.Exec(orgctx.WithBypassRLS(ctx), query,
 		enrollment.PhoneNumber,
 		enrollment.CountryCode,
 		enrollment.Verified,
@@ -577,16 +596,16 @@ func (s *Service) updateSMSEnrollment(ctx context.Context, enrollment *SMSEnroll
 }
 
 func (s *Service) updateSMSLastUsed(ctx context.Context, userID string) {
-	query := `UPDATE mfa_sms SET last_used_at = $1 WHERE user_id = $2`
-	s.db.Pool.Exec(ctx, query, time.Now(), userID)
+	query := `UPDATE mfa_sms SET last_used_at = $1 WHERE user_id = $2 AND org_id = (SELECT org_id FROM users WHERE id = $2)`
+	s.db.Pool.Exec(orgctx.WithBypassRLS(ctx), query, time.Now(), userID)
 }
 
 func (s *Service) storeEmailOTPEnrollment(ctx context.Context, enrollment *EmailOTPEnrollment) error {
 	query := `
-		INSERT INTO mfa_email_otp (id, user_id, email_address, enabled, created_at)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO mfa_email_otp (id, org_id, user_id, email_address, enabled, created_at)
+		VALUES ($1, (SELECT org_id FROM users WHERE id = $2), $2, $3, $4, $5)
 	`
-	_, err := s.db.Pool.Exec(ctx, query,
+	_, err := s.db.Pool.Exec(orgctx.WithBypassRLS(ctx), query,
 		enrollment.ID,
 		enrollment.UserID,
 		enrollment.EmailAddress,
@@ -597,17 +616,17 @@ func (s *Service) storeEmailOTPEnrollment(ctx context.Context, enrollment *Email
 }
 
 func (s *Service) updateEmailOTPLastUsed(ctx context.Context, userID string) {
-	query := `UPDATE mfa_email_otp SET last_used_at = $1 WHERE user_id = $2`
-	s.db.Pool.Exec(ctx, query, time.Now(), userID)
+	query := `UPDATE mfa_email_otp SET last_used_at = $1 WHERE user_id = $2 AND org_id = (SELECT org_id FROM users WHERE id = $2)`
+	s.db.Pool.Exec(orgctx.WithBypassRLS(ctx), query, time.Now(), userID)
 }
 
 func (s *Service) storeOTPChallenge(ctx context.Context, challenge *OTPChallenge) error {
 	query := `
 		INSERT INTO mfa_otp_challenges
-		(id, user_id, method, recipient, code_hash, attempts, max_attempts, status, ip_address, user_agent, created_at, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		(id, org_id, user_id, method, recipient, code_hash, attempts, max_attempts, status, ip_address, user_agent, created_at, expires_at)
+		VALUES ($1, (SELECT org_id FROM users WHERE id = $2), $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 	`
-	_, err := s.db.Pool.Exec(ctx, query,
+	_, err := s.db.Pool.Exec(orgctx.WithBypassRLS(ctx), query,
 		challenge.ID,
 		challenge.UserID,
 		challenge.Method,
@@ -630,12 +649,13 @@ func (s *Service) getLatestOTPChallenge(ctx context.Context, userID, method stri
 		       status, ip_address, user_agent, created_at, expires_at, verified_at
 		FROM mfa_otp_challenges
 		WHERE user_id = $1 AND method = $2 AND status = 'pending'
+		  AND org_id = (SELECT org_id FROM users WHERE id = $1)
 		ORDER BY created_at DESC
 		LIMIT 1
 	`
 
 	var challenge OTPChallenge
-	err := s.db.Pool.QueryRow(ctx, query, userID, method).Scan(
+	err := s.db.Pool.QueryRow(orgctx.WithBypassRLS(ctx), query, userID, method).Scan(
 		&challenge.ID,
 		&challenge.UserID,
 		&challenge.Method,
@@ -658,14 +678,16 @@ func (s *Service) getLatestOTPChallenge(ctx context.Context, userID, method stri
 }
 
 func (s *Service) updateOTPChallengeStatus(ctx context.Context, challenge *OTPChallenge) error {
+	//orgscope:ignore challenge id came from getLatestOTPChallenge, which is scoped by the session user's org
 	query := `UPDATE mfa_otp_challenges SET status = $1, verified_at = $2 WHERE id = $3`
-	_, err := s.db.Pool.Exec(ctx, query, challenge.Status, challenge.VerifiedAt, challenge.ID)
+	_, err := s.db.Pool.Exec(orgctx.WithBypassRLS(ctx), query, challenge.Status, challenge.VerifiedAt, challenge.ID)
 	return err
 }
 
 func (s *Service) incrementOTPChallengeAttempts(ctx context.Context, challengeID string) error {
+	//orgscope:ignore challenge id came from getLatestOTPChallenge, which is scoped by the session user's org
 	query := `UPDATE mfa_otp_challenges SET attempts = attempts + 1 WHERE id = $1`
-	_, err := s.db.Pool.Exec(ctx, query, challengeID)
+	_, err := s.db.Pool.Exec(orgctx.WithBypassRLS(ctx), query, challengeID)
 	return err
 }
 
@@ -673,9 +695,10 @@ func (s *Service) countRecentOTPChallenges(ctx context.Context, userID, method s
 	query := `
 		SELECT COUNT(*) FROM mfa_otp_challenges
 		WHERE user_id = $1 AND method = $2 AND created_at > $3
+		  AND org_id = (SELECT org_id FROM users WHERE id = $1)
 	`
 	var count int
-	err := s.db.Pool.QueryRow(ctx, query, userID, method, time.Now().Add(-window)).Scan(&count)
+	err := s.db.Pool.QueryRow(orgctx.WithBypassRLS(ctx), query, userID, method, time.Now().Add(-window)).Scan(&count)
 	return count, err
 }
 

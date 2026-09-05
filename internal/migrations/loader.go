@@ -1037,5 +1037,12 @@ func allMigrations() []*Migration {
 			UpSQL:       credentialTenantScopeUp,
 			DownSQL:     credentialTenantScopeDown,
 		},
+		{
+			Version:     146,
+			Name:        "mfa_factor_tenant_scope",
+			Description: "Add org_id + FORCE RLS to mfa_sms, mfa_email_otp, mfa_phone_call and mfa_otp_challenges — the four second-factor tables the belt had skipped. Three of the six factors (mfa_totp, mfa_push_devices, mfa_webauthn) already carried org_id, and internal/admin/mfa_management.go listed all six in one SELECT with three carrying `AND x.org_id = $1` and three not, under a comment recording the asymmetry as a property of the schema. Every query is keyed on user_id and a user belongs to one organization, so this is depth rather than a live hole; what makes it worth doing is mfa_otp_challenges, which holds the code hash, the recipient (a real phone number or e-mail) and the requester's IP for every OTP in flight with no tenant column at all, and whose status and attempt counter are updated by bare id. It also completes a pair v143 left half-done: that migration belted phone_call_challenges without belting mfa_phone_call, the enrolment they are issued against. THE BELT ITSELF IS THE HAZARD HERE, pointing the opposite way from v145: evaluateMFA in internal/oauth/mfa_policy.go asks each enrolment table in turn, discards the error and reads nil as 'not enrolled', so an RLS-empty read on a connection with no app.org_id would make a user whose only factor is SMS sign in with no second factor at all — the belt letting everybody in rather than locking anybody out. Those policy reads therefore run bypassed with the tenant in the predicate, pinned by a test. UNIQUE(user_id) is deliberately NOT re-scoped, the third case in the taxonomy v143 and v144 built: user_id already determines org_id, so a per-org key would accept strictly more rows and the extra rows are corrupt ones. Existing rows are attributed to their user, with the oldest organization as the fallback mfa_phone_call's nullable user_id makes load-bearing. No column DEFAULT.",
+			UpSQL:       mfaFactorTenantScopeUp,
+			DownSQL:     mfaFactorTenantScopeDown,
+		},
 	}
 }

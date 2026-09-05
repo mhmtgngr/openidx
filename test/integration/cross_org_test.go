@@ -516,6 +516,33 @@ func TestRLSBeltTables(t *testing.T) {
 			VALUES ('tbelt-ml-` + suffix + `','tbelt-ml-` + suffix + `@example.test',true,$1) RETURNING id)
 			INSERT INTO magic_links (user_id, email, token_hash, expires_at, org_id)
 			SELECT u.id,'tbelt-ml-` + suffix + `@example.test','x',NOW() + INTERVAL '1 hour',$1 FROM u`},
+		// v146 — the four second factors the belt had skipped while mfa_totp,
+		// mfa_push_devices and mfa_webauthn already carried org_id. Each is
+		// UNIQUE(user_id), so the probe brings its own user rather than
+		// colliding with one an earlier case made; that UNIQUE is deliberately
+		// NOT re-scoped to (org_id, user_id), because user_id already
+		// determines org_id and the per-org key would additionally accept one
+		// user enrolled in two organizations.
+		{"mfa_sms", `WITH u AS (
+			INSERT INTO users (username, email, enabled, org_id)
+			VALUES ('tbelt-sms-` + suffix + `','tbelt-sms-` + suffix + `@example.test',true,$1) RETURNING id)
+			INSERT INTO mfa_sms (user_id, phone_number, country_code, org_id)
+			SELECT u.id,'5550000000','+1',$1 FROM u`},
+		{"mfa_email_otp", `WITH u AS (
+			INSERT INTO users (username, email, enabled, org_id)
+			VALUES ('tbelt-eotp-` + suffix + `','tbelt-eotp-` + suffix + `@example.test',true,$1) RETURNING id)
+			INSERT INTO mfa_email_otp (user_id, email_address, org_id)
+			SELECT u.id,'tbelt-eotp-` + suffix + `@example.test',$1 FROM u`},
+		{"mfa_phone_call", `WITH u AS (
+			INSERT INTO users (username, email, enabled, org_id)
+			VALUES ('tbelt-pc-` + suffix + `','tbelt-pc-` + suffix + `@example.test',true,$1) RETURNING id)
+			INSERT INTO mfa_phone_call (user_id, phone_number, country_code, org_id)
+			SELECT u.id,'5550000001','+1',$1 FROM u`},
+		{"mfa_otp_challenges", `WITH u AS (
+			INSERT INTO users (username, email, enabled, org_id)
+			VALUES ('tbelt-otpc-` + suffix + `','tbelt-otpc-` + suffix + `@example.test',true,$1) RETURNING id)
+			INSERT INTO mfa_otp_challenges (user_id, method, recipient, code_hash, expires_at, org_id)
+			SELECT u.id,'sms','+15550000002','x',NOW() + INTERVAL '5 minutes',$1 FROM u`},
 	}
 
 	// One list, not two: the role is granted exactly the tables the cases probe.

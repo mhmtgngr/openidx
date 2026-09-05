@@ -21,6 +21,30 @@ to a spec that describes an eighth of a surface, a documented endpoint that
   the posture score was neither one tenant's nor the install's. All now carry
   `org_id` under FORCE RLS, with the install-wide unique keys re-scoped and an
   isolation test per handler file.
+- **The remaining second factors got a tenant** (migration v146). OpenIDX
+  offers six second factors; three of them — TOTP, push and WebAuthn — already
+  carried `org_id` and sat behind the row-level-security belt, and three did
+  not: `mfa_sms`, `mfa_email_otp` and `mfa_phone_call`, along with
+  `mfa_otp_challenges`, which holds the code hash, the recipient (a real phone
+  number or e-mail address) and the requester's IP for every one-time code in
+  flight. The administration console's MFA enrolment report listed all six side
+  by side, three of its subqueries carrying an organization predicate and three
+  not, under a comment recording the asymmetry as a property of the schema. No
+  tenant could read another's rows — every query is keyed on the user, and a
+  user belongs to one organization — so this is depth rather than a fixed
+  disclosure; what it closes is the absence of any structural guarantee that it
+  stays that way, and a challenge whose status and attempt counter were updated
+  by bare id. It also completes a pair v143 left half-done: that migration
+  belted the phone-call challenges without belting the enrolment they are
+  issued against. The enrolment reads on the sign-in path run with the belt
+  deliberately lifted and the tenant in the query instead, because the code
+  that decides whether to demand a second factor reads an invisible enrolment
+  as an absent one — under the belt alone, a user whose only factor is SMS
+  would have signed in without it. The per-user uniqueness on each enrolment is
+  deliberately left alone rather than made per-organization: the user already
+  determines the organization, so a per-organization key would accept strictly
+  more rows, and the extra rows are one user enrolled twice. Existing rows are
+  attributed to their user.
 - **The credentials that stand in for a password got a tenant** (migration
   v145). `hardware_tokens`, `hardware_token_events`, `mfa_bypass_codes`,
   `mfa_bypass_audit` and `magic_links` — five ways to authenticate without the
