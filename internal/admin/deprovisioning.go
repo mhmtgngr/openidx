@@ -62,11 +62,21 @@ func (s *Service) handleListLifecyclePolicies(c *gin.Context) {
 	if !requireAdmin(c) {
 		return
 	}
+	org, ok := requireOrg(c)
+	if !ok {
+		return
+	}
 
+	// Every column below the first two is nullable, and each is scanned into a
+	// plain Go value — so one NULL made the scan fail and the loop below used
+	// to `continue` past it, silently dropping the policy from the only list
+	// an administrator has. Same shape as the risk-policy read fixed in v153.
 	rows, err := s.db.Pool.Query(c.Request.Context(),
-		`SELECT id, name, description, policy_type, conditions, actions, enabled, schedule,
-		        grace_period_days, notify_before_days, last_run_at, next_run_at, created_by, created_at, updated_at
-		 FROM lifecycle_policies ORDER BY name`)
+		`SELECT id, name, COALESCE(description,''), policy_type, COALESCE(conditions,'{}'),
+		        COALESCE(actions,'{}'), COALESCE(enabled,false), COALESCE(schedule,''),
+		        COALESCE(grace_period_days,7), COALESCE(notify_before_days,3),
+		        last_run_at, next_run_at, created_by, created_at, updated_at
+		 FROM lifecycle_policies WHERE org_id = $1 ORDER BY name`, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to list lifecycle policies", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list policies"})
@@ -80,6 +90,10 @@ func (s *Service) handleListLifecyclePolicies(c *gin.Context) {
 		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.PolicyType, &p.Conditions, &p.Actions,
 			&p.Enabled, &p.Schedule, &p.GracePeriodDays, &p.NotifyBeforeDays,
 			&p.LastRunAt, &p.NextRunAt, &p.CreatedBy, &p.CreatedAt, &p.UpdatedAt); err != nil {
+			// Still skip the row -- one bad row should not fail the page -- but
+			// say so. A de-provisioning rule that vanishes from the list without
+			// a word is a rule nobody can review or turn off.
+			s.logger.Error("Skipped a lifecycle policy that would not scan", zap.Error(err))
 			continue
 		}
 		policies = append(policies, p)
@@ -92,6 +106,10 @@ func (s *Service) handleListLifecyclePolicies(c *gin.Context) {
 
 func (s *Service) handleCreateLifecyclePolicy(c *gin.Context) {
 	if !requireAdmin(c) {
+		return
+	}
+	org, ok := requireOrg(c)
+	if !ok {
 		return
 	}
 
@@ -150,10 +168,10 @@ func (s *Service) handleCreateLifecyclePolicy(c *gin.Context) {
 	var id string
 	err := s.db.Pool.QueryRow(c.Request.Context(),
 		`INSERT INTO lifecycle_policies (name, description, policy_type, conditions, actions, schedule,
-		  grace_period_days, notify_before_days, created_by)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
+		  grace_period_days, notify_before_days, created_by, org_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
 		req.Name, req.Description, req.PolicyType, conds, acts, req.Schedule,
-		req.GracePeriodDays, req.NotifyBeforeDays, nilIfEmpty(userIDStr),
+		req.GracePeriodDays, req.NotifyBeforeDays, nilIfEmpty(userIDStr), org.ID,
 	).Scan(&id)
 	if err != nil {
 		s.logger.Error("Failed to create lifecycle policy", zap.Error(err))
@@ -169,12 +187,19 @@ func (s *Service) handleGetLifecyclePolicy(c *gin.Context) {
 		return
 	}
 
+	org, ok := requireOrg(c)
+	if !ok {
+		return
+	}
+
 	id := c.Param("id")
 	var p LifecyclePolicy
 	err := s.db.Pool.QueryRow(c.Request.Context(),
-		`SELECT id, name, description, policy_type, conditions, actions, enabled, schedule,
-		        grace_period_days, notify_before_days, last_run_at, next_run_at, created_by, created_at, updated_at
-		 FROM lifecycle_policies WHERE id = $1`, id,
+		`SELECT id, name, COALESCE(description,''), policy_type, COALESCE(conditions,'{}'),
+		        COALESCE(actions,'{}'), COALESCE(enabled,false), COALESCE(schedule,''),
+		        COALESCE(grace_period_days,7), COALESCE(notify_before_days,3),
+		        last_run_at, next_run_at, created_by, created_at, updated_at
+		 FROM lifecycle_policies WHERE id = $1 AND org_id = $2`, id, org.ID,
 	).Scan(&p.ID, &p.Name, &p.Description, &p.PolicyType, &p.Conditions, &p.Actions,
 		&p.Enabled, &p.Schedule, &p.GracePeriodDays, &p.NotifyBeforeDays,
 		&p.LastRunAt, &p.NextRunAt, &p.CreatedBy, &p.CreatedAt, &p.UpdatedAt)
@@ -187,6 +212,11 @@ func (s *Service) handleGetLifecyclePolicy(c *gin.Context) {
 
 func (s *Service) handleUpdateLifecyclePolicy(c *gin.Context) {
 	if !requireAdmin(c) {
+		return
+	}
+
+	org, ok := requireOrg(c)
+	if !ok {
 		return
 	}
 
@@ -252,8 +282,13 @@ func (s *Service) handleUpdateLifecyclePolicy(c *gin.Context) {
 		argIdx++
 	}
 
-	args = append(args, id)
-	query := pf("UPDATE lifecycle_policies SET %s WHERE id = $%d", joinSetClauses(sets), argIdx)
+	// The org term is what stops another tenant re-aiming this rule: conditions
+	// and actions are both settable here, so without it a policy labelled
+	// "disable after 90 days" could be rewritten into "delete after 0" and
+	// handed back to the administrator who owns it.
+	args = append(args, id, org.ID)
+	query := pf("UPDATE lifecycle_policies SET %s WHERE id = $%d AND org_id = $%d",
+		joinSetClauses(sets), argIdx, argIdx+1)
 
 	tag, err := s.db.Pool.Exec(c.Request.Context(), query, args...)
 	if err != nil {
@@ -273,8 +308,14 @@ func (s *Service) handleDeleteLifecyclePolicy(c *gin.Context) {
 		return
 	}
 
+	org, ok := requireOrg(c)
+	if !ok {
+		return
+	}
+
 	id := c.Param("id")
-	tag, err := s.db.Pool.Exec(c.Request.Context(), "DELETE FROM lifecycle_policies WHERE id = $1", id)
+	tag, err := s.db.Pool.Exec(c.Request.Context(),
+		"DELETE FROM lifecycle_policies WHERE id = $1 AND org_id = $2", id, org.ID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete policy"})
 		return
@@ -291,27 +332,32 @@ func (s *Service) handleExecuteLifecyclePolicy(c *gin.Context) {
 		return
 	}
 
+	// Capture the org before anything else. Two reasons: the policy load below
+	// is scoped by it, and the execution runs on a detached context.Background
+	// goroutine that can't read the request org later.
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	id := c.Param("id")
 	var req struct {
 		DryRun bool `json:"dry_run"`
 	}
 	_ = c.ShouldBindJSON(&req)
 
-	// Load policy
+	// Load policy. The org term matters even though the actions below are
+	// scoped to the caller's own tenant: without it, one organization's rule
+	// governs another organization's accounts.
 	var p LifecyclePolicy
 	err := s.db.Pool.QueryRow(c.Request.Context(),
-		`SELECT id, name, policy_type, conditions, actions FROM lifecycle_policies WHERE id = $1`, id,
+		`SELECT id, name, policy_type, COALESCE(conditions,'{}'), COALESCE(actions,'{}')
+		 FROM lifecycle_policies WHERE id = $1 AND org_id = $2`,
+		id, org.ID,
 	).Scan(&p.ID, &p.Name, &p.PolicyType, &p.Conditions, &p.Actions)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Policy not found"})
-		return
-	}
-
-	// Capture the org synchronously: the execution runs on a detached
-	// context.Background goroutine and can't read the request org later.
-	org, oerr := orgctx.From(c.Request.Context())
-	if oerr != nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
 		return
 	}
 
@@ -326,8 +372,8 @@ func (s *Service) handleExecuteLifecyclePolicy(c *gin.Context) {
 	// Create execution record
 	var execID string
 	err = s.db.Pool.QueryRow(c.Request.Context(),
-		`INSERT INTO lifecycle_policy_executions (policy_id, status, users_scanned) VALUES ($1, 'running', $2) RETURNING id`,
-		id, len(affected),
+		`INSERT INTO lifecycle_policy_executions (policy_id, status, users_scanned, org_id) VALUES ($1, 'running', $2, $3) RETURNING id`,
+		id, len(affected), org.ID,
 	).Scan(&execID)
 	if err != nil {
 		s.logger.Error("Failed to create lifecycle execution", zap.Error(err))
@@ -340,7 +386,7 @@ func (s *Service) handleExecuteLifecyclePolicy(c *gin.Context) {
 
 	// Update last_run_at
 	_, _ = s.db.Pool.Exec(c.Request.Context(),
-		"UPDATE lifecycle_policies SET last_run_at = NOW() WHERE id = $1", id)
+		"UPDATE lifecycle_policies SET last_run_at = NOW() WHERE id = $1 AND org_id = $2", id, org.ID)
 
 	c.JSON(http.StatusOK, gin.H{"execution_id": execID, "affected_count": len(affected), "status": "running"})
 }
@@ -485,11 +531,13 @@ func (s *Service) executeLifecyclePolicy(orgID, execID string, p LifecyclePolicy
 		}
 	}
 
+	// actions_taken carries a username and a reason per affected account, so
+	// this row is personal data about the tenant's directory, not just a status.
 	actionsJSON, _ := json.Marshal(actionsTaken)
 	_, _ = s.db.Pool.Exec(ctx,
 		`UPDATE lifecycle_policy_executions SET status = 'completed', users_affected = $1,
-		 actions_taken = $2, completed_at = NOW() WHERE id = $3`,
-		usersAffected, actionsJSON, execID)
+		 actions_taken = $2, completed_at = NOW() WHERE id = $3 AND org_id = $4`,
+		usersAffected, actionsJSON, execID, orgID)
 }
 
 func (s *Service) handleListLifecycleExecutions(c *gin.Context) {
@@ -497,10 +545,25 @@ func (s *Service) handleListLifecycleExecutions(c *gin.Context) {
 		return
 	}
 
+	org, ok := requireOrg(c)
+	if !ok {
+		return
+	}
+
+	// Not a status list: actions_taken names every account the run touched, the
+	// action taken against it and why. Unscoped, this returned another tenant's
+	// directory with a justification column.
+	// error_message is NULL on every run that succeeded -- executeLifecyclePolicy
+	// never sets it -- and it was scanned into a plain string, so the scan failed
+	// and the loop below skipped the row. Every COMPLETED run was therefore
+	// invisible here: an administrator opening the history of a policy that had
+	// just disabled fifty accounts saw an empty list. Coalesced with the rest.
 	policyID := c.Param("id")
 	rows, err := s.db.Pool.Query(c.Request.Context(),
-		`SELECT id, policy_id, status, users_scanned, users_affected, actions_taken, started_at, completed_at, error_message
-		 FROM lifecycle_policy_executions WHERE policy_id = $1 ORDER BY started_at DESC LIMIT 20`, policyID)
+		`SELECT id, policy_id, COALESCE(status,''), COALESCE(users_scanned,0), COALESCE(users_affected,0),
+		        COALESCE(actions_taken,'[]'), started_at, completed_at, COALESCE(error_message,'')
+		 FROM lifecycle_policy_executions WHERE policy_id = $1 AND org_id = $2 ORDER BY started_at DESC LIMIT 20`,
+		policyID, org.ID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list executions"})
 		return
@@ -512,6 +575,7 @@ func (s *Service) handleListLifecycleExecutions(c *gin.Context) {
 		var e LifecycleExecution
 		if err := rows.Scan(&e.ID, &e.PolicyID, &e.Status, &e.UsersScanned, &e.UsersAffected,
 			&e.ActionsTaken, &e.StartedAt, &e.CompletedAt, &e.ErrorMessage); err != nil {
+			s.logger.Error("Skipped a lifecycle execution that would not scan", zap.Error(err))
 			continue
 		}
 		execs = append(execs, e)

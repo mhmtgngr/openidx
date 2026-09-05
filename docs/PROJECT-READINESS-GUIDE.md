@@ -2332,6 +2332,96 @@ class this whole program exists for.
    `deployments/docker/seed.sql` too. Two tables still on `needsScoping` —
    `lifecycle_policies` and `notification_routing_rules` — are seeded there and
    will need the same treatment when their batch comes.
+
+   **Batch 16 shipped (migration v154, `needsScoping` 32 → 28; registers 49 →
+   45): the actions were scoped and the rule that aims them was not.** Four
+   tables, one subsystem: `lifecycle_workflows` and `lifecycle_policies` are the
+   rules that decide which accounts get roles added, groups removed, sessions
+   revoked, passwords forced, accounts disabled or accounts **deleted**;
+   `lifecycle_executions` and `lifecycle_policy_executions` are the logs of what
+   those rules did. v54 and v55 created all four with no tenant column.
+
+   **Every action was already careful.** In both packages the mutations carry a
+   tenant term — `UPDATE users SET enabled = false … WHERE id = $1 AND org_id =
+   $2`, `DELETE FROM users WHERE id = $1 AND org_id = $2`, the same on
+   `user_roles`, `group_memberships` and `sessions` — and `findAffectedUsers`
+   selects its candidates with `AND org_id = $N` in all four policy types.
+   `internal/admin/deprovisioning.go` even carries a comment recording an
+   earlier fix in this programme: the org has to travel on the **context**,
+   because `users` is behind the FORCE-RLS belt and on a bare
+   `context.Background` the leaver disable matched its predicate and affected
+   nobody. Someone thought hard about the blast radius of the actions.
+
+   **Nobody scoped the rule.** Every handler addressed these tables by bare id:
+   `SELECT … FROM lifecycle_policies ORDER BY name`, `UPDATE lifecycle_policies
+   SET %s WHERE id = $N`, `DELETE FROM lifecycle_workflows WHERE id = $1`,
+   `SELECT … FROM lifecycle_policy_executions WHERE policy_id = $1`. `conditions`
+   and `actions` are both fields the UPDATE will SET, so a second organization's
+   administrator could take a policy labelled *"Stale Account Auto-Disable — 90
+   days"*, make it `{"inactive_days": 0}` / `{"action": "delete"}`, and hand it
+   back. The owner then runs their own rule and it empties their directory. The
+   org predicate on the DELETE does not help, because by then the rows being
+   destroyed are the owner's own: **a control another tenant can re-aim is armed
+   by its owner and pointed by someone else.**
+
+   The other directions are the same defect from different sides. DELETE removes
+   another tenant's offboarding rule outright, and nothing on the owner's
+   console says the leaver control has stopped existing. Execute loaded any
+   tenant's policy by bare id and ran it against the caller's own users. And the
+   run logs are a plain cross-tenant read of personal data — `actions_taken`
+   records `{"user_id":…, "username":…, "action":"delete", "reason":"No login
+   for 90+ days"}` per affected account, so listing another tenant's runs
+   returned their directory with a justification column.
+
+   **Two more defects found while writing the tests, both the silent-drop
+   shape.** `handleListLifecyclePolicies` scanned nullable `description`,
+   `schedule`, `enabled`, `conditions`, `actions`, `grace_period_days` and
+   `notify_before_days` into plain Go values and then `continue`d past any row
+   that failed to scan — so a de-provisioning rule could vanish from the only
+   list an administrator has, without a word. Worse, `handleListLifecycleExecutions`
+   did the same with `error_message`, which `executeLifecyclePolicy` **never
+   sets on a successful run**: every completed run was therefore invisible, and
+   an administrator opening the history of a policy that had just disabled fifty
+   accounts saw an empty list. Both reads are now coalesced and the skip is
+   logged. This is the fourth batch running to find one read of a table
+   defensive and another not.
+
+   **Direction checking.** `ExecuteLifecycleWorkflow` took a target user id and
+   ran the workflow; every action is org-scoped, so a foreign user id matched
+   nothing — and the function still wrote an execution row reading `completed`
+   with every action listed under `actions_completed`. A lifecycle run that
+   reports success having touched no account is the failure this subsystem was
+   fixed for once already, so the target is now verified against the caller's
+   organization and a foreign one is refused before the record is written.
+
+   **The backfill narrows from the most specific attribution:** rules go to
+   their author's organization (`created_by` → `users.org_id`); a workflow
+   execution goes to the organization of the **user it acted on**, because the
+   row names that person and the log belongs where they do, falling back to the
+   workflow's organization only when that user is gone; a policy execution
+   follows its policy; anything still unattributed goes to the oldest
+   organization. One consequence for a multi-organization install, and the
+   CHANGELOG says it in these words: a rule that has been visible to every
+   administrator becomes visible to one, and an organization relying on a rule
+   another authored — which it was never entitled to — must author its own.
+
+   The seed was handled **before** the push this time, which is the batch-15
+   lesson working: `deployments/docker/seed.sql` inserts two starter lifecycle
+   policies, and they now name the default organization in the shape
+   `tenant_branding` and the v153 risk policies already use. Proven on Postgres
+   16: eleven cases across `internal/admin` and `internal/identity`, **all
+   eleven red** against the old code (the masked ones re-run in isolation to
+   prove it). `TestRLSBeltTables` **49/49**;
+   `TestComposeMigrateSeedProducesRLSInstall` green; the seed applies twice with
+   both rows in the default organization; v154 applied, rolled back to 153 and
+   re-applied.
+
+   **Observed, not changed:** `lifecycle_policies` carries `schedule` (defaulted
+   to `'daily'` on create) and `next_run_at`, and **nothing reads either** —
+   there is no scheduler for de-provisioning policies, and `next_run_at` is
+   never even written. A policy page that offers a schedule and runs on none of
+   it is this programme's own defect class, but building the runner is a feature
+   rather than a scoping fix, so it is recorded here.
 4. ✅ **OPA `deny` enforced** — *shipped.* — `internal/common/middleware/opa.go`: abort
    unless `Allow && len(Deny)==0`; `authz.rego:15-19`'s "any authenticated
    user may GET anything" removed; `policies/access_control.rego`
@@ -3960,7 +4050,7 @@ that holds it rather than by the commit that wrote it.
 |---|---|---|
 | 1 · journeys verified | ☐ | J1 ✅ the `smoke` and `first-run` jobs (P6.2); J2 ✅ `test/integration/{auth_flows,mfa_flow,passwordless}_test.go`; J3 ✅ `test/integration/enforced_posture_test.go` (P6.1); ☐ **J6 has no automated proof** — `e2e/access-reviews-flow.spec.ts` is still on the `hold` side of `e2e/suite.txt`; ☐ **J7 needs a leaver integration case**; J4/J5/J8 stay scripted operator drills (`tools/darkprobe`, `make dr-game-day`) to be filed under `docs/evidence/` (P8.4) |
 | 2 · enforced posture, legacy login gone | ◐ | code ✅ — the server-rendered login is deleted and `internal/oauth/routes_legacy_login_test.go` fails if any of it returns (P6.1); ops ☐ — rollout Task 16 is the operator's, on a live deployment |
-| 3 · every control enforces | ◐ | P5.1–5.11 ✅ (tenant isolation, the inverted orgscope lint, OPA `deny`, ABAC at both PEPs, the honest Apply/Remediate, SMS, multi-IdP, the fail-closed gate, `ValidateProduction`, the faked measurements); ◐ the P5.3b register programme — batch 1 (v140) belted fifteen tables and fixed `email_branding`'s cross-tenant read *and* write; batch 2 (v141) scoped the compliance record and fixed an archive worker that was silently producing empty archives; batches 4–10 (v142–v148) took the unified audit stream, the sign-in tables, the SAML surface, the password-substitute credentials, the four second factors the belt had skipped, the breach response record — where a containment reported success while quarantining nobody — the temporary vendor access surface, where v71's written-down reason for skipping the belt had expired three batches earlier, the legal holds — the first batch whose defect destroys rather than discloses, since releasing a hold is what lets the retention sweep delete the recording — the remote support sessions, whose list ran with no `WHERE` clause at all over a nullable tenant column the belt would have hidden rather than scoped, and the PAM broker's connection registry — where the row that decides which vault credential is injected carried no tenant, so another tenant's route id bought a live session onto their machine with their password, and the four-eyes gates could not help because both are satisfiable inside the caller's own tenant — delegated administration, read by the enforcement point itself under a deliberate bypass with a tenant-scoping comment copied from the query above it and a cache that handed one person's delegation to everyone sharing their roles, and the login risk policies, where one tenant's row could replace every tenant's allowed second factors or deny every login outright; **49** still ride `needsScoping`/`needsBelt` waivers |
+| 3 · every control enforces | ◐ | P5.1–5.11 ✅ (tenant isolation, the inverted orgscope lint, OPA `deny`, ABAC at both PEPs, the honest Apply/Remediate, SMS, multi-IdP, the fail-closed gate, `ValidateProduction`, the faked measurements); ◐ the P5.3b register programme — batch 1 (v140) belted fifteen tables and fixed `email_branding`'s cross-tenant read *and* write; batch 2 (v141) scoped the compliance record and fixed an archive worker that was silently producing empty archives; batches 4–10 (v142–v148) took the unified audit stream, the sign-in tables, the SAML surface, the password-substitute credentials, the four second factors the belt had skipped, the breach response record — where a containment reported success while quarantining nobody — the temporary vendor access surface, where v71's written-down reason for skipping the belt had expired three batches earlier, the legal holds — the first batch whose defect destroys rather than discloses, since releasing a hold is what lets the retention sweep delete the recording — the remote support sessions, whose list ran with no `WHERE` clause at all over a nullable tenant column the belt would have hidden rather than scoped, and the PAM broker's connection registry — where the row that decides which vault credential is injected carried no tenant, so another tenant's route id bought a live session onto their machine with their password, and the four-eyes gates could not help because both are satisfiable inside the caller's own tenant — delegated administration, read by the enforcement point itself under a deliberate bypass with a tenant-scoping comment copied from the query above it and a cache that handed one person's delegation to everyone sharing their roles, and the login risk policies, where one tenant's row could replace every tenant's allowed second factors or deny every login outright, and the joiner/mover/leaver automation, where every action the rules take was already scoped but the rules themselves were not, so another tenant could rewrite a policy labelled "disable after 90 days" into "delete after 0" and leave its owner running it; **45** still ride `needsScoping`/`needsBelt` waivers |
 | 4 · first run / first login / four pillars from the docs | ✅ | first run ✅ the `smoke` and `first-run` jobs (P6.2); first login ✅ one authoritative credential in `GETTING-STARTED.md`, with the `USER_GUIDE.md` and `CONTRIBUTING.md` copies pointing at it rather than repeating it (P8.1); four pillars ✅ `guide/governance.md` was the missing one (P8.1) |
 | 5 · one story + auditor artifacts | ✅ | threat model and control mapping exist; docs sweep 3 ✅ and the docs-drift guard ✅ (`check-docs-drift.sh`, enforced in CI, so a document cannot cite a path that is not there); `docs/evidence/` ✅ (P8.4) |
 | 6 · releases current, signed, Helm proven | ◐ | signing ✅ `release.yml` (cosign) and, since P7.5, an Android artifact whose name tracks the key that signed it; Helm ✅ the `kind` install job (P6.4); versions ✅ `VERSION` + `check-version-sync.sh` (P8.3); CHANGELOG ✅ every release attributed from the commit that wrote its entry, 61 compare links that resolve (P8.2); ☐ v1.34.0 is not cut — the maintainer's |

@@ -139,10 +139,18 @@ ON CONFLICT (id) DO NOTHING;
 -- (internal/admin/ispm.go, postureCheckDefs / ensureDefaultRules). The old seed
 -- listed ten rules of which six had no check behind them; those are gone with it.
 
--- Lifecycle policies
-INSERT INTO lifecycle_policies (id, name, description, policy_type, conditions, actions, enabled, schedule) VALUES
-('d0000000-0000-0000-0000-000000000001', 'Stale Account Auto-Disable', 'Automatically disable accounts that have not logged in for 90 days', 'stale_account_disable', '{"inactive_days": 90}'::jsonb, '{"action": "disable", "notify_user": true}'::jsonb, false, 'daily'),
-('d0000000-0000-0000-0000-000000000002', 'Disabled Account Cleanup', 'Delete accounts that have been disabled for 180 days', 'disabled_account_cleanup', '{"disabled_days": 180}'::jsonb, '{"action": "delete", "notify_admin": true}'::jsonb, false, 'weekly')
+-- Lifecycle policies. Per-tenant since migration v154 (org_id NOT NULL, FORCE
+-- RLS), so these name the default organization rather than belonging to none:
+-- they are starter rules for that organization, and another organization
+-- authors its own. Both ship disabled -- one of them deletes accounts.
+INSERT INTO lifecycle_policies (id, org_id, name, description, policy_type, conditions, actions, enabled, schedule)
+SELECT v.id::uuid, o.id, v.name, v.description, v.policy_type, v.conditions::jsonb, v.actions::jsonb, false, v.schedule
+FROM organizations o
+CROSS JOIN (VALUES
+  ('d0000000-0000-0000-0000-000000000001', 'Stale Account Auto-Disable', 'Automatically disable accounts that have not logged in for 90 days', 'stale_account_disable', '{"inactive_days": 90}', '{"action": "disable", "notify_user": true}', 'daily'),
+  ('d0000000-0000-0000-0000-000000000002', 'Disabled Account Cleanup', 'Delete accounts that have been disabled for 180 days', 'disabled_account_cleanup', '{"disabled_days": 180}', '{"action": "delete", "notify_admin": true}', 'weekly')
+) AS v(id, name, description, policy_type, conditions, actions, schedule)
+WHERE o.slug = 'default'
 ON CONFLICT (id) DO NOTHING;
 
 -- Tenant branding (default org)

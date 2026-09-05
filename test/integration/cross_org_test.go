@@ -623,6 +623,36 @@ func TestRLSBeltTables(t *testing.T) {
 			(name, enabled, priority, conditions, actions, org_id)
 			VALUES ('tbelt-risk-` + suffix + `', true, 1, '{"risk_score_min": 0}'::jsonb,
 				'{"require_mfa": true}'::jsonb, $1)`},
+
+		// v154 — the joiner/mover/leaver automation. Two rules and two logs.
+		// Every action these rules take was already scoped; the rules were not,
+		// so the belt here guards the thing that AIMS the deletion rather than
+		// the deletion itself. The logs carry usernames and the reason each
+		// account was acted on, which makes them personal data and not status.
+		{"lifecycle_workflows", `INSERT INTO lifecycle_workflows
+			(name, event_type, actions, org_id)
+			VALUES ('tbelt-wf-` + suffix + `', 'joiner', '[]'::jsonb, $1)`},
+
+		{"lifecycle_policies", `INSERT INTO lifecycle_policies
+			(name, policy_type, conditions, actions, org_id)
+			VALUES ('tbelt-lcp-` + suffix + `', 'stale_account_disable',
+				'{"inactive_days": 90}'::jsonb, '{"action": "disable"}'::jsonb, $1)`},
+
+		{"lifecycle_executions", `WITH w AS (
+			INSERT INTO lifecycle_workflows (name, event_type, actions, org_id)
+			VALUES ('tbelt-wfx-` + suffix + `', 'leaver', '[]'::jsonb, $1) RETURNING id),
+			u AS (
+			INSERT INTO users (org_id, username, email, enabled)
+			VALUES ($1,'tbelt-lce-` + suffix + `','tbelt-lce-` + suffix + `@example.test',true) RETURNING id)
+			INSERT INTO lifecycle_executions (workflow_id, user_id, trigger_type, status, org_id)
+			SELECT w.id, u.id, 'manual', 'completed', $1 FROM w, u`},
+
+		{"lifecycle_policy_executions", `WITH p AS (
+			INSERT INTO lifecycle_policies (name, policy_type, conditions, actions, org_id)
+			VALUES ('tbelt-lcpx-` + suffix + `', 'stale_account_disable',
+				'{"inactive_days": 90}'::jsonb, '{"action": "disable"}'::jsonb, $1) RETURNING id)
+			INSERT INTO lifecycle_policy_executions (policy_id, status, users_scanned, org_id)
+			SELECT p.id, 'completed', 0, $1 FROM p`},
 	}
 
 	// One list, not two: the role is granted exactly the tables the cases probe.

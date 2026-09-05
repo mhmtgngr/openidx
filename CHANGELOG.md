@@ -21,6 +21,50 @@ to a spec that describes an eighth of a surface, a documented endpoint that
   the posture score was neither one tenant's nor the install's. All now carry
   `org_id` under FORCE RLS, with the install-wide unique keys re-scoped and an
   isolation test per handler file.
+- **A second organization could re-aim the rule that disables and deletes
+  accounts** (migration v154). Joiner/mover/leaver automation is two kinds of
+  rule — a workflow that runs on a person's arrival or departure, and a
+  de-provisioning policy that sweeps for stale, disabled or orphaned accounts —
+  plus a log of what each run did. Between them the actions available are: add
+  or remove a role, add or remove a group membership, revoke every session,
+  force a password change, disable the account, and delete the account.
+
+  Everything those rules **do** was already confined to the organization the
+  rule was run in. What the rules **were** belonged to nobody. Any
+  administrator could list every organization's rules, open one, and change
+  both what it looks for and what it does. A policy named "Stale Account
+  Auto-Disable — 90 days" could be turned into "delete anything idle for zero
+  days", which is every account, and handed back unchanged in name. Its owner
+  then runs the rule they have always run, on their own directory, and the
+  confinement of the action is no help at all: the accounts destroyed are
+  theirs. The same reach allowed deleting another organization's offboarding
+  rule outright — after which nothing on their console says the control that
+  used to disable departing staff has stopped existing.
+
+  The run logs were readable across organizations too, and they are not
+  status: each entry names every account the run touched, the action taken
+  against it, and the reason it was selected.
+
+  All four record types now belong to an organization, and every listing,
+  view, edit, deletion and run is limited to the caller's own.
+
+  **Operators of installations with more than one organization should review
+  their lifecycle rules after upgrading.** Rules are assigned to the
+  organization of whoever created them; run logs follow the account they acted
+  on; anything the upgrade cannot attribute goes to the oldest organization. A
+  rule that every administrator could see will now be visible to one. If a
+  second organization had been relying on a rule the first authored — which it
+  was never entitled to — it needs its own.
+
+  Fixed alongside it: a completed policy run was invisible in its own history.
+  The run record leaves the error field empty when nothing went wrong, and the
+  reader could not cope with an empty value, so it skipped the row silently —
+  an administrator opening the history of a policy that had just disabled fifty
+  accounts saw an empty list. The same fault could hide a whole rule from the
+  policy list. Both readers now handle the empty values, and a skipped row is
+  logged instead of disappearing. And running a workflow against an account in
+  another organization is now refused outright rather than recorded as
+  completed work that never happened.
 - **One organization's sign-in rule could weaken the second factor for every
   organization** (migration v153). A risk policy is a rule the sign-in path
   consults: when this condition holds, ask for a second factor, ask for a

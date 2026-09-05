@@ -6036,6 +6036,11 @@ type LifecycleExecution struct {
 
 // CreateLifecycleWorkflow inserts a new lifecycle workflow into the database
 func (s *Service) CreateLifecycleWorkflow(ctx context.Context, wf *LifecycleWorkflow) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	wf.ID = uuid.New().String()
 	wf.CreatedAt = time.Now()
 	wf.UpdatedAt = time.Now()
@@ -6051,11 +6056,11 @@ func (s *Service) CreateLifecycleWorkflow(ctx context.Context, wf *LifecycleWork
 	}
 
 	_, err = s.db.Pool.Exec(ctx,
-		`INSERT INTO lifecycle_workflows (id, name, description, event_type, trigger_type, actions, conditions, require_approval, approval_policy_id, enabled, created_by, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+		`INSERT INTO lifecycle_workflows (id, name, description, event_type, trigger_type, actions, conditions, require_approval, approval_policy_id, enabled, created_by, created_at, updated_at, org_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
 		wf.ID, wf.Name, wf.Description, wf.EventType, wf.TriggerType,
 		actionsJSON, conditionsJSON, wf.RequireApproval, wf.ApprovalPolicyID,
-		wf.Enabled, wf.CreatedBy, wf.CreatedAt, wf.UpdatedAt,
+		wf.Enabled, wf.CreatedBy, wf.CreatedAt, wf.UpdatedAt, org.ID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create lifecycle workflow: %w", err)
@@ -6065,24 +6070,28 @@ func (s *Service) CreateLifecycleWorkflow(ctx context.Context, wf *LifecycleWork
 
 // ListLifecycleWorkflows returns paginated lifecycle workflows with optional event_type filter
 func (s *Service) ListLifecycleWorkflows(ctx context.Context, offset, limit int, eventType string) ([]LifecycleWorkflow, int, error) {
-	countQuery := "SELECT COUNT(*) FROM lifecycle_workflows"
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	countQuery := "SELECT COUNT(*) FROM lifecycle_workflows WHERE org_id = $1"
 	listQuery := `SELECT id, name, description, event_type, trigger_type, actions, conditions,
 		require_approval, approval_policy_id, enabled, created_by, created_at, updated_at
-		FROM lifecycle_workflows`
+		FROM lifecycle_workflows WHERE org_id = $1`
 
-	var args []interface{}
-	argIdx := 1
+	args := []interface{}{org.ID}
+	argIdx := 2
 
 	if eventType != "" {
-		countQuery += fmt.Sprintf(" WHERE event_type = $%d", argIdx)
-		listQuery += fmt.Sprintf(" WHERE event_type = $%d", argIdx)
+		countQuery += fmt.Sprintf(" AND event_type = $%d", argIdx)
+		listQuery += fmt.Sprintf(" AND event_type = $%d", argIdx)
 		args = append(args, eventType)
 		argIdx++
 	}
 
 	var total int
-	err := s.db.Pool.QueryRow(ctx, countQuery, args...).Scan(&total)
-	if err != nil {
+	if err := s.db.Pool.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("failed to count lifecycle workflows: %w", err)
 	}
 
@@ -6132,13 +6141,18 @@ func (s *Service) ListLifecycleWorkflows(ctx context.Context, offset, limit int,
 
 // GetLifecycleWorkflow returns a single lifecycle workflow by ID
 func (s *Service) GetLifecycleWorkflow(ctx context.Context, id string) (*LifecycleWorkflow, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	var wf LifecycleWorkflow
 	var actionsBytes, conditionsBytes []byte
 
-	err := s.db.Pool.QueryRow(ctx,
+	err = s.db.Pool.QueryRow(ctx,
 		`SELECT id, name, description, event_type, trigger_type, actions, conditions,
 			require_approval, approval_policy_id, enabled, created_by, created_at, updated_at
-		 FROM lifecycle_workflows WHERE id = $1`, id,
+		 FROM lifecycle_workflows WHERE id = $1 AND org_id = $2`, id, org.ID,
 	).Scan(
 		&wf.ID, &wf.Name, &wf.Description, &wf.EventType, &wf.TriggerType,
 		&actionsBytes, &conditionsBytes, &wf.RequireApproval, &wf.ApprovalPolicyID,
@@ -6164,6 +6178,11 @@ func (s *Service) GetLifecycleWorkflow(ctx context.Context, id string) (*Lifecyc
 
 // UpdateLifecycleWorkflow updates an existing lifecycle workflow
 func (s *Service) UpdateLifecycleWorkflow(ctx context.Context, wf *LifecycleWorkflow) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	wf.UpdatedAt = time.Now()
 
 	actionsJSON, err := json.Marshal(wf.Actions)
@@ -6176,15 +6195,18 @@ func (s *Service) UpdateLifecycleWorkflow(ctx context.Context, wf *LifecycleWork
 		return fmt.Errorf("failed to marshal conditions: %w", err)
 	}
 
+	// `actions` is one of the fields set here, and an action is what disables
+	// or strips an account. Without the org term another tenant could re-point
+	// this rule and leave its owner running it.
 	result, err := s.db.Pool.Exec(ctx,
 		`UPDATE lifecycle_workflows
 		 SET name = $1, description = $2, event_type = $3, trigger_type = $4,
 			 actions = $5, conditions = $6, require_approval = $7, approval_policy_id = $8,
 			 enabled = $9, updated_at = $10
-		 WHERE id = $11`,
+		 WHERE id = $11 AND org_id = $12`,
 		wf.Name, wf.Description, wf.EventType, wf.TriggerType,
 		actionsJSON, conditionsJSON, wf.RequireApproval, wf.ApprovalPolicyID,
-		wf.Enabled, wf.UpdatedAt, wf.ID,
+		wf.Enabled, wf.UpdatedAt, wf.ID, org.ID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update lifecycle workflow: %w", err)
@@ -6199,7 +6221,13 @@ func (s *Service) UpdateLifecycleWorkflow(ctx context.Context, wf *LifecycleWork
 
 // DeleteLifecycleWorkflow deletes a lifecycle workflow by ID
 func (s *Service) DeleteLifecycleWorkflow(ctx context.Context, id string) error {
-	result, err := s.db.Pool.Exec(ctx, "DELETE FROM lifecycle_workflows WHERE id = $1", id)
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
+	result, err := s.db.Pool.Exec(ctx,
+		"DELETE FROM lifecycle_workflows WHERE id = $1 AND org_id = $2", id, org.ID)
 	if err != nil {
 		return fmt.Errorf("failed to delete lifecycle workflow: %w", err)
 	}
@@ -6213,6 +6241,11 @@ func (s *Service) DeleteLifecycleWorkflow(ctx context.Context, id string) error 
 
 // ExecuteLifecycleWorkflow runs a workflow against a target user
 func (s *Service) ExecuteLifecycleWorkflow(ctx context.Context, workflowID, userID, triggeredBy string) (*LifecycleExecution, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	wf, err := s.GetLifecycleWorkflow(ctx, workflowID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get workflow: %w", err)
@@ -6220,6 +6253,19 @@ func (s *Service) ExecuteLifecycleWorkflow(ctx context.Context, workflowID, user
 
 	if !wf.Enabled {
 		return nil, fmt.Errorf("workflow is disabled")
+	}
+
+	// Refuse a target outside the caller's tenant rather than running against
+	// it. Every action below already carries `AND org_id = $N`, so a foreign
+	// user id would match nothing and affect nobody -- and this function would
+	// then write an execution row saying "completed", with every action listed
+	// under actions_completed. A joiner/mover/leaver run that reports success
+	// having touched no account is the failure mode this subsystem was fixed
+	// for once already; silently is the wrong way for it to fail.
+	var one int
+	if err := s.db.Pool.QueryRow(ctx,
+		"SELECT 1 FROM users WHERE id = $1 AND org_id = $2", userID, org.ID).Scan(&one); err != nil {
+		return nil, fmt.Errorf("target user is not in this organization")
 	}
 
 	exec := &LifecycleExecution{
@@ -6237,10 +6283,10 @@ func (s *Service) ExecuteLifecycleWorkflow(ctx context.Context, workflowID, user
 
 	// Insert the initial execution record
 	_, err = s.db.Pool.Exec(ctx,
-		`INSERT INTO lifecycle_executions (id, workflow_id, user_id, triggered_by, trigger_type, status, actions_completed, actions_failed, error, started_at, completed_at, created_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, '[]'::jsonb, '[]'::jsonb, NULL, $7, NULL, $8)`,
+		`INSERT INTO lifecycle_executions (id, workflow_id, user_id, triggered_by, trigger_type, status, actions_completed, actions_failed, error, started_at, completed_at, created_at, org_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, '[]'::jsonb, '[]'::jsonb, NULL, $7, NULL, $8, $9)`,
 		exec.ID, exec.WorkflowID, exec.UserID, exec.TriggeredBy, exec.TriggerType,
-		exec.Status, exec.StartedAt, exec.CreatedAt,
+		exec.Status, exec.StartedAt, exec.CreatedAt, org.ID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create execution record: %w", err)
@@ -6299,8 +6345,8 @@ func (s *Service) ExecuteLifecycleWorkflow(ctx context.Context, workflowID, user
 	_, err = s.db.Pool.Exec(ctx,
 		`UPDATE lifecycle_executions
 		 SET status = $1, actions_completed = $2, actions_failed = $3, error = $4, completed_at = $5
-		 WHERE id = $6`,
-		exec.Status, completedJSON, failedJSON, errPtr, exec.CompletedAt, exec.ID,
+		 WHERE id = $6 AND org_id = $7`,
+		exec.Status, completedJSON, failedJSON, errPtr, exec.CompletedAt, exec.ID, org.ID,
 	)
 	if err != nil {
 		s.logger.Error("Failed to update execution record", zap.String("execution_id", exec.ID), zap.Error(err))
@@ -6387,14 +6433,21 @@ func (s *Service) executeLifecycleAction(ctx context.Context, userID string, act
 
 // ListLifecycleExecutions returns paginated lifecycle executions with optional filters
 func (s *Service) ListLifecycleExecutions(ctx context.Context, offset, limit int, workflowID, userID string) ([]LifecycleExecution, int, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+
 	countQuery := "SELECT COUNT(*) FROM lifecycle_executions"
 	listQuery := `SELECT id, workflow_id, user_id, triggered_by, trigger_type, status,
 		actions_completed, actions_failed, error, started_at, completed_at, created_at
 		FROM lifecycle_executions`
 
-	var conditions []string
-	var args []interface{}
-	argIdx := 1
+	// The org term is not optional the way the others are: an execution row
+	// names a user and records what was done to their account.
+	conditions := []string{"org_id = $1"}
+	args := []interface{}{org.ID}
+	argIdx := 2
 
 	if workflowID != "" {
 		conditions = append(conditions, fmt.Sprintf("workflow_id = $%d", argIdx))
@@ -6407,15 +6460,12 @@ func (s *Service) ListLifecycleExecutions(ctx context.Context, offset, limit int
 		argIdx++
 	}
 
-	if len(conditions) > 0 {
-		whereClause := " WHERE " + strings.Join(conditions, " AND ")
-		countQuery += whereClause
-		listQuery += whereClause
-	}
+	whereClause := " WHERE " + strings.Join(conditions, " AND ")
+	countQuery += whereClause
+	listQuery += whereClause
 
 	var total int
-	err := s.db.Pool.QueryRow(ctx, countQuery, args...).Scan(&total)
-	if err != nil {
+	if err := s.db.Pool.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("failed to count lifecycle executions: %w", err)
 	}
 
@@ -6465,13 +6515,18 @@ func (s *Service) ListLifecycleExecutions(ctx context.Context, offset, limit int
 
 // GetLifecycleExecution returns a single lifecycle execution by ID
 func (s *Service) GetLifecycleExecution(ctx context.Context, id string) (*LifecycleExecution, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	var ex LifecycleExecution
 	var completedBytes, failedBytes []byte
 
-	err := s.db.Pool.QueryRow(ctx,
+	err = s.db.Pool.QueryRow(ctx,
 		`SELECT id, workflow_id, user_id, triggered_by, trigger_type, status,
 			actions_completed, actions_failed, error, started_at, completed_at, created_at
-		 FROM lifecycle_executions WHERE id = $1`, id,
+		 FROM lifecycle_executions WHERE id = $1 AND org_id = $2`, id, org.ID,
 	).Scan(
 		&ex.ID, &ex.WorkflowID, &ex.UserID, &ex.TriggeredBy, &ex.TriggerType,
 		&ex.Status, &completedBytes, &failedBytes, &ex.Error,

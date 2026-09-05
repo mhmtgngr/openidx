@@ -88,13 +88,9 @@ var needsScoping = map[string]string{
 	"custom_claims_mappings": "per-application claim mappings",
 
 	// Lifecycle, governance and delegation.
-	"lifecycle_policies":          "joiner/mover/leaver policies",
-	"lifecycle_workflows":         "lifecycle workflow definitions",
-	"lifecycle_executions":        "per-user lifecycle runs",
-	"lifecycle_policy_executions": "policy run history (v55)",
-	"entitlement_metadata":        "risk level and owner per entitlement",
-	"kiosk_policies":              "kiosk lockdown policies (v44)",
-	"kiosk_policy_assignments":    "kiosk policy targets (v44)",
+	"entitlement_metadata":     "risk level and owner per entitlement",
+	"kiosk_policies":           "kiosk lockdown policies (v44)",
+	"kiosk_policy_assignments": "kiosk policy targets (v44)",
 
 	// Agent fleet — the devices enrolled by a tenant's users.
 	"enrolled_agents":         "enrolled devices with tokens and compliance state (v43)",
