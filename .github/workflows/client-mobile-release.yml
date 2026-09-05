@@ -1,11 +1,27 @@
 name: client-mobile-release
 
-# Publishes an installable Android APK of the Flutter client and attaches it to
-# the GitHub Release for each version tag, giving a stable, login-free download
-# URL (github.com/<repo>/releases/latest) instead of a login-gated, expiring
-# Actions artifact. The APK is release-mode (Flutter's template signs the release
-# build with the debug keystore, so it installs via sideload) — good for internal
-# distribution; a Play-Store build still needs a real signing key + store upload.
+# Publishes the mobile client's release artifacts and attaches them to the
+# GitHub Release for each version tag, giving a stable, login-free download URL
+# (github.com/<repo>/releases/latest) instead of a login-gated, expiring Actions
+# artifact.
+#
+# Signing, and why the filename carries it. Flutter's generated template signs
+# the release build with the *debug* keystore, so an APK built without further
+# work installs via sideload and is rejected by the Play Store — and every
+# device that ever installed it must uninstall before a properly signed build
+# can replace it, because the signing key changed. Publishing that under the
+# plain name `openidx-agent-android-<tag>.apk` would say "release build" and
+# mean "debug key". So: when ANDROID_KEYSTORE_BASE64 and its passwords are
+# present the build is signed with the upload key and keeps the plain name;
+# when they are not, the same APK ships as
+# `openidx-agent-android-<tag>-debugsigned.apk` and the release body says what
+# that means. scripts/check-release-signing.sh fails the build if that pairing
+# is ever broken.
+#
+# iOS ships an unsigned .ipa. Signing needs an Apple Developer account, a
+# distribution certificate and a provisioning profile — maintainer credentials
+# this repository does not carry — so CI produces the archive and a maintainer
+# re-signs it. An unsigned artifact that says so beats no artifact at all.
 #
 # Trigger is tag-only (no paths filter, which would otherwise skip tag pushes
 # whose commit didn't touch client/**). Also runnable on demand.
@@ -80,19 +96,164 @@ jobs:
         working-directory: client
         run: flutter pub get
 
+      # Write the upload keystore and point the generated Gradle project at it.
+      # `flutter create` above regenerates android/, so this has to run after it
+      # and cannot be committed. Both DSL flavours are handled because the
+      # template switched from Groovy to Kotlin mid-stable; neither matching is
+      # a hard failure the build must not silently skip, so the step says which
+      # it patched and the signed/unsigned decision is a single output.
+      - name: Configure Android release signing
+        id: signing
+        working-directory: client
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${KEYSTORE_B64:-}" ]; then
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=Unsigned release::ANDROID_KEYSTORE_BASE64 is not set; the APK will carry Flutter's debug key and ships as -debugsigned."
+            exit 0
+          fi
+          for v in KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            if [ -z "${!v:-}" ]; then
+              echo "::error title=Incomplete signing config::ANDROID_KEYSTORE_BASE64 is set but $v is not. Set all four or none."
+              exit 1
+            fi
+          done
+
+          echo "$KEYSTORE_B64" | base64 -d > android/app/upload-keystore.jks
+          cat > android/key.properties <<EOF
+          storePassword=$KEYSTORE_PASSWORD
+          keyPassword=$KEY_PASSWORD
+          keyAlias=$KEY_ALIAS
+          storeFile=upload-keystore.jks
+          EOF
+
+          if [ -f android/app/build.gradle.kts ]; then
+            python3 - <<'PATCH'
+          import re
+          p = "android/app/build.gradle.kts"
+          s = open(p).read()
+          preamble = '''import java.util.Properties
+          import java.io.FileInputStream
+
+          val keystoreProperties = Properties()
+          val keystorePropertiesFile = rootProject.file("key.properties")
+          if (keystorePropertiesFile.exists()) {
+              keystoreProperties.load(FileInputStream(keystorePropertiesFile))
+          }
+
+          '''
+          s = preamble + s
+          block = '''    signingConfigs {
+                  create("release") {
+                      keyAlias = keystoreProperties["keyAlias"] as String
+                      keyPassword = keystoreProperties["keyPassword"] as String
+                      storeFile = file(keystoreProperties["storeFile"] as String)
+                      storePassword = keystoreProperties["storePassword"] as String
+                  }
+              }
+          '''
+          s = re.sub(r'(?m)^(android \{\n)', r'\1' + block, s, count=1)
+          s2 = s.replace('signingConfig = signingConfigs.getByName("debug")',
+                         'signingConfig = signingConfigs.getByName("release")')
+          assert s2 != s, "release buildType did not name the debug signingConfig"
+          open(p, "w").write(s2)
+          print("patched build.gradle.kts")
+          PATCH
+          elif [ -f android/app/build.gradle ]; then
+            python3 - <<'PATCH'
+          import re
+          p = "android/app/build.gradle"
+          s = open(p).read()
+          preamble = '''def keystoreProperties = new Properties()
+          def keystorePropertiesFile = rootProject.file('key.properties')
+          if (keystorePropertiesFile.exists()) {
+              keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+          }
+
+          '''
+          s = preamble + s
+          block = '''    signingConfigs {
+                  release {
+                      keyAlias keystoreProperties['keyAlias']
+                      keyPassword keystoreProperties['keyPassword']
+                      storeFile file(keystoreProperties['storeFile'])
+                      storePassword keystoreProperties['storePassword']
+                  }
+              }
+          '''
+          s = re.sub(r'(?m)^(android \{\n)', r'\1' + block, s, count=1)
+          s2 = s.replace('signingConfig signingConfigs.debug',
+                         'signingConfig signingConfigs.release')
+          assert s2 != s, "release buildType did not name the debug signingConfig"
+          open(p, "w").write(s2)
+          print("patched build.gradle")
+          PATCH
+          else
+            echo "::error title=No Gradle build file::neither android/app/build.gradle.kts nor build.gradle exists after flutter create."
+            exit 1
+          fi
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+
       - name: Build release APK
         working-directory: client
         run: flutter build apk --release
 
-      - name: Rename APK with version
+      - name: Verify the APK is signed with the upload key
+        if: steps.signing.outputs.signed == 'true'
+        working-directory: client
         run: |
+          set -euo pipefail
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -1)"
+          "$APKSIGNER" verify --print-certs build/app/outputs/flutter-apk/app-release.apk > /tmp/certs.txt
+          cat /tmp/certs.txt
+          # Flutter's debug keystore always carries this DN. Seeing it here means
+          # the signing patch silently did nothing.
+          if grep -q "CN=Android Debug" /tmp/certs.txt; then
+            echo "::error title=Debug-signed release::the APK is signed with the Android debug key despite a keystore being configured."
+            exit 1
+          fi
+
+      - name: Name the APK for what it is
+        id: apk
+        run: |
+          set -euo pipefail
           mkdir -p dist
+          if [ "${{ steps.signing.outputs.signed }}" = "true" ]; then
+            SUFFIX=""
+          else
+            SUFFIX="-debugsigned"
+          fi
           cp client/build/app/outputs/flutter-apk/app-release.apk \
-             "dist/openidx-agent-android-${GITHUB_REF_NAME}.apk"
+             "dist/openidx-agent-android-${GITHUB_REF_NAME}${SUFFIX}.apk"
           # Also publish a stable, version-less name for "latest" links.
           cp client/build/app/outputs/flutter-apk/app-release.apk \
-             dist/openidx-agent-android.apk
+             "dist/openidx-agent-android${SUFFIX}.apk"
           ( cd dist && sha256sum *.apk > SHA256SUMS.txt )
+          echo "suffix=${SUFFIX}" >> "$GITHUB_OUTPUT"
+
+          # The release body says which key signed it. Written here rather than
+          # inline in the `body:` expression because the sentence contains a
+          # colon-space, which YAML reads as a mapping inside a plain scalar.
+          {
+            echo "note<<RELEASE_NOTE_EOF"
+            if [ -z "$SUFFIX" ]; then
+              echo "Android APK signed with the OpenIDX upload key."
+            else
+              cat <<'UNSIGNED'
+          > **The Android APK is signed with Flutter's debug key** — that is what
+          > `-debugsigned` in the filename means. No upload keystore is configured
+          > in CI. It sideloads and it is not a Play Store build, and a device that
+          > installs it must uninstall before a properly signed build can replace
+          > it, because the signing key differs.
+          UNSIGNED
+            fi
+            echo "RELEASE_NOTE_EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Upload APK as a build artifact (fallback)
         uses: actions/upload-artifact@v4
@@ -105,6 +266,81 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/openidx-agent-android-${{ github.ref_name }}.apk
-            dist/openidx-agent-android.apk
+            dist/openidx-agent-android-${{ github.ref_name }}${{ steps.apk.outputs.suffix }}.apk
+            dist/openidx-agent-android${{ steps.apk.outputs.suffix }}.apk
             dist/SHA256SUMS.txt
+          append_body: true
+          body: ${{ steps.apk.outputs.note }}
+
+  # An unsigned iOS archive. Signing needs an Apple Developer account, a
+  # distribution certificate and a provisioning profile — none of which this
+  # repository carries — so CI builds the app and packages it, and a maintainer
+  # re-signs before any distribution. Shipping the archive is what turns "iOS
+  # builds in CI" from a claim into something a person can hold.
+  ios-release:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Install gomobile
+        run: |
+          go install golang.org/x/mobile/cmd/gomobile@v0.0.0-20250606033058-a2a15c67f36f
+          go install golang.org/x/mobile/cmd/gobind@v0.0.0-20250606033058-a2a15c67f36f
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: gomobile init
+        run: gomobile init
+
+      - name: Build Engine.xcframework (gomobile bind)
+        working-directory: agent
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/client/plugins/openidx_engine/ios/Frameworks"
+          gomobile bind -target=ios -ldflags=-checklinkname=0 \
+            -o "$GITHUB_WORKSPACE/client/plugins/openidx_engine/ios/Frameworks/Engine.xcframework" ./mobile
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Materialize platform runners
+        working-directory: client
+        run: flutter create --platforms=ios,android --project-name openidx_client .
+
+      - name: Resolve dependencies
+        working-directory: client
+        run: flutter pub get
+
+      - name: Build iOS (release, unsigned)
+        working-directory: client
+        run: flutter build ios --release --no-codesign
+
+      - name: Package the unsigned .ipa
+        run: |
+          set -euo pipefail
+          mkdir -p dist/Payload
+          cp -R client/build/ios/iphoneos/Runner.app dist/Payload/
+          ( cd dist && zip -qry "openidx-agent-ios-${GITHUB_REF_NAME}-unsigned.ipa" Payload && rm -rf Payload )
+          ( cd dist && shasum -a 256 *.ipa > SHA256SUMS-ios.txt )
+
+      - name: Upload the .ipa as a build artifact (fallback)
+        uses: actions/upload-artifact@v4
+        with:
+          name: openidx-ios-ipa-${{ github.ref_name }}
+          path: dist/*.ipa
+
+      - name: Attach the .ipa to the GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/openidx-agent-ios-${{ github.ref_name }}-unsigned.ipa
+            dist/SHA256SUMS-ios.txt
+          append_body: true
+          body: |
+            > **iOS `.ipa` is unsigned.** It cannot be installed directly. Re-sign
+            > it with an Apple distribution certificate and provisioning profile
+            > (`codesign` / `xcrun altool`) before TestFlight or App Store upload.

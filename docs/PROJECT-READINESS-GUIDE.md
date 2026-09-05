@@ -2683,10 +2683,70 @@ those tests found.
    `docs/mobile/firebase-fcm-setup.md` ("how to turn Firebase on") became
    `docs/mobile/push-mfa-delivery.md` (what ships, and what re-adding a
    provider would cost).
-   Still to do, with the Flutter work: release keystore from CI secrets,
-   backup-codes / passkeys / TOTP screens ported, iOS built as an artifact
-   until Apple credentials exist, and those three documents retargeted at
-   `client/` file paths rather than merely bannered.
+2. ✅ **P7.5 — the client's third login pipeline, and a "release" APK signed with
+   the debug key.**
+
+   **`client/lib/api/auth.dart` was a third way to log in.** 198 lines of
+   OAuth + PKCE with a passkey-first path and a browser fallback, two platform
+   seams (`passkeyAssertion`, `browserAuthorize`) left as stubs that throw, no
+   test, and `authServiceProvider` declared and never read — by anything,
+   including its own file. The app logs in through the Go engine
+   (`login_screen.dart` → `loginStart`, then `mobile/oauth_login_handler.dart`
+   completes it when the OS delivers `openidx://oauth-callback`), so passkeys
+   and MFA happen in the system browser against the server flow the console
+   uses. Deleted, with the provider and the stale `deep_links.dart` comment
+   that pointed at it. Two credential pipelines that can disagree is the hazard
+   this branch removed from the backend in P6.1; it was still in the client.
+
+   **The release APK was signed with Flutter's debug key** and published as
+   `openidx-agent-android-<tag>.apk`. That name says "release build" and means
+   "debug key": the Play Store rejects it, and every device that installs one
+   must uninstall before a properly signed build can replace it, because the
+   signing key changed. `client-mobile-release.yml` now decodes an upload
+   keystore from `ANDROID_KEYSTORE_BASE64` (plus password, alias, key password
+   — all four or the job fails, rather than quietly debug-signing), patches the
+   Gradle project `flutter create` generates (both the Groovy and Kotlin DSL
+   shapes; neither matching is a hard error), builds, and **verifies with
+   `apksigner` that the certificate is not `CN=Android Debug`** — because a
+   signing patch that silently no-ops would otherwise ship as if signed. When
+   no keystore is configured the same APK ships as
+   `…-<tag>-debugsigned.apk` and the release body says what that means.
+
+   `scripts/check-release-signing.sh` keeps the pairing: it fails if the
+   keystore secret is never read, if `apksigner` never runs, if the debug
+   certificate is not named, if the suffix disappears, if the suffix is
+   computed and then dropped from the attached asset names, or if an iOS
+   artifact is published without `unsigned` in its name.
+   `check-release-signing.test.sh` proves all six red against mutations of the
+   real workflow, and both run in the `github-config` job.
+
+   **iOS now ships an artifact.** CI built an unsigned debug iOS app and threw
+   it away; a release tag now builds `--release --no-codesign`, packages
+   `Payload/Runner.app` as `openidx-agent-ios-<tag>-unsigned.ipa` with a
+   checksum, and attaches it with a note saying it must be re-signed with an
+   Apple distribution certificate before TestFlight. An unsigned artifact that
+   says so beats a green "iOS builds in CI" nobody can hold.
+
+   **`docs/mobile-authenticator-developer-guide.md` is retargeted, not
+   bannered.** Its "Already complete and `tsc`-clean" table listed fifteen
+   `mobile/src/...` files with ✅ against each — for a tree deleted two commits
+   earlier. Every citation now points into `client/`, `agent/` or the backend;
+   §7 says the overlay is the engine's Ziti stack rather than a Swift/Kotlin
+   module with `dial()` returning `not_implemented`; §8 is the real release
+   matrix with the maintainer actions named. Two stale claims went with it: the
+   Phase-3 overlay described as "scaffolded — the one real code TODO" (it is
+   the engine's, and shipped), and §3's advice to prefer the native login
+   because `/oauth/authorize` "server-renders HTML a native app can't cleanly
+   intercept" — that page was deleted in P6.1.
+
+   A correction found while writing it: the base URL is not a compiled-in
+   constant or a settings field. `backendBaseUrlProvider` reads the engine's
+   `status.server_url`, so the HTTP journeys are empty until the device is
+   enrolled and then point at whatever deployment enrolled it.
+
+   Remaining for the maintainer, and only for the maintainer: the Android
+   upload keystore and the Apple signing material. Both are named in §8 with
+   the exact secrets and commands.
 
 ### P8 — Docs and the release
 
@@ -2860,17 +2920,24 @@ Call the project ready from the user's perspective when all of these hold:
    and the Helm path installs working or is not advertised.
 7. The §5 controls have run at least once on cadence with evidence.
 
-### 6.1 Scorecard (2026-09-04)
+### 6.1 Scorecard (2026-09-05)
+
+Rows move only when something in CI proves them; "what is missing" names the
+remaining work by its P-number, and a shipped item is cited by the job or test
+that holds it rather than by the commit that wrote it.
 
 | DoD item | State | What proves it, or what is missing |
 |---|---|---|
-| 1 · journeys verified | ☐ | J1 needs the smoke job (P6.2); J3 the enforced-posture integration case (P6.1); J7 a leaver integration case; J4/J5/J8 keep scripted operator drills (`tools/darkprobe`, `make dr-game-day`) filed under `docs/evidence/` (P8.4) |
-| 2 · enforced posture, legacy login gone | ☐ | code: P6.1 (Task 15 is unremoved code today, `internal/oauth/service.go` registers the routes unconditionally); ops: rollout Task 16 |
-| 3 · every control enforces | ☐ | P5 (the eleven items above); the tenant boundary itself is P5.1–5.3 + the P5.3b register programme |
-| 4 · first run / first login / four pillars from the docs | ☐ | smoke job (P6.2), `USER_GUIDE.md` credential (P8.1), IGA guide page (P8.1) |
-| 5 · one story + auditor artifacts | ☐ | threat model and control mapping exist; docs sweep 3 + drift guard (P8.1) |
-| 6 · releases current, signed, Helm proven | ☐ | CHANGELOG/pins (P8.2–3); v1.34.0 will be the first signed tag; `kind` install proof (P6.4) |
-| 7 · controls run with evidence | ☐ | §5.1 automated half in CI; §5.2/§5.3 operator-run; `docs/evidence/` (P8.4) |
+| 1 · journeys verified | ☐ | J1 ✅ the `smoke` and `first-run` jobs (P6.2); J2 ✅ `test/integration/{auth_flows,mfa_flow,passwordless}_test.go`; J3 ✅ `test/integration/enforced_posture_test.go` (P6.1); ☐ **J6 has no automated proof** — `e2e/access-reviews-flow.spec.ts` is still on the `hold` side of `e2e/suite.txt`; ☐ **J7 needs a leaver integration case**; J4/J5/J8 stay scripted operator drills (`tools/darkprobe`, `make dr-game-day`) to be filed under `docs/evidence/` (P8.4) |
+| 2 · enforced posture, legacy login gone | ◐ | code ✅ — the server-rendered login is deleted and `internal/oauth/routes_legacy_login_test.go` fails if any of it returns (P6.1); ops ☐ — rollout Task 16 is the operator's, on a live deployment |
+| 3 · every control enforces | ◐ | P5.1–5.11 ✅ (tenant isolation, the inverted orgscope lint, OPA `deny`, ABAC at both PEPs, the honest Apply/Remediate, SMS, multi-IdP, the fail-closed gate, `ValidateProduction`, the faked measurements); ☐ the P5.3b register programme — 95 tables still ride `needsScoping`/`needsBelt` waivers |
+| 4 · first run / first login / four pillars from the docs | ◐ | first run ✅ `smoke` + `first-run` jobs (P6.2); ☐ `USER_GUIDE.md:428` still prints a default credential and the site has no IGA guide page, so it is three pillars (P8.1) |
+| 5 · one story + auditor artifacts | ☐ | threat model and control mapping exist; docs sweep 3 + the docs-drift guard are P8.1 |
+| 6 · releases current, signed, Helm proven | ◐ | signing ✅ `release.yml` (cosign) and, since P7.5, an Android artifact whose name tracks the key that signed it; Helm ✅ the `kind` install job (P6.4); versions ✅ `VERSION` + `check-version-sync.sh` (P8.3); ☐ the CHANGELOG still carries 359 shipped lines under `[Unreleased]` (P8.2), and v1.34.0 is not cut |
+| 7 · controls run with evidence | ☐ | §5.1's automated half runs in CI; §5.2/§5.3 are operator-run; `docs/evidence/` does not exist yet (P8.4) |
+
+◐ = the engineering half is done and proven; what remains is either an operator
+action on a live deployment or a later phase in this programme.
 
 ---
 

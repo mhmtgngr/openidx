@@ -208,16 +208,26 @@ artifacts.
 
 ### Non-engine journeys (HTTP)
 
-Enroll / PAM / Ziti go through the engine. The remaining journeys (MFA,
-governance, notifications) talk to the backend gateway **directly** over HTTP,
-mirroring the React-Native app's `src/lib/api.ts`:
+Enroll / PAM / Ziti go through the engine, and **so does login**: the engine
+owns the OAuth session, and `lib/api/api_client.dart` sources its bearer token
+from it. The remaining journeys (MFA, governance, notifications) talk to the
+backend gateway directly over HTTP:
 
-- `lib/api/api_client.dart` — token-authed `dio` client; `Bearer` injection,
-  `X-Org-Slug`, single-flight refresh-on-401 via `/oauth/token`.
-- `lib/api/auth.dart` — PKCE via `/oauth/native/login-init`, then passkey
-  (`/oauth/passkey-begin`/`finish`) or a browser PKCE fallback; tokens in
-  `flutter_secure_storage`.
-- `lib/api/{mfa,governance,notifications}.dart` — the endpoint wrappers.
+- `lib/api/api_client.dart` — token-authed `dio` client; `Bearer` injection
+  from the engine, `X-Org-Slug`, single-flight refresh-on-401 via
+  `/oauth/token`.
+- `lib/api/{mfa,governance,notifications,access,portal,qr_login}.dart` — the
+  endpoint wrappers.
+
+There is no second login implementation in Dart. `lib/api/auth.dart` used to
+carry one — PKCE, passkey-first with a browser fallback — with its two platform
+seams left as stubs that throw, no test, and no caller: `authServiceProvider`
+was declared and never read. On mobile the engine hands the authorize URL to
+the system browser (`ui/screens/login_screen.dart`), so passkeys, MFA and
+step-up happen in the browser against the same server flow the console uses,
+and `mobile/oauth_login_handler.dart` completes the login when the OS delivers
+`openidx://oauth-callback`. Two credential pipelines is the hazard this project
+keeps removing, so the dead one is gone.
 
 ### Mobile UI + platform
 

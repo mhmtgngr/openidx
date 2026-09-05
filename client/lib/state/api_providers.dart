@@ -3,7 +3,6 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../api/access.dart';
 import '../api/api_client.dart';
-import '../api/auth.dart';
 import '../api/governance.dart';
 import '../api/mfa.dart';
 import '../api/notifications.dart';
@@ -49,13 +48,6 @@ final apiClientProvider = Provider<ApiClient>((ref) {
   );
   ref.onDispose(() {});
   return client;
-});
-
-final authServiceProvider = Provider<AuthService>((ref) {
-  return AuthService(
-    baseUrl: ref.watch(backendBaseUrlProvider),
-    tokens: ref.watch(tokenStoreProvider),
-  );
 });
 
 final mfaApiProvider =

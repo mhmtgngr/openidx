@@ -123,6 +123,10 @@ jobs:
         run: bash scripts/check-version-sync.test.sh
       - name: Every artifact declares the version in VERSION
         run: bash scripts/check-version-sync.sh --enforce
+      - name: Verify the release-signing guard can go red
+        run: bash scripts/check-release-signing.test.sh
+      - name: A release artifact must not claim a signature it lacks
+        run: bash scripts/check-release-signing.sh --enforce
 
   # The README's quick start is two commands, and nothing had ever run either
   # of them: generate-secrets.sh aborted on SIGPIPE, it omitted two variables
