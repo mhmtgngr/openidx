@@ -995,5 +995,12 @@ func allMigrations() []*Migration {
 			UpSQL:       hardwareTokenThrottleUp,
 			DownSQL:     hardwareTokenThrottleDown,
 		},
+		{
+			Version:     140,
+			Name:        "rls_belt_batch_1",
+			Description: "Extend the FORCE-RLS belt to fifteen org-scoped tables that drifted out of it: scheduled_reports, detailed_compliance_reports, audit_webhook_subscriptions, usage_metering_daily, email_branding, device_trust_settings, pam_active_checkouts, pam_checkout_authorizations, brokered_sessions, ssh_ca, sod_violations, privileged_accounts_discovered, entitlement_warehouse, upstream_pools and upstream_pool_members. Each carries org_id and each of its queries already names it, so the belt cannot change what any query returns — it stops a future query that forgets the predicate from crossing tenants silently. scheduled_reports, device_trust_settings, email_branding and usage_metering_daily also get org_id NOT NULL (oldest org for the first three, the zero UUID for unattributable metering rows), because a NULL org under a belt is an invisible row rather than a loudly wrong one. email_branding's handlers never read the caller's org at all and are fixed in the same commit; under this policy the old write would be refused by WITH CHECK.",
+			UpSQL:       rlsBeltBatch1Up,
+			DownSQL:     rlsBeltBatch1Down,
+		},
 	}
 }

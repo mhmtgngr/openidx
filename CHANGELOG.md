@@ -21,6 +21,17 @@ to a spec that describes an eighth of a surface, a documented endpoint that
   the posture score was neither one tenant's nor the install's. All now carry
   `org_id` under FORCE RLS, with the install-wide unique keys re-scoped and an
   isolation test per handler file.
+- **The FORCE-RLS belt extended to fifteen more tables** (migration v140):
+  `scheduled_reports`, `detailed_compliance_reports`,
+  `audit_webhook_subscriptions`, `usage_metering_daily`, `email_branding`,
+  `device_trust_settings`, `pam_active_checkouts`,
+  `pam_checkout_authorizations`, `brokered_sessions`, `ssh_ca`,
+  `sod_violations`, `privileged_accounts_discovered`, `entitlement_warehouse`,
+  `upstream_pools` and `upstream_pool_members` carried `org_id` for as long as
+  nine migrations with nothing underneath it, so a single query that forgot its
+  predicate would have crossed tenants silently. Four also get `org_id NOT
+  NULL`: under a belt, a NULL org is a row nobody can see rather than a row
+  that is loudly wrong. `tools/orgscope`'s registers drop from 95 tables to 80.
 - **ABAC actually decides something** — `internal/abac`, `ABAC_ENFORCE=off|observe|enforce`,
   wired at both enforcement points (the token endpoint and the access proxy).
   The admin page had authored allow/deny rules that no enforcement point
@@ -41,6 +52,12 @@ to a spec that describes an eighth of a surface, a documented endpoint that
 
 ### Fixed
 
+- **Email branding was a shared row.** Both `email_branding` handlers ignored
+  the caller's organization entirely — the read was `ORDER BY created_at LIMIT
+  1` and the write was `(SELECT id FROM organizations LIMIT 1)` — so on a
+  multi-tenant install every admin saw, and every save overwrote, the same
+  single row. Both now scope to the caller's org, and migration v140's policy
+  refuses the old write at the database.
 - The assignment gate, the OPA `deny` path and the SMS mock provider each failed
   **open**; they now fail closed or refuse to start.
 - Five documented `/access/*` auth endpoints that returned 404 (the served

@@ -1436,7 +1436,7 @@ class this whole program exists for.
    cannot be parked on one to keep it quiet. **P5.3b** below is that
    programme.
 
-3b. ☐ **Retire the registers** (the 61 + 34, in batches by domain: audit ·
+3b. ◐ **Retire the registers** (the 61 + 34, in batches by domain: audit ·
    MFA/credentials · lifecycle/governance · PAM/remote · agent fleet ·
    notifications/console). Each batch is one migration in the v138 shape plus
    the handler predicates plus a two-org isolation test, and drops the
@@ -1444,6 +1444,36 @@ class this whole program exists for.
    engineering in the programme and the one that decides whether "multi-tenant
    isolation is enforced" is true of the whole schema or only of the part
    somebody had listed.
+
+   **Batch 1 shipped (migration v140, `needsBelt` 34 → 19; registers 95 → 80).**
+   The belt now covers `scheduled_reports`, `detailed_compliance_reports`,
+   `audit_webhook_subscriptions`, `usage_metering_daily`, `email_branding`,
+   `device_trust_settings`, `pam_active_checkouts`,
+   `pam_checkout_authorizations`, `brokered_sessions`, `ssh_ca`,
+   `sod_violations`, `privileged_accounts_discovered`,
+   `entitlement_warehouse`, `upstream_pools` and `upstream_pool_members` —
+   the fifteen whose queries the lint already proved carry their org
+   predicate, so the belt could not change what any one of them returns.
+   Four (`scheduled_reports`, `device_trust_settings`, `email_branding`,
+   `usage_metering_daily`) also got `org_id NOT NULL`: a nullable org under a
+   belt is a row nobody can see rather than a row that is loudly wrong.
+
+   The batch found a live cross-tenant defect rather than merely hardening
+   against one. **`email_branding`'s two handlers never read the caller's org
+   at all** — the read was `ORDER BY created_at LIMIT 1` and the write was
+   `(SELECT id FROM organizations LIMIT 1)` — so on a multi-tenant install
+   every admin saw, and every save overwrote, the *same* row. Both now take
+   the org from `orgctx`, and the old write is refused outright by the new
+   policy's `WITH CHECK` (verified against Postgres 16: `new row violates
+   row-level security policy for table "email_branding"`).
+
+   The nineteen that remain each have at least one query addressing a row by
+   id with no `org_id` named, and the register now records that count per
+   table. The coupling is deliberate: `tools/orgscope` derives its scoped set
+   from the belt, so the moment a table leaves `needsBelt` every query against
+   it comes under the missing-predicate rule *in the same commit*. Belting a
+   table and auditing its queries are one act, which is why these leave in
+   feature-sized batches and not in one sweep.
 4. ✅ **OPA `deny` enforced** — *shipped.* — `internal/common/middleware/opa.go`: abort
    unless `Allow && len(Deny)==0`; `authz.rego:15-19`'s "any authenticated
    user may GET anything" removed; `policies/access_control.rego`
@@ -3072,7 +3102,7 @@ that holds it rather than by the commit that wrote it.
 |---|---|---|
 | 1 · journeys verified | ☐ | J1 ✅ the `smoke` and `first-run` jobs (P6.2); J2 ✅ `test/integration/{auth_flows,mfa_flow,passwordless}_test.go`; J3 ✅ `test/integration/enforced_posture_test.go` (P6.1); ☐ **J6 has no automated proof** — `e2e/access-reviews-flow.spec.ts` is still on the `hold` side of `e2e/suite.txt`; ☐ **J7 needs a leaver integration case**; J4/J5/J8 stay scripted operator drills (`tools/darkprobe`, `make dr-game-day`) to be filed under `docs/evidence/` (P8.4) |
 | 2 · enforced posture, legacy login gone | ◐ | code ✅ — the server-rendered login is deleted and `internal/oauth/routes_legacy_login_test.go` fails if any of it returns (P6.1); ops ☐ — rollout Task 16 is the operator's, on a live deployment |
-| 3 · every control enforces | ◐ | P5.1–5.11 ✅ (tenant isolation, the inverted orgscope lint, OPA `deny`, ABAC at both PEPs, the honest Apply/Remediate, SMS, multi-IdP, the fail-closed gate, `ValidateProduction`, the faked measurements); ☐ the P5.3b register programme — 95 tables still ride `needsScoping`/`needsBelt` waivers |
+| 3 · every control enforces | ◐ | P5.1–5.11 ✅ (tenant isolation, the inverted orgscope lint, OPA `deny`, ABAC at both PEPs, the honest Apply/Remediate, SMS, multi-IdP, the fail-closed gate, `ValidateProduction`, the faked measurements); ◐ the P5.3b register programme — batch 1 (v140) belted fifteen tables and fixed `email_branding`'s cross-tenant read *and* write; **80** still ride `needsScoping`/`needsBelt` waivers |
 | 4 · first run / first login / four pillars from the docs | ✅ | first run ✅ the `smoke` and `first-run` jobs (P6.2); first login ✅ one authoritative credential in `GETTING-STARTED.md`, with the `USER_GUIDE.md` and `CONTRIBUTING.md` copies pointing at it rather than repeating it (P8.1); four pillars ✅ `guide/governance.md` was the missing one (P8.1) |
 | 5 · one story + auditor artifacts | ✅ | threat model and control mapping exist; docs sweep 3 ✅ and the docs-drift guard ✅ (`check-docs-drift.sh`, enforced in CI, so a document cannot cite a path that is not there); `docs/evidence/` ✅ (P8.4) |
 | 6 · releases current, signed, Helm proven | ◐ | signing ✅ `release.yml` (cosign) and, since P7.5, an Android artifact whose name tracks the key that signed it; Helm ✅ the `kind` install job (P6.4); versions ✅ `VERSION` + `check-version-sync.sh` (P8.3); CHANGELOG ✅ every release attributed from the commit that wrote its entry, 61 compare links that resolve (P8.2); ☐ v1.34.0 is not cut — the maintainer's |

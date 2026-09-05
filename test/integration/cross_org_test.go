@@ -422,6 +422,16 @@ func TestRLSBeltTables(t *testing.T) {
 		{"ispm_rules", `INSERT INTO ispm_rules (name, category, check_type, org_id) VALUES ('tbelt rule','accounts','tbelt-` + suffix + `',$1)`},
 		{"ai_agents", `INSERT INTO ai_agents (name, org_id) VALUES ('tbelt-agent-` + suffix + `',$1)`},
 		{"ai_recommendations", `INSERT INTO ai_recommendations (recommendation_type, category, title, org_id) VALUES ('tbelt','security','tbelt rec',$1)`},
+		// v140 — a spread across the fifteen tables that carried org_id for as
+		// long as nine migrations without the belt underneath it. email_branding
+		// is the one that was actually leaking: both its handlers ignored the
+		// caller's org entirely, so every tenant read and overwrote the same row.
+		{"email_branding", `INSERT INTO email_branding (header_text, org_id) VALUES ('tbelt brand',$1)`},
+		{"scheduled_reports", `INSERT INTO scheduled_reports (name, report_type, schedule, org_id) VALUES ('tbelt-rep-` + suffix + `','soc2','0 0 * * *',$1)`},
+		{"brokered_sessions", `INSERT INTO brokered_sessions (user_id, target, principal, org_id) VALUES (gen_random_uuid(),'tbelt.example.test','root',$1)`},
+		{"ssh_ca", `INSERT INTO ssh_ca (public_key, vault_secret_id, org_id) VALUES ('ssh-ed25519 tbelt',gen_random_uuid(),$1)`},
+		{"entitlement_warehouse", `INSERT INTO entitlement_warehouse (user_id, entitlement_type, entitlement_id, source, org_id) VALUES (gen_random_uuid(),'role','tbelt-ent','direct',$1)`},
+		{"upstream_pools", `INSERT INTO upstream_pools (name, org_id) VALUES ('tbelt-pool-` + suffix + `',$1)`},
 	}
 
 	for _, c := range cases {

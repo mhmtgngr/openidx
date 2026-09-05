@@ -156,41 +156,36 @@ var needsScoping = map[string]string{
 // crosses tenants silently. v37 belted the tables that existed then and v121
 // extended it; everything added since has drifted out. Several of their own
 // migrations say "org-scoped for RLS" while the belt was never applied.
+//
+// 34 -> 19. Migration v140 belted the fifteen whose queries this lint already
+// proved carry their org predicate, so the belt could not change what any one
+// of them returns. What is left is the harder half, and the count after each
+// name says why: every one has at least one query that addresses a row by id
+// without naming org_id, and by the ratchet in ddl.go those queries come under
+// the missing-predicate rule the moment the belt lands. That coupling is
+// deliberate -- belting a table and auditing its queries are the same act --
+// so these leave in feature-sized batches together with their query fixes,
+// never in one sweep.
 var needsBelt = map[string]string{
-	"report_exports":                 "v26",
-	"scheduled_reports":              "v26",
-	"device_trust_requests":          "v39",
-	"device_trust_settings":          "v39",
-	"published_apps":                 "v40",
-	"discovered_paths":               "v40",
-	"remote_support_sessions":        "v42",
-	"email_branding":                 "v54",
-	"temp_access_links":              "v71 added org_id to close a cross-tenant IDOR; the belt did not follow",
-	"detailed_compliance_reports":    "v74 says org-scoped",
-	"scim_target_apps":               "v95 says org-scoped for RLS",
-	"scim_provisioning_records":      "v95 says org-scoped for RLS",
-	"scim_provisioning_queue":        "v95 outbox; confirm the outbound worker's scope before belting",
-	"oauth_registration_tokens":      "v97",
-	"edr_posture_sources":            "v98",
-	"edr_device_mappings":            "v98",
-	"network_revocation_queue":       "v100 queue; confirm the reconciler's scope before belting",
-	"network_grant_queue":            "v101 queue; confirm the reconciler's scope before belting",
-	"usage_metering_daily":           "v102",
-	"mcp_servers":                    "v103",
-	"mcp_tool_policies":              "v103",
-	"pam_active_checkouts":           "v105",
-	"pam_checkout_authorizations":    "v105",
-	"sod_violations":                 "v106",
-	"privileged_accounts_discovered": "v107",
-	"entitlement_warehouse":          "v108",
-	"brokered_sessions":              "v109",
-	"ssh_ca":                         "v109",
-	"audit_webhook_subscriptions":    "v114",
-	"oauth_device_codes":             "v125 redeemed by hashed device_code; confirm the pre-tenant path before belting",
-	"upstream_pools":                 "v130",
-	"upstream_pool_members":          "v130",
-	"enrollment_sessions":            "v132",
-	"group_application_assignments":  "v136",
+	"report_exports":                "v26; 1 unscoped query",
+	"device_trust_requests":         "v39; 2 unscoped queries",
+	"published_apps":                "v40; 2 unscoped queries",
+	"discovered_paths":              "v40; 1 unscoped query",
+	"remote_support_sessions":       "v42; 14 unscoped queries",
+	"temp_access_links":             "v71 added org_id to close a cross-tenant IDOR; the belt did not follow; 1 unscoped query",
+	"scim_target_apps":              "v95 says org-scoped for RLS; 3 unscoped queries",
+	"scim_provisioning_records":     "v95 says org-scoped for RLS; 2 unscoped queries",
+	"scim_provisioning_queue":       "v95 outbox; confirm the outbound worker's scope before belting; 4 unscoped queries",
+	"oauth_registration_tokens":     "v97; 3 unscoped queries",
+	"edr_posture_sources":           "v98; 4 unscoped queries",
+	"edr_device_mappings":           "v98; its queries are clean, but the ingest writes a NULL org_id when the source has none, so a belt would hide rows rather than scope them; goes with edr_posture_sources",
+	"network_revocation_queue":      "v100 queue; confirm the reconciler's scope before belting; 2 unscoped queries",
+	"network_grant_queue":           "v101 queue; confirm the reconciler's scope before belting; 3 unscoped queries",
+	"mcp_servers":                   "v103; 1 unscoped query",
+	"mcp_tool_policies":             "v103; 2 unscoped queries",
+	"oauth_device_codes":            "v125 redeemed by hashed device_code; confirm the pre-tenant path before belting; 4 unscoped queries",
+	"enrollment_sessions":           "v132; 3 unscoped queries",
+	"group_application_assignments": "v136; its queries are clean, but this is the app-assignment table the enforcement path and the proxy's cross-org cache warmer read; the highest blast radius in this register, so it belts on its own",
 }
 
 // predicateAuditPending: OPEN FINDINGS, query level. Deriving the scoped set
