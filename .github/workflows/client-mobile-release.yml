@@ -314,6 +314,11 @@ jobs:
         working-directory: client
         run: flutter pub get
 
+      # Before the build, not during it: see scripts/ci-prime-cocoapods.sh.
+      # This job runs on a tag, where a CDN blip costs a release, not a re-push.
+      - name: Prime the CocoaPods spec source
+        run: bash scripts/ci-prime-cocoapods.sh
+
       - name: Build iOS (release, unsigned)
         working-directory: client
         run: flutter build ios --release --no-codesign

@@ -13,11 +13,15 @@ on:
       - "client/**"
       - "agent/**"
       - ".github/workflows/client-mobile-build.yml"
+      - "scripts/ci-prime-cocoapods.sh"
+      - "scripts/ci-retry.sh"
   pull_request:
     paths:
       - "client/**"
       - "agent/**"
       - ".github/workflows/client-mobile-build.yml"
+      - "scripts/ci-prime-cocoapods.sh"
+      - "scripts/ci-retry.sh"
   workflow_dispatch:
 
 env:
@@ -218,6 +222,10 @@ jobs:
       - name: Resolve dependencies
         working-directory: client
         run: flutter pub get
+
+      # Before the build, not during it: see scripts/ci-prime-cocoapods.sh.
+      - name: Prime the CocoaPods spec source
+        run: bash scripts/ci-prime-cocoapods.sh
 
       - name: Build iOS (no codesign)
         working-directory: client

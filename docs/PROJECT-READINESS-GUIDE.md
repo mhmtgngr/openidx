@@ -464,6 +464,33 @@ All six items landed with this guide (commits on
    green cases are in the self-test alongside the red ones, because a guard
    that fires on a correct file is one somebody switches off.
 
+   **And the class is not Docker's alone.** `build (macos-latest)` in
+   `client-desktop-build.yml` went red on a commit whose diff was Go files
+   under `internal/`, SQL migrations, tests and docs — while the Linux and
+   Windows legs of the same matrix were green on that same commit, and
+   `build-ios` resolved the same Podfile on a macOS runner three minutes
+   later and was green too. The message was `fatal: repository
+   'https://cdn.cocoapods.org/' not found`, which reads like a broken
+   checkout and is not one: CocoaPods probes that URL to decide whether it is
+   a CDN before creating the spec source, and when the probe does not come
+   back it falls through to the plain `git clone` path — where a CDN is,
+   correctly, not a repository. So somebody else's bad minute arrived ninety
+   seconds into a Flutter build wearing a costume.
+   `scripts/ci-prime-cocoapods.sh` now creates that source up front, by name
+   (`pod repo add-cdn`, which takes the CDN path and never probes) and
+   through `ci-retry.sh`, so the fallback cannot be reached and a blip costs
+   a few seconds in a step of its own. It is deliberately not a cure: once
+   the source exists, resolution still fetches over the same network, and an
+   outage there is still a red build — an honest one, in CocoaPods' own
+   words. Wrapping the whole `flutter build` would have covered the rest at
+   the price of running a real compile failure three times over.
+   `check-macos-pod-priming.sh` fails CI if a job that names a macOS runner
+   runs `flutter build` without priming **first** — priming afterwards is the
+   same as not priming while looking like it is not — because the step is
+   opt-in per job and the three jobs that need it (a three-OS desktop matrix
+   where one leg is exposed, the iOS PR build, the tag-time unsigned archive)
+   look nothing alike.
+
 8. ✅ **Both proxies stop forwarding the caller's own claims about who it
    is.** This started as deprecation cleanup — Go 1.26 deprecates
    `httputil.ReverseProxy.Director`, and the ZTNA route proxy and the Ziti

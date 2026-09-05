@@ -81,14 +81,19 @@ jobs:
 
   # CI jobs here used to go red on other people's outages -- a Docker Hub 502
   # on a base-image manifest, a reset connection to the chart CDN, a Docker Hub
-  # auth timeout while BOOTING THE BUILDER, before a line of this repo was
-  # compiled -- on commits that changed nothing related. Those steps now retry,
-  # and the retries are load-bearing enough to need guarding three ways: a
-  # retry wrapper that swallows the final exit code turns every red into a slow
-  # green; a duplicated block that drifts makes the second attempt run
-  # something the first never tried; and `continue-on-error` with no retry left
-  # consuming it is a step that simply fails in silence. None of the three
-  # would be visible in a passing run, which is exactly why they are gates.
+  # auth timeout while BOOTING THE BUILDER, and cdn.cocoapods.org declining the
+  # probe that decides whether it is a CDN, so CocoaPods tried to `git clone` it
+  # and the macOS client build died on `fatal: repository
+  # 'https://cdn.cocoapods.org/' not found` -- every one of them before a line
+  # of this repo was compiled, on commits that changed nothing related. Those
+  # steps now retry, and the retries are load-bearing enough to need guarding
+  # four ways: a retry wrapper that swallows the final exit code turns every
+  # red into a slow green; a duplicated block that drifts makes the second
+  # attempt run something the first never tried; `continue-on-error` with no
+  # retry left consuming it is a step that simply fails in silence; and a
+  # macOS Flutter build added without the CocoaPods priming step is exposed
+  # again from the day it lands. None of the four would be visible in a passing
+  # run, which is exactly why they are gates.
   ci-resilience-guards:
     name: Retries can still go red
     runs-on: ubuntu-latest
@@ -101,6 +106,20 @@ jobs:
         run: bash scripts/check-docker-retry-drift.test.sh
       - name: A retried step must stay identical and never fail silently
         run: bash scripts/check-docker-retry-drift.sh
+      - name: Verify the CocoaPods priming survives a blip and not an outage
+        # The prime is a retry like the others, so it carries the same risk:
+        # a `|| true` added to "stop the macOS job being flaky" would make
+        # every CDN outage look like a healthy prime. The suite fails if it
+        # ever exits 0 on a command that never succeeded.
+        run: bash scripts/ci-prime-cocoapods.test.sh
+      - name: Verify the CocoaPods priming guard can go red
+        # Same mutation discipline as the guards above: it must flag a macOS
+        # Flutter build with no priming step AND one that primes after the
+        # build, and stay green on Android legs and on prose that merely names
+        # a macOS runner.
+        run: bash scripts/check-macos-pod-priming.test.sh
+      - name: A macOS Flutter build must create its spec source first
+        run: bash scripts/check-macos-pod-priming.sh
 
   # The files under .github/ decide what CI runs and who reviews it, and both
   # had defects that made them describe a process that was not happening.

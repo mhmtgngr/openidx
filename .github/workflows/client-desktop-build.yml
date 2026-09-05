@@ -11,10 +11,14 @@ on:
     paths:
       - "client/**"
       - ".github/workflows/client-desktop-build.yml"
+      - "scripts/ci-prime-cocoapods.sh"
+      - "scripts/ci-retry.sh"
   pull_request:
     paths:
       - "client/**"
       - ".github/workflows/client-desktop-build.yml"
+      - "scripts/ci-prime-cocoapods.sh"
+      - "scripts/ci-retry.sh"
   workflow_dispatch:
 
 concurrency:
@@ -96,6 +100,24 @@ jobs:
         # building the desktop client and the red check said nothing about why.
         run: |
           echo "TODO: fetch + stage openidx-agent sidecar for ${{ matrix.platform }}"
+
+      # `flutter build macos` shells out to CocoaPods, which reaches
+      # cdn.cocoapods.org before a line is compiled. Creating that spec source
+      # here, with a retry, keeps a bad minute at somebody else's CDN from
+      # arriving ninety seconds into the build as a git error about a URL that
+      # is not a repository. scripts/ci-prime-cocoapods.sh carries the log of
+      # the run this is named after.
+      #
+      # `runner.os`, not `matrix.os == 'macos-latest'`: the label in the matrix
+      # is going to be bumped to a pinned `macos-N` one day, and a condition
+      # spelled against the label would stop matching without anything going
+      # red -- the priming would just quietly stop happening. Linux and Windows
+      # have no CocoaPods and the script no-ops there anyway; the condition is
+      # for the reader.
+      - name: Prime the CocoaPods spec source
+        if: runner.os == 'macOS'
+        working-directory: ${{ github.workspace }}
+        run: bash scripts/ci-prime-cocoapods.sh
 
       - name: Build
         env:
