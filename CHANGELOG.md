@@ -58,6 +58,23 @@ to a spec that describes an eighth of a surface, a documented endpoint that
   **Operators of installations with more than one organization should note**
   that existing runs are assigned to the organization of whoever started them,
   and their per-account records follow the run.
+- **Anyone signed in could end someone else's supervised session.** A privileged
+  session on a connection that requires supervision cannot start until a second
+  person joins to watch it. Ending that supervision also ends the session
+  itself — it is the supervisor's stop button.
+
+  The endpoint that does this is documented as being for the person being
+  supervised or the person supervising, and it checked neither. **Any signed-in
+  member of the organization could end any supervised session by naming it.**
+  The effect is to cut a session short rather than to gain access to one, so
+  this cost availability rather than granting anything — but it is a restriction
+  the product described and did not apply. It now checks, and administrators
+  keep the ability to clear a stuck session.
+
+  The three screens behind this feature also resolved which organization the
+  caller belonged to, refused anyone without one, and then did not use it. The
+  database's own isolation rule was confining them regardless; they now say so
+  themselves.
 - **The credential vault's permission checks now name the organization
   themselves.** Whether somebody may reveal a stored credential, who may see the
   record of past reveals, and which permissions may be withdrawn were all

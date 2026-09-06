@@ -3720,6 +3720,39 @@ class this whole program exists for.
    them rotation workers that have no request org of their own. That is a
    signature change across packages, and it is recorded as such rather than done
    halfway.
+
+   **Batch 35 (`predicateAuditPending` 16 → 15): resolved, refused, and never
+   used — on the four-eyes control.**
+
+   `guacamole_moderation_sessions` backs PAM's four-eyes gate: a session on a
+   `require_moderator` connection may not start until a second person joins to
+   watch it. Three of its handlers — status, join, end — did this:
+
+   ```go
+   if _, err := orgctx.From(ctx); err != nil { …403… }
+   // …and then act on a row by the bare id from the URL
+   ```
+
+   They resolved the caller's organization, refused when there was none, and
+   then never used it. That is verbatim the shape `guacamole.go`'s own v151
+   comment calls *"the whole security of this handler"* — here on the control
+   that decides whether a privileged session may run, and in one case on the
+   handler that terminates it. The belt scoped them, so these were not live
+   holes; all six queries now carry the tenant themselves.
+
+   **And one of them asserted a check it did not make.** `handleEndModeration`
+   is documented *"(requester or moderator)"*, its route carries no role guard,
+   and the `UPDATE` checked neither — so **any authenticated caller could end
+   any moderation session in the organization by naming its id**, and ending it
+   terminates the underlying privileged session: the moderator's kill switch,
+   available to everyone. The direction of the error is deny rather than grant,
+   so it cost availability rather than granting access, and the guide says so
+   rather than overstating it. The party check the comment claims is now in the
+   `WHERE` clause, with an administrator exemption beside it rather than
+   replacing it, so a stuck session can still be cleared.
+
+   Red proof: with the party check neutralised, *"a user who is neither
+   requester nor moderator ended the session (200)."*
 4. ✅ **OPA `deny` enforced** — *shipped.* — `internal/common/middleware/opa.go`: abort
    unless `Allow && len(Deny)==0`; `authz.rego:15-19`'s "any authenticated
    user may GET anything" removed; `policies/access_control.rego`

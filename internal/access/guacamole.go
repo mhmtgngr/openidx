@@ -645,7 +645,7 @@ func (s *Service) handleGuacamoleConnect(c *gin.Context) {
 	// is a live-presence requirement: block the connect until a moderator has
 	// claimed the pending moderation row for this (connection, requester).
 	if requireModerator {
-		ok, err := s.checkModerationActive(ctx, connectionPK, userID)
+		ok, err := s.checkModerationActive(ctx, org.ID, connectionPK, userID)
 		if err != nil {
 			s.logger.Error("handleGuacamoleConnect: checkModerationActive failed",
 				zap.String("connection_id", connectionPK), zap.Error(err))

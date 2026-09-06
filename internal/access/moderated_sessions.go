@@ -50,13 +50,13 @@ const moderationWaitWindow = 15 * time.Minute
 // this (connection, requester) — i.e. a moderator has joined and the session
 // may proceed. Runs under the connect handler's request ctx so RLS scopes it to
 // the org. Returns (true,nil) when a moderator is present.
-func (s *Service) checkModerationActive(ctx context.Context, connectionID, requesterID string) (bool, error) {
+func (s *Service) checkModerationActive(ctx context.Context, orgID, connectionID, requesterID string) (bool, error) {
 	var id string
 	err := s.db.Pool.QueryRow(ctx,
 		`SELECT id FROM guacamole_moderation_sessions
-		  WHERE connection_id = $1 AND requester_id = $2 AND status = 'active'
+		  WHERE connection_id = $1 AND requester_id = $2 AND org_id = $3 AND status = 'active'
 		  ORDER BY joined_at DESC LIMIT 1`,
-		connectionID, requesterID).Scan(&id)
+		connectionID, requesterID, orgID).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}
@@ -116,11 +116,11 @@ func (s *Service) handleRequestModeration(c *gin.Context) {
 	var existingID, existingStatus string
 	err = s.db.Pool.QueryRow(ctx,
 		`SELECT id, status FROM guacamole_moderation_sessions
-		  WHERE connection_id = $1 AND requester_id = $2
+		  WHERE connection_id = $1 AND requester_id = $2 AND org_id = $3
 		    AND status IN ('pending','active')
 		    AND (expires_at IS NULL OR expires_at > NOW())
 		  ORDER BY created_at DESC LIMIT 1`,
-		connectionID, userID).Scan(&existingID, &existingStatus)
+		connectionID, userID, org.ID).Scan(&existingID, &existingStatus)
 	if err == nil {
 		c.JSON(http.StatusOK, gin.H{"id": existingID, "status": existingStatus, "reused": true})
 		return
@@ -154,16 +154,17 @@ func (s *Service) handleRequestModeration(c *gin.Context) {
 func (s *Service) handleGetModerationStatus(c *gin.Context) {
 	id := c.Param("id")
 	ctx := c.Request.Context()
-	if _, err := orgctx.From(ctx); err != nil {
+	org, err := orgctx.From(ctx)
+	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
 		return
 	}
 	var status string
 	var moderatorID, activeConnID *string
 	var joinedAt, expiresAt *time.Time
-	err := s.db.Pool.QueryRow(ctx,
+	err = s.db.Pool.QueryRow(ctx,
 		`SELECT status, moderator_id::text, active_conn_id, joined_at, expires_at
-		   FROM guacamole_moderation_sessions WHERE id = $1`, id).
+		   FROM guacamole_moderation_sessions WHERE id = $1 AND org_id = $2`, id, org.ID).
 		Scan(&status, &moderatorID, &activeConnID, &joinedAt, &expiresAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "moderation session not found"})
@@ -177,10 +178,9 @@ func (s *Service) handleGetModerationStatus(c *gin.Context) {
 	// Lazily mark an over-window pending request as expired so pollers see a
 	// terminal state without waiting for a sweeper.
 	if status == "pending" && expiresAt != nil && time.Now().After(*expiresAt) {
-		//orgscope:ignore RLS scopes by the request ctx org; row identified by PK
 		_, _ = s.db.Pool.Exec(ctx,
 			`UPDATE guacamole_moderation_sessions SET status='expired', ended_at=NOW()
-			  WHERE id=$1 AND status='pending'`, id)
+			  WHERE id=$1 AND org_id=$2 AND status='pending'`, id, org.ID)
 		status = "expired"
 	}
 	c.JSON(http.StatusOK, gin.H{
@@ -188,6 +188,19 @@ func (s *Service) handleGetModerationStatus(c *gin.Context) {
 		"moderator_id": moderatorID, "active_conn_id": activeConnID,
 		"joined_at": joinedAt, "expires_at": expiresAt,
 	})
+}
+
+// isModerationAdmin reports whether the caller may act on a moderation session
+// they are not party to. Kept beside the party check rather than replacing it:
+// an administrator must be able to end a stuck session, and everyone else must
+// be one of the two people the session is about.
+func isModerationAdmin(roles []string) bool {
+	for _, r := range roles {
+		if r == "admin" || r == "super_admin" {
+			return true
+		}
+	}
+	return false
 }
 
 // ---- moderator side ----
@@ -248,7 +261,8 @@ func (s *Service) handleListPendingModeration(c *gin.Context) {
 func (s *Service) handleJoinModeration(c *gin.Context) {
 	id := c.Param("id")
 	ctx := c.Request.Context()
-	if _, err := orgctx.From(ctx); err != nil {
+	org, err := orgctx.From(ctx)
+	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
 		return
 	}
@@ -262,14 +276,14 @@ func (s *Service) handleJoinModeration(c *gin.Context) {
 	// the claimer is the requester.
 	var requesterID string
 	var claimed string
-	err := s.db.Pool.QueryRow(ctx,
+	err = s.db.Pool.QueryRow(ctx,
 		`UPDATE guacamole_moderation_sessions
 		    SET status = 'active', moderator_id = $2, joined_at = NOW()
-		  WHERE id = $1 AND status = 'pending'
+		  WHERE id = $1 AND org_id = $3 AND status = 'pending'
 		    AND (expires_at IS NULL OR expires_at > NOW())
 		    AND requester_id <> $2
 		  RETURNING id, requester_id::text`,
-		id, moderatorID).Scan(&claimed, &requesterID)
+		id, moderatorID, org.ID).Scan(&claimed, &requesterID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		// Either already claimed/expired, or the caller is the requester.
 		c.JSON(http.StatusConflict, gin.H{"error": "request is not pending, already claimed, expired, or you are the requester"})
@@ -293,21 +307,37 @@ func (s *Service) handleJoinModeration(c *gin.Context) {
 func (s *Service) handleEndModeration(c *gin.Context) {
 	id := c.Param("id")
 	ctx := c.Request.Context()
-	if _, err := orgctx.From(ctx); err != nil {
+	org, err := orgctx.From(ctx)
+	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
 		return
 	}
 	actor := c.GetString("user_id")
 
+	// THE PARTY CHECK THIS HANDLER'S OWN COMMENT CLAIMS. The doc comment above
+	// says "(requester or moderator)" and the route carries no role guard, but
+	// the UPDATE checked neither: any authenticated caller could end any
+	// moderation session in the organization by naming its id -- and ending it
+	// terminates the underlying privileged session, which is the moderator's
+	// kill switch. The direction of the error is deny rather than grant, so
+	// this cost availability rather than granting access; it is still a control
+	// the code asserted and did not make.
+	//
+	// Admins keep the ability to end a stuck session, which is why the role
+	// check sits beside the party check rather than replacing it.
+	party := isModerationAdmin(pamCallerRoles(c))
+
 	var activeConnID *string
-	err := s.db.Pool.QueryRow(ctx,
+	err = s.db.Pool.QueryRow(ctx,
 		`UPDATE guacamole_moderation_sessions
 		    SET status = 'ended', ended_at = NOW()
-		  WHERE id = $1 AND status IN ('pending','active')
+		  WHERE id = $1 AND org_id = $2 AND status IN ('pending','active')
+		    AND ($3 OR requester_id::text = $4 OR moderator_id::text = $4)
 		  RETURNING active_conn_id`,
-		id).Scan(&activeConnID)
+		id, org.ID, party, actor).Scan(&activeConnID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		c.JSON(http.StatusConflict, gin.H{"error": "moderation session is not active"})
+		c.JSON(http.StatusConflict, gin.H{
+			"error": "moderation session is not active, or you are not the requester or moderator"})
 		return
 	}
 	if err != nil {

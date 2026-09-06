@@ -131,22 +131,21 @@ var needsBelt = map[string]string{}
 // The register is pinned by ddl_test.go and can only shrink. A table leaves it
 // by having its queries audited, not by being added to it.
 var predicateAuditPending = map[string]string{
-	"attestation_items":             "governance attestation",
-	"attestation_campaigns":         "governance attestation",
-	"certification_campaigns":       "governance certification",
-	"campaign_runs":                 "governance certification",
-	"request_approval_chains":       "governance approvals",
-	"jit_grants":                    "governance JIT",
-	"vault_secrets":                 "PAM vault; read in 5 packages, and Use() runs under an explicit bypass -- retiring it needs the org threaded through Use's 9 callers",
-	"vault_secret_versions":         "PAM vault; decryptCurrent joins vault_secrets, so it leaves with that table",
-	"credential_rotation_policies":  "PAM vault rotation; read by internal/credentials and internal/governance, both on rotation-worker paths that need their own org read first",
-	"guacamole_sessions":            "PAM session brokering",
-	"guacamole_session_requests":    "PAM session brokering",
-	"guacamole_moderation_sessions": "PAM session shadowing",
-	"guacamole_users":               "PAM session brokering",
-	"mcp_tool_approvals":            "MCP tool gating",
-	"ssf_stream_delivery":           "SSF outbox, drained across orgs (also beltExempt)",
-	"ssf_received_events":           "SSF inbound dedup log (also beltExempt)",
+	"attestation_items":            "governance attestation",
+	"attestation_campaigns":        "governance attestation",
+	"certification_campaigns":      "governance certification",
+	"campaign_runs":                "governance certification",
+	"request_approval_chains":      "governance approvals",
+	"jit_grants":                   "governance JIT",
+	"vault_secrets":                "PAM vault; read in 5 packages, and Use() runs under an explicit bypass -- retiring it needs the org threaded through Use's 9 callers",
+	"vault_secret_versions":        "PAM vault; decryptCurrent joins vault_secrets, so it leaves with that table",
+	"credential_rotation_policies": "PAM vault rotation; read by internal/credentials and internal/governance, both on rotation-worker paths that need their own org read first",
+	"guacamole_sessions":           "PAM session brokering",
+	"guacamole_session_requests":   "PAM session brokering",
+	"guacamole_users":              "PAM session brokering",
+	"mcp_tool_approvals":           "MCP tool gating",
+	"ssf_stream_delivery":          "SSF outbox, drained across orgs (also beltExempt)",
+	"ssf_received_events":          "SSF inbound dedup log (also beltExempt)",
 }
 
 // census and scopedTables are derived once from the migration registry.

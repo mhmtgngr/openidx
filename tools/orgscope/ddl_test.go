@@ -396,7 +396,12 @@ func TestRegistersOnlyShrink(t *testing.T) {
 		// alone. The three vault tables that stay are read from five packages,
 		// and Use() runs under an explicit bypass; their register entries say
 		// what retiring them needs.
-		{"predicateAuditPending", len(predicateAuditPending), 16},
+		// 16 -> 15 with the moderation sessions: three handlers resolved the
+		// caller's organization, refused when there was none, and then never
+		// used it -- the shape v151's comment in guacamole.go names as "the
+		// whole security of this handler" -- on the four-eyes control, one of
+		// whose handlers also terminates the live privileged session.
+		{"predicateAuditPending", len(predicateAuditPending), 15},
 		{"installWideTables", len(installWideTables), 21},
 		{"beltExempt", len(beltExempt), 5},
 	} {
