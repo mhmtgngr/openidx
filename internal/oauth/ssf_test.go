@@ -182,7 +182,7 @@ func TestSSFReceiveAppliesSessionRevoked(t *testing.T) {
         CREATE TABLE users (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), email VARCHAR(255), enabled BOOLEAN DEFAULT true, org_id UUID);
         CREATE TABLE sessions (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID, org_id UUID, revoked BOOLEAN DEFAULT false, revoked_at TIMESTAMPTZ);
         CREATE TABLE refresh_tokens (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID, org_id UUID);
-        CREATE TABLE ssf_received_events (jti VARCHAR(255) PRIMARY KEY, org_id UUID, issuer TEXT, event_type TEXT, subject TEXT, outcome VARCHAR(16) NOT NULL DEFAULT 'applied', detail TEXT, received_at TIMESTAMPTZ DEFAULT NOW());`)
+        CREATE TABLE ssf_received_events (jti VARCHAR(255), org_id UUID NOT NULL, issuer TEXT, event_type TEXT, subject TEXT, outcome VARCHAR(16) NOT NULL DEFAULT 'applied', detail TEXT, received_at TIMESTAMPTZ DEFAULT NOW(), PRIMARY KEY (org_id, jti));`)
 
 	orgID := "00000000-0000-0000-0000-0000000000aa"
 	var userID string
@@ -318,7 +318,7 @@ func TestSSFReceiveDedup(t *testing.T) {
         CREATE TABLE users (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), email VARCHAR(255), enabled BOOLEAN DEFAULT true, org_id UUID);
         CREATE TABLE sessions (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID, org_id UUID, revoked BOOLEAN DEFAULT false, revoked_at TIMESTAMPTZ);
         CREATE TABLE refresh_tokens (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID, org_id UUID);
-        CREATE TABLE ssf_received_events (jti VARCHAR(255) PRIMARY KEY, org_id UUID, issuer TEXT, event_type TEXT, subject TEXT, outcome VARCHAR(16) NOT NULL DEFAULT 'applied', detail TEXT, received_at TIMESTAMPTZ DEFAULT NOW());`)
+        CREATE TABLE ssf_received_events (jti VARCHAR(255), org_id UUID NOT NULL, issuer TEXT, event_type TEXT, subject TEXT, outcome VARCHAR(16) NOT NULL DEFAULT 'applied', detail TEXT, received_at TIMESTAMPTZ DEFAULT NOW(), PRIMARY KEY (org_id, jti));`)
 	orgID := "00000000-0000-0000-0000-0000000000bb"
 	var userID string
 	db.Pool.QueryRow(dbctx, `INSERT INTO users (email, org_id) VALUES ('dup@corp.com',$1) RETURNING id`, orgID).Scan(&userID)

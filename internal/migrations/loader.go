@@ -1219,5 +1219,12 @@ func allMigrations() []*Migration {
 			UpSQL:       lastBeltTablesUp,
 			DownSQL:     lastBeltTablesDown,
 		},
+		{
+			Version:     172,
+			Name:        "ssf_received_tenant",
+			Description: "Give the inbound SSF replay-dedup ledger the tenant it was already acting on, and make its dedup key per-organization. ssf_received_events (v99) records every inbound Security Event Token the receiver applies, keyed on the SET's jti so a re-delivery is applied once; it was created with an org_id column and NOTHING HAS EVER WRITTEN IT, so every row on every install carries a NULL tenant -- a ledger of applied security events (session revoked, account disabled, credential changed) that cannot say which organization each was applied to. THE EXEMPTION'S REASON WAS NOT TRUE OF THE CODE: the orgscope register recorded the table as belt-exempt because 'the public receiver endpoint carries no tenant context', but /ssf/events is not on tenantSkipPaths, so TenantResolver runs on it, and resolveUserBySubject two functions below the writer reads orgctx.From and refuses to resolve a subject without one -- every user lookup it makes carries AND org_id = $2, and applyCAEPEvent's account-disable does too. The EFFECT of an inbound event has always been scoped to one organization; only the RECORD of it was not. This is the fourth standing claim this programme has retired alongside the change that invalidated it, after v167's proxy comment, v169's migration note and v171's enrolment comment. THE DEDUP KEY CHANGES WITH IT: jti was the PRIMARY KEY, so the ledger was install-wide, and a per-tenant dedup read against a global key would apply an event correctly for a second tenant and then silently fail to record it (ON CONFLICT (jti) DO NOTHING), losing replay protection for that tenant from then on; (org_id, jti) makes the read and the key agree. Not belted -- the receiver is a public endpoint reached by an external transmitter, and the exemption stays with its reason corrected to the true one. Backfill: existing rows carry no attribution and none can be recovered, so they go to the oldest organization, which is the organization a single-tenant install applied them under; on a multi-tenant install a SET already applied for another tenant can be delivered once more and applied again, and applyCAEPEvent's actions are idempotent, so the cost is a repeat rather than a wrong outcome. Down returns the install-wide key, dropping the newer of each duplicated jti pair first.",
+			UpSQL:       ssfReceivedTenantUp,
+			DownSQL:     ssfReceivedTenantDown,
+		},
 	}
 }

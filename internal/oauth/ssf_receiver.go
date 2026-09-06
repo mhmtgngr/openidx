@@ -59,10 +59,25 @@ func (s *Service) handleSSFReceive(c *gin.Context) {
 		return
 	}
 
-	// Dedup: if we already applied this jti, ack without re-applying.
+	// The organization this event is applied in. resolveUserBySubject and
+	// applyCAEPEvent have always read it and refused without it, so the EFFECT of
+	// an inbound SET was already scoped; until v172 the ledger row recording it
+	// was not, because nothing ever wrote org_id. Resolving it here, once, means
+	// the record and the effect name the same tenant.
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		s.logger.Warn("SSF receive: no organization on the request; refusing to apply",
+			zap.String("jti", jti), zap.String("issuer", issuer))
+		c.JSON(http.StatusBadRequest, gin.H{"err": "invalid_request", "description": "no organization for this receiver"})
+		return
+	}
+
+	// Dedup: if we already applied this jti FOR THIS TENANT, ack without
+	// re-applying. Before v172 jti was the table's install-wide primary key, so
+	// this read and the key it rests on now agree.
 	var exists bool
 	_ = s.db.Pool.QueryRow(c.Request.Context(),
-		`SELECT true FROM ssf_received_events WHERE jti=$1`, jti).Scan(&exists)
+		`SELECT true FROM ssf_received_events WHERE jti=$1 AND org_id=$2`, jti, org.ID).Scan(&exists)
 	if exists {
 		c.JSON(http.StatusAccepted, gin.H{"status": "accepted"})
 		return
@@ -71,10 +86,18 @@ func (s *Service) handleSSFReceive(c *gin.Context) {
 	eventType, subject, eventClaims := extractCAEPEvent(claims)
 	outcome, detail := s.applyCAEPEvent(c.Request.Context(), eventType, subject, eventClaims)
 
-	_, _ = s.db.Pool.Exec(c.Request.Context(), `
-        INSERT INTO ssf_received_events (jti, issuer, event_type, subject, outcome, detail)
-        VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (jti) DO NOTHING`,
-		jti, ssfNullIfEmpty(issuer), ssfNullIfEmpty(eventType), ssfNullIfEmpty(subject), outcome, ssfNullIfEmpty(detail))
+	// This write is the replay protection: the event has already been applied
+	// above, so a failure here means the next re-delivery of the same SET applies
+	// it a second time. It used to be discarded with `_, _ =`, which is how a
+	// stale test fixture presented as a missing row rather than as an error.
+	if _, err := s.db.Pool.Exec(c.Request.Context(), `
+        INSERT INTO ssf_received_events (jti, org_id, issuer, event_type, subject, outcome, detail)
+        VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (org_id, jti) DO NOTHING`,
+		jti, org.ID, ssfNullIfEmpty(issuer), ssfNullIfEmpty(eventType), ssfNullIfEmpty(subject), outcome, ssfNullIfEmpty(detail),
+	); err != nil {
+		s.logger.Error("SSF receive: event applied but NOT recorded; a re-delivery will apply it again",
+			zap.String("jti", jti), zap.String("event", eventType), zap.Error(err))
+	}
 
 	s.logger.Info("SSF receive: event applied",
 		zap.String("event", eventType), zap.String("subject", subject),

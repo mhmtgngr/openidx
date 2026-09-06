@@ -61,7 +61,7 @@ var beltExempt = map[string]string{
 	"tenant_domains":      "the table tenant resolution looks the host up in; belting it makes resolution impossible (v38)",
 	"tenant_settings":     "read alongside tenant_domains during resolution (v38)",
 	"ssf_stream_delivery": "outbox drained by a background worker that spans orgs (v99)",
-	"ssf_received_events": "replay-dedup log of INBOUND SETs written by the public receiver endpoint, which carries no tenant context (v99)",
+	"ssf_received_events": "replay-dedup log of INBOUND SETs from an external transmitter; the receiver DOES resolve a tenant and v172 gives the ledger org_id + a (org_id, jti) key, but the endpoint is public and RLS on it is a separate decision from getting its tenant resolution right",
 }
 
 // needsScoping: OPEN FINDINGS. These tables hold per-user or per-org data and
@@ -138,8 +138,6 @@ var predicateAuditPending = map[string]string{
 	"vault_secrets":                "PAM vault; read in 5 packages, and Use() runs under an explicit bypass -- retiring it needs the org threaded through Use's 9 callers",
 	"vault_secret_versions":        "PAM vault; decryptCurrent joins vault_secrets, so it leaves with that table",
 	"credential_rotation_policies": "PAM vault rotation; read by internal/credentials and internal/governance, both on rotation-worker paths that need their own org read first",
-	"ssf_stream_delivery":          "SSF outbox, drained across orgs (also beltExempt)",
-	"ssf_received_events":          "SSF inbound dedup log (also beltExempt)",
 }
 
 // census and scopedTables are derived once from the migration registry.

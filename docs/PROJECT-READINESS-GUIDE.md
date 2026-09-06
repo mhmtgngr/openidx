@@ -3931,6 +3931,52 @@ class this whole program exists for.
    assertions red, one of them sharper than expected — org A's consume did not
    merely succeed, it *spent* org B's single-use approval, so the owner could no
    longer use it.
+
+   **Batch 41 (migration v172, `predicateAuditPending` 5 → 3): the ledger that
+   could not say whose event it was.**
+
+   `ssf_received_events` records every inbound Security Event Token the receiver
+   applies — session revoked, account disabled, credential changed — keyed on
+   the SET's `jti` so a re-delivery is applied once. v99 created it **with an
+   `org_id` column, and nothing has ever written it**, so every row on every
+   install carries a NULL tenant: a ledger of applied security events that
+   cannot say which organization each was applied to.
+
+   **The exemption's reason was not true of the code.** The register recorded
+   the table as belt-exempt because *"the public receiver endpoint carries no
+   tenant context"*. But `/ssf/events` is not on `tenantSkipPaths`, so
+   `TenantResolver` runs on it — and `resolveUserBySubject`, two functions below
+   the writer, reads `orgctx.From` and refuses to resolve a subject without one;
+   every user lookup it makes carries `AND org_id = $2`, and
+   `applyCAEPEvent`'s account-disable does too. **The effect of an inbound event
+   has always been scoped to one organization. Only the record of it was not.**
+   Fourth standing claim retired alongside the change that invalidated it, after
+   v167's proxy comment, v169's migration note and v171's enrolment comment.
+
+   **The dedup key had to move with it.** `jti` was the PRIMARY KEY, so the
+   ledger was install-wide. A per-tenant dedup read against a global key is
+   worse than either alone: the second tenant would apply the event correctly
+   and then silently fail to record it (`ON CONFLICT (jti) DO NOTHING`), losing
+   replay protection for that event from then on. v172 makes the key
+   `(org_id, jti)` so the read and the key agree.
+
+   Not belted. The receiver is a public endpoint reached by an external
+   transmitter, and RLS there is a separate decision from getting its tenant
+   resolution right; the exemption stays with its reason corrected.
+
+   **And the fixture that had drifted.** Both SSF test fixtures hand-build
+   `ssf_received_events` with `jti` alone as the primary key — correct when they
+   were written, stale the moment v172 lands — and the INSERT's error was
+   discarded with `_, _ =`, so the mismatch presented as *"expected a
+   received-event row: no rows in result set"* rather than as the
+   `ON CONFLICT` error it was. The fixtures now carry the real shape, and the
+   write logs its failure: this row **is** the replay protection, so a silent
+   failure here means the next re-delivery applies the event again.
+
+   `ssf_stream_delivery`, the outbound side, keeps its cross-org reach: one
+   worker drains every tenant's outbox, claims by state alone, and each claimed
+   row carries its own `org_id` onward. Its five worker statements now say so on
+   the query, the way v166's network queues do.
 4. ✅ **OPA `deny` enforced** — *shipped.* — `internal/common/middleware/opa.go`: abort
    unless `Allow && len(Deny)==0`; `authz.rego:15-19`'s "any authenticated
    user may GET anything" removed; `policies/access_control.rego`

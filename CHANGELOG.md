@@ -88,6 +88,19 @@ to a spec that describes an eighth of a surface, a documented endpoint that
   it, and a test exercises them **in that condition** rather than the ordinary
   one. No exposure is known to have followed from this; it removes the
   dependence.
+- **The log of security events received from a federated provider now records
+  which organization each was applied to** (migration v172). When an upstream
+  identity provider pushes a security event — a session revoked, an account
+  disabled, a credential changed — OpenIDX applies it and writes a row so a
+  re-delivery of the same event is not applied twice. Applying the event has
+  always been confined to one organization. Recording it was not: the column
+  meant to hold the organization existed and nothing ever filled it, so the log
+  could not say whose event any row was. The de-duplication key was
+  installation-wide for the same reason, which on a multi-tenant installation
+  meant a second organization receiving the same event id would apply it and
+  then fail to record it, losing its protection against a repeat. Both now name
+  the organization, and a failure to write the record is logged rather than
+  discarded — that row is the protection.
 - **The approval that clears an AI agent's tool call to run now names the
   tenant that granted it.** Sensitive tools reached through the MCP gateway wait
   for a person to approve them. The check that asked *does this tool need
