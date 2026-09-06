@@ -644,9 +644,20 @@ jobs:
           echo "::endgroup::"
 
           # ----- build services the integration tests hit -----
-          echo "::group::Build identity-service + oauth-service"
+          # gateway-service is here because TestCrossOrgSpoofing needs it and
+          # nothing was starting it. That test asserts the gateway STRIPS a
+          # client-supplied X-Org-Slug -- forge the header, read another
+          # tenant's user by id, get refused. Its own comment said "it runs
+          # fully in CI"; it did not. helpers_test.go defaults GATEWAY_URL to
+          # localhost:8008, nothing listened there, and the test skipped on
+          # every run since it was merged, so a cross-tenant spoofing defence
+          # was proven nowhere. It passes with a gateway up, and fails with a
+          # gateway whose Header.Del("X-Org-Slug") is removed -- both checked
+          # before this line was added.
+          echo "::group::Build identity-service + oauth-service + gateway-service"
           go build -o /tmp/identity-service ./cmd/identity-service
           go build -o /tmp/oauth-service    ./cmd/oauth-service
+          go build -o /tmp/gateway-service  ./cmd/gateway-service
           echo "::endgroup::"
 
           # ----- start services in background -----
@@ -685,28 +696,38 @@ jobs:
           IDENTITY_PID=$!
           /tmp/oauth-service    > /tmp/oauth.log    2>&1 &
           OAUTH_PID=$!
-          echo "identity-service pid=$IDENTITY_PID, oauth-service pid=$OAUTH_PID"
+          # The gateway needs no configuration beyond what is already exported
+          # above; it listens on 8008, which is what GATEWAY_URL defaults to.
+          /tmp/gateway-service  > /tmp/gateway.log  2>&1 &
+          GATEWAY_PID=$!
+          echo "identity-service pid=$IDENTITY_PID, oauth-service pid=$OAUTH_PID, gateway-service pid=$GATEWAY_PID"
 
           cleanup() {
             echo "::group::identity-service log"; cat /tmp/identity.log || true; echo "::endgroup::"
             echo "::group::oauth-service log";    cat /tmp/oauth.log    || true; echo "::endgroup::"
-            kill "$IDENTITY_PID" "$OAUTH_PID" 2>/dev/null || true
+            echo "::group::gateway-service log";  cat /tmp/gateway.log  || true; echo "::endgroup::"
+            kill "$IDENTITY_PID" "$OAUTH_PID" "$GATEWAY_PID" 2>/dev/null || true
           }
           trap cleanup EXIT
 
-          # ----- wait for both to be healthy -----
+          # ----- wait for all three to be healthy -----
+          # The gateway is waited for like the other two rather than probed
+          # opportunistically: a gateway that fails to start must fail this job,
+          # not send TestCrossOrgSpoofing back to skipping quietly, which is the
+          # state it spent its whole life in.
           echo "::group::Wait for service health"
           for i in $(seq 1 60); do
-            id_ok=0; oa_ok=0
+            id_ok=0; oa_ok=0; gw_ok=0
             curl -sf http://localhost:8001/health/ready >/dev/null 2>&1 && id_ok=1
             curl -sf http://localhost:8006/health/ready >/dev/null 2>&1 && oa_ok=1
-            if [ "$id_ok" = "1" ] && [ "$oa_ok" = "1" ]; then
-              echo "both services ready after ${i}s"
+            curl -sf http://localhost:8008/health       >/dev/null 2>&1 && gw_ok=1
+            if [ "$id_ok" = "1" ] && [ "$oa_ok" = "1" ] && [ "$gw_ok" = "1" ]; then
+              echo "all three services ready after ${i}s"
               break
             fi
             sleep 1
             if [ "$i" = "60" ]; then
-              echo "::error::services did not become ready within 60s (identity_ok=$id_ok oauth_ok=$oa_ok)"
+              echo "::error::services did not become ready within 60s (identity_ok=$id_ok oauth_ok=$oa_ok gateway_ok=$gw_ok)"
               exit 1
             fi
           done

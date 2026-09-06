@@ -1100,8 +1100,15 @@ func TestCrossOrgSpoofing(t *testing.T) {
 
 	// Use the error-returning login directly so the test SKIPS (not fatals) when
 	// admin auth isn't available in this environment (e.g. the OAuth test client's
-	// redirect_uri isn't registered on a dev box); it runs fully in CI, where the
-	// existing cross-org suite authenticates successfully.
+	// redirect_uri isn't registered on a dev box).
+	//
+	// This comment used to end "it runs fully in CI, where the existing cross-org
+	// suite authenticates successfully." It did not. The skip above this one
+	// fired instead: ci.yml's integration job started identity-service and
+	// oauth-service and no gateway, GATEWAY_URL defaults to localhost:8008, and
+	// so a test of whether the gateway strips a forged X-Org-Slug reported SKIP
+	// on every run from the day it was written. The job now starts a gateway and
+	// waits for it, so this is the only skip that can still fire here.
 	token, err := doAdminLogin()
 	if err != nil {
 		t.Skipf("admin login unavailable in this env (%v) — skipping gateway X-Org-Slug strip test", err)
