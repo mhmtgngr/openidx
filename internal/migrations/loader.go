@@ -1266,5 +1266,12 @@ func allMigrations() []*Migration {
 			UpSQL:       orphanTablesUp,
 			DownSQL:     orphanTablesDown,
 		},
+		{
+			Version:     178,
+			Name:        "retire_seeded_access_review",
+			Description: "Delete v10's seeded 'Q1 2026 Access Review' where it is untouched. v10 ships starter data -- roles, applications, OAuth clients -- and among it one access review: pending, start 2026-01-01, end 2026-03-31, assigned to the seeded admin. The rest of that seed is functional starter data an operator builds on; this row is a fixture, and the only thing that consults it is the compliance report. Which never noticed, because the overdue count asked for access_reviews.due_date -- a column the table does not have, the deadline being end_date -- so the statement failed to plan and the count read 0 on every report this product has generated: a compliance dashboard stating that no access review is overdue, which is exactly the reading an auditor takes as evidence. That query is corrected in the same commit, and correcting it without this migration would hand every install a permanent '1 access review overdue' on its SOC 2 report -- a finding no operator created and none can close by doing their job. A fabricated finding on a compliance report is the same defect as a fabricated zero, pointing the other way. The DELETE is guarded on status = 'pending' and both seeded dates, so an install where somebody actually ran this campaign keeps it; Down restores the row exactly as v10 wrote it, with org_id taking the column default v34 gave it.",
+			UpSQL:       seededAccessReviewUp,
+			DownSQL:     seededAccessReviewDown,
+		},
 	}
 }

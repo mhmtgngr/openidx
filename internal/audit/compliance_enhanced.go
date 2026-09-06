@@ -388,11 +388,16 @@ func (s *Service) evaluateCC6LogicalAccess(ctx context.Context, startDate, endDa
 
 	// API key management
 	var activeAPIKeys, expiredAPIKeys int
+	// api_keys records revocation in `status` ('active' / 'revoked'); it has no
+	// revoked_at column, so BOTH halves of this control failed to plan and both
+	// counts read 0. An expired-key count of zero produces no finding and docks
+	// no points: the control has reported compliant on every install, including
+	// ones with expired keys still accepted.
 	s.db.Pool.QueryRow(ctx, `
-		SELECT COUNT(*) FROM api_keys WHERE revoked_at IS NULL AND (expires_at IS NULL OR expires_at > NOW()) AND org_id = $1
+		SELECT COUNT(*) FROM api_keys WHERE status = 'active' AND (expires_at IS NULL OR expires_at > NOW()) AND org_id = $1
 	`, org.ID).Scan(&activeAPIKeys)
 	s.db.Pool.QueryRow(ctx, `
-		SELECT COUNT(*) FROM api_keys WHERE expires_at IS NOT NULL AND expires_at <= NOW() AND revoked_at IS NULL AND org_id = $1
+		SELECT COUNT(*) FROM api_keys WHERE expires_at IS NOT NULL AND expires_at <= NOW() AND status = 'active' AND org_id = $1
 	`, org.ID).Scan(&expiredAPIKeys)
 
 	assessment.Evidence = append(assessment.Evidence,
@@ -855,10 +860,11 @@ func (s *Service) evaluateA9AccessControl(ctx context.Context, startDate, endDat
 
 	// Session management
 	var avgSessionHours *float64
+	// started_at, not created_at -- see the same correction in compliance.go.
 	s.db.Pool.QueryRow(ctx, `
-		SELECT AVG(EXTRACT(EPOCH FROM (expires_at - created_at)) / 3600.0)
+		SELECT AVG(EXTRACT(EPOCH FROM (expires_at - started_at)) / 3600.0)
 		FROM sessions
-		WHERE created_at > NOW() - INTERVAL '30 days'
+		WHERE started_at > NOW() - INTERVAL '30 days'
 		  AND org_id = $1
 	`, org.ID).Scan(&avgSessionHours)
 	if avgSessionHours != nil {

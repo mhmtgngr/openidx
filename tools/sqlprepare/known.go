@@ -37,24 +37,6 @@ var knownBroken = map[string]string{
 	// internal/audit/anomaly.go:337  [42703] column "resource_type" does not exist
 	"internal/audit/anomaly.go#44c7545bd70d": "the anomaly sweep groups by a resource_type column the audit table does not have; that detector never fires.",
 
-	// internal/audit/compliance.go:273  [42703] column "due_date" does not exist
-	"internal/audit/compliance.go#ac03bc8e4d2f": "the control-status query selects due_date from a table without it; the compliance dashboard shows no due dates.",
-
-	// internal/audit/compliance.go:424  [42703] column "created_at" does not exist
-	"internal/audit/compliance.go#0901156ab63d": "created_at absent on that relation; the evidence-age computation never runs.",
-
-	// internal/audit/compliance.go:699  [42703] column "resource_type" does not exist
-	"internal/audit/compliance.go#0b9ef89fdfeb": "resource_type absent; the access-evidence section is empty.",
-
-	// internal/audit/compliance_enhanced.go:391  [42703] column "revoked_at" does not exist
-	"internal/audit/compliance_enhanced.go#9bc12472e453": "api_keys revocation is `status`; the expired-key control reports 0 findings, which reads as compliant.",
-
-	// internal/audit/compliance_enhanced.go:394  [42703] column "revoked_at" does not exist
-	"internal/audit/compliance_enhanced.go#489ea4acfc82": "api_keys revocation is `status`; this is the second query of the same expired-key control, so both halves of it report nothing.",
-
-	// internal/audit/compliance_enhanced.go:858  [42703] column "created_at" does not exist
-	"internal/audit/compliance_enhanced.go#de460d4ce663": "created_at absent on that relation; the evidence bundle omits the section.",
-
 	// internal/governance/service.go:495  [42803] column "ar.id" must appear in the GROUP BY clause or be used in an aggregate function
 	"internal/governance/service.go#d3a7d5f31586": "an aggregate query selects ar.id without grouping by it; the campaign roll-up never runs.",
 

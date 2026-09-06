@@ -270,10 +270,14 @@ func (s *Service) getAccessReviewMetrics(ctx context.Context, startDate, endDate
 			AND org_id = $3
 		`, startDate, endDate, org.ID).Scan(&metrics.CompletedReviews)
 
+		// access_reviews has no due_date; the campaign's deadline is end_date.
+		// The overdue count therefore read 0 on every report ever generated --
+		// a compliance dashboard stating that no access review is overdue,
+		// which is the reading an auditor takes as evidence.
 		s.db.Pool.QueryRow(ctx, `
 			SELECT COALESCE(COUNT(*), 0)
 			FROM access_reviews
-			WHERE status = 'pending' AND due_date < NOW()
+			WHERE status = 'pending' AND end_date < NOW()
 			AND org_id = $1
 		`, org.ID).Scan(&metrics.OverdueReviews)
 
@@ -421,10 +425,12 @@ func (s *Service) getSessionManagementMetrics(ctx context.Context) SessionManage
 			AND org_id = $1
 		`, org.ID).Scan(&metrics.ActiveSessions)
 
+		// sessions records its start as started_at; there is no created_at, so
+		// this statement could never plan and the average read 0 hours.
 		s.db.Pool.QueryRow(ctx, `
-			SELECT COALESCE(AVG(EXTRACT(EPOCH FROM (expires_at - created_at)) / 3600.0), 0)
+			SELECT COALESCE(AVG(EXTRACT(EPOCH FROM (expires_at - started_at)) / 3600.0), 0)
 			FROM sessions
-			WHERE created_at > NOW() - INTERVAL '30 days'
+			WHERE started_at > NOW() - INTERVAL '30 days'
 			AND org_id = $1
 		`, org.ID).Scan(&metrics.AverageSessionHours)
 
@@ -696,13 +702,16 @@ func (s *Service) getDataAccessMetrics(ctx context.Context, startDate, endDate t
 			rows.Close()
 		}
 
+		// audit_events describes what was acted on as (target_id, target_type);
+		// it has no resource_type. The GDPR report's "access by data type"
+		// section has therefore been empty in every report.
 		rows, err = s.db.Pool.Query(ctx, `
-			SELECT resource_type, COUNT(*)
+			SELECT target_type, COUNT(*)
 			FROM audit_events
 			WHERE event_type = 'data_access'
 			AND timestamp BETWEEN $1 AND $2
 			AND org_id = $3
-			GROUP BY resource_type
+			GROUP BY target_type
 		`, startDate, endDate, org.ID)
 		if err == nil {
 			for rows.Next() {

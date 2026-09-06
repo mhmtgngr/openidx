@@ -100,6 +100,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Four compliance controls that reported compliant because their queries
+  could not run.** Six statements across the SOC 2 / ISO 27001 / GDPR reporting
+  named columns the schema does not have, and each failed silently into a zero.
+  `access_reviews.due_date` (the deadline is `end_date`) — the overdue-review
+  count read 0 on every report ever generated, so the dashboard stated that no
+  access review was overdue. `sessions.created_at` (it is `started_at`), twice —
+  average session length always 0 hours, so the "sessions run too long" control
+  never fired. `audit_events.resource_type` (it is `target_type`) — the GDPR
+  report's access-by-data-type section was empty in every report.
+  `api_keys.revoked_at` (revocation is `status`), in **both** halves of the
+  expired-key control — an install with expired keys still being accepted
+  reported zero findings and lost no points. A control that cannot fail is not a
+  control, and zero findings reads to an auditor as evidence. Migration v178
+  retires v10's seeded "Q1 2026 Access Review" fixture where it is untouched:
+  with the overdue query corrected, that pending row dated March would otherwise
+  give every install a permanent overdue finding no operator created and none
+  could close. Pinned by a new suite that runs the real migration chain rather
+  than creating its own tables — the sibling DB tests in that package define the
+  columns they then assert on, which is part of why these six survived.
+
 - **The right to erasure had never run, and the data package always omitted
   four sections.** Both halves of the GDPR subject-rights implementation were
   broken in the same way, and neither could be seen from outside. *Erasure
