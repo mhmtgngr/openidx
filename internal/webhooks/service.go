@@ -27,20 +27,8 @@ import (
 	"github.com/openidx/openidx/internal/common/secretcrypt"
 )
 
-// Webhook event type constants
-const (
-	EventUserCreated     = "user.created"
-	EventUserUpdated     = "user.updated"
-	EventUserDeleted     = "user.deleted"
-	EventUserLocked      = "user.locked"
-	EventLoginSuccess    = "login.success"
-	EventLoginFailed     = "login.failed"
-	EventLoginHighRisk   = "login.high_risk"
-	EventGroupUpdated    = "group.updated"
-	EventRoleUpdated     = "role.updated"
-	EventPolicyViolated  = "policy.violated"
-	EventReviewCompleted = "review.completed"
-)
+// The event types live in catalogue.go, next to the list that says which of
+// them this product can actually deliver.
 
 // Subscription represents a webhook subscription
 type Subscription struct {

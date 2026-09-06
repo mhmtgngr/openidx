@@ -10,6 +10,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/webhooks"
 )
 
 // AttestationCampaign represents a certification/attestation campaign
@@ -681,8 +682,31 @@ func (s *Service) handleDecideAttestationItem(c *gin.Context) {
 		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND org_id = $2 AND decision = 'pending'", campaignID, org.ID,
 	).Scan(&pendingCount)
 	if pendingCount == 0 {
-		_, _ = s.db.Pool.Exec(c.Request.Context(),
+		// review.completed, at the moment the last item is decided.
+		//
+		// The event type was declared in internal/webhooks and published by
+		// nothing, so an operator whose evidence pipeline waits for "the
+		// certification finished" waited for ever. It is sent only when the
+		// UPDATE actually moved the campaign: the error was discarded here, and
+		// announcing a completion the database refused would be worse than the
+		// silence it replaces.
+		tag, cerr := s.db.Pool.Exec(c.Request.Context(),
 			"UPDATE attestation_campaigns SET status = 'completed', completed_at = NOW() WHERE id = $1 AND org_id = $2", campaignID, org.ID)
+		switch {
+		case cerr != nil:
+			s.logger.Error("failed to complete attestation campaign",
+				zap.String("campaign_id", campaignID), zap.Error(cerr))
+		case tag.RowsAffected() > 0 && s.webhookService != nil:
+			if perr := s.webhookService.Publish(orgctx.Detached(c.Request.Context()),
+				webhooks.EventReviewCompleted, map[string]interface{}{
+					"campaign_id": campaignID,
+					"kind":        "attestation",
+					"actor_id":    c.GetString("user_id"),
+				}); perr != nil {
+				s.logger.Warn("failed to publish review.completed",
+					zap.String("campaign_id", campaignID), zap.Error(perr))
+			}
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Decision recorded", "decision": req.Decision})

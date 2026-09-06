@@ -7628,6 +7628,7 @@ const tr: typeof en = {
         secret: 'Gizli anahtar',
         secretPlaceholder: 'Yük doğrulaması için imzalama anahtarı',
         events: 'Olaylar',
+        eventsResource: 'olay türleri',
         creating: 'Oluşturuluyor...',
         submit: 'Oluştur',
       },

@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Six of the webhook events the console offers had never been published.**
+  The subscription form listed ten event types. `user.updated` and
+  `group.updated` were emitted only from `internal/identity/handler.go` — a
+  complete second user-and-group CRUD implementation, fourteen exported
+  handlers, that **no router has ever mounted** — so their emitters ran
+  nowhere. `user.locked`, `login.failed`, `role.updated`, `policy.violated` and
+  `review.completed` were emitted by nothing at all: the failed-login path wrote
+  an audit row and sent no webhook, an account lockout was logged and announced
+  to no one, and a completed access-certification campaign told nobody. An
+  operator wired an integration up, saw the subscription listed, saw the
+  delivery log stay empty, and had no way to tell that from a quiet week. Every
+  one now publishes from the handler that actually runs: `user.updated` and
+  `user.deleted` from the mounted user handlers, `user.locked` on the failed
+  attempt that crosses the lockout threshold (once, not on every retry after),
+  `login.failed` beside the audit row, `role.updated` from the role handler,
+  `policy.violated` when the ABAC gate denies a sign-in, `review.completed` when
+  an attestation campaign's last item is decided — and the four group events
+  that had no publisher and no constant, `group.created`, `group.deleted`,
+  `group.member_added` and `group.member_removed`, the last being the event a
+  downstream system needs in order to **revoke** the access that came with a
+  group. Publishes are now made on a context detached from the request but
+  carrying its organization (`orgctx.Detached`): webhook subscriptions are
+  RLS-scoped, so an org-less publish matches nothing and delivers nothing,
+  quietly, for every tenant. `internal/identity/handler.go` is deleted.
+
 - **Revoking a user's MFA break-glass codes has never revoked one.**
   `DELETE /users/:id/bypass-codes` is how an administrator destroys every MFA
   bypass code a user holds — what you do the minute a break-glass code leaks.
@@ -24,6 +49,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `mfa_bypass_audit`. Proved red first with exactly the failure above.
 
 ### Added
+
+- **A webhook event catalogue that cannot drift from the code.**
+  `internal/webhooks.EventCatalogue` is now the single place an event type is
+  named — type, category, and the sentence an operator reads when choosing what
+  to subscribe to — and `catalogue_test.go` holds it against the tree in **both
+  directions**: an entry nothing publishes fails the build, and a `Publish`
+  naming something outside the catalogue fails it too. The census resolves
+  literals, `webhooks.EventX` constants, a variable assigned two constants, and
+  one level of forwarding (a helper that takes the event type as a parameter is
+  resolved at its call sites), and a `Publish` whose event type it cannot read
+  is itself a failure in the services that own a publisher — so nothing can hide
+  behind an expression. `GET /api/v1/webhooks/event-types` serves the catalogue
+  and the console's picker now reads it instead of a hard-coded list that had
+  drifted six entries away from reality; `POST /api/v1/webhooks` rejects a
+  subscription to an event type this deployment does not publish, with the
+  endpoint to consult, because the moment a subscription is created is the only
+  moment an operator can be told.
 
 - **`tools/routereach` — parameters with no route, handlers with no router.**
   The census that found the defect above, and a second class beside it. It

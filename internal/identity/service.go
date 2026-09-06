@@ -40,6 +40,7 @@ import (
 	"github.com/openidx/openidx/internal/common/pwhash"
 	"github.com/openidx/openidx/internal/common/secretcrypt"
 	"github.com/openidx/openidx/internal/risk"
+	"github.com/openidx/openidx/internal/webhooks"
 
 	"github.com/openidx/openidx/internal/common/logsafe"
 )
@@ -1614,7 +1615,7 @@ const (
 		        ELSE locked_until
 		    END
 		WHERE username = $1 AND org_id = $2
-		RETURNING failed_login_count, locked_until`
+		RETURNING id, failed_login_count, locked_until`
 
 	failedLoginIncrementByID = `
 		UPDATE users
@@ -1625,7 +1626,7 @@ const (
 		        ELSE locked_until
 		    END
 		WHERE id = $1 AND org_id = $2
-		RETURNING failed_login_count, locked_until`
+		RETURNING id, failed_login_count, locked_until`
 )
 
 func (s *Service) recordFailedLogin(ctx context.Context, query, subject string) error {
@@ -1638,16 +1639,27 @@ func (s *Service) recordFailedLogin(ctx context.Context, query, subject string) 
 
 	maxFailures, lockoutDuration := s.lockoutPolicy(ctx)
 
+	var userID string
 	var failures int
 	var lockedUntil *time.Time
 	if err := s.db.Pool.QueryRow(ctx, query,
-		subject, org.ID, maxFailures, lockoutDuration.String()).Scan(&failures, &lockedUntil); err != nil {
+		subject, org.ID, maxFailures, lockoutDuration.String()).Scan(&userID, &failures, &lockedUntil); err != nil {
 		return err
 	}
 
 	if lockedUntil != nil && failures >= maxFailures {
 		s.logger.Warn("Account locked due to failed login attempts",
 			zap.String("subject", logsafe.Clean(subject)), zap.Int("failures", failures))
+	}
+	// user.locked, on the attempt that crosses the threshold and not on the
+	// ones after it: while an account stays locked every further attempt still
+	// increments the counter, so `>= maxFailures` would send the same event on
+	// every retry and an operator's integration would see a lockout storm where
+	// there was one lockout. This event type was declared and never published by
+	// anything, so there is no existing subscriber whose expectations this
+	// changes.
+	if failures == maxFailures && lockedUntil != nil {
+		s.emitAccountLocked(ctx, userID, failures)
 	}
 	return nil
 }
@@ -3873,7 +3885,7 @@ func (s *Service) handleCreateUser(c *gin.Context) {
 
 	// Publish webhook event (best-effort)
 	if s.webhookService != nil {
-		s.webhookService.Publish(c.Request.Context(), "user.created", map[string]interface{}{
+		s.webhookService.Publish(publishCtx(c.Request.Context()), webhooks.EventUserCreated, map[string]interface{}{
 			"user_id": user.ID, "username": user.GetUsername(), "email": user.GetEmail(),
 		})
 	}
@@ -3897,6 +3909,7 @@ func (s *Service) handleUpdateUser(c *gin.Context) {
 		return
 	}
 
+	s.emitUserLifecycleEvent(c.Request.Context(), webhooks.EventUserUpdated, userID, getActorID(c))
 	c.JSON(200, user)
 }
 
@@ -3910,6 +3923,7 @@ func (s *Service) handleDeleteUser(c *gin.Context) {
 		return
 	}
 
+	s.emitUserLifecycleEvent(c.Request.Context(), webhooks.EventUserDeleted, userID, getActorID(c))
 	c.JSON(204, nil)
 }
 
@@ -4145,6 +4159,7 @@ func (s *Service) handleUpdateRole(c *gin.Context) {
 		return
 	}
 
+	s.emitRoleLifecycleEvent(c.Request.Context(), webhooks.EventRoleUpdated, roleID, getActorID(c))
 	c.JSON(200, role)
 }
 
@@ -4392,6 +4407,7 @@ func (s *Service) handleCreateGroup(c *gin.Context) {
 		return
 	}
 
+	s.emitGroupLifecycleEvent(c.Request.Context(), webhooks.EventGroupCreated, group.ID, getActorID(c))
 	c.JSON(201, group)
 }
 
@@ -4411,6 +4427,7 @@ func (s *Service) handleUpdateGroup(c *gin.Context) {
 		return
 	}
 
+	s.emitGroupLifecycleEvent(c.Request.Context(), webhooks.EventGroupUpdated, groupID, getActorID(c))
 	c.JSON(200, group)
 }
 
@@ -4423,6 +4440,7 @@ func (s *Service) handleDeleteGroup(c *gin.Context) {
 		return
 	}
 
+	s.emitGroupLifecycleEvent(c.Request.Context(), webhooks.EventGroupDeleted, groupID, getActorID(c))
 	c.JSON(204, nil)
 }
 
@@ -4463,6 +4481,9 @@ func (s *Service) handleAddGroupMember(c *gin.Context) {
 		return
 	}
 
+	// The event a downstream system needs in order to GRANT the access that
+	// comes with the group.
+	s.emitGroupLifecycleEvent(c.Request.Context(), webhooks.EventGroupMemberAdded, groupID, getActorID(c), req.UserID)
 	c.JSON(200, gin.H{"status": "member added"})
 }
 
@@ -4491,6 +4512,8 @@ func (s *Service) handleRemoveGroupMember(c *gin.Context) {
 		return
 	}
 
+	// And the event it needs in order to REVOKE it again.
+	s.emitGroupLifecycleEvent(c.Request.Context(), webhooks.EventGroupMemberRemoved, groupID, getActorID(c), userID)
 	c.JSON(200, gin.H{"status": "member removed"})
 }
 
@@ -5947,7 +5970,7 @@ func (s *Service) handleAcceptInvitation(c *gin.Context) {
 
 	// Publish webhook
 	if s.webhookService != nil {
-		s.webhookService.Publish(c.Request.Context(), "user.created", map[string]interface{}{
+		s.webhookService.Publish(publishCtx(c.Request.Context()), webhooks.EventUserCreated, map[string]interface{}{
 			"user_id": user.ID, "username": user.GetUsername(), "email": email, "source": "invitation",
 		})
 	}
@@ -5992,7 +6015,7 @@ func (s *Service) handleOffboardUser(c *gin.Context) {
 
 	// Publish webhook
 	if s.webhookService != nil {
-		s.webhookService.Publish(c.Request.Context(), "user.deleted", map[string]interface{}{
+		s.webhookService.Publish(publishCtx(c.Request.Context()), webhooks.EventUserDeleted, map[string]interface{}{
 			"user_id": userID, "action": "offboard",
 		})
 	}

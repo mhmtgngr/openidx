@@ -7741,6 +7741,7 @@ const en = {
         secret: 'Secret',
         secretPlaceholder: 'Signing secret for payload verification',
         events: 'Events',
+        eventsResource: 'event types',
         creating: 'Creating...',
         submit: 'Create',
       },

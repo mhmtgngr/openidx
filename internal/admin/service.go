@@ -21,6 +21,7 @@ import (
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/orgctx"
 	"github.com/openidx/openidx/internal/sms"
+	"github.com/openidx/openidx/internal/webhooks"
 )
 
 // Dashboard contains overview statistics
@@ -1037,6 +1038,7 @@ func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 
 	// Webhooks
 	admin.GET("/webhooks", svc.handleListWebhooks)
+	admin.GET("/webhooks/event-types", svc.handleWebhookEventTypes)
 	admin.POST("/webhooks", svc.handleCreateWebhook)
 	admin.GET("/webhooks/:id", svc.handleGetWebhook)
 	admin.DELETE("/webhooks/:id", svc.handleDeleteWebhook)
@@ -2366,6 +2368,19 @@ func (s *Service) handleListWebhooks(c *gin.Context) {
 	c.JSON(200, gin.H{"webhooks": subs})
 }
 
+// handleWebhookEventTypes serves the event catalogue an operator subscribes
+// from.
+//
+// The console used to hard-code this list, and it had drifted into offering six
+// event types that nothing published: a subscription to "user.updated" or
+// "somebody left this group" was accepted, listed, and never delivered.
+// internal/webhooks/catalogue_test.go now fails on a catalogue entry with no
+// publisher, so serving that same list is what makes the form honest -- the
+// console can only offer what something sends.
+func (s *Service) handleWebhookEventTypes(c *gin.Context) {
+	c.JSON(200, gin.H{"event_types": webhooks.EventCatalogue})
+}
+
 func (s *Service) handleCreateWebhook(c *gin.Context) {
 	if s.webhookService == nil {
 		c.JSON(500, gin.H{"error": "webhook service not available"})
@@ -2391,6 +2406,18 @@ func (s *Service) handleCreateWebhook(c *gin.Context) {
 	if len(req.Events) == 0 {
 		c.JSON(400, gin.H{"error": "at least one event is required"})
 		return
+	}
+	// An accepted subscription to an event nothing publishes is a delivery log
+	// that stays empty for ever, and no way for the operator to tell that from a
+	// quiet week. Refusing it here is the only moment they can be told.
+	for _, e := range req.Events {
+		if !webhooks.KnownEventType(e) {
+			c.JSON(400, gin.H{
+				"error": "unknown event type: " + e,
+				"hint":  "GET /api/v1/webhooks/event-types lists what this deployment publishes",
+			})
+			return
+		}
 	}
 	if len(req.Secret) < 16 {
 		c.JSON(400, gin.H{"error": "webhook secret must be at least 16 characters"})

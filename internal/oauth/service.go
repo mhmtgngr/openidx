@@ -41,6 +41,7 @@ import (
 	"github.com/openidx/openidx/internal/identity"
 	"github.com/openidx/openidx/internal/risk"
 	"github.com/openidx/openidx/internal/signingkeys"
+	"github.com/openidx/openidx/internal/webhooks"
 
 	"github.com/openidx/openidx/internal/common/logsafe"
 )
@@ -722,7 +723,7 @@ func (s *Service) handleRefreshTokenReuse(ctx context.Context, token *RefreshTok
 		zap.Timep("rotated_at", token.UsedAt))
 
 	if s.webhookService != nil {
-		s.webhookService.Publish(ctx, "oauth.refresh_token.reuse_detected", map[string]interface{}{
+		s.webhookService.Publish(orgctx.Detached(ctx), webhooks.EventRefreshTokenReuse, map[string]interface{}{
 			"user_id":        token.UserID,
 			"client_id":      clientID,
 			"family_id":      token.FamilyID,
@@ -1790,6 +1791,18 @@ func (s *Service) handleLogin(c *gin.Context) {
 				map[string]interface{}{"reason": err.Error(), "user_agent": userAgent})
 		}()
 
+		// login.failed has been a declared webhook event type with no publisher:
+		// the audit row above was written and nothing was ever delivered, so an
+		// operator watching for a credential-stuffing burst from their own SIEM
+		// saw an empty stream. The username is what the caller typed, so it is
+		// not a confirmed account and the payload says so.
+		if s.webhookService != nil {
+			s.webhookService.Publish(orgctx.Detached(c.Request.Context()), webhooks.EventLoginFailed, map[string]interface{}{
+				"username": req.Username, "ip": clientIP,
+				"reason": err.Error(), "user_agent": userAgent,
+			})
+		}
+
 		// Return appropriate error message
 		errorMsg := "Invalid username or password"
 		if err.Error() == "account is locked" {
@@ -1887,11 +1900,11 @@ func (s *Service) handleLogin(c *gin.Context) {
 
 		// Publish webhook event for login
 		if s.webhookService != nil {
-			eventType := "login.success"
+			eventType := webhooks.EventLoginSuccess
 			if riskScore >= 70 {
-				eventType = "login.high_risk"
+				eventType = webhooks.EventLoginHighRisk
 			}
-			s.webhookService.Publish(c.Request.Context(), eventType, map[string]interface{}{
+			s.webhookService.Publish(orgctx.Detached(c.Request.Context()), eventType, map[string]interface{}{
 				"user_id": user.ID, "ip": clientIP, "location": location,
 				"risk_score": riskScore, "device_trusted": deviceTrusted,
 			})
@@ -4408,6 +4421,16 @@ func (s *Service) abacGateAllows(c *gin.Context, userID, clientID, appID string)
 			logsafe.String("client_id", clientID),
 			logsafe.String("application_id", appID),
 			logsafe.String("policy_id", res.PolicyID))
+		// policy.violated: declared as a webhook event type and published by
+		// nothing until now. An attribute policy refusing a sign-in is the
+		// decision an operator most wants forwarded -- it is the one their
+		// helpdesk will be asked about within the minute.
+		if s.webhookService != nil {
+			s.webhookService.Publish(orgctx.Detached(ctx), webhooks.EventPolicyViolated, map[string]interface{}{
+				"user_id": userID, "client_id": clientID, "application_id": appID,
+				"policy_id": res.PolicyID, "reason": res.Reason, "ip": c.ClientIP(),
+			})
+		}
 		c.JSON(403, gin.H{"error": "access_denied", "error_description": res.Reason})
 		return false
 	}
