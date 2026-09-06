@@ -304,14 +304,13 @@ func (s *Service) handleStartDiscovery(c *gin.Context) {
 
 	s.db.Pool.Exec(ctx, `UPDATE published_apps SET status='discovering', discovery_started_at=NOW(), discovery_error=NULL, updated_at=NOW() WHERE id=$1 AND org_id=$2`, appID, org.ID)
 
-	// Run app discovery in background with timeout. The org id is threaded
-	// explicitly because the background context has no org (so RLS/orgctx are
-	// unavailable) — every discovery query scopes by this org id.
-	orgID := org.ID
+	// Run app discovery in the background, on a context that outlives the
+	// response and still carries the tenant — see discoveryContext.
+	discoveryOrg := org
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		ctx, cancel := discoveryContext(discoveryOrg)
 		defer cancel()
-		s.runAppDiscovery(ctx, appID, orgID)
+		s.runAppDiscovery(ctx, appID, discoveryOrg.ID)
 	}()
 
 	s.logAuditEvent(c, "app_discovery_started", appID, "published_app", nil)
@@ -736,9 +735,29 @@ func (s *Service) handlePublishApp(c *gin.Context) {
 
 // ---- Discovery engine ----
 
-// runAppDiscovery runs in a background goroutine (no org context), so the org
-// id is passed in explicitly and every query scopes by it — the app was already
-// org-verified by the handler that launched the discovery.
+// discoveryContext builds the context the background discovery goroutine runs
+// on. It starts from Background because the request's context dies with the
+// response — and it CARRIES THE ORG, which is the whole point of it being a
+// named function.
+//
+// v73 declined to belt published_apps and discovered_paths, recording as its
+// reason that "runAppDiscovery runs in a background goroutine with no org ctx".
+// That was true, and it made the belt impossible: the pool sets app.org_id from
+// orgctx at checkout, so a Background context sets nothing and, under the belt,
+// every statement in the discovery run would have matched no rows — an app
+// stuck at "discovering" forever, with nothing in the log to say why.
+//
+// The org on the context is what the DATABASE scopes by. The org id the caller
+// also passes to runAppDiscovery is what the SQL scopes by. Both, deliberately:
+// the belt is not a licence to drop the predicate.
+func discoveryContext(org orgctx.Org) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(orgctx.With(context.Background(), org), 5*time.Minute)
+}
+
+// runAppDiscovery runs in a background goroutine on the context discoveryContext
+// builds: detached from the request, carrying the tenant. The org id is ALSO
+// passed in, so every query keeps its own predicate. The app was already
+// org-verified by the handler that launched it.
 func (s *Service) runAppDiscovery(ctx context.Context, appID, orgID string) {
 	var targetURL, specURL string
 	err := s.db.Pool.QueryRow(ctx, `SELECT target_url, COALESCE(spec_url,'') FROM published_apps WHERE id=$1 AND org_id=$2`, appID, orgID).

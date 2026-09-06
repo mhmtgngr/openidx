@@ -852,9 +852,21 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.POST("/apps/:appId/consolidate", adminOnly, svc.handleConsolidateApp)
 		api.GET("/apps/:appId/ziti-services", adminOnly, svc.handleGetAppZitiServices)
 
-		// Relations & Integrity Doctor
-		api.GET("/health/relations", svc.handleHealthRelations)
-		api.POST("/health/fix/:checkId", svc.handleHealthFix)
+		// Relations & Integrity Doctor — adminOnly, like every neighbouring
+		// management surface. Both handlers run under orgctx.WithBypassRLS by
+		// design (the doctor is an install-wide diagnostic), so RLS cannot
+		// scope them and the role gate is the only thing standing between a
+		// plain tenant user and: an install-wide report naming every tenant's
+		// apps, hosts, client ids and Ziti services; `?heal=safe`, which
+		// applies every Safe fix across every tenant in one request; and
+		// /health/fix, which applies one named fix — including tearing a
+		// service off the controller and consolidating an app, which rewrites
+		// another tenant's routes. handleHealthRelations' own comment already
+		// assumed an admin ("an org-scoped admin request must see all rows");
+		// this is the guard that comment assumed. Pinned by
+		// health_doctor_gate_test.go against the real route table.
+		api.GET("/health/relations", adminOnly, svc.handleHealthRelations)
+		api.POST("/health/fix/:checkId", adminOnly, svc.handleHealthFix)
 
 		// Unified audit log
 		api.GET("/audit/unified", svc.handleGetUnifiedAuditEvents)

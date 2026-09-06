@@ -368,8 +368,14 @@ func TestRegistersOnlyShrink(t *testing.T) {
 		// session and severs the overlay circuit, and the match named no
 		// organization at all. 12 -> 10 with v166, the two network hand-off
 		// queues, where the revocation worker marked every item done whether or
-		// not the circuit was actually severed.
-		{"needsBelt", len(needsBelt), 7},
+		// not the circuit was actually severed. 9 -> 7 with v168, the MCP
+		// gateway pair, where the server an AI agent is proxied to was scoped
+		// on every read and the tool allowlist attached to it was not. 7 -> 5
+		// with v169, the app-publish pair, whose migration wrote down a reason
+		// for skipping the belt that had half expired -- the integrity doctor
+		// sweeps under WithBypassRLS, which is the belt's own opt-out, and the
+		// discovery goroutine needed one line to carry the org on its context.
+		{"needsBelt", len(needsBelt), 5},
 		{"predicateAuditPending", len(predicateAuditPending), 18},
 		{"installWideTables", len(installWideTables), 21},
 		{"beltExempt", len(beltExempt), 5},

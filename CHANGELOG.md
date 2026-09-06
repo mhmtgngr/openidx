@@ -58,6 +58,39 @@ to a spec that describes an eighth of a surface, a documented endpoint that
   **Operators of installations with more than one organization should note**
   that existing runs are assigned to the organization of whoever started them,
   and their per-account records follow the run.
+- **The system-health repair tool required no administrator role** (migration
+  v169). The Relations & Integrity Doctor on the System Health page finds
+  inconsistencies across the whole installation — an application whose network
+  service no longer exists, two applications claiming the same address — and
+  offers to repair them. It is deliberately install-wide: it deliberately steps
+  outside the per-organization boundary so that an operator can see the whole
+  picture.
+
+  **Its two endpoints required only that the caller be signed in.** Every
+  neighbouring administrative endpoint requires an administrator; these did not,
+  and because they deliberately step outside the organization boundary, nothing
+  else was confining them either. Any signed-in user of any organization could:
+
+  - read a report naming every organization's published applications, their
+    public addresses, their sign-in client identifiers and their network service
+    names;
+  - apply every repair marked safe, across every organization, in one request;
+  - apply one of the two repairs the product itself marks risky — removing a
+    service from the network controller, or consolidating an application, which
+    rewrites another organization's routes and re-points their discovered paths.
+
+  Both endpoints now require an administrator, and a test drives the product's
+  real routing table to prove it, so a route added here in future cannot quietly
+  skip the check.
+
+  Also in this change: the App Publish records (published applications and their
+  discovered paths) are brought under the database's own isolation rule. Their
+  earlier migration had recorded a reason for leaving them out — half of it had
+  since stopped being true, and the other half needed one line so that the
+  background path-discovery job carries the organization it is working for.
+  Changing the classification of a path — which decides whether it is published,
+  behind what sign-in, and under what device requirement — now has a test
+  covering the cross-organization case it did not have.
 - **One organization could add a permission to another organization's AI tool
   gateway** (migration v168). The MCP gateway lets an administrator register an
   upstream an AI agent may be proxied to, and then list which callers may use

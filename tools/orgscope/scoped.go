@@ -115,8 +115,6 @@ var needsScoping = map[string]string{
 var needsBelt = map[string]string{
 	"report_exports":            "v26; 1 unscoped query",
 	"device_trust_requests":     "v39; 2 unscoped queries",
-	"published_apps":            "v40; 2 unscoped queries",
-	"discovered_paths":          "v40; 1 unscoped query",
 	"oauth_registration_tokens": "v97; 3 unscoped queries",
 	"oauth_device_codes":        "v125 redeemed by hashed device_code; confirm the pre-tenant path before belting; 4 unscoped queries",
 	"enrollment_sessions":       "v132; 3 unscoped queries",

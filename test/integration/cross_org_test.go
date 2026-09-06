@@ -846,6 +846,19 @@ func TestRLSBeltTables(t *testing.T) {
 			INSERT INTO mcp_tool_policies (server_id, principal, tool, org_id)
 			SELECT m.id, 'role:admin', '*', $1 FROM m`},
 
+		// v169 — the app-publish pair. v73 scoped them and recorded a reason for
+		// skipping the belt; the doctor half of that reason was a WithBypassRLS
+		// path the belt permits, and the goroutine half was one line of context.
+		{"published_apps", `INSERT INTO published_apps (name, target_url, status, org_id)
+			VALUES ('tbelt-app-` + suffix + `', 'http://app.example.test:8080', 'draft', $1)`},
+
+		{"discovered_paths", `WITH a AS (
+			INSERT INTO published_apps (name, target_url, status, org_id)
+			VALUES ('tbelt-app-p-` + suffix + `', 'http://app.example.test:8080', 'draft', $1)
+			RETURNING id)
+			INSERT INTO discovered_paths (app_id, path, classification, org_id)
+			SELECT a.id, '/tbelt-` + suffix + `', 'public', $1 FROM a`},
+
 		{"group_application_assignments", `WITH g AS (
 			INSERT INTO groups (name, org_id) VALUES ('tbelt-gaa-` + suffix + `', $1) RETURNING id),
 			a AS (
