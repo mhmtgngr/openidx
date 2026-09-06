@@ -408,7 +408,13 @@ func TestRegistersOnlyShrink(t *testing.T) {
 		// suppresses on its own line or the one below, so one sitting above a
 		// multi-line Exec never reached the SQL literal it was written for. The
 		// reasons were right and unread.
-		{"predicateAuditPending", len(predicateAuditPending), 12},
+		// 12 -> 10 with the JIT elevations and the approval chain. ValidateGrant
+		// is the check that decides whether a time-boxed elevation is live, and
+		// RequestElevation's duplicate check refused a second live grant while
+		// looking in no particular tenant. The escalation sweep's own comment
+		// said it selects r.org_id "so each request's writes below stay scoped
+		// to its own org"; one write did not use it.
+		{"predicateAuditPending", len(predicateAuditPending), 10},
 		{"installWideTables", len(installWideTables), 21},
 		{"beltExempt", len(beltExempt), 5},
 	} {

@@ -3788,6 +3788,32 @@ class this whole program exists for.
    `TestGuacamoleConnections_TenantIsolation`, written for exactly this failure
    mode in an earlier batch, said so in one line: *"org A connecting to its OWN
    route returned 403; the org predicate must scope the lookup, not empty it."*
+
+   **Batch 37 (`predicateAuditPending` 12 → 10): the elevation and the chain
+   that approves it.**
+
+   `jit_grants` is a time-boxed elevation — a user holds a role for an hour and
+   then does not. Ten of its queries named no tenant. Two matter more than the
+   rest:
+
+   - **`ValidateGrant`** is the check that decides whether an elevation is
+     *live*. It counted active grants for a `(user, role)` pair across the
+     installation.
+   - **`RequestElevation`'s duplicate check** refuses a second live grant for
+     the same role — a correctness gate — and it ran *before* the org was
+     resolved, so it looked in no particular tenant. The org is now resolved
+     first, which is also why the gate and the write it guards now agree.
+
+   The write side was already correct: `INSERT INTO jit_grants` has always
+   carried `org_id`. The expiry sweep keeps its cross-org reach with the reason
+   written on the query — an elevation the sweep cannot see never expires, which
+   is the one direction of this control that must not be scoped.
+
+   `request_approval_chains` contributed a single line, and the file argued
+   against itself. `checkEscalations` is a deliberate cross-org sweep whose own
+   comment says it selects `r.org_id` *"so each request's writes below stay
+   scoped to its own org (escalation has no request context to read org from)"*.
+   One of those writes did not use it. The value was already in hand.
 4. ✅ **OPA `deny` enforced** — *shipped.* — `internal/common/middleware/opa.go`: abort
    unless `Allow && len(Deny)==0`; `authz.rego:15-19`'s "any authenticated
    user may GET anything" removed; `policies/access_control.rego`

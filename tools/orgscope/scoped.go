@@ -135,8 +135,6 @@ var predicateAuditPending = map[string]string{
 	"attestation_campaigns":        "governance attestation",
 	"certification_campaigns":      "governance certification",
 	"campaign_runs":                "governance certification",
-	"request_approval_chains":      "governance approvals",
-	"jit_grants":                   "governance JIT",
 	"vault_secrets":                "PAM vault; read in 5 packages, and Use() runs under an explicit bypass -- retiring it needs the org threaded through Use's 9 callers",
 	"vault_secret_versions":        "PAM vault; decryptCurrent joins vault_secrets, so it leaves with that table",
 	"credential_rotation_policies": "PAM vault rotation; read by internal/credentials and internal/governance, both on rotation-worker paths that need their own org read first",

@@ -83,20 +83,26 @@ func (s *JITService) RequestElevation(ctx context.Context, req JITRequest) (*JIT
 		return nil, fmt.Errorf("justification is required")
 	}
 
+	// The org is resolved FIRST: the duplicate-grant check below is a
+	// correctness gate (it refuses a second live elevation for the same role),
+	// so it has to look in the same tenant the grant will be written to.
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	// Check if user already has an active JIT grant for this role
 	var existingID string
-	err := s.db.Pool.QueryRow(ctx,
-		`SELECT id FROM jit_grants WHERE user_id = $1 AND role_id = $2 AND status = 'active' AND expires_at > NOW()`,
-		req.UserID, req.RoleID).Scan(&existingID)
+	err = s.db.Pool.QueryRow(ctx,
+		`SELECT id FROM jit_grants
+		  WHERE user_id = $1 AND role_id = $2 AND org_id = $3
+		    AND status = 'active' AND expires_at > NOW()`,
+		req.UserID, req.RoleID, org.ID).Scan(&existingID)
 	if err == nil {
 		return nil, fmt.Errorf("user already has an active JIT grant for this role: %s", existingID)
 	}
 
 	// Verify the role exists
-	org, err := orgctx.From(ctx)
-	if err != nil {
-		return nil, err
-	}
 	var roleName string
 	err = s.db.Pool.QueryRow(ctx,
 		`SELECT name FROM roles WHERE id = $1 AND org_id = $2`, req.RoleID, org.ID).Scan(&roleName)
@@ -158,6 +164,10 @@ func (s *JITService) GrantElevation(ctx context.Context, userID, roleID, granted
 
 // GetActiveGrant retrieves an active JIT grant for a user and role
 func (s *JITService) GetActiveGrant(ctx context.Context, userID, roleID string) (*JITGrant, error) {
+	org, orgErr := orgctx.From(ctx)
+	if orgErr != nil {
+		return nil, orgErr
+	}
 	var grant JITGrant
 	var revokedAt *time.Time
 	var revokedBy *string
@@ -166,8 +176,9 @@ func (s *JITService) GetActiveGrant(ctx context.Context, userID, roleID string) 
 	err := s.db.Pool.QueryRow(ctx,
 		`SELECT id, user_id, role_id, role_name, granted_by, justification, duration, expires_at, created_at, revoked_at, revoked_by, status
 		 FROM jit_grants
-		 WHERE user_id = $1 AND role_id = $2 AND status = 'active' AND expires_at > NOW()`,
-		userID, roleID).Scan(
+		 WHERE user_id = $1 AND role_id = $2 AND org_id = $3
+		   AND status = 'active' AND expires_at > NOW()`,
+		userID, roleID, org.ID).Scan(
 		&grant.ID, &grant.UserID, &grant.RoleID, &grant.RoleName,
 		&grant.GrantedBy, &grant.Justification, &durationStr,
 		&grant.ExpiresAt, &grant.CreatedAt, &revokedAt, &revokedBy, &grant.Status)
@@ -190,12 +201,16 @@ func (s *JITService) GetActiveGrant(ctx context.Context, userID, roleID string) 
 
 // GetUserActiveGrants returns all active JIT grants for a user
 func (s *JITService) GetUserActiveGrants(ctx context.Context, userID string) ([]JITGrant, error) {
+	org, orgErr := orgctx.From(ctx)
+	if orgErr != nil {
+		return nil, orgErr
+	}
 	rows, err := s.db.Pool.Query(ctx,
 		`SELECT id, user_id, role_id, role_name, granted_by, justification, duration, expires_at, created_at, revoked_at, revoked_by, status
 		 FROM jit_grants
-		 WHERE user_id = $1 AND status = 'active' AND expires_at > NOW()
+		 WHERE user_id = $1 AND org_id = $2 AND status = 'active' AND expires_at > NOW()
 		 ORDER BY expires_at ASC`,
-		userID)
+		userID, org.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query active grants: %w", err)
 	}
@@ -233,6 +248,10 @@ func (s *JITService) GetUserActiveGrants(ctx context.Context, userID string) ([]
 
 // ExtendGrant extends the duration of an existing JIT grant
 func (s *JITService) ExtendGrant(ctx context.Context, grantID string, additionalDuration time.Duration, extendedBy string) (*JITGrant, error) {
+	org, orgErr := orgctx.From(ctx)
+	if orgErr != nil {
+		return nil, orgErr
+	}
 	// Lock the row for update
 	var grant JITGrant
 	var currentExpiresAt time.Time
@@ -240,8 +259,8 @@ func (s *JITService) ExtendGrant(ctx context.Context, grantID string, additional
 
 	err := s.db.Pool.QueryRow(ctx,
 		`SELECT id, user_id, role_id, role_name, granted_by, justification, duration, expires_at, created_at, status
-		 FROM jit_grants WHERE id = $1 AND status = 'active' FOR UPDATE`,
-		grantID).Scan(
+		 FROM jit_grants WHERE id = $1 AND org_id = $2 AND status = 'active' FOR UPDATE`,
+		grantID, org.ID).Scan(
 		&grant.ID, &grant.UserID, &grant.RoleID, &grant.RoleName,
 		&grant.GrantedBy, &grant.Justification, &durationStr,
 		&currentExpiresAt, &grant.CreatedAt, &grant.Status)
@@ -262,7 +281,7 @@ func (s *JITService) ExtendGrant(ctx context.Context, grantID string, additional
 	// Update the grant
 	now := time.Now()
 	_, err = s.db.Pool.Exec(ctx,
-		`UPDATE jit_grants SET expires_at = $1, updated_at = $2 WHERE id = $3`,
+		`UPDATE jit_grants SET expires_at = $1, updated_at = $2 WHERE id = $3 AND org_id = $4`,
 		newExpiresAt, now, grantID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to extend grant: %w", err)
@@ -284,19 +303,24 @@ func (s *JITService) ExtendGrant(ctx context.Context, grantID string, additional
 
 // RevokeGrant immediately revokes an active JIT grant
 func (s *JITService) RevokeGrant(ctx context.Context, grantID, revokedBy, reason string) error {
+	org, orgErr := orgctx.From(ctx)
+	if orgErr != nil {
+		return orgErr
+	}
 	// Get the grant details before revoking
 	var userID, roleID string
 	err := s.db.Pool.QueryRow(ctx,
-		`SELECT user_id, role_id FROM jit_grants WHERE id = $1 AND status = 'active'`,
-		grantID).Scan(&userID, &roleID)
+		`SELECT user_id, role_id FROM jit_grants WHERE id = $1 AND org_id = $2 AND status = 'active'`,
+		grantID, org.ID).Scan(&userID, &roleID)
 	if err != nil {
 		return fmt.Errorf("active grant not found: %w", err)
 	}
 
 	now := time.Now()
 	result, err := s.db.Pool.Exec(ctx,
-		`UPDATE jit_grants SET status = 'revoked', revoked_at = $1, revoked_by = $2, updated_at = $1 WHERE id = $3 AND status = 'active'`,
-		now, revokedBy, grantID)
+		`UPDATE jit_grants SET status = 'revoked', revoked_at = $1, revoked_by = $2, updated_at = $1
+		  WHERE id = $3 AND org_id = $4 AND status = 'active'`,
+		now, revokedBy, grantID, org.ID)
 	if err != nil {
 		return fmt.Errorf("failed to revoke grant: %w", err)
 	}
@@ -340,6 +364,7 @@ func (s *JITService) StartExpiryChecker(ctx context.Context) {
 func (s *JITService) revokeExpiredGrants(ctx context.Context) {
 	// Find all active grants that have expired
 	rows, err := s.db.Pool.Query(ctx,
+		//orgscope:ignore JIT expiry sweep runs across every organization by design; an elevation the sweep cannot see never expires
 		`SELECT id, user_id, role_id, role_name FROM jit_grants WHERE status = 'active' AND expires_at <= NOW()`)
 	if err != nil {
 		s.logger.Error("Failed to query expired JIT grants", zap.Error(err))
@@ -371,6 +396,7 @@ func (s *JITService) revokeExpiredGrants(ctx context.Context) {
 	for _, g := range expiredGrants {
 		now := time.Now()
 		result, err := s.db.Pool.Exec(ctx,
+			//orgscope:ignore JIT expiry sweep; the row id comes from this sweep's own cross-org scan
 			`UPDATE jit_grants SET status = 'expired', updated_at = $1 WHERE id = $2 AND status = 'active'`,
 			now, g.ID)
 		if err != nil {
@@ -398,11 +424,16 @@ func (s *JITService) revokeExpiredGrants(ctx context.Context) {
 
 // ValidateGrant checks if a user has a valid, non-revoked JIT grant for a role
 func (s *JITService) ValidateGrant(ctx context.Context, userID, roleID string) (bool, error) {
+	org, orgErr := orgctx.From(ctx)
+	if orgErr != nil {
+		return false, orgErr
+	}
 	var count int
 	err := s.db.Pool.QueryRow(ctx,
 		`SELECT COUNT(*) FROM jit_grants
-		 WHERE user_id = $1 AND role_id = $2 AND status = 'active' AND expires_at > NOW()`,
-		userID, roleID).Scan(&count)
+		 WHERE user_id = $1 AND role_id = $2 AND org_id = $3
+		   AND status = 'active' AND expires_at > NOW()`,
+		userID, roleID, org.ID).Scan(&count)
 	if err != nil {
 		return false, fmt.Errorf("failed to validate grant: %w", err)
 	}

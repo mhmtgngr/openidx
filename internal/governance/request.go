@@ -469,9 +469,13 @@ func (s *RequestService) checkEscalations(ctx context.Context) {
 
 	for _, info := range toEscalate {
 		// Mark as notified
+		// info.OrgID is selected above for exactly this: the sweep spans orgs,
+		// and each write it makes is scoped to the org of the request it came
+		// from. This was the one write that did not use it.
 		s.db.Pool.Exec(ctx,
-			`UPDATE request_approval_chains SET escalation_notified = true WHERE request_id = $1`,
-			info.RequestID)
+			`UPDATE request_approval_chains SET escalation_notified = true
+			  WHERE request_id = $1 AND org_id = $2`,
+			info.RequestID, info.OrgID)
 
 		// Add escalation approvals for each escalation target
 		now := time.Now()
