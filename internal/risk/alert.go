@@ -215,11 +215,15 @@ func (a *AlertManager) storeAlert(ctx context.Context, alert *Alert) error {
 	actionsJSON, _ := json.Marshal(alert.RemediationActions)
 	deliveriesJSON, _ := json.Marshal(alert.Deliveries)
 
-	// security_alerts carries both the pre-existing tenant_id and the v34 org_id
-	// column; they are the same organization. Populate org_id = tenant_id so the
-	// org-scoped reads/filters resolve. storeAlert also runs from the background
-	// deliverAlert goroutine (context.Background()), so the org is taken from the
-	// alert itself, not request context, with a default-org fallback.
+	// security_alerts has ONE tenant column, org_id, and the comment that used to
+	// stand here said it carried "both the pre-existing tenant_id and the v34
+	// org_id column". No migration ever created tenant_id, so this statement --
+	// which named it, along with ip_address, user_agent, deliveries,
+	// acknowledged_by and acknowledged_at -- has never executed. Alert.TenantID
+	// stays as the Go-side name for the same value and is written to org_id.
+	// storeAlert also runs from the background deliverAlert goroutine
+	// (context.Background()), so the org is taken from the alert itself, not
+	// request context, with a default-org fallback.
 	orgID := alert.TenantID
 	if orgID == "" {
 		orgID = "00000000-0000-0000-0000-000000000010"
@@ -233,10 +237,10 @@ func (a *AlertManager) storeAlert(ctx context.Context, alert *Alert) error {
 
 	_, err := a.db.Pool.Exec(ctx,
 		`INSERT INTO security_alerts
-		 (id, tenant_id, user_id, alert_type, severity, status, title, description,
-		  details, source_ip, ip_address, user_agent, remediation_actions, deliveries,
-		  acknowledged_by, acknowledged_at, resolved_by, resolved_at, created_at, updated_at, org_id)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+		 (id, org_id, user_id, alert_type, severity, status, title, description,
+		  details, source_ip, user_agent, remediation_actions, deliveries,
+		  acknowledged_by, acknowledged_at, resolved_by, resolved_at, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
 		 ON CONFLICT (id) DO UPDATE
 		 SET status = EXCLUDED.status,
 		     updated_at = EXCLUDED.updated_at,
@@ -245,13 +249,26 @@ func (a *AlertManager) storeAlert(ctx context.Context, alert *Alert) error {
 		     resolved_by = EXCLUDED.resolved_by,
 		     resolved_at = EXCLUDED.resolved_at,
 		     deliveries = EXCLUDED.deliveries`,
-		alert.ID, alert.TenantID, alert.UserID, string(alert.Type), string(alert.Severity),
+		alert.ID, orgID, alert.UserID, string(alert.Type), string(alert.Severity),
 		string(alert.Status), alert.Title, alert.Description, detailsJSON,
-		alert.SourceIP, alert.IPAddress, alert.UserAgent, actionsJSON, deliveriesJSON,
+		alertSourceIP(alert), alert.UserAgent, actionsJSON, deliveriesJSON,
 		alert.AcknowledgedBy, alert.AcknowledgedAt, alert.ResolvedBy, alert.ResolvedAt,
-		alert.CreatedAt, alert.UpdatedAt, orgID)
+		alert.CreatedAt, alert.UpdatedAt)
 
 	return err
+}
+
+// alertSourceIP collapses the two Go fields that mean one column.
+//
+// Alert carries both SourceIP and IPAddress, and the INSERT bound them to
+// source_ip and to a non-existent ip_address. Once the statement runs, a caller
+// that filled only IPAddress would have written an empty address and lost it
+// silently. The table has source_ip; whichever field the caller set goes there.
+func alertSourceIP(alert *Alert) string {
+	if alert.SourceIP != "" {
+		return alert.SourceIP
+	}
+	return alert.IPAddress
 }
 
 // deliverAlert sends the alert through configured channels
@@ -506,19 +523,20 @@ func (a *AlertManager) GetAlert(ctx context.Context, alertID string) (*Alert, er
 	var detailsJSON, actionsJSON, deliveriesJSON []byte
 
 	err = a.db.Pool.QueryRow(ctx,
-		`SELECT id, tenant_id, user_id, alert_type, severity, status, title, description,
-		         details, source_ip, ip_address, user_agent, remediation_actions, deliveries,
+		`SELECT id, org_id, user_id, alert_type, severity, status, title, description,
+		         details, source_ip, user_agent, remediation_actions, deliveries,
 		         acknowledged_by, acknowledged_at, resolved_by, resolved_at, created_at, updated_at
 		 FROM security_alerts WHERE id = $1 AND org_id = $2`,
 		alertID, org.ID).Scan(&alert.ID, &alert.TenantID, &alert.UserID, &alert.Type, &alert.Severity,
 		&alert.Status, &alert.Title, &alert.Description, &detailsJSON, &alert.SourceIP,
-		&alert.IPAddress, &alert.UserAgent, &actionsJSON, &deliveriesJSON,
+		&alert.UserAgent, &actionsJSON, &deliveriesJSON,
 		&alert.AcknowledgedBy, &alert.AcknowledgedAt, &alert.ResolvedBy, &alert.ResolvedAt,
 		&alert.CreatedAt, &alert.UpdatedAt)
 
 	if err != nil {
 		return nil, fmt.Errorf("alert not found: %w", err)
 	}
+	alert.IPAddress = alert.SourceIP
 
 	if detailsJSON != nil {
 		json.Unmarshal(detailsJSON, &alert.Details)
@@ -535,8 +553,8 @@ func (a *AlertManager) GetAlert(ctx context.Context, alertID string) (*Alert, er
 
 // ListAlerts retrieves alerts with optional filters
 func (a *AlertManager) ListAlerts(ctx context.Context, tenantID string, filter AlertFilter) ([]Alert, int, error) {
-	query := `SELECT id, tenant_id, user_id, alert_type, severity, status, title, description,
-		         details, source_ip, ip_address, user_agent, remediation_actions, deliveries,
+	query := `SELECT id, org_id, user_id, alert_type, severity, status, title, description,
+		         details, source_ip, user_agent, remediation_actions, deliveries,
 		         acknowledged_by, acknowledged_at, resolved_by, resolved_at, created_at, updated_at
 		 FROM security_alerts WHERE org_id = $1`
 
@@ -614,12 +632,15 @@ func (a *AlertManager) ListAlerts(ctx context.Context, tenantID string, filter A
 
 		err := rows.Scan(&alert.ID, &alert.TenantID, &alert.UserID, &alert.Type, &alert.Severity,
 			&alert.Status, &alert.Title, &alert.Description, &detailsJSON, &alert.SourceIP,
-			&alert.IPAddress, &alert.UserAgent, &actionsJSON, &deliveriesJSON,
+			&alert.UserAgent, &actionsJSON, &deliveriesJSON,
 			&alert.AcknowledgedBy, &alert.AcknowledgedAt, &alert.ResolvedBy, &alert.ResolvedAt,
 			&alert.CreatedAt, &alert.UpdatedAt)
 		if err != nil {
 			continue
 		}
+		// One column, two field names: the API has always carried both, so both
+		// are answered from source_ip rather than one of them going empty.
+		alert.IPAddress = alert.SourceIP
 
 		if detailsJSON != nil {
 			json.Unmarshal(detailsJSON, &alert.Details)

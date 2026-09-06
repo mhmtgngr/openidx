@@ -36,6 +36,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **No security alert had ever been written, on any install.**
+  `internal/risk/alert.go` INSERTs twenty-one columns into `security_alerts`
+  and six of them do not exist — `tenant_id`, `ip_address`, `user_agent`,
+  `deliveries`, `acknowledged_by`, `acknowledged_at` — so the statement has
+  never executed since it was written. The single-alert read, the list and the
+  acknowledge path named the same absent columns, so the alerts page would have
+  been empty even if a row had arrived some other way, and the failure surfaced
+  only as an error the caller logged. Two of the six were a naming
+  disagreement: `tenant_id` is `org_id`, which the same statement already set
+  (the file's own comment claimed the table "carries both", which was never
+  true of the schema), and `ip_address` is `source_ip` — a caller that filled
+  only `IPAddress` would have written an empty address even once the statement
+  ran. Migration **v174** adds the other four, which are real fields with
+  nowhere to go, plus an index for the list the page issues. The second writer
+  needed no columns at all: `internal/audit/anomaly.go` INSERTed `type`,
+  `event_id`, `actor_id`, `timestamp` and `metadata` — the audit-events
+  vocabulary applied to this table — and every one maps onto a column that was
+  already there, so a detected anomaly now raises an alert instead of logging
+  that it could not. Found by `tools/sqlprepare`; the register is down from 39
+  to 34.
+
 - **The agent module was scanned for vulnerabilities against the wrong Go
   standard library, and it was the toolchain-pin change that did it.**
   `go-version-file` reads go.mod's `go` directive, not its `toolchain`

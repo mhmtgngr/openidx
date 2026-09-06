@@ -3,6 +3,7 @@ package audit
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
@@ -452,13 +453,28 @@ func (ad *AnomalyDetector) storeAlerts(ctx context.Context, alerts []*AnomalyAle
 	}
 
 	for _, alert := range alerts {
+		// security_alerts is (id, org_id, user_id, alert_type, severity, status,
+		// title, description, details, source_ip, ...). This statement named
+		// type, event_id, actor_id, timestamp and metadata -- five names from
+		// the audit-events vocabulary applied to a different table -- so it has
+		// never executed and a detected anomaly has never raised an alert. Every
+		// one of the five has a home here: alert_type, user_id, created_at, and
+		// details for both JSON payloads, so nothing is dropped and no column
+		// had to be invented for a second spelling.
+		details := map[string]interface{}{
+			"event_id": alert.EventID,
+			"detail":   alert.Details,
+			"metadata": alert.Metadata,
+		}
+		detailsJSON, _ := json.Marshal(details)
+
 		_, err := ad.service.db.Pool.Exec(ctx, `
-			INSERT INTO security_alerts (id, type, severity, title, description, event_id,
-			                              actor_id, timestamp, details, metadata, status, org_id)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'open', $11)
+			INSERT INTO security_alerts (id, alert_type, severity, title, description,
+			                              user_id, created_at, updated_at, details, status, org_id)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $8, 'open', $9)
 		`, alert.ID, string(alert.Type), alert.Severity, alert.Title,
-			alert.Description, alert.EventID, alert.ActorID, alert.Timestamp,
-			alert.Details, alert.Metadata, orgID)
+			alert.Description, alert.ActorID, alert.Timestamp,
+			detailsJSON, orgID)
 
 		if err != nil {
 			ad.logger.Error("Failed to store anomaly alert",

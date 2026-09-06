@@ -64,9 +64,6 @@ var knownBroken = map[string]string{
 	// internal/audit/anomaly.go:337  [42703] column "resource_type" does not exist
 	"internal/audit/anomaly.go#44c7545bd70d": "the anomaly sweep groups by a resource_type column the audit table does not have; that detector never fires.",
 
-	// internal/audit/anomaly.go:455  [42703] column "type" of relation "security_alerts" does not exist
-	"internal/audit/anomaly.go#2d7111da5428": "security_alerts has alert_type, not type; the anomaly detector's alert write fails, so a detected anomaly raises nothing.",
-
 	// internal/audit/compliance.go:273  [42703] column "due_date" does not exist
 	"internal/audit/compliance.go#ac03bc8e4d2f": "the control-status query selects due_date from a table without it; the compliance dashboard shows no due dates.",
 
@@ -114,18 +111,6 @@ var knownBroken = map[string]string{
 
 	// internal/oauth/saml_metadata.go:378  [42703] column "metadata_xml" of relation "saml_service_providers" does not exist
 	"internal/oauth/saml_metadata.go#3ecaefc538a0": "saml_service_providers stores metadata under a different column; the SAML SP metadata refresh writes nothing.",
-
-	// internal/risk/alert.go:235  [42703] column "tenant_id" of relation "security_alerts" does not exist
-	"internal/risk/alert.go#1beb147c2dd3": "security_alerts has (user_id, alert_type, severity, status, title, description, details, source_ip, remediation_actions, resolved_by, resolved_at, org_id). The INSERT names tenant_id, ip_address, user_agent, deliveries, acknowledged_by and acknowledged_at -- six columns no migration creates -- so NO security alert has ever been written. The commit that fixed this statement's RLS org context did not read its column list.",
-
-	// internal/risk/alert.go:509  [42703] column "tenant_id" does not exist
-	"internal/risk/alert.go#8ec01e40809b": "the single-alert read selects the same absent columns.",
-
-	// internal/risk/alert.go:538  [42703] column "tenant_id" does not exist
-	"internal/risk/alert.go#f68437dc1087": "the alert list selects them too, so the alerts page would be empty even if writes worked.",
-
-	// internal/risk/alert.go:658  [42703] column "acknowledged_by" of relation "security_alerts" does not exist
-	"internal/risk/alert.go#15ae8331b607": "acknowledging an alert updates acknowledged_by/acknowledged_at, neither of which exists.",
 
 	// internal/risk/scoring_engine.go:562  [42703] column "created_at" does not exist
 	"internal/risk/scoring_engine.go#74a403735d1d": "created_at absent on that relation; the scoring engine's history window is never read.",
