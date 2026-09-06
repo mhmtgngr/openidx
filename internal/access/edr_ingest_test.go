@@ -14,6 +14,11 @@ import (
 	"go.uber.org/zap"
 )
 
+// edrTestOrgID is the tenant these tests run as. They used to pass the empty
+// string and rely on the store's OR-empty-string wildcard, which v165 removed:
+// an absent organization meant every organization.
+const edrTestOrgID = "00000000-0000-0000-0000-0000000000e1"
+
 // edrSchema is the subset of migration v98 + the posture/identity tables the
 // EDR ingestion tests need.
 const edrSchema = `
@@ -75,7 +80,7 @@ func TestEDRSourceCRUDSecretNoLeak(t *testing.T) {
 	ctx := context.Background()
 	svc := newEDRTestService(db)
 
-	src, err := svc.CreateEDRSource(ctx, "", &EDRSourceInput{
+	src, err := svc.CreateEDRSource(ctx, edrTestOrgID, &EDRSourceInput{
 		Name: "cs", Provider: "crowdstrike", ClientID: "id", ClientSecret: "topsecret",
 		MatchStrategy: "email", Enabled: true,
 	})
@@ -86,7 +91,7 @@ func TestEDRSourceCRUDSecretNoLeak(t *testing.T) {
 		t.Fatal("expected source id")
 	}
 	// Secret never surfaced in the struct.
-	got, _ := svc.GetEDRSource(ctx, "", src.ID)
+	got, _ := svc.GetEDRSource(ctx, edrTestOrgID, src.ID)
 	if got.MatchStrategy != "email" || got.Provider != "crowdstrike" {
 		t.Errorf("unexpected source: %+v", got)
 	}
@@ -97,14 +102,14 @@ func TestEDRSourceCRUDSecretNoLeak(t *testing.T) {
 		t.Error("secret leaked in source JSON")
 	}
 
-	list, _ := svc.ListEDRSources(ctx, "")
+	list, _ := svc.ListEDRSources(ctx, edrTestOrgID)
 	if len(list) != 1 {
 		t.Fatalf("expected 1 source, got %d", len(list))
 	}
-	if err := svc.DeleteEDRSource(ctx, "", src.ID); err != nil {
+	if err := svc.DeleteEDRSource(ctx, edrTestOrgID, src.ID); err != nil {
 		t.Fatalf("DeleteEDRSource: %v", err)
 	}
-	if _, err := svc.GetEDRSource(ctx, "", src.ID); err == nil {
+	if _, err := svc.GetEDRSource(ctx, edrTestOrgID, src.ID); err == nil {
 		t.Error("expected source gone after delete")
 	}
 }
@@ -115,10 +120,10 @@ func TestEDRSourceValidation(t *testing.T) {
 	ctx := context.Background()
 	svc := newEDRTestService(db)
 
-	if _, err := svc.CreateEDRSource(ctx, "", &EDRSourceInput{Name: "x", Provider: "sentinelone"}); err == nil {
+	if _, err := svc.CreateEDRSource(ctx, edrTestOrgID, &EDRSourceInput{Name: "x", Provider: "sentinelone"}); err == nil {
 		t.Error("expected unsupported provider rejected")
 	}
-	if _, err := svc.CreateEDRSource(ctx, "", &EDRSourceInput{Name: "x", Provider: "jamf", MatchStrategy: "fingerprint"}); err == nil {
+	if _, err := svc.CreateEDRSource(ctx, edrTestOrgID, &EDRSourceInput{Name: "x", Provider: "jamf", MatchStrategy: "fingerprint"}); err == nil {
 		t.Error("expected unsupported match_strategy rejected")
 	}
 }
@@ -134,8 +139,11 @@ func TestEDRSyncWritesPostureResult(t *testing.T) {
 
 	// Seed a user + ziti identity so an email match resolves.
 	var userID, identityID string
-	db.Pool.QueryRow(ctx, `INSERT INTO users (username,email) VALUES ('alice','alice@corp.com') RETURNING id`).Scan(&userID)
-	db.Pool.QueryRow(ctx, `INSERT INTO ziti_identities (user_id, ziti_id) VALUES ($1,'zid-1') RETURNING id`, userID).Scan(&identityID)
+	// Seeded into the source's tenant. They used to be seeded with no
+	// organization and matched anyway, because resolveIdentityForDevice named
+	// none -- the cross-tenant match v165 closed.
+	db.Pool.QueryRow(ctx, `INSERT INTO users (username,email,org_id) VALUES ('alice','alice@corp.com',$1::uuid) RETURNING id`, edrTestOrgID).Scan(&userID)
+	db.Pool.QueryRow(ctx, `INSERT INTO ziti_identities (user_id, ziti_id, org_id) VALUES ($1,'zid-1',$2::uuid) RETURNING id`, userID, edrTestOrgID).Scan(&identityID)
 	// A posture check the EDR signal fails.
 	var checkID string
 	db.Pool.QueryRow(ctx, `INSERT INTO posture_checks (name, check_type, severity) VALUES ('EDR Compliance','EDR','critical') RETURNING id`).Scan(&checkID)
@@ -152,7 +160,7 @@ func TestEDRSyncWritesPostureResult(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	src, err := svc.CreateEDRSource(ctx, "", &EDRSourceInput{
+	src, err := svc.CreateEDRSource(ctx, edrTestOrgID, &EDRSourceInput{
 		Name: "cs", Provider: "crowdstrike", BaseURL: srv.URL, ClientID: "id", ClientSecret: "sec",
 		PostureCheckID: checkID, MatchStrategy: "email", Enabled: true, ResultTTLMinutes: 30,
 	})
@@ -204,8 +212,8 @@ func TestEDRSyncCompliantDevicePasses(t *testing.T) {
 	svc := newEDRTestService(db)
 
 	var userID, identityID, checkID string
-	db.Pool.QueryRow(ctx, `INSERT INTO users (username,email) VALUES ('bob','bob@corp.com') RETURNING id`).Scan(&userID)
-	db.Pool.QueryRow(ctx, `INSERT INTO ziti_identities (user_id, ziti_id) VALUES ($1,'zid-2') RETURNING id`, userID).Scan(&identityID)
+	db.Pool.QueryRow(ctx, `INSERT INTO users (username,email,org_id) VALUES ('bob','bob@corp.com',$1::uuid) RETURNING id`, edrTestOrgID).Scan(&userID)
+	db.Pool.QueryRow(ctx, `INSERT INTO ziti_identities (user_id, ziti_id, org_id) VALUES ($1,'zid-2',$2::uuid) RETURNING id`, userID, edrTestOrgID).Scan(&identityID)
 	db.Pool.QueryRow(ctx, `INSERT INTO posture_checks (name, check_type, severity) VALUES ('EDR','EDR','high') RETURNING id`).Scan(&checkID)
 
 	mux := http.NewServeMux()
@@ -217,7 +225,7 @@ func TestEDRSyncCompliantDevicePasses(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	src, _ := svc.CreateEDRSource(ctx, "", &EDRSourceInput{
+	src, _ := svc.CreateEDRSource(ctx, edrTestOrgID, &EDRSourceInput{
 		Name: "cs", Provider: "crowdstrike", BaseURL: srv.URL, ClientID: "id", ClientSecret: "sec",
 		PostureCheckID: checkID, MatchStrategy: "email", Enabled: true,
 	})

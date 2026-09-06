@@ -58,6 +58,37 @@ to a spec that describes an eighth of a surface, a documented endpoint that
   **Operators of installations with more than one organization should note**
   that existing runs are assigned to the organization of whoever started them,
   and their per-account records follow the run.
+- **A device reported by one organization's endpoint-security connection could
+  cut off another organization's user** (migration v165). OpenIDX can read
+  device compliance from CrowdStrike, Intune, Jamf or Wazuh and use it as a
+  posture signal: a device the security tool reports as non-compliant fails its
+  posture check, and that is what revokes the session and disconnects the
+  device from the private network.
+
+  **The step that decides *whose* device it is looked across all
+  organizations.** A reported device is matched to a local identity by email
+  address, hostname or serial number, and that lookup named no organization —
+  so a device reported by one organization's connection could be matched to a
+  user in another, and which one was decided by the database's own query plan.
+  The effect was a disconnection, not a disclosure: one organization's security
+  tool calling a laptop non-compliant could cut off someone else's user, on
+  nothing more than a shared email address — which is the ordinary case for one
+  person employed by two organizations on the same installation. The match is
+  now confined to the organization that owns the connection.
+
+  The connections themselves also gain database-level protection, which the
+  migration that created them said they had and never applied, and their
+  organization can no longer be left empty. As with the outbound provisioning
+  connections above, the "empty organization means all organizations" shortcut
+  in the queries is gone, and these endpoints now refuse a request that arrives
+  without an organization. The background poller that reads the security tools
+  is unaffected: it is deliberately installation-wide and already had an
+  explicit exemption.
+
+  **Operators of installations with more than one organization should note**
+  that device records follow their connection exactly, but a connection stored
+  with no organization is assigned to the oldest one — and the next poll writes
+  posture results, so check which connection belongs to whom first.
 - **Outbound provisioning connections were not protected by the database, and
   their organization could be left empty** (migration v164). These are the
   connections that push your users out to Slack, Okta, Entra and similar: a base

@@ -118,8 +118,6 @@ var needsBelt = map[string]string{
 	"published_apps":                "v40; 2 unscoped queries",
 	"discovered_paths":              "v40; 1 unscoped query",
 	"oauth_registration_tokens":     "v97; 3 unscoped queries",
-	"edr_posture_sources":           "v98; 4 unscoped queries",
-	"edr_device_mappings":           "v98; its queries are clean, but the ingest writes a NULL org_id when the source has none, so a belt would hide rows rather than scope them; goes with edr_posture_sources",
 	"network_revocation_queue":      "v100 queue; confirm the reconciler's scope before belting; 2 unscoped queries",
 	"network_grant_queue":           "v101 queue; confirm the reconciler's scope before belting; 3 unscoped queries",
 	"mcp_servers":                   "v103; 1 unscoped query",

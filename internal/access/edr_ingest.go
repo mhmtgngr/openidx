@@ -122,7 +122,7 @@ func (s *Service) CreateEDRSource(ctx context.Context, orgID string, in *EDRSour
              tenant_id, api_user, api_token_enc, posture_check_id, match_strategy,
              result_ttl_minutes, poll_interval_minutes, enabled)
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
-		id, edrNullIfEmpty(orgID), in.Name, in.Provider, edrNullIfEmpty(in.BaseURL),
+		id, orgID, in.Name, in.Provider, edrNullIfEmpty(in.BaseURL),
 		edrNullIfEmpty(in.ClientID), secretEnc, edrNullIfEmpty(in.TenantID),
 		edrNullIfEmpty(in.APIUser), tokenEnc, edrNullUUID(in.PostureCheckID),
 		in.MatchStrategy, in.ResultTTLMinutes, in.PollIntervalMinutes, in.Enabled)
@@ -142,7 +142,27 @@ func (s *Service) GetEDRSource(ctx context.Context, orgID, id string) (*EDRSourc
                COALESCE(last_sync_status,''), COALESCE(last_sync_error,''),
                created_at, updated_at
           FROM edr_posture_sources
-         WHERE id=$1 AND (org_id::text=$2 OR $2='')`, id, orgID)
+         WHERE id=$1 AND org_id::text=$2`, id, orgID)
+	return scanEDRSource(row)
+}
+
+// edrSourceByID loads a source without a tenant term. Its only callers are the
+// ingestion worker, which runs under an explicit RLS bypass and polls every
+// organization's sources by design, and connectorForSource, which the request
+// path reaches only after the org-scoped GetEDRSource has proved the source is
+// the caller's own. It replaces a GetEDRSource(ctx, "", id) call that used the
+// store's own wildcard, so that the wildcard could be removed.
+func (s *Service) edrSourceByID(ctx context.Context, id string) (*EDRSource, error) {
+	//orgscope:ignore ingestion worker (runs under bypass_rls) loading a source it is already polling; see the doc comment above
+	row := s.db.Pool.QueryRow(ctx, `
+        SELECT id, COALESCE(org_id::text,''), name, provider, COALESCE(base_url,''),
+               COALESCE(client_id,''), COALESCE(tenant_id,''), COALESCE(api_user,''),
+               COALESCE(posture_check_id::text,''), match_strategy, result_ttl_minutes,
+               poll_interval_minutes, enabled, last_sync_at,
+               COALESCE(last_sync_status,''), COALESCE(last_sync_error,''),
+               created_at, updated_at
+          FROM edr_posture_sources
+         WHERE id=$1`, id)
 	return scanEDRSource(row)
 }
 
@@ -156,7 +176,7 @@ func (s *Service) ListEDRSources(ctx context.Context, orgID string) ([]EDRSource
                COALESCE(last_sync_status,''), COALESCE(last_sync_error,''),
                created_at, updated_at
           FROM edr_posture_sources
-         WHERE (org_id::text=$1 OR $1='')
+         WHERE org_id::text=$1
          ORDER BY created_at DESC`, orgID)
 	if err != nil {
 		return nil, err
@@ -176,7 +196,7 @@ func (s *Service) ListEDRSources(ctx context.Context, orgID string) ([]EDRSource
 // DeleteEDRSource removes a source (+ its device mappings via CASCADE).
 func (s *Service) DeleteEDRSource(ctx context.Context, orgID, id string) error {
 	ct, err := s.db.Pool.Exec(ctx,
-		`DELETE FROM edr_posture_sources WHERE id=$1 AND (org_id::text=$2 OR $2='')`, id, orgID)
+		`DELETE FROM edr_posture_sources WHERE id=$1 AND org_id::text=$2`, id, orgID)
 	if err != nil {
 		return err
 	}
@@ -190,6 +210,7 @@ func (s *Service) DeleteEDRSource(ctx context.Context, orgID, id string) error {
 func (s *Service) connectorForSource(ctx context.Context, id string) (edr.Connector, *EDRSource, error) {
 	var provider, baseURL, clientID, tenantID, apiUser string
 	var secretEnc, tokenEnc *string
+	//orgscope:ignore ingestion worker (runs under bypass_rls) loading the credentials of a source it is already polling; the request path reaches this only after the org-scoped GetEDRSource, and the poll loop is install-wide by design
 	if err := s.db.Pool.QueryRow(ctx, `
         SELECT provider, COALESCE(base_url,''), COALESCE(client_id,''), COALESCE(tenant_id,''),
                COALESCE(api_user,''), client_secret_enc, api_token_enc
@@ -216,7 +237,13 @@ func (s *Service) connectorForSource(ctx context.Context, id string) (edr.Connec
 	if err != nil {
 		return nil, nil, err
 	}
-	src, _ := s.GetEDRSource(ctx, "", id)
+	// The source row itself, read across tenants for the same reason: the
+	// caller is either the install-wide poll loop or a handler that has
+	// already proved the source is the caller's own.
+	src, err := s.edrSourceByID(ctx, id)
+	if err != nil {
+		return nil, nil, err
+	}
 	return conn, src, nil
 }
 
@@ -325,33 +352,54 @@ func (s *Service) syncEDRSource(ctx context.Context, sourceID string) (*edrSourc
 	return status, nil
 }
 
-// resolveIdentityForDevice maps an EDR device to a ziti_identities.id using the
-// source's match strategy against users, returning "" if unmatched.
+// resolveIdentityForDevice maps an EDR device to a ziti_identities.id within the
+// SOURCE'S organization, returning "" if unmatched.
+//
+// The tenant term is the whole point of this function, because what it returns
+// is not displayed — it is handed to RecordPostureResult, and a failing posture
+// result is what the proxy and continuous verification read to revoke a session
+// and sever the overlay circuit. Before v165 none of the three strategies named
+// an organization, so a device reported by ONE tenant's EDR connection was
+// matched against EVERY tenant's identities, with `LIMIT 1` and no ORDER BY
+// leaving the choice to the query planner. One tenant's EDR calling a laptop
+// non-compliant could therefore cut another tenant's user off, on nothing more
+// than a shared email address, hostname or serial.
+//
+// ziti_identities.org_id is the term for all three. It also covers the two
+// strategies that reach through enrolled_agents, which carries no tenant of its
+// own: an agent enrolled by a user in another organization cannot join to an
+// identity in this one.
 func (s *Service) resolveIdentityForDevice(ctx context.Context, src *EDRSource, d edr.Device) string {
+	if src.OrgID == "" {
+		return "" // no tenant, no enforcement decision
+	}
 	var matchVal, query string
 	switch src.MatchStrategy {
 	case "email":
 		matchVal = d.Email
 		query = `SELECT zi.id::text FROM ziti_identities zi JOIN users u ON u.id = zi.user_id
-                 WHERE lower(u.email) = lower($1) LIMIT 1`
+                 WHERE lower(u.email) = lower($1) AND zi.org_id = $2::uuid AND u.org_id = $2::uuid
+                 LIMIT 1`
 	case "hostname":
 		matchVal = d.Hostname
 		// enrolled_agents stores device attributes in a JSONB metadata blob;
 		// match the reported hostname to the enrolling user's Ziti identity.
 		query = `SELECT zi.id::text FROM ziti_identities zi
                  JOIN enrolled_agents ea ON ea.enrolled_by_user_id = zi.user_id
-                 WHERE lower(ea.metadata->>'hostname') = lower($1) LIMIT 1`
+                 WHERE lower(ea.metadata->>'hostname') = lower($1) AND zi.org_id = $2::uuid
+                 LIMIT 1`
 	default: // serial
 		matchVal = d.Serial
 		query = `SELECT zi.id::text FROM ziti_identities zi
                  JOIN enrolled_agents ea ON ea.enrolled_by_user_id = zi.user_id
-                 WHERE ea.metadata->>'serial' = $1 LIMIT 1`
+                 WHERE ea.metadata->>'serial' = $1 AND zi.org_id = $2::uuid
+                 LIMIT 1`
 	}
 	if matchVal == "" {
 		return ""
 	}
 	var identityID string
-	if err := s.db.Pool.QueryRow(ctx, query, matchVal).Scan(&identityID); err != nil {
+	if err := s.db.Pool.QueryRow(ctx, query, matchVal, src.OrgID).Scan(&identityID); err != nil {
 		return ""
 	}
 	return identityID
@@ -376,12 +424,13 @@ func (s *Service) upsertEDRMapping(ctx context.Context, src *EDRSource, d edr.De
         DO UPDATE SET match_value=EXCLUDED.match_value, identity_id=EXCLUDED.identity_id,
                       last_compliant=EXCLUDED.last_compliant, last_risk=EXCLUDED.last_risk,
                       last_seen_at=EXCLUDED.last_seen_at, updated_at=NOW()`,
-		edrNullIfEmpty(src.OrgID), src.ID, d.ExternalID, edrNullIfEmpty(matchVal),
+		src.OrgID, src.ID, d.ExternalID, edrNullIfEmpty(matchVal),
 		edrNullUUID(identityID), d.Compliant, edrNullIfEmpty(d.Risk), d.LastSeen)
 }
 
 func (s *Service) markEDRSyncOK(ctx context.Context, sourceID string, st *edrSourceStatus) {
 	summary, _ := json.Marshal(st)
+	//orgscope:ignore ingestion worker (runs under bypass_rls) stamping the sync outcome on a source it just polled
 	_, _ = s.db.Pool.Exec(ctx, `
         UPDATE edr_posture_sources
            SET last_sync_at=NOW(), last_sync_status='ok', last_sync_error=NULL, updated_at=NOW()
@@ -390,6 +439,7 @@ func (s *Service) markEDRSyncOK(ctx context.Context, sourceID string, st *edrSou
 }
 
 func (s *Service) markEDRSyncError(ctx context.Context, sourceID string, cause error) {
+	//orgscope:ignore ingestion worker (runs under bypass_rls) stamping a sync failure on a source it just polled
 	_, _ = s.db.Pool.Exec(ctx, `
         UPDATE edr_posture_sources
            SET last_sync_at=NOW(), last_sync_status='error', last_sync_error=$2, updated_at=NOW()

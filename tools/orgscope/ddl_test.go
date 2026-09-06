@@ -362,8 +362,12 @@ func TestRegistersOnlyShrink(t *testing.T) {
 		// description says "Org-scoped for RLS" and the belt was never applied,
 		// its org_id was nullable with no foreign key, and every "org-scoped"
 		// query carried `OR $N = ''` -- an escape hatch whose only callers in
-		// the tree were the package's own tests.
-		{"needsBelt", len(needsBelt), 14},
+		// the tree were the package's own tests. 14 -> 12 with v165, the EDR
+		// posture pair, whose device match reached across tenants into an
+		// ENFORCEMENT decision: a failing posture result is what revokes a
+		// session and severs the overlay circuit, and the match named no
+		// organization at all.
+		{"needsBelt", len(needsBelt), 12},
 		{"predicateAuditPending", len(predicateAuditPending), 18},
 		{"installWideTables", len(installWideTables), 21},
 		{"beltExempt", len(beltExempt), 5},

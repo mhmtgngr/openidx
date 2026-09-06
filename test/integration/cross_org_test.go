@@ -799,6 +799,19 @@ func TestRLSBeltTables(t *testing.T) {
 			RETURNING id)
 			INSERT INTO scim_provisioning_queue (target_id, resource_type, local_id, operation, org_id)
 			SELECT t.id, 'user', gen_random_uuid(), 'create', $1 FROM t`},
+
+		// v165 — EDR/MDM posture ingestion. A source holds the encrypted API
+		// credentials for CrowdStrike/Intune/Jamf, and a mapping is what turns a
+		// device report into the posture result that revokes a session.
+		{"edr_posture_sources", `INSERT INTO edr_posture_sources (name, provider, match_strategy, org_id)
+			VALUES ('tbelt-edr-` + suffix + `', 'crowdstrike', 'serial', $1)`},
+
+		{"edr_device_mappings", `WITH s AS (
+			INSERT INTO edr_posture_sources (name, provider, match_strategy, org_id)
+			VALUES ('tbelt-edr-m-` + suffix + `', 'intune', 'email', $1)
+			RETURNING id)
+			INSERT INTO edr_device_mappings (source_id, external_device_id, match_value, last_compliant, org_id)
+			SELECT s.id, 'tbelt-dev-` + suffix + `', 'tbelt@example.test', false, $1 FROM s`},
 	}
 
 	// One list, not two: the role is granted exactly the tables the cases probe.
