@@ -1117,6 +1117,17 @@ to a spec that describes an eighth of a surface, a documented endpoint that
 
 ### Fixed
 
+- **Every CodeQL finding at security severity 7.0+ now has a written verdict.**
+  `docs/evidence/codeql-triage.md` lists all 41 (28 Go, 13 JS) with the evidence
+  for each: what is vendored, what is a protocol requirement, what is already
+  sanitised, what is admin-configured, and the one that was a real finding and
+  is fixed. A verdict recorded in the code-scanning UI is keyed to an alert
+  fingerprint and evaporates when a refactor moves the line — one alert in that
+  list had been dismissed once already and came back for exactly that reason.
+  `.github/codeql/codeql-config.yml` excludes the vendored `agent/third_party`
+  tree from analysis (nine findings in a library this project does not
+  maintain); no query is disabled and no first-party path is excluded.
+
 - **A second migration system that applied nothing.** `migrations/` held 105
   files and a README calling itself "Database Migration System"; nothing in the
   repository has ever read them. Every service applies the registry in

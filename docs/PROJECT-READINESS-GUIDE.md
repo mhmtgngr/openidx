@@ -4116,6 +4116,56 @@ class this whole program exists for.
    The next red CodeQL check on this repository — this one included — is read
    out of the job log instead of guessed at.
 
+   ### What the alert actually was
+
+   **Batch 46: 41 findings, one verdict each.**
+
+   The summary printed on the next run, and it settled the question the two
+   previous batches had been guessing at. The Go analysis carries **28** results
+   at security severity 7.0 or higher and the JS analysis **13** — and
+   `tools/contractcheck` was no longer among the `go/disabled-certificate-check`
+   five, so batch 43's fix had landed; it just was not the alert the check was
+   failing on.
+
+   Reading all 41 was more useful than finding the one:
+
+   - **Five `go/request-forgery` at 9.1** — the highest severity in the tree —
+     are `internal/access/ziti.go` calling the Ziti controller at the URL an
+     **administrator** configured (`PUT /ziti/settings`, `adminOnly`). The
+     feature, not a forgery.
+   - **Four `go/path-injection`** all resolve through a `strings.Map` that
+     replaces every rune outside `[A-Za-z0-9_-]`, so `../` becomes `___`.
+   - **Three `go/weak-sensitive-data-hashing`** are SHA-1 for the HaveIBeenPwned
+     k-anonymity API (which specifies SHA-1), MD5 for the PostgreSQL `md5`
+     auth message (a wire protocol), and the labelled pre-scrypt legacy backup
+     path.
+   - **Nine `go/incorrect-integer-conversion` at 8.1** are all in vendored
+     `agent/third_party/gopsutil`, parsing `/proc`.
+   - **All thirteen JS results** are in `e2e/` specs and `*.test.tsx`.
+   - **One `go/insecure-hostkeycallback` at 8.2** is real, pre-existing, and
+     already carries "per-entry pinning is a follow-up" at the line.
+
+   And one entry explains the whole two-batch chase.
+   `internal/credentials/mysql_rotator.go:204` carries `go/sql-injection` at
+   8.8 — under a comment that ends **"Dismissed as FP"**. It had been assessed
+   and dismissed before. A code-scanning dismissal is keyed to the alert's
+   **fingerprint**, and batch 42's unrelated refactor (routing the rotator's
+   bootstrap credential through `useAdminSecret`) moved that statement by one
+   line. The verdict did not move with it.
+
+   That is the argument for `docs/evidence/codeql-triage.md`: a verdict recorded
+   in a review UI evaporates on a line move; a verdict recorded in the
+   repository does not, and it is reviewable in a diff. Every one of the 41 has
+   an entry there with its evidence, and the three the maintainer still owns —
+   dismiss the tests, dismiss the assessed false positives, keep host-key
+   pinning open — are listed at the end.
+
+   `.github/codeql/codeql-config.yml` excludes `agent/third_party` from
+   analysis. That narrows what is scanned, never how a finding is treated: no
+   query is disabled, and nothing under `internal/`, `cmd/`, `tools/`, `web/`
+   or the agent's own source is excluded. Nine findings nobody can act on were
+   nine findings between a reader and the ones they can.
+
    ### The second migration system
 
    **Batch 45: a documented procedure that produced nothing.**

@@ -11,6 +11,16 @@ Controls split two ways, and the split is the whole point:
 | **Automated** ([release-gate.md](release-gate.md)) | CI, on every push | the run link — the control ran or the merge was blocked |
 | **Operator-run** ([operational.md](operational.md), [display-equals-enforcement.md](display-equals-enforcement.md)) | a person, against a live deployment | a dated row in the file, with the output |
 
+One file here is neither: [codeql-triage.md](codeql-triage.md) is a **reviewed
+verdict** on every CodeQL result at security severity 7.0 or higher, with the
+evidence for each. It exists because the code-scanning check reports a count
+and not a rule, and because a verdict recorded in a review UI is keyed to an
+alert fingerprint — it evaporates the next time a refactor moves the line. One
+of the alerts in that file had already been assessed and dismissed once, and
+came back for exactly that reason. A snapshot goes stale: re-read the analysis
+from the job log (`scripts/codeql-alert-summary.sh` prints it) before trusting
+the list.
+
 **Nothing in this directory is pre-filled.** An automated control's evidence
 is the CI run that just passed on the commit you are releasing; an
 operator-run control has no evidence until someone runs it and writes the
