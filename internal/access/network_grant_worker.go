@@ -35,13 +35,14 @@ func (s *Service) runNetworkGrant(ctx context.Context) {
 }
 
 func (s *Service) drainNetworkGrants(ctx context.Context) {
+	//orgscope:ignore network hand-off queue drain (runs under bypass_rls): one worker serves the whole install, claims by state and never by tenant, and each claimed row carries its own organization onward
 	rows, err := s.db.Pool.Query(ctx, `
         UPDATE network_grant_queue q SET state='processing', updated_at=NOW()
          WHERE q.id IN (
              SELECT id FROM network_grant_queue
               WHERE state='pending'
               ORDER BY id ASC LIMIT 50 FOR UPDATE SKIP LOCKED)
-        RETURNING q.id, q.user_id::text, q.attribute`)
+        RETURNING q.id, q.user_id::text, q.attribute, q.attempts, COALESCE(q.org_id::text,'')`)
 	if err != nil {
 		s.logger.Warn("network grant: claim failed", zap.Error(err))
 		return
@@ -50,26 +51,40 @@ func (s *Service) drainNetworkGrants(ctx context.Context) {
 		id        int64
 		userID    string
 		attribute string
+		attempts  int
+		orgID     string
 	}
 	var items []item
 	for rows.Next() {
 		var it item
-		if err := rows.Scan(&it.id, &it.userID, &it.attribute); err == nil {
-			items = append(items, it)
+		// A dropped row here is an intent the worker claimed and then forgot,
+		// leaving it stuck in 'processing' forever. org_id is COALESCEd above
+		// for the same reason: v101 left the column nullable, and a legacy
+		// NULL-tenant row must still be applied, not silently skipped.
+		if err := rows.Scan(&it.id, &it.userID, &it.attribute, &it.attempts, &it.orgID); err != nil {
+			s.logger.Warn("network grant: claimed item skipped", zap.Error(err))
+			continue
 		}
+		items = append(items, it)
 	}
 	rows.Close()
 
 	for _, it := range items {
+		// This direction always recorded its failures -- but 'failed' was
+		// terminal on the first error and nothing in the tree ever read it, so a
+		// transient controller error lost the grant permanently and silently:
+		// the console said the request was granted and the attribute was never
+		// added. v166 retries against the attempts column v101 already had, and
+		// dead-letters to the audit trail.
 		if err := s.addUserZitiAttribute(ctx, it.userID, it.attribute); err != nil {
 			s.logger.Warn("network grant: apply attribute failed",
 				zap.String("user_id", it.userID), zap.String("attr", it.attribute), zap.Error(err))
-			_, _ = s.db.Pool.Exec(ctx,
-				`UPDATE network_grant_queue SET state='failed', last_error=$2, updated_at=NOW() WHERE id=$1`,
-				it.id, err.Error())
+			s.retryOrDeadLetterNetworkItem(ctx, "network_grant_queue", it.id, it.attempts,
+				it.orgID, it.userID, "attribute="+it.attribute, err)
 			continue
 		}
 		_, _ = s.db.Pool.Exec(ctx,
+			//orgscope:ignore network hand-off queue drain (runs under bypass_rls) completing an item it already claimed by primary key
 			`UPDATE network_grant_queue SET state='done', updated_at=NOW() WHERE id=$1`, it.id)
 	}
 }
@@ -99,20 +114,26 @@ func (s *Service) addUserZitiAttribute(ctx context.Context, userID, attribute st
 
 // removeUserZitiAttribute removes a role attribute from the user's Ziti identity
 // (idempotent set difference). No-op when the overlay is off.
-func (s *Service) removeUserZitiAttribute(ctx context.Context, userID, attribute string) {
+//
+// It returns an error now because its caller writes the outcome to a queue: it
+// used to log a controller failure and return nothing, and the revocation
+// worker then marked the item 'done'. Genuine no-ops -- overlay off, no
+// identity, attribute already absent -- are success; only a controller call
+// that failed is an error.
+func (s *Service) removeUserZitiAttribute(ctx context.Context, userID, attribute string) error {
 	zm := s.ziti()
 	if zm == nil || userID == "" || attribute == "" {
-		return
+		return nil
 	}
 	zitiID := s.userZitiID(ctx, userID)
 	if zitiID == "" {
-		return
+		return nil
 	}
 	attrs, err := zm.GetIdentityRoleAttributes(ctx, zitiID)
 	if err != nil {
 		s.logger.Warn("network grant: read attributes failed",
 			zap.String("ziti_id", zitiID), zap.Error(err))
-		return
+		return err
 	}
 	next := make([]string, 0, len(attrs))
 	removed := false
@@ -124,12 +145,14 @@ func (s *Service) removeUserZitiAttribute(ctx context.Context, userID, attribute
 		next = append(next, a)
 	}
 	if !removed {
-		return
+		return nil
 	}
 	if err := zm.PatchIdentityRoleAttributes(ctx, zitiID, next); err != nil {
 		s.logger.Warn("network grant: remove attribute failed",
 			zap.String("ziti_id", zitiID), zap.String("attr", attribute), zap.Error(err))
+		return err
 	}
+	return nil
 }
 
 // userZitiID resolves the user's Ziti controller identity id.

@@ -9,6 +9,14 @@ import (
 	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
+// The three enqueue functions below refuse a tenantless row rather than writing
+// one. They used to pass the organization through NULLIF, so an empty org wrote
+// a NULL -- and a NULL-tenant row is invisible to every scoped read once the
+// belt lands (v166), which for these queues means an intent the worker still
+// drains but no operator can account for. Every caller already resolves its
+// organization from a scoped row, so refusing costs nothing and the log names
+// the user.
+
 // enqueueNetworkRevocation records a circuit-severance intent for the given
 // user. The governance service has no Ziti access, so it hands off to the
 // access-service (which owns the ZitiManager) via network_revocation_queue; a
@@ -19,9 +27,14 @@ func (s *Service) enqueueNetworkRevocation(ctx context.Context, userID, orgID, r
 	if userID == "" {
 		return
 	}
+	if orgID == "" {
+		s.logger.Warn("refusing to enqueue a tenantless network revocation",
+			zap.String("user_id", logsafe.Clean(userID)), zap.String("reason", reason))
+		return
+	}
 	_, err := s.db.Pool.Exec(ctx, `
         INSERT INTO network_revocation_queue (org_id, user_id, reason)
-        VALUES (NULLIF($1,'')::uuid, $2::uuid, $3)`,
+        VALUES ($1::uuid, $2::uuid, $3)`,
 		orgID, userID, reason)
 	if err != nil {
 		s.logger.Warn("failed to enqueue network revocation",
@@ -36,9 +49,14 @@ func (s *Service) enqueueNetworkGrant(ctx context.Context, userID, orgID, reques
 	if userID == "" || attribute == "" {
 		return
 	}
+	if orgID == "" {
+		s.logger.Warn("refusing to enqueue a tenantless network grant",
+			zap.String("user_id", logsafe.Clean(userID)), zap.String("attribute", logsafe.Clean(attribute)))
+		return
+	}
 	_, err := s.db.Pool.Exec(ctx, `
         INSERT INTO network_grant_queue (org_id, user_id, request_id, attribute, expires_at)
-        VALUES (NULLIF($1,'')::uuid, $2::uuid, NULLIF($3,'')::uuid, $4, $5)`,
+        VALUES ($1::uuid, $2::uuid, NULLIF($3,'')::uuid, $4, $5)`,
 		orgID, userID, requestID, attribute, expiresAt)
 	if err != nil {
 		s.logger.Warn("failed to enqueue network grant",
@@ -52,9 +70,14 @@ func (s *Service) enqueueNetworkAttributeRemoval(ctx context.Context, userID, or
 	if userID == "" || attribute == "" {
 		return
 	}
+	if orgID == "" {
+		s.logger.Warn("refusing to enqueue a tenantless network attribute removal",
+			zap.String("user_id", logsafe.Clean(userID)), zap.String("attribute", logsafe.Clean(attribute)))
+		return
+	}
 	_, err := s.db.Pool.Exec(ctx, `
         INSERT INTO network_revocation_queue (org_id, user_id, reason, attribute)
-        VALUES (NULLIF($1,'')::uuid, $2::uuid, $3, $4)`,
+        VALUES ($1::uuid, $2::uuid, $3, $4)`,
 		orgID, userID, reason, attribute)
 	if err != nil {
 		s.logger.Warn("failed to enqueue network attribute removal",

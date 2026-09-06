@@ -812,6 +812,23 @@ func TestRLSBeltTables(t *testing.T) {
 			RETURNING id)
 			INSERT INTO edr_device_mappings (source_id, external_device_id, match_value, last_compliant, org_id)
 			SELECT s.id, 'tbelt-dev-` + suffix + `', 'tbelt@example.test', false, $1 FROM s`},
+
+		// v166 — the network hand-off queues. A grant row opens a dial; a
+		// revocation row severs live circuits. The revocation worker used to
+		// mark every item done whether or not the circuit was actually cut.
+		{"network_grant_queue", `WITH u AS (
+			INSERT INTO users (username, email, enabled, org_id)
+			VALUES ('tbelt-grant-` + suffix + `','tbelt-grant-` + suffix + `@example.test',true,$1)
+			RETURNING id)
+			INSERT INTO network_grant_queue (user_id, attribute, org_id)
+			SELECT u.id, 'jit-tbelt-` + suffix + `', $1 FROM u`},
+
+		{"network_revocation_queue", `WITH u AS (
+			INSERT INTO users (username, email, enabled, org_id)
+			VALUES ('tbelt-revoke-` + suffix + `','tbelt-revoke-` + suffix + `@example.test',true,$1)
+			RETURNING id)
+			INSERT INTO network_revocation_queue (user_id, reason, org_id)
+			SELECT u.id, 'access_review', $1 FROM u`},
 	}
 
 	// One list, not two: the role is granted exactly the tables the cases probe.

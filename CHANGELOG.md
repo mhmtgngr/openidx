@@ -58,6 +58,31 @@ to a spec that describes an eighth of a surface, a documented endpoint that
   **Operators of installations with more than one organization should note**
   that existing runs are assigned to the organization of whoever started them,
   and their per-account records follow the run.
+- **Revoking someone's network access reported success even when the
+  disconnection failed** (migration v166). When an access review revokes access,
+  or a time-limited grant expires, the product records the decision and then
+  hands the actual work — removing the network permission and cutting the user's
+  live connections — to a background worker.
+
+  **The worker marked every item done regardless of whether it had worked.** If
+  the network controller was unreachable, or the call to sever the connection
+  failed, the failure was written to the log and the item was recorded as
+  completed anyway. The reviewer saw a revocation; the user's live connection
+  stayed open; every record agreed it had been cut. The worker now records a
+  failure as a failure.
+
+  **A failed hand-off was retried never and read by nobody.** Both queues have
+  had an attempt counter since they were created and neither worker ever used
+  it, so one transient controller error lost the change permanently — a granted
+  request whose permission was never applied, or a revocation that never
+  happened. And nothing in the product reads the failure state, so there was no
+  screen, alert or report where it appeared. Failures are now retried, and a
+  hand-off that exhausts its retries is written to the audit trail of the
+  organization it belongs to, where it can be seen.
+
+  Both queues also gain database-level protection and can no longer be stored
+  without an organization. The background worker is unaffected: it is
+  deliberately installation-wide and already had an explicit exemption.
 - **A device reported by one organization's endpoint-security connection could
   cut off another organization's user** (migration v165). OpenIDX can read
   device compliance from CrowdStrike, Intune, Jamf or Wazuh and use it as a

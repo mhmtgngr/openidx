@@ -366,8 +366,10 @@ func TestRegistersOnlyShrink(t *testing.T) {
 		// posture pair, whose device match reached across tenants into an
 		// ENFORCEMENT decision: a failing posture result is what revokes a
 		// session and severs the overlay circuit, and the match named no
-		// organization at all.
-		{"needsBelt", len(needsBelt), 12},
+		// organization at all. 12 -> 10 with v166, the two network hand-off
+		// queues, where the revocation worker marked every item done whether or
+		// not the circuit was actually severed.
+		{"needsBelt", len(needsBelt), 10},
 		{"predicateAuditPending", len(predicateAuditPending), 18},
 		{"installWideTables", len(installWideTables), 21},
 		{"beltExempt", len(beltExempt), 5},

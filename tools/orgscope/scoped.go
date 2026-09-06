@@ -118,8 +118,6 @@ var needsBelt = map[string]string{
 	"published_apps":                "v40; 2 unscoped queries",
 	"discovered_paths":              "v40; 1 unscoped query",
 	"oauth_registration_tokens":     "v97; 3 unscoped queries",
-	"network_revocation_queue":      "v100 queue; confirm the reconciler's scope before belting; 2 unscoped queries",
-	"network_grant_queue":           "v101 queue; confirm the reconciler's scope before belting; 3 unscoped queries",
 	"mcp_servers":                   "v103; 1 unscoped query",
 	"mcp_tool_policies":             "v103; 2 unscoped queries",
 	"oauth_device_codes":            "v125 redeemed by hashed device_code; confirm the pre-tenant path before belting; 4 unscoped queries",

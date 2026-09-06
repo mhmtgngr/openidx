@@ -201,7 +201,7 @@ func (cv *ContinuousVerifier) verifyActiveSessions(ctx context.Context) {
 			// the user's live controller sessions too so a posture/risk degrade
 			// kills the circuit in-flight (posture becomes a guarantee, not a
 			// gate). Best-effort; never blocks the revoke.
-			cv.svc.severUserZitiCircuits(ctx, sess.UserID, decision.Reason)
+			_ = cv.svc.severUserZitiCircuits(ctx, sess.UserID, decision.Reason)
 
 			cv.logger.Warn("Session revoked by continuous verification",
 				zap.String("session_id", sess.SessionID),
@@ -254,10 +254,10 @@ func (s *Service) StartContinuousVerification(ctx context.Context, intervalSecon
 // live Ziti controller sessions so a mid-session posture/risk degrade kills any
 // already-open overlay circuit, not just future dials (Wave A3). No-op when the
 // overlay is not active. Best-effort: failures are logged, never propagated.
-func (s *Service) severUserZitiCircuits(ctx context.Context, userID, reason string) {
+func (s *Service) severUserZitiCircuits(ctx context.Context, userID, reason string) error {
 	zm := s.ziti()
 	if zm == nil || userID == "" {
-		return
+		return nil
 	}
 	// Collect the user's own identity + any enrolled-device identities.
 	var zitiIDs []string
@@ -282,11 +282,20 @@ func (s *Service) severUserZitiCircuits(ctx context.Context, userID, reason stri
 	}
 
 	total := 0
+	// The first termination failure is returned so a caller that RECORDS the
+	// outcome -- the network revocation queue worker -- can tell "severed" from
+	// "could not reach the controller". The sweep callers ignore it and keep
+	// their log-and-continue behaviour; finding no identity to sever is not a
+	// failure, because a user with no overlay identity has no circuit.
+	var firstErr error
 	for _, zid := range zitiIDs {
 		edge, api, terr := zm.TerminateIdentitySessions(ctx, zid)
 		if terr != nil {
 			s.logger.Warn("continuous-verify: Ziti session termination failed",
 				zap.String("ziti_id", zid), zap.Error(terr))
+			if firstErr == nil {
+				firstErr = terr
+			}
 			continue
 		}
 		total += edge + api
@@ -295,4 +304,5 @@ func (s *Service) severUserZitiCircuits(ctx context.Context, userID, reason stri
 		s.logger.Warn("continuous-verify: severed live Ziti circuits",
 			zap.String("user_id", userID), zap.String("reason", reason), zap.Int("sessions", total))
 	}
+	return firstErr
 }
