@@ -6,12 +6,16 @@ package admin
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/database"
@@ -22,18 +26,25 @@ import (
 
 // AuthContext represents the current authentication context of a session
 type AuthContext struct {
-	SessionID         string                 `json:"session_id"`
-	UserID            string                 `json:"user_id"`
-	AuthTime          time.Time              `json:"auth_time"`
-	AuthMethod        string                 `json:"auth_method"`
-	AuthStrength      string                 `json:"auth_strength"` // low, medium, high
-	CurrentRiskScore  float64                `json:"current_risk_score"`
-	DeviceFingerprint string                 `json:"device_fingerprint"`
-	IPAddress         string                 `json:"ip_address"`
-	Location          *GeoLocation           `json:"location,omitempty"`
-	UserAgent         string                 `json:"user_agent"`
-	Metadata          map[string]interface{} `json:"metadata"`
-	UpdatedAt         time.Time              `json:"updated_at"`
+	SessionID         string    `json:"session_id"`
+	UserID            string    `json:"user_id"`
+	AuthTime          time.Time `json:"auth_time"`
+	AuthMethod        string    `json:"auth_method"`
+	AuthStrength      string    `json:"auth_strength"` // low, medium, high
+	CurrentRiskScore  float64   `json:"current_risk_score"`
+	DeviceFingerprint string    `json:"device_fingerprint"`
+	IPAddress         string    `json:"ip_address"`
+	// Location is the label sessions.location carries ("Istanbul, TR"), not a
+	// coordinate. It was typed *GeoLocation -- a struct with latitude,
+	// longitude and ASN -- and read from a TEXT column, which is the clearest
+	// single proof that the query below it never ran against a row: the scan
+	// destination was a **GeoLocation and would have failed on type every time.
+	// GeoLocation described a shape nothing in the product ever produced and
+	// has been removed with it.
+	Location  string                 `json:"location,omitempty"`
+	UserAgent string                 `json:"user_agent"`
+	Metadata  map[string]interface{} `json:"metadata"`
+	UpdatedAt time.Time              `json:"updated_at"`
 }
 
 // RiskFactor represents a specific risk factor in the authentication context
@@ -124,8 +135,10 @@ func (s *continuousAuthService) CalculateSessionRisk(ctx context.Context, sessio
 	ipChangeRisk := s.calculateIPChangeRisk(ctx, authCtx)
 	totalRisk += ipChangeRisk * s.config.RiskFactors["geo_anomaly"]
 
-	// 3. Device fingerprint risk
-	deviceRisk := s.calculateDeviceRisk(ctx, authCtx)
+	// 3. Device fingerprint risk. It reports whether it could measure at all;
+	// an unmeasured factor contributes nothing and says so in Context, rather
+	// than contributing a constant that reads like a finding.
+	deviceRisk, deviceMeasured := s.calculateDeviceRisk(ctx, authCtx)
 	totalRisk += deviceRisk * s.config.RiskFactors["device_anomaly"]
 
 	// 4. Behavioral risk
@@ -138,6 +151,19 @@ func (s *continuousAuthService) CalculateSessionRisk(ctx context.Context, sessio
 
 	// Normalize to 0-100
 	risk.OverallRisk = math.Min(totalRisk, 100)
+
+	// Say which factors were actually measured. A score of 12 built from four
+	// live factors and one that could not run is a different number from a 12
+	// built from five, and the caller acting on it -- step up, terminate --
+	// deserves to know which it has.
+	risk.Context["factors_measured"] = map[string]bool{
+		"session_age":        true,
+		"ip_change":          true,
+		"device_anomaly":     deviceMeasured,
+		"behavioral_anomaly": true,
+		"velocity":           true,
+	}
+	risk.Context["auth_strength"] = authCtx.AuthStrength
 
 	// Determine risk level
 	risk.RiskLevel = s.determineRiskLevel(risk.OverallRisk)
@@ -167,65 +193,151 @@ func (s *continuousAuthService) CalculateSessionRisk(ctx context.Context, sessio
 	return risk, nil
 }
 
-// GetAuthContext retrieves the current authentication context for a session
+// GetAuthContext retrieves the current authentication context for a session.
+//
+// It reads `sessions` -- the table the product actually writes on login, which
+// carries org_id and has been behind the v37 FORCE-RLS belt since v37 -- plus
+// the most recent score this engine itself stored in `session_risks` (v77,
+// org_id NOT NULL).
+//
+// It used to read `auth_contexts`, a table v62 created to stop these endpoints
+// 500ing and that no code path has ever written a row to: not a handler, not
+// the login path, not a seed, not a migration. So this function returned "no
+// rows in result set" for every session that has ever existed, and with it the
+// three routes that depend on it. v157 drops the table. The tenant term was
+// missing at exactly one place in this engine -- the input -- because every
+// other factor below already resolves orgctx and scopes its own query.
 func (s *continuousAuthService) GetAuthContext(ctx context.Context, sessionID string) (*AuthContext, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("organization context required: %w", err)
+	}
+
 	var authCtx AuthContext
-	var metadata []byte
+	var authMethods []string
+	var startedAt, lastSeenAt *time.Time
 
-	err := s.db.Pool.QueryRow(ctx, `
-		SELECT session_id, user_id, auth_time, auth_method, auth_strength, current_risk_score,
-			device_fingerprint, ip_address, location, user_agent, metadata, updated_at
-		FROM auth_contexts WHERE session_id = $1
-	`, sessionID).Scan(
-		&authCtx.SessionID, &authCtx.UserID, &authCtx.AuthTime, &authCtx.AuthMethod,
-		&authCtx.AuthStrength, &authCtx.CurrentRiskScore, &authCtx.DeviceFingerprint,
-		&authCtx.IPAddress, &authCtx.Location, &authCtx.UserAgent, &metadata, &authCtx.UpdatedAt,
+	// The org term is what stops one tenant scoring, and with
+	// RequireReauthentication terminating, another tenant's session by id.
+	err = s.db.Pool.QueryRow(ctx, `
+		SELECT s.id::text, s.user_id::text, s.started_at, s.last_seen_at,
+		       COALESCE(s.auth_methods, '{}'), COALESCE(s.ip_address, ''),
+		       COALESCE(s.user_agent, ''), COALESCE(s.location, ''),
+		       COALESCE((SELECT r.overall_risk FROM session_risks r
+		                  WHERE r.session_id = s.id AND r.org_id = $2
+		                  ORDER BY r.calculated_at DESC LIMIT 1), 0)
+		FROM sessions s
+		WHERE s.id = $1 AND s.org_id = $2
+	`, sessionID, org.ID).Scan(
+		&authCtx.SessionID, &authCtx.UserID, &startedAt, &lastSeenAt,
+		&authMethods, &authCtx.IPAddress, &authCtx.UserAgent, &authCtx.Location,
+		&authCtx.CurrentRiskScore,
 	)
-
 	if err != nil {
 		return nil, err
 	}
 
-	json.Unmarshal(metadata, &authCtx.Metadata)
+	if startedAt != nil {
+		authCtx.AuthTime = *startedAt
+	}
+	if lastSeenAt != nil {
+		authCtx.UpdatedAt = *lastSeenAt
+	}
+	authCtx.AuthMethod = strings.Join(authMethods, ",")
+	authCtx.AuthStrength = authStrength(authMethods)
+	// sessions carries no device fingerprint; see calculateDeviceRisk.
+	authCtx.Metadata = map[string]interface{}{}
+
 	return &authCtx, nil
 }
 
-// UpdateAuthScore updates the authentication score based on new events
+// authStrength grades a session by what was actually presented at login. v133
+// added sessions.auth_methods for exactly this and nothing has read it since.
+// A second factor is the line that matters: "high" means something beyond a
+// password was proven.
+func authStrength(methods []string) string {
+	if len(methods) == 0 {
+		return "unknown"
+	}
+	for _, m := range methods {
+		switch strings.ToLower(m) {
+		case "webauthn", "passkey", "totp", "mfa", "push", "sms", "hardware_token", "backup_code":
+			return "high"
+		}
+	}
+	if len(methods) > 1 {
+		return "medium"
+	}
+	return "low"
+}
+
+// authScoreEventAdjustments is the risk delta each reportable event carries.
+// An event outside this set is rejected rather than scored as zero: the handler
+// used to accept any string, adjust by nothing and answer "auth score updated",
+// so a caller mis-spelling "failed_auth" was told their report had been
+// recorded.
+var authScoreEventAdjustments = map[string]float64{
+	"sensitive_access":  -5, // a positive signal: the user re-proved themselves
+	"failed_auth":       20,
+	"new_location":      30,
+	"new_device":        25,
+	"impossible_travel": 50,
+	"mass_download":     40,
+}
+
+// errUnknownRiskEvent is returned for an event name outside the set above, so
+// the handler can answer 400 rather than 500.
+var errUnknownRiskEvent = errors.New("unknown risk event")
+
+// UpdateAuthScore records a risk event against a session and stores the
+// adjusted score.
+//
+// It used to UPDATE auth_contexts, which no row has ever existed in, so it
+// matched nothing, returned nil, and POST /continuous-auth/update answered
+// {"message":"auth score updated"} having updated nothing at all. The score now
+// lands in session_risks -- the append-only ledger CalculateSessionRisk already
+// writes to and reads previous_risk from -- under the caller's organization.
+//
+// The caller's metadata is recorded too. The old body marshalled
+// authCtx.Metadata, the context's own map, and dropped the metadata argument on
+// the floor, so whatever a reporter sent to explain the event was discarded.
 func (s *continuousAuthService) UpdateAuthScore(ctx context.Context, sessionID string, event string, metadata map[string]interface{}) error {
-	// Get current context
+	adjustment, known := authScoreEventAdjustments[event]
+	if !known {
+		return fmt.Errorf("%w: %q", errUnknownRiskEvent, event)
+	}
+
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return fmt.Errorf("organization context required: %w", err)
+	}
+
+	// Resolves the session under this organization: another tenant's session is
+	// not found rather than scored.
 	authCtx, err := s.GetAuthContext(ctx, sessionID)
 	if err != nil {
 		return err
 	}
 
-	// Update based on event type
-	scoreAdjustment := 0.0
+	previous := authCtx.CurrentRiskScore
+	updated := math.Max(0, math.Min(100, previous+adjustment))
+	level := s.determineRiskLevel(updated)
 
-	switch event {
-	case "sensitive_access":
-		scoreAdjustment = -5 // Decrease risk (positive signal)
-	case "failed_auth":
-		scoreAdjustment = 20
-	case "new_location":
-		scoreAdjustment = 30
-	case "new_device":
-		scoreAdjustment = 25
-	case "impossible_travel":
-		scoreAdjustment = 50
-	case "mass_download":
-		scoreAdjustment = 40
+	payload, mErr := json.Marshal(map[string]interface{}{
+		"event":      event,
+		"adjustment": adjustment,
+		"metadata":   metadata,
+	})
+	if mErr != nil {
+		payload = []byte(`{}`)
 	}
 
-	authCtx.CurrentRiskScore = math.Max(0, math.Min(100, authCtx.CurrentRiskScore+scoreAdjustment))
-	authCtx.UpdatedAt = time.Now()
-
-	// Store updated context
-	metadataJSON, _ := json.Marshal(authCtx.Metadata)
 	_, err = s.db.Pool.Exec(ctx, `
-		UPDATE auth_contexts
-		SET current_risk_score = $1, updated_at = NOW(), metadata = $2
-		WHERE session_id = $3
-	`, authCtx.CurrentRiskScore, metadataJSON, sessionID)
+		INSERT INTO session_risks (session_id, overall_risk, risk_level, action_required,
+		                           risk_factors, calculated_at, previous_risk, risk_delta, org_id)
+		VALUES ($1, $2, $3, $4, $5, NOW(), $6, $7, $8)
+	`, sessionID, updated, level, s.determineActionRequired(level),
+		payload, previous, updated-previous, org.ID)
 
 	return err
 }
@@ -305,14 +417,22 @@ func (s *continuousAuthService) calculateTimeRisk(ctx context.Context, authCtx *
 // It was called calculateGeoRisk and documented as impossible-travel
 // detection, which it has never been — see the comment at its return.
 func (s *continuousAuthService) calculateIPChangeRisk(ctx context.Context, authCtx *AuthContext) float64 {
-	// Most recent session from this user, other than this one.
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return 0
+	}
+
+	// Most recent session from this user, other than this one. Read from
+	// sessions, which is written on every login and carries org_id; the
+	// auth_contexts this used to read has never held a row, so this factor
+	// could only ever have contributed 0 -- and it never ran at all, because
+	// the caller failed on the same table one step earlier.
 	var previousIP string
-	var previousTime time.Time
 	s.db.Pool.QueryRow(ctx, `
-		SELECT ip_address, auth_time FROM auth_contexts
-		WHERE user_id = $1 AND session_id != $2
-		ORDER BY auth_time DESC LIMIT 1
-	`, authCtx.UserID, authCtx.SessionID).Scan(&previousIP, &previousTime)
+		SELECT COALESCE(ip_address, '') FROM sessions
+		WHERE user_id = $1::uuid AND id != $2::uuid AND org_id = $3
+		ORDER BY started_at DESC LIMIT 1
+	`, authCtx.UserID, authCtx.SessionID, org.ID).Scan(&previousIP)
 
 	if previousIP != "" && authCtx.IPAddress != previousIP {
 		// A changed source address between two sessions, which is a real
@@ -339,14 +459,31 @@ func (s *continuousAuthService) calculateIPChangeRisk(ctx context.Context, authC
 // session over a gate.
 const ipChangeRiskScore = 15
 
-func (s *continuousAuthService) calculateDeviceRisk(ctx context.Context, authCtx *AuthContext) float64 {
-	// Check against known_devices — the table device trust actually lives in.
-	// The old EXISTS read a nonexistent user_devices table and swallowed the
-	// error, so this factor always contributed 0 and continuous auth
-	// under-scored every session on an unrecognized device.
+// calculateDeviceRisk scores the session's device against the tenant's trusted
+// devices, and reports whether it could measure anything at all.
+//
+// It checks known_devices — the table device trust actually lives in. The
+// original EXISTS read a nonexistent user_devices table and swallowed the
+// error, so this factor always contributed 0 and continuous auth under-scored
+// every session on an unrecognized device.
+//
+// The lookup needs a fingerprint, and there is currently no way to get one for
+// a session: sessions carries device_name and device_type but no fingerprint,
+// and login_history — which does record device_fingerprint — has no session_id
+// to join on. So for now this reports "not measured" rather than asserting the
+// 25 of an unknown device on every session, which would be a constant dressed
+// as a measurement, the same shape as the flat 15 this file's IP factor used to
+// return under the name of impossible travel. Giving sessions a fingerprint at
+// login is a feature; it is named in the readiness guide rather than guessed at
+// here. The returned flag is reported in the response so a caller can see which
+// factors are live.
+func (s *continuousAuthService) calculateDeviceRisk(ctx context.Context, authCtx *AuthContext) (float64, bool) {
+	if authCtx.DeviceFingerprint == "" {
+		return 0, false
+	}
 	org, err := orgctx.From(ctx)
 	if err != nil {
-		return 25 // no org context → treat as unknown device (conservative)
+		return 25, true // org context is required upstream; unknown device is the safe read
 	}
 	var isKnown bool
 	s.db.Pool.QueryRow(ctx, `
@@ -355,10 +492,10 @@ func (s *continuousAuthService) calculateDeviceRisk(ctx context.Context, authCtx
 	`, authCtx.UserID, authCtx.DeviceFingerprint, org.ID).Scan(&isKnown)
 
 	if !isKnown {
-		return 25
+		return 25, true
 	}
 
-	return 0
+	return 0, true
 }
 
 func (s *continuousAuthService) calculateBehaviorRisk(ctx context.Context, authCtx *AuthContext) float64 {
@@ -436,16 +573,20 @@ func (s *continuousAuthService) getRecommendedAuth(level string) string {
 
 // Handlers
 
-func (s *Service) handleContinuousAuthGetRisk(c *gin.Context) {
-	ctx := c.Request.Context()
-	sessionID := c.Query("session_id")
-
-	if sessionID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "session_id required"})
-		return
-	}
-
-	config := &ContinuousAuthConfig{
+// defaultContinuousAuthConfig is the one set of thresholds and weights all
+// three routes evaluate against.
+//
+// It exists because they did not share one. Only the risk route built a full
+// config; the check route built &ContinuousAuthConfig{SessionMaxLifetime: 8h}
+// and the update route built an empty one, so their thresholds were all zero --
+// and determineRiskLevel compares `score >= CriticalRiskThreshold` first, so
+// with a critical threshold of zero every session on those two routes graded
+// "critical", which determineActionRequired turns into "terminate". The bug was
+// invisible only because both routes failed on auth_contexts before reaching
+// it; making the engine work is what makes it reachable, so it is fixed in the
+// same commit.
+func defaultContinuousAuthConfig() *ContinuousAuthConfig {
+	return &ContinuousAuthConfig{
 		Enabled:                true,
 		RiskEvaluationInterval: 5 * time.Minute,
 		HighRiskThreshold:      70,
@@ -461,11 +602,28 @@ func (s *Service) handleContinuousAuthGetRisk(c *gin.Context) {
 			"velocity":           0.1,
 		},
 	}
+}
 
-	authService := &continuousAuthService{db: s.db, logger: s.logger, config: config}
+func (s *Service) handleContinuousAuthGetRisk(c *gin.Context) {
+	ctx := c.Request.Context()
+	sessionID := c.Query("session_id")
+
+	if sessionID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "session_id required"})
+		return
+	}
+
+	authService := &continuousAuthService{db: s.db, logger: s.logger, config: defaultContinuousAuthConfig()}
 
 	risk, err := authService.CalculateSessionRisk(ctx, sessionID)
 	if err != nil {
+		// A session this organization does not have is a 404, not a server
+		// fault. Before v157 every call landed here, because the table the
+		// score was read from has never held a row.
+		if errors.Is(err, pgx.ErrNoRows) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "session not found in this organization"})
+			return
+		}
 		s.logger.Error("failed to calculate session risk", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to calculate risk"})
 		return
@@ -485,11 +643,15 @@ func (s *Service) handleContinuousAuthCheck(c *gin.Context) {
 		return
 	}
 
-	config := &ContinuousAuthConfig{SessionMaxLifetime: 8 * time.Hour}
-	authService := &continuousAuthService{db: s.db, logger: s.logger, config: config}
+	authService := &continuousAuthService{db: s.db, logger: s.logger, config: defaultContinuousAuthConfig()}
 
 	required, reason, err := authService.RequireReauthentication(ctx, req.SessionID)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "session not found in this organization"})
+			return
+		}
+		s.logger.Error("failed to check auth status", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check auth status"})
 		return
 	}
@@ -513,23 +675,34 @@ func (s *Service) handleContinuousAuthUpdate(c *gin.Context) {
 		return
 	}
 
-	authService := &continuousAuthService{db: s.db, logger: s.logger, config: &ContinuousAuthConfig{}}
+	authService := &continuousAuthService{db: s.db, logger: s.logger, config: defaultContinuousAuthConfig()}
 	err := authService.UpdateAuthScore(ctx, req.SessionID, req.Event, req.Metadata)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update auth score"})
+		switch {
+		case errors.Is(err, errUnknownRiskEvent):
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":           err.Error(),
+				"accepted_events": sortedRiskEvents(),
+			})
+		case errors.Is(err, pgx.ErrNoRows):
+			c.JSON(http.StatusNotFound, gin.H{"error": "session not found in this organization"})
+		default:
+			s.logger.Error("failed to update auth score", zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update auth score"})
+		}
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "auth score updated"})
 }
 
-// GeoLocation represents geographical location data
-type GeoLocation struct {
-	Country     string  `json:"country"`
-	CountryCode string  `json:"country_code"`
-	Region      string  `json:"region"`
-	City        string  `json:"city"`
-	Latitude    float64 `json:"latitude"`
-	Longitude   float64 `json:"longitude"`
-	ASN         int     `json:"asn"`
+// sortedRiskEvents lists the events UpdateAuthScore accepts, so a 400 tells the
+// caller what to send instead of only that they were wrong.
+func sortedRiskEvents() []string {
+	events := make([]string, 0, len(authScoreEventAdjustments))
+	for e := range authScoreEventAdjustments {
+		events = append(events, e)
+	}
+	sort.Strings(events)
+	return events
 }

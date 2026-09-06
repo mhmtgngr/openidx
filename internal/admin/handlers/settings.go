@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +18,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // registerBrandingValidators wires the custom "httpurl_or_path" validator into
@@ -203,19 +206,37 @@ func (h *SettingsHandler) GetSettings(c *gin.Context) {
 
 	ctx := c.Request.Context()
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	// Try to get from admin_console_settings first (new migration)
 	settings := &Settings{
-		ID:        uuid.New().String(),
-		UpdatedAt: time.Now(),
+		ID: uuid.New().String(),
+		// UpdatedAt is deliberately left at its zero value. The loop below
+		// keeps the most recent row's timestamp with `updatedAt.After(...)`,
+		// and "now" is later than every stored row, so seeding this with
+		// time.Now() made that comparison unreachable and the endpoint
+		// reported the settings as having been changed at the moment of every
+		// read. Zero now means what it says: this organization has never saved
+		// its console settings and is on the compiled-in defaults.
 		UpdatedBy: "system",
 	}
 
-	// Query individual setting categories
+	// Query individual setting categories. Before v157 `key` was the table's
+	// PRIMARY KEY and this read had no predicate at all, so the four rows it
+	// returned were the installation's, not this organization's: the page
+	// showed every administrator whatever the last administrator anywhere had
+	// saved -- password policy, whether MFA is required, the allowed email
+	// domains and the session timeouts included.
 	rows, err := h.db.Query(ctx, `
 		SELECT key, value, updated_at, updated_by
 		FROM admin_console_settings
+		WHERE org_id = $1
 		ORDER BY key
-	`)
+	`, org.ID)
 	if err == nil {
 		defer rows.Close()
 		for rows.Next() {
@@ -327,6 +348,12 @@ func (h *SettingsHandler) UpdateSettings(c *gin.Context) {
 
 	ctx := c.Request.Context()
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	// Update each section in the database
 	updates := []struct {
 		key   string
@@ -338,23 +365,40 @@ func (h *SettingsHandler) UpdateSettings(c *gin.Context) {
 		{"branding", settings.Branding},
 	}
 
+	// A section that fails to write is a section that was not saved, and the
+	// handler used to log it and answer 200 with the payload the administrator
+	// had just typed -- so a rejected password policy came straight back on
+	// screen looking stored. Collect the failures and say so.
+	var failed []string
 	for _, update := range updates {
 		valueBytes, err := json.Marshal(update.value)
 		if err != nil {
 			h.logger.Error("Failed to marshal settings section", zap.String("key", update.key), zap.Error(err))
+			failed = append(failed, update.key)
 			continue
 		}
 
+		// The conflict target is the v157 primary key. On (key) alone this
+		// wrote the installation's single row: saving a password policy or
+		// turning off "MFA required" here changed it for every tenant.
 		_, err = h.db.Exec(ctx, `
-			INSERT INTO admin_console_settings (key, value, updated_at, updated_by)
-			VALUES ($1, $2, NOW(), $3)
-			ON CONFLICT (key) DO UPDATE
+			INSERT INTO admin_console_settings (key, value, updated_at, updated_by, org_id)
+			VALUES ($1, $2, NOW(), $3, $4)
+			ON CONFLICT (org_id, key) DO UPDATE
 			SET value = $2, updated_at = NOW(), updated_by = $3
-		`, update.key, valueBytes, userIDStr)
+		`, update.key, valueBytes, userIDStr, org.ID)
 
 		if err != nil {
 			h.logger.Error("Failed to update settings section", zap.String("key", update.key), zap.Error(err))
+			failed = append(failed, update.key)
 		}
+	}
+	if len(failed) > 0 {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":           "settings were not saved; the sections listed are unchanged",
+			"failed_sections": failed,
+		})
+		return
 	}
 
 	h.logger.Info("Settings updated", zap.String("updated_by", userIDStr))
@@ -389,6 +433,12 @@ func (h *SettingsHandler) ResetSettings(c *gin.Context) {
 
 	ctx := c.Request.Context()
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	// Reset each section to defaults
 	defaults := map[string]interface{}{
 		"general":        settings.General,
@@ -397,23 +447,36 @@ func (h *SettingsHandler) ResetSettings(c *gin.Context) {
 		"branding":       settings.Branding,
 	}
 
+	// Without the org term this reset every organization's console to the
+	// defaults, including their password policy and MFA requirement.
+	var failed []string
 	for key, value := range defaults {
 		valueBytes, err := json.Marshal(value)
 		if err != nil {
 			h.logger.Error("Failed to marshal default settings", zap.String("key", key), zap.Error(err))
+			failed = append(failed, key)
 			continue
 		}
 
 		_, err = h.db.Exec(ctx, `
-			INSERT INTO admin_console_settings (key, value, updated_at, updated_by)
-			VALUES ($1, $2, NOW(), $3)
-			ON CONFLICT (key) DO UPDATE
+			INSERT INTO admin_console_settings (key, value, updated_at, updated_by, org_id)
+			VALUES ($1, $2, NOW(), $3, $4)
+			ON CONFLICT (org_id, key) DO UPDATE
 			SET value = $2, updated_at = NOW(), updated_by = $3
-		`, key, valueBytes, resetBy)
+		`, key, valueBytes, resetBy, org.ID)
 
 		if err != nil {
 			h.logger.Error("Failed to reset settings section", zap.String("key", key), zap.Error(err))
+			failed = append(failed, key)
 		}
+	}
+	if len(failed) > 0 {
+		sort.Strings(failed) // map iteration order is not stable
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":           "settings were not reset; the sections listed are unchanged",
+			"failed_sections": failed,
+		})
+		return
 	}
 
 	h.logger.Info("Settings reset to defaults", zap.String("reset_by", resetBy))
@@ -748,12 +811,24 @@ func indexOf(s, substr string) int {
 // SettingsService is a service-level implementation of SettingsRepository
 type SettingsService struct{}
 
-// getPasswordPolicy retrieves the current password policy from the database
+// getPasswordPolicy retrieves the current password policy from the database.
+//
+// This is the one read of admin_console_settings that enforces rather than
+// displays: POST /api/v1/settings/validate-password answers from it. Before
+// v157 the 'security' key was unique across the installation, so the policy a
+// password was checked against was whichever one had been saved last, by an
+// administrator of any organization. With no organization on the context the
+// compiled-in defaults apply, which are stricter than the validator's own floor
+// -- failing to the stricter policy rather than to no policy.
 func (h *SettingsHandler) getPasswordPolicy(ctx context.Context) PasswordPolicySettings {
 	var value json.RawMessage
-	err := h.db.QueryRow(ctx, `
-		SELECT value FROM admin_console_settings WHERE key = 'security'
-	`).Scan(&value)
+	org, orgErr := orgctx.From(ctx)
+	var err error = orgErr
+	if orgErr == nil {
+		err = h.db.QueryRow(ctx, `
+			SELECT value FROM admin_console_settings WHERE key = 'security' AND org_id = $1
+		`, org.ID).Scan(&value)
+	}
 
 	if err == nil {
 		var security SecuritySection

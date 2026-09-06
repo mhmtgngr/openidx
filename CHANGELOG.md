@@ -21,6 +21,51 @@ to a spec that describes an eighth of a surface, a documented endpoint that
   the posture score was neither one tenant's nor the install's. All now carry
   `org_id` under FORCE RLS, with the install-wide unique keys re-scoped and an
   isolation test per handler file.
+- **One password policy, one MFA requirement and one set of allowed sign-up
+  domains for the whole installation; and a continuous-authentication engine
+  that had never once run** (migration v157). The admin console's settings page
+  saves four records — general, security, authentication and branding. Their key
+  was the table's primary key, so there were four records on the installation in
+  total and every organization's administrators shared them. The security record
+  holds the password policy (minimum length, required character classes,
+  forbidden words, maximum age, history depth), whether multi-factor
+  authentication is required and which methods are allowed, and the session
+  timeouts; the authentication record holds the email domains allowed to
+  register. One administrator lowering their minimum password length, or
+  switching MFA-required off, did it for every organization — and each
+  organization's page showed them whatever had been saved last, by anyone.
+
+  This is not only a display problem. The password checker
+  (`POST /api/v1/settings/validate-password`) reads that same shared security
+  record, so the policy a password was measured against was whichever one had
+  been saved most recently, by an administrator of any organization. Each
+  organization now has its own four records, and its own policy.
+
+  **Operators of installations with more than one organization should review
+  their console settings after upgrading.** The existing records are assigned to
+  the organization of whoever last saved them; every other organization starts
+  from the built-in defaults, which are the stricter setting in each case, and
+  should save its own.
+
+  Separately, the continuous-authentication engine — which scores a live session
+  for risk and can require a step-up or end the session — read its session
+  information from a table that no part of the product has ever written a row
+  to. Its three endpoints have therefore only ever returned an error, and its
+  "record a risk event" endpoint reported success while storing nothing. The
+  engine now reads the session and risk-history tables the product actually
+  writes, under the caller's organization, so one organization can no longer
+  score or end another's session. Three faults that this uncovered are fixed
+  with it: two of the three endpoints graded every session "critical" because
+  their thresholds were left at zero, an unrecognised event name was silently
+  scored as nothing and reported as recorded, and the detail supplied with an
+  event was discarded.
+
+  Also recorded, and not yet fixed: the engine's device factor needs a device
+  fingerprint, and nothing records one against a session. Rather than treat
+  every session as an unrecognised device — a fixed number presented as a
+  measurement — that factor now reports itself unavailable, and the response
+  says which factors the score was actually built from. Recording a fingerprint
+  at sign-in is outstanding work.
 - **The developer portal kept one settings record for the whole installation,
   and its OAuth playground handed out a live flow's secret to anyone who knew
   the session's identifier** (migration v156). The developer settings page sets

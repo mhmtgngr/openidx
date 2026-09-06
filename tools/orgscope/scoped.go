@@ -79,7 +79,6 @@ var needsScoping = map[string]string{
 	// MFA and credentials — the most sensitive per-user rows in the product.
 	"biometric_preferences": "per-user biometric settings",
 	"biometric_policies":    "org policy over authenticator types",
-	"auth_contexts":         "live per-session auth context and risk (v62)",
 	"user_identity_links":   "per-user external identity links",
 	"social_account_links":  "per-user social provider links",
 
@@ -101,12 +100,11 @@ var needsScoping = map[string]string{
 	"webhook_delivery_stats":     "delivery statistics per subscription",
 
 	// Admin console and developer surfaces.
-	"admin_console_settings": "console settings key/value (v62 deferred org_id explicitly)",
-	"bulk_operations":        "bulk import/export runs (v54)",
-	"bulk_operation_items":   "per-row results of a bulk run (v54)",
-	"connection_tests":       "connectivity test results per route",
-	"feature_adoption":       "per-user feature usage",
-	"service_features":       "per-route feature toggles (v40)",
+	"bulk_operations":      "bulk import/export runs (v54)",
+	"bulk_operation_items": "per-row results of a bulk run (v54)",
+	"connection_tests":     "connectivity test results per route",
+	"feature_adoption":     "per-user feature usage",
+	"service_features":     "per-route feature toggles (v40)",
 }
 
 // needsBelt: OPEN FINDINGS. These carry org_id -- the application filters on

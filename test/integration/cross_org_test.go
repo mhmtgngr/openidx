@@ -682,6 +682,13 @@ func TestRLSBeltTables(t *testing.T) {
 			(client_id, state, code_verifier, code_challenge, redirect_uri, org_id)
 			VALUES ('tbelt-pg-` + suffix + `', 'st', 'verifier', 'challenge',
 				'https://console.example.test/callback', $1)`},
+
+		// v157 — the admin console's own settings. v62 made `key` the PRIMARY
+		// KEY, so the installation had four rows in total and every tenant's
+		// administrators shared them; the 'security' row is the password policy
+		// that POST /settings/validate-password answers from.
+		{"admin_console_settings", `INSERT INTO admin_console_settings (key, value, org_id)
+			VALUES ('tbelt-` + suffix + `', '{"password_policy":{"min_length":20}}'::jsonb, $1)`},
 	}
 
 	// One list, not two: the role is granted exactly the tables the cases probe.
