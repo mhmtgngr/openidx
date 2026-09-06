@@ -106,5 +106,67 @@ expect ok "a conditional skip inside a subtest"
 WD="$TMP/empty"; rm -rf "$WD"; mkdir -p "$WD"
 expect red "no test files found at all"
 
+# 7. Verbatim cmd/gateway-service/main_test.go as it stood: three lines of
+#    explanation, then the skip. The first cut of this guard required the skip to
+#    be the first line of the body and this sat green behind the paragraph.
+fresh
+cat >"$WD/pkg/a_test.go" <<'GO'
+package pkg
+
+func TestRegisterServiceRoutes(t *testing.T) {
+	t.Run("Registers all service routes", func(t *testing.T) {
+		// The routes.Register*Routes functions register both specific routes
+		// and wildcard routes, which causes a conflict in Gin.
+		// The actual routing is tested via integration tests.
+		t.Skip("Skipping this test due to route conflicts in the routes package")
+	})
+}
+GO
+expect red "a subtest whose skip hides behind a paragraph of explanation"
+
+# 8. The same, whole-function -- verbatim the integration suite's shape.
+fresh
+cat >"$WD/pkg/a_test.go" <<'GO'
+package pkg
+
+func TestAuthorizationCodeExpiry(t *testing.T) {
+	// This test would require modifying the code TTL or waiting
+	// For now, we document that expired codes should be rejected
+	t.Skip("Skipping - requires code TTL modification or long wait")
+}
+GO
+expect red "a test function whose skip hides behind a paragraph of explanation"
+
+# 9. …and a blank line is prose too. A skip is not made conditional by the
+#    whitespace in front of it.
+fresh
+cat >"$WD/pkg/a_test.go" <<'GO'
+package pkg
+
+func TestSpacedOut(t *testing.T) {
+
+	t.Skip("not written yet")
+}
+GO
+expect red "a skip separated from the brace by a blank line"
+
+# 10. One statement in front of the skip clears it: from the text alone the
+#     guard can no longer tell the skip is reached, and guessing is how a guard
+#     starts reddening on tests that are fine.
+fresh
+cat >"$WD/pkg/a_test.go" <<'GO'
+package pkg
+
+func TestHasARealFirstStatement(t *testing.T) {
+	// A comment, and then something that actually runs.
+	cfg := loadConfig(t)
+	if cfg.Backend == "" {
+		t.Skip("no backend configured")
+	}
+	assertThings(t, cfg)
+}
+GO
+expect ok "a statement before the skip"
+
 echo "check-inert-tests.test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

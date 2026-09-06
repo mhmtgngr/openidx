@@ -4,6 +4,7 @@
 package integration
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
@@ -94,19 +95,59 @@ func TestOAuthAuthorizationCodeFlow(t *testing.T) {
 	})
 
 	t.Run("authorization code cannot be used twice (replay protection)", func(t *testing.T) {
-		// Get a fresh authorization code
-		token := loginAndGetToken(t, username, password)
+		// This asserted `token != ""` from a helper that logs in and returns a
+		// token, under a comment saying "we can't directly test this without
+		// intercepting the code". The code IS available — beginAuthorizeForLogin
+		// and submitLoginForCode hand it over — so the subtest named after the
+		// single-use rule (RFC 6749 §4.1.2: "the client MUST NOT use the
+		// authorization code more than once") tested the login helper instead.
+		loginSession, verifier := beginAuthorizeForLogin(t, "openid profile", nil)
+		code := submitLoginForCode(t, username, password, loginSession)
 
-		// Try to use the same code again - should fail
-		// We can't directly test this without intercepting the code,
-		// but the token flow already validates single-use codes
-		assert.NotEmpty(t, token, "Login should succeed")
+		first, firstBody := exchangeCodeWithPKCE(t, code, verifier)
+		require.Equal(t, http.StatusOK, first, "first exchange should succeed: %v", firstBody)
+		require.NotEmpty(t, firstBody["access_token"])
+
+		second, secondBody := exchangeCodeWithPKCE(t, code, verifier)
+		assert.Equal(t, http.StatusBadRequest, second,
+			"the same code minted a second token: %v", secondBody)
+		assert.Equal(t, "invalid_grant", secondBody["error"])
+		assert.Empty(t, secondBody["access_token"], "a replayed code must mint nothing")
 	})
 
 	t.Run("authorization code expires after timeout", func(t *testing.T) {
-		// This test would require modifying the code TTL or waiting
-		// For now, we document that expired codes should be rejected
-		t.Skip("Skipping - requires code TTL modification or long wait")
+		// The TTL is a hardcoded 10 minutes (CreateAuthorizationCode), so this
+		// used to be a skip reading "requires code TTL modification or long
+		// wait" — which left the expiry branch of ConsumeAuthorizationCode with
+		// no test at all while the subtest counted as a pass.
+		//
+		// Neither a knob nor a wait is needed: age the row. `expires_at` in the
+		// past is exactly the state ten minutes of clock produces, and the code
+		// under test reads that column and nothing else.
+		db := integrationDB(t)
+		defer db.Close()
+
+		loginSession, verifier := beginAuthorizeForLogin(t, "openid profile", nil)
+		code := submitLoginForCode(t, username, password, loginSession)
+
+		mustExec(t, db, 1,
+			`UPDATE oauth_authorization_codes SET expires_at = NOW() - INTERVAL '1 minute' WHERE code = $1`,
+			code)
+
+		status, body := exchangeCodeWithPKCE(t, code, verifier)
+		require.Equal(t, http.StatusBadRequest, status,
+			"an expired authorization code minted a token: %v", body)
+		assert.Equal(t, "invalid_grant", body["error"],
+			"an expired code must be refused as invalid_grant (RFC 6749 §5.2)")
+		assert.Empty(t, body["access_token"])
+
+		// And it must be spent, not merely refused: the consume path DELETEs
+		// before it checks expiry, so an expired code cannot be left lying in
+		// the table for a second attempt after a clock change.
+		var left int
+		require.NoError(t, db.QueryRow(context.Background(),
+			`SELECT COUNT(*) FROM oauth_authorization_codes WHERE code = $1`, code).Scan(&left))
+		assert.Equal(t, 0, left, "the expired code is still in the table")
 	})
 
 	t.Run("invalid authorization code rejected", func(t *testing.T) {

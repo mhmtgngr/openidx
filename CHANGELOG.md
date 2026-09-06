@@ -9,6 +9,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The mandatory cross-org audit trail had never been written by a test, and
+  could not have been where it was aimed.** `TestCrossOrgIsolation`'s
+  platform-admin subtest skipped on every run of its life -- "admin is not a
+  platform admin in this environment" -- so `audit.CrossOrgAuditor`, the row
+  that makes a platform admin crossing a tenant boundary accountable, was
+  asserted nowhere. That code is the kind that fails silently: a failed insert
+  is logged and the request succeeds anyway, so a broken trail looks exactly
+  like a working one. Chasing the skip found why it could never have passed:
+  `TenantResolver` is mounted **before** route-level auth on identity-service
+  and five other services, so at resolution time the context carries no roles,
+  `SuperAdminPredicate` is false for every caller, and steps 2 and 3 of the
+  resolver's documented precedence are unreachable there. `admin-api` mounts it
+  on `/api/v1` after auth and is the one service where the control is live. The
+  suite now proves both halves where they are true: X-Org-ID is inert on a
+  service that resolves before auth; on admin-api a `super_admin` crosses and
+  the audit row lands under the **target** org, a plain admin does not cross and
+  no row is written, and the RLS bypass the insert depends on is shown
+  load-bearing on a NOSUPERUSER connection (CI connects as a superuser, where
+  RLS is ignored and the bypass would look unnecessary). admin-api now starts in
+  the integration job alongside the other three. No migration seeds a
+  `super_admin` role -- v134 grants a permission to one and matches nothing --
+  so the fixture creates and removes it.
+
+- **The gateway's route table had no test, behind a reason that was untrue.**
+  `TestRegisterServiceRoutes` skipped with "route conflicts in the routes
+  package"; `registerServiceRoutes` registers 63 routes on a fresh engine
+  without conflict, and has since the duplicate health registration moved out.
+  It now asserts every proxied service is reachable by every method a REST
+  client uses, that each proxied group resolves to a backend URL (and vice
+  versa, so neither list can drift alone), that the docs endpoints are served,
+  and that `/health` is **not** registered here -- registering it twice panics
+  the gateway at boot, in production, which no test could previously catch.
+
+- **Authorization-code expiry and single-use were both untested.** The expiry
+  subtest was a bare skip ("requires code TTL modification or long wait"), and
+  the one named for replay protection asserted that a login helper returned a
+  token. Neither needed what it claimed: the code is available to the harness,
+  and expiry is a column. An expired code is now shown to be refused as
+  `invalid_grant` and removed from the table, and a replayed code is shown to
+  mint nothing -- both verified by mutating `ConsumeAuthorizationCode` and
+  watching them go red.
+
+- **`scripts/check-inert-tests.sh` looked only at the first line of a body.**
+  A skip preceded by comments -- which is where the reason for not writing the
+  test gets parked -- slipped past it, and two inert tests sat green behind a
+  paragraph the whole time the guard was in CI. Blank lines and comments no
+  longer clear the finding; a statement still does.
+
 - **A denied access request could be approved back to life.** `handleApproveRequest`
   read the request only to compare `requester_id` against the caller; it never
   looked at the request's **status**, and the pending-count that decides whether

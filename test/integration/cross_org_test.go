@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -159,6 +160,32 @@ func seedUserInOrg(t *testing.T, db *pgxpool.Pool, orgID, username, email string
 
 // bypassExec runs a statement with app.bypass_rls set so test cleanup can touch
 // FORCE-RLS tables (a raw pool connection carries no org scope). Best-effort.
+// mustExec is bypassExec for SETUP rather than cleanup: it fails the test on
+// error and on an unexpected row count.
+//
+// bypassExec returns silently on every error because it exists to tear fixtures
+// down, where a failed DELETE should not mask the real assertion. Setup is the
+// opposite case — a fixture step that quietly does nothing leaves the test
+// asserting against a state it never established, which is the same "green over
+// nothing" this file's own suite was built to stop. wantRows of -1 accepts any
+// count.
+func mustExec(t *testing.T, db *pgxpool.Pool, wantRows int64, sql string, args ...interface{}) {
+	t.Helper()
+	ctx := context.Background()
+	tx, err := db.Begin(ctx)
+	require.NoError(t, err, "begin fixture tx")
+	defer tx.Rollback(ctx)
+	_, err = tx.Exec(ctx, `select set_config('app.bypass_rls', 'on', true)`)
+	require.NoError(t, err, "set bypass_rls for fixture")
+	tag, err := tx.Exec(ctx, sql, args...)
+	require.NoError(t, err, "fixture statement: %s", sql)
+	if wantRows >= 0 {
+		require.Equal(t, wantRows, tag.RowsAffected(),
+			"fixture statement affected the wrong number of rows: %s", sql)
+	}
+	require.NoError(t, tx.Commit(ctx), "commit fixture tx")
+}
+
 func bypassExec(t *testing.T, db *pgxpool.Pool, sql string, args ...interface{}) {
 	t.Helper()
 	ctx := context.Background()
@@ -229,16 +256,199 @@ func TestCrossOrgIsolation(t *testing.T) {
 		assert.Equal(t, 404, status, "org A must not see org B's user (404, anti-enumeration)")
 	})
 
-	t.Run("platform-admin X-Org-ID cross-org read is audited", func(t *testing.T) {
+	// The X-Org-ID platform-admin bypass, both halves.
+	//
+	// The subtest that used to stand here read the seeded admin's token, found
+	// 404 (that admin holds "admin", not "super_admin"), and skipped — every
+	// run, in CI too. So the mandatory cross-org audit trail was never once
+	// written by a test, and audit.CrossOrgAuditor's RLS bypass is exactly the
+	// code that fails silently when it is wrong: a failed insert is logged and
+	// the request succeeds anyway, so a broken audit trail looks from the
+	// outside precisely like a working one.
+	//
+	// Chasing the skip turned up why it could never have passed here.
+	// TenantResolver is mounted on identity-service BEFORE route-level auth
+	// (cmd/identity-service/main.go, and the comment there says so), so at
+	// resolution time the gin context carries no roles: SuperAdminPredicate
+	// returns false no matter who is calling, and steps 2 and 3 of the
+	// resolver's documented precedence are unreachable. Six of the seven
+	// services that wire OnPlatformCrossOrg are in that position. admin-api is
+	// the exception — it mounts the resolver on the /api/v1 group after auth —
+	// so that is where the control is live and where it is now tested.
+	//
+	// Both halves are asserted, because "the bypass works" and "the bypass is
+	// not available to everyone" are different claims and a regression in
+	// either is a tenant-isolation failure.
+
+	t.Run("X-Org-ID does not cross the boundary on a service that resolves before auth", func(t *testing.T) {
 		before := crossOrgAuditCount(t, db, orgB)
 		status, _ := apiRequestWithOrgID(t, "GET", url, "", token, orgB)
-		if status != 200 {
-			t.Skipf("admin is not a platform admin in this environment (status %d); skipping audited-bypass assertion", status)
-		}
-		// Give the synchronous audit insert a beat (it runs inline in the resolver).
-		after := crossOrgAuditCount(t, db, orgB)
-		assert.Greater(t, after, before, "platform-admin cross-org read must write an audit_events row")
+		assert.Equal(t, 404, status,
+			"X-Org-ID crossed orgs on identity-service, where the resolver cannot have seen a role")
+		assert.Equal(t, before, crossOrgAuditCount(t, db, orgB),
+			"a crossing that did not happen must not write a cross-org audit row")
 	})
+
+	// A row that exists only in org B. GET /api/v1/ai-agents lists strictly
+	// `WHERE org_id = $1` from the RESOLVED org, so whether this name comes back
+	// is a direct read of which tenant the resolver put the request in — and it
+	// exercises the org_id that migration v138 added to ai_agents.
+	agentName := "xorg-agent-" + suffix
+	mustExec(t, db, 1,
+		`INSERT INTO ai_agents (name, description, agent_type, status, trust_level, org_id)
+		 VALUES ($1, 'cross-org resolver probe', 'assistant', 'active', 'low', $2)`,
+		agentName, orgB)
+	t.Cleanup(func() {
+		bypassExec(t, db, "DELETE FROM ai_agents WHERE name = $1", agentName)
+	})
+
+	listsOrgBAgent := func(t *testing.T, body map[string]interface{}) bool {
+		t.Helper()
+		agents, ok := body["data"].([]interface{})
+		require.True(t, ok, "GET /ai-agents did not return a data array: %v", body)
+		for _, a := range agents {
+			if m, ok := a.(map[string]interface{}); ok && m["name"] == agentName {
+				return true
+			}
+		}
+		return false
+	}
+
+	t.Run("platform-admin X-Org-ID cross-org read is audited", func(t *testing.T) {
+		// A platform admin has to be MADE, not hoped for: no migration seeds a
+		// role named super_admin (v134 grants a permission to one and matches
+		// nothing), and HasRoleInContext is equality, not hierarchy.
+		saUser, saPassword := seedPlatformAdmin(t, db, suffix)
+		saToken := loginAndGetToken(t, saUser, saPassword)
+
+		agents := adminAPIURL + "/api/v1/ai-agents"
+
+		status, body := apiRequest(t, "GET", agents, "", saToken)
+		require.Equal(t, 200, status, "admin-api /ai-agents: %v", body)
+		require.False(t, listsOrgBAgent(t, body),
+			"the platform admin already sees org B's rows without crossing; the crossing would prove nothing")
+
+		before := crossOrgAuditCount(t, db, orgB)
+		status, body = apiRequestWithOrgID(t, "GET", agents, "", saToken, orgB)
+		require.Equal(t, 200, status,
+			"a super_admin must be able to cross with X-Org-ID: %v", body)
+		assert.True(t, listsOrgBAgent(t, body),
+			"X-Org-ID was accepted but the request stayed in the caller's org")
+
+		// The insert runs inline in the resolver, before the handler replies, so
+		// by the time the response is in hand the row is committed or lost.
+		assert.Equal(t, before+1, crossOrgAuditCount(t, db, orgB),
+			"platform-admin cross-org read must write an audit_events row under the TARGET org")
+
+		// Under the target org, not the actor's: the tenant being crossed into
+		// is the one whose compliance trail has to show it.
+		assert.Equal(t, 0, crossOrgAuditCount(t, db, orgA),
+			"the audit row landed under the wrong org")
+	})
+
+	t.Run("the cross-org audit insert needs its RLS bypass on a production-shaped connection", func(t *testing.T) {
+		// Honest scope note: the two subtests above cannot catch a regression in
+		// audit.CrossOrgAuditor's WithBypassRLS. Removing it and re-running them
+		// stays green, because CI and local both connect the services as a
+		// Postgres SUPERUSER, which ignores RLS outright — the bypass is dead
+		// weight there and load-bearing in production, where the app connects as
+		// a plain role. That is the worst shape a control can have: the
+		// environment that tests it is the one environment where it does not
+		// matter.
+		//
+		// So assert the property the bypass exists for, on a NOSUPERUSER
+		// connection that behaves like production: the auditor writes a row for
+		// the TARGET org from a session scoped to the ACTOR's org, and the
+		// fail-closed WITH CHECK (org_id = app.org_id) rejects exactly that
+		// write. A future cleanup that removes the bypass turns this red with
+		// the reason attached.
+		rolePool := rlsRolePool(t, db, "audit_events")
+		defer rolePool.Close()
+		ctx := context.Background()
+		conn, err := rolePool.Acquire(ctx)
+		require.NoError(t, err)
+		defer conn.Release()
+
+		insertForOrgB := func() error {
+			_, err := conn.Exec(ctx,
+				`INSERT INTO audit_events (id, timestamp, event_type, category, action, outcome,
+				                           actor_type, target_id, target_type, details, org_id)
+				 VALUES ($1, NOW(), 'platform_admin_cross_org_access', 'security', 'cross_org_access',
+				         'success', 'platform_admin', $2, 'organization', '{}'::jsonb, $3)`,
+				uuid.NewString(), orgB, orgB)
+			return err
+		}
+
+		// Scoped to org A, no bypass: this is the auditor's write without its
+		// bypass, and the policy must refuse it.
+		_, err = conn.Exec(ctx, `select set_config('app.org_id',$1,false), set_config('app.bypass_rls','',false)`, orgA)
+		require.NoError(t, err)
+		require.Error(t, insertForOrgB(),
+			"a session scoped to org A wrote an org-B audit row: the WITH CHECK is not fail-closed, and CrossOrgAuditor's bypass is not what makes the trail work")
+
+		// Same statement, bypass on: accepted. Together these say the bypass is
+		// the difference, which is the claim the auditor's comment makes.
+		_, err = conn.Exec(ctx, `select set_config('app.bypass_rls','on',false)`)
+		require.NoError(t, err)
+		require.NoError(t, insertForOrgB(), "the bypass did not let the mandatory audit row through")
+		bypassExec(t, db, `DELETE FROM audit_events WHERE org_id = $1 AND actor_type = 'platform_admin' AND actor_id IS NULL`, orgB)
+	})
+
+	t.Run("a plain admin cannot cross with X-Org-ID even where the resolver can see roles", func(t *testing.T) {
+		// Same endpoint, same header, a token holding "admin". If this crossed,
+		// X-Org-ID would be a tenant boundary anyone with an admin role could
+		// step over — and the audit row above would be recording the front door.
+		before := crossOrgAuditCount(t, db, orgB)
+		status, body := apiRequestWithOrgID(t, "GET", adminAPIURL+"/api/v1/ai-agents", "", token, orgB)
+		require.Equal(t, 200, status, "admin-api /ai-agents: %v", body)
+		assert.False(t, listsOrgBAgent(t, body),
+			"a plain admin read org B's rows with X-Org-ID")
+		assert.Equal(t, before, crossOrgAuditCount(t, db, orgB),
+			"a refused crossing must not write a cross-org audit row")
+	})
+}
+
+// seedPlatformAdmin creates a user in the default org holding the super_admin
+// role and returns credentials for it.
+//
+// The role is created here because the product does not ship one: `roles` seeds
+// admin / manager / user / auditor / developer, and super_admin — the name
+// auth.SuperAdminPredicate matches exactly (HasRoleInContext is equality, not
+// hierarchy) — exists only in code. Both the role grant and the role row are
+// removed again on cleanup so a run leaves no standing cross-tenant identity in
+// the database.
+func seedPlatformAdmin(t *testing.T, db *pgxpool.Pool, suffix string) (username, password string) {
+	t.Helper()
+	const defaultOrgID = "00000000-0000-0000-0000-000000000010" // config default_org_id
+
+	username = "xorg-superadmin-" + suffix
+	password = "XorgSuper@123"
+	userID := createTestUser(t, username, "xorg-super-"+suffix+"@example.test", password)
+	t.Cleanup(func() { deleteTestUser(t, userID) })
+
+	var roleID string
+	err := db.QueryRow(context.Background(),
+		`SELECT id FROM roles WHERE name = 'super_admin'`).Scan(&roleID)
+	if err != nil {
+		mustExec(t, db, 1,
+			`INSERT INTO roles (name, description, org_id) VALUES ('super_admin', $1, $2)`,
+			"Platform administrator (created by the cross-org integration test)", defaultOrgID)
+		require.NoError(t, db.QueryRow(context.Background(),
+			`SELECT id FROM roles WHERE name = 'super_admin'`).Scan(&roleID))
+		t.Cleanup(func() {
+			// CASCADE on user_roles.role_id takes the grant with it.
+			bypassExec(t, db, `DELETE FROM roles WHERE id = $1`, roleID)
+		})
+	}
+
+	mustExec(t, db, 1,
+		`INSERT INTO user_roles (user_id, role_id, org_id) VALUES ($1, $2, $3)`,
+		userID, roleID, defaultOrgID)
+	t.Cleanup(func() {
+		bypassExec(t, db, `DELETE FROM user_roles WHERE user_id = $1 AND role_id = $2`, userID, roleID)
+	})
+
+	return username, password
 }
 
 func crossOrgAuditCount(t *testing.T, db *pgxpool.Pool, orgID string) int {

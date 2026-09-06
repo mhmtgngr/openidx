@@ -654,10 +654,25 @@ jobs:
           # was proven nowhere. It passes with a gateway up, and fails with a
           # gateway whose Header.Del("X-Org-Slug") is removed -- both checked
           # before this line was added.
-          echo "::group::Build identity-service + oauth-service + gateway-service"
+          #
+          # admin-api is here for the same reason, one layer down.
+          # TestCrossOrgIsolation's platform-admin subtest skipped on every run
+          # since it was written ("admin is not a platform admin in this
+          # environment"), so the MANDATORY cross-org audit trail -- the row
+          # that makes a platform admin crossing a tenant boundary accountable
+          # -- had never been written by a test. Chasing that skip found why it
+          # could not pass where it was aimed: TenantResolver is mounted before
+          # route-level auth on identity-service (and five others), so the
+          # platform-admin predicate sees no roles and the X-Org-ID path is
+          # unreachable there. admin-api mounts it on /api/v1 AFTER auth, which
+          # is the one place the control is live -- so that is where it is now
+          # tested, and both halves are asserted (a super_admin crosses and is
+          # audited; a plain admin does not).
+          echo "::group::Build identity-service + oauth-service + gateway-service + admin-api"
           go build -o /tmp/identity-service ./cmd/identity-service
           go build -o /tmp/oauth-service    ./cmd/oauth-service
           go build -o /tmp/gateway-service  ./cmd/gateway-service
+          go build -o /tmp/admin-api        ./cmd/admin-api
           echo "::endgroup::"
 
           # ----- start services in background -----
@@ -691,6 +706,11 @@ jobs:
           # harness never follows the redirect; the enforced-posture test only
           # asserts the Location it points at.
           export OAUTH_LOGIN_URL=http://localhost:3000/login
+          # admin-api fail-closes at startup without a 32-byte key (its vault
+          # keyring refuses to come up), which is correct and is why this is
+          # exported rather than left unset. Test-only value; the same shape the
+          # other jobs in this file already use.
+          export ENCRYPTION_KEY="0123456789abcdef0123456789abcdef"
 
           /tmp/identity-service > /tmp/identity.log 2>&1 &
           IDENTITY_PID=$!
@@ -700,34 +720,39 @@ jobs:
           # above; it listens on 8008, which is what GATEWAY_URL defaults to.
           /tmp/gateway-service  > /tmp/gateway.log  2>&1 &
           GATEWAY_PID=$!
-          echo "identity-service pid=$IDENTITY_PID, oauth-service pid=$OAUTH_PID, gateway-service pid=$GATEWAY_PID"
+          # admin-api listens on 8005, which is what ADMIN_API_URL defaults to.
+          /tmp/admin-api        > /tmp/admin-api.log 2>&1 &
+          ADMIN_API_PID=$!
+          echo "identity-service pid=$IDENTITY_PID, oauth-service pid=$OAUTH_PID, gateway-service pid=$GATEWAY_PID, admin-api pid=$ADMIN_API_PID"
 
           cleanup() {
-            echo "::group::identity-service log"; cat /tmp/identity.log || true; echo "::endgroup::"
-            echo "::group::oauth-service log";    cat /tmp/oauth.log    || true; echo "::endgroup::"
-            echo "::group::gateway-service log";  cat /tmp/gateway.log  || true; echo "::endgroup::"
-            kill "$IDENTITY_PID" "$OAUTH_PID" "$GATEWAY_PID" 2>/dev/null || true
+            echo "::group::identity-service log"; cat /tmp/identity.log  || true; echo "::endgroup::"
+            echo "::group::oauth-service log";    cat /tmp/oauth.log     || true; echo "::endgroup::"
+            echo "::group::gateway-service log";  cat /tmp/gateway.log   || true; echo "::endgroup::"
+            echo "::group::admin-api log";        cat /tmp/admin-api.log || true; echo "::endgroup::"
+            kill "$IDENTITY_PID" "$OAUTH_PID" "$GATEWAY_PID" "$ADMIN_API_PID" 2>/dev/null || true
           }
           trap cleanup EXIT
 
-          # ----- wait for all three to be healthy -----
-          # The gateway is waited for like the other two rather than probed
-          # opportunistically: a gateway that fails to start must fail this job,
-          # not send TestCrossOrgSpoofing back to skipping quietly, which is the
-          # state it spent its whole life in.
+          # ----- wait for all four to be healthy -----
+          # Each is waited for rather than probed opportunistically: a service
+          # that fails to start must fail this job, not send the test that needs
+          # it back to skipping quietly, which is the state both the gateway and
+          # the admin-api tests spent their whole lives in.
           echo "::group::Wait for service health"
           for i in $(seq 1 60); do
-            id_ok=0; oa_ok=0; gw_ok=0
+            id_ok=0; oa_ok=0; gw_ok=0; ad_ok=0
             curl -sf http://localhost:8001/health/ready >/dev/null 2>&1 && id_ok=1
             curl -sf http://localhost:8006/health/ready >/dev/null 2>&1 && oa_ok=1
             curl -sf http://localhost:8008/health       >/dev/null 2>&1 && gw_ok=1
-            if [ "$id_ok" = "1" ] && [ "$oa_ok" = "1" ] && [ "$gw_ok" = "1" ]; then
-              echo "all three services ready after ${i}s"
+            curl -sf http://localhost:8005/health       >/dev/null 2>&1 && ad_ok=1
+            if [ "$id_ok" = "1" ] && [ "$oa_ok" = "1" ] && [ "$gw_ok" = "1" ] && [ "$ad_ok" = "1" ]; then
+              echo "all four services ready after ${i}s"
               break
             fi
             sleep 1
             if [ "$i" = "60" ]; then
-              echo "::error::services did not become ready within 60s (identity_ok=$id_ok oauth_ok=$oa_ok gateway_ok=$gw_ok)"
+              echo "::error::services did not become ready within 60s (identity_ok=$id_ok oauth_ok=$oa_ok gateway_ok=$gw_ok admin_api_ok=$ad_ok)"
               exit 1
             fi
           done

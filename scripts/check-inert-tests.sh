@@ -20,6 +20,14 @@
 # delete it and leave the reason in the package's doc comment where a reader
 # will find it, rather than a green tick that says the opposite.
 #
+# A comment is not a condition. The first cut of this guard required the skip to
+# be the FIRST line of the body, and two inert tests sat behind a paragraph of
+# explanation the whole time it was green: cmd/gateway-service's route-table test
+# ("route conflicts in the routes package" -- untrue; the 63 routes register on a
+# fresh engine without a murmur) and the integration suite's authorization-code
+# expiry test. The prose is exactly where the reason for not writing the test
+# gets parked, so the prose is where the guard has to look through.
+#
 # Usage: check-inert-tests.sh [--enforce]
 #   --enforce  exit non-zero on a finding (the CI mode; the default too)
 #
@@ -41,14 +49,32 @@ if not os.path.isdir(scan):
 
 # A subtest whose entire body is one t.Skip, and a top-level test of the same
 # shape. Both are matched on the literal source rather than on a parse, because
-# the property is textual: nothing stands between the opening brace and the
-# skip.
+# the property is textual: nothing EXECUTABLE stands between the opening brace
+# and the skip.
+#
+# PROSE is what may stand there -- blank lines and // comments -- and it does not
+# make the skip conditional, so it does not clear the finding. Anything else
+# (even a single statement) does, because then the guard can no longer tell from
+# the text alone whether the skip is reached.
+PROSE = r'((?:[ \t]*(?://[^\n]*)?\n)*)'
 SUBTEST = re.compile(
-    r't\.Run\(\s*"([^"]*)"\s*,\s*func\(t \*testing\.T\) \{\s*\n\s*t\.Skipf?\([^\n]*\)\s*\n\s*\}\)'
+    r't\.Run\(\s*"([^"]*)"\s*,\s*func\(t \*testing\.T\) \{[ \t]*\n'
+    + PROSE
+    + r'[ \t]*t\.Skipf?\([^\n]*\)\s*\n\s*\}\)'
 )
 TOPLEVEL = re.compile(
-    r'func (Test\w+)\(t \*testing\.T\) \{\s*\n\s*t\.Skipf?\([^\n]*\)\s*\n\}'
+    r'func (Test\w+)\(t \*testing\.T\) \{[ \t]*\n'
+    + PROSE
+    + r'[ \t]*t\.Skipf?\([^\n]*\)\s*\n\}'
 )
+
+
+def buried(prose):
+    """How the finding reads when an explanation stands in front of the skip."""
+    n = len([ln for ln in prose.splitlines() if ln.strip()])
+    if n == 0:
+        return ""
+    return f" (behind {n} comment line{'s' if n > 1 else ''})"
 
 findings = []
 scanned = 0
@@ -63,10 +89,14 @@ for root, dirs, names in os.walk(scan):
         rel = os.path.relpath(path, scan)
         for m in SUBTEST.finditer(src):
             line = src[: m.start()].count("\n") + 1
-            findings.append(f"{rel}:{line}: subtest {m.group(1)!r} is one unconditional t.Skip")
+            findings.append(
+                f"{rel}:{line}: subtest {m.group(1)!r} is one unconditional t.Skip{buried(m.group(2))}"
+            )
         for m in TOPLEVEL.finditer(src):
             line = src[: m.start()].count("\n") + 1
-            findings.append(f"{rel}:{line}: {m.group(1)} is one unconditional t.Skip")
+            findings.append(
+                f"{rel}:{line}: {m.group(1)} is one unconditional t.Skip{buried(m.group(2))}"
+            )
 
 for f in sorted(findings):
     print(f"check-inert-tests: {f}", file=sys.stderr)
