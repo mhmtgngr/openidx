@@ -273,7 +273,7 @@ input.
 So: triage a future `go/log-injection` alert by asking which argument the
 tainted value reaches. A field is safe by construction; the message is not.
 
-### Update — nine alerts on lines that ARE sanitised
+### Update — eleven alerts on lines that ARE sanitised
 
 Alerts **2477–2486**, raised on `5921ce10`, sit on:
 
@@ -281,7 +281,14 @@ Alerts **2477–2486**, raised on `5921ce10`, sit on:
 `opa.go:71, 88` · `ratelimit.go:172, 210, 211` ·
 `tenant_resolver.go:208`
 
-Every one of those lines reads `logsafe.String(...)`. They are the sites that
+Alerts **2488–2489**, raised on `41d70b07`, are the same thing one commit later:
+`internal/gateway/middleware/logging.go:87` logs a body that went through
+`logsafe.JSONBody`, and `:261` a query string that went through
+`logsafe.QueryString`. Both lines were *added* by the commit that introduced the
+redaction, which is the tell: the count goes up when the sanitiser is applied to
+a site the query already reached.
+
+Every one of those lines reads `logsafe.String(...)` or another `logsafe` call. They are the sites that
 commit *added* the sanitiser to, and the count did not go down, because
 **CodeQL cannot see this sanitiser**. From the query's own customizations
 (`go/ql/lib/semmle/go/security/LogInjectionCustomizations.qll`) it recognises
@@ -328,7 +335,7 @@ alert list nobody has triaged is an alert list nobody reads.
    UI is the only place this verdict can be recorded, and it has to be
    re-recorded whenever a vendor bump moves those lines.
 3b. Dismiss as **"false positive"**, citing this file: `go/log-injection`
-   alerts 2477–2486, which are on lines that call `logsafe.String`. Read the
+   alerts 2477–2486 and 2488–2489, which are on lines that call `logsafe`. Read the
    "nine alerts on lines that ARE sanitised" entry first — the reason matters,
    because the change that would clear them is a change that must not be made.
 4. Nothing to do for `go/insecure-hostkeycallback`: it is no longer raised.
