@@ -58,6 +58,41 @@ to a spec that describes an eighth of a surface, a documented endpoint that
   **Operators of installations with more than one organization should note**
   that existing runs are assigned to the organization of whoever started them,
   and their per-account records follow the run.
+- **The approval request raised when an untrusted device is refused had never
+  once been raised** (migration v171). When a device that has not been marked
+  trusted reaches a resource protected by a device check, the product refuses it
+  and — in its own words — "files a pending device-trust request so an admin can
+  approve it". An administrator is meant to see that request on the Device Trust
+  Approval screen and let the person in.
+
+  An earlier migration gave those records a required organization column. The
+  step that writes them was never updated to fill it, so **every attempt failed
+  at the database and the failure was written to the log and discarded** —
+  deliberately, because that step is best-effort and must never block the
+  request it is refusing. The result: the check refused the device, said it was
+  raising a request, and raised nothing. On every installation, for as long as
+  that column has existed. A person locked out by a device check waited for an
+  approval that was never in anybody's queue.
+
+  The equivalent step on the self-service side always filled the column
+  correctly; this was its counterpart. The organization now comes from the
+  already-signed-in person, which is exact.
+
+  A test did assert that the request was filed. It built its own copy of the
+  table **without** the required column — a shape the product has not had since
+  that migration — so it passed against a constraint that was not there. It now
+  matches the real schema.
+
+  Also in this change: report exports, agent enrolment sessions and these
+  device-trust requests are all brought under the database's own isolation rule,
+  which completes that work — every record type in the product that names an
+  organization is now confined by the database as well as by the application.
+  Two supporting fixes went with it: the background job that writes a finished
+  report's status now carries the organization it is working for (without it the
+  export would have stayed at "generating" for ever, with the file on disk), and
+  the public endpoint an agent uses to redeem its enrolment code now says
+  explicitly that it works across organizations, since it runs before any
+  organization can be known.
 - **A record that names the organization had never had one written into it**
   (migration v170). When an application registers itself with OpenIDX
   automatically — the standard mechanism for a client to sign itself up — it is

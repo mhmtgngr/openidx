@@ -82,7 +82,18 @@ func TestEnsureDeviceTrustRequest(t *testing.T) {
 
 	ctx := context.Background()
 
+	// The fixture carries org_id NOT NULL on device_trust_requests and a users
+	// table to resolve it from, because that is what the real schema has had
+	// since v72. It did not before v171, and that mismatch is why this test
+	// passed while the statement it exercises had never once succeeded in
+	// production: the fixture allowed a NULL tenant the real table refuses.
 	if _, err := db.Pool.Exec(ctx, `
+		CREATE TABLE users (
+			id UUID PRIMARY KEY,
+			username VARCHAR(255) NOT NULL,
+			email VARCHAR(255) NOT NULL,
+			org_id UUID NOT NULL
+		);
 		CREATE TABLE known_devices (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 			user_id UUID NOT NULL,
@@ -94,6 +105,7 @@ func TestEnsureDeviceTrustRequest(t *testing.T) {
 		CREATE TABLE device_trust_requests (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 			user_id UUID NOT NULL,
+			org_id UUID NOT NULL,
 			device_id UUID,
 			device_fingerprint VARCHAR(255),
 			device_name VARCHAR(255),
@@ -115,9 +127,16 @@ func TestEnsureDeviceTrustRequest(t *testing.T) {
 	s := &Service{db: db, logger: zap.NewNop()}
 
 	const userID = "00000000-0000-0000-0000-000000000001"
+	const orgID = "00000000-0000-0000-0000-0000000000aa"
 	const ip = "192.168.1.50"
 	const ua = "Mozilla/5.0 (TestAgent)"
 	fp := risk.ComputeDeviceFingerprint(ip, ua)
+
+	if _, err := db.Pool.Exec(ctx,
+		`INSERT INTO users (id, username, email, org_id) VALUES ($1,'dt','dt@example.test',$2)`,
+		userID, orgID); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
 
 	pending := func() int {
 		var n int

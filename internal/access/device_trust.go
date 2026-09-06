@@ -67,11 +67,41 @@ func (s *Service) ensureDeviceTrustRequest(ctx context.Context, userID, ip, user
 		return
 	}
 
-	// Dedup: one pending request per (user, device).
+	// THE TENANT, AND WHY THIS FUNCTION HAD NEVER ONCE WORKED.
+	//
+	// v72 gave device_trust_requests an org_id and made it NOT NULL, with no
+	// default. This INSERT was never updated. Since v72 it has failed on every
+	// single call with
+	//
+	//	null value in column "org_id" ... violates not-null constraint (23502)
+	//
+	// and the error was logged at WARN and swallowed, because this whole
+	// function is best-effort so it can never block the proxied request. So the
+	// enforcement path refused an untrusted device, said it was filing a request
+	// for an admin to approve, and filed nothing -- every time, on every
+	// install, for as long as the column has existed. The identity-side writer
+	// in internal/identity/device_trust_approval.go always wrote the tenant;
+	// this one, the pair's other half, never did.
+	//
+	// Forward-auth carries no resolved org (hence the bypass above), so the
+	// tenant comes from the already-authenticated user, which is exact: a user
+	// belongs to exactly one organization. Without it the row would be filed
+	// nowhere, and the approval queue is org-scoped on every read.
+	var orgID string
+	if err := s.db.Pool.QueryRow(ctx,
+		//orgscope:ignore proxy data-plane device-trust write; resolves the already-authenticated session user's tenant (user_id is globally unique)
+		`SELECT org_id::text FROM users WHERE id=$1`, userID).Scan(&orgID); err != nil || orgID == "" {
+		s.logger.Warn("device-trust request: cannot resolve the user's organization; not filing",
+			zap.String("user_id", userID), zap.Error(err))
+		return
+	}
+
+	// Dedup: one pending request per (user, device), within the tenant.
 	var exists int
 	if err := s.db.Pool.QueryRow(ctx,
-		`SELECT 1 FROM device_trust_requests WHERE user_id=$1 AND device_fingerprint=$2 AND status='pending' LIMIT 1`,
-		userID, fp).Scan(&exists); err == nil {
+		`SELECT 1 FROM device_trust_requests
+		 WHERE user_id=$1 AND device_fingerprint=$2 AND status='pending' AND org_id=$3 LIMIT 1`,
+		userID, fp, orgID).Scan(&exists); err == nil {
 		return // already pending
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		s.logger.Warn("device-trust request: dedup check failed", zap.String("user_id", userID), zap.Error(err))
@@ -81,10 +111,10 @@ func (s *Service) ensureDeviceTrustRequest(ctx context.Context, userID, ip, user
 	if _, err := s.db.Pool.Exec(ctx, `
 		INSERT INTO device_trust_requests
 			(id, user_id, device_id, device_fingerprint, device_name, device_type,
-			 ip_address, user_agent, justification, status, created_at)
+			 ip_address, user_agent, justification, status, org_id, created_at)
 		VALUES (gen_random_uuid(), $1, $2, $3, $4, 'unknown', $5, $6,
-			'Untrusted device attempted access to a device-trust-protected resource', 'pending', NOW())`,
-		userID, deviceID, fp, deviceName, ip, userAgent); err != nil {
+			'Untrusted device attempted access to a device-trust-protected resource', 'pending', $7, NOW())`,
+		userID, deviceID, fp, deviceName, ip, userAgent, orgID); err != nil {
 		s.logger.Warn("device-trust request: insert failed", zap.String("user_id", userID), zap.Error(err))
 	}
 }

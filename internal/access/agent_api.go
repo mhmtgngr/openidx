@@ -577,7 +577,7 @@ func (h *AgentAPIHandler) HandleEnroll(c *gin.Context) {
 			// MFA state, never from agent-supplied request data.
 			trusted, mode := decideAutoTrust(h.cfg(), h.logger, sess.MFAVerified, false, sess.OrgID)
 			h.linkAgentToKnownDevice(ctx, c.ClientIP(), creds.AgentID, creds.DeviceID, sess.CreatedByUID, sess.OrgID, enrollReq, trusted)
-			h.markEnrollmentSessionEnrolled(ctx, sess.ID, creds.AgentID, creds.DeviceID, trusted)
+			h.markEnrollmentSessionEnrolled(ctx, sess.ID, sess.OrgID, creds.AgentID, creds.DeviceID, trusted)
 			h.logger.Info("enrollment session redeemed",
 				zap.String("agent_id", creds.AgentID), zap.Bool("auto_trusted", trusted),
 				zap.String("autotrust_mode", mode))

@@ -112,11 +112,7 @@ var needsScoping = map[string]string{
 // deliberate -- belting a table and auditing its queries are the same act --
 // so these leave in feature-sized batches together with their query fixes,
 // never in one sweep.
-var needsBelt = map[string]string{
-	"report_exports":        "v26; 1 unscoped query",
-	"device_trust_requests": "v39; 2 unscoped queries",
-	"enrollment_sessions":   "v132; 3 unscoped queries",
-}
+var needsBelt = map[string]string{}
 
 // predicateAuditPending: OPEN FINDINGS, query level. Deriving the scoped set
 // from the DDL brought these tables under the missing-predicate rule for the

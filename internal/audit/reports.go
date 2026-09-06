@@ -17,6 +17,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	apperrors "github.com/openidx/openidx/internal/common/errors"
+	"github.com/openidx/openidx/internal/common/orgctx"
 	"go.uber.org/zap"
 )
 
@@ -103,9 +104,18 @@ func (s *Service) GenerateReportExport(ctx context.Context, orgID, reportType, f
 	return export, nil
 }
 
-// generateReportAsync runs report generation in the background
+// generateReportAsync runs report generation in the background.
+//
+// The context is detached from the request (which ends the moment the export id
+// is returned) and CARRIES THE TENANT, because v171 belts report_exports: the
+// pool sets app.org_id from orgctx at checkout, so a bare Background context
+// would set none and updateExportStatus below would match no row. The export
+// would then sit at "generating" for ever, with the file written to disk and
+// the download endpoint answering "export is not completed" until someone read
+// the log. Same shape v169 fixed in the app-discovery goroutine.
 func (s *Service) generateReportAsync(export *ReportExport) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(
+		orgctx.With(context.Background(), orgctx.Org{ID: export.OrgID}), 5*time.Minute)
 	defer cancel()
 	s.logger.Info("Starting async report generation",
 		zap.String("export_id", export.ID),
@@ -142,14 +152,14 @@ func (s *Service) generateReportAsync(export *ReportExport) {
 
 	if err != nil {
 		s.logger.Error("Failed to query report data", zap.Error(err))
-		s.updateExportStatus(ctx, export.ID, "failed", "", 0, 0, err.Error())
+		s.updateExportStatus(ctx, export.ID, export.OrgID, "failed", "", 0, 0, err.Error())
 		return
 	}
 
 	// Ensure report directory exists
 	if mkErr := os.MkdirAll(reportDir, 0755); mkErr != nil {
 		s.logger.Error("Failed to create report directory", zap.Error(mkErr))
-		s.updateExportStatus(ctx, export.ID, "failed", "", 0, 0, mkErr.Error())
+		s.updateExportStatus(ctx, export.ID, export.OrgID, "failed", "", 0, 0, mkErr.Error())
 		return
 	}
 
@@ -165,7 +175,7 @@ func (s *Service) generateReportAsync(export *ReportExport) {
 	default:
 		err = fmt.Errorf("unsupported format: %s", export.Format)
 		s.logger.Error("Failed to write report file", zap.Error(err))
-		s.updateExportStatus(ctx, export.ID, "failed", "", 0, 0, err.Error())
+		s.updateExportStatus(ctx, export.ID, export.OrgID, "failed", "", 0, 0, err.Error())
 		return
 	}
 
@@ -173,7 +183,7 @@ func (s *Service) generateReportAsync(export *ReportExport) {
 	filePath, pathErr := reportFilePath(fileName)
 	if pathErr != nil {
 		s.logger.Error("Rejected report export path", zap.Error(pathErr))
-		s.updateExportStatus(ctx, export.ID, "failed", "", 0, 0, pathErr.Error())
+		s.updateExportStatus(ctx, export.ID, export.OrgID, "failed", "", 0, 0, pathErr.Error())
 		return
 	}
 
@@ -186,7 +196,7 @@ func (s *Service) generateReportAsync(export *ReportExport) {
 
 	if err != nil {
 		s.logger.Error("Failed to write report file", zap.Error(err))
-		s.updateExportStatus(ctx, export.ID, "failed", "", 0, 0, err.Error())
+		s.updateExportStatus(ctx, export.ID, export.OrgID, "failed", "", 0, 0, err.Error())
 		return
 	}
 
@@ -196,7 +206,7 @@ func (s *Service) generateReportAsync(export *ReportExport) {
 		fileSize = info.Size()
 	}
 
-	s.updateExportStatus(ctx, export.ID, "completed", filePath, fileSize, len(data), "")
+	s.updateExportStatus(ctx, export.ID, export.OrgID, "completed", filePath, fileSize, len(data), "")
 	s.logger.Info("Report generation completed",
 		zap.String("export_id", export.ID),
 		zap.String("file_path", filePath),
@@ -393,14 +403,14 @@ func (s *Service) writeJSONFile(filePath string, data []map[string]interface{}) 
 }
 
 // updateExportStatus updates the status of a report export in the database
-func (s *Service) updateExportStatus(ctx context.Context, exportID, status, filePath string, fileSize int64, rowCount int, errMsg string) {
+func (s *Service) updateExportStatus(ctx context.Context, exportID, orgID, status, filePath string, fileSize int64, rowCount int, errMsg string) {
 	now := time.Now()
 	_, err := s.db.Pool.Exec(ctx, `
 		UPDATE report_exports
 		SET status = $1, file_path = $2, file_size = $3, row_count = $4,
 		    error_message = $5, completed_at = $6
-		WHERE id = $7
-	`, status, filePath, fileSize, rowCount, errMsg, &now, exportID)
+		WHERE id = $7 AND org_id = $8
+	`, status, filePath, fileSize, rowCount, errMsg, &now, exportID, orgID)
 	if err != nil {
 		s.logger.Error("Failed to update export status",
 			zap.String("export_id", exportID),

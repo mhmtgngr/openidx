@@ -869,6 +869,30 @@ func TestRLSBeltTables(t *testing.T) {
 			VALUES ('tbelt-dch-` + suffix + `', 'TBELT` + suffix + `', 'tbelt-dev', 'openid',
 			        'pending', $1, NOW() + INTERVAL '10 minutes')`},
 
+		// v171 — the last three off the needsBelt register. The device-trust
+		// request is the one the proxy files when it refuses an untrusted
+		// device; before v171 that INSERT omitted org_id, which v72 had made
+		// NOT NULL, so it had never once succeeded.
+		{"report_exports", `INSERT INTO report_exports (id, org_id, name, report_type, framework, format, status)
+			VALUES (gen_random_uuid(), $1, 'tbelt-` + suffix + `', 'access', 'soc2', 'csv', 'generating')`},
+
+		{"device_trust_requests", `WITH u AS (
+			INSERT INTO users (username, email, enabled, org_id)
+			VALUES ('tbelt-dtr-` + suffix + `', 'tbelt-dtr-` + suffix + `@example.test', true, $1)
+			RETURNING id)
+			INSERT INTO device_trust_requests
+			  (id, user_id, device_id, device_fingerprint, device_name, device_type, status, org_id)
+			SELECT gen_random_uuid(), u.id, gen_random_uuid(), 'fp-` + suffix + `', 'laptop', 'unknown', 'pending', $1 FROM u`},
+
+		{"enrollment_sessions", `WITH u AS (
+			INSERT INTO users (username, email, enabled, org_id)
+			VALUES ('tbelt-enr-` + suffix + `', 'tbelt-enr-` + suffix + `@example.test', true, $1)
+			RETURNING id)
+			INSERT INTO enrollment_sessions
+			  (id, created_by_user_id, org_id, short_code, token_hash, status, expires_at)
+			SELECT gen_random_uuid(), u.id, $1, 'TBELT` + suffix[len(suffix)-8:] + `',
+			       'tbelt-enr-hash-` + suffix + `', 'pending', NOW() + INTERVAL '15 minutes' FROM u`},
+
 		{"group_application_assignments", `WITH g AS (
 			INSERT INTO groups (name, org_id) VALUES ('tbelt-gaa-` + suffix + `', $1) RETURNING id),
 			a AS (

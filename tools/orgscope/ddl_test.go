@@ -380,7 +380,14 @@ func TestRegistersOnlyShrink(t *testing.T) {
 		// v97's org_id was never written by anything, so belting that table as
 		// it stood would have answered 401 to every RFC 7592 management call on
 		// every install. The column is filled first, then enforced.
-		{"needsBelt", len(needsBelt), 3},
+		//
+		// 3 -> 0 with v171: the report exports, the device-trust requests and
+		// the agent enrolment sessions. THE REGISTER IS EMPTY. It began at 34
+		// tables whose own migrations had drifted out of the v37/v121 belt; the
+		// pin below is now zero, so a table can never join it again -- an
+		// org_id-carrying table without FORCE ROW LEVEL SECURITY fails the
+		// build outright, which is what this whole register existed to reach.
+		{"needsBelt", len(needsBelt), 0},
 		{"predicateAuditPending", len(predicateAuditPending), 18},
 		{"installWideTables", len(installWideTables), 21},
 		{"beltExempt", len(beltExempt), 5},
