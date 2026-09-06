@@ -31,12 +31,8 @@ var installWideTables = map[string]string{
 	"oauth_signing_keys":   "install-wide JWKS signing material (v79); one key set serves every tenant",
 	"ip_threat_list":       "shared threat-intel feed consulted before a tenant is resolved",
 	"ip_geolocation_cache": "shared IP->geo cache keyed by address; no tenant dimension",
-	"posture_check_types":  "global enum of posture check kinds",
 	"policy_sync_state":    "global governance->Ziti sync watermark",
 	"siem_forward_cursor":  "single-row watermark over audit_events for one outbound SIEM connection; an install-level integration, not a tenant's (v175)",
-
-	// Operations telemetry about the install, not about anyone's data.
-	"health_check_history": "per-service dependency health for the operator; install-wide by design",
 
 	// Ziti overlay infrastructure. The controller is a single install-wide
 	// component; these mirror its state, and per-org overlay scoping is a

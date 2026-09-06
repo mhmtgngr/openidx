@@ -69,6 +69,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **Four tables no code has ever touched (migration v177).** The other half of
+  what the census found: `health_check_history` (v54), `posture_check_types`
+  (v29), `scim_groups` (v3) and `user_mfa_policies` (v5) are read by nothing and
+  written by nothing, and between them carry DDL, indexes, grants, foreign keys,
+  row-level-security policies and a docker seed that maintains five rows nobody
+  consults. `scim_groups` is the unused half of its SCIM pair — `scim_users` is
+  written on every SCIM user operation, group provisioning writes the product's
+  own `groups` table — and an earlier commit in this programme carefully
+  re-scoped its install-wide unique key, which is what dead schema costs: it
+  consumes the attention the real tables need. Two of the four sat behind the
+  v37 FORCE-RLS belt, which is the argument for dropping rather than leaving:
+  a belted table with no rows looks, to every census here, like a tenant
+  boundary being maintained. The rollback recreates all four in the shape the
+  chain had produced — org_id, foreign key, index, policy and the re-scoped
+  unique key included — read off a database with the full chain applied.
+
 - **The Usage Analytics API card, and the table behind it (migration v176).**
   `api_usage_metrics` was created by v54 with exactly the columns an hourly
   request aggregate needs, and no handler, worker or seed has ever inserted a

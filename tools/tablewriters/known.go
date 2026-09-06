@@ -22,12 +22,4 @@ var knownUnwritten = map[string]string{
 	"upstream_pools": "v130 built the place to express a load-balanced backend set -- algorithm, hash key, active health checks, per-node weights -- and the reconciler that renders it into the data plane. Nothing builds the other half: no handler, no route, no console page can create a pool, so proxy_routes.upstream_pool_id is NULL on every route on every install and loadUpstreamPools returns an empty map every time. Recorded rather than fixed: the missing half is a CRUD surface with its own console page, which is a feature.",
 
 	"upstream_pool_members": "the members of the pools above. Same verdict: the reconciler reads them, nothing can create them.",
-
-	"health_check_history": "v54's per-service dependency-health history (service_name, dependency_name, status, latency_ms, checked_at) with an index for the time-series read someone intended. Neither written nor read. The health checks that do exist (internal/access/health_checks.go) report live and store nothing.",
-
-	"posture_check_types": "v29's global enum of posture check kinds. deployments/docker/seed.sql fills it with five rows and no Go code has ever read it: posture check definitions live in Go (internal/admin's postureCheckDefs), which is why the ISPM rules page works at all. Dead schema plus a seed that maintains it.",
-
-	"scim_groups": "the unused half of v3's SCIM pair. scim_users is written and updated by the provisioning service on every SCIM user operation; group provisioning writes the product's own groups table (internal/provisioning/service.go), and scim_groups has never had a writer. Its install-wide UNIQUE on display_name was re-scoped by an earlier commit in this programme -- a constraint fixed on a table nothing uses.",
-
-	"user_mfa_policies": "v5's per-user MFA policy table. No writer, no reader, and no history of either: MFA policy is decided by admin_console_settings (the security key) and the per-factor tables. Dead schema.",
 }
