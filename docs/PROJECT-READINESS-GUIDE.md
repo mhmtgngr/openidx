@@ -3843,6 +3843,52 @@ class this whole program exists for.
    query — *a run the sweep cannot see never expires*, which is the direction of
    this control that must not be scoped. Its sibling query in the same function
    already carried exactly that directive; the other two now do too.
+
+   **Batch 39 (`predicateAuditPending` 8 → 6): a reviewer who could not see the
+   item, on a certification that could never finish.**
+
+   `attestation_items` and `attestation_campaigns` back the attestation
+   surface — the campaign an administrator launches to certify who still needs
+   the access they have. Twenty-eight of this file's SQL statements addressed
+   rows by bare `id` or `campaign_id`; all twenty-eight now name the tenant.
+
+   **One of them was live, and it was not a scoping miss.**
+   `handleDelegateAttestationItem` took `delegate_to` straight from the request
+   body and wrote it onto `reviewer_id` and `delegated_to` with **no validation
+   at all** — not that it named a user, not that the user was enabled, not that
+   the user belonged to the caller's organization. The belt does not help here:
+   v61's policy constrains `org_id`, and the foreign key
+   `reviewer_id REFERENCES users(id)` is install-wide, so **an administrator
+   could hand an access-certification item to a reviewer of another tenant with
+   the belt fully on**. That makes it the one finding in this batch that is not
+   latent.
+
+   The cost is not disclosure — the delegate cannot see the item, because
+   `handleListAttestationItems` reads reviewer names through an org-scoped join,
+   so it renders with a blank reviewer. The cost is that the item can never be
+   decided; and because a campaign auto-completes only when its pending count
+   reaches zero, **one delegation freezes the certification permanently**. A
+   governance control reporting a state it can no longer reach. `delegate_to`
+   must now name an enabled user of the caller's organization, which is the rule
+   `resolveItemReviewer` already applied to reviewers the product assigns
+   itself; this is the same rule on the path an administrator drives by hand.
+
+   **The rest are latent, and the red proof shows why they still matter.** With
+   the predicates reverted, thirteen assertions go red under an explicit bypass,
+   and one of them compounds: org A's decide on org B's item revoked that item
+   *and* drove org B's campaign to `completed`, because the auto-complete count
+   was unscoped too. A single unscoped read closing another tenant's
+   certification as finished is the shape worth pinning even where RLS stands in
+   front of it.
+
+   **And a null column that made a campaign disappear.** The list scans
+   `description` into a `string` and swallows a scan failure with `continue`, so
+   a row whose `description` is NULL fell out of the certification list with no
+   error anywhere. The create path always writes `""`, so nothing made through
+   the API can be in that state — this is recorded as unreachable-through-the-
+   product rather than as a live defect — but a certification vanishing from its
+   own list is not a failure mode to leave standing, and both reads now
+   `COALESCE`.
 4. ✅ **OPA `deny` enforced** — *shipped.* — `internal/common/middleware/opa.go`: abort
    unless `Allow && len(Deny)==0`; `authz.rego:15-19`'s "any authenticated
    user may GET anything" removed; `policies/access_control.rego`

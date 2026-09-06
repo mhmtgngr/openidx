@@ -88,6 +88,24 @@ to a spec that describes an eighth of a surface, a documented endpoint that
   it, and a test exercises them **in that condition** rather than the ordinary
   one. No exposure is known to have followed from this; it removes the
   dependence.
+- **An access-certification item could be delegated to a reviewer in another
+  organization, and then never decided.** The Attestation surface lets an
+  administrator hand a certification item to a different reviewer. The user id
+  in that request was written onto the item with no validation at all — not
+  that it named a user, not that the user was enabled, not that the user
+  belonged to the administrator's own organization. Row-level security did not
+  stand in the way: it constrains which *rows* a tenant may touch, and this is a
+  *value* written into a row the tenant already owns.
+  A reviewer in another organization cannot see the item — reviewer names are
+  read through an organization-scoped join, so it simply renders blank — so
+  nothing was disclosed. What was lost is the certification: the item stays
+  pending for ever, and a campaign completes only when its pending count reaches
+  zero, so a single delegation froze the campaign permanently. `delegate_to`
+  must now name an enabled user of the administrator's organization, which is
+  the rule the product already applied to reviewers it assigned itself.
+  Every one of the twenty-eight attestation statements also names the tenant
+  now, and a campaign whose description is empty no longer drops silently out of
+  the list it belongs to.
 - **The approval request raised when an untrusted device is refused had never
   once been raised** (migration v171). When a device that has not been marked
   trusted reaches a resource protected by a device check, the product refuses it
