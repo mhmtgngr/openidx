@@ -218,10 +218,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
+          # Via env:, not a ${{ }} inside the script. A ${{ }} expansion is
+          # substituted textually before the shell parses the line, so a ref
+          # name carrying shell metacharacters would run here rather than be
+          # passed as an argument -- and a ref name is attacker-influenceable.
+          # RELEASE_VERSION is already a workflow-level env for the same reason.
+          TARGET_REF: ${{ github.ref_name }}
         run: |
-          gh workflow run docker.yml \
-            --ref "${{ github.ref_name }}" \
-            -f version="${RELEASE_VERSION}"
-          echo "Dispatched docker.yml for ${RELEASE_VERSION} on ${{ github.ref_name }}."
+          gh workflow run docker.yml --ref "$TARGET_REF" -f version="$RELEASE_VERSION"
+          echo "Dispatched docker.yml for $RELEASE_VERSION on $TARGET_REF."
           echo "Images are stamped by that run, not this one -- check it before" \
                "announcing the release."
