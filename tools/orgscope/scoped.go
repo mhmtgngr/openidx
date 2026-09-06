@@ -96,22 +96,26 @@ var needsScoping = map[string]string{
 	"agent_enrollment_tokens": "enrolment tokens that admit a device to the fleet (v43); follows enrolled_agents",
 }
 
-// needsBelt: OPEN FINDINGS. These carry org_id -- the application filters on
-// it -- but never received FORCE ROW LEVEL SECURITY, so the database itself
-// does not enforce the boundary and a single query that forgets its predicate
-// crosses tenants silently. v37 belted the tables that existed then and v121
-// extended it; everything added since has drifted out. Several of their own
-// migrations say "org-scoped for RLS" while the belt was never applied.
+// needsBelt: EMPTY, AND PINNED AT ZERO.
 //
-// 34 -> 19. Migration v140 belted the fifteen whose queries this lint already
-// proved carry their org predicate, so the belt could not change what any one
-// of them returns. What is left is the harder half, and the count after each
-// name says why: every one has at least one query that addresses a row by id
-// without naming org_id, and by the ratchet in ddl.go those queries come under
-// the missing-predicate rule the moment the belt lands. That coupling is
-// deliberate -- belting a table and auditing its queries are the same act --
-// so these leave in feature-sized batches together with their query fixes,
-// never in one sweep.
+// It held tables carrying org_id -- the application filtered on it -- that had
+// never received FORCE ROW LEVEL SECURITY, so the database did not enforce the
+// boundary and a single query forgetting its predicate crossed tenants
+// silently. v37 belted the tables that existed then and v121 extended it;
+// everything added afterwards drifted out, several with their own migrations
+// saying "org-scoped for RLS" while the belt was never applied.
+//
+// It began at 34 and reached zero over v140 through v171. The count after each
+// name used to say why a table was still here: every one had at least one query
+// addressing a row by id without naming org_id, and by the ratchet in ddl.go
+// those queries came under the missing-predicate rule the moment the belt
+// landed. That coupling is what made the register shrink honestly -- belting a
+// table and auditing its queries are the same act -- so they left in
+// feature-sized batches with their query fixes, never in one sweep.
+//
+// ddl_test.go pins len(needsBelt) at 0, so it cannot grow back: a table that
+// carries org_id and lacks FORCE ROW LEVEL SECURITY now fails the build. That
+// is the state this register existed to reach. Leave it empty; fix the table.
 var needsBelt = map[string]string{}
 
 // predicateAuditPending: OPEN FINDINGS, query level. Deriving the scoped set
