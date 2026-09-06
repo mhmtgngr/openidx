@@ -9,6 +9,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A denied access request could be approved back to life.** `handleApproveRequest`
+  read the request only to compare `requester_id` against the caller; it never
+  looked at the request's **status**, and the pending-count that decides whether
+  to fulfil counts rows marked `pending` while being blind to rows marked
+  `denied`. On a request with two approvers where the first denied, the second's
+  row was untouched: their approval drove the count to zero and the request was
+  flipped from `denied` back to `approved` and **fulfilled** -- the role granted
+  over the top of a recorded refusal, with both decisions in the audit trail and
+  nothing to say one had overridden the other. A decided request (denied,
+  cancelled or already approved) now answers `409` and grants nothing. Found by
+  the first test ever written for the denial path.
+
+- **Five of the seven OpenAPI specs were not YAML.** `28df9119` wrote the
+  shared-responses block into a path item, on top of that operation's
+  `parameters:` key, in `audit-service`, `governance-service`,
+  `identity-service`, `oauth-service` and `provisioning-service`; a sixth,
+  `access-service`, parsed but referred to a `ServerError` response it never
+  defined. It shipped in v1.34.0. Nothing noticed because nothing in this
+  repository ever parsed them -- `docs.yml` copies `api/openapi/*` into the
+  published site verbatim, so the API reference for five services was being
+  served a file no parser accepts. All seven now parse with every local `$ref`
+  resolving, no operation lost, and `scripts/check-openapi-parses.sh` holds it.
+
+- **Twenty-eight tests could not fail.** `internal/governance/request_test.go`
+  was nine functions and fourteen subtests, every one a bare
+  `t.Skip("DB mock not available")` -- named after `SubmitRequest` /
+  `ApproveRequest` / `DenyRequest`, methods this service has never had, while
+  the package carried a container-backed `setupTestDB` the whole time.
+  `jit_test.go` skipped duration-bounds cases as needing "service init" over
+  validation that runs before `RequestElevation` touches a database.
+  `response_test.go` skipped four cases as needing "a real Redis client" in a
+  package that has used miniredis since it was written, three of them named
+  after methods that do not exist. And `TestJITRequestValidation` re-implemented
+  the validation inside the test body and asserted its own copy -- a tautology
+  that would stay green if `RequestElevation` dropped every check. All replaced
+  with tests that drive the real code; `scripts/check-inert-tests.sh` fails on
+  the shape.
+
 - **Two database-backed test suites ran nowhere.** `ci.yml`'s unit matrix gives
   every package a live Postgres and exports it as `DATABASE_URL`; it does not
   set `OPENIDX_TEST_DATABASE_URL`, which is the developer escape hatch for a

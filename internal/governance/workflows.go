@@ -603,10 +603,26 @@ func (s *Service) handleApproveRequest(c *gin.Context) {
 	// still in the table. Every one of those routes ends here, so this is where
 	// the rule has to hold. A 403 rather than a 404: the approval row exists,
 	// it is the caller who may not act on it.
-	var requesterID string
+	// The status is read alongside the requester, and it is not bookkeeping.
+	//
+	// Nothing below looks at it: the approval UPDATE only requires the
+	// APPROVER'S OWN row to be pending, and the fulfilment gate counts rows
+	// still marked 'pending' -- a count that is blind to rows marked 'denied'.
+	// So on a request with two approvers where the first denied, the second's
+	// row is untouched, their approval drives the pending count to zero, and
+	// the request is flipped from 'denied' back to 'approved' and fulfilled.
+	// The role is granted over the top of a recorded refusal, and the audit
+	// trail holds both decisions with nothing to say one overrode the other.
+	//
+	// A denial is final (handleDenyRequest ends the request on the first one),
+	// so anything that is no longer pending -- denied, cancelled, already
+	// approved -- is a decided request, and a decided request does not accept
+	// another decision. 409 rather than 403: the caller may well be a
+	// legitimate approver, it is the request's state that refuses them.
+	var requesterID, status string
 	switch err := s.db.Pool.QueryRow(c.Request.Context(),
-		`SELECT requester_id FROM access_requests WHERE id = $1 AND org_id = $2`, id, org.ID,
-	).Scan(&requesterID); {
+		`SELECT requester_id, status FROM access_requests WHERE id = $1 AND org_id = $2`, id, org.ID,
+	).Scan(&requesterID, &status); {
 	case err == pgx.ErrNoRows:
 		c.JSON(http.StatusNotFound, gin.H{"error": "Access request not found"})
 		return
@@ -616,6 +632,12 @@ func (s *Service) handleApproveRequest(c *gin.Context) {
 		return
 	case requesterID == approverID:
 		c.JSON(http.StatusForbidden, gin.H{"error": "you cannot approve your own access request"})
+		return
+	case status != "pending":
+		c.JSON(http.StatusConflict, gin.H{
+			"error":  fmt.Sprintf("this request is already %s and cannot be approved", status),
+			"status": status,
+		})
 		return
 	}
 

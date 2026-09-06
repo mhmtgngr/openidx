@@ -184,6 +184,14 @@ jobs:
         run: bash scripts/check-test-reachability.test.sh
       - name: No database-backed test may be unreachable from CI
         run: bash scripts/check-test-reachability.sh --enforce
+      - name: Verify the inert-test guard can go red
+        run: bash scripts/check-inert-tests.test.sh
+      - name: No test may be one unconditional skip
+        run: bash scripts/check-inert-tests.sh --enforce
+      - name: Verify the OpenAPI guard can go red
+        run: bash scripts/check-openapi-parses.test.sh
+      - name: Every OpenAPI spec must parse and resolve
+        run: bash scripts/check-openapi-parses.sh --enforce
       - name: The CodeQL alert summary really names the high-severity rule
         run: bash scripts/codeql-alert-summary.test.sh
 

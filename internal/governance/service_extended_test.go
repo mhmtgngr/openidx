@@ -3,7 +3,6 @@ package governance
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -827,154 +826,12 @@ func TestJITGrantValidation(t *testing.T) {
 	}
 }
 
-func TestJITRequestValidation(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name          string
-		request       JITRequest
-		shouldError   bool
-		errorContains string
-	}{
-		{
-			name: "valid request with minimum duration",
-			request: JITRequest{
-				UserID:        "user-001",
-				RoleID:        "role-developer",
-				Duration:      15 * time.Minute,
-				Justification: "Need to deploy hotfix",
-				RequestedBy:   "user-001",
-			},
-			shouldError: false,
-		},
-		{
-			name: "valid request with maximum duration",
-			request: JITRequest{
-				UserID:        "user-002",
-				RoleID:        "role-ops",
-				Duration:      8 * time.Hour,
-				Justification: "Maintenance window access",
-				RequestedBy:   "manager-001",
-			},
-			shouldError: false,
-		},
-		{
-			name: "duration too short",
-			request: JITRequest{
-				UserID:        "user-003",
-				RoleID:        "role-admin",
-				Duration:      5 * time.Minute,
-				Justification: "Quick task",
-				RequestedBy:   "user-003",
-			},
-			shouldError:   true,
-			errorContains: "at least",
-		},
-		{
-			name: "duration too long",
-			request: JITRequest{
-				UserID:        "user-004",
-				RoleID:        "role-viewer",
-				Duration:      12 * time.Hour,
-				Justification: "Long running task",
-				RequestedBy:   "user-004",
-			},
-			shouldError:   true,
-			errorContains: "not exceed",
-		},
-		{
-			name: "missing user ID",
-			request: JITRequest{
-				RoleID:        "role-admin",
-				Duration:      2 * time.Hour,
-				Justification: "Need access",
-				RequestedBy:   "admin-001",
-			},
-			shouldError:   true,
-			errorContains: "user_id",
-		},
-		{
-			name: "missing role ID",
-			request: JITRequest{
-				UserID:        "user-005",
-				Duration:      2 * time.Hour,
-				Justification: "Need access",
-				RequestedBy:   "user-005",
-			},
-			shouldError:   true,
-			errorContains: "role_id",
-		},
-		{
-			name: "missing justification",
-			request: JITRequest{
-				UserID:      "user-006",
-				RoleID:      "role-admin",
-				Duration:    2 * time.Hour,
-				RequestedBy: "user-006",
-			},
-			shouldError:   true,
-			errorContains: "justification",
-		},
-		{
-			name: "empty justification",
-			request: JITRequest{
-				UserID:        "user-007",
-				RoleID:        "role-admin",
-				Duration:      2 * time.Hour,
-				Justification: "",
-				RequestedBy:   "user-007",
-			},
-			shouldError:   true,
-			errorContains: "justification",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Validate request fields
-			hasError := false
-			errorMsg := ""
-
-			if tt.request.UserID == "" {
-				hasError = true
-				errorMsg = "user_id is required"
-			}
-
-			if tt.request.RoleID == "" && !hasError {
-				hasError = true
-				errorMsg = "role_id is required"
-			}
-
-			if tt.request.Justification == "" && !hasError {
-				hasError = true
-				errorMsg = "justification is required"
-			}
-
-			if tt.request.Duration < MinimumJITDuration && !hasError {
-				hasError = true
-				errorMsg = fmt.Sprintf("duration must be at least %v", MinimumJITDuration)
-			}
-
-			if tt.request.Duration > MaximumJITDuration && !hasError {
-				hasError = true
-				errorMsg = fmt.Sprintf("duration must not exceed %v", MaximumJITDuration)
-			}
-
-			if tt.shouldError {
-				assert.True(t, hasError, "expected validation error")
-				if tt.errorContains != "" {
-					assert.Contains(t, errorMsg, tt.errorContains)
-				}
-			} else {
-				assert.False(t, hasError, "unexpected validation error: "+errorMsg)
-			}
-		})
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Review Progress Calculation Tests
-// ---------------------------------------------------------------------------
+// TestJITRequestValidation used to stand here. It did not call
+// RequestElevation: it re-implemented the field and duration checks inside the
+// test body and then asserted that its own copy agreed with its own table. A
+// tautology -- RequestElevation could drop every check tomorrow and it would
+// stay green. The real cases now live in jit_test.go, where they drive
+// RequestElevation itself.
 
 func TestReviewProgressCalculation_Extended(t *testing.T) {
 	t.Parallel()

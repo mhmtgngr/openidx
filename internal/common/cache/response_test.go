@@ -4,6 +4,7 @@ package cache
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -579,19 +580,83 @@ func TestResponseCache_ResponseWriter(t *testing.T) {
 	assert.True(t, capturedBody.Len() > 0)
 }
 
-// TestResponseCache_GetStats tests cache statistics
-func TestResponseCache_GetStats(t *testing.T) {
-	t.Skip("Requires real Redis client")
+// The four tests that stood here were `t.Skip("Requires real Redis client")`,
+// and three of them named methods this package has never had -- GetStats,
+// ClearAll, GetFromCacheByKey. The reason was false as well as the names: this
+// package has run miniredis since redis_test.go was written, and the Redis
+// paths below are the ones production takes. What follows tests the API that
+// exists, against that miniredis.
+
+// redisBackedCache returns a ResponseCache wired to miniredis, so the Redis
+// branch of each method is the one under test rather than the in-memory
+// fallback (which the nil-client tests already cover).
+func redisBackedCache(t *testing.T) (*ResponseCache, *redis.Client) {
+	t.Helper()
+	_, client := mustCreateTestRedis(t)
+	resetGlobalCache()
+	rc := getGlobalResponseCache(client, zap.NewNop())
+	t.Cleanup(resetGlobalCache)
+	return rc, client
 }
 
-// TestResponseCache_ClearAll tests clearing all cached responses
-func TestResponseCache_ClearAll(t *testing.T) {
-	t.Skip("Requires real Redis client")
+func TestResponseCache_RoundTripsThroughRedis(t *testing.T) {
+	rc, client := redisBackedCache(t)
+	ctx := context.Background()
+
+	stored := &CachedResponse{
+		StatusCode: http.StatusOK,
+		Headers:    map[string]string{"Content-Type": "application/json"},
+		Body:       []byte(`{"hello":"world"}`),
+		ETag:       `"abc123"`,
+		CachedAt:   time.Now().UTC().Truncate(time.Second),
+	}
+	require.NoError(t, rc.setToCache(ctx, "response:round-trip", stored, time.Minute))
+
+	// The value really is in Redis, not only in the process. The body is a
+	// []byte, so it is base64 in the stored JSON -- assert on a field that is
+	// not, or this checks the encoder rather than the write.
+	raw, err := client.Get(ctx, "response:round-trip").Result()
+	require.NoError(t, err, "setToCache did not write to Redis")
+	assert.Contains(t, raw, `"status_code":200`)
+	assert.Contains(t, raw, base64.StdEncoding.EncodeToString(stored.Body))
+
+	got, err := rc.getFromCache(ctx, "response:round-trip")
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, stored.StatusCode, got.StatusCode)
+	assert.Equal(t, stored.Body, got.Body)
+	assert.Equal(t, stored.ETag, got.ETag)
+	assert.Equal(t, "application/json", got.Headers["Content-Type"])
 }
 
-// TestResponseCache_GetFromCacheByKey tests direct cache access
-func TestResponseCache_GetFromCacheByKey(t *testing.T) {
-	t.Skip("Requires real Redis client")
+func TestResponseCache_MissesAreNotErrorsButAreNotHits(t *testing.T) {
+	rc, _ := redisBackedCache(t)
+	got, err := rc.getFromCache(context.Background(), "response:never-written")
+	if err == nil && got != nil {
+		t.Fatal("a key that was never written came back as a hit")
+	}
+}
+
+func TestResponseCache_InvalidatePatternRemovesOnlyMatchingKeys(t *testing.T) {
+	rc, client := redisBackedCache(t)
+	ctx := context.Background()
+
+	for _, key := range []string{"response:users:1", "response:users:2", "response:groups:1"} {
+		require.NoError(t, rc.setToCache(ctx, key, &CachedResponse{StatusCode: 200, Body: []byte("x")}, time.Minute))
+	}
+
+	rc.invalidatePattern(ctx, "users")
+
+	for _, gone := range []string{"response:users:1", "response:users:2"} {
+		if n, _ := client.Exists(ctx, gone).Result(); n != 0 {
+			t.Errorf("%s survived an invalidation that named it", gone)
+		}
+	}
+	// The blast radius matters as much as the invalidation: a pattern that
+	// clears unrelated tenants' entries turns a cache flush into a stampede.
+	if n, _ := client.Exists(ctx, "response:groups:1").Result(); n != 1 {
+		t.Error("invalidating \"users\" also removed response:groups:1")
+	}
 }
 
 // TestResponseCache_CacheWriter tests CacheWriter functionality
@@ -609,9 +674,50 @@ func TestResponseCache_CacheWriter(t *testing.T) {
 	assert.Equal(t, 0, cw.buffer.Len())
 }
 
-// TestResponseCache_InvalidateManual tests manual invalidation
 func TestResponseCache_InvalidateManual(t *testing.T) {
-	t.Skip("Requires real Redis client")
+	rc, client := redisBackedCache(t)
+	ctx := context.Background()
+
+	for _, key := range []string{"response:apps:alpha", "response:apps:beta", "response:roles:admin"} {
+		require.NoError(t, rc.setToCache(ctx, key, &CachedResponse{StatusCode: 200, Body: []byte("x")}, time.Minute))
+	}
+
+	t.Run("a nil client is refused rather than silently succeeding", func(t *testing.T) {
+		// This is the shape that matters operationally: an operator running the
+		// invalidation against an install with no Redis configured must be told,
+		// not handed a nil error that reads as "cache cleared".
+		err := InvalidateManual(nil, "*")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "nil")
+	})
+
+	t.Run("only the named keys go", func(t *testing.T) {
+		require.NoError(t, InvalidateManual(client, "apps"))
+		for _, gone := range []string{"response:apps:alpha", "response:apps:beta"} {
+			if n, _ := client.Exists(ctx, gone).Result(); n != 0 {
+				t.Errorf("%s survived InvalidateManual", gone)
+			}
+		}
+		if n, _ := client.Exists(ctx, "response:roles:admin").Result(); n != 1 {
+			t.Error("InvalidateManual(\"apps\") also removed response:roles:admin")
+		}
+	})
+
+	t.Run("the wildcard clears the response namespace", func(t *testing.T) {
+		require.NoError(t, rc.setToCache(ctx, "response:anything", &CachedResponse{StatusCode: 200}, time.Minute))
+		require.NoError(t, client.Set(ctx, "unrelated:key", "keep me", time.Minute).Err())
+
+		require.NoError(t, InvalidateManual(client, "*"))
+
+		if n, _ := client.Exists(ctx, "response:anything").Result(); n != 0 {
+			t.Error("the wildcard left a response: key behind")
+		}
+		// The scan is namespaced to response:*, so a wildcard flush must not
+		// take sessions, rate-limit counters or revocation markers with it.
+		if n, _ := client.Exists(ctx, "unrelated:key").Result(); n != 1 {
+			t.Error("the wildcard reached outside the response: namespace")
+		}
+	})
 }
 
 // TestResponseCache_NilRedisClient tests behavior with nil Redis client

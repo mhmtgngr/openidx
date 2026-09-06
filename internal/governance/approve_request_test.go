@@ -26,6 +26,9 @@ const (
 	arAlice = "11111111-1111-1111-1111-111111111111" // requester
 	arBob   = "22222222-2222-2222-2222-222222222222" // approver
 	arRole  = "33333333-3333-3333-3333-333333333333"
+	// A second approver, so a request can carry two pending decisions -- the
+	// shape that makes "does a denial stick?" answerable.
+	arCarol = "44444444-4444-4444-4444-444444444444"
 )
 
 const approvalSchema = `
@@ -71,7 +74,8 @@ func newApprovalFixture(t *testing.T) *approvalFixture {
 		t.Fatalf("schema: %v", err)
 	}
 	f := &approvalFixture{svc: &Service{db: db, config: &config.Config{}, logger: zap.NewNop()}, ctx: ctx, t: t}
-	f.exec(`INSERT INTO users (id, org_id, username) VALUES ($1,$3,'alice'),($2,$3,'bob')`, arAlice, arBob, arOrg)
+	f.exec(`INSERT INTO users (id, org_id, username) VALUES ($1,$4,'alice'),($2,$4,'bob'),($3,$4,'carol')`,
+		arAlice, arBob, arCarol, arOrg)
 	f.exec(`INSERT INTO roles (id, name, org_id) VALUES ($1,'reader',$2)`, arRole, arOrg)
 	return f
 }
@@ -233,9 +237,9 @@ func TestApproveRequestReportsAFulfilmentFailure(t *testing.T) {
 // has to say that, or the first approver believes they finished it.
 func TestApproveRequestWaitsForTheRemainingApprovers(t *testing.T) {
 	f := newApprovalFixture(t)
-	third := "44444444-4444-4444-4444-444444444444"
-	f.exec(`INSERT INTO users (id, org_id, username) VALUES ($1,$2,'carol')`, third, arOrg)
-	id := f.request("role", arRole, arBob, third)
+	// arCarol is seeded by the fixture now; this used to insert its own copy
+	// under the same id.
+	id := f.request("role", arRole, arBob, arCarol)
 
 	w := f.approveAs(id, arBob)
 	if w.Code != http.StatusOK {
@@ -252,7 +256,7 @@ func TestApproveRequestWaitsForTheRemainingApprovers(t *testing.T) {
 	}
 
 	// The second approval completes it.
-	w = f.approveAs(id, third)
+	w = f.approveAs(id, arCarol)
 	if w.Code != http.StatusOK {
 		t.Fatalf("second approval: status = %d (body=%s)", w.Code, w.Body.String())
 	}
@@ -274,8 +278,15 @@ func TestApproveRequestRefusesANonApproverAndADoubleApproval(t *testing.T) {
 	if w := f.approveAs(id, arBob); w.Code != http.StatusOK {
 		t.Fatalf("approver: status = %d (body=%s)", w.Code, w.Body.String())
 	}
-	if w := f.approveAs(id, arBob); w.Code != http.StatusNotFound {
-		t.Errorf("second approval by the same approver: status = %d, want 404", w.Code)
+	// 409, not the 404 this asserted before the decided-request check landed.
+	// The property is unchanged -- a second approval is still not a second
+	// approval -- but the reason is now stated: the request is decided, rather
+	// than the approver's row merely being absent from a pending scan. Same
+	// check that stops a denied request being approved back to life
+	// (request_test.go). The stranger case above is untouched: that request is
+	// still pending, so it answers 404 as before.
+	if w := f.approveAs(id, arBob); w.Code != http.StatusConflict {
+		t.Errorf("second approval by the same approver: status = %d, want 409", w.Code)
 	}
 }
 
