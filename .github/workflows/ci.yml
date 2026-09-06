@@ -176,6 +176,8 @@ jobs:
         run: bash scripts/check-release-signing.test.sh
       - name: A release artifact must not claim a signature it lacks
         run: bash scripts/check-release-signing.sh --enforce
+      - name: The CodeQL alert summary really names the high-severity rule
+        run: bash scripts/codeql-alert-summary.test.sh
 
   # The README's quick start is two commands, and nothing had ever run either
   # of them: generate-secrets.sh aborted on SIGPIPE, it omitted two variables

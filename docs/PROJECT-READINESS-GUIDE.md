@@ -4090,6 +4090,31 @@ class this whole program exists for.
    check stays red on the next head, the remaining alert is something the sweep
    could not see from the diff, and the next step is reading it directly rather
    than guessing again.
+
+   **Batch 44: it stayed red, so stop inferring.** The same *"1 high, 211
+   medium"* came back on the next head. The inference was wrong, and a second
+   guess would have been worse than the first — the honest move is to read the
+   alert.
+
+   Nothing in this environment can: the code-scanning API is not reachable, the
+   check's annotations are not exposed by any tool, and `output.text` on the
+   check run is empty. But the analysis writes the answer to disk on the runner
+   — `../results/<language>.sarif`, kept after the upload — and nobody was
+   reading it. It was being discarded with the runner on every run.
+
+   `scripts/codeql-alert-summary.sh` reads it: for each SARIF, every result
+   whose rule carries a security severity of 7.0 or higher, with its rule id,
+   file and line, then a count per rule for everything else. Both CodeQL jobs
+   run it after `analyze`, `if: always()`. It is a **diagnostic, not a gate** —
+   it cannot fail the build, because the gate is the code-scanning check and a
+   diagnostic that can go red only adds a way to be wrong. Its self-test
+   (in the `GitHub config is runnable` job) drives a SARIF that hides one 7.5
+   among mediums, in both shapes CodeQL emits — rules under `tool.driver` and
+   rules under `tool.extensions` — and asserts the high one is named and the
+   mediums are not mistaken for it.
+
+   The next red CodeQL check on this repository — this one included — is read
+   out of the job log instead of guessed at.
 4. ✅ **OPA `deny` enforced** — *shipped.* — `internal/common/middleware/opa.go`: abort
    unless `Allow && len(Deny)==0`; `authz.rego:15-19`'s "any authenticated
    user may GET anything" removed; `policies/access_control.rego`

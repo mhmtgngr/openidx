@@ -1117,6 +1117,16 @@ to a spec that describes an eighth of a surface, a documented endpoint that
 
 ### Fixed
 
+- **A red CodeQL check named a count, never a rule.** The code-scanning results
+  check fails a pull request on one alert with a security severity of 7.0 or
+  higher and reports only *"N new alerts including 1 high severity security
+  vulnerability"*, while both CodeQL jobs stay green — so nothing in a CI log
+  said which rule, in which file. The analysis had been writing the answer to
+  `../results/<language>.sarif` on the runner and throwing it away.
+  `scripts/codeql-alert-summary.sh` now prints, after each analysis, every
+  result at or above that floor with its rule id, file and line, plus a count
+  per rule. Diagnostic only: it cannot fail the build.
+
 - **The contract prober accepted any TLS certificate, by default.**
   `tools/contractcheck` probes a running deployment to prove the console's
   declared response shapes match what the backend actually returns — but its

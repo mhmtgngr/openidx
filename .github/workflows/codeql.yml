@@ -41,6 +41,15 @@ jobs:
         with:
           category: '/language:go'
 
+      # The results check can fail a PR while this job is green: it fails on a
+      # single alert with a security severity of 7.0 or higher, and names only
+      # a count. The SARIF that would name the rule is on disk here and was
+      # being thrown away with the runner. Print it. Diagnostic only -- the
+      # gate is the code-scanning check, and this step never fails the build.
+      - name: What CodeQL found
+        if: always()
+        run: bash scripts/codeql-alert-summary.sh "${GITHUB_WORKSPACE}/../results"
+
   analyze-javascript:
     name: Analyze JavaScript/TypeScript
     runs-on: ubuntu-latest
@@ -61,3 +70,7 @@ jobs:
         uses: github/codeql-action/analyze@v4
         with:
           category: '/language:javascript-typescript'
+
+      - name: What CodeQL found
+        if: always()
+        run: bash scripts/codeql-alert-summary.sh "${GITHUB_WORKSPACE}/../results"
