@@ -760,6 +760,24 @@ func TestRLSBeltTables(t *testing.T) {
 			RETURNING id)
 			INSERT INTO connection_tests (route_id, test_type, success, details, org_id)
 			SELECT r.id, 'full', true, '{"upstream":{"url":"http://upstream.internal:8080"}}'::jsonb, $1 FROM r`},
+
+		// v163 — the governance annotation on a role, group or application, and
+		// the per-user digest schedule. The annotation's unique key was
+		// install-wide, so a PUT naming another tenant's role id wrote onto
+		// their catalog.
+		{"entitlement_metadata", `WITH r AS (
+			INSERT INTO roles (name, description, org_id)
+			VALUES ('tbelt-ent-` + suffix + `', 'tbelt', $1)
+			RETURNING id)
+			INSERT INTO entitlement_metadata (entitlement_type, entitlement_id, risk_level, review_required, org_id)
+			SELECT 'role', r.id, 'critical', true, $1 FROM r`},
+
+		{"notification_digests", `WITH u AS (
+			INSERT INTO users (username, email, enabled, org_id)
+			VALUES ('tbelt-dig-` + suffix + `','tbelt-dig-` + suffix + `@example.test',true,$1)
+			RETURNING id)
+			INSERT INTO notification_digests (user_id, digest_type, channel, enabled, org_id)
+			SELECT u.id, 'daily', 'email', true, $1 FROM u`},
 	}
 
 	// One list, not two: the role is granted exactly the tables the cases probe.

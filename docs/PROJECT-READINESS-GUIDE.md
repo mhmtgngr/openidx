@@ -3046,6 +3046,92 @@ class this whole program exists for.
    no organization at all. Whole `internal/access` suite green;
    `TestRLSBeltTables` **65/65**; v162 applied, rolled back to 161 and
    re-applied.
+
+   **Batch 25 shipped (migration v163, `needsScoping` 9 → 5; registers 26 →
+   22): the last four that did not need a product decision — two scoped, two
+   dropped.** What is left on `needsScoping` after this batch is exactly the
+   **deferred half**, and it is deferred on a product question rather than on
+   effort: the two external-identity-link tables need a decision on whether one
+   external account may link to a user in two tenants, and the three agent-fleet
+   tables need the decision v159 raised — three separate comments in
+   `internal/access` assert the fleet is deliberately install-wide, which is why
+   cross-tenant kiosk *targeting* has no tenant term available to close it.
+
+   **One tenant could annotate another tenant's role.** `entitlement_metadata`
+   (v54) is the governance annotation on a role, a group or an application: its
+   risk level, its owner, its tags, whether it requires review. It had no tenant
+   column *and* an install-wide `UNIQUE (entitlement_type, entitlement_id)`.
+   The catalog read is scoped — the roles, groups and applications it unions all
+   carry `WHERE org_id = $1` — and then reached the annotation through a
+   `LEFT JOIN` with no tenant term. The write is where that mattered:
+   `UpdateEntitlementMetadata` resolved no organization at all and never checked
+   that the entitlement belonged to the caller. It took the type and the id
+   straight from the URL and upserted on the install-wide key, so
+   `PUT /entitlements/role/<another organization's role id>/metadata` wrote a
+   row that appeared on **their** catalog — their role's risk level, their
+   role's owner, their tags, their "review required" badge. The red-proof shows
+   org B's PUT answering `200 {"message":"Entitlement metadata updated"}` on org
+   A's role.
+
+   `owner_id` carries no foreign key either, so a foreign account could be named
+   as the owner of your own privileged role. Refused now rather than written and
+   filtered later — the call v152 made for delegations.
+
+   **A count of things that could go negative.** `GetEntitlementStats` counts
+   this tenant's roles, groups and applications with `WHERE org_id = $1` for the
+   total, then read the risk breakdown with
+   `SELECT risk_level, COUNT(*) FROM entitlement_metadata GROUP BY risk_level` —
+   no predicate at all — before doing `ByRiskLevel["low"] += total - counted`.
+   One tenant's total minus the installation's count. On any install where
+   another organization had annotated more entitlements than this one owns, the
+   "low risk" figure on the Entitlement Catalog came out **negative**: a count
+   of things, printed below zero, beside figures that were correct. The same
+   arithmetic impossibility v158 found in the passwordless adoption rate. Scoped
+   and floored.
+
+   **And the Save button had never worked.** Found by this batch's own test:
+   the upsert wrote `NULLIF($4, '')` into `owner_id UUID`, and `NULLIF` of a
+   text parameter is text, so Postgres refused the statement at plan time with
+   `column "owner_id" is of type uuid but expression is of type text`
+   (SQLSTATE 42804) — for *every* request, whatever `owner_id` held. So every
+   Save on the Entitlement Catalog has returned a bare 500 since v54, and the
+   cross-tenant write above was reachable only for whoever fixed that first.
+   Pre-existing, and fixed here with a cast: the same shape as batch 21's kiosk
+   create, where a JSON bug the batch's own test surfaced turned out to predate
+   the batch entirely.
+
+   **`notification_digests` is the one table on this register that was NOT
+   reachable across tenants**, and the guide says so rather than dressing it up:
+   both queries address it by `user_id`, and that user id is the caller's own,
+   taken from their token. The tenant term added here is defence in depth behind
+   the belt. What *is* worth recording is that **nothing sends a digest** — the
+   table carries `next_scheduled_at` and v43 built `idx_digests_next` for a
+   worker that reads it, and no such worker exists anywhere in the tree. A user
+   opens Notification Center, chooses a daily email digest, saves it, and no
+   digest is ever sent. Sixth authored-but-unconsumed surface, after v154's
+   unscheduled lifecycle policies, v155's `custom_claims_mappings`, v156's
+   developer settings, v158's biometric policies and v160's email templates.
+
+   **Two tables go.** `feature_adoption` had no writer anywhere — no INSERT, no
+   UPDATE, no seed — and its one reader ran
+   `SELECT feature_name, total_users, trend FROM feature_adoption` against a
+   table that has neither a `total_users` column nor a `trend` column and never
+   had. That query cannot succeed, and the handler's `if err == nil` swallowed
+   the error, so the comment below it — *"If no rows exist in the
+   feature_adoption table, compute from live data"* — describes a fallback that
+   is in fact the **only** path the Feature Adoption endpoint has ever taken.
+   The live computation is org-scoped and correct and is now the whole handler.
+   `webhook_delivery_stats` appears in v54's DDL and the orgscope register and
+   nowhere else at all. Both dropped, for the reason v157 dropped `auth_contexts`
+   and v159 dropped v44's two orphans.
+
+   Proven on Postgres 16: six cases in `internal/admin` plus a guard case in
+   `internal/notifications`, and the red-proof turned **six assertions red
+   across all five scoping subtests** — one of them by the defect proving
+   itself, since with the join unscoped the row org B's PUT had already written
+   collided with the foreign annotation the test then tried to plant. Whole
+   `internal/admin` suite green; `TestRLSBeltTables` **67/67**; v163 applied,
+   rolled back to 162 (both orphans recreated verbatim) and re-applied.
 4. ✅ **OPA `deny` enforced** — *shipped.* — `internal/common/middleware/opa.go`: abort
    unless `Allow && len(Deny)==0`; `authz.rego:15-19`'s "any authenticated
    user may GET anything" removed; `policies/access_control.rego`
@@ -4674,7 +4760,7 @@ that holds it rather than by the commit that wrote it.
 |---|---|---|
 | 1 · journeys verified | ☐ | J1 ✅ the `smoke` and `first-run` jobs (P6.2); J2 ✅ `test/integration/{auth_flows,mfa_flow,passwordless}_test.go`; J3 ✅ `test/integration/enforced_posture_test.go` (P6.1); ☐ **J6 has no automated proof** — `e2e/access-reviews-flow.spec.ts` is still on the `hold` side of `e2e/suite.txt`; ☐ **J7 needs a leaver integration case**; J4/J5/J8 stay scripted operator drills (`tools/darkprobe`, `make dr-game-day`) to be filed under `docs/evidence/` (P8.4) |
 | 2 · enforced posture, legacy login gone | ◐ | code ✅ — the server-rendered login is deleted and `internal/oauth/routes_legacy_login_test.go` fails if any of it returns (P6.1); ops ☐ — rollout Task 16 is the operator's, on a live deployment |
-| 3 · every control enforces | ◐ | P5.1–5.11 ✅ (tenant isolation, the inverted orgscope lint, OPA `deny`, ABAC at both PEPs, the honest Apply/Remediate, SMS, multi-IdP, the fail-closed gate, `ValidateProduction`, the faked measurements); ◐ the P5.3b register programme — batch 1 (v140) belted fifteen tables and fixed `email_branding`'s cross-tenant read *and* write; batch 2 (v141) scoped the compliance record and fixed an archive worker that was silently producing empty archives; batches 4–10 (v142–v148) took the unified audit stream, the sign-in tables, the SAML surface, the password-substitute credentials, the four second factors the belt had skipped, the breach response record — where a containment reported success while quarantining nobody — the temporary vendor access surface, where v71's written-down reason for skipping the belt had expired three batches earlier, the legal holds — the first batch whose defect destroys rather than discloses, since releasing a hold is what lets the retention sweep delete the recording — the remote support sessions, whose list ran with no `WHERE` clause at all over a nullable tenant column the belt would have hidden rather than scoped, and the PAM broker's connection registry — where the row that decides which vault credential is injected carried no tenant, so another tenant's route id bought a live session onto their machine with their password, and the four-eyes gates could not help because both are satisfiable inside the caller's own tenant — delegated administration, read by the enforcement point itself under a deliberate bypass with a tenant-scoping comment copied from the query above it and a cache that handed one person's delegation to everyone sharing their roles, and the login risk policies, where one tenant's row could replace every tenant's allowed second factors or deny every login outright, and the joiner/mover/leaver automation, where every action the rules take was already scoped but the rules themselves were not, so another tenant could rewrite a policy labelled "disable after 90 days" into "delete after 0" and leave its owner running it, and the identity federation configuration, where the admin list wrote its tenant condition into a LEFT JOIN's ON clause and so filtered nothing while the login path's inner join twelve functions away did — and where two install-wide UNIQUE keys meant one organization per email domain and one per issuer URL for the entire installation, and the developer portal, whose settings row was keyed on the literal 'global' and unique across the installation so the last administrator to press Save chose the API-key limits, CORS origins and rate limit for every organization — and whose OAuth playground handed out a live flow's PKCE verifier by id alone, with no role check at all, and the admin console's own settings, where `key` was the PRIMARY KEY so the installation held four settings rows in total and one administrator's password policy, MFA requirement and allowed sign-up domains were every tenant's — the sixth install-wide key and the first that a control actually enforces, since `validate-password` answers from it — alongside the continuous-auth engine, whose only input table nothing had ever written a row to, so its three routes had only ever returned 500 and are now pointed at the belted `sessions` and `session_risks` the product really writes, and the biometric policies, where the list feeding the applicable-policy decision had no tenant term and `ORDER BY name` therefore decided which organization's rule governed a login -- a control aimed by sort order -- while the per-user preferences that say whether an account is biometric-only were read and written by bare user_id, and the kiosk lockdown policies, whose admin list said in its own doc comment that it returned every policy on the installation and whose assignment handler took the policy id from the URL and the device from the body and checked neither -- alongside two tables v44 created for a route that was later deleted as dead, which are dropped rather than scoped, and the notification admin surface, where email_templates.slug was the seventh install-wide unique key this programme has found and the broadcast send path resolved the tenant for its recipients while loading the message itself by bare id, and the bulk user operations, where every action carried its tenant term and the record of what they did carried none -- so one administrator's run list held every organization's, and its item list held their usernames -- and where Cancel set a column the execution loop never read, so a cancelled bulk DELETE kept deleting and then overwrote the cancel with 'completed', and the per-route feature switches, where the same toggle was guarded on the way on -- the enable path resolves the tenant and refuses a foreign route -- and open on the way off, so one administrator could turn off another organization's ZTNA overlay for a route by naming its id, and the imperative teardown deleted their overlay service from the controller while the one org-scoped statement in the same function matched no row and left their console still reporting the route as Ziti-protected -- alongside the connectivity test history, which carried the route's upstream URL, the host:port a probe dialled and the raw dial error naming the host, and was read by route id with no tenant term at all; **26** still ride `needsScoping`/`needsBelt` waivers |
+| 3 · every control enforces | ◐ | P5.1–5.11 ✅ (tenant isolation, the inverted orgscope lint, OPA `deny`, ABAC at both PEPs, the honest Apply/Remediate, SMS, multi-IdP, the fail-closed gate, `ValidateProduction`, the faked measurements); ◐ the P5.3b register programme — batch 1 (v140) belted fifteen tables and fixed `email_branding`'s cross-tenant read *and* write; batch 2 (v141) scoped the compliance record and fixed an archive worker that was silently producing empty archives; batches 4–10 (v142–v148) took the unified audit stream, the sign-in tables, the SAML surface, the password-substitute credentials, the four second factors the belt had skipped, the breach response record — where a containment reported success while quarantining nobody — the temporary vendor access surface, where v71's written-down reason for skipping the belt had expired three batches earlier, the legal holds — the first batch whose defect destroys rather than discloses, since releasing a hold is what lets the retention sweep delete the recording — the remote support sessions, whose list ran with no `WHERE` clause at all over a nullable tenant column the belt would have hidden rather than scoped, and the PAM broker's connection registry — where the row that decides which vault credential is injected carried no tenant, so another tenant's route id bought a live session onto their machine with their password, and the four-eyes gates could not help because both are satisfiable inside the caller's own tenant — delegated administration, read by the enforcement point itself under a deliberate bypass with a tenant-scoping comment copied from the query above it and a cache that handed one person's delegation to everyone sharing their roles, and the login risk policies, where one tenant's row could replace every tenant's allowed second factors or deny every login outright, and the joiner/mover/leaver automation, where every action the rules take was already scoped but the rules themselves were not, so another tenant could rewrite a policy labelled "disable after 90 days" into "delete after 0" and leave its owner running it, and the identity federation configuration, where the admin list wrote its tenant condition into a LEFT JOIN's ON clause and so filtered nothing while the login path's inner join twelve functions away did — and where two install-wide UNIQUE keys meant one organization per email domain and one per issuer URL for the entire installation, and the developer portal, whose settings row was keyed on the literal 'global' and unique across the installation so the last administrator to press Save chose the API-key limits, CORS origins and rate limit for every organization — and whose OAuth playground handed out a live flow's PKCE verifier by id alone, with no role check at all, and the admin console's own settings, where `key` was the PRIMARY KEY so the installation held four settings rows in total and one administrator's password policy, MFA requirement and allowed sign-up domains were every tenant's — the sixth install-wide key and the first that a control actually enforces, since `validate-password` answers from it — alongside the continuous-auth engine, whose only input table nothing had ever written a row to, so its three routes had only ever returned 500 and are now pointed at the belted `sessions` and `session_risks` the product really writes, and the biometric policies, where the list feeding the applicable-policy decision had no tenant term and `ORDER BY name` therefore decided which organization's rule governed a login -- a control aimed by sort order -- while the per-user preferences that say whether an account is biometric-only were read and written by bare user_id, and the kiosk lockdown policies, whose admin list said in its own doc comment that it returned every policy on the installation and whose assignment handler took the policy id from the URL and the device from the body and checked neither -- alongside two tables v44 created for a route that was later deleted as dead, which are dropped rather than scoped, and the notification admin surface, where email_templates.slug was the seventh install-wide unique key this programme has found and the broadcast send path resolved the tenant for its recipients while loading the message itself by bare id, and the bulk user operations, where every action carried its tenant term and the record of what they did carried none -- so one administrator's run list held every organization's, and its item list held their usernames -- and where Cancel set a column the execution loop never read, so a cancelled bulk DELETE kept deleting and then overwrote the cancel with 'completed', and the per-route feature switches, where the same toggle was guarded on the way on -- the enable path resolves the tenant and refuses a foreign route -- and open on the way off, so one administrator could turn off another organization's ZTNA overlay for a route by naming its id, and the imperative teardown deleted their overlay service from the controller while the one org-scoped statement in the same function matched no row and left their console still reporting the route as Ziti-protected -- alongside the connectivity test history, which carried the route's upstream URL, the host:port a probe dialled and the raw dial error naming the host, and was read by route id with no tenant term at all, and the entitlement catalog's governance annotations, whose install-wide unique key and unchecked handler let one administrator set the risk level, owner and review-required badge on another organization's role -- through a Save button that had in fact never once worked, because the upsert put a text expression into a uuid column and Postgres refused it at plan time -- beside a risk breakdown that subtracted the installation's annotation count from this tenant's entitlement total and could print a count of things below zero; alongside two more tables dropped rather than scoped, one whose only reader named two columns it never had and one referenced nowhere in the tree at all. **22** still ride `needsScoping`/`needsBelt` waivers, and the five left on `needsScoping` are the deferred half: each needs a product decision (may one external account link to a user in two tenants; is the agent fleet per-tenant) rather than a migration |
 | 4 · first run / first login / four pillars from the docs | ✅ | first run ✅ the `smoke` and `first-run` jobs (P6.2); first login ✅ one authoritative credential in `GETTING-STARTED.md`, with the `USER_GUIDE.md` and `CONTRIBUTING.md` copies pointing at it rather than repeating it (P8.1); four pillars ✅ `guide/governance.md` was the missing one (P8.1) |
 | 5 · one story + auditor artifacts | ✅ | threat model and control mapping exist; docs sweep 3 ✅ and the docs-drift guard ✅ (`check-docs-drift.sh`, enforced in CI, so a document cannot cite a path that is not there); `docs/evidence/` ✅ (P8.4) |
 | 6 · releases current, signed, Helm proven | ◐ | signing ✅ `release.yml` (cosign) and, since P7.5, an Android artifact whose name tracks the key that signed it; Helm ✅ the `kind` install job (P6.4); versions ✅ `VERSION` + `check-version-sync.sh` (P8.3); CHANGELOG ✅ every release attributed from the commit that wrote its entry, 61 compare links that resolve (P8.2); ☐ v1.34.0 is not cut — the maintainer's |

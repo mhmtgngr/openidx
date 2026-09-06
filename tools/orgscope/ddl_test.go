@@ -348,7 +348,13 @@ func TestRegistersOnlyShrink(t *testing.T) {
 		// routing rules, broadcast messages), 13 -> 11 with v161 (the bulk
 		// operations and their items), and 11 -> 9 with v162, the per-route
 		// feature switches and the connectivity tests that probe behind them.
-		{"needsScoping", len(needsScoping), 9},
+		// 9 -> 5 with v163, which took the last four that did not need a product
+		// decision: the entitlement annotations and the digest schedules scoped,
+		// feature_adoption and webhook_delivery_stats dropped -- the first read
+		// by a query naming two columns the table never had, the second by
+		// nothing at all. What remains is the deferred half; see scoped.go for
+		// the two questions it is waiting on.
+		{"needsScoping", len(needsScoping), 5},
 		// 34 → 19: migration v140 belted the fifteen whose queries already
 		// carried their org predicate. Re-pinned rather than left at 34, or
 		// the register could grow back into the room the fix just made.

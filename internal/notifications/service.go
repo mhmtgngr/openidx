@@ -518,6 +518,18 @@ func (s *Service) handleDeleteNotification(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "notification deleted"})
 }
 
+// handleGetDigestSettings returns the calling user's digest schedules.
+//
+// The tenant term added in v163 is defence in depth rather than a leak being
+// closed: user_id here is the CALLER'S OWN, taken from their token, and a user
+// belongs to one organization. It matters because the table is now behind the
+// FORCE RLS belt, and a background job that opts into orgctx.WithBypassRLS
+// keeps only what the SQL says.
+//
+// Worth recording plainly: NOTHING SENDS A DIGEST. next_scheduled_at and v43's
+// idx_digests_next were built for a worker that reads them, and no such worker
+// exists anywhere in the tree. A user chooses a daily email digest here, saves
+// it, and no digest is ever sent.
 func (s *Service) handleGetDigestSettings(c *gin.Context) {
 	userID := getUserID(c)
 	if userID == "" {
@@ -525,10 +537,17 @@ func (s *Service) handleGetDigestSettings(c *gin.Context) {
 		return
 	}
 
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	rows, err := s.db.Pool.Query(c.Request.Context(),
 		`SELECT id, digest_type, channel, last_sent_at, next_scheduled_at,
-			notification_count, enabled, settings, created_at, updated_at
-		 FROM notification_digests WHERE user_id = $1`, userID)
+			COALESCE(notification_count, 0), COALESCE(enabled, true),
+			COALESCE(settings, '{}'::jsonb), created_at, updated_at
+		 FROM notification_digests WHERE user_id = $1 AND org_id = $2`, userID, org.ID)
 	if err != nil {
 		s.logger.Error("failed to get digest settings", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get digest settings"})
@@ -554,6 +573,9 @@ func (s *Service) handleGetDigestSettings(c *gin.Context) {
 		var d digest
 		if err := rows.Scan(&d.ID, &d.DigestType, &d.Channel, &d.LastSentAt, &d.NextScheduledAt,
 			&d.NotificationCount, &d.Enabled, &d.Settings, &d.CreatedAt, &d.UpdatedAt); err != nil {
+			// A dropped row reads as "you have no digest for that channel",
+			// which is what the settings page then offers to create.
+			s.logger.Warn("digest row skipped", zap.String("user_id", userID), zap.Error(err))
 			continue
 		}
 		digests = append(digests, d)
@@ -585,12 +607,18 @@ func (s *Service) handleUpdateDigestSettings(c *gin.Context) {
 		req.Channel = "email"
 	}
 
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	_, err := s.db.Pool.Exec(c.Request.Context(),
-		`INSERT INTO notification_digests (user_id, digest_type, channel, enabled, settings)
-		 VALUES ($1, $2, $3, $4, $5)
+		`INSERT INTO notification_digests (user_id, org_id, digest_type, channel, enabled, settings)
+		 VALUES ($1, $2, $3, $4, $5, $6)
 		 ON CONFLICT (user_id, digest_type, channel)
 		 DO UPDATE SET enabled = EXCLUDED.enabled, settings = EXCLUDED.settings, updated_at = NOW()`,
-		userID, req.DigestType, req.Channel, req.Enabled, req.Settings)
+		userID, org.ID, req.DigestType, req.Channel, req.Enabled, req.Settings)
 	if err != nil {
 		s.logger.Error("failed to update digest settings", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update digest settings"})

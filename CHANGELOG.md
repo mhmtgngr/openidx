@@ -58,6 +58,50 @@ to a spec that describes an eighth of a surface, a documented endpoint that
   **Operators of installations with more than one organization should note**
   that existing runs are assigned to the organization of whoever started them,
   and their per-account records follow the run.
+- **One organization could reclassify another's roles, and the button that saves
+  a classification had never worked** (migration v163).
+
+  The Entitlement Catalog lets an administrator annotate a role, a group or an
+  application: its risk level, its owner, its tags, and whether it requires
+  review. Those annotations had no organization, and the identifier they were
+  stored under was unique across the whole installation — so an administrator
+  who knew another organization's role identifier could set that role's risk
+  level, name an account of their own as its owner, retag it, and switch its
+  "review required" badge off. The change appeared on the other organization's
+  catalog. Annotations are now the annotating organization's own, and naming an
+  entitlement or an owner from outside it is refused.
+
+  **The Save button had never worked at all.** The statement that stores an
+  annotation put a text value into a column that holds an identifier, which the
+  database rejects before it runs — for every request, whatever was being saved.
+  So every Save on the Entitlement Catalog has returned "internal server error"
+  since the feature shipped. Fixed.
+
+  **The risk breakdown could show a negative number.** The catalog's summary
+  counted this organization's roles, groups and applications, then subtracted a
+  count of annotations taken from the entire installation. Where another
+  organization had annotated more entitlements than this one owns, the "low
+  risk" figure came out below zero — a count of things, printed negative, beside
+  figures that were correct. Both halves are now this organization's.
+
+  **Notification digests** are also now scoped to the organization, though they
+  were never reachable across organizations: each request only ever read the
+  calling user's own row. Worth stating plainly for anyone relying on the
+  feature: **nothing sends a digest.** The schedule is stored and no part of the
+  product reads it, so choosing a daily or weekly digest in Notification Center
+  has never resulted in one being sent. That remains outstanding work; this
+  release does not change it.
+
+  Two unused tables were removed: one that nothing had ever written to and whose
+  only reader asked it for two columns it does not have, and one referenced
+  nowhere in the product at all. The Feature Adoption analytics page is
+  unaffected — it has always computed its figures live, because the read of the
+  stored table failed silently every time.
+
+  **Operators of installations with more than one organization should note**
+  that existing annotations are assigned to the organization that owns the
+  entitlement they annotate, which is exact, and existing digest settings to the
+  organization of the user they belong to.
 - **One organization could switch off another's private-network protection for
   an application, and read their internal server names** (migration v162). Two
   records had no organization: the per-application feature switches (whether

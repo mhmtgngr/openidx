@@ -27,20 +27,10 @@ type NotificationRoutingRule struct {
 	UpdatedAt         time.Time       `json:"updated_at"`
 }
 
-// NotificationDigest represents a digest configuration for batching notifications
-type NotificationDigest struct {
-	ID                string          `json:"id"`
-	UserID            string          `json:"user_id"`
-	DigestType        string          `json:"digest_type"` // daily, weekly
-	Channel           string          `json:"channel"`
-	LastSentAt        *time.Time      `json:"last_sent_at"`
-	NextScheduledAt   *time.Time      `json:"next_scheduled_at"`
-	NotificationCount int             `json:"notification_count"`
-	Enabled           bool            `json:"enabled"`
-	Settings          json.RawMessage `json:"settings"`
-	CreatedAt         time.Time       `json:"created_at"`
-	UpdatedAt         time.Time       `json:"updated_at"`
-}
+// The digest configuration is served by internal/notifications, which owns the
+// notification_digests table. A NotificationDigest struct declared here was
+// referenced by nothing in the tree -- no handler, no query, no test -- and was
+// removed with migration v163 rather than left to look like a second reader.
 
 // BroadcastMessage represents a broadcast notification sent to multiple users
 type BroadcastMessage struct {

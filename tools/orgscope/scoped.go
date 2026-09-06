@@ -71,25 +71,29 @@ var beltExempt = map[string]string{
 // migration (org_id + backfill + FORCE RLS) and an org predicate in its
 // handlers. Listed with what the table actually holds so the batches are easy
 // to cut.
+//
+// What is left is the DEFERRED half, and it is deferred on a product question
+// rather than on effort. Both groups need a decision this lint cannot make:
+//
+//   - the external identity links: may one external account link to a user in
+//     two tenants at once, and if so which tenant owns the link row?
+//   - the agent fleet: three separate comments in internal/access assert that
+//     the fleet is deliberately install-wide, so an agent id names a device
+//     without naming a tenant. v159 raised this in the readiness guide as an
+//     open product decision after finding that it leaves cross-tenant kiosk
+//     TARGETING open with no tenant term available to close it.
+//
+// Every table on this register that did NOT need such a decision has now been
+// scoped or dropped.
 var needsScoping = map[string]string{
 	// MFA and credentials — the most sensitive per-user rows in the product.
-	"user_identity_links":  "per-user external identity links",
-	"social_account_links": "per-user social provider links",
-
-	// Lifecycle, governance and delegation.
-	"entitlement_metadata": "risk level and owner per entitlement",
+	"user_identity_links":  "per-user external identity links; needs the one-account-two-tenants decision",
+	"social_account_links": "per-user social provider links; needs the one-account-two-tenants decision",
 
 	// Agent fleet — the devices enrolled by a tenant's users.
-	"enrolled_agents":         "enrolled devices with tokens and compliance state (v43)",
-	"agent_posture_results":   "per-device posture results (v43)",
-	"agent_enrollment_tokens": "enrolment tokens that admit a device to the fleet (v43)",
-
-	// Notifications, messaging and templates.
-	"notification_digests":   "per-user digest schedules (v43)",
-	"webhook_delivery_stats": "delivery statistics per subscription",
-
-	// Admin console and developer surfaces.
-	"feature_adoption": "per-user feature usage",
+	"enrolled_agents":         "enrolled devices with tokens and compliance state (v43); needs the is-the-fleet-per-tenant decision",
+	"agent_posture_results":   "per-device posture results (v43); follows enrolled_agents",
+	"agent_enrollment_tokens": "enrolment tokens that admit a device to the fleet (v43); follows enrolled_agents",
 }
 
 // needsBelt: OPEN FINDINGS. These carry org_id -- the application filters on

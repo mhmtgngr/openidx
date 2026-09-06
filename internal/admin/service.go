@@ -3108,7 +3108,8 @@ func (s *Service) GetEntitlementCatalog(ctx context.Context, offset, limit int, 
 			COALESCE(em.review_required, false) as review_required,
 			em.last_reviewed_at
 		FROM catalog c
-		LEFT JOIN entitlement_metadata em ON em.entitlement_id = c.id AND em.entitlement_type = c.type
+		LEFT JOIN entitlement_metadata em
+		       ON em.entitlement_id = c.id AND em.entitlement_type = c.type AND em.org_id = $1
 	`
 
 	conditions := []string{}
@@ -3204,9 +3205,14 @@ func (s *Service) GetEntitlementStats(ctx context.Context) (*EntitlementStats, e
 	stats.ByType["application"] = appCount
 	stats.TotalEntitlements = roleCount + groupCount + appCount
 
+	// The breakdown had no predicate at all while the total above is this
+	// organization's, and the two are then subtracted from each other. On any
+	// install where another organization had annotated more entitlements than
+	// this one owns, the "low risk" figure came out NEGATIVE -- a count of
+	// things, printed below zero, beside figures that were correct.
 	riskRows, err := s.db.Pool.Query(ctx, `
-		SELECT risk_level, COUNT(*) FROM entitlement_metadata GROUP BY risk_level
-	`)
+		SELECT risk_level, COUNT(*) FROM entitlement_metadata WHERE org_id = $1 GROUP BY risk_level
+	`, org.ID)
 	if err == nil {
 		defer riskRows.Close()
 		for riskRows.Next() {
@@ -3216,11 +3222,18 @@ func (s *Service) GetEntitlementStats(ctx context.Context) (*EntitlementStats, e
 			stats.ByRiskLevel[level] = count
 		}
 	}
+	// Entitlements with no annotation count as low risk, which is what the
+	// catalog's COALESCE(em.risk_level, 'low') shows for them. An annotation
+	// naming an entitlement that has since been deleted leaves the counted
+	// total above the owned total -- entitlement_id carries no foreign key --
+	// so the remainder is floored rather than allowed to go negative.
 	metadataCount := 0
 	for _, c := range stats.ByRiskLevel {
 		metadataCount += c
 	}
-	stats.ByRiskLevel["low"] += stats.TotalEntitlements - metadataCount
+	if unannotated := stats.TotalEntitlements - metadataCount; unannotated > 0 {
+		stats.ByRiskLevel["low"] += unannotated
+	}
 
 	var orphanCount int
 	s.db.Pool.QueryRow(ctx, `
@@ -3233,8 +3246,50 @@ func (s *Service) GetEntitlementStats(ctx context.Context) (*EntitlementStats, e
 	return stats, nil
 }
 
+// errEntitlementNotInOrg is returned when the entitlement named in the URL is
+// not one of the caller organization's roles, groups or applications.
+var errEntitlementNotInOrg = errors.New("entitlement not found in this organization")
+
+// entitlementInOrg proves the entitlement belongs to the caller's organization.
+//
+// Before v163 nothing did. UpdateEntitlementMetadata took the type and the id
+// straight from the URL and upserted on an install-wide
+// UNIQUE (entitlement_type, entitlement_id), so a PUT naming another
+// organization's role id wrote a row that appeared on THEIR catalog: their
+// role's risk level, their role's owner -- a user id, so a foreign account
+// could be planted as the owner of their privileged role -- their tags, and
+// their "review required" badge.
+func (s *Service) entitlementInOrg(ctx context.Context, orgID, entType, entID string) error {
+	var table string
+	switch entType {
+	case "role":
+		table = "roles"
+	case "group":
+		table = "groups"
+	case "application":
+		table = "applications"
+	default:
+		return fmt.Errorf("unknown entitlement type %q", entType)
+	}
+	var exists bool
+	// table is chosen from the switch above, never from the request.
+	if err := s.db.Pool.QueryRow(ctx,
+		"SELECT true FROM "+table+" WHERE id = $1 AND org_id = $2", entID, orgID).Scan(&exists); err != nil {
+		return errEntitlementNotInOrg
+	}
+	return nil
+}
+
 // UpdateEntitlementMetadata updates risk level, owner, tags for an entitlement
 func (s *Service) UpdateEntitlementMetadata(ctx context.Context, entType, entID string, metadata map[string]interface{}) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+	if err := s.entitlementInOrg(ctx, org.ID, entType, entID); err != nil {
+		return err
+	}
+
 	riskLevel, _ := metadata["risk_level"].(string)
 	if riskLevel == "" {
 		riskLevel = "low"
@@ -3243,6 +3298,18 @@ func (s *Service) UpdateEntitlementMetadata(ctx context.Context, entType, entID 
 	description, _ := metadata["description"].(string)
 	reviewRequired, _ := metadata["review_required"].(bool)
 
+	// owner_id carries no foreign key, so nothing stops a foreign account being
+	// named as the owner of an entitlement. A row that points out of its own
+	// tenant is not worth keeping -- the same call v152 made for delegations --
+	// so it is refused rather than written and filtered later.
+	if ownerID != "" {
+		var ok bool
+		if err := s.db.Pool.QueryRow(ctx,
+			"SELECT true FROM users WHERE id = $1 AND org_id = $2", ownerID, org.ID).Scan(&ok); err != nil {
+			return fmt.Errorf("%w: owner", errEntitlementNotInOrg)
+		}
+	}
+
 	var tags []byte
 	if tagsRaw, ok := metadata["tags"]; ok {
 		tags, _ = json.Marshal(tagsRaw)
@@ -3250,12 +3317,18 @@ func (s *Service) UpdateEntitlementMetadata(ctx context.Context, entType, entID 
 		tags = []byte("[]")
 	}
 
-	_, err := s.db.Pool.Exec(ctx, `
-		INSERT INTO entitlement_metadata (entitlement_type, entitlement_id, risk_level, owner_id, description, tags, review_required, updated_at)
-		VALUES ($1, $2, $3, NULLIF($4, ''), $5, $6, $7, NOW())
-		ON CONFLICT (entitlement_type, entitlement_id) DO UPDATE SET
-			risk_level = $3, owner_id = NULLIF($4, ''), description = $5, tags = $6, review_required = $7, updated_at = NOW()
-	`, entType, entID, riskLevel, ownerID, description, tags, reviewRequired)
+	// NULLIF($5, '') is text, and owner_id is uuid. Without the cast Postgres
+	// answers `column "owner_id" is of type uuid but expression is of type text`
+	// (SQLSTATE 42804) at plan time -- for every request, whatever owner_id
+	// holds -- so this statement has never once succeeded and every Save on the
+	// Entitlement Catalog has returned a bare 500. Pre-existing; found by this
+	// batch's own test and fixed with it.
+	_, err = s.db.Pool.Exec(ctx, `
+		INSERT INTO entitlement_metadata (org_id, entitlement_type, entitlement_id, risk_level, owner_id, description, tags, review_required, updated_at)
+		VALUES ($1, $2, $3, $4, NULLIF($5, '')::uuid, $6, $7, $8, NOW())
+		ON CONFLICT (org_id, entitlement_type, entitlement_id) DO UPDATE SET
+			risk_level = $4, owner_id = NULLIF($5, '')::uuid, description = $6, tags = $7, review_required = $8, updated_at = NOW()
+	`, org.ID, entType, entID, riskLevel, ownerID, description, tags, reviewRequired)
 	if err != nil {
 		return fmt.Errorf("failed to update entitlement metadata: %w", err)
 	}
@@ -3313,6 +3386,14 @@ func (s *Service) handleUpdateEntitlementMetadata(c *gin.Context) {
 	}
 
 	if err := s.UpdateEntitlementMetadata(c.Request.Context(), entType, entID, metadata); err != nil {
+		if errors.Is(err, errEntitlementNotInOrg) {
+			c.JSON(404, gin.H{"error": errEntitlementNotInOrg.Error()})
+			return
+		}
+		if errors.Is(err, orgctx.ErrNoOrgContext) {
+			c.JSON(403, gin.H{"error": "organization context required"})
+			return
+		}
 		s.logger.Error("failed to update entitlement metadata", zap.String("type", entType), zap.String("id", entID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
