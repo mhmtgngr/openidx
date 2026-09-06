@@ -14,8 +14,8 @@ to a spec that describes an eighth of a surface, a documented endpoint that
 
 The programme closed with a full audit on one tree
 (`docs/evidence/final-audit.md`): build, vet, 77 Go test packages, 1,181
-console tests, the org-scope gate and 55 guard runs, all green — and one defect,
-in the programme's own work, fixed below.
+console tests, the org-scope gate and 55 guard runs, all green — and two
+defects, fixed below.
 
 ### Added
 
@@ -1166,6 +1166,19 @@ in the programme's own work, fixed below.
   list had been dismissed once already and came back for exactly that reason.
   The code-scanning results check passes: the one high-severity result in
   changed code was the SSH host key, and fixing it took the count to zero.
+
+- **A token test that failed about as often as a run was slow.**
+  `TestTokenService_WithConfig` asserted a token's expiry was within one second
+  of a `time.Now()` taken *after* the token was minted. The expiry is
+  `mint + 30m` serialised as a JWT `NumericDate`, which carries whole seconds,
+  so the difference measured is the elapsed time **plus** a truncation uniform
+  on [0s, 1s) -- half the tolerance gone on average before any work happened,
+  and any measurable delay pushing a fraction of runs over. The failure rate is
+  roughly the elapsed time in seconds: invisible locally, occasional under the
+  race detector, certain across enough runs. The assertion now brackets the
+  mint and requires the expiry to land in the window the mint could have
+  produced, which no amount of slowness moves; setting the duration to 31
+  minutes still fails it.
 
 - **A CodeQL config that excluded nothing is gone.** An earlier commit on this
   branch added `.github/codeql/codeql-config.yml` with

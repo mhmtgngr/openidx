@@ -578,16 +578,34 @@ func TestTokenService_WithConfig(t *testing.T) {
 	}
 
 	ts := NewTokenService(privateKey, publicKey, nil, logger).WithConfig(customConfig)
-	token, _ := ts.GenerateAccessToken(ctx, "user123", "tenant456", []string{"admin"})
+
+	// Bracket the mint. The expiry is computed from time.Now() inside
+	// GenerateAccessToken and serialised as a JWT NumericDate, which carries
+	// whole seconds -- so the value that comes back is the mint instant plus
+	// 30 minutes, truncated down by up to a second.
+	//
+	// Comparing it against a time.Now() taken AFTER the mint, within a
+	// one-second tolerance, is why this test used to fail about as often as a
+	// run was slow: the difference is the elapsed time plus that truncation,
+	// and the truncation alone is uniform on [0s, 1s). Any measurable delay
+	// between minting and asserting -- a loaded runner, the race detector --
+	// pushes some fraction of runs over. Bracketing removes the guess: the
+	// expiry has to land in the window the mint could possibly have produced.
+	before := time.Now()
+	token, err := ts.GenerateAccessToken(ctx, "user123", "tenant456", []string{"admin"})
+	require.NoError(t, err)
+	after := time.Now()
 
 	// Verify claims
 	claims, err := ts.ValidateToken(ctx, token)
 	require.NoError(t, err)
 	assert.Equal(t, "custom-issuer", claims.Issuer)
 
-	// Check expiration is approximately 30 minutes
-	expectedExpiry := time.Now().Add(30 * time.Minute)
-	assert.WithinDuration(t, expectedExpiry, claims.ExpiresAt.Time, time.Second)
+	earliest := before.Add(30 * time.Minute).Truncate(time.Second)
+	latest := after.Add(30 * time.Minute)
+	exp := claims.ExpiresAt.Time
+	assert.Falsef(t, exp.Before(earliest), "expiry %s is before the earliest the mint could produce (%s)", exp, earliest)
+	assert.Falsef(t, exp.After(latest), "expiry %s is after the latest the mint could produce (%s)", exp, latest)
 }
 
 func TestExtractSubject(t *testing.T) {
