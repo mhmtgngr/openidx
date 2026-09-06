@@ -113,16 +113,15 @@ var needsScoping = map[string]string{
 // so these leave in feature-sized batches together with their query fixes,
 // never in one sweep.
 var needsBelt = map[string]string{
-	"report_exports":                "v26; 1 unscoped query",
-	"device_trust_requests":         "v39; 2 unscoped queries",
-	"published_apps":                "v40; 2 unscoped queries",
-	"discovered_paths":              "v40; 1 unscoped query",
-	"oauth_registration_tokens":     "v97; 3 unscoped queries",
-	"mcp_servers":                   "v103; 1 unscoped query",
-	"mcp_tool_policies":             "v103; 2 unscoped queries",
-	"oauth_device_codes":            "v125 redeemed by hashed device_code; confirm the pre-tenant path before belting; 4 unscoped queries",
-	"enrollment_sessions":           "v132; 3 unscoped queries",
-	"group_application_assignments": "v136; its queries are clean, but this is the app-assignment table the enforcement path and the proxy's cross-org cache warmer read; the highest blast radius in this register, so it belts on its own",
+	"report_exports":            "v26; 1 unscoped query",
+	"device_trust_requests":     "v39; 2 unscoped queries",
+	"published_apps":            "v40; 2 unscoped queries",
+	"discovered_paths":          "v40; 1 unscoped query",
+	"oauth_registration_tokens": "v97; 3 unscoped queries",
+	"mcp_servers":               "v103; 1 unscoped query",
+	"mcp_tool_policies":         "v103; 2 unscoped queries",
+	"oauth_device_codes":        "v125 redeemed by hashed device_code; confirm the pre-tenant path before belting; 4 unscoped queries",
+	"enrollment_sessions":       "v132; 3 unscoped queries",
 }
 
 // predicateAuditPending: OPEN FINDINGS, query level. Deriving the scoped set

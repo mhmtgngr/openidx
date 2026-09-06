@@ -829,6 +829,17 @@ func TestRLSBeltTables(t *testing.T) {
 			RETURNING id)
 			INSERT INTO network_revocation_queue (user_id, reason, org_id)
 			SELECT u.id, 'access_review', $1 FROM u`},
+
+		// v167 — the group half of the app-assignment pair. v136 wrote ENABLE
+		// and a policy and no FORCE, so its belt held only while the migrating
+		// role and the runtime role differed.
+		{"group_application_assignments", `WITH g AS (
+			INSERT INTO groups (name, org_id) VALUES ('tbelt-gaa-` + suffix + `', $1) RETURNING id),
+			a AS (
+			INSERT INTO applications (client_id, name, type, org_id)
+			VALUES ('tbelt-gaa-app-` + suffix + `','tbelt gaa app','web',$1) RETURNING id)
+			INSERT INTO group_application_assignments (group_id, application_id, org_id)
+			SELECT g.id, a.id, $1 FROM g, a`},
 	}
 
 	// One list, not two: the role is granted exactly the tables the cases probe.
@@ -861,6 +872,58 @@ func TestRLSBeltTables(t *testing.T) {
 			assert.Greater(t, countB("on"), 0, "bypass must see org B rows in %s", c.table)
 		})
 	}
+}
+
+// TestEveryPoliciedTableIsForced is the guard that would have caught v136.
+//
+// requireForceRLS below SKIPS a table that is not forced rather than failing
+// it, so the belt suite steps aside for exactly the condition it exists to
+// detect — which is why group_application_assignments carried ENABLE, a policy
+// and no FORCE from v136 until v167, while the three tables named beside it in
+// the proxy's own justifying comment all carried FORCE.
+//
+// ENABLE applies a policy to every role EXCEPT the table's owner. A table with a
+// policy and no FORCE is therefore isolated only while the migrating role and
+// the runtime role are different roles — an assumption that holds on the
+// reference deployment and silently does not on a single-role install. This
+// asserts the property directly, over whatever the schema actually contains, so
+// the next migration that writes ENABLE and forgets FORCE fails here.
+func TestEveryPoliciedTableIsForced(t *testing.T) {
+	admin := integrationDB(t)
+	defer admin.Close()
+
+	rows, err := admin.Query(context.Background(), `
+		SELECT c.relname, c.relforcerowsecurity
+		  FROM pg_class c
+		  JOIN pg_namespace n ON n.oid = c.relnamespace
+		 WHERE n.nspname = 'public'
+		   AND c.relkind = 'r'
+		   AND c.relrowsecurity
+		   AND EXISTS (SELECT 1 FROM pg_policy p WHERE p.polrelid = c.oid)
+		 ORDER BY c.relname`)
+	require.NoError(t, err)
+	defer rows.Close()
+
+	var unforced []string
+	total := 0
+	for rows.Next() {
+		var name string
+		var forced bool
+		require.NoError(t, rows.Scan(&name, &forced))
+		total++
+		if !forced {
+			unforced = append(unforced, name)
+		}
+	}
+	require.NoError(t, rows.Err())
+	require.Greater(t, total, 0, "no policied tables found — is the schema migrated?")
+
+	assert.Empty(t, unforced,
+		"these tables carry an RLS policy but not FORCE ROW LEVEL SECURITY, so the "+
+			"policy does not apply to the table's OWNER: %v. On an install where "+
+			"migrations and the application share a role, the belt on these tables "+
+			"is not applied at all. Add `ALTER TABLE <t> FORCE ROW LEVEL SECURITY` "+
+			"to the migration that created the policy.", unforced)
 }
 
 // requireForceRLS skips the suite (with guidance) unless FORCE ROW LEVEL

@@ -369,7 +369,7 @@ func TestRegistersOnlyShrink(t *testing.T) {
 		// organization at all. 12 -> 10 with v166, the two network hand-off
 		// queues, where the revocation worker marked every item done whether or
 		// not the circuit was actually severed.
-		{"needsBelt", len(needsBelt), 10},
+		{"needsBelt", len(needsBelt), 9},
 		{"predicateAuditPending", len(predicateAuditPending), 18},
 		{"installWideTables", len(installWideTables), 21},
 		{"beltExempt", len(beltExempt), 5},

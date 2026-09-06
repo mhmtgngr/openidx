@@ -58,6 +58,27 @@ to a spec that describes an eighth of a surface, a documented endpoint that
   **Operators of installations with more than one organization should note**
   that existing runs are assigned to the organization of whoever started them,
   and their per-account records follow the run.
+- **Group-to-application assignments were protected by a rule the database did
+  not apply to every connection** (migration v167). When an application is
+  assigned to a group, that record decides who may reach the application. It was
+  given a database rule confining it to its own organization, but not the second
+  setting that makes the rule apply to the account that owns the tables as well
+  as to everyone else.
+
+  On the deployment this project documents, migrations and the running services
+  connect as different database accounts, so the rule applied and the records
+  were confined — **this was not an exposure there**. On an installation where
+  the two are the same account (a single-account database, a hosted service
+  whose application user owns the schema, a developer's machine), the rule did
+  not apply to the application at all, and this record was protected only by the
+  product's own filtering. Every comparable record — direct user assignments,
+  group memberships, the applications themselves — already had both settings.
+  This one now does too.
+
+  A check was added that asks the database directly whether every record type
+  with such a rule also has the second setting, so a future migration cannot
+  omit it quietly. Run against the previous schema it identified this record
+  type and no other.
 - **Revoking someone's network access reported success even when the
   disconnection failed** (migration v166). When an access review revokes access,
   or a time-limited grant expires, the product records the decision and then
