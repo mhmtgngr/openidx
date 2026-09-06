@@ -37,7 +37,13 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCAN="${OPENIDX_TESTREACH_ROOT:-$ROOT}"
 
-GATE_VAR='Getenv("OPENIDX_TEST_DATABASE_URL")'
+# Any OPENIDX_*_DATABASE_URL, not only the one variable this guard was written
+# for. A helper that gates on a private variable of its own -- the migration
+# round trip reads OPENIDX_DOWNSWEEP_DATABASE_URL, because it needs a cluster
+# with no other migrated database in it -- was invisible to a check that matched
+# a single literal name, which is the guard failing in exactly the way it exists
+# to prevent. The pattern is a glob, so it must stay unquoted at its use site.
+GATE_VAR='Getenv("OPENIDX_*_DATABASE_URL")'
 
 fail=0
 finding() {
@@ -131,7 +137,7 @@ done <<<"$records"
 # trips this is told to say so with the marker.
 checked=0
 while IFS=$'\t' read -r file line name marker body; do
-  case "$body" in *"$GATE_VAR"*) ;; *) continue ;; esac
+  case "$body" in *$GATE_VAR*) ;; *) continue ;; esac
   checked=$((checked + 1))
 
   if [ "$marker" = "!BARE!" ]; then
@@ -155,7 +161,7 @@ while IFS=$'\t' read -r file line name marker body; do
   done
 
   if [ "$delegates" -eq 0 ]; then
-    finding "$file:$line: $name skips unless OPENIDX_TEST_DATABASE_URL is set, and ci.yml never sets it — this test runs nowhere. Start a container (testsupport.RunOrSkip), read DATABASE_URL, or delegate to a helper in this package that does."
+    finding "$file:$line: $name skips unless its OPENIDX_*_DATABASE_URL is set, and ci.yml never sets one — this test runs nowhere. Start a container (testsupport.RunOrSkip), read DATABASE_URL, or delegate to a helper in this package that does."
   fi
 done <<<"$records"
 

@@ -214,5 +214,40 @@ open(p, "w").write(s)
 PY
 expect red "v172 back to skipping unless the variable is set"
 
+# 12. A helper that gates on a PRIVATE OPENIDX_*_DATABASE_URL of its own. The
+# guard used to match one literal variable name, so this shape -- a suite with
+# its own escape hatch and no other path -- was invisible to it: the guard
+# failing in the way it exists to prevent. The migration round trip reads
+# OPENIDX_DOWNSWEEP_DATABASE_URL because it needs a cluster with no other
+# migrated database in it, and that is what turned this hole up.
+fresh
+cat >"$WD/pkg/private_var_test.go" <<'GO'
+package pkg
+
+func downSweepDB(t *testing.T) *pool {
+	url := os.Getenv("OPENIDX_DOWNSWEEP_DATABASE_URL")
+	if url == "" {
+		t.Skip("OPENIDX_DOWNSWEEP_DATABASE_URL not set")
+	}
+	return open(url)
+}
+GO
+expect red "gated on a private OPENIDX_*_DATABASE_URL with no other path"
+
+# 13. …and the same helper with the container fallback it should have.
+fresh
+cat >"$WD/pkg/private_var_test.go" <<'GO'
+package pkg
+
+func downSweepDB(t *testing.T) *pool {
+	if url := os.Getenv("OPENIDX_DOWNSWEEP_DATABASE_URL"); url != "" {
+		return open(url)
+	}
+	container := testsupport.RunOrSkip(t, req.Image, start)
+	return openContainer(container)
+}
+GO
+expect ok "a private variable with a container fallback is reachable"
+
 echo "check-test-reachability.test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

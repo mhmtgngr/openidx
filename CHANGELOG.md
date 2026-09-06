@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The migration chain could not be rolled back past v29.** Every migration
+  carries a `Down` half and `RollbackTo` exists to run them — it is what an
+  operator reaches for when an upgrade goes wrong — and nothing had ever
+  executed the chain in that direction. Measured on a fresh PostgreSQL 16,
+  rolling back from v179 one version at a time, it stopped at v29 with
+  `DROP TABLE IF NOT EXISTS posture_check_types;` →
+  **`ERROR: syntax error at or near "NOT"`**: a spelling PostgreSQL has never
+  accepted (the keyword is `IF EXISTS`), in five statements across three
+  migrations. Behind that, at v13 and v10, nine more statements matched a UUID
+  primary key with `LIKE`, which raises
+  `operator does not exist: uuid ~~ unknown`. So the rollback path was blocked
+  at v29 on every install, and the twenty-nine migrations below it had never
+  been reachable in reverse at all. All fourteen statements are fixed and the
+  chain now completes the full round trip: 179 up, 179 down to zero, 179 up
+  again. **A new test does exactly that** against a throwaway container, and
+  asserts the schema left behind after a full rollback is exactly the four
+  tables it should be — the migrator's two bookkeeping tables plus the two v51
+  re-creates on the way down, which is recorded rather than papered over.
+  `scripts/check-test-reachability.sh` was widened in the same change: it
+  matched one literal variable name, so a helper gating on a private
+  `OPENIDX_*_DATABASE_URL` of its own was invisible to it — the guard failing
+  in the way it exists to prevent.
+
 - **The OpenID Connect discovery document omitted three things this server
   does.** `revocation_endpoint` and `introspection_endpoint` (RFC 8414 §2) were
   absent although `POST /oauth/revoke` and `POST /oauth/introspect` are both
