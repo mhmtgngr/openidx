@@ -100,6 +100,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The right to erasure had never run, and the data package always omitted
+  four sections.** Both halves of the GDPR subject-rights implementation were
+  broken in the same way, and neither could be seen from outside. *Erasure
+  (Article 17):* the statement that anonymises the user row set `phone_number`
+  and `avatar_url`, neither of which exists on `users`, so it failed with
+  SQLSTATE 42703 — and being the **first** statement, its error was returned
+  before a single session, MFA enrolment or consent was wiped. No erasure
+  request has ever run to completion on any install. *Export (Article 15):* four
+  of the twelve categories named columns the schema does not have —
+  `audit_events.resource_type` (it is `target_type`), `mfa_totp.verified_at`
+  (`enrolled_at`), `mfa_webauthn.friendly_name` (`name`),
+  `mfa_push_devices.device_type` (`platform`/`device_name`/`device_model`) — and
+  each failure was logged at Debug and the section left out, while the result
+  reported `categories: 8` as though eight were all there were. The subject's
+  own activity log and all three MFA enrolment records were missing from every
+  data package this product has produced. Both are fixed against the real
+  schema, and both now say when they cannot do what they claim: a category that
+  fails is named in the bundle under `_incomplete` and counted in the response,
+  and a failed erasure statement returns an error instead of marking the request
+  completed. The erasure also now wipes the tables that actually hold a phone
+  number (`mfa_sms`, `mfa_phone_call`, `phone_call_challenges`) and the device
+  records (`known_devices`, `trusted_browsers`) — the "no leftover phone numbers
+  / device IDs" its own comment has always promised — and the export gained
+  those four as categories. Driven end to end by a new test against a migrated
+  database, proved red first on both halves.
+
 - **A risk score with nothing behind it.** The continuous-auth engine computes
   five weighted factors — session age, source-address change, device
   fingerprint, out-of-hours activity, action velocity — sums them into a 0-100

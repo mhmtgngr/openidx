@@ -25,21 +25,6 @@ var knownBroken = map[string]string{
 	// internal/admin/predictive_analytics.go:241  [42703] column u.last_login does not exist
 	"internal/admin/predictive_analytics.go#5948c3dee70a": "users has last_login_at, not last_login; the churn/growth prediction input is never read.",
 
-	// internal/admin/privacy.go:735  [42703] column "resource_type" does not exist
-	"internal/admin/privacy.go#d420d55253f0": "the DSAR export selects resource_type from a table that has no such column; that section of the subject's data package is empty.",
-
-	// internal/admin/privacy.go:745  [42703] column "verified_at" does not exist
-	"internal/admin/privacy.go#75d5cfe2abf6": "same export, verified_at absent; the subject's verification records are omitted.",
-
-	// internal/admin/privacy.go:747  [42703] column "friendly_name" does not exist
-	"internal/admin/privacy.go#23091de907a0": "same DSAR export, friendly_name absent: the device names a subject would recognise are missing from their data package.",
-
-	// internal/admin/privacy.go:749  [42703] column "device_type" does not exist
-	"internal/admin/privacy.go#583a0ab72587": "same export, device_type absent; a GDPR data package that silently omits sections is the worst shape this class takes.",
-
-	// internal/admin/privacy.go:833  [42703] column "phone_number" of relation "users" does not exist
-	"internal/admin/privacy.go#638d176b5bcd": "users has no phone_number column (phone lives on the MFA factor rows); the subject's phone number is never exported or erased.",
-
 	// internal/admin/service.go:2960  [42703] column "last_login" does not exist
 	"internal/admin/service.go#fc94058888bf": "users.last_login_at again, spelled last_login.",
 
