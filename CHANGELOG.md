@@ -7,7 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`tools/sqlprepare` — every SQL literal in the tree, planned by a real
+  PostgreSQL.** A green CI run's database log carried `column "request_count"
+  does not exist`, and following it found a class no reviewer or compiler can
+  catch: a query naming a column that has never existed is syntactically
+  perfect Go and SQL, and the handler around it discards the error. The tool
+  hands each statement to `PREPARE` against a database with all migrations
+  applied — parse, name resolution and planning, no execution and no rows — so
+  a missing column, a missing table, an unresolvable type or an aggregate
+  outside its `GROUP BY` surfaces and nothing else does. Syntax errors are
+  skipped as fragments of runtime-assembled queries and parameter-inference
+  errors as limits of `PREPARE` itself; a file the sweep cannot parse fails the
+  run rather than quietly shrinking the count. It runs in the integration job,
+  the only place with a migrated database. The first sweep found **39
+  statements that cannot succeed against the schema this repo creates**, each
+  registered in `tools/sqlprepare/known.go` with its verdict; a finding the
+  register does not carry fails the run, and so does an entry that no longer
+  reproduces, so the list can only shrink. Among them: no security alert has
+  ever been written (`security_alerts` has none of the six columns the INSERT
+  names), the SIEM forwarder's cursor table is created by no migration,
+  scheduled-report listing fails outright, the DSAR export silently omits
+  sections, two compliance controls report zero findings because api-key
+  revocation lives in `status` and not a `revoked_at` column, and the API-usage
+  dashboard's four queries all name columns that were never created — so it
+  reports 0 requests, 0 errors and 0 ms latency as measurements.
+
 ### Fixed
+
+- **ABAC evaluation failed on every request, which under
+  `ABAC_ENFORCE=enforce` denies everything.** `abac_policies.resource_id` is a
+  UUID column and the policy query compared it to the empty string; PostgreSQL
+  resolves that at plan time, so the statement never ran, the error became
+  `Allowed: false`, and the evaluator answered "policy evaluation error,
+  failing closed" for every call — in observe mode recording a would-deny on
+  every request, and in enforce mode denying them. Found by `tools/sqlprepare`
+  on its first sweep.
 
 - **The trusted-proxy hardening resolved every client to the proxy's own
   address in the deployments this repo ships.** `ConfigureTrustedProxies` trusts

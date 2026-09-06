@@ -659,6 +659,19 @@ jobs:
           go run ./cmd/migrate up
           echo "::endgroup::"
 
+          # ----- every SQL literal in the tree, planned by the real database --
+          # This job is the only place with a migrated PostgreSQL, and it is the
+          # only place this class can be caught: a query naming a column that
+          # does not exist compiles, reviews clean, and fails at runtime into a
+          # handler that discards the error. A green run of THIS job printed
+          # `column "request_count" does not exist` into the Postgres log while
+          # reporting success. sqlprepare PREPAREs each statement -- parse,
+          # name resolution and planning, no execution -- and fails on anything
+          # its register does not already carry. See tools/sqlprepare.
+          echo "::group::SQL prepares against the migrated schema"
+          go run ./tools/sqlprepare -fail
+          echo "::endgroup::"
+
           # ----- build services the integration tests hit -----
           # gateway-service is here because TestCrossOrgSpoofing needs it and
           # nothing was starting it. That test asserts the gateway STRIPS a

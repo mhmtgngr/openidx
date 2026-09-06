@@ -100,7 +100,19 @@ func Evaluate(ctx context.Context, db *database.PostgresDB, orgID string, req Ev
 		WHERE org_id = $3
 			AND enabled = true
 			AND resource_type IN ($1, '*')
-			AND (resource_id IS NULL OR resource_id = '' OR resource_id = $2)
+			-- abac_policies.resource_id is UUID. The clause here also tested
+			-- resource_id against the empty string, and PostgreSQL resolves
+			-- that against a uuid column at PLAN time, so
+			-- the statement never ran: every call returned an error, the caller
+			-- turned that into Allowed=false, and the whole evaluator answered
+			-- "policy evaluation error, failing closed" for every request --
+			-- meaning ABAC_ENFORCE=enforce would have denied everything and
+			-- observe mode would have recorded a would-deny on every request.
+			-- A UUID column cannot hold the empty string; IS NULL is the
+			-- "applies to every resource of this type" case on its own. The
+			-- comparison is made in text so an empty or non-UUID resource id
+			-- from a caller simply matches nothing instead of erroring.
+			AND (resource_id IS NULL OR resource_id::text = $2)
 		ORDER BY priority DESC
 	`, req.ResourceType, req.ResourceID, orgID)
 	if err != nil {
