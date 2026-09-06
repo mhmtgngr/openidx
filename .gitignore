@@ -150,3 +150,9 @@ google-services.json
 # `git add -A` committed 83 files of it once; docs/doc-citations.txt waives the
 # path on the understanding that it is never checked in.
 docs/site/
+
+# Redis snapshot. `redis-server` writes dump.rdb into whatever directory it was
+# started from, which for a local dev stack is the repo root. It is a database
+# file, it turns up in `git status` looking like a build artifact, and there is
+# no version of it that belongs in the tree.
+dump.rdb

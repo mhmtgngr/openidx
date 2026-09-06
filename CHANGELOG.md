@@ -9,6 +9,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The correlation id every log line is stamped with was chosen by the
+  client.** Seven places read `X-Request-ID`, `X-Correlation-ID` or
+  `traceparent` off the request and adopted whatever arrived -- three
+  `RequestID` middlewares (`internal/middleware/requestid.go` twice,
+  `internal/common/middleware/logging.go`,
+  `internal/common/middleware/middleware.go`), the gateway's correlation
+  middleware and its `GetCorrelationID` fallback, and `TracingHeaders`, which
+  relays them to the backend. That value is echoed back in the response, kept on
+  the request context, written into every log entry for the request, and set on
+  the outbound request to each service: a caller sending five kilobytes of "A"
+  got five kilobytes back and five kilobytes per entry (measured, not
+  hypothesised), and could equally pick an id that collides with somebody else's
+  request. An inbound value is now adopted only when it is id-shaped --
+  `logsafe.PlausibleID`, which accepts a UUID, a W3C traceparent and a vendor
+  scheme, and rejects anything longer than 128 bytes or outside
+  `[A-Za-z0-9-_.:]` -- and is replaced with a fresh UUID otherwise. Replaced,
+  not cleaned: an id quietly rewritten still ties one request's entries together
+  but no longer matches what the caller kept, which is the only job it has. One
+  implementation now, and a guard (`TestCorrelationHeadersAreValidatedWhereThey
+  AreRead`) that fails on an eighth copy -- the same lesson `logsafe` itself was
+  created for, one level up.
+
+- **`logsafe`'s own comment named the wrong mechanism.** It said zap's console
+  encoder writes a newline raw where the JSON encoder escapes it, so a hostile
+  value in a FIELD could forge a log line. Measured, that is backwards: the
+  console encoder delegates fields to a JSON encoder, so a newline comes out as
+  `\n` and an ANSI escape as `\u001b` under both. The half that is raw is the
+  MESSAGE, so the forging shape is `logger.Warn(fmt.Sprintf("... %s", input))`,
+  which the comment did not mention. Naming the wrong mechanism is worse than
+  naming none -- it invites "just use the JSON encoder", which fixes nothing.
+  The comment now says what was measured, `encoder_test.go` measures it (so the
+  claim fails a build rather than ageing), and the reasons a field still needs
+  cleaning are stated as what they are: the length bound no encoder applies, the
+  sinks downstream of zap that do their own escaping or none, and the fact that
+  a percent-encoded `%0A` in a request target really does arrive in
+  `URL.Path` as a newline. A new guard forbids the interpolated-message shape
+  outright; the tree had two (`internal/server/graceful.go`), now zero.
+
+- **Request-derived values reached the log unfiltered across
+  `internal/common/middleware`.** CodeQL flagged one site -- the cross-org
+  warning added earlier on this branch (`tenant_resolver.go`) -- and the same
+  shape was in eight more: the CSRF middleware's `origin`/`referer`/`path`, the
+  request logger's `path`/`method`/`client_ip`/`user_agent`/`query_params`, the
+  OPA middleware's `path`/`method`, the rate limiter's `key` (which embeds the
+  client IP) and `path`, and `internal/common/logger`'s second request logger.
+  All now go through `logsafe.String`. `request_body` deliberately does not: it
+  is a payload rather than an identifier, `logsafe.MaxLen` would cut it to 256
+  bytes and defeat the option somebody turned on, and it is already bounded at
+  10 KB -- said in the code rather than left for a reader to wonder about.
+
 - **The mandatory cross-org audit trail had never been written by a test, and
   could not have been where it was aimed.** `TestCrossOrgIsolation`'s
   platform-admin subtest skipped on every run of its life -- "admin is not a

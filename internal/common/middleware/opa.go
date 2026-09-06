@@ -8,6 +8,8 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/opa"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 // OPAAuthz returns a Gin middleware that enforces OPA authorization decisions.
@@ -66,7 +68,7 @@ func OPAAuthz(client *opa.Client, logger *zap.Logger, devMode bool) gin.HandlerF
 		if err != nil {
 			logger.Warn("OPA authorization error",
 				zap.Error(err),
-				zap.String("path", c.Request.URL.Path),
+				logsafe.String("path", c.Request.URL.Path),
 				zap.String("user_id", uid),
 			)
 			if devMode {
@@ -83,8 +85,8 @@ func OPAAuthz(client *opa.Client, logger *zap.Logger, devMode bool) gin.HandlerF
 		// Deny overrides allow, matching the policy's own final_allow rule.
 		if !decision.Allow || len(decision.Deny) > 0 {
 			logger.Info("OPA denied request",
-				zap.String("path", c.Request.URL.Path),
-				zap.String("method", c.Request.Method),
+				logsafe.String("path", c.Request.URL.Path),
+				logsafe.String("method", c.Request.Method),
 				zap.String("user_id", uid),
 				zap.Bool("allow", decision.Allow),
 				zap.Strings("deny_reasons", decision.Deny),

@@ -15,6 +15,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/openidx/openidx/internal/gateway"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 // ctxKey is a private type for context keys to avoid collisions with keys
@@ -137,9 +139,16 @@ func (p *ReverseProxy) modifyRequest(req *http.Request) error {
 			req.Header.Set("X-Correlation-ID", correlationID)
 		}
 
-		// Add request ID
-		if requestID := c.GetHeader("X-Request-ID"); requestID != "" {
-			req.Header.Set("X-Request-ID", requestID)
+		// Add request ID. Forward the value a RequestID middleware already vetted
+		// and put on the context; fall back to the inbound header only when it is
+		// id-shaped, so the gateway does not relay a client's arbitrary bytes to
+		// every backend's logs (logsafe.PlausibleID).
+		if requestID, ok := c.Get("request_id"); ok {
+			if id, isStr := requestID.(string); isStr && id != "" {
+				req.Header.Set("X-Request-ID", id)
+			}
+		} else if id := c.GetHeader("X-Request-ID"); logsafe.PlausibleID(id) {
+			req.Header.Set("X-Request-ID", id)
 		}
 
 		// Add gateway identification
@@ -219,14 +228,22 @@ func (p *ReverseProxy) errorHandler(w http.ResponseWriter, r *http.Request, err 
 	writeJSONError(w, "failed to reach upstream service", "PROXY_ERROR")
 }
 
-// GetCorrelationID gets the correlation ID from the Gin context
+// GetCorrelationID gets the correlation ID from the Gin context.
+//
+// The context value was vetted by the correlation middleware. The header
+// fallback covers a request that never passed through it, and is only honoured
+// when it is id-shaped: this value is written into an outbound header on every
+// proxied request, so an unvetted one would reach every backend's logs.
 func GetCorrelationID(c *gin.Context) string {
 	if correlationID, exists := c.Get("correlation_id"); exists {
 		if id, ok := correlationID.(string); ok {
 			return id
 		}
 	}
-	return c.GetHeader("X-Correlation-ID")
+	if id := c.GetHeader("X-Correlation-ID"); logsafe.PlausibleID(id) {
+		return id
+	}
+	return ""
 }
 
 // getClientIP gets the client IP address from the Gin context or request

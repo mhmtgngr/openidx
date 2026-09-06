@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -204,8 +205,8 @@ func warnUnanswerableCrossOrg(c *gin.Context, cfg TenantResolverConfig) {
 	cfg.Logger.Warn(
 		"X-Org-ID ignored: TenantResolver ran before authentication, so the platform-admin predicate has no roles to read. "+
 			"Mount the resolver after the auth middleware (see cmd/admin-api) if this service is meant to honor cross-org access.",
-		zap.String("path", c.Request.URL.Path),
-		zap.String("method", c.Request.Method),
+		logsafe.String("path", c.Request.URL.Path),
+		logsafe.String("method", c.Request.Method),
 	)
 }
 

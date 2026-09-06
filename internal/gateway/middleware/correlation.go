@@ -9,6 +9,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 const (
@@ -43,11 +45,20 @@ func DefaultCorrelationIDConfig() CorrelationIDConfig {
 // CorrelationID creates a Gin middleware for correlation ID handling
 func CorrelationID(config CorrelationIDConfig) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// Both headers are the client's. A correlation ID is echoed back, kept on
+		// the context and propagated to every backend, so it is adopted only when
+		// it is id-shaped and replaced outright otherwise — see
+		// logsafe.PlausibleID for why a bad one is not cleaned into shape.
 		correlationID := c.GetHeader(CorrelationIDHeader)
+		if !logsafe.PlausibleID(correlationID) {
+			correlationID = ""
+		}
 
 		// Try X-Request-ID if configured and correlation ID is missing
 		if correlationID == "" && config.UseRequestIDHeader {
-			correlationID = c.GetHeader(RequestIDHeader)
+			if id := c.GetHeader(RequestIDHeader); logsafe.PlausibleID(id) {
+				correlationID = id
+			}
 		}
 
 		// Generate new ID if configured and still missing
@@ -192,13 +203,21 @@ func TracingHeaders(c *gin.Context) map[string]string {
 		headers[CorrelationIDHeader] = correlationID
 	}
 
-	// Add request ID if present
-	if requestID := c.GetHeader(RequestIDHeader); requestID != "" {
-		headers[RequestIDHeader] = requestID
+	// Add request ID if present. Prefer the value a RequestID middleware vetted
+	// onto the context; take the raw header only when it is id-shaped, since
+	// these headers are set on the request going to the backend.
+	if requestID, ok := c.Get("request_id"); ok {
+		if id, isStr := requestID.(string); isStr && id != "" {
+			headers[RequestIDHeader] = id
+		}
+	} else if id := c.GetHeader(RequestIDHeader); logsafe.PlausibleID(id) {
+		headers[RequestIDHeader] = id
 	}
 
-	// Add trace parent for OpenTelemetry if present
-	if traceParent := c.GetHeader("traceparent"); traceParent != "" {
+	// Add trace parent for OpenTelemetry if present. Same rule: this goes onto
+	// the outbound request, so it is relayed only when it is id-shaped. A real
+	// traceparent (version-traceid-spanid-flags) passes; arbitrary bytes do not.
+	if traceParent := c.GetHeader("traceparent"); logsafe.PlausibleID(traceParent) {
 		headers["traceparent"] = traceParent
 	}
 

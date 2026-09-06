@@ -10,6 +10,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 // Service represents the gateway service
@@ -268,8 +270,11 @@ func anyFields(fields []zap.Field) []interface{} {
 // Create middleware implementations
 func (s *Service) correlationIDMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// The header is the client's: it is echoed back, kept on the context and
+		// propagated to every backend. Adopt it only when it is id-shaped
+		// (logsafe.PlausibleID), otherwise mint one.
 		correlationID := c.GetHeader("X-Correlation-ID")
-		if correlationID == "" {
+		if !logsafe.PlausibleID(correlationID) {
 			correlationID = generateCorrelationID()
 		}
 		c.Set("correlation_id", correlationID)

@@ -707,3 +707,62 @@ func TestTenantResolver_nonPlatformAdmin_ignoresXOrgID(t *testing.T) {
 		t.Fatalf("audit hook fired %d times for non-platform-admin, want 0", hookCalls)
 	}
 }
+
+// fieldValue returns the string value of key on the first captured entry whose
+// message contains substr.
+func (c *capturedLogs) fieldValue(substr, key string) (string, bool) {
+	for _, e := range c.entries {
+		if !strings.Contains(e.Message, substr) {
+			continue
+		}
+		for _, f := range e.Context {
+			if f.Key == key {
+				return f.String, true
+			}
+		}
+	}
+	return "", false
+}
+
+// TestTenantResolver_warningNeutralisesAHostilePath is the answer to CodeQL's
+// "Log entries created from user input" on warnUnanswerableCrossOrg: the warning
+// this branch added reports the path of the request that tried to cross orgs,
+// and the path is the client's, not the router's — %0A in a request target
+// arrives in URL.Path as a real newline (internal/common/logsafe/encoder_test.go
+// measures that, and what each zap encoder then does with it).
+//
+// Two things are asserted rather than one, because the fix has to keep the
+// warning USEFUL: the control characters are gone AND the readable part of the
+// path is still there. A sanitiser that logged "path: [redacted]" would pass a
+// weaker version of this test and tell an operator nothing.
+func TestTenantResolver_warningNeutralisesAHostilePath(t *testing.T) {
+	logs, logger := recordingLogger()
+	cfg := TenantResolverConfig{
+		DefaultOrgFallback:     true,
+		DefaultOrgID:           defaultOrgID,
+		PlatformAdminPredicate: func(*gin.Context) bool { return false },
+		Logger:                 logger,
+	}
+
+	// A path carrying a line break, a tab and an ANSI escape, percent-encoded the
+	// way they would arrive over the wire.
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/identity/users%0A2026-01-01T00:00:00Z%09FATAL%09forged%1b[2J", nil)
+	req.Header.Set("X-Org-ID", acmeOrgID)
+
+	var got capturedRequest
+	if rec := runResolver(t, newFakeLookup(), cfg, &got, req); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+
+	path, ok := logs.fieldValue("X-Org-ID ignored", "path")
+	if !ok {
+		t.Fatal("no path field on the warning — the test cannot say anything about it")
+	}
+	if strings.ContainsAny(path, "\r\n\t\x1b") {
+		t.Fatalf("the warning carried a control character out of the request: %q", path)
+	}
+	if !strings.Contains(path, "/api/v1/identity/users") {
+		t.Fatalf("path field = %q — cleaning must not cost the operator the route", path)
+	}
+}

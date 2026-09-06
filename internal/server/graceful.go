@@ -3,7 +3,6 @@ package server
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
@@ -200,7 +199,7 @@ func (g *GracefulShutdown) shutdown() {
 // This is a convenience method that combines server startup with graceful shutdown
 func (g *GracefulShutdown) ListenAndServe() error {
 	go func() {
-		g.logger.Info(fmt.Sprintf("Server listening on %s", g.server.Addr))
+		g.logger.Info("Server listening", zap.String("addr", g.server.Addr))
 		if err := g.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			g.logger.Error("Server error", zap.Error(err))
 		}
@@ -213,7 +212,7 @@ func (g *GracefulShutdown) ListenAndServe() error {
 // ListenAndServeTLS starts the HTTPS server and then waits for shutdown signals
 func (g *GracefulShutdown) ListenAndServeTLS(certFile, keyFile string) error {
 	go func() {
-		g.logger.Info(fmt.Sprintf("Server listening on %s (TLS)", g.server.Addr))
+		g.logger.Info("Server listening (TLS)", zap.String("addr", g.server.Addr))
 		if err := g.server.ListenAndServeTLS(certFile, keyFile); err != nil && err != http.ErrServerClosed {
 			g.logger.Error("Server error", zap.Error(err))
 		}

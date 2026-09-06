@@ -11,6 +11,8 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 // New creates a new zap logger with sensible defaults.
@@ -97,20 +99,30 @@ func GinMiddleware(logger *zap.Logger) gin.HandlerFunc {
 		latency := time.Since(start)
 		status := c.Writer.Status()
 
+		// Everything here that is a string came off the wire: the path carries
+		// whatever %-encoding the client chose, the query and user agent are the
+		// client's outright, and ip is X-Forwarded-For behind a trusted proxy.
+		// See internal/common/logsafe.
 		fields := []zap.Field{
 			zap.Int("status", status),
-			zap.String("method", c.Request.Method),
-			zap.String("path", path),
-			zap.String("query", query),
-			zap.String("ip", c.ClientIP()),
-			zap.String("user-agent", c.Request.UserAgent()),
+			logsafe.String("method", c.Request.Method),
+			logsafe.String("path", path),
+			logsafe.String("query", query),
+			logsafe.String("ip", c.ClientIP()),
+			logsafe.String("user-agent", c.Request.UserAgent()),
 			zap.Duration("latency", latency),
 			zap.Int("body_size", c.Writer.Size()),
 		}
 
-		// Add request ID if present
-		if requestID := c.GetHeader("X-Request-ID"); requestID != "" {
-			fields = append(fields, zap.String("request_id", requestID))
+		// Add request ID if present. Prefer the one a RequestID middleware already
+		// vetted and put on the context; fall back to the header only when it is
+		// id-shaped, so a hostile value is dropped rather than logged.
+		if requestID, ok := c.Get("request_id"); ok {
+			if id, isStr := requestID.(string); isStr && id != "" {
+				fields = append(fields, logsafe.String("request_id", id))
+			}
+		} else if id := c.GetHeader("X-Request-ID"); logsafe.PlausibleID(id) {
+			fields = append(fields, zap.String("request_id", id))
 		}
 
 		// Add user ID if authenticated

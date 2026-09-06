@@ -690,3 +690,63 @@ func TestBodyReadingAfterLogging(t *testing.T) {
 	assert.Equal(t, "testuser", receivedBody["username"])
 	assert.Equal(t, "test@example.com", receivedBody["email"])
 }
+
+// TestRequestLogger_RejectsAnImplausibleRequestID: X-Request-ID is honoured so a
+// caller can correlate a request across services, and TestRequestLogger_Preserve
+// RequestID pins that. This is the other half — the header is unauthenticated,
+// it is echoed back in the response, and it is stamped on every log line for the
+// request, so an id-shaped value is accepted and anything else is replaced.
+//
+// The 5,000-byte case is the one measured before the fix: the value came back in
+// the response header in full and appeared in every log entry.
+func TestRequestLogger_RejectsAnImplausibleRequestID(t *testing.T) {
+	cases := map[string]struct {
+		sent   string
+		accept bool
+	}{
+		"a UUID":                        {"3f2504e0-4f89-11d3-9a0c-0305e82c3301", true},
+		"a W3C traceparent":             {"00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01", true},
+		"a vendor id with dots":         {"svc.api.7a1f_2b", true},
+		"five kilobytes":                {strings.Repeat("A", 5000), false},
+		"a line break":                  {"abc\ndef", false},
+		"an ANSI escape":                {"abc\x1b[2Jdef", false},
+		"a space":                       {"abc def", false},
+		"markup":                        {"<script>alert(1)</script>", false},
+		"empty (the pre-existing case)": {"", false},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			logger, observedLogs := setupTestLogger()
+			gin.SetMode(gin.TestMode)
+			router := gin.New()
+			router.Use(RequestLogger(logger))
+			router.GET("/test", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{}) })
+
+			req := httptest.NewRequest("GET", "/test", nil)
+			if tc.sent != "" {
+				// Set directly on the map: http.Header.Set would be fine here, but
+				// going through it hides that a proxy can hand us anything.
+				req.Header["X-Request-Id"] = []string{tc.sent}
+			}
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			logs := observedLogs.All()
+			require.Greater(t, len(logs), 0)
+			logged := findField(logs[0], "request_id")
+			echoed := w.Header().Get("X-Request-ID")
+
+			require.NotEmpty(t, logged, "every request must carry a correlation id")
+			assert.Equal(t, logged, echoed, "the logged id and the echoed id must be the same value")
+
+			if tc.accept {
+				assert.Equal(t, tc.sent, logged, "an id-shaped X-Request-ID must be preserved for correlation")
+				return
+			}
+			assert.NotEqual(t, tc.sent, logged, "an implausible X-Request-ID was used as the correlation id")
+			assert.Len(t, logged, 36, "the replacement should be a UUID")
+			assert.NotContains(t, echoed, "AAAA", "the rejected value was echoed back to the client")
+		})
+	}
+}

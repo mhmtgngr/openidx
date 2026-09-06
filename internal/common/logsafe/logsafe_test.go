@@ -87,3 +87,41 @@ func TestStringCleansTheValue(t *testing.T) {
 		t.Errorf("String() key = %q, want client_id", f.Key)
 	}
 }
+
+// PlausibleID decides what four middlewares adopt from a client, so the boundary
+// is worth spelling out rather than leaving to the reader of the loop.
+func TestPlausibleID(t *testing.T) {
+	accept := []string{
+		"3f2504e0-4f89-11d3-9a0c-0305e82c3301",                    // UUID
+		"00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01", // W3C traceparent
+		"svc.api.7a1f_2b", // a vendor scheme
+		"req:12345",
+		"a",
+		strings.Repeat("a", MaxIDLen),
+	}
+	for _, s := range accept {
+		if !PlausibleID(s) {
+			t.Errorf("PlausibleID(%q) = false, want true — a legitimate correlation id was thrown away", s)
+		}
+	}
+
+	reject := map[string]string{
+		"":                              "empty",
+		strings.Repeat("a", MaxIDLen+1): "one over the bound",
+		strings.Repeat("A", 5000):       "the measured five-kilobyte case",
+		"abc\ndef":                      "a line break",
+		"abc\r\ndef":                    "a CRLF",
+		"abc def":                       "a space",
+		"abc\x1b[2Jdef":                 "an ANSI escape",
+		"<script>alert(1)</script>":     "markup",
+		"id/../../etc/passwd":           "a path traversal, in case an id is ever used as one",
+		"id%0Aforged":                   "a percent-encoded newline",
+		"tenant=acme&role=admin":        "query syntax",
+		"ünïcode":                       "non-ASCII, which no tracing system emits",
+	}
+	for s, why := range reject {
+		if PlausibleID(s) {
+			t.Errorf("PlausibleID(%q) = true, want false (%s)", s, why)
+		}
+	}
+}

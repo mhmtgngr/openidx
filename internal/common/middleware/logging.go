@@ -13,6 +13,8 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 // DefaultSanitizedFields contains default sensitive field names to redact
@@ -78,9 +80,13 @@ func RequestLoggerWithConfig(config LoggingConfig) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
 
-		// Generate or retrieve request ID
+		// Generate or retrieve request ID. An inbound X-Request-ID is honoured so
+		// a caller can correlate across services, but it is not trusted: it is
+		// echoed back in the response header below and stamped on every log line
+		// for the request. logsafe.PlausibleID says what "trusted" means here and
+		// why a rejected value is replaced rather than cleaned.
 		requestID := c.GetHeader("X-Request-ID")
-		if requestID == "" {
+		if !logsafe.PlausibleID(requestID) {
 			requestID = uuid.New().String()
 		}
 
@@ -127,22 +133,37 @@ func RequestLoggerWithConfig(config LoggingConfig) gin.HandlerFunc {
 			requestBody = sanitizeJSON(requestBody, sanitizeFields)
 		}
 
-		// Prepare log fields before processing
+		// Prepare log fields before processing. Everything here except request_id
+		// (already validated above) came off the wire: the path carries whatever
+		// %-encoding the client chose, the user agent is a free-text header, and
+		// client_ip is X-Forwarded-For behind a trusted proxy. See
+		// internal/common/logsafe for what "cleaned" means and why a zap field
+		// still needs it.
 		fields := []zapcore.Field{
 			zap.String("request_id", requestID),
-			zap.String("method", c.Request.Method),
-			zap.String("path", c.Request.URL.Path),
-			zap.String("client_ip", getClientIP(c)),
-			zap.String("user_agent", c.Request.UserAgent()),
+			logsafe.String("method", c.Request.Method),
+			logsafe.String("path", c.Request.URL.Path),
+			logsafe.String("client_ip", getClientIP(c)),
+			logsafe.String("user_agent", c.Request.UserAgent()),
 		}
 
-		// Add query parameters if enabled
+		// Add query parameters if enabled. sanitizeQueryParams redacts the values
+		// of sensitive KEYS; it does not touch the rest of the query string, which
+		// is entirely the client's.
 		if config.LogQueryParams && c.Request.URL.RawQuery != "" {
 			sanitizedQuery := sanitizeQueryParams(c.Request.URL.RawQuery, sanitizeFields)
-			fields = append(fields, zap.String("query_params", sanitizedQuery))
+			fields = append(fields, logsafe.String("query_params", sanitizedQuery))
 		}
 
-		// Add request body if enabled and present
+		// Add request body if enabled and present.
+		//
+		// Deliberately NOT cleaned through logsafe: this field is a payload, not
+		// an identifier, and logsafe.MaxLen would cut it to 256 bytes, which
+		// defeats the option somebody turned on. Its bound is the 10 KB truncation
+		// above, and it is a zap field, so both encoders escape it (see
+		// internal/common/logsafe/encoder_test.go). LogBody is off by default and
+		// is a debugging tool; turning it on means accepting client bytes in the
+		// log by definition.
 		if config.LogBody && requestBody != "" {
 			fields = append(fields, zap.String("request_body", requestBody))
 		}
