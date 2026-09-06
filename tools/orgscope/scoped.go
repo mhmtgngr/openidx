@@ -72,18 +72,12 @@ var beltExempt = map[string]string{
 // handlers. Listed with what the table actually holds so the batches are easy
 // to cut.
 var needsScoping = map[string]string{
-	// Audit and compliance — one tenant's auditor can read another's trail.
-	"compliance_gaps":        "named control gaps and remediation plans (v44)",
-	"policy_recommendations": "recommendations naming affected users, roles and resources (v44)",
-
 	// MFA and credentials — the most sensitive per-user rows in the product.
 	"user_identity_links":  "per-user external identity links",
 	"social_account_links": "per-user social provider links",
 
 	// Lifecycle, governance and delegation.
-	"entitlement_metadata":     "risk level and owner per entitlement",
-	"kiosk_policies":           "kiosk lockdown policies (v44)",
-	"kiosk_policy_assignments": "kiosk policy targets (v44)",
+	"entitlement_metadata": "risk level and owner per entitlement",
 
 	// Agent fleet — the devices enrolled by a tenant's users.
 	"enrolled_agents":         "enrolled devices with tokens and compliance state (v43)",

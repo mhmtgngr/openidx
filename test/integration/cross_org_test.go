@@ -704,6 +704,20 @@ func TestRLSBeltTables(t *testing.T) {
 			RETURNING id)
 			INSERT INTO biometric_preferences (user_id, biometric_only_enabled, org_id)
 			SELECT u.id, true, $1 FROM u`},
+
+		// v159 — the kiosk lockdown policies. The admin list said outright that
+		// it returned every policy on the installation, and the assignment
+		// handler took the policy id from the URL and the target from the body
+		// and checked neither.
+		{"kiosk_policies", `INSERT INTO kiosk_policies (name, mode, enabled, org_id)
+			VALUES ('tbelt-kiosk-` + suffix + `', 'single_app', true, $1)`},
+
+		{"kiosk_policy_assignments", `WITH p AS (
+			INSERT INTO kiosk_policies (name, mode, enabled, org_id)
+			VALUES ('tbelt-kiosk-a-` + suffix + `', 'single_app', true, $1)
+			RETURNING id)
+			INSERT INTO kiosk_policy_assignments (policy_id, target_kind, target_id, priority, org_id)
+			SELECT p.id, 'agent', 'tbelt-agent-` + suffix + `', 300, $1 FROM p`},
 	}
 
 	// One list, not two: the role is granted exactly the tables the cases probe.

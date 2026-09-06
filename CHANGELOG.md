@@ -21,6 +21,42 @@ to a spec that describes an eighth of a surface, a documented endpoint that
   the posture score was neither one tenant's nor the install's. All now carry
   `org_id` under FORCE RLS, with the install-wide unique keys re-scoped and an
   isolation test per handler file.
+- **Any administrator could read, disable or delete another organization's
+  device lockdown policies, and aim one at a device** (migration v159). A kiosk
+  policy puts a managed device into locked-down mode: which apps may run, which
+  screen is pinned, the branding shown, and the PIN required to leave. The
+  records had no organization. The administrative list returned every policy on
+  the installation — its own code comment said so — and reading, editing and
+  deleting a policy needed only its identifier, so one organization's
+  administrator could turn off another's device lockdown with nothing on the
+  owning console to say the control had stopped existing.
+
+  Assigning a policy to a device was worse: the endpoint took the policy from
+  the address and the device from the request body and checked neither, so an
+  administrator could aim another organization's lockdown — and its exit PIN —
+  at a device. Policies, assignments and every one of the eight endpoints now
+  carry the organization, and assignment verifies the policy belongs to the
+  caller.
+
+  **What this does not settle**, stated plainly: enrolled agents have no
+  organization, by an existing deliberate decision. So an agent identifier names
+  a device without naming a tenant, and while an administrator can no longer aim
+  *another organization's* policy at a device, nothing yet stops them aiming
+  *their own* policy at a device someone else enrolled. Whether the agent fleet
+  should be per-organization is an open product decision.
+
+  **Operators of installations with more than one organization should review
+  their kiosk policies and assignments after upgrading.** Existing policies are
+  assigned to the organization of whoever created them, and assignments follow
+  their policy; anything unattributed goes to the oldest organization.
+
+  Two more, alongside. Creating a kiosk policy without specifying the allowed
+  apps, the lock-task features or the branding — all three optional — failed
+  with an unexplained server error; it now works, using the defaults the schema
+  already declared. And two tables this release removes, `policy_recommendations`
+  and `compliance_gaps`: they were created for an AI policy-suggestion endpoint
+  that was itself removed as dead earlier in this programme, and nothing in the
+  product has read or written either since.
 - **One organization's biometric rule could decide another organization's
   sign-in, and which rule won was decided alphabetically** (migration v158). A
   biometric policy says which authenticator types are allowed, whether a
