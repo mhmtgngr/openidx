@@ -18,10 +18,10 @@ and a snapshot goes stale.
 
 **Snapshot:** commit `7ebdcdd0`, CodeQL 2.26.4, `security-and-quality`.
 
-**What is not here.** The 757 `go/log-injection` results (6.1, medium) and the
-80 quality-only JS results are below the floor and out of scope for this file.
-`go/log-injection` at that volume is worth its own pass; it is not what fails
-the check.
+**Below the floor.** The 80 quality-only JS results are not security findings
+and are out of scope here. `go/log-injection` is 757 results at 6.1 — not what
+fails the check, but the volume that buried the 41 that do, so it gets a
+verdict of its own at the end.
 
 ---
 
@@ -180,6 +180,40 @@ is allowed to mutate by `PLAYWRIGHT_BASE_URL?.includes('openidx.tdv.org')`. A
 substring test is the wrong shape for that question, and the cost of getting it
 wrong is a destructive suite running against a live deployment. Recorded for
 the e2e work, not a product defect.
+
+---
+
+## `go/log-injection` — 6.1 × 757 — **not a defect**, and pinned
+
+Below the failing threshold, but it is 757 of the 793 Go results: the reason
+nobody could see the 28 that matter. It deserves a verdict rather than a
+shrug.
+
+Log injection is **forging a record** — a user-supplied value carrying CR/LF so
+that what reads as a second log line was in fact typed by the attacker. What
+prevents it here is the encoder, not a sanitiser at each of 757 call sites:
+
+- production (`APP_ENV=production`) builds `zap.NewProductionConfig()`
+  (`internal/common/logger/logger.go:24`), whose encoding is JSON;
+- development builds `zap.NewDevelopmentConfig()`, and zap's console encoder
+  still writes the structured **fields** through the JSON encoder.
+
+Either way a `zap.String("username", userInput)` value is JSON-escaped and a
+newline inside it comes out as the two characters `\` and `n`. That is not an
+assertion: `TestUserValuesInFieldsCannotForgeALogRecord`
+(`internal/common/logger/log_injection_test.go`) encodes a forged value through
+both encoders and fails if a raw line break survives.
+
+**The shape that would be a real defect** is a user value interpolated into the
+log *message*, which the console encoder writes verbatim. The same test pins
+that difference, so the distinction cannot quietly stop being true. A sweep for
+it — `logger.Info(fmt.Sprintf(...))` and message concatenation across
+`internal/` and `cmd/` — finds **four** sites, and all four interpolate
+configuration (`server.Addr`) or join constant strings. None carries user
+input.
+
+So: triage a future `go/log-injection` alert by asking which argument the
+tainted value reaches. A field is safe by construction; the message is not.
 
 ---
 

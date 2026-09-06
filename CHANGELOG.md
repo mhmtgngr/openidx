@@ -1117,6 +1117,17 @@ to a spec that describes an eighth of a surface, a documented endpoint that
 
 ### Fixed
 
+- **The 757 `go/log-injection` findings have a verdict, pinned by a test.** Log
+  injection is forging a record with CR/LF in a user-supplied value. What
+  prevents it here is the encoder, not a sanitiser at 757 call sites: production
+  logs JSON, and zap's console encoder still writes structured *fields* as JSON,
+  so a newline in a `zap.String` value comes out escaped either way.
+  `TestUserValuesInFieldsCannotForgeALogRecord` encodes a forged value through
+  both encoders and fails if a raw line break survives — and pins the one shape
+  that *would* be a defect, a user value interpolated into the log message,
+  which the console encoder writes verbatim. A sweep for that shape finds four
+  sites, all interpolating configuration, none user input.
+
 - **Every CodeQL finding at security severity 7.0+ now has a written verdict.**
   `docs/evidence/codeql-triage.md` lists all 41 (28 Go, 13 JS) with the evidence
   for each: what is vendored, what is a protocol requirement, what is already
