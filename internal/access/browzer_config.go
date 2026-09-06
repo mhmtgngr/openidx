@@ -346,12 +346,18 @@ func (s *Service) handleBrowZerDomainChange(c *gin.Context) {
 	}
 
 	// Update oauth_clients redirect_uris: replace old domain
+	// oauth_clients.redirect_uris is JSONB, not TEXT[], so unnest() has no
+	// function to resolve and this statement could never plan: after a BrowZer
+	// domain change every OAuth client kept redirecting to the old domain,
+	// which is the failure a domain change exists to prevent. The JSONB
+	// spelling of the same rewrite -- expand to text, replace, re-aggregate.
 	_, err = s.db.Pool.Exec(ctx,
 		`UPDATE oauth_clients SET redirect_uris = (
-			SELECT array_agg(REPLACE(uri, $1, $2))
-			FROM unnest(redirect_uris) AS uri
+			SELECT COALESCE(jsonb_agg(REPLACE(uri, $1, $2)), '[]'::jsonb)
+			FROM jsonb_array_elements_text(redirect_uris) AS uri
 		) WHERE EXISTS (
-			SELECT 1 FROM unnest(redirect_uris) AS uri WHERE uri LIKE '%' || $1 || '%'
+			SELECT 1 FROM jsonb_array_elements_text(redirect_uris) AS uri
+			WHERE uri LIKE '%' || $1 || '%'
 		) AND org_id = $3`, oldDomain, newDomain, org.ID)
 	if err != nil {
 		s.logger.Warn("Failed to update OAuth redirect URIs", zap.Error(err))

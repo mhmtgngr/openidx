@@ -1,6 +1,8 @@
 package main
 
 import (
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"strings"
@@ -47,7 +49,7 @@ func TestIsStatementSeparatesQueriesFromEverythingElse(t *testing.T) {
 func TestOnlyPrepareLimitationsAreSkipped(t *testing.T) {
 	skipped := []string{"42601", "42P18", "42P08"}
 	for _, code := range skipped {
-		reason, ok := skipReason(code, "", "SELECT 1")
+		reason, ok := skipReason(code, "", "SELECT 1", false)
 		if !ok {
 			t.Errorf("SQLSTATE %s should be skipped", code)
 			continue
@@ -62,15 +64,15 @@ func TestOnlyPrepareLimitationsAreSkipped(t *testing.T) {
 	// SELECT list somebody uses as a search string, not a statement. A missing
 	// TABLE always comes from a statement that HAS the FROM clause naming it.
 	if _, ok := skipReason("42P01", `missing FROM-clause entry for table "e"`,
-		"SELECT e.id, e.source, r.name as route_name"); !ok {
+		"SELECT e.id, e.source, r.name as route_name", false); !ok {
 		t.Error("a SELECT list with no FROM clause is not a statement and must be skipped")
 	}
 	if reason, ok := skipReason("42P01", `missing FROM-clause entry for table "x"`,
-		"SELECT a FROM t WHERE x.id = 1"); ok {
+		"SELECT a FROM t WHERE x.id = 1", false); ok {
 		t.Errorf("a statement WITH a FROM clause was skipped as %q", reason)
 	}
 	if reason, ok := skipReason("42P01", `relation "gone" does not exist`,
-		"SELECT a FROM gone"); ok {
+		"SELECT a FROM gone", false); ok {
 		t.Errorf("a missing table was skipped as %q -- that is the class this tool exists for", reason)
 	}
 
@@ -83,7 +85,7 @@ func TestOnlyPrepareLimitationsAreSkipped(t *testing.T) {
 		"42803", // grouping error
 		"22P02", // invalid text representation (malformed array, bad uuid literal)
 	} {
-		if reason, ok := skipReason(code, `relation "t" does not exist`, "SELECT a FROM t"); ok {
+		if reason, ok := skipReason(code, `relation "t" does not exist`, "SELECT a FROM t", false); ok {
 			t.Errorf("SQLSTATE %s must be a finding, not skipped as %q", code, reason)
 		}
 	}
@@ -170,4 +172,56 @@ func repoRoot(t *testing.T) string {
 	}
 	t.Fatal("could not find the module root")
 	return ""
+}
+
+// A grouping error is skippable only on a literal the code appends clauses to.
+// internal/governance builds its access-review list that way: the aggregate is
+// in the literal and the GROUP BY arrives three statements later, so preparing
+// the first half alone reports a grouping error for a query that groups
+// correctly at runtime. The same error on a COMPLETE statement is a real defect
+// -- it fails the same way against the database.
+func TestGroupingErrorsAreSkippedOnlyOnAssembledQueries(t *testing.T) {
+	const detail = `column "ar.id" must appear in the GROUP BY clause`
+	const sql = "SELECT ar.id, COUNT(ri.id) FROM access_reviews ar LEFT JOIN review_items ri ON ar.id = ri.review_id"
+
+	if _, ok := skipReason("42803", detail, sql, true); !ok {
+		t.Error("a grouping error on a literal the code appends to must be skipped")
+	}
+	if reason, ok := skipReason("42803", detail, sql, false); ok {
+		t.Errorf("a grouping error on a complete statement was skipped as %q", reason)
+	}
+	// And a missing column stays a finding even on a fragment: no suffix
+	// supplies a column the table does not have.
+	if reason, ok := skipReason("42703", `column "gone" does not exist`, sql, true); ok {
+		t.Errorf("a missing column on a fragment was skipped as %q", reason)
+	}
+}
+
+// The fragment flag has to come from the code, not from a guess: a literal is
+// assembled when the file appends to the variable holding it.
+func TestContinuedVariablesAreDetected(t *testing.T) {
+	src := `package p
+
+func f(status string) {
+	baseQuery := ` + "`SELECT a, COUNT(b) FROM t`" + `
+	if status != "" {
+		baseQuery += " AND status = $1"
+	}
+	baseQuery += ` + "`GROUP BY a`" + `
+	whole := ` + "`SELECT c FROM u`" + `
+	_, _ = baseQuery, whole
+}
+`
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "p.go", src, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	continued := continuedVars(f)
+	if !continued["baseQuery"] {
+		t.Error("baseQuery is appended to and was not recognised")
+	}
+	if continued["whole"] {
+		t.Error("whole is never appended to and was marked assembled")
+	}
 }

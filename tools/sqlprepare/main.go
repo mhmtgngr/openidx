@@ -141,7 +141,7 @@ func main() {
 			continue
 		}
 		code, detail := pgErr(perr)
-		if reason, skip := skipReason(code, detail, s.SQL); skip {
+		if reason, skip := skipReason(code, detail, s.SQL, s.Continued); skip {
 			skipped[reason]++
 			if *verbose {
 				fmt.Printf("skip  %s:%d  %s (%s)\n", s.File, s.Line, reason, code)
@@ -203,12 +203,23 @@ func main() {
 
 // skipReason names the PREPARE outcomes that say something about this tool's
 // reach rather than about the query.
-func skipReason(code, detail, sql string) (string, bool) {
+func skipReason(code, detail, sql string, continued bool) (string, bool) {
 	switch code {
 	case "42601":
 		return "fragment of a query assembled at runtime (syntax error alone)", true
 	case "42P18", "42P08":
 		return "parameter type not inferable by PREPARE (the driver supplies it)", true
+	case "42803":
+		// A grouping error on a literal the code appends to is the missing
+		// GROUP BY that arrives in the suffix. internal/governance builds its
+		// access-review list that way -- the aggregate is in the literal, the
+		// GROUP BY three statements later -- and preparing the first half
+		// alone reported "ar.id must appear in the GROUP BY clause" for a
+		// query that groups correctly at runtime. A grouping error on a
+		// COMPLETE statement is still a finding.
+		if continued {
+			return "first half of a query the code appends clauses to", true
+		}
 	case "42P01":
 		// 42P01 covers two different things and only one of them is a finding.
 		//
@@ -251,6 +262,13 @@ type sqlLiteral struct {
 	File string
 	Line int
 	SQL  string
+	// Continued marks a literal the code appends to (`q := ` + "`SELECT …`" + `;
+	// q += ` + "`GROUP BY …`" + `). PREPARE sees only the first half, so an
+	// error a suffix would have supplied -- a GROUP BY that arrives later, a
+	// clause the builder adds -- is a property of the fragment and not of the
+	// statement that reaches the database. Errors that no suffix can explain,
+	// a missing column or a missing table, are still findings on a fragment.
+	Continued bool
 }
 
 // collect walks the roots and returns every string literal that begins a SQL
@@ -283,6 +301,10 @@ func collect(roots []string) ([]sqlLiteral, error) {
 				// is the defect it was written to catch.
 				return fmt.Errorf("%s: %w", path, perr)
 			}
+			// Which variables the file appends to, so a literal assigned to
+			// one can be recognised as the first half of a query.
+			continued := continuedVars(f)
+
 			ast.Inspect(f, func(n ast.Node) bool {
 				lit, ok := n.(*ast.BasicLit)
 				if !ok || lit.Kind != token.STRING {
@@ -296,9 +318,10 @@ func collect(roots []string) ([]sqlLiteral, error) {
 					return true
 				}
 				out = append(out, sqlLiteral{
-					File: filepath.ToSlash(path),
-					Line: fset.Position(lit.Pos()).Line,
-					SQL:  strings.TrimSuffix(strings.TrimSpace(val), ";"),
+					File:      filepath.ToSlash(path),
+					Line:      fset.Position(lit.Pos()).Line,
+					SQL:       strings.TrimSuffix(strings.TrimSpace(val), ";"),
+					Continued: continued[assignedTo(f, lit)],
 				})
 				return true
 			})
@@ -309,6 +332,42 @@ func collect(roots []string) ([]sqlLiteral, error) {
 		}
 	}
 	return out, nil
+}
+
+// continuedVars returns the names of variables the file appends a string to
+// with `+=`. A query built that way reaches the database with more clauses than
+// the literal carries.
+func continuedVars(f *ast.File) map[string]bool {
+	out := map[string]bool{}
+	ast.Inspect(f, func(n ast.Node) bool {
+		asn, ok := n.(*ast.AssignStmt)
+		if !ok || asn.Tok != token.ADD_ASSIGN {
+			return true
+		}
+		for _, lhs := range asn.Lhs {
+			if id, ok := lhs.(*ast.Ident); ok {
+				out[id.Name] = true
+			}
+		}
+		return true
+	})
+	return out
+}
+
+// assignedTo returns the name of the variable a literal is assigned to, or "".
+func assignedTo(f *ast.File, lit *ast.BasicLit) string {
+	var name string
+	ast.Inspect(f, func(n ast.Node) bool {
+		asn, ok := n.(*ast.AssignStmt)
+		if !ok || len(asn.Lhs) != 1 || len(asn.Rhs) != 1 || asn.Rhs[0] != ast.Expr(lit) {
+			return true
+		}
+		if id, ok := asn.Lhs[0].(*ast.Ident); ok {
+			name = id.Name
+		}
+		return false
+	})
+	return name
 }
 
 var statementHeads = []string{"select ", "insert into ", "update ", "delete from ", "with "}

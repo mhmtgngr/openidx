@@ -335,15 +335,19 @@ func (ad *AnomalyDetector) detectBulkAccess(ctx context.Context, event *ServiceA
 
 	if accessCount > ad.config.BulkAccessThreshold {
 		// Get breakdown by resource type
+		// target_type, not resource_type: audit_events records what was acted
+		// on as (target_id, target_type). The breakdown that names the bulk
+		// access has been empty in every anomaly this detector raised, and the
+		// error was discarded on the line below.
 		rows, _ := ad.service.db.Pool.Query(ctx, `
-			SELECT resource_type, COUNT(*) as count
+			SELECT target_type, COUNT(*) as count
 			FROM audit_events
 			WHERE actor_id = $1
 			  AND event_type = 'authorization'
 			  AND timestamp BETWEEN $2 AND $3
 			  AND outcome = 'success'
 			  AND org_id = $4
-			GROUP BY resource_type
+			GROUP BY target_type
 			ORDER BY count DESC
 		`, event.ActorID, windowStart, windowEnd, org.ID)
 		defer rows.Close()

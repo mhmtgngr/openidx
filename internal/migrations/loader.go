@@ -1273,5 +1273,12 @@ func allMigrations() []*Migration {
 			UpSQL:       seededAccessReviewUp,
 			DownSQL:     seededAccessReviewDown,
 		},
+		{
+			Version:     179,
+			Name:        "saml_sp_metadata_xml",
+			Description: "Give saml_service_providers the metadata_xml column its refresh has always written to. A SAML service provider is registered by URL or by pasting its metadata document -- the API accepts both -- and refreshSPMetadata re-fetches that document on demand and rewrites entity_id, acs_url, certificate and metadata_xml from it. The table has no metadata_xml column and never had one, so the UPDATE could not plan and the entire refresh failed with it. THE CONSEQUENCE IS NOT A MISSING DOCUMENT: it is that a service provider's ROTATED SIGNING CERTIFICATE never reaches this database. An administrator clicks refresh, the operation errors, and assertions to that SP keep being signed against the old certificate until somebody edits the record by hand -- in a federation feature whose whole point is that the provider's own published metadata is the source of truth. The document is worth storing on its own account as well: it is the evidence of what was fetched and what the parsed fields were derived from, and re-reading it needs no second call to a provider that may have changed since. TEXT and nullable with no backfill, because nothing has ever stored one and NULL is the honest value for every existing row; a row acquires its document the first time its metadata is refreshed or re-uploaded. Found by tools/sqlprepare. Down drops the column, losing documents that a refresh regenerates -- which is what the product does anyway, and what it could not do before this migration.",
+			UpSQL:       samlMetadataXMLUp,
+			DownSQL:     samlMetadataXMLDown,
+		},
 	}
 }

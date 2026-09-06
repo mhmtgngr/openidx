@@ -100,6 +100,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The SQL register is empty: every statement in the tree now plans against
+  the schema.** The last four. `oauth_clients.redirect_uris` is JSONB and the
+  BrowZer domain rewrite called `unnest()` on it, so after a domain change every
+  OAuth client kept redirecting to the old domain — the exact failure a domain
+  change exists to prevent. The bulk-access anomaly's "breakdown by resource
+  type" asked `audit_events` for a `resource_type` column (it is `target_type`)
+  and discarded the error, so every anomaly this detector raised named nothing.
+  Migration **v179** gives `saml_service_providers` the `metadata_xml` column
+  its refresh has always written to: without it the whole UPDATE failed to plan,
+  and with it the only path by which a service provider's **rotated signing
+  certificate** reaches this database — an administrator clicked refresh, got an
+  error, and assertions kept being signed against the old certificate. The
+  fourth was another false positive of the tool, now fixed there: the
+  access-review roll-up's literal is the first half of a query the code appends
+  a `GROUP BY` to, and `sqlprepare` prepared it alone and reported a grouping
+  error for a query that groups correctly at runtime. It now recognises a
+  literal the code appends to and skips only the errors a suffix can explain — a
+  missing column or table on such a fragment is still a finding.
+
 - **The console's tenant switcher has never worked, and nine other statements
   the database refused.** `handleSwitchTenant` and `handleGetCurrentTenant`
   selected `display_name` and `enabled` from `organizations`, which is
