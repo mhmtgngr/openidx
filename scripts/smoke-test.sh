@@ -187,6 +187,25 @@ else
     fail "Gateway API tests" "skipped - no admin token"
 fi
 
+# Security headers on the response the GATEWAY itself produces. Seven service
+# mains mounted the middleware and the gateway did not, so the one host a
+# browser talks to sent none of these. A unit guard now derives the list of HTTP
+# services and fails on the eighth; this asserts the same thing against the
+# running binary, because "mounted in main.go" and "on the wire" are two claims.
+#
+# The probe is an UNAUTHENTICATED request, so it is a gateway-generated 401/403
+# rather than a proxied backend response -- that is the half that had no headers.
+HEADERS=$(curl -s -o /dev/null -D - "${GATEWAY_URL}/api/v1/identity/users" 2>/dev/null || echo "")
+MISSING=""
+for h in "X-Content-Type-Options" "X-Frame-Options" "Referrer-Policy"; do
+    echo "$HEADERS" | grep -qi "^${h}:" || MISSING="${MISSING} ${h}"
+done
+if [ -z "$MISSING" ]; then
+    pass "Gateway sets security headers on its own responses"
+else
+    fail "Gateway security headers" "missing:${MISSING}"
+fi
+
 DISCOVERY=$(curl -sf "${OAUTH_URL}/.well-known/openid-configuration" 2>/dev/null || echo "")
 if [ -n "$DISCOVERY" ] && echo "$DISCOVERY" | jq -e '.issuer' > /dev/null 2>&1; then
     pass "OIDC discovery endpoint"

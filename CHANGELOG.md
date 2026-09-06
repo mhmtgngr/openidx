@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The gateway — the service that faces the internet — sent no security
+  headers.** Seven of the eight HTTP service mains mount
+  `middleware.SecurityHeadersForEnv`; `cmd/gateway-service` did not, and nothing
+  in `internal/gateway` set one either. So the one host a browser actually talks
+  to answered with no HSTS, no `X-Content-Type-Options: nosniff`, no
+  `X-Frame-Options`, no `Referrer-Policy` and no CSP on everything it produces
+  itself: `/metrics`, the combined OpenAPI spec, and every 404, 429 and 502 the
+  proxy generates. Proxied responses carry the backend's headers, so the gap was
+  the gateway's own. Verified against the real binary both ways — before the fix
+  a gateway-generated 502 carried none of them, after it carries all six.
+  Duplicate CSP on proxied responses is harmless and the code says why: the
+  gateway forwards only the six `/api/v1` JSON groups, browsers enforce the
+  intersection of repeated policies, and the Guacamole path overrides do not
+  apply because those prefixes are not proxied here.
+  The omission was invisible because seven services looked like the rule, so the
+  list is now DERIVED: `TestEveryHTTPServiceMountsSecurityHeaders` finds every
+  `cmd/` main that builds a gin engine and fails unless it mounts the headers or
+  is declared exempt with a reason. `scripts/smoke-test.sh` asserts the same
+  thing against the running gateway, because "mounted in main.go" and "on the
+  wire" are two different claims.
+
 - **The gateway's request-body logger truncated the request it was observing.**
   `internal/gateway/middleware/logging.go` read the body through an
   `io.LimitReader` and then handed the *truncated* bytes back to the handler, so

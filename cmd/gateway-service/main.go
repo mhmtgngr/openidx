@@ -97,6 +97,22 @@ func main() {
 	// (bypasses device-trust known-IP auto-approve, geo-block, spoofs audit IPs).
 	commonmiddleware.ConfigureTrustedProxies(router, log)
 	router.Use(gin.Recovery())
+	// Security response headers, on the service that faces the internet.
+	//
+	// The other seven service mains have mounted this since it existed; the
+	// gateway did not, and nothing else in internal/gateway set a security
+	// header, so the one host a browser actually talks to was the one sending
+	// no HSTS, no nosniff and no frame-options. Every response the gateway
+	// produces itself — /metrics, the combined OpenAPI spec, and each 404, 429
+	// and 502 the proxy generates — went out bare.
+	//
+	// Proxied responses already carry the backend's headers, so this duplicates
+	// them there. That is harmless and worth stating: the gateway forwards only
+	// the six /api/v1 JSON groups, browsers enforce the intersection of repeated
+	// CSP headers, and the policy is the same one from the same function. The
+	// Guacamole path overrides do not apply here because those prefixes are not
+	// proxied by this service.
+	router.Use(commonmiddleware.SecurityHeadersForEnv(cfg.IsProduction()))
 	router.Use(otelgin.Middleware("gateway-service"))
 	router.Use(logger.GinMiddleware(log))
 	router.Use(metrics.Middleware("gateway-service"))
