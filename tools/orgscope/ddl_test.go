@@ -414,7 +414,13 @@ func TestRegistersOnlyShrink(t *testing.T) {
 		// looking in no particular tenant. The escalation sweep's own comment
 		// said it selects r.org_id "so each request's writes below stay scoped
 		// to its own org"; one write did not use it.
-		{"predicateAuditPending", len(predicateAuditPending), 10},
+		// 10 -> 8 with the certification campaigns and their runs. The posture
+		// panel's own neighbours carried AND org_id = $1 and two counts beside
+		// them did not, so within one function some numbers said which tenant
+		// they were about and some left it to the belt. The deadline sweep keeps
+		// its cross-org reach with the reason on the query: a run the sweep
+		// cannot see never expires.
+		{"predicateAuditPending", len(predicateAuditPending), 8},
 		{"installWideTables", len(installWideTables), 21},
 		{"beltExempt", len(beltExempt), 5},
 	} {

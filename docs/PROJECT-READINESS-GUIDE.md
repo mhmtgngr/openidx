@@ -3814,6 +3814,35 @@ class this whole program exists for.
    comment says it selects `r.org_id` *"so each request's writes below stay
    scoped to its own org (escalation has no request context to read org from)"*.
    One of those writes did not use it. The value was already in hand.
+
+   **Batch 38 (`predicateAuditPending` 10 → 8): two numbers in a panel that did
+   not say which tenant they were about.**
+
+   `certification_campaigns` and `campaign_runs` back the recurring access
+   certification: a campaign is scheduled, a run collects its review items, and
+   a deadline expires it. The sharpest instance is in the admin posture panel,
+   where the neighbouring counts read
+
+   ```sql
+   SELECT COUNT(*) FROM users WHERE enabled = false AND org_id = $1
+   ```
+
+   and the two beside them did not. **Within one function, some numbers said
+   which tenant they were about and some left it to the belt** — and a reader
+   could not tell which was which. The belt was scoping them, so the figures on
+   the panel were right; what was missing was any way to know that from the
+   query.
+
+   `GetCampaign`, `UpdateCampaign`, `DeleteCampaign`, `RunCampaign`'s timestamp
+   write and `GetCampaignRuns` all gained the tenant. Both deletes in
+   `DeleteCampaign` name it for the same reason `RevokeGrantForPrincipal` does:
+   a delete that matches nothing is silent, so without it the caller is told the
+   campaign is gone either way.
+
+   The deadline sweep keeps its cross-org reach, with the reason written on the
+   query — *a run the sweep cannot see never expires*, which is the direction of
+   this control that must not be scoped. Its sibling query in the same function
+   already carried exactly that directive; the other two now do too.
 4. ✅ **OPA `deny` enforced** — *shipped.* — `internal/common/middleware/opa.go`: abort
    unless `Allow && len(Deny)==0`; `authz.rego:15-19`'s "any authenticated
    user may GET anything" removed; `policies/access_control.rego`

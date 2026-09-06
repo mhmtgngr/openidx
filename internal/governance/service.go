@@ -2161,13 +2161,17 @@ func (s *Service) ListCampaigns(ctx context.Context, offset, limit int, status s
 
 // GetCampaign retrieves a single certification campaign by ID
 func (s *Service) GetCampaign(ctx context.Context, id string) (*ScheduledCampaign, error) {
+	org, orgErr := orgctx.From(ctx)
+	if orgErr != nil {
+		return nil, orgErr
+	}
 	var c ScheduledCampaign
 	err := s.db.Pool.QueryRow(ctx, `
 		SELECT id, name, description, type, schedule, reviewer_strategy,
 		       reviewer_id, reviewer_role, auto_revoke, grace_period_days, duration_days,
 		       status, last_run_at, next_run_at, created_by, created_at, updated_at
-		FROM certification_campaigns WHERE id = $1
-	`, id).Scan(
+		FROM certification_campaigns WHERE id = $1 AND org_id = $2
+	`, id, org.ID).Scan(
 		&c.ID, &c.Name, &c.Description, &c.Type, &c.Schedule, &c.ReviewerStrategy,
 		&c.ReviewerID, &c.ReviewerRole, &c.AutoRevoke, &c.GracePeriodDays, &c.DurationDays,
 		&c.Status, &c.LastRunAt, &c.NextRunAt, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt,
@@ -2180,6 +2184,10 @@ func (s *Service) GetCampaign(ctx context.Context, id string) (*ScheduledCampaig
 
 // UpdateCampaign updates an existing certification campaign
 func (s *Service) UpdateCampaign(ctx context.Context, campaign *ScheduledCampaign) error {
+	org, orgErr := orgctx.From(ctx)
+	if orgErr != nil {
+		return orgErr
+	}
 	s.logger.Info("Updating certification campaign", zap.String("id", campaign.ID))
 
 	now := time.Now()
@@ -2191,26 +2199,33 @@ func (s *Service) UpdateCampaign(ctx context.Context, campaign *ScheduledCampaig
 		SET name = $2, description = $3, type = $4, schedule = $5, reviewer_strategy = $6,
 		    reviewer_id = $7, reviewer_role = $8, auto_revoke = $9, grace_period_days = $10,
 		    duration_days = $11, status = $12, next_run_at = $13, updated_at = $14
-		WHERE id = $1
+		WHERE id = $1 AND org_id = $15
 	`, campaign.ID, campaign.Name, campaign.Description, campaign.Type, campaign.Schedule,
 		campaign.ReviewerStrategy, campaign.ReviewerID, campaign.ReviewerRole,
 		campaign.AutoRevoke, campaign.GracePeriodDays, campaign.DurationDays,
-		campaign.Status, campaign.NextRunAt, campaign.UpdatedAt)
+		campaign.Status, campaign.NextRunAt, campaign.UpdatedAt, org.ID)
 
 	return err
 }
 
 // DeleteCampaign deletes a certification campaign and its runs
 func (s *Service) DeleteCampaign(ctx context.Context, id string) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
 	s.logger.Info("Deleting certification campaign", zap.String("id", id))
 
-	// Delete associated campaign runs first
-	_, err := s.db.Pool.Exec(ctx, "DELETE FROM campaign_runs WHERE campaign_id = $1", id)
+	// Both deletes name the tenant. A delete that matches nothing is silent, so
+	// without it the caller is told the campaign is gone either way.
+	_, err = s.db.Pool.Exec(ctx,
+		"DELETE FROM campaign_runs WHERE campaign_id = $1 AND org_id = $2", id, org.ID)
 	if err != nil {
 		return fmt.Errorf("failed to delete campaign runs: %w", err)
 	}
 
-	_, err = s.db.Pool.Exec(ctx, "DELETE FROM certification_campaigns WHERE id = $1", id)
+	_, err = s.db.Pool.Exec(ctx,
+		"DELETE FROM certification_campaigns WHERE id = $1 AND org_id = $2", id, org.ID)
 	return err
 }
 
@@ -2305,8 +2320,8 @@ func (s *Service) RunCampaign(ctx context.Context, campaignID string) (*Campaign
 	_, err = s.db.Pool.Exec(ctx, `
 		UPDATE certification_campaigns
 		SET last_run_at = $2, next_run_at = $3, updated_at = $4
-		WHERE id = $1
-	`, campaignID, now, nextRunAt, now)
+		WHERE id = $1 AND org_id = $5
+	`, campaignID, now, nextRunAt, now, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to update campaign run timestamps", zap.Error(err))
 	}
@@ -2316,13 +2331,17 @@ func (s *Service) RunCampaign(ctx context.Context, campaignID string) (*Campaign
 
 // GetCampaignRuns retrieves all runs for a specific campaign
 func (s *Service) GetCampaignRuns(ctx context.Context, campaignID string) ([]CampaignRun, error) {
+	org, orgErr := orgctx.From(ctx)
+	if orgErr != nil {
+		return nil, orgErr
+	}
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT id, campaign_id, review_id, status, started_at, deadline,
 		       completed_at, total_items, reviewed_items, auto_revoked_items, created_at
 		FROM campaign_runs
-		WHERE campaign_id = $1
+		WHERE campaign_id = $1 AND org_id = $2
 		ORDER BY created_at DESC
-	`, campaignID)
+	`, campaignID, org.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -2511,11 +2530,11 @@ func (s *Service) checkCampaignSchedules(ctx context.Context) {
 // checkCampaignDeadlines finds in-progress campaign runs past their deadline and marks them expired.
 // If the parent campaign has auto_revoke enabled, it counts unreviewed items as auto-revoked.
 func (s *Service) checkCampaignDeadlines(ctx context.Context) {
-	rows, err := s.db.Pool.Query(ctx, `
-		SELECT cr.id, cr.campaign_id, cr.review_id
+	rows, err := s.db.Pool.Query(ctx,
+		//orgscope:ignore cross-org background deadline sweep; a run the sweep cannot see never expires, which is the direction of this control that must not be scoped
+		`SELECT cr.id, cr.campaign_id, cr.review_id
 		FROM campaign_runs cr
-		WHERE cr.status = 'in_progress' AND cr.deadline < NOW()
-	`)
+		WHERE cr.status = 'in_progress' AND cr.deadline < NOW()`)
 	if err != nil {
 		s.logger.Error("Failed to query expired campaign runs", zap.Error(err))
 		return
@@ -2590,11 +2609,12 @@ func (s *Service) checkCampaignDeadlines(ctx context.Context) {
 		}
 
 		// Mark the campaign run as expired
-		_, err := s.db.Pool.Exec(ctx, `
-			UPDATE campaign_runs
+		_, err := s.db.Pool.Exec(ctx,
+			//orgscope:ignore cross-org background deadline sweep; the run id comes from this sweep's own scan
+			`UPDATE campaign_runs
 			SET status = 'expired', completed_at = $2, reviewed_items = $3, auto_revoked_items = $4
-			WHERE id = $1
-		`, er.runID, now, reviewedItems, autoRevokedCount)
+			WHERE id = $1`,
+			er.runID, now, reviewedItems, autoRevokedCount)
 		if err != nil {
 			s.logger.Error("Failed to mark campaign run as expired",
 				zap.String("run_id", er.runID), zap.Error(err))

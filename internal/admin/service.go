@@ -2973,10 +2973,13 @@ func (s *Service) GetCompliancePosture(ctx context.Context) (*CompliancePosture,
 		s.logger.Warn("Failed to query disabled accounts", zap.Error(err))
 	}
 
-	// Active certification campaigns
+	// Active certification campaigns. The two counts above carry AND org_id = $1
+	// and these two did not: within one panel some numbers said which tenant
+	// they were about and some relied on the belt to say it for them, and a
+	// reader could not tell which was which.
 	err = s.db.Pool.QueryRow(ctx, `
-		SELECT COUNT(*) FROM certification_campaigns WHERE status = 'active'
-	`).Scan(&posture.ActiveCampaignsCount)
+		SELECT COUNT(*) FROM certification_campaigns WHERE status = 'active' AND org_id = $1
+	`, org.ID).Scan(&posture.ActiveCampaignsCount)
 	if err != nil {
 		s.logger.Warn("Failed to query active campaigns", zap.Error(err))
 	}
@@ -2988,8 +2991,8 @@ func (s *Service) GetCompliancePosture(ctx context.Context) (*CompliancePosture,
 			CASE WHEN total_items > 0 THEN (reviewed_items::float / total_items * 100)
 			ELSE 0 END
 		) FROM campaign_runs
-		WHERE status = 'in_progress'
-	`).Scan(&avgCompletion)
+		WHERE status = 'in_progress' AND org_id = $1
+	`, org.ID).Scan(&avgCompletion)
 	if err != nil {
 		s.logger.Warn("Failed to query campaign completion", zap.Error(err))
 	}
