@@ -1,14 +1,23 @@
 # CodeQL high-severity triage
 
-CodeQL's `security-and-quality` suite raises 41 results at security severity
-**7.0 or higher** across this tree — 28 Go, 13 JavaScript/TypeScript. GitHub's
+CodeQL's `security-and-quality` suite raises 40 results at security severity
+**7.0 or higher** across this tree — 27 Go, 13 JavaScript/TypeScript. GitHub's
 code-scanning results check fails a pull request on exactly these (mediums,
 warnings and notes cannot fail it), and it names only a count:
 
 > 224 new alerts including 1 high severity security vulnerability
 
-That is the whole of what the check tells you. This file is the rest: every
-result at or above the floor, with a verdict and the evidence for it.
+That is the whole of what the check told you while it was red. This file is
+the rest: every result at or above the floor, with a verdict and the evidence
+for it.
+
+**The check is green now**, and the title says why:
+
+> 225 new alerts including 213 medium severity security vulnerabilities
+
+One high became none. The one was `go/insecure-hostkeycallback`, and the fix
+below removed it — see the caution in that entry, because an alert
+disappearing and a behaviour disappearing are not the same claim.
 
 **How the list is produced.** `scripts/codeql-alert-summary.sh` runs after each
 analysis (both jobs in `.github/workflows/codeql.yml`) and prints the results
@@ -16,11 +25,13 @@ from the SARIF the analysis already writes. It is a diagnostic and cannot fail
 the build. Re-read it from the job log after any run; this file is a snapshot,
 and a snapshot goes stale.
 
-**Snapshot:** commit `7ebdcdd0`, CodeQL 2.26.4, `security-and-quality`.
+**Snapshot:** commit `dec5b493`, `security-and-quality` — the run in which the
+results check first passed.
 
 **Below the floor.** The 80 quality-only JS results are not security findings
-and are out of scope here. `go/log-injection` is 757 results at 6.1 — not what
-fails the check, but the volume that buried the 41 that do, so it gets a
+and are out of scope here. `go/log-injection` is 759 results at 6.1 — not what
+fails the check, but the volume that buried the 27 Go results that do, so
+it gets a
 verdict of its own at the end.
 
 ---
@@ -39,7 +50,7 @@ work is fixed.
 
 ---
 
-## Go — 28 results ≥ 7.0
+## Go — 27 results ≥ 7.0
 
 ### `go/request-forgery` — 9.1 (critical) × 5 — **not a defect**
 
@@ -117,6 +128,22 @@ is invoked with the pinned key and with a different one, and has to accept the
 first and reject the second. Red-proved by dropping the `FixedHostKey`
 assignment.
 
+**The alert is gone from the SARIF, and that is the weaker of the two claims.**
+`go/insecure-hostkeycallback` follows an `InsecureIgnoreHostKey()` that reaches
+`HostKeyCallback`; once the callback is a variable a branch may overwrite, the
+query stops flagging it. So the count went to zero the moment the pin existed,
+whether or not any entry sets one. What the tests prove is the other claim: a
+pinned entry is enforced. An entry that pins nothing still accepts any host
+key — deliberately, loudly (Warn log, `host_key_pinned: false`), and
+refusably (`PAM_SSH_REQUIRE_HOST_KEY=true`). Do not read the green check as
+"no entry connects unpinned"; read `host_key_pinned` on the audit events.
+
+Semgrep sees the same line and says so — `go.lang.security.audit.crypto.`
+`insecure_ssh.avoid-ssh-insecure-ignore-host-key`, raised on the review of the
+commit that added the pin. It is a true finding about the unpinned path, and
+it carries this verdict: not a `// nosemgrep`, because this repository silences
+a scanner only for a false positive, and this one is not.
+
 ### `go/incorrect-integer-conversion` — 8.1 × 9 — **vendored**
 
 `agent/third_party/gopsutil/cpu/cpu_linux.go:204, 278, 289`,
@@ -125,9 +152,19 @@ assignment.
 
 A vendored copy of gopsutil, parsing `/proc`. This project does not maintain
 that source, and patching a vendored tree in place is how a vendored tree stops
-being updatable. `.github/codeql/codeql-config.yml` excludes
-`agent/third_party/**` from analysis for exactly this reason: nine findings
-nobody can act on are nine findings between a reader and the ones they can.
+being updatable.
+
+**A correction, because this file was wrong here.** It said these nine would
+"disappear on the next run" under a `paths-ignore: agent/third_party` in
+`.github/codeql/codeql-config.yml`. The next run produced all nine. A Go
+database is whatever the build compiled, the agent compiles gopsutil, and the
+config's path filter is honoured for interpreted languages only — so the
+config excluded nothing while its own comment said it narrowed what was
+scanned. That is this programme's defect class wearing a YAML hat, found by
+the final audit reading the SARIF instead of trusting the file. The config is
+deleted (`.github/workflows/codeql.yml` carries the reason where the next
+person would reach for one), and these nine go back on the maintainer's
+dismissal list below, where they were always going to have to live.
 
 ### `go/path-injection` — 7.5 × 4 — **not a defect**
 
@@ -204,15 +241,15 @@ the e2e work, not a product defect.
 
 ---
 
-## `go/log-injection` — 6.1 × 757 — **not a defect**, and pinned
+## `go/log-injection` — 6.1 × 759 — **not a defect**, and pinned
 
-Below the failing threshold, but it is 757 of the 793 Go results: the reason
-nobody could see the 28 that matter. It deserves a verdict rather than a
+Below the failing threshold, but it is 759 of the 794 Go results: the reason
+nobody could see the 27 that matter. It deserves a verdict rather than a
 shrug.
 
 Log injection is **forging a record** — a user-supplied value carrying CR/LF so
 that what reads as a second log line was in fact typed by the attacker. What
-prevents it here is the encoder, not a sanitiser at each of 757 call sites:
+prevents it here is the encoder, not a sanitiser at each of 759 call sites:
 
 - production (`APP_ENV=production`) builds `zap.NewProductionConfig()`
   (`internal/common/logger/logger.go:24`), whose encoding is JSON;
@@ -241,17 +278,23 @@ tainted value reaches. A field is safe by construction; the message is not.
 ## What the maintainer needs to do
 
 The verdicts above are recorded; the alerts are still open in code scanning,
-and closing them is a UI action this branch cannot take.
+and closing them is a UI action this branch cannot take. **None of it blocks
+the merge** — the results check passes on `dec5b493`. This is hygiene: an
+alert list nobody has triaged is an alert list nobody reads.
 
 1. Dismiss as **"used in tests"**: the 13 JS results.
 2. Dismiss as **"false positive"**, citing this file: `go/sql-injection`,
    the four `go/path-injection`, the three `go/weak-sensitive-data-hashing`,
    the five `go/request-forgery`, and the five `go/disabled-certificate-check`.
-3. Dismiss as **"fixed in this PR"** once it stops appearing:
-   `go/insecure-hostkeycallback` (`ws_connect.go`) — per-entry host-key
-   pinning now exists and is enforced. The `InsecureIgnoreHostKey` call
-   remains for entries that pin nothing, so the alert may persist; the
-   verdict above says what it now means.
+3. Dismiss as **"won't fix"**, citing this file: the nine vendored
+   `go/incorrect-integer-conversion` in `agent/third_party/gopsutil`. A path
+   filter cannot remove them from a Go analysis — see the entry above — so the
+   UI is the only place this verdict can be recorded, and it has to be
+   re-recorded whenever a vendor bump moves those lines.
+4. Nothing to do for `go/insecure-hostkeycallback`: it is no longer raised.
+   Read its entry anyway before concluding the unpinned path went away.
 
-The nine vendored results disappear on the next run with the `paths-ignore`
-config; nothing to dismiss.
+Item 2 is the one worth doing carefully: a dismissal is keyed to an alert
+fingerprint, so the next refactor that moves one of those lines brings the
+alert back with the dismissal gone. That is why the verdicts live here as
+well.

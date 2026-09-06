@@ -4155,16 +4155,26 @@ class this whole program exists for.
 
    That is the argument for `docs/evidence/codeql-triage.md`: a verdict recorded
    in a review UI evaporates on a line move; a verdict recorded in the
-   repository does not, and it is reviewable in a diff. Every one of the 41 has
-   an entry there with its evidence, and the three the maintainer still owns —
-   dismiss the tests, dismiss the assessed false positives, keep host-key
-   pinning open — are listed at the end.
+   repository does not, and it is reviewable in a diff. Every one of them has
+   an entry there with its evidence, and what the maintainer still owns —
+   dismiss the tests, dismiss the assessed false positives, dismiss the
+   vendored nine — is listed at the end. The results check itself is green:
+   the host-key fix took the one high-severity result in changed code to zero,
+   so the dismissals are hygiene rather than a merge blocker.
 
-   `.github/codeql/codeql-config.yml` excludes `agent/third_party` from
-   analysis. That narrows what is scanned, never how a finding is treated: no
-   query is disabled, and nothing under `internal/`, `cmd/`, `tools/`, `web/`
-   or the agent's own source is excluded. Nine findings nobody can act on were
-   nine findings between a reader and the ones they can.
+   This batch also added `.github/codeql/codeql-config.yml`, with
+   `paths-ignore: agent/third_party`, to keep those nine vendored findings out
+   of a reader's way — and a comment saying it narrowed what was scanned and
+   nothing else. **The final audit deleted it.** The very next analysis
+   produced all nine: a Go database is whatever the build compiled, the agent
+   compiles gopsutil, and the config's path filter is honoured for interpreted
+   languages only. A file that says it excludes a tree and does not is a
+   control that displays without enforcing — written, in this programme, by the
+   programme. It only came out because the audit read the SARIF the diagnostic
+   prints rather than trusting the file, which is the same discipline that
+   found the alert in the first place. The reason now lives in
+   `.github/workflows/codeql.yml`, at the step where the next person would
+   reach for a config, and the nine are on the maintainer's dismissal list.
 
    ### The badge that meant less than it looked like
 
@@ -5947,6 +5957,22 @@ that holds it rather than by the commit that wrote it.
 
 ◐ = the engineering half is done and proven; what remains is either an operator
 action on a live deployment or a later phase in this programme.
+
+### 6.2 The final audit (2026-09-06)
+
+The programme's last act was to re-run every check on one tree and write down
+what came back: [`docs/evidence/final-audit.md`](evidence/final-audit.md). The
+build, the vet, 77 Go test packages, 1,181 console tests, the orgscope gate,
+and 55 guard self-tests and enforcement runs, all green on `dec5b493`; the
+CodeQL results check green with it.
+
+It also found one defect, and the defect was ours.
+`.github/codeql/codeql-config.yml` — added by this branch — claimed to
+exclude a vendored tree from analysis and excluded nothing, because a Go
+database is whatever the build compiled. A control that displays without enforcing, written by the programme
+that exists to delete them. It is deleted; the audit
+file says how it surfaced, which is the part worth keeping: the check was read
+from the artefact it produces, not from the file that describes it.
 
 ---
 

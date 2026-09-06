@@ -55,6 +55,7 @@ allow web/admin-console/keycloak-theme      deleted; OpenIDX is its own IdP and 
 allow web/admin-console/keycloak-theme/     same, cited with a trailing slash
 allow .github/workflows/mobile-eas-build.yml  deleted with the Expo tree
 allow .github/dependabot.yml           removed in favour of renovate; the guide records why
+allow .github/codeql/codeql-config.yml deleted by the final audit: its paths-ignore excluded nothing, because a Go database is whatever the build compiled -- three live documents cite it to explain that, and this waiver fails the day someone adds it back
 allow internal/feature/                deleted: 780 lines, 13 routes, no importer
 allow internal/feature/flag.go         same, cited for its silent memory-store fallback
 allow internal/oauth/store.go          deleted: 539 lines, no non-test caller, broken token-family revocation

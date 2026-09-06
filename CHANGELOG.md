@@ -12,6 +12,11 @@ control that displays without enforcing is a lie** — extended, phase by phase,
 to a spec that describes an eighth of a surface, a documented endpoint that
 404s, and a "release" artifact signed with a debug key.
 
+The programme closed with a full audit on one tree
+(`docs/evidence/final-audit.md`): build, vet, 77 Go test packages, 1,181
+console tests, the org-scope gate and 55 guard runs, all green — and one defect,
+in the programme's own work, fixed below.
+
 ### Added
 
 - **Tenant isolation on the nine ISPM/AI tables** (migration v138). `ispm_rules`,
@@ -1141,9 +1146,9 @@ to a spec that describes an eighth of a surface, a documented endpoint that
   Warn log and `host_key_pinned: false` on the `pam.ws_connect` audit event —
   and `PAM_SSH_REQUIRE_HOST_KEY=true` refuses unpinned entries outright.
 
-- **The 757 `go/log-injection` findings have a verdict, pinned by a test.** Log
+- **The 759 `go/log-injection` findings have a verdict, pinned by a test.** Log
   injection is forging a record with CR/LF in a user-supplied value. What
-  prevents it here is the encoder, not a sanitiser at 757 call sites: production
+  prevents it here is the encoder, not a sanitiser at 759 call sites: production
   logs JSON, and zap's console encoder still writes structured *fields* as JSON,
   so a newline in a `zap.String` value comes out escaped either way.
   `TestUserValuesInFieldsCannotForgeALogRecord` encodes a forged value through
@@ -1153,15 +1158,25 @@ to a spec that describes an eighth of a surface, a documented endpoint that
   sites, all interpolating configuration, none user input.
 
 - **Every CodeQL finding at security severity 7.0+ now has a written verdict.**
-  `docs/evidence/codeql-triage.md` lists all 41 (28 Go, 13 JS) with the evidence
+  `docs/evidence/codeql-triage.md` lists all 40 (27 Go, 13 JS) with the evidence
   for each: what is vendored, what is a protocol requirement, what is already
   sanitised, what is admin-configured, and the one that was a real finding and
   is fixed. A verdict recorded in the code-scanning UI is keyed to an alert
   fingerprint and evaporates when a refactor moves the line — one alert in that
   list had been dismissed once already and came back for exactly that reason.
-  `.github/codeql/codeql-config.yml` excludes the vendored `agent/third_party`
-  tree from analysis (nine findings in a library this project does not
-  maintain); no query is disabled and no first-party path is excluded.
+  The code-scanning results check passes: the one high-severity result in
+  changed code was the SSH host key, and fixing it took the count to zero.
+
+- **A CodeQL config that excluded nothing is gone.** An earlier commit on this
+  branch added `.github/codeql/codeql-config.yml` with
+  `paths-ignore: agent/third_party`, to keep nine findings in a vendored
+  library out of the reader's way. The next analysis produced all nine: a Go
+  database is whatever the build compiled, and the path filter is honoured for
+  interpreted languages only. A file whose comment claimed it narrowed what was
+  scanned, and did not, is the defect class this release spent itself deleting,
+  so it is deleted too — `.github/workflows/codeql.yml` now carries the reason
+  at the step where the next person would reach for one, and the nine vendored
+  findings are on the dismissal list in the triage file where they belong.
 
 - **A second migration system that applied nothing.** `migrations/` held 105
   files and a README calling itself "Database Migration System"; nothing in the

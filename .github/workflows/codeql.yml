@@ -27,12 +27,22 @@ jobs:
           go-version: '1.26'
           cache: true
 
+      # No config-file here, and specifically no `paths-ignore`. This branch
+      # tried one, to drop the nine `go/incorrect-integer-conversion` results
+      # in the vendored `agent/third_party/gopsutil` tree, and the run that
+      # followed it produced all nine anyway: a Go database is whatever the
+      # build compiled, and the agent compiles that package, so a path filter
+      # in the config cannot remove it. The filter is honoured for interpreted
+      # languages only. A config that says it excludes a tree and does not is
+      # the exact thing this branch spent itself deleting, so it is gone --
+      # those nine carry a written verdict in docs/evidence/codeql-triage.md
+      # and a dismissal in the code-scanning UI instead. If you reach for a
+      # config-file to quieten a Go alert, read that file first.
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:
           languages: go
           queries: security-and-quality
-          config-file: ./.github/codeql/codeql-config.yml
 
       - name: Autobuild
         uses: github/codeql-action/autobuild@v4
@@ -63,7 +73,6 @@ jobs:
         with:
           languages: javascript-typescript
           queries: security-and-quality
-          config-file: ./.github/codeql/codeql-config.yml
 
       - name: Autobuild
         uses: github/codeql-action/autobuild@v4
