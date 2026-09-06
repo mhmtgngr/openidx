@@ -1117,6 +1117,16 @@ to a spec that describes an eighth of a surface, a documented endpoint that
 
 ### Fixed
 
+- **The contract prober accepted any TLS certificate, by default.**
+  `tools/contractcheck` probes a running deployment to prove the console's
+  declared response shapes match what the backend actually returns — but its
+  `-insecure` flag defaulted to on and the transport hard-coded a disabled
+  certificate check, so a probe could pass against anything that answered on the
+  address, having proved nothing about the deployment it named. Verification is
+  now on unless `-insecure` is asked for, the transport takes the flag's value
+  instead of a constant, and a TLS 1.2 floor applies either way. (CI is
+  unaffected: it probes each service on `http://localhost:<port>`.)
+
 - **The audit trail was not recording.** `audit_events` is behind the FORCE-RLS
   belt, and the pool sets `app.org_id` at checkout from the request context — but
   the oauth (SAML/SSO), identity and provisioning services all wrote it from a

@@ -4039,6 +4039,57 @@ class this whole program exists for.
    whose queries do not name `org_id` fails the build. What remains is the five
    deferred `needsScoping` tables, each waiting on a product decision rather than
    a migration.
+
+   ### The probe that proved nothing about what it probed
+
+   **Batch 43: the one high-severity alert CodeQL says this branch introduced.**
+
+   GitHub's code-scanning check has been failing on this PR — *"224 new alerts
+   including 1 high severity security vulnerability"* — while both CodeQL
+   **jobs** (`Analyze Go`, `Analyze JavaScript/TypeScript`) pass. The failing
+   thing is the results check, and under its default rule only the single
+   high-severity alert can fail it: 211 mediums, 3 warnings and 9 notes cannot.
+
+   The alert list is not readable from this environment (the code-scanning API
+   is not reachable here and no tool surfaces the check's annotations), so the
+   alert was identified from the diff instead. Every added line of the branch —
+   104,682 of them — was swept for the CodeQL query classes that carry a
+   security severity of 7.0 or higher. Exactly one match came back:
+
+   ```
+   tools/contractcheck/main.go:  InsecureSkipVerify: true
+   ```
+
+   which is `go/disabled-certificate-check`, security-severity 7.5. Every other
+   site of that class in the tree — `ws_connect.go`'s `InsecureIgnoreHostKey`,
+   `my_resources.go`'s liveness probe, the agent's enrolment client,
+   `openidx-connect`, `profiler`, `darkprobe`, and the console's
+   `localStorage.setItem('token', …)` — is byte-identical **and line-identical**
+   between `main` and this branch, so those alerts keep their fingerprints and
+   are not new. `contractcheck`'s is the one that moved: this branch rewrote that
+   statement (line 45 → 48) when it added the TLS 1.2 floor, which is enough to
+   re-fingerprint the alert and have it counted as introduced here.
+
+   The finding is real on its own terms, and it is this programme's own defect
+   class wearing a tool's clothes. `contractcheck` exists to prove what a running
+   deployment *actually answers* — it is the guard against a console reading
+   `undefined` off a response that changed shape. A probe that accepts any
+   certificate has not proved it reached the deployment it names; it has proved
+   it reached *something*. And `-insecure` defaulted to **true**, so nobody had
+   to choose that.
+
+   So: `-insecure` now defaults to **off**, and the transport takes the flag's
+   value rather than a hard-coded `true` (`probeTLS(skipVerify bool)`). Skipping
+   verification for the self-signed local edge is still one flag away — it just
+   has to be asked for. A test pins the default and both branches of the flag,
+   and the TLS 1.2 floor applies either way. The CI job is unaffected: it runs
+   `-probe -local`, which addresses each service on `http://localhost:<port>`
+   and never negotiates TLS at all.
+
+   The identification is inferential, and stated that way on the PR. If the
+   check stays red on the next head, the remaining alert is something the sweep
+   could not see from the diff, and the next step is reading it directly rather
+   than guessing again.
 4. ✅ **OPA `deny` enforced** — *shipped.* — `internal/common/middleware/opa.go`: abort
    unless `Allow && len(Deny)==0`; `authz.rego:15-19`'s "any authenticated
    user may GET anything" removed; `policies/access_control.rego`
