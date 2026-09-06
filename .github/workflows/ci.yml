@@ -1090,6 +1090,27 @@ jobs:
           go install golang.org/x/vuln/cmd/govulncheck@latest
           govulncheck ./...
 
+      # The agent is a separate module with a separate pin, and it needs its own
+      # toolchain rather than inheriting the root one.
+      #
+      # WHY, because this cost a red run. `go-version-file` reads the `go`
+      # directive, not `toolchain`: root go.mod says `go 1.26.0` (with
+      # `toolchain go1.26.8`), so setup-go installs 1.26.0. For the ROOT scan
+      # that is harmless — the toolchain directive makes the go command re-exec
+      # 1.26.8. For the agent it is not, because Go only ever switches UP: the
+      # agent pins go1.25.13, 1.26.0 is newer, so no switch happens and the
+      # agent was analysed against the go1.26.0 standard library. That release
+      # carries 19 advisories fixed in 1.26.1 — including two crypto/x509 ones
+      # the agent's own SSO path reaches — and govulncheck reported every one
+      # of them. Before the toolchain commit the loose '1.26' spec happened to
+      # resolve to the runner's cached 1.26.7, which is why this was green.
+      # Each module is now scanned with the toolchain it actually pins.
+      - name: Set up Go for the agent module
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: agent/go.mod
+          cache: false
+
       # `./...` stops at the module boundary, so this gate never looked at the
       # agent — its own module — and reported "0 reachable vulnerabilities"
       # while the agent's stdlib carried 29 the agent's own code reached. It

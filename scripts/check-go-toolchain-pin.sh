@@ -59,15 +59,44 @@ for wf in $WORKFLOWS; do
         in_step && /^[[:space:]]*go-version-file:/ { in_step = 0; next }
         in_step && /^[[:space:]]*-[[:space:]]/ { in_step = 0 }
     ' "$wf")
+
+    # A go-version-file must name a file that is there. A typo installs
+    # whatever setup-go falls back to and says nothing.
+    while IFS= read -r hit; do
+        LINE="${hit%%:*}"
+        REF=$(echo "$hit" | sed 's/^[0-9]*: *//; s/.*go-version-file: *//; s/[[:space:]]*$//')
+        [ -f "$REF" ] && continue
+        FINDINGS=$((FINDINGS + 1))
+        echo "$wf:$LINE: go-version-file names '$REF', which does not exist"
+        # Anchored so the prose in this file's own header -- which names the
+        # key it is about -- is not read as a step input.
+    done < <(grep -n '^[[:space:]]*go-version-file:' "$wf")
+
+    # A step that runs go in another module must be preceded by a setup-go that
+    # reads THAT module's go.mod. go-version-file reads the `go` directive and
+    # not `toolchain`, and Go only ever switches UP: a module pinned lower than
+    # the installed toolchain is silently analysed against the newer standard
+    # library. That is how the agent came to be scanned against go1.26.0 and
+    # govulncheck reported 19 advisories fixed in 1.26.1.
+    while IFS= read -r hit; do
+        LINE="${hit%%:*}"
+        MOD=$(echo "$hit" | sed 's/.*working-directory: *//; s/[[:space:]]*$//')
+        [ -f "$MOD/go.mod" ] || continue
+        grep -qE "^[[:space:]]*go-version-file: *$MOD/go\.mod" "$wf" && continue
+        FINDINGS=$((FINDINGS + 1))
+        echo "$wf:$LINE: runs in module '$MOD' with no 'go-version-file: $MOD/go.mod' in this workflow"
+        echo "    $MOD/go.mod pins its own toolchain; without its own setup-go step it is"
+        echo "    analysed against whichever Go the root pin installed."
+    done < <(grep -n '^[[:space:]]*working-directory: *[a-z]' "$wf")
 done
 
 if [ "$FINDINGS" -eq 0 ]; then
-    echo "check-go-toolchain-pin: ok — every setup-go step installs the toolchain go.mod pins ($TOOLCHAIN)"
+    echo "check-go-toolchain-pin: ok — every setup-go step installs the toolchain its module pins ($TOOLCHAIN at the root)"
     exit 0
 fi
 
 echo
-echo "check-go-toolchain-pin: $FINDINGS setup-go step(s) with a loose version." >&2
-echo "Replace 'go-version: <spec>' with 'go-version-file: go.mod'." >&2
+echo "check-go-toolchain-pin: $FINDINGS finding(s)." >&2
+echo "Replace 'go-version: <spec>' with 'go-version-file: <that module>/go.mod'." >&2
 [ "$ENFORCE" -eq 1 ] && exit 1
 exit 0

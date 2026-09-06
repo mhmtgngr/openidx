@@ -92,6 +92,52 @@ run_case "a workflow with no setup-go passes" 0 'jobs:
       - uses: actions/checkout@v7
       - run: echo hello'
 
+# A go-version-file that names nothing installs whatever setup-go falls back to
+# and says nothing about it.
+run_case "a go-version-file that does not exist is a finding" 1 'jobs:
+  test:
+    steps:
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: nowhere/go.mod'
+
+# The shape that turned Vulnerability Check red: the agent module is scanned
+# with whatever Go the ROOT pin installed. go-version-file reads the `go`
+# directive and not `toolchain`, and Go only switches UP, so a module pinned
+# lower is silently analysed against the newer standard library.
+run_case "a step in another module with no setup-go of its own" 1 'jobs:
+  vuln:
+    steps:
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: govulncheck ./...
+      - name: agent
+        working-directory: agent
+        run: govulncheck ./...'
+
+run_case "the same step with the module its own toolchain" 0 'jobs:
+  vuln:
+    steps:
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: govulncheck ./...
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: agent/go.mod
+      - name: agent
+        working-directory: agent
+        run: govulncheck ./...'
+
+# A working-directory that is not a Go module is none of this guard'"'"'s business.
+run_case "a working-directory with no go.mod is ignored" 0 'jobs:
+  web:
+    steps:
+      - name: build the console
+        working-directory: web/admin-console
+        run: npm run build'
+
 echo
 echo "check-go-toolchain-pin.test: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

@@ -36,6 +36,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The agent module was scanned for vulnerabilities against the wrong Go
+  standard library, and it was the toolchain-pin change that did it.**
+  `go-version-file` reads go.mod's `go` directive, not its `toolchain`
+  directive, so pointing every `setup-go` step at the root go.mod installed Go
+  1.26.0 rather than the pinned 1.26.8. The root scan was unaffected — the
+  `toolchain` line makes the go command re-exec 1.26.8 — but Go only ever
+  switches *up*, so the agent, pinned to 1.25, kept the installed 1.26.0 and
+  govulncheck reported the 19 advisories that release carries and 1.26.1 fixes,
+  two of them reachable from the agent's own SSO path. Before the pin change
+  the loose `'1.26'` spec happened to resolve to the runner's cached 1.26.7,
+  which is the only reason this was ever green. The agent scan now gets its own
+  `setup-go` reading `agent/go.mod`, and
+  `scripts/check-go-toolchain-pin.sh` gained two rules: a `go-version-file`
+  must name a file that exists, and a step running in another module must be
+  preceded by a `setup-go` for that module's go.mod. Eleven self-test cases,
+  and the guard was shown red against the real workflow with the new step
+  removed.
+
 - **ABAC evaluation failed on every request, which under
   `ABAC_ENFORCE=enforce` denies everything.** `abac_policies.resource_id` is a
   UUID column and the policy query compared it to the empty string; PostgreSQL
