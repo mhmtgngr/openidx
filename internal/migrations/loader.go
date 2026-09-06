@@ -1,10 +1,15 @@
-//go:build !embed_migrations
-
 package migrations
 
-// LoadMigrations loads all migrations from the embedded filesystem
+// LoadMigrations returns the migrations every service applies.
+//
+// This file used to carry a `!embed_migrations` build tag, naming a variant
+// that has never existed: no file in this repository is built under
+// `embed_migrations`, so `go build -tags embed_migrations ./internal/migrations`
+// failed with "m.LoadMigrations undefined" at three call sites. The tag was
+// the last trace of a design where the SQL lived in a directory and was
+// embedded; the SQL lives in Go constants here, and there is nothing to
+// choose between.
 func (m *Migrator) LoadMigrations() ([]*Migration, error) {
-	// For embedded migrations, use predefined list
 	return allMigrations(), nil
 }
 

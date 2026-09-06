@@ -13,7 +13,6 @@ on:
       - 'cmd/migrate/**'
       - 'cmd/backup/**'
       - 'internal/migrations/**'
-      - 'migrations/**'
       - 'scripts/check-chart-images*.sh'
       - 'scripts/ci-retry.sh'
   pull_request:
@@ -28,7 +27,6 @@ on:
       - 'cmd/migrate/**'
       - 'cmd/backup/**'
       - 'internal/migrations/**'
-      - 'migrations/**'
       - 'scripts/check-chart-images*.sh'
       - 'scripts/ci-retry.sh'
   workflow_dispatch:

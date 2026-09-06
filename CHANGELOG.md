@@ -1117,6 +1117,25 @@ to a spec that describes an eighth of a surface, a documented endpoint that
 
 ### Fixed
 
+- **A second migration system that applied nothing.** `migrations/` held 105
+  files and a README calling itself "Database Migration System"; nothing in the
+  repository has ever read them. Every service applies the registry in
+  `internal/migrations` (Go constants, `loader.go`, v1–v172), and the loose tree
+  had stalled at 52 with numbering that never matched — its
+  `008_add_scim_identity_tables` is `audit_compliance` in the registry. Worse,
+  `openidx migrate create` wrote into it, so a contributor's new migration was
+  inert while `openidx migrate up` reported success, and code had been written
+  against columns only the dead tree declared. The tree is deleted;
+  `openidx migrate create <name>` now writes `internal/migrations/sql_v<N>.go`
+  (version taken from the registry) and prints the `loader.go` entry to add;
+  `openidx db seed` falls back to `deployments/docker/seed.sql`, the file the
+  `seed` service really applies, and fails loudly when no seed exists;
+  `openidx paths` names the real directory. `internal/identity/README.md`'s
+  schema section, which described a `users_v2`/`groups_v2`/`organizations_v2`
+  schema that exists nowhere in this repository, now describes the tables the
+  package really reads. `loader.go`'s `//go:build !embed_migrations` named a
+  build variant that never existed and is gone.
+
 - **A red CodeQL check named a count, never a rule.** The code-scanning results
   check fails a pull request on one alert with a security severity of 7.0 or
   higher and reports only *"N new alerts including 1 high severity security

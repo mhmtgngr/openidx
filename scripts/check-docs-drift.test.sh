@@ -111,6 +111,9 @@ expect ok "a brace set is not a path claim" \
 expect ok "an elision is not a path claim" \
   "$(fixture elision '# none' 'The old `mobile/src/...` files are gone.')"
 
+expect ok "a placeholder is not a path claim" \
+  "$(fixture placeholder '# none' 'Write `internal/migrations/sql_v<N>.go`, then register it.')"
+
 expect ok "a Go symbol is not a path claim" \
   "$(fixture symbol '# none' 'Call `internal/oauth.isValidSessionID` first.')"
 

@@ -65,7 +65,7 @@ down incrementally.
 
 | Area | Status |
 |---|---|
-| Database schema + migrations | ✅ Complete (`migrations/`, `deployments/docker/init-db.sql`) |
+| Database schema + migrations | ✅ Complete (`internal/migrations/`, `deployments/docker/init-db.sql`) |
 | Docker Compose (infra) | ✅ Postgres/Redis/Elasticsearch/APISIX/OPA + healthchecks |
 | CI/CD | ✅ GitHub Actions: `ci.yml` (Go), `ci-web.yml` (frontend), `ci-android.yml`, `codeql.yml`, `docker.yml`, `security-scan.yml`, `release.yml`, `docs.yml` |
 | Config validation | ✅ `ValidateProduction()` blocks prod startup on insecure secrets / wildcard CORS / disabled CSRF / non-TLS DB |

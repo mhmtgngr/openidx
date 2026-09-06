@@ -18,8 +18,9 @@
 # What counts as a citation: a backticked token starting with one of the
 # repo's top-level directories. Deliberately NOT checked, because they are
 # not claims about a path that exists:
-#   - glob and brace forms (`internal/oauth/**`, `internal/{a,b}.go`) and
-#     elisions (`mobile/src/...`) -- shorthand for a set, not a file
+#   - glob and brace forms (`internal/oauth/**`, `internal/{a,b}.go`),
+#     elisions (`mobile/src/...`) and placeholders
+#     (`internal/migrations/sql_v<N>.go`) -- shorthand for a set, not a file
 #   - Go symbol references (`internal/auth.ValidateToken`) -- a package path
 #     plus an identifier
 #
@@ -89,7 +90,12 @@ def is_skipped(rel: str) -> bool:
     return any(pathlib.PurePath(rel).match(g) for g, _ in skipped)
 
 def is_shorthand(p: str) -> bool:
-    return any(c in p for c in "*{}") or "..." in p or is_go_symbol(p)
+    # `<N>` is a placeholder, the same class as `**` and `...`: it names the
+    # shape of a filename, not a file. `internal/migrations/sql_v<N>.go` is how
+    # you write "the migration file" when the number is the reader's to choose,
+    # and demanding it exist would push the writer to name one arbitrary
+    # migration instead -- a citation that goes stale the moment it is copied.
+    return any(c in p for c in "*{}<>") or "..." in p or is_go_symbol(p)
 
 findings, seen_allowed = [], set()
 docs = sorted(p for p in root.rglob("*.md")

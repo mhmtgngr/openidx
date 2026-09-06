@@ -1915,7 +1915,7 @@ class this whole program exists for.
      tenant**.
    - The UPDATE that records the containment writes a `containment_steps`
      column that `internal/migrations` never created (only the legacy standalone
-     tree at `migrations/017_*.up.sql` declares it). It too failed on every call
+     SQL tree declared it — deleted in batch 45). It too failed on every call
      since v62, taking `quarantine_action` with it — so the console's incident
      list has been reading `none` for incidents that were fully quarantined.
      v147 adds the column and the write now reports.
@@ -4115,6 +4115,72 @@ class this whole program exists for.
 
    The next red CodeQL check on this repository — this one included — is read
    out of the job log instead of guessed at.
+
+   ### The second migration system
+
+   **Batch 45: a documented procedure that produced nothing.**
+
+   `migrations/` held 105 files — 52 `.up.sql`/`.down.sql` pairs and a README
+   titled *"Database Migration System"* whose first line was *"This directory
+   contains versioned database migrations for OpenIDX"*. **Nothing has ever
+   applied them.** The schema every service applies is the registry in
+   `internal/migrations`: Go string constants in `sql_v<N>.go`, listed in
+   `loader.go`, v1 through v172. `openidx migrate up` shells out to
+   `cmd/migrate`, which applies that registry. No `go:embed`, no loader, no
+   compose service, no Helm hook ever read the loose tree.
+
+   Four things followed from that, each worse than the last:
+
+   - **The tree was stale by 120 migrations.** It stops at 52; the registry is
+     at 172. A file nobody reads cannot go stale loudly.
+   - **The numbering never matched.** The tree's `008_add_scim_identity_tables`
+     is `audit_compliance` in the registry. So even as a reference, reading it
+     tells you the wrong thing about what v8 did.
+   - **`openidx migrate create <name>` wrote into it** — a command whose entire
+     output was inert. A contributor following it wrote SQL that never ran, then
+     watched `openidx migrate up` report success, because it had applied the
+     registry.
+   - **Code was written against schema only the dead tree declared.** The
+     containment finding earlier in this section is exactly that: an UPDATE
+     writing a `containment_steps` column that `internal/migrations` never
+     created and only `migrations/017_*.up.sql` declared. It failed on every
+     call since v62.
+
+   `internal/identity/README.md` was the same shape one level down: its
+   "Database Schema" section described `users_v2`, `groups_v2` and
+   `organizations_v2` as *"defined in `migrations/008_add_scim_identity_tables.sql`"*.
+   The string `users_v2` appears **nowhere** in this repository's Go or SQL. The
+   package reads `users`, `groups`, `group_memberships`, `sessions`,
+   `user_roles`, `roles`, `login_history` and `hardware_tokens` — 103 `FROM
+   users` and not one `_v2`. A package README is the first thing a contributor
+   reads about a schema.
+
+   So the tree is deleted, and the commands that pointed into it now point at
+   what runs:
+
+   - `openidx migrate create <name>` writes `internal/migrations/sql_v<N>.go`
+     with the up/down constants and prints the exact `loader.go` entry to add.
+     **N comes from the registry**, not from counting files — counting files is
+     how the old command offered `053` while the schema was at 172. Registering
+     stays a deliberate edit: `loader.go` is the list `tools/orgscope` derives
+     the tenant-scope census from, and a machine appending to it is one bad
+     merge from reordering the schema. Re-running refuses rather than
+     overwriting.
+   - `openidx db seed`'s fallback pointed at `migrations/010_seed_data.up.sql`,
+     so a missing `scripts/seed.sh` silently "seeded" from statements that had
+     never run anywhere. It now falls back to `deployments/docker/seed.sql` —
+     the file the `seed` compose service really applies — and fails loudly when
+     neither exists.
+   - `openidx paths` listed the dead directory as "Migrations".
+   - `loader.go` carried `//go:build !embed_migrations`, naming a build variant
+     that has never existed: `go build -tags embed_migrations
+     ./internal/migrations` failed with `m.LoadMigrations undefined` at three
+     call sites. The last trace of the design where the SQL lived in that
+     directory; removed with it.
+
+   Four tests pin the CLI (`cmd/openidx/commands/migrate_test.go`): the file it
+   writes is the one the migrator reads, the version follows the registry, it
+   does not write into `migrations/`, and it refuses to overwrite.
 4. ✅ **OPA `deny` enforced** — *shipped.* — `internal/common/middleware/opa.go`: abort
    unless `Allow && len(Deny)==0`; `authz.rego:15-19`'s "any authenticated
    user may GET anything" removed; `policies/access_control.rego`

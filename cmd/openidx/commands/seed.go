@@ -48,15 +48,21 @@ the application.`,
 					return e
 				}
 			} else {
-				// Fallback to SQL file
-				seedFile := ctx.Path("migrations", "010_seed_data.up.sql")
+				// The fallback used to be migrations/010_seed_data.up.sql, in a
+				// tree nothing applied — so a missing seed.sh silently "seeded"
+				// from a file whose statements had never run anywhere. The seed
+				// is deployments/docker/seed.sql, applied by scripts/seed.sh and
+				// by the one-shot `seed` compose service; if the script is gone,
+				// say so rather than pretend.
+				seedFile := ctx.Path("deployments", "docker", "seed.sql")
 				if ctx.Exists(seedFile) {
 					if e := runSQLFile(ctx, dbURL, seedFile); e != nil {
 						errColor.Printf("Failed to run seed file: %v\n", e)
 						return e
 					}
 				} else {
-					success.Println("No seed data found (skipping)")
+					errColor.Printf("No seed found: neither %s nor %s exists\n", seedScript, seedFile)
+					return fmt.Errorf("no seed script or seed SQL found")
 				}
 			}
 

@@ -274,29 +274,23 @@ err = repo.RemoveGroupMember(ctx, group.ID, userID)
 
 ## Database Schema
 
-The repository uses the following tables (defined in `migrations/008_add_scim_identity_tables.sql`):
+The tables this package really reads and writes are `users`, `groups`,
+`group_memberships`, `organizations`, `sessions`, `user_roles`, `roles`,
+`login_history` and `hardware_tokens`. They are created by the migration
+registry in `internal/migrations` — Go constants in `sql_v<N>.go`, listed in
+`loader.go` — which is what every service applies at startup and what
+`go run ./cmd/migrate up` applies by hand.
 
-### users_v2
+This section used to describe a `users_v2` / `groups_v2` / `organizations_v2`
+schema "defined in `migrations/008_add_scim_identity_tables.sql`". No such
+table has ever existed: the string `users_v2` appears nowhere in this
+repository's Go or SQL, and the loose `migrations/` tree it cited was never
+applied by anything and has been deleted. A package README is the first thing
+a contributor reads about a schema, so the fiction is worth naming rather than
+quietly dropping.
 
-- SCIM 2.0 compatible users table
-- JSONB fields for emails, phoneNumbers, photos, addresses, groups, roles
-- Soft delete support with `deleted_at` column
-- Full-text search index on username, display_name, emails
-- GIN indexes for JSONB array operations
-
-### groups_v2
-
-- SCIM 2.0 compatible groups table
-- JSONB members array with Member objects
-- Organization and directory references
-- Soft delete support
-
-### organizations_v2
-
-- Organizations/tenants table
-- Branding and settings stored as JSONB
-- Domain uniqueness constraint
-- Soft delete support
+SCIM 2.0 attributes are mapped onto those tables by this package (see
+`SCIM Synchronization` above), not stored in a parallel SCIM schema.
 
 ## Filtering and Pagination
 
@@ -365,18 +359,16 @@ org.UpdateMeta(baseURL)
 
 ## Migration
 
-To use the new identity models with existing data:
+The schema is applied by the migration registry, never by hand:
 
-1. Run the migration:
 ```bash
-psql -U openidx -d openidx -f migrations/008_add_scim_identity_tables.sql
+go run ./cmd/migrate up          # or: docker compose up migrate
 ```
 
-2. Migrate existing users from `users` to `users_v2` (custom script required)
-
-3. Update service code to use new repository
-
-4. Verify data integrity
+Every service also applies pending migrations at startup when `AUTO_MIGRATE`
+is set. To add one, `openidx migrate create <name>` writes
+`internal/migrations/sql_v<N>.go` and prints the `loader.go` entry to add —
+until it is in that list, nothing applies it.
 
 ## Performance Considerations
 

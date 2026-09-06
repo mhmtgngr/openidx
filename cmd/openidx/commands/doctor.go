@@ -470,7 +470,7 @@ func NewPathsCommand() *cobra.Command {
 				{"Project Root", ctx.RootDir},
 				{"Go Services", ctx.Path("cmd")},
 				{"Web Console", ctx.Path("web", "admin-console")},
-				{"Migrations", ctx.Path("migrations")},
+				{"Migrations", ctx.Path("internal", "migrations")},
 				{"Deployments", ctx.Path("deployments")},
 				{"Config", ctx.Path("configs")},
 				{"Scripts", ctx.Path("scripts")},
