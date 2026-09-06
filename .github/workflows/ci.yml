@@ -1082,6 +1082,58 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           exit $rc
 
+  # tablewriters holds the schema next to the code: every table the migration
+  # registry creates, against every table a SQL literal in the product writes.
+  # A table with no writer is a measurement that cannot measure -- the Usage
+  # Analytics card reads api_usage_metrics for requests, latency and error rate,
+  # nothing has ever inserted a row, and all three have read 0 on every install.
+  #
+  # Nothing else in this repository can see it. The SQL is valid, so sqlprepare
+  # passes it; the tenant predicate is there, so orgscope passes it; the handler
+  # returns 200 with a well-formed body, so the contract test passes it; and
+  # COUNT(*) of an empty table is 0, not an error, so nothing is logged.
+  tablewriters:
+    name: Unwritten-table lint
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.go_changed == 'true'
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Self-test the tool first
+        # A guard whose own cases do not pass has no standing to fail a build.
+        run: go test ./tools/tablewriters/
+
+      - name: Run tablewriters (hard gate)
+        run: |
+          set +e
+          go run ./tools/tablewriters -fail ./internal ./cmd ./pkg > tw.out 2> tw.err
+          rc=$?
+          set -e
+          {
+            echo "## tablewriters — tables nothing writes"
+            echo
+            if [ "$rc" -ne 0 ]; then
+              echo "❌ **Gate failed.** A NEW finding is a table the schema creates that no production code writes: if something reads it, the numbers it shows are zeros presented as measurements. A STALE entry is a table that has gained a writer, and its line in \`tools/tablewriters/known.go\` must go."
+            else
+              echo "✅ $(tail -n1 tw.err 2>/dev/null || echo 'every live table has a writer or a verdict')"
+            fi
+            echo
+            echo '```'
+            head -60 tw.out
+            tail -n1 tw.err
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
+
   # Security vulnerability check
   vulnerability-check:
     name: Vulnerability Check
@@ -1650,6 +1702,7 @@ jobs:
       - selfheal
       - shell-prose
       - smoke
+      - tablewriters
       - test-frontend
       - test-integration
       - test-race

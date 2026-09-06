@@ -9,6 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`tools/tablewriters` — the tables the product reads and nothing writes.**
+  The API-usage card reads `api_usage_metrics` for total requests, average
+  latency and error rate; migration v54 created that table with exactly the
+  columns an hourly request aggregate needs, and nothing has ever inserted a
+  row into it. So the card has reported three zeros on every install that has
+  ever run, and a zero from an empty table is indistinguishable from a measured
+  zero. Nothing else in the repository can see this: the SQL is valid, so
+  `sqlprepare` passes it; the tenant predicate is present, so `orgscope` passes
+  it; the handler returns 200 with a well-formed body, so the contract test
+  passes it; and `COUNT(*)` of an empty table is 0, not an error, so nothing is
+  logged. The only thing that can see it is a census, so this one holds the set
+  of tables the migration registry creates next to the set of tables a SQL
+  literal in `./internal`, `./cmd` and `./pkg` writes, and subtracts. Both
+  halves are derived rather than listed, for the reason `orgscope` was
+  inverted. Literals come out of the AST rather than a grep, because prose
+  about SQL is not SQL — a comment quoting a query a previous fix deleted was
+  read by the first draft as a live read of a table dropped two migrations ago.
+  A table a migration seeds is not a finding: the seed is its writer. **Nine of
+  226 live tables have no writer**, each registered in
+  `tools/tablewriters/known.go` with its verdict, and the register can only
+  shrink: an unregistered finding fails the run and so does an entry that no
+  longer reproduces. Five are read — `api_usage_metrics`, `risk_factors` (the
+  continuous-auth engine computes five weighted factors and returns the empty
+  slice it started with), `ai_agent_activity` (three reads: a per-agent
+  activity list, a 24-hour ranking and a failure count, all empty because
+  nothing outside the admin API so much as reads an agent credential, so no
+  agent has ever acted), and `upstream_pools` with its members (v130 built the
+  place to express a load-balanced backend set and the reconciler that renders
+  it; nothing can create one). Four are dead schema: `health_check_history`,
+  `posture_check_types`, `scim_groups` — the unused half of v3's SCIM pair,
+  whose install-wide unique key an earlier commit in this programme carefully
+  re-scoped — and `user_mfa_policies`.
+
 - **`tools/sqlprepare` — every SQL literal in the tree, planned by a real
   PostgreSQL.** A green CI run's database log carried `column "request_count"
   does not exist`, and following it found a class no reviewer or compiler can
