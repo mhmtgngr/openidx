@@ -36,6 +36,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The SQL gate added in this release could not fail the build.** ci.yml's
+  integration step opens `set -uo pipefail` — no `-e` — so a bare failing
+  command does not stop the script and the step's exit code is whatever the
+  LAST command returned. Measured: `bash -c 'set -uo pipefail; false; echo
+  reached; true'` prints `reached` and exits 0. `go run ./tools/sqlprepare
+  -fail` was added as a bare command, so it would have printed its findings into
+  a green job — the defect this branch keeps finding, written into the file
+  whose job is checking. It and `go run ./cmd/migrate up` now say `exit 1`
+  themselves, the four service builds in the same block are guarded (an
+  unbuilt service surfaced sixty seconds later as "services did not become
+  ready", naming the wrong cause), and
+  `scripts/check-run-blocks-can-fail.sh` keeps the next one honest: in a
+  block that sets shell options without `-e`, a gating command must be
+  guarded unless it is the last command, whose status *is* the step's. Eight
+  self-test cases, five of them negatives (`|| true`, a `-e` block, no `set`
+  line, the last command, non-gating commands).
+
 - **The SIEM forwarder created its own cursor table, as a role that cannot
   create tables.** `internal/audit/siem_forwarder.go` opened with
   `CREATE TABLE IF NOT EXISTS siem_forward_cursor` executed through the service

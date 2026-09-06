@@ -137,6 +137,15 @@ jobs:
         run: bash scripts/check-go-toolchain-pin.test.sh
       - name: Every setup-go step installs the toolchain go.mod pins
         run: bash scripts/check-go-toolchain-pin.sh --enforce
+      - name: Verify the run-block guard can go red
+        run: bash scripts/check-run-blocks-can-fail.test.sh
+      - name: A gate in a run block without -e must exit 1 itself
+        # Added because a gate added to this very file could not fail: the
+        # integration step opens `set -uo pipefail` (no -e), so a bare failing
+        # command is skipped over and the step's status comes from the LAST
+        # command. A checker that cannot fail is the defect this repository
+        # keeps finding, and the checking file is where it is easiest to write.
+        run: bash scripts/check-run-blocks-can-fail.sh --enforce
       - name: Verify the race-timeout guard can go red
         # Same mutation discipline: it must flag a bare `-race`, including one
         # split across a line continuation where the first line looks complete,
@@ -655,8 +664,18 @@ jobs:
           set -uo pipefail
 
           # ----- migrations -----
+          # Guarded explicitly: this block runs under `set -uo pipefail` with no
+          # -e, so a bare failing command does NOT stop the script -- the step's
+          # exit code is whatever the LAST command returns. Every failure path
+          # in this block has to say `exit 1` itself, which is why the health
+          # wait below does. A failed migration would otherwise surface sixty
+          # seconds later as "services did not become ready", naming the wrong
+          # cause.
           echo "::group::Migrate DB"
-          go run ./cmd/migrate up
+          if ! go run ./cmd/migrate up; then
+            echo "::error::migrations failed; the schema the rest of this job needs does not exist"
+            exit 1
+          fi
           echo "::endgroup::"
 
           # ----- every SQL literal in the tree, planned by the real database --
@@ -669,7 +688,10 @@ jobs:
           # name resolution and planning, no execution -- and fails on anything
           # its register does not already carry. See tools/sqlprepare.
           echo "::group::SQL prepares against the migrated schema"
-          go run ./tools/sqlprepare -fail
+          if ! go run ./tools/sqlprepare -fail; then
+            echo "::error::sqlprepare: SQL this database refuses to plan. A NEW finding is a query that cannot succeed; a STALE entry is one that was fixed and whose register line must go. See tools/sqlprepare/known.go."
+            exit 1
+          fi
           echo "::endgroup::"
 
           # ----- build services the integration tests hit -----
@@ -698,10 +720,13 @@ jobs:
           # tested, and both halves are asserted (a super_admin crosses and is
           # audited; a plain admin does not).
           echo "::group::Build identity-service + oauth-service + gateway-service + admin-api"
-          go build -o /tmp/identity-service ./cmd/identity-service
-          go build -o /tmp/oauth-service    ./cmd/oauth-service
-          go build -o /tmp/gateway-service  ./cmd/gateway-service
-          go build -o /tmp/admin-api        ./cmd/admin-api
+          for svc in identity-service oauth-service gateway-service admin-api; do
+            if ! go build -o "/tmp/$svc" "./cmd/$svc"; then
+              echo "::error::$svc failed to build; without it the wait below would report" \
+                   "'services did not become ready' sixty seconds from now and name the wrong cause"
+              exit 1
+            fi
+          done
           echo "::endgroup::"
 
           # ----- start services in background -----
