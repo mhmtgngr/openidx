@@ -401,7 +401,14 @@ func TestRegistersOnlyShrink(t *testing.T) {
 		// used it -- the shape v151's comment in guacamole.go names as "the
 		// whole security of this handler" -- on the four-eyes control, one of
 		// whose handlers also terminates the live privileged session.
-		{"predicateAuditPending", len(predicateAuditPending), 15},
+		// 15 -> 12 with the rest of the Guacamole surface: the per-user broker
+		// accounts (whose row holds the encrypted password the share path
+		// decrypts), the approval gate, and the session ledger. Three of those
+		// findings were only ever a MISPLACED //orgscope:ignore -- the directive
+		// suppresses on its own line or the one below, so one sitting above a
+		// multi-line Exec never reached the SQL literal it was written for. The
+		// reasons were right and unread.
+		{"predicateAuditPending", len(predicateAuditPending), 12},
 		{"installWideTables", len(installWideTables), 21},
 		{"beltExempt", len(beltExempt), 5},
 	} {

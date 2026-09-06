@@ -57,7 +57,7 @@ func (s *Service) ensureGuacUserRecord(ctx context.Context, gc *GuacamoleClient,
 	var guacUser, encPw string
 	err := s.db.Pool.QueryRow(ctx,
 		`SELECT guac_username, guac_password_enc FROM guacamole_users
-		  WHERE broker = $1 AND user_id = $2`, gc.component, userID).Scan(&guacUser, &encPw)
+		  WHERE broker = $1 AND user_id = $2 AND org_id = $3`, gc.component, userID, orgID).Scan(&guacUser, &encPw)
 	if err == nil {
 		pw, derr := gc.tokenCipher.Decrypt(encPw)
 		if derr != nil {
@@ -193,7 +193,7 @@ func (s *Service) connectURLForBroker(ctx context.Context, gc *GuacamoleClient, 
 // mint the owner-scoped read-only monitor share key. Resolves activeConnID →
 // ConnectionIdentifier (via ListActiveSessions) → the newest active
 // pam_entry_sessions.guac_username → guacamole_users password.
-func (s *Service) resolveActiveSessionOwner(ctx context.Context, gc *GuacamoleClient, activeConnID string) (string, string, error) {
+func (s *Service) resolveActiveSessionOwner(ctx context.Context, gc *GuacamoleClient, orgID, activeConnID string) (string, string, error) {
 	sessions, err := gc.ListActiveSessions(ctx)
 	if err != nil {
 		return "", "", err
@@ -221,7 +221,8 @@ func (s *Service) resolveActiveSessionOwner(ctx context.Context, gc *GuacamoleCl
 	var encPw string
 	if err := s.db.Pool.QueryRow(ctx,
 		`SELECT guac_password_enc FROM guacamole_users
-		  WHERE broker = $1 AND guac_username = $2 LIMIT 1`, gc.component, guacUser).Scan(&encPw); err != nil {
+		  WHERE broker = $1 AND guac_username = $2 AND org_id = $3 LIMIT 1`,
+		gc.component, guacUser, orgID).Scan(&encPw); err != nil {
 		return "", "", fmt.Errorf("resolve session owner secret: %w", err)
 	}
 	pw, err := gc.tokenCipher.Decrypt(encPw)
@@ -301,7 +302,9 @@ func (s *Service) sweepDeprovisionGuacUsers(ctx context.Context) {
 		}
 		_, status, derr := b.apiRequest("DELETE", "/users/"+t.guacUser, nil)
 		if derr == nil && (status/100 == 2 || status == http.StatusNotFound) {
-			if _, err := s.db.Pool.Exec(ctx, `DELETE FROM guacamole_users WHERE id = $1`, t.rowID); err != nil {
+			if _, err := s.db.Pool.Exec(ctx,
+				//orgscope:ignore deprovision sweep runs across orgs under bypass-RLS; the row id comes from this sweep's own scan
+				`DELETE FROM guacamole_users WHERE id = $1`, t.rowID); err != nil {
 				s.logger.Warn("sweepDeprovisionGuacUsers: row delete failed", zap.String("row", t.rowID), zap.Error(err))
 			}
 		}

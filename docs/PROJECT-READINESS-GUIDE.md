@@ -3753,6 +3753,41 @@ class this whole program exists for.
 
    Red proof: with the party check neutralised, *"a user who is neither
    requester nor moderator ended the session (200)."*
+
+   **Batch 36 (`predicateAuditPending` 15 → 12): a directive nobody read, and a
+   note that was load-bearing.**
+
+   The rest of the Guacamole surface — the per-user broker accounts, the
+   approval gate, the session ledger. Three of its seven findings turned out to
+   be **a misplaced `//orgscope:ignore`**. The directive suppresses on its own
+   line or the one directly below, so one written above a multi-line
+   `db.Pool.Exec(ctx,` never reached the SQL literal it was written for. The
+   reasons were correct and unread — the lint had been reporting them all along
+   and they read as unfinished work rather than as a placement bug. Moved onto
+   the literal, they do what their authors meant.
+
+   The four that were real:
+
+   - `ensureGuacUserRecord` **took an `orgID` argument and never used it** in
+     its lookup — the discard shape again, on the row holding the encrypted
+     password the share path later decrypts.
+   - `resolveActiveSessionOwner` reads that password to mint a read-only monitor
+     link for a live privileged session; it now takes the tenant, and
+     `handleShareGuacSession` resolves one instead of assuming.
+   - `checkAndConsumeApproval` — **the approval gate** — carried a comment
+     explaining that RLS scoped it *"without an explicit org_id predicate"*,
+     with a parenthetical warning that *"the context must originate from the
+     request — not a background context — so RLS remains active."* A
+     correctness argument about the caller, in the gate that decides whether a
+     privileged session may start. The predicate makes the gate's own SQL
+     sufficient and the note no longer load-bearing.
+
+   **A pre-existing test caught an error in this batch's own change.** The
+   approval predicate referenced `$3` and the argument list still passed two —
+   so the gate matched nothing and refused a tenant's own connection.
+   `TestGuacamoleConnections_TenantIsolation`, written for exactly this failure
+   mode in an earlier batch, said so in one line: *"org A connecting to its OWN
+   route returned 403; the org predicate must scope the lookup, not empty it."*
 4. ✅ **OPA `deny` enforced** — *shipped.* — `internal/common/middleware/opa.go`: abort
    unless `Allow && len(Deny)==0`; `authz.rego:15-19`'s "any authenticated
    user may GET anything" removed; `policies/access_control.rego`

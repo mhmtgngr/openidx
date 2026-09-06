@@ -461,8 +461,8 @@ func (s *Service) handleTerminateGuacSession(c *gin.Context) {
 	// Best-effort: mark the tracking row as terminated. guacamole_sessions has
 	// org_id and RLS is FORCE-enabled, so the UPDATE is automatically org-scoped
 	// via the request context's app.org_id setting.
-	//orgscope:ignore RLS on guacamole_sessions is enforced via the request context's app.org_id setting
 	_, dbErr := s.db.Pool.Exec(ctx,
+		//orgscope:ignore RLS on guacamole_sessions is enforced via the request context's app.org_id setting; the key is the broker's global session uuid
 		`UPDATE guacamole_sessions
 		    SET status   = 'terminated',
 		        ended_at = NOW()
@@ -501,13 +501,18 @@ func (s *Service) handleShareGuacSession(c *gin.Context) {
 
 	activeConnID := c.Param("id")
 	ctx := c.Request.Context()
+	shareOrg, orgErr := orgctx.From(ctx)
+	if orgErr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
 
 	gc := s.guacamoleClient
 	var shareURL string
 	var err error
 	if gc.perUserIdentities {
 		// Owner-restricted: mint the share key as the session's per-user owner.
-		owner, pw, oerr := s.resolveActiveSessionOwner(ctx, gc, activeConnID)
+		owner, pw, oerr := s.resolveActiveSessionOwner(ctx, gc, shareOrg.ID, activeConnID)
 		if oerr != nil {
 			s.logger.Warn("handleShareGuacSession: owner resolve failed", zap.Error(oerr))
 			c.JSON(http.StatusConflict, gin.H{"error": "cannot resolve session owner for read-only monitor"})
@@ -693,11 +698,13 @@ func (s *Service) recordGuacSession(ctx context.Context, orgID, connectionID, us
 // user. Returns (true, nil) if a row was consumed (access granted),
 // (false, nil) if none exists (access denied), or (false, err) on error.
 //
-// The UPDATE runs under the connect handler's ctx which already carries the
-// org_id app-setting → RLS scopes the CTE to the right org without an
-// explicit org_id predicate. (Note for T7: the context must originate from
-// the request — not a background context — so RLS remains active.)
-func (s *Service) checkAndConsumeApproval(ctx context.Context, connectionID, userID string) (bool, error) {
+// The UPDATE names the organization itself. It used to rely on the connect
+// handler's ctx carrying the org_id app-setting, with a note that "the context
+// must originate from the request — not a background context — so RLS remains
+// active": a correctness argument about the caller, in a gate that decides
+// whether a privileged session may start. The predicate makes the gate's own
+// SQL sufficient, so that note is no longer load-bearing.
+func (s *Service) checkAndConsumeApproval(ctx context.Context, orgID, connectionID, userID string) (bool, error) {
 	var id string
 	err := s.db.Pool.QueryRow(ctx,
 		`UPDATE guacamole_session_requests SET status = 'consumed'
@@ -705,13 +712,14 @@ func (s *Service) checkAndConsumeApproval(ctx context.Context, connectionID, use
 		        SELECT id FROM guacamole_session_requests
 		         WHERE connection_id = $1
 		           AND requester_id  = $2
+		           AND org_id        = $3
 		           AND status        = 'approved'
 		           AND (expires_at IS NULL OR expires_at > NOW())
 		         ORDER BY created_at DESC
 		         LIMIT 1
 		  )
 		  RETURNING id`,
-		connectionID, userID).Scan(&id)
+		connectionID, userID, orgID).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}

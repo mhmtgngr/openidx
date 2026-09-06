@@ -547,8 +547,8 @@ func (h *RemoteSupportHandler) generateGuacTranscripts(ctx context.Context) {
 		return // guaclog not installed → feature inert, no error
 	}
 
-	//orgscope:ignore background cross-org transcript sweep under bypass-RLS context
 	rows, err := h.db.Pool.Query(ctx,
+		//orgscope:ignore background cross-org transcript sweep under bypass-RLS context
 		`SELECT id, recording_path
 		   FROM guacamole_sessions
 		  WHERE status IN ('ended', 'terminated')
@@ -602,8 +602,8 @@ func (h *RemoteSupportHandler) generateGuacTranscripts(ctx context.Context) {
 				continue
 			}
 		}
-		//orgscope:ignore background sweep; row identified by PK
 		_, _ = h.db.Pool.Exec(ctx,
+			//orgscope:ignore background sweep; the row id comes from this sweep's own cross-org scan
 			`UPDATE guacamole_sessions
 			    SET transcript_path         = $1,
 			        transcript_generated_at = NOW()

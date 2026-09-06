@@ -626,7 +626,7 @@ func (s *Service) handleGuacamoleConnect(c *gin.Context) {
 
 	// Approval gate — single-use, atomic consume.
 	if requireApproval {
-		ok, err := s.checkAndConsumeApproval(ctx, connectionPK, userID)
+		ok, err := s.checkAndConsumeApproval(ctx, org.ID, connectionPK, userID)
 		if err != nil {
 			s.logger.Error("handleGuacamoleConnect: checkAndConsumeApproval failed",
 				zap.String("connection_id", connectionPK), zap.Error(err))
