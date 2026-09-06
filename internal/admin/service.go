@@ -1320,20 +1320,6 @@ func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 
 // HTTP Handlers
 
-func (s *Service) handleUpdateSettings(c *gin.Context) {
-	var settings Settings
-	if err := c.ShouldBindJSON(&settings); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
-		return
-	}
-	if err := s.UpdateSettings(c.Request.Context(), &settings); err != nil {
-		s.logger.Error("failed to update settings", zap.Error(err))
-		c.JSON(500, gin.H{"error": "internal server error"})
-		return
-	}
-	c.JSON(200, settings)
-}
-
 func (s *Service) handleGetSMSSettings(c *gin.Context) {
 	valueBytes, err := s.settings.GetRaw(c.Request.Context(), "sms_config")
 

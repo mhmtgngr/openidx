@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The OpenID Connect discovery document omitted three things this server
+  does.** `revocation_endpoint` and `introspection_endpoint` (RFC 8414 §2) were
+  absent although `POST /oauth/revoke` and `POST /oauth/introspect` are both
+  routed, so a relying party that reads discovery to find where to revoke a
+  token at sign-out found nowhere — and did not revoke. And
+  `token_endpoint_auth_methods_supported` listed only `client_secret_post` and
+  `client_secret_basic`, although dynamic client registration creates a
+  **public** client when `token_endpoint_auth_method=none` and the token
+  endpoint skips secret verification for that type (PKCE carries the proof
+  instead): every conforming SPA and native client was told it had no usable
+  authentication method here. All three are now advertised, and they move with
+  the issuer under subdomain tenancy. The drift was invisible because it was on
+  the wrong side of a dead file: `api/openapi/oauth-service.yaml` documented
+  both endpoints, `docs/docs/api/authentication.md` showed them in its sample
+  document, and `internal/oauth/discovery.go` — a **second, unmounted**
+  discovery implementation with a 415-line test suite — carried them too. Only
+  the document actually served lacked them. The dead implementation is deleted
+  and its assertions moved onto the live handler, so a discovery test now goes
+  through the route a relying party fetches.
+
 - **Six of the webhook events the console offers had never been published.**
   The subscription form listed ten event types. `user.updated` and
   `group.updated` were emitted only from `internal/identity/handler.go` — a

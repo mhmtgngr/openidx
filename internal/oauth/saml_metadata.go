@@ -319,11 +319,6 @@ func (s *Service) getSigningCertificate() (string, error) {
 	return s.samlSigningCertBase64()
 }
 
-// HandleIdPMetadataRequest is an alias for handleIdPMetadata for compatibility
-func (s *Service) HandleIdPMetadataRequest(c *gin.Context) {
-	s.handleIdPMetadata(c)
-}
-
 // GenerateIdPMetadataXML generates and returns the IdP metadata as a string
 // This is useful for testing and programmatic access
 func (s *Service) GenerateIdPMetadataXML(baseURL string) (string, error) {

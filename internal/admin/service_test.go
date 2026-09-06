@@ -246,15 +246,23 @@ func TestUpdateApplicationFieldParsing(t *testing.T) {
 	}
 }
 
-// TestHandlerUpdateSettingsInvalidJSON tests settings handler with invalid JSON
-func TestHandlerUpdateSettingsInvalidJSON(t *testing.T) {
+// TestHandlerUpdateSMSSettingsInvalidJSON tests a settings handler with invalid
+// JSON.
+//
+// It used to drive handleUpdateSettings, a second writer for the system
+// settings blob that NO ROUTE MOUNTED -- routes.go mounts
+// admin/handlers.UpdateSettings on PUT /settings, and this one's only caller
+// anywhere was this test. A test whose subject no request can reach proves the
+// behaviour of nothing. tools/routereach found it; the handler is deleted and
+// the case moved onto handleUpdateSMSSettings, which PUT /settings/sms mounts.
+func TestHandlerUpdateSMSSettingsInvalidJSON(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
-	c.Request, _ = http.NewRequest("PUT", "/settings", strings.NewReader("not json"))
+	c.Request, _ = http.NewRequest("PUT", "/settings/sms", strings.NewReader("not json"))
 	c.Request.Header.Set("Content-Type", "application/json")
 
 	svc := &Service{}
-	svc.handleUpdateSettings(c)
+	svc.handleUpdateSMSSettings(c)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }

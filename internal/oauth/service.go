@@ -152,9 +152,16 @@ type OIDCDiscovery struct {
 	TokenEndpointAuthMethodsSupported []string `json:"token_endpoint_auth_methods_supported"`
 	ClaimsSupported                   []string `json:"claims_supported"`
 	CodeChallengeMethodsSupported     []string `json:"code_challenge_methods_supported"`
-	EndSessionEndpoint                string   `json:"end_session_endpoint,omitempty"`
-	BackchannelLogoutSupported        bool     `json:"backchannel_logout_supported,omitempty"`
-	BackchannelLogoutSessionSupported bool     `json:"backchannel_logout_session_supported,omitempty"`
+	// RFC 8414 §2. Both endpoints are routed (POST /oauth/revoke, POST
+	// /oauth/introspect) and neither was advertised, so a relying party that
+	// reads discovery to find where to revoke a token at sign-out found nowhere
+	// and did not revoke.
+	RevocationEndpoint    string `json:"revocation_endpoint,omitempty"`
+	IntrospectionEndpoint string `json:"introspection_endpoint,omitempty"`
+
+	EndSessionEndpoint                string `json:"end_session_endpoint,omitempty"`
+	BackchannelLogoutSupported        bool   `json:"backchannel_logout_supported,omitempty"`
+	BackchannelLogoutSessionSupported bool   `json:"backchannel_logout_session_supported,omitempty"`
 }
 
 // Service provides OAuth/OIDC operations
@@ -1517,13 +1524,21 @@ func (s *Service) handleDiscovery(c *gin.Context) {
 		// Advertising id_token / token id_token / code id_token sent conforming
 		// clients down a flow that silently returns a code instead. Implicit is
 		// also removed outright by OAuth 2.1, so narrowing is the right direction.
-		ResponseTypesSupported:            []string{"code"},
-		GrantTypesSupported:               []string{"authorization_code", "refresh_token", "client_credentials", grantTypeTokenExchange, grantTypeDeviceCode},
-		SubjectTypesSupported:             s.discoverySubjectTypes(),
-		IDTokenSigningAlgValuesSupported:  []string{"RS256"},
-		TokenEndpointAuthMethodsSupported: []string{"client_secret_post", "client_secret_basic"},
+		ResponseTypesSupported:           []string{"code"},
+		GrantTypesSupported:              []string{"authorization_code", "refresh_token", "client_credentials", grantTypeTokenExchange, grantTypeDeviceCode},
+		SubjectTypesSupported:            s.discoverySubjectTypes(),
+		IDTokenSigningAlgValuesSupported: []string{"RS256"},
+		// "none" is how RFC 8414 spells a public client, and this server has
+		// them: dcr.go registers a client as public when
+		// token_endpoint_auth_method=none, and the token endpoint skips secret
+		// verification for that type (PKCE carries the proof instead). Omitting
+		// it told every conforming SPA and native client that it had no usable
+		// authentication method here.
+		TokenEndpointAuthMethodsSupported: []string{"client_secret_post", "client_secret_basic", "none"},
 		ClaimsSupported:                   []string{"sub", "iss", "aud", "exp", "iat", "email", "email_verified", "name", "given_name", "family_name", "sid"},
 		CodeChallengeMethodsSupported:     []string{"S256"},
+		RevocationEndpoint:                base + "/oauth/revoke",
+		IntrospectionEndpoint:             base + "/oauth/introspect",
 		EndSessionEndpoint:                base + "/oauth/logout",
 		BackchannelLogoutSupported:        true,
 		BackchannelLogoutSessionSupported: true,

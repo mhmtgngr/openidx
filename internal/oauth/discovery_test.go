@@ -1,415 +1,222 @@
-// Package oauth provides unit tests for OIDC Discovery functionality
 package oauth
 
 import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
-// Test Discovery Document
+// These tests describe the OpenID Connect discovery document this server
+// actually serves.
+//
+// They used to describe a different one. internal/oauth/discovery.go held a
+// second discovery implementation -- a DiscoveryDocument struct, a
+// buildDiscoveryDocument, a DiscoveryHandler -- that no service ever mounted,
+// and this file was 415 lines proving it correct. tools/routereach found the
+// handler with no router. The two documents had drifted, and because the tests
+// covered the dead one, the drift was invisible: the SERVED document omitted
+// revocation_endpoint and introspection_endpoint (both routed) and omitted
+// "none" from token_endpoint_auth_methods_supported (public clients exist and
+// the token endpoint skips secret verification for them).
+//
+// So the dead implementation is deleted and the assertions moved onto the live
+// handler. A discovery test that does not go through the route a relying party
+// fetches is a test of prose.
 
-func TestBuildDiscoveryDocument(t *testing.T) {
-	issuer := "https://test.openidx.org"
-	doc := buildDiscoveryDocument(issuer)
-
-	// Test required fields per OpenID Connect Discovery 1.0
-	t.Run("Required fields present", func(t *testing.T) {
-		assert.Equal(t, issuer, doc.Issuer, "issuer must match")
-		assert.NotEmpty(t, doc.AuthorizationEndpoint, "authorization_endpoint is required")
-		assert.NotEmpty(t, doc.TokenEndpoint, "token_endpoint is required")
-		assert.NotEmpty(t, doc.JWKSURI, "jwks_uri is required")
-		assert.NotEmpty(t, doc.ResponseTypesSupported, "response_types_supported is required")
-		assert.NotEmpty(t, doc.SubjectTypesSupported, "subject_types_supported is required")
-		assert.NotEmpty(t, doc.IDTokenSigningAlgValuesSupported, "id_token_signing_alg_values_supported is required")
-	})
-
-	t.Run("Endpoint URLs use correct issuer", func(t *testing.T) {
-		assert.True(t, strings.HasPrefix(doc.AuthorizationEndpoint, issuer))
-		assert.True(t, strings.HasPrefix(doc.TokenEndpoint, issuer))
-		assert.True(t, strings.HasPrefix(doc.JWKSURI, issuer))
-		assert.True(t, strings.HasPrefix(doc.UserInfoEndpoint, issuer))
-	})
-
-	t.Run("Response types include code flow", func(t *testing.T) {
-		assert.Contains(t, doc.ResponseTypesSupported, "code", "code response type must be supported")
-	})
-
-	t.Run("Subject types include public", func(t *testing.T) {
-		assert.Contains(t, doc.SubjectTypesSupported, "public", "public subject type must be supported")
-	})
-
-	t.Run("Signing algorithms include RS256", func(t *testing.T) {
-		assert.Contains(t, doc.IDTokenSigningAlgValuesSupported, "RS256", "RS256 must be supported")
-	})
-
-	t.Run("Scopes include openid", func(t *testing.T) {
-		assert.Contains(t, doc.ScopesSupported, "openid", "openid scope must be supported")
-	})
-
-	t.Run("Grant types include authorization_code", func(t *testing.T) {
-		assert.Contains(t, doc.GrantTypesSupported, "authorization_code", "authorization_code grant must be supported")
-	})
-
-	t.Run("Token endpoint auth methods include client_secret_basic", func(t *testing.T) {
-		assert.Contains(t, doc.TokenEndpointAuthMethodsSupported, "client_secret_basic")
-	})
-}
-
-func TestValidateDiscoveryDocument(t *testing.T) {
-	tests := []struct {
-		name        string
-		doc         *DiscoveryDocument
-		expectErr   bool
-		errContains string
-	}{
-		{
-			name: "Valid discovery document",
-			doc: &DiscoveryDocument{
-				Issuer:                           "https://test.openidx.org",
-				AuthorizationEndpoint:            "https://test.openidx.org/oauth/authorize",
-				TokenEndpoint:                    "https://test.openidx.org/oauth/token",
-				JWKSURI:                          "https://test.openidx.org/.well-known/jwks.json",
-				ResponseTypesSupported:           []string{"code"},
-				SubjectTypesSupported:            []string{"public"},
-				IDTokenSigningAlgValuesSupported: []string{"RS256"},
-			},
-			expectErr: false,
-		},
-		{
-			name: "Missing issuer",
-			doc: &DiscoveryDocument{
-				AuthorizationEndpoint:            "https://test.openidx.org/oauth/authorize",
-				TokenEndpoint:                    "https://test.openidx.org/oauth/token",
-				JWKSURI:                          "https://test.openidx.org/.well-known/jwks.json",
-				ResponseTypesSupported:           []string{"code"},
-				SubjectTypesSupported:            []string{"public"},
-				IDTokenSigningAlgValuesSupported: []string{"RS256"},
-			},
-			expectErr:   true,
-			errContains: "issuer",
-		},
-		{
-			name: "Missing authorization_endpoint",
-			doc: &DiscoveryDocument{
-				Issuer:                           "https://test.openidx.org",
-				TokenEndpoint:                    "https://test.openidx.org/oauth/token",
-				JWKSURI:                          "https://test.openidx.org/.well-known/jwks.json",
-				ResponseTypesSupported:           []string{"code"},
-				SubjectTypesSupported:            []string{"public"},
-				IDTokenSigningAlgValuesSupported: []string{"RS256"},
-			},
-			expectErr:   true,
-			errContains: "authorization_endpoint",
-		},
-		{
-			name: "Missing token_endpoint",
-			doc: &DiscoveryDocument{
-				Issuer:                           "https://test.openidx.org",
-				AuthorizationEndpoint:            "https://test.openidx.org/oauth/authorize",
-				JWKSURI:                          "https://test.openidx.org/.well-known/jwks.json",
-				ResponseTypesSupported:           []string{"code"},
-				SubjectTypesSupported:            []string{"public"},
-				IDTokenSigningAlgValuesSupported: []string{"RS256"},
-			},
-			expectErr:   true,
-			errContains: "token_endpoint",
-		},
-		{
-			name: "Missing jwks_uri",
-			doc: &DiscoveryDocument{
-				Issuer:                           "https://test.openidx.org",
-				AuthorizationEndpoint:            "https://test.openidx.org/oauth/authorize",
-				TokenEndpoint:                    "https://test.openidx.org/oauth/token",
-				ResponseTypesSupported:           []string{"code"},
-				SubjectTypesSupported:            []string{"public"},
-				IDTokenSigningAlgValuesSupported: []string{"RS256"},
-			},
-			expectErr:   true,
-			errContains: "jwks_uri",
-		},
-		{
-			name: "Empty response_types_supported",
-			doc: &DiscoveryDocument{
-				Issuer:                           "https://test.openidx.org",
-				AuthorizationEndpoint:            "https://test.openidx.org/oauth/authorize",
-				TokenEndpoint:                    "https://test.openidx.org/oauth/token",
-				JWKSURI:                          "https://test.openidx.org/.well-known/jwks.json",
-				ResponseTypesSupported:           []string{},
-				SubjectTypesSupported:            []string{"public"},
-				IDTokenSigningAlgValuesSupported: []string{"RS256"},
-			},
-			expectErr:   true,
-			errContains: "response_types_supported",
-		},
-		{
-			name: "Empty subject_types_supported",
-			doc: &DiscoveryDocument{
-				Issuer:                           "https://test.openidx.org",
-				AuthorizationEndpoint:            "https://test.openidx.org/oauth/authorize",
-				TokenEndpoint:                    "https://test.openidx.org/oauth/token",
-				JWKSURI:                          "https://test.openidx.org/.well-known/jwks.json",
-				ResponseTypesSupported:           []string{"code"},
-				SubjectTypesSupported:            []string{},
-				IDTokenSigningAlgValuesSupported: []string{"RS256"},
-			},
-			expectErr:   true,
-			errContains: "subject_types_supported",
-		},
-		{
-			name: "Empty id_token_signing_alg_values_supported",
-			doc: &DiscoveryDocument{
-				Issuer:                           "https://test.openidx.org",
-				AuthorizationEndpoint:            "https://test.openidx.org/oauth/authorize",
-				TokenEndpoint:                    "https://test.openidx.org/oauth/token",
-				JWKSURI:                          "https://test.openidx.org/.well-known/jwks.json",
-				ResponseTypesSupported:           []string{"code"},
-				SubjectTypesSupported:            []string{"public"},
-				IDTokenSigningAlgValuesSupported: []string{},
-			},
-			expectErr:   true,
-			errContains: "id_token_signing_alg_values_supported",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := ValidateDiscoveryDocument(tt.doc)
-
-			if tt.expectErr {
-				assert.Error(t, err)
-				if tt.errContains != "" {
-					assert.Contains(t, err.Error(), tt.errContains)
-				}
-			} else {
-				assert.NoError(t, err)
-			}
-		})
-	}
-}
-
-func TestDiscoveryHandler(t *testing.T) {
+// serveDiscovery renders the live discovery document the way a relying party
+// gets it: through the router, on the well-known path.
+func serveDiscovery(t *testing.T, issuer string) (map[string]interface{}, *httptest.ResponseRecorder) {
+	t.Helper()
 	gin.SetMode(gin.TestMode)
 
-	tests := []struct {
-		name           string
-		method         string
-		expectedStatus int
-		validateResp   func(*testing.T, *httptest.ResponseRecorder)
-	}{
-		{
-			name:           "GET request returns discovery document",
-			method:         "GET",
-			expectedStatus: http.StatusOK,
-			validateResp: func(t *testing.T, w *httptest.ResponseRecorder) {
-				assert.Equal(t, "application/json; charset=utf-8", w.Header().Get("Content-Type"))
+	svc := &Service{issuer: issuer, logger: zap.NewNop()}
+	router := gin.New()
+	router.GET("/.well-known/openid-configuration", svc.handleDiscovery)
+	router.OPTIONS("/.well-known/openid-configuration", svc.handleDiscovery)
 
-				var doc DiscoveryDocument
-				err := json.Unmarshal(w.Body.Bytes(), &doc)
-				require.NoError(t, err)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/.well-known/openid-configuration", nil))
+	require.Equal(t, http.StatusOK, w.Code)
 
-				// Verify required fields
-				assert.NotEmpty(t, doc.Issuer)
-				assert.NotEmpty(t, doc.AuthorizationEndpoint)
-				assert.NotEmpty(t, doc.TokenEndpoint)
-				assert.NotEmpty(t, doc.JWKSURI)
-			},
-		},
-		{
-			name:           "OPTIONS request returns 204 No Content",
-			method:         "OPTIONS",
-			expectedStatus: http.StatusNoContent,
-			validateResp: func(t *testing.T, w *httptest.ResponseRecorder) {
-				assert.Equal(t, "public, max-age=3600", w.Header().Get("Cache-Control"))
-			},
-		},
-		{
-			name:           "HEAD request should be handled",
-			method:         "HEAD",
-			expectedStatus: http.StatusOK,
-		},
+	var doc map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &doc))
+	return doc, w
+}
+
+func strs(t *testing.T, doc map[string]interface{}, key string) []string {
+	t.Helper()
+	raw, ok := doc[key]
+	require.True(t, ok, "discovery document has no %s", key)
+	list, ok := raw.([]interface{})
+	require.True(t, ok, "%s is not an array", key)
+	out := make([]string, 0, len(list))
+	for _, v := range list {
+		s, ok := v.(string)
+		require.True(t, ok, "%s contains a non-string", key)
+		out = append(out, s)
+	}
+	return out
+}
+
+// Every field OpenID Connect Discovery 1.0 §3 marks REQUIRED is present and
+// non-empty. A missing one makes the document unusable to a conforming client.
+func TestDiscoveryDocumentHasEveryRequiredField(t *testing.T) {
+	const issuer = "https://test.openidx.org"
+	doc, _ := serveDiscovery(t, issuer)
+
+	for _, key := range []string{"issuer", "authorization_endpoint", "token_endpoint", "jwks_uri"} {
+		v, _ := doc[key].(string)
+		assert.NotEmpty(t, v, "%s is required by OIDC Discovery 1.0 §3", key)
+	}
+	for _, key := range []string{
+		"response_types_supported", "subject_types_supported", "id_token_signing_alg_values_supported",
+	} {
+		assert.NotEmpty(t, strs(t, doc, key), "%s is required by OIDC Discovery 1.0 §3", key)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			handler := NewDiscoveryHandler("https://test.openidx.org", zap.NewNop())
+	assert.Equal(t, issuer, doc["issuer"])
+	assert.Equal(t, issuer+"/oauth/authorize", doc["authorization_endpoint"])
+	assert.Equal(t, issuer+"/oauth/token", doc["token_endpoint"])
+	assert.Equal(t, issuer+"/.well-known/jwks.json", doc["jwks_uri"])
+	assert.Equal(t, issuer+"/oauth/userinfo", doc["userinfo_endpoint"])
+}
 
-			router := gin.New()
-			router.GET("/.well-known/openid-configuration", handler.HandleDiscovery)
-			router.OPTIONS("/.well-known/openid-configuration", handler.HandleDiscovery)
-			router.HEAD("/.well-known/openid-configuration", handler.HandleDiscovery)
+// Every endpoint the document advertises is one this server routes. The
+// converse -- an endpoint routed and not advertised -- is the defect this file
+// was rewritten over, so both directions are named here rather than assumed.
+func TestDiscoveryAdvertisesTheEndpointsTheServerRoutes(t *testing.T) {
+	const issuer = "https://test.openidx.org"
+	doc, _ := serveDiscovery(t, issuer)
 
-			req := httptest.NewRequest(tt.method, "/.well-known/openid-configuration", nil)
-			w := httptest.NewRecorder()
-			router.ServeHTTP(w, req)
-
-			assert.Equal(t, tt.expectedStatus, w.Code)
-
-			if tt.validateResp != nil {
-				tt.validateResp(t, w)
-			}
-		})
+	for key, path := range map[string]string{
+		"authorization_endpoint":        "/oauth/authorize",
+		"token_endpoint":                "/oauth/token",
+		"userinfo_endpoint":             "/oauth/userinfo",
+		"registration_endpoint":         "/oauth/register",
+		"device_authorization_endpoint": "/oauth/device_authorization",
+		"end_session_endpoint":          "/oauth/logout",
+		// RFC 8414 §2. Both were routed and neither was advertised, so a
+		// relying party looking for where to revoke a token at sign-out found
+		// nowhere -- and did not revoke.
+		"revocation_endpoint":    "/oauth/revoke",
+		"introspection_endpoint": "/oauth/introspect",
+	} {
+		assert.Equal(t, issuer+path, doc[key], "%s must point at the route this server serves", key)
 	}
 }
 
-func TestDiscoveryDocumentJSONSerialization(t *testing.T) {
-	issuer := "https://test.openidx.org"
-	doc := buildDiscoveryDocument(issuer)
+// The rule this repository keeps returning to: advertised means working.
+func TestDiscoveryAdvertisesOnlyImplementedFlows(t *testing.T) {
+	doc, _ := serveDiscovery(t, "https://test.openidx.org")
 
-	// Serialize to JSON
-	data, err := json.Marshal(doc)
-	require.NoError(t, err)
+	responseTypes := strs(t, doc, "response_types_supported")
+	assert.Contains(t, responseTypes, "code")
+	for _, unimplemented := range []string{"id_token", "token id_token", "code id_token", "code token", "code id_token token"} {
+		assert.NotContains(t, responseTypes, unimplemented,
+			"advertised %q but the authorize path always issues a code", unimplemented)
+	}
 
-	// Deserialize back
-	var decoded DiscoveryDocument
-	err = json.Unmarshal(data, &decoded)
-	require.NoError(t, err)
+	grants := strs(t, doc, "grant_types_supported")
+	for _, required := range []string{"authorization_code", "refresh_token", "client_credentials"} {
+		assert.Contains(t, grants, required)
+	}
+	assert.Contains(t, grants, "urn:ietf:params:oauth:grant-type:device_code")
+	assert.NotContains(t, grants, "password",
+		"the token endpoint has no password case; advertising it returns unsupported_grant_type")
 
-	// Verify key fields are preserved
-	assert.Equal(t, doc.Issuer, decoded.Issuer)
-	assert.Equal(t, doc.AuthorizationEndpoint, decoded.AuthorizationEndpoint)
-	assert.Equal(t, doc.TokenEndpoint, decoded.TokenEndpoint)
-	assert.Equal(t, doc.JWKSURI, decoded.JWKSURI)
-	assert.Equal(t, len(doc.ResponseTypesSupported), len(decoded.ResponseTypesSupported))
-	assert.Equal(t, len(doc.ScopesSupported), len(decoded.ScopesSupported))
-	assert.Equal(t, len(doc.ClaimsSupported), len(decoded.ClaimsSupported))
+	// PKCE: S256 only. "plain" offers no protection against code interception
+	// and the authorize endpoint rejects it in production.
+	assert.Equal(t, []string{"S256"}, strs(t, doc, "code_challenge_methods_supported"))
 }
 
-func TestDiscoveryDocumentComprehensiveClaims(t *testing.T) {
-	issuer := "https://test.openidx.org"
-	doc := buildDiscoveryDocument(issuer)
-
-	t.Run("Standard OIDC claims are supported", func(t *testing.T) {
-		// Required OIDC claims
-		requiredClaims := []string{"sub", "iss", "aud", "exp", "iat"}
-		for _, claim := range requiredClaims {
-			assert.Contains(t, doc.ClaimsSupported, claim, "required claim %s must be supported", claim)
-		}
-
-		// Standard profile claims
-		profileClaims := []string{"name", "given_name", "family_name", "preferred_username"}
-		for _, claim := range profileClaims {
-			assert.Contains(t, doc.ClaimsSupported, claim, "profile claim %s should be supported", claim)
-		}
-
-		// Email claims
-		assert.Contains(t, doc.ClaimsSupported, "email")
-		assert.Contains(t, doc.ClaimsSupported, "email_verified")
-
-		// Phone claims
-		assert.Contains(t, doc.ClaimsSupported, "phone_number")
-
-		// Address claim
-		assert.Contains(t, doc.ClaimsSupported, "address")
-	})
-
-	t.Run("Custom OpenIDX claims are supported", func(t *testing.T) {
-		assert.Contains(t, doc.ClaimsSupported, "roles", "roles claim should be supported")
-		assert.Contains(t, doc.ClaimsSupported, "groups", "groups claim should be supported")
-		assert.Contains(t, doc.ClaimsSupported, "sid", "session ID claim should be supported")
-		assert.Contains(t, doc.ClaimsSupported, "at_hash", "access token hash should be supported")
-		assert.Contains(t, doc.ClaimsSupported, "c_hash", "code hash should be supported")
-	})
+// Public clients exist here -- dcr.go registers one when
+// token_endpoint_auth_method=none, and the token endpoint skips secret
+// verification for that type -- so "none" belongs in the advertised methods.
+// Omitting it told every conforming SPA and native client that it had no usable
+// authentication method at this server.
+func TestDiscoveryAdvertisesPublicClientAuthentication(t *testing.T) {
+	doc, _ := serveDiscovery(t, "https://test.openidx.org")
+	methods := strs(t, doc, "token_endpoint_auth_methods_supported")
+	assert.Contains(t, methods, "client_secret_basic", "RFC 6749 §2.3.1 requires HTTP Basic")
+	assert.Contains(t, methods, "client_secret_post")
+	assert.Contains(t, methods, "none", "public clients authenticate with PKCE and no secret")
 }
 
-func TestDiscoveryDocumentCodeChallengeMethods(t *testing.T) {
-	issuer := "https://test.openidx.org"
-	doc := buildDiscoveryDocument(issuer)
-
-	t.Run("only S256 PKCE is advertised", func(t *testing.T) {
-		assert.Contains(t, doc.CodeChallengeMethodsSupported, "S256", "S256 method must be supported")
-		assert.NotContains(t, doc.CodeChallengeMethodsSupported, "plain",
-			"plain PKCE must NOT be advertised (offers no code-interception protection)")
-	})
+// Only the subject types the provider honours. pairwise appears when
+// OIDCPairwiseSubjects is on and not before.
+func TestDiscoverySubjectTypesFollowTheConfiguration(t *testing.T) {
+	doc, _ := serveDiscovery(t, "https://test.openidx.org")
+	assert.Equal(t, []string{"public"}, strs(t, doc, "subject_types_supported"))
 }
 
-func TestDiscoveryDocumentSessionManagement(t *testing.T) {
-	issuer := "https://test.openidx.org"
-	doc := buildDiscoveryDocument(issuer)
-
-	t.Run("End session endpoint is present", func(t *testing.T) {
-		assert.NotEmpty(t, doc.EndSessionEndpoint, "end_session_endpoint should be present")
-		assert.True(t, strings.Contains(doc.EndSessionEndpoint, "/logout"))
-	})
-
-	t.Run("Back-channel logout is supported", func(t *testing.T) {
-		assert.True(t, doc.BackchannelLogoutSupported, "back-channel logout should be supported")
-		assert.True(t, doc.BackchannelLogoutSessionSupported, "back-channel logout session should be supported")
-	})
+// The signing algorithms advertised are the ones tokens are actually signed
+// with. RS256 is what the signer produces; listing RS384/RS512 beside it would
+// invite a client to demand a signature this server cannot make.
+func TestDiscoverySigningAlgorithms(t *testing.T) {
+	doc, _ := serveDiscovery(t, "https://test.openidx.org")
+	assert.Equal(t, []string{"RS256"}, strs(t, doc, "id_token_signing_alg_values_supported"))
 }
 
-func TestDiscoveryDocumentTokenIntrospectionRevocation(t *testing.T) {
-	issuer := "https://test.openidx.org"
-	doc := buildDiscoveryDocument(issuer)
+func TestDiscoveryScopesAndClaims(t *testing.T) {
+	doc, _ := serveDiscovery(t, "https://test.openidx.org")
 
-	t.Run("Introspection endpoint is present", func(t *testing.T) {
-		assert.NotEmpty(t, doc.IntrospectionEndpoint)
-		assert.True(t, strings.Contains(doc.IntrospectionEndpoint, "/introspect"))
-	})
+	scopes := strs(t, doc, "scopes_supported")
+	assert.Contains(t, scopes, "openid", "openid is required for OIDC")
+	for _, s := range []string{"profile", "email", "offline_access"} {
+		assert.Contains(t, scopes, s)
+	}
 
-	t.Run("Revocation endpoint is present", func(t *testing.T) {
-		assert.NotEmpty(t, doc.RevocationEndpoint)
-		assert.True(t, strings.Contains(doc.RevocationEndpoint, "/revoke"))
-	})
+	claims := strs(t, doc, "claims_supported")
+	for _, c := range []string{"sub", "iss", "aud", "exp", "iat", "email", "sid"} {
+		assert.Contains(t, claims, c)
+	}
 }
 
-func TestDiscoveryDocumentScopes(t *testing.T) {
-	issuer := "https://test.openidx.org"
-	doc := buildDiscoveryDocument(issuer)
+// The document is cacheable and answers a CORS preflight, because a browser
+// client fetches it cross-origin before it can do anything else.
+func TestDiscoveryCachingAndPreflight(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := &Service{issuer: "https://test.openidx.org", logger: zap.NewNop()}
+	router := gin.New()
+	router.GET("/.well-known/openid-configuration", svc.handleDiscovery)
+	router.OPTIONS("/.well-known/openid-configuration", svc.handleDiscovery)
 
-	t.Run("OIDC scopes are supported", func(t *testing.T) {
-		requiredScopes := []string{"openid", "profile", "email"}
-		for _, scope := range requiredScopes {
-			assert.Contains(t, doc.ScopesSupported, scope, "scope %s must be supported", scope)
-		}
-	})
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/.well-known/openid-configuration", nil))
+	assert.Equal(t, "public, max-age=3600", w.Header().Get("Cache-Control"))
 
-	t.Run("Offline access scope is supported", func(t *testing.T) {
-		assert.Contains(t, doc.ScopesSupported, "offline_access")
-	})
+	pre := httptest.NewRecorder()
+	router.ServeHTTP(pre, httptest.NewRequest(http.MethodOptions, "/.well-known/openid-configuration", nil))
+	assert.Equal(t, http.StatusNoContent, pre.Code)
 }
 
-func TestDiscoveryDocumentGrantTypes(t *testing.T) {
-	issuer := "https://test.openidx.org"
-	doc := buildDiscoveryDocument(issuer)
-
-	t.Run("Required grant types are supported", func(t *testing.T) {
-		requiredGrants := []string{"authorization_code", "refresh_token"}
-		for _, grant := range requiredGrants {
-			assert.Contains(t, doc.GrantTypesSupported, grant, "grant type %s must be supported", grant)
-		}
+// A tenant fetching discovery from its own host gets its own issuer, so the
+// document matches the iss its tokens carry.
+func TestDiscoveryIsPerTenantWhenSubdomainTenancyIsOn(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := &Service{issuer: "https://id.example.com", tenantBaseDomain: "example.com", logger: zap.NewNop()}
+	router := gin.New()
+	router.GET("/.well-known/openid-configuration", func(c *gin.Context) {
+		c.Request = c.Request.WithContext(orgctx.With(c.Request.Context(),
+			orgctx.Org{ID: "00000000-0000-0000-0000-000000000010", Slug: "acme"}))
+		svc.handleDiscovery(c)
 	})
 
-	t.Run("Client credentials is supported", func(t *testing.T) {
-		assert.Contains(t, doc.GrantTypesSupported, "client_credentials")
-	})
-}
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/.well-known/openid-configuration", nil))
+	require.Equal(t, http.StatusOK, w.Code)
 
-func TestDiscoveryDocumentResponseTypes(t *testing.T) {
-	issuer := "https://test.openidx.org"
-	doc := buildDiscoveryDocument(issuer)
-
-	t.Run("Authorization code flow is supported", func(t *testing.T) {
-		assert.Contains(t, doc.ResponseTypesSupported, "code")
-	})
-
-	t.Run("Unimplemented flows are not advertised", func(t *testing.T) {
-		// This used to assert the opposite. Nothing implements implicit or
-		// hybrid — the authorize path always issues a code — so advertising
-		// them sent conforming clients down a flow that silently returned
-		// something else. Discovery must describe what the server actually
-		// does; if hybrid is implemented later, add it back here and in
-		// buildDiscoveryDocument together.
-		for _, unimplemented := range []string{"id_token", "token id_token", "code id_token", "code token", "code id_token token"} {
-			assert.NotContains(t, doc.ResponseTypesSupported, unimplemented,
-				"advertised %q but no handler implements it", unimplemented)
-		}
-	})
+	var doc map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &doc))
+	assert.Equal(t, "https://acme.example.com", doc["issuer"])
+	assert.Equal(t, "https://acme.example.com/oauth/revoke", doc["revocation_endpoint"],
+		"every endpoint moves with the issuer, or the document describes two servers")
 }
