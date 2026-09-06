@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.34.0] - 2026-09-06
+
 The project-readiness programme (PR #883). One organising defect class: **a
 control that displays without enforcing is a lie** — extended, phase by phase,
 to a spec that describes an eighth of a surface, a documented endpoint that
@@ -3700,7 +3702,8 @@ The first tagged release: a hardened, single-tenant, self-hostable v1.
   endpoints.
 
 
-[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.33.3...HEAD
+[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.34.0...HEAD
+[1.34.0]: https://github.com/mhmtgngr/openidx/compare/v1.33.3...v1.34.0
 [1.33.3]: https://github.com/mhmtgngr/openidx/compare/v1.33.2...v1.33.3
 [1.33.2]: https://github.com/mhmtgngr/openidx/compare/v1.33.1...v1.33.2
 [1.33.1]: https://github.com/mhmtgngr/openidx/compare/v1.33.0...v1.33.1
