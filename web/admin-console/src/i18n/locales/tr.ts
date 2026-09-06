@@ -7007,6 +7007,10 @@ const tr: typeof en = {
         organization: 'Kuruluş UUID’si — Kuruluşlar sayfasından kopyalayın.',
         fallback: 'Kapsamlanan kaynağın UUID’si.',
       },
+      scopeNotEnforcedBadge: 'uygulanmıyor',
+      scopeNotEnforcedTitle: 'Daraltıcı kapsamlar kaydedilir, uygulanmaz',
+      scopeNotEnforcedBody:
+        'Grup, Rol veya Uygulama kapsamı bu kuruluşa karşı doğrulanır ve denetim kaydında tutulur; ancak izin denetimi yalnızca kaynak ve eylemi karşılaştırır — devredilen izinler, bu kuruluşta o izin nerede denetleniyorsa orada geçerlidir. Bugün yalnızca Kuruluş kapsamı gerçekten daraltır. Kapsama güvenmek yerine mümkün olan en küçük izin kümesini verin.',
       resource: 'yetki devirleri',
       loading: 'Yetki devirleri yükleniyor...',
       emptyTitle: 'Yetki devri bulunamadı',

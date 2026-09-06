@@ -98,6 +98,13 @@ export function DelegationsPage() {
       defaultValue: scope.charAt(0).toUpperCase() + scope.slice(1),
     })
 
+  // Only an Organization scope narrows anything: the delegation read is scoped
+  // by org_id, so that one is enforced by the tenant predicate. A Group, Role
+  // or Application scope is validated on create and then never consulted --
+  // RequirePermission compares resource and action only. The page says so
+  // rather than showing a scope badge that means less than it looks like.
+  const scopeIsEnforced = (scope: string) => scope === 'organization'
+
   const [formData, setFormData] = useState({
     delegate_id: '',
     delegated_by: '',
@@ -263,6 +270,12 @@ export function DelegationsPage() {
                   ))}
                 </SelectContent>
               </Select>
+              {!scopeIsEnforced(formData.scope_type) && (
+                <p className="text-xs text-muted-foreground">
+                  <span className="font-medium">{t('pages.delegations.scopeNotEnforcedTitle')}</span>{' '}
+                  {t('pages.delegations.scopeNotEnforcedBody')}
+                </p>
+              )}
             </div>
           </div>
         </CardHeader>
@@ -314,6 +327,15 @@ export function DelegationsPage() {
                       </TableCell>
                       <TableCell className="p-3">
                         <Badge variant="secondary">{scopeLabel(d.scope_type)}</Badge>
+                        {!scopeIsEnforced(d.scope_type) && (
+                          <Badge
+                            variant="outline"
+                            className="ml-1 text-xs"
+                            title={t('pages.delegations.scopeNotEnforcedBody')}
+                          >
+                            {t('pages.delegations.scopeNotEnforcedBadge')}
+                          </Badge>
+                        )}
                       </TableCell>
                       <TableCell className="p-3 text-muted-foreground">
                         {d.scope_name || d.scope_id}

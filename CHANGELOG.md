@@ -1117,6 +1117,19 @@ to a spec that describes an eighth of a surface, a documented endpoint that
 
 ### Fixed
 
+- **A delegation's scope said more than it did.** The Delegated Administration
+  page lets an admin scope a delegation to a Group, Role or Application,
+  validates it, shows it as a badge — and the permission check compares resource
+  and action only, so the delegated permissions applied wherever that permission
+  was checked. The page now marks every narrowing scope **"not enforced"**, the
+  create form explains what that means, and the governance guide says to grant
+  the smallest permission set rather than rely on the scope. An `organization`
+  scope is genuinely enforced (by the tenant predicate the delegation is read
+  under) and is not marked. Enforcing the others needs the resource identity of
+  each request, which the middleware does not have, and would silently revoke
+  access someone is relying on — a product decision, now recorded as one instead
+  of implied by a badge.
+
 - **The clientless SSH relay never checked the host key.** `ws_connect.go`
   passed `ssh.InsecureIgnoreHostKey()` unconditionally, under a comment calling
   per-entry pinning "a follow-up" — so a PAM entry could carry a host key and

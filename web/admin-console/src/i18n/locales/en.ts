@@ -7070,6 +7070,15 @@ const en = {
         organization: 'Organization UUID — copy it from the Organizations page.',
         fallback: 'UUID of the scoped resource.',
       },
+      // The scope is recorded, validated against this organization, and shown
+      // in the audit trail -- but the permission check compares resource and
+      // action only, so a group/role/application scope does not narrow where
+      // the delegated permissions apply. Saying so on the page is the whole
+      // point: a control that displays without enforcing is a lie.
+      scopeNotEnforcedBadge: 'not enforced',
+      scopeNotEnforcedTitle: 'Narrowing scopes are recorded, not enforced',
+      scopeNotEnforcedBody:
+        'A Group, Role or Application scope is validated against this organization and kept in the audit trail, but the permission check compares resource and action only — the delegated permissions apply wherever that permission is checked in this organization. Only an Organization scope actually narrows anything today. Grant the smallest permission set rather than relying on the scope.',
       resource: 'delegations',
       loading: 'Loading delegations...',
       emptyTitle: 'No delegations found',

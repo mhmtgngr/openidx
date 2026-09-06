@@ -4166,6 +4166,44 @@ class this whole program exists for.
    or the agent's own source is excluded. Nine findings nobody can act on were
    nine findings between a reader and the ones they can.
 
+   ### The badge that meant less than it looked like
+
+   **Batch 49: the delegation scope.**
+
+   This is the programme's oldest open finding, recorded in v152's own
+   migration text and left there deliberately: `admin_delegations.scope_type` /
+   `scope_id` are validated on create, stored, filtered on, and rendered as a
+   badge on the Delegated Administration page — and `RequirePermission` compares
+   resource and action only, so a delegation scoped to one group grants its
+   permissions wherever that permission is checked. `PermissionEntry.ScopeType`
+   has **zero consumers** in the tree.
+
+   It stayed open for a real reason and the reason has not changed: enforcing a
+   Group/Role/Application scope needs the identity of the resource each handler
+   is acting on, which the permission middleware does not have; and narrowing an
+   existing delegation silently revokes access an operator is relying on. That
+   is a product decision.
+
+   What was **not** a product decision was letting the page keep saying "Group"
+   with nothing beside it. An admin reading that badge believes their delegation
+   is contained. So:
+
+   - every narrowing scope is now marked **"not enforced"** on the row, with the
+     explanation on hover;
+   - the create form carries the same sentence under the scope selector, before
+     the delegation exists;
+   - the copy says what to do instead — grant the smallest permission set;
+   - an `organization` scope is **not** marked, because that one really is
+     enforced, by the `org_id` predicate the delegation is read under. The
+     distinction is one line with a comment, and both catalogs (en/tr) carry the
+     strings, so the bilingual gate covers it.
+
+   Two tests pin it — the marked case and the unmarked one — red-proved by
+   making `scopeIsEnforced` return true for everything.
+
+   The gap itself stays open, and now says so in three places instead of none:
+   the middleware comment, the page, and the governance guide.
+
    ### The one finding that was work
 
    **Batch 48: `go/insecure-hostkeycallback`, 8.2.**

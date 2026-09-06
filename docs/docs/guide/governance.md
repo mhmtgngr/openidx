@@ -162,6 +162,29 @@ Two policy engines meet here, and the difference matters:
 Test either without granting anything: `POST /policies/{id}/evaluate` and
 `POST /abac-policies/evaluate` run the same evaluator production runs.
 
+## Delegated administration, and what its scope really does
+
+A delegation hands one person a named set of administrative permissions until
+a date. The scope you pick — Group, Role, Application or Organization — is
+validated against your organization when the delegation is created and kept in
+the audit trail.
+
+**Only an Organization scope narrows anything today.** The permission check
+compares resource and action, so a Group, Role or Application scope does not
+stop the delegated permissions applying wherever that permission is checked in
+your organization. The Organization scope *is* enforced, by the tenant
+predicate the delegation is read under.
+
+The console says so on every affected row and in the create form rather than
+showing a scope badge that means more than it does. Until the narrowing scopes
+are enforced, **grant the smallest permission set** instead of relying on the
+scope to contain a large one.
+
+Enforcing them needs the identity of the resource each request acts on, which
+the permission middleware does not have, and narrowing an existing delegation
+would silently revoke access someone is relying on — so it is a product
+decision rather than a bug fix, and it is recorded as one.
+
 ## What is API-only today
 
 Three governance-adjacent capabilities ship with a working API and no console

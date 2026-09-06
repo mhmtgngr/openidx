@@ -827,9 +827,20 @@ func PermissionResolver(db *pgxpool.Pool, redisClient *redis.Client) gin.Handler
 // KNOWN GAP, not closed here: the ScopeType/ScopeID carried on each entry are
 // resolved and returned but never consulted — RequirePermission compares
 // resource and action only, so a delegation scoped to one group grants its
-// permissions wherever that permission is checked. Fixing it changes what
-// existing delegations grant, so it is a product decision; see the readiness
-// guide's P5.3b section.
+// permissions wherever that permission is checked. Enforcing it needs the
+// identity of the resource each handler is acting on, which the middleware
+// does not have; and narrowing an existing delegation silently revokes access
+// an operator is relying on. Both make it a product decision, not a scoping
+// one.
+//
+// What is NOT deferred is saying so. The delegations page marks every
+// group/role/application scope "not enforced" and explains it in the create
+// form (web/admin-console/src/pages/delegations.tsx, pinned by two tests), the
+// PAM/governance docs say it, and the readiness guide's P5.3b section carries
+// the reasoning. An `organization` scope IS enforced — by the org_id predicate
+// on the query above — and is marked differently for that reason. A control
+// that displays without enforcing is a lie; one that displays and says it does
+// not enforce is a fact an admin can plan around.
 func resolveDelegations(ctx context.Context, db *pgxpool.Pool, userID, orgID string) []PermissionEntry {
 	rows, err := db.Query(ctx, `
 		SELECT permissions, scope_type, scope_id::text
