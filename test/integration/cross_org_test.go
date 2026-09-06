@@ -742,6 +742,24 @@ func TestRLSBeltTables(t *testing.T) {
 			RETURNING id)
 			INSERT INTO kiosk_policy_assignments (policy_id, target_kind, target_id, priority, org_id)
 			SELECT p.id, 'agent', 'tbelt-agent-` + suffix + `', 300, $1 FROM p`},
+
+		// v162 — the per-route feature switches and the connectivity tests
+		// behind them. The switch was guarded on the way on and open on the way
+		// off, and connection_tests.details carries the route's upstream URL,
+		// the host:port a probe dialled and the raw dial error.
+		{"service_features", `WITH r AS (
+			INSERT INTO proxy_routes (name, from_url, to_url, org_id)
+			VALUES ('tbelt-sf-` + suffix + `', '/tbelt-sf-` + suffix + `', 'http://upstream.internal:8080', $1)
+			RETURNING id)
+			INSERT INTO service_features (route_id, feature_name, enabled, status, health_status, org_id)
+			SELECT r.id, 'ziti', true, 'enabled', 'healthy', $1 FROM r`},
+
+		{"connection_tests", `WITH r AS (
+			INSERT INTO proxy_routes (name, from_url, to_url, org_id)
+			VALUES ('tbelt-ct-` + suffix + `', '/tbelt-ct-` + suffix + `', 'http://upstream.internal:8080', $1)
+			RETURNING id)
+			INSERT INTO connection_tests (route_id, test_type, success, details, org_id)
+			SELECT r.id, 'full', true, '{"upstream":{"url":"http://upstream.internal:8080"}}'::jsonb, $1 FROM r`},
 	}
 
 	// One list, not two: the role is granted exactly the tables the cases probe.

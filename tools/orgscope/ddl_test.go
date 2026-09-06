@@ -338,8 +338,17 @@ func TestRegistersOnlyShrink(t *testing.T) {
 		// say what an application is told about whoever signed in. 26 -> 24 with
 		// v156, the developer portal: a settings row keyed on the literal
 		// 'global' and unique across the installation, and the playground
-		// session that holds a live flow's PKCE verifier.
-		{"needsScoping", len(needsScoping), 11},
+		// session that holds a live flow's PKCE verifier. 24 -> 22 with v157,
+		// which scoped admin_console_settings -- whose install-wide key was the
+		// PRIMARY key, so the whole installation shared one password policy --
+		// and dropped auth_contexts, read at three sites and written at none.
+		// 22 -> 20 with v158 (the biometric preference and the policy over it),
+		// 20 -> 16 with v159 (the two kiosk lockdown tables scoped, v44's two
+		// orphans dropped), 16 -> 13 with v160 (email templates, notification
+		// routing rules, broadcast messages), 13 -> 11 with v161 (the bulk
+		// operations and their items), and 11 -> 9 with v162, the per-route
+		// feature switches and the connectivity tests that probe behind them.
+		{"needsScoping", len(needsScoping), 9},
 		// 34 → 19: migration v140 belted the fifteen whose queries already
 		// carried their org predicate. Re-pinned rather than left at 34, or
 		// the register could grow back into the room the fix just made.

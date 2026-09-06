@@ -143,20 +143,45 @@ func (fm *FeatureManager) SetBrowZerTargetManager(btm *BrowZerTargetManager) {
 // (SDK edge terminator + router tunnel terminator) and 502'd the route.
 func (fm *FeatureManager) SetReconcilerEnabled(v bool) { fm.reconcilerEnabled = v }
 
+// routeOrg resolves the caller's organization and proves the route belongs to
+// it. Every entry point that reads or writes service_features goes through this
+// first: v40 gave the table no tenant column and the enable path was the only
+// one that happened to check, through validateRouteTypeCompatibility's
+// org-scoped route lookup. Disable read and wrote the same rows by route id
+// alone, so the same switch was guarded on the way on and open on the way off.
+func (fm *FeatureManager) routeOrg(ctx context.Context, routeID string) (string, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return "", err
+	}
+	var exists bool
+	if err := fm.db.Pool.QueryRow(ctx,
+		`SELECT true FROM proxy_routes WHERE id = $1 AND org_id = $2`,
+		routeID, org.ID).Scan(&exists); err != nil {
+		return "", fmt.Errorf("route not found")
+	}
+	return org.ID, nil
+}
+
 // EnableFeature enables a feature on a route
 func (fm *FeatureManager) EnableFeature(ctx context.Context, routeID string, feature FeatureName, config *FeatureConfig, userID string) error {
+	orgID, err := fm.routeOrg(ctx, routeID)
+	if err != nil {
+		return err
+	}
+
 	// Validate dependencies
-	if err := fm.validateFeatureDependencies(ctx, routeID, feature); err != nil {
+	if err := fm.validateFeatureDependencies(ctx, routeID, orgID, feature); err != nil {
 		return fmt.Errorf("dependency check failed: %w", err)
 	}
 
 	// Validate route type compatibility
-	if err := fm.validateRouteTypeCompatibility(ctx, routeID, feature); err != nil {
+	if err := fm.validateRouteTypeCompatibility(ctx, routeID, orgID, feature); err != nil {
 		return fmt.Errorf("route type incompatible: %w", err)
 	}
 
 	// Get or create feature record
-	featureRecord, err := fm.getOrCreateFeature(ctx, routeID, feature)
+	featureRecord, err := fm.getOrCreateFeature(ctx, routeID, orgID, feature)
 	if err != nil {
 		return fmt.Errorf("failed to get/create feature: %w", err)
 	}
@@ -167,14 +192,14 @@ func (fm *FeatureManager) EnableFeature(ctx context.Context, routeID string, fea
 	}
 
 	// Set status to pending while provisioning
-	if err := fm.updateFeatureStatus(ctx, featureRecord.ID, FeatureStatusPending, ""); err != nil {
+	if err := fm.updateFeatureStatus(ctx, featureRecord.ID, orgID, FeatureStatusPending, ""); err != nil {
 		return err
 	}
 
 	// Provision the feature
-	resourceIDs, err := fm.provisionFeature(ctx, routeID, feature, config)
+	resourceIDs, err := fm.provisionFeature(ctx, routeID, orgID, feature, config)
 	if err != nil {
-		fm.updateFeatureStatus(ctx, featureRecord.ID, FeatureStatusError, err.Error())
+		fm.updateFeatureStatus(ctx, featureRecord.ID, orgID, FeatureStatusError, err.Error())
 		return fmt.Errorf("failed to provision feature: %w", err)
 	}
 
@@ -199,15 +224,15 @@ func (fm *FeatureManager) EnableFeature(ctx context.Context, routeID string, fea
 		    enabled_at = $4,
 		    enabled_by = $5,
 		    updated_at = NOW()
-		WHERE id = $6
-	`, configJSON, resourceJSON, FeatureStatusEnabled, now, enabledBy, featureRecord.ID)
+		WHERE id = $6 AND org_id = $7
+	`, configJSON, resourceJSON, FeatureStatusEnabled, now, enabledBy, featureRecord.ID, orgID)
 
 	if err != nil {
 		return fmt.Errorf("failed to update feature record: %w", err)
 	}
 
 	// Update the proxy_route table for backward compatibility
-	if err := fm.syncRouteFlags(ctx, routeID, feature, true, resourceIDs); err != nil {
+	if err := fm.syncRouteFlags(ctx, routeID, orgID, feature, true, resourceIDs); err != nil {
 		fm.logger.Warn("Failed to sync route flags", zap.Error(err))
 	}
 
@@ -224,10 +249,24 @@ func (fm *FeatureManager) EnableFeature(ctx context.Context, routeID string, fea
 	return nil
 }
 
-// DisableFeature disables a feature on a route
+// DisableFeature disables a feature on a route.
+//
+// The route-ownership check is the first statement on purpose. Before v162 this
+// path had none: getDependentFeatures, getFeature and deprovisionFeature all
+// addressed the row by route id alone, and deprovisionFeature for the Ziti
+// feature calls DeleteService against the controller with the ziti_service_id
+// it finds there. So naming another organization's route id deleted their
+// overlay service — while syncRouteFlags, the one statement here that was
+// org-scoped, matched no row and left proxy_routes.ziti_enabled true, so their
+// console went on reporting the route as Ziti-protected.
 func (fm *FeatureManager) DisableFeature(ctx context.Context, routeID string, feature FeatureName) error {
+	orgID, err := fm.routeOrg(ctx, routeID)
+	if err != nil {
+		return err
+	}
+
 	// Check for dependent features that need to be disabled first
-	dependents, err := fm.getDependentFeatures(ctx, routeID, feature)
+	dependents, err := fm.getDependentFeatures(ctx, routeID, orgID, feature)
 	if err != nil {
 		return fmt.Errorf("failed to check dependents: %w", err)
 	}
@@ -243,7 +282,7 @@ func (fm *FeatureManager) DisableFeature(ctx context.Context, routeID string, fe
 	}
 
 	// Get feature record
-	featureRecord, err := fm.getFeature(ctx, routeID, feature)
+	featureRecord, err := fm.getFeature(ctx, routeID, orgID, feature)
 	if err != nil {
 		return fmt.Errorf("feature not found: %w", err)
 	}
@@ -265,15 +304,15 @@ func (fm *FeatureManager) DisableFeature(ctx context.Context, routeID string, fe
 		    error_message = NULL,
 		    resource_ids = '{}',
 		    updated_at = NOW()
-		WHERE id = $2
-	`, FeatureStatusDisabled, featureRecord.ID)
+		WHERE id = $2 AND org_id = $3
+	`, FeatureStatusDisabled, featureRecord.ID, orgID)
 
 	if err != nil {
 		return fmt.Errorf("failed to update feature record: %w", err)
 	}
 
 	// Update the proxy_route table for backward compatibility
-	if err := fm.syncRouteFlags(ctx, routeID, feature, false, nil); err != nil {
+	if err := fm.syncRouteFlags(ctx, routeID, orgID, feature, false, nil); err != nil {
 		fm.logger.Warn("Failed to sync route flags", zap.Error(err))
 	}
 
@@ -314,12 +353,13 @@ func (fm *FeatureManager) GetServiceStatus(ctx context.Context, routeID string) 
 	if err != nil {
 		return nil, err
 	}
+	orgID := org.ID
 
 	// Get route info
 	var routeName, routeType string
 	err = fm.db.Pool.QueryRow(ctx,
 		`SELECT name, COALESCE(route_type, 'http') FROM proxy_routes WHERE id = $1 AND org_id = $2`,
-		routeID, org.ID).Scan(&routeName, &routeType)
+		routeID, orgID).Scan(&routeName, &routeType)
 	if err != nil {
 		return nil, fmt.Errorf("route not found: %w", err)
 	}
@@ -335,12 +375,13 @@ func (fm *FeatureManager) GetServiceStatus(ctx context.Context, routeID string) 
 
 	// Get all features for this route
 	rows, err := fm.db.Pool.Query(ctx, `
-		SELECT id, route_id, feature_name, enabled, config, resource_ids,
-		       status, error_message, last_health_check, health_status,
+		SELECT id, route_id, feature_name, COALESCE(enabled, false), config, resource_ids,
+		       COALESCE(status, 'disabled'), error_message, last_health_check,
+		       COALESCE(health_status, 'unknown'),
 		       enabled_at, enabled_by, created_at, updated_at
 		FROM service_features
-		WHERE route_id = $1
-	`, routeID)
+		WHERE route_id = $1 AND org_id = $2
+	`, routeID, orgID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query features: %w", err)
 	}
@@ -359,6 +400,11 @@ func (fm *FeatureManager) GetServiceStatus(ctx context.Context, routeID string) 
 			&lastHealthCheck, &healthStatus, &enabledAt, &enabledBy,
 			&f.CreatedAt, &f.UpdatedAt)
 		if err != nil {
+			// A dropped row here reads on the console as "this feature is not
+			// configured on this route", which is the opposite of what a scan
+			// failure means. Say so rather than swallowing it.
+			fm.logger.Warn("service feature row skipped",
+				zap.String("route_id", routeID), zap.Error(err))
 			continue
 		}
 
@@ -396,26 +442,41 @@ func (fm *FeatureManager) GetServiceStatus(ctx context.Context, routeID string) 
 
 // GetFeatureState returns the state of a specific feature
 func (fm *FeatureManager) GetFeatureState(ctx context.Context, routeID string, feature FeatureName) (*ServiceFeature, error) {
-	return fm.getFeature(ctx, routeID, feature)
+	orgID, err := fm.routeOrg(ctx, routeID)
+	if err != nil {
+		return nil, err
+	}
+	return fm.getFeature(ctx, routeID, orgID, feature)
 }
 
-// UpdateFeatureHealth updates the health status of a feature
+// UpdateFeatureHealth records the health verdict of a feature on a route.
+//
+// This is the only writer of service_features.health_status in the tree, and
+// until v162 it had no caller at all — so the coloured dot beside each feature
+// on the Zero Trust page and the badge on the route's feature panel could only
+// ever read 'unknown'. Its caller is now the connection test, which already
+// dials the upstream, resolves the Ziti service and validates the Guacamole
+// connection: the verdict was being measured and thrown away.
 func (fm *FeatureManager) UpdateFeatureHealth(ctx context.Context, routeID string, feature FeatureName, health HealthStatus, errorMsg string) error {
-	_, err := fm.db.Pool.Exec(ctx, `
+	orgID, err := fm.routeOrg(ctx, routeID)
+	if err != nil {
+		return err
+	}
+	_, err = fm.db.Pool.Exec(ctx, `
 		UPDATE service_features
 		SET health_status = $1,
 		    last_health_check = NOW(),
 		    error_message = CASE WHEN $2 = '' THEN NULL ELSE $2 END,
 		    updated_at = NOW()
-		WHERE route_id = $3 AND feature_name = $4
-	`, health, errorMsg, routeID, feature)
+		WHERE route_id = $3 AND feature_name = $4 AND org_id = $5
+	`, health, errorMsg, routeID, feature, orgID)
 	return err
 }
 
 // Helper methods
 
-func (fm *FeatureManager) getOrCreateFeature(ctx context.Context, routeID string, feature FeatureName) (*ServiceFeature, error) {
-	f, err := fm.getFeature(ctx, routeID, feature)
+func (fm *FeatureManager) getOrCreateFeature(ctx context.Context, routeID, orgID string, feature FeatureName) (*ServiceFeature, error) {
+	f, err := fm.getFeature(ctx, routeID, orgID, feature)
 	if err == nil {
 		return f, nil
 	}
@@ -423,9 +484,9 @@ func (fm *FeatureManager) getOrCreateFeature(ctx context.Context, routeID string
 	// Create new feature record
 	id := uuid.New().String()
 	_, err = fm.db.Pool.Exec(ctx, `
-		INSERT INTO service_features (id, route_id, feature_name, enabled, config, resource_ids, status, health_status)
-		VALUES ($1, $2, $3, false, '{}', '{}', $4, $5)
-	`, id, routeID, feature, FeatureStatusDisabled, HealthStatusUnknown)
+		INSERT INTO service_features (id, route_id, org_id, feature_name, enabled, config, resource_ids, status, health_status)
+		VALUES ($1, $2, $3, $4, false, '{}', '{}', $5, $6)
+	`, id, routeID, orgID, feature, FeatureStatusDisabled, HealthStatusUnknown)
 	if err != nil {
 		return nil, err
 	}
@@ -440,7 +501,7 @@ func (fm *FeatureManager) getOrCreateFeature(ctx context.Context, routeID string
 	}, nil
 }
 
-func (fm *FeatureManager) getFeature(ctx context.Context, routeID string, feature FeatureName) (*ServiceFeature, error) {
+func (fm *FeatureManager) getFeature(ctx context.Context, routeID, orgID string, feature FeatureName) (*ServiceFeature, error) {
 	var f ServiceFeature
 	var featureName string
 	var configJSON, resourceJSON []byte
@@ -449,12 +510,13 @@ func (fm *FeatureManager) getFeature(ctx context.Context, routeID string, featur
 	var healthStatus, featureStatus string
 
 	err := fm.db.Pool.QueryRow(ctx, `
-		SELECT id, route_id, feature_name, enabled, config, resource_ids,
-		       status, error_message, last_health_check, health_status,
+		SELECT id, route_id, feature_name, COALESCE(enabled, false), config, resource_ids,
+		       COALESCE(status, 'disabled'), error_message, last_health_check,
+		       COALESCE(health_status, 'unknown'),
 		       enabled_at, enabled_by, created_at, updated_at
 		FROM service_features
-		WHERE route_id = $1 AND feature_name = $2
-	`, routeID, feature).Scan(&f.ID, &f.RouteID, &featureName, &f.Enabled,
+		WHERE route_id = $1 AND feature_name = $2 AND org_id = $3
+	`, routeID, feature, orgID).Scan(&f.ID, &f.RouteID, &featureName, &f.Enabled,
 		&configJSON, &resourceJSON, &featureStatus, &errorMsg,
 		&lastHealthCheck, &healthStatus, &enabledAt, &enabledBy,
 		&f.CreatedAt, &f.UpdatedAt)
@@ -484,22 +546,22 @@ func (fm *FeatureManager) getFeature(ctx context.Context, routeID string, featur
 	return &f, nil
 }
 
-func (fm *FeatureManager) updateFeatureStatus(ctx context.Context, featureID string, status FeatureStatus, errorMsg string) error {
+func (fm *FeatureManager) updateFeatureStatus(ctx context.Context, featureID, orgID string, status FeatureStatus, errorMsg string) error {
 	_, err := fm.db.Pool.Exec(ctx, `
 		UPDATE service_features
 		SET status = $1,
 		    error_message = CASE WHEN $2 = '' THEN NULL ELSE $2 END,
 		    updated_at = NOW()
-		WHERE id = $3
-	`, status, errorMsg, featureID)
+		WHERE id = $3 AND org_id = $4
+	`, status, errorMsg, featureID, orgID)
 	return err
 }
 
-func (fm *FeatureManager) validateFeatureDependencies(ctx context.Context, routeID string, feature FeatureName) error {
+func (fm *FeatureManager) validateFeatureDependencies(ctx context.Context, routeID, orgID string, feature FeatureName) error {
 	switch feature {
 	case FeatureBrowZer:
 		// BrowZer requires Ziti to be enabled
-		zitiFeature, err := fm.getFeature(ctx, routeID, FeatureZiti)
+		zitiFeature, err := fm.getFeature(ctx, routeID, orgID, FeatureZiti)
 		if err != nil || !zitiFeature.Enabled {
 			return fmt.Errorf("BrowZer requires Ziti to be enabled first")
 		}
@@ -507,15 +569,11 @@ func (fm *FeatureManager) validateFeatureDependencies(ctx context.Context, route
 	return nil
 }
 
-func (fm *FeatureManager) validateRouteTypeCompatibility(ctx context.Context, routeID string, feature FeatureName) error {
-	org, err := orgctx.From(ctx)
-	if err != nil {
-		return err
-	}
+func (fm *FeatureManager) validateRouteTypeCompatibility(ctx context.Context, routeID, orgID string, feature FeatureName) error {
 	var routeType string
-	err = fm.db.Pool.QueryRow(ctx,
+	err := fm.db.Pool.QueryRow(ctx,
 		`SELECT COALESCE(route_type, 'http') FROM proxy_routes WHERE id = $1 AND org_id = $2`,
-		routeID, org.ID).Scan(&routeType)
+		routeID, orgID).Scan(&routeType)
 	if err != nil {
 		return fmt.Errorf("route not found")
 	}
@@ -531,13 +589,13 @@ func (fm *FeatureManager) validateRouteTypeCompatibility(ctx context.Context, ro
 	return nil
 }
 
-func (fm *FeatureManager) getDependentFeatures(ctx context.Context, routeID string, feature FeatureName) ([]FeatureName, error) {
+func (fm *FeatureManager) getDependentFeatures(ctx context.Context, routeID, orgID string, feature FeatureName) ([]FeatureName, error) {
 	var dependents []FeatureName
 
 	switch feature {
 	case FeatureZiti:
 		// BrowZer depends on Ziti
-		browzerFeature, err := fm.getFeature(ctx, routeID, FeatureBrowZer)
+		browzerFeature, err := fm.getFeature(ctx, routeID, orgID, FeatureBrowZer)
 		if err == nil && browzerFeature.Enabled {
 			dependents = append(dependents, FeatureBrowZer)
 		}
@@ -546,13 +604,8 @@ func (fm *FeatureManager) getDependentFeatures(ctx context.Context, routeID stri
 	return dependents, nil
 }
 
-func (fm *FeatureManager) provisionFeature(ctx context.Context, routeID string, feature FeatureName, config *FeatureConfig) (map[string]string, error) {
+func (fm *FeatureManager) provisionFeature(ctx context.Context, routeID, orgID string, feature FeatureName, config *FeatureConfig) (map[string]string, error) {
 	resourceIDs := make(map[string]string)
-
-	org, err := orgctx.From(ctx)
-	if err != nil {
-		return nil, err
-	}
 
 	switch feature {
 	case FeatureZiti:
@@ -563,7 +616,7 @@ func (fm *FeatureManager) provisionFeature(ctx context.Context, routeID string, 
 		var remotePort *int
 		err := fm.db.Pool.QueryRow(ctx,
 			`SELECT name, to_url, remote_host, remote_port FROM proxy_routes WHERE id = $1 AND org_id = $2`,
-			routeID, org.ID).Scan(&routeName, &toURL, &remoteHost, &remotePort)
+			routeID, orgID).Scan(&routeName, &toURL, &remoteHost, &remotePort)
 		if err != nil {
 			return nil, fmt.Errorf("route not found: %w", err)
 		}
@@ -624,7 +677,7 @@ func (fm *FeatureManager) provisionFeature(ctx context.Context, routeID string, 
 				PolicyType:    "Bind",
 				ServiceRoles:  []string{"#" + serviceName},
 				IdentityRoles: []string{"#access-proxy-clients"},
-				OrgID:         org.ID,
+				OrgID:         orgID,
 			}); mErr != nil {
 				fm.logger.Warn("Failed to mirror Bind policy", zap.Error(mErr))
 			}
@@ -645,7 +698,7 @@ func (fm *FeatureManager) provisionFeature(ctx context.Context, routeID string, 
 				PolicyType:    "Dial",
 				ServiceRoles:  []string{"#" + serviceName},
 				IdentityRoles: []string{"#access-proxy-clients"},
-				OrgID:         org.ID,
+				OrgID:         orgID,
 			}); mErr != nil {
 				fm.logger.Warn("Failed to mirror Dial policy", zap.Error(mErr))
 			}
@@ -666,7 +719,7 @@ func (fm *FeatureManager) provisionFeature(ctx context.Context, routeID string, 
 		// Update proxy route with Ziti service name
 		fm.db.Pool.Exec(ctx,
 			"UPDATE proxy_routes SET ziti_enabled=true, ziti_service_name=$1, updated_at=NOW() WHERE id=$2 AND org_id=$3",
-			serviceName, routeID, org.ID)
+			serviceName, routeID, orgID)
 
 		// Host the service so it has a terminator. The controller has just
 		// created the service; the access-proxy SDK may not have synced it
@@ -710,7 +763,7 @@ func (fm *FeatureManager) provisionFeature(ctx context.Context, routeID string, 
 		err := fm.db.Pool.QueryRow(ctx,
 			`SELECT zs.ziti_id FROM ziti_services zs
 			 JOIN proxy_routes pr ON pr.ziti_service_name = zs.name AND zs.org_id = pr.org_id
-			 WHERE pr.id = $1 AND pr.org_id = $2`, routeID, org.ID).Scan(&zitiServiceID)
+			 WHERE pr.id = $1 AND pr.org_id = $2`, routeID, orgID).Scan(&zitiServiceID)
 		if err != nil {
 			return nil, fmt.Errorf("no Ziti service found for route (enable Ziti first): %w", err)
 		}
@@ -755,7 +808,7 @@ func (fm *FeatureManager) provisionFeature(ctx context.Context, routeID string, 
 		var remotePort *int
 		err := fm.db.Pool.QueryRow(ctx,
 			`SELECT name, remote_host, remote_port FROM proxy_routes WHERE id = $1 AND org_id = $2`,
-			routeID, org.ID).Scan(&routeName, &remoteHost, &remotePort)
+			routeID, orgID).Scan(&routeName, &remoteHost, &remotePort)
 		if err != nil {
 			return nil, fmt.Errorf("route not found: %w", err)
 		}
@@ -850,11 +903,7 @@ func (fm *FeatureManager) deprovisionFeature(ctx context.Context, routeID string
 	return nil
 }
 
-func (fm *FeatureManager) syncRouteFlags(ctx context.Context, routeID string, feature FeatureName, enabled bool, resourceIDs map[string]string) error {
-	org, err := orgctx.From(ctx)
-	if err != nil {
-		return err
-	}
+func (fm *FeatureManager) syncRouteFlags(ctx context.Context, routeID, orgID string, feature FeatureName, enabled bool, resourceIDs map[string]string) error {
 	switch feature {
 	case FeatureZiti:
 		var serviceName *string
@@ -865,13 +914,13 @@ func (fm *FeatureManager) syncRouteFlags(ctx context.Context, routeID string, fe
 		}
 		_, err := fm.db.Pool.Exec(ctx,
 			`UPDATE proxy_routes SET ziti_enabled = $1, ziti_service_name = $2, updated_at = NOW() WHERE id = $3 AND org_id = $4`,
-			enabled, serviceName, routeID, org.ID)
+			enabled, serviceName, routeID, orgID)
 		return err
 
 	case FeatureBrowZer:
 		_, err := fm.db.Pool.Exec(ctx,
 			`UPDATE proxy_routes SET browzer_enabled = $1, updated_at = NOW() WHERE id = $2 AND org_id = $3`,
-			enabled, routeID, org.ID)
+			enabled, routeID, orgID)
 		return err
 
 	case FeatureGuacamole:
@@ -883,7 +932,7 @@ func (fm *FeatureManager) syncRouteFlags(ctx context.Context, routeID string, fe
 		}
 		_, err := fm.db.Pool.Exec(ctx,
 			`UPDATE proxy_routes SET guacamole_connection_id = $1, updated_at = NOW() WHERE id = $2 AND org_id = $3`,
-			connID, routeID, org.ID)
+			connID, routeID, orgID)
 		return err
 	}
 	return nil

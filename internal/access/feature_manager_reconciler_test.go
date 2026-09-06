@@ -19,8 +19,9 @@ func TestProvisionBrowZerDefersToReconciler(t *testing.T) {
 	fm := &FeatureManager{logger: zap.NewNop()}
 	fm.SetReconcilerEnabled(true)
 
-	ctx := orgctx.With(context.Background(), orgctx.Org{ID: "11111111-1111-1111-1111-111111111111"})
-	ids, err := fm.provisionFeature(ctx, "route-1", FeatureBrowZer, &FeatureConfig{})
+	const org = "11111111-1111-1111-1111-111111111111"
+	ctx := orgctx.With(context.Background(), orgctx.Org{ID: org})
+	ids, err := fm.provisionFeature(ctx, "route-1", org, FeatureBrowZer, &FeatureConfig{})
 	if err != nil {
 		t.Fatalf("reconciler-aware BrowZer provision must succeed without a Ziti manager, got: %v", err)
 	}

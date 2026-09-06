@@ -58,6 +58,44 @@ to a spec that describes an eighth of a surface, a documented endpoint that
   **Operators of installations with more than one organization should note**
   that existing runs are assigned to the organization of whoever started them,
   and their per-account records follow the run.
+- **One organization could switch off another's private-network protection for
+  an application, and read their internal server names** (migration v162). Two
+  records had no organization: the per-application feature switches (whether
+  private-network access, browser-based access or remote-desktop brokering is on
+  for a route) and the results of the "Test connection" button.
+
+  **The switch was protected in one direction only.** Turning a feature *on* for
+  an application belonging to another organization was already refused. Turning
+  one *off* was not checked at all, so an administrator who knew an
+  application's identifier could switch off another organization's
+  private-network protection for it — and, on installations that provision
+  directly rather than through the reconciler, the underlying network service
+  was deleted outright. The owning organization's console went on showing the
+  application as protected, because the one statement that would have updated
+  that display *was* limited to the caller's own organization and so changed
+  nothing. Both directions are now checked.
+
+  **The connection-test history named internal hosts.** Each stored test result
+  holds the application's upstream address, the host and port a connectivity
+  probe dialled, the private-network service name, and the raw error text of a
+  failed connection — which names the server it could not reach. That history
+  was read by application identifier with no organization attached, so it was
+  readable across organizations, and by a caller with no organization at all.
+  Both the test and its history now require one and return only the caller's own.
+
+  **The health indicator beside each feature was never written.** The coloured
+  dot on the Zero Trust page and the badge on an application's feature panel
+  read from a field nothing in the product ever set, so they have shown
+  "unknown" for every feature on every application since the field was
+  introduced. The connection test already measures exactly what they report —
+  it resolves the private-network service and validates the remote-desktop
+  connection — and now records its verdict, so the indicator means "the last
+  connection test said this". It stays "unknown" until a test has run, and a
+  test that did not probe a feature leaves that feature's indicator alone.
+
+  **Operators of installations with more than one organization should note**
+  that existing feature switches and test results are assigned to the
+  organization that owns the application they belong to, which is exact.
 - **One set of email templates for the whole installation, and an announcement
   another organization could send** (migration v160). Three records had no
   organization: the email templates, the notification routing rules, and the
