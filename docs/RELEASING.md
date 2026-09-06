@@ -28,6 +28,34 @@ git tag -a vX.Y.Z -m "OpenIDX vX.Y.Z"
 git push origin vX.Y.Z
 ```
 
+### …or without pushing a tag
+
+Some environments cannot push a tag at all: a branch-scoped git credential
+answers `HTTP 403` for `refs/tags/*`, and that is the session's write scope
+rather than a fault to route around. (The error can arrive disguised — over
+HTTP/2 it surfaces as `send-pack: unexpected disconnect while reading sideband
+packet`. Re-run with `git -c http.version=HTTP/1.1` to see the 403 itself.)
+
+For those, run **Actions → Release → Run workflow** with the version, or:
+
+```bash
+gh workflow run release.yml --ref main -f version=vX.Y.Z
+```
+
+`release.yml` creates the tag at the chosen commit and then does everything the
+tag push would have. **It is not a lesser path**: because a tag created under
+`GITHUB_TOKEN` starts no workflow, `release.yml` explicitly hands off to
+`docker.yml` so the images still get their `X.Y.Z` / `X.Y` / `X` / `stable`
+tags. Without that hand-off a dispatched release would publish binaries and a
+chart over images that only ever carried a `:sha` tag — a release whose version
+tags do not exist. `scripts/check-release-dispatch.sh` holds the two paths
+together in CI, and its `.test.sh` proves it goes red on that exact regression.
+
+Two consequences worth knowing: the images are stamped by the **docker.yml run
+this dispatch starts**, not by the release run itself, so check that run before
+announcing; and the dispatched version is validated (`vX.Y.Z`) rather than
+trusted, because unlike a pushed tag it is free-text input.
+
 ## What the tag triggers (no manual steps)
 
 - **`release.yml`** — runs the test suite, builds version-stamped Linux

@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A dispatched release left the images unstamped.** `release.yml` already had
+  a `workflow_dispatch` path, for environments that cannot push a tag ref at
+  all -- a branch-scoped git credential answers HTTP 403 for `refs/tags/*`.
+  That path published binaries, a GitHub Release, signed checksums and a signed
+  Helm chart, and stopped there: the tag it creates is made under
+  `GITHUB_TOKEN`, GitHub deliberately starts no workflow from a token-created
+  push, so `docker.yml` never ran and the images kept only their `:sha` tag.
+  The outcome looked like a full release and was a release whose version tags
+  did not exist -- the failure `docker.yml`'s own retag job carries a comment
+  against. `release.yml` now hands off to `docker.yml` on that path
+  (`workflow_dispatch` being one of the two events `GITHUB_TOKEN` may still
+  start), `docker.yml` accepts the version and stamps `X.Y.Z` / `X.Y` / `X` /
+  `stable` from either trigger, and `scripts/check-release-dispatch.sh` holds
+  the two paths together in CI -- its self-test regresses `docker.yml` to the
+  pushed-tags-only shape the repository actually had and requires the guard to
+  go red.
+
 ## [1.34.0] - 2026-09-06
 
 The project-readiness programme (PR #883). One organising defect class: **a

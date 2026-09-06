@@ -190,3 +190,38 @@ jobs:
         run: |
           cosign sign --yes \
             "${CHART_OCI_REPO}/openidx@${{ steps.push.outputs.digest }}"
+
+  # Closes the dispatch path's last gap.
+  #
+  # A pushed tag starts docker.yml on its own, and its release-tag job stamps
+  # every image with X.Y.Z / X.Y / X / stable. A DISPATCHED release has no such
+  # push: the tag is created by action-gh-release under GITHUB_TOKEN, and
+  # GitHub deliberately starts no workflow from a token-created push. Without
+  # this job the dispatch path would publish binaries, a GitHub Release and a
+  # signed chart while leaving the images on their :sha tag alone -- a release
+  # whose version tags do not exist, which is the exact failure docker.yml's
+  # own retag job is commented against.
+  #
+  # workflow_dispatch is one of the two events GITHUB_TOKEN is still allowed to
+  # start, which is why this hand-off works where the tag push does not. It
+  # runs only on the dispatch path; on a tag push docker.yml is already going.
+  stamp-images:
+    name: Stamp release version onto the images
+    needs: [release, helm-chart]
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Ask docker.yml to build and stamp this version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh workflow run docker.yml \
+            --ref "${{ github.ref_name }}" \
+            -f version="${RELEASE_VERSION}"
+          echo "Dispatched docker.yml for ${RELEASE_VERSION} on ${{ github.ref_name }}."
+          echo "Images are stamped by that run, not this one -- check it before" \
+               "announcing the release."

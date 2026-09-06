@@ -176,6 +176,10 @@ jobs:
         run: bash scripts/check-release-signing.test.sh
       - name: A release artifact must not claim a signature it lacks
         run: bash scripts/check-release-signing.sh --enforce
+      - name: Verify the release-dispatch guard can go red
+        run: bash scripts/check-release-dispatch.test.sh
+      - name: A dispatched release must stamp images like a tagged one
+        run: bash scripts/check-release-dispatch.sh --enforce
       - name: The CodeQL alert summary really names the high-severity rule
         run: bash scripts/codeql-alert-summary.test.sh
 
