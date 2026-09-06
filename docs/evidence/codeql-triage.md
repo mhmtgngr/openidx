@@ -273,6 +273,42 @@ input.
 So: triage a future `go/log-injection` alert by asking which argument the
 tainted value reaches. A field is safe by construction; the message is not.
 
+### Update — nine alerts on lines that ARE sanitised
+
+Alerts **2477–2486**, raised on `5921ce10`, sit on:
+
+`internal/common/middleware/csrf.go:81, 97, 107` ·
+`opa.go:71, 88` · `ratelimit.go:172, 210, 211` ·
+`tenant_resolver.go:208`
+
+Every one of those lines reads `logsafe.String(...)`. They are the sites that
+commit *added* the sanitiser to, and the count did not go down, because
+**CodeQL cannot see this sanitiser**. From the query's own customizations
+(`go/ql/lib/semmle/go/security/LogInjectionCustomizations.qll`) it recognises
+exactly two:
+
+- `ReplaceSanitizer` — a `strings.ReplaceAll` whose replaced string is `"\r"`
+  or `"\n"`;
+- `SafeFormatArgumentSanitizer` — an argument formatted with `%q`.
+
+`logsafe.Clean` uses `strings.Map`, which is neither, so taint flows through
+it. No config file can change that (and see the note in
+`.github/workflows/codeql.yml` about why a Go `paths-ignore` cannot either).
+
+**Do not rewrite `Clean` as a CR/LF `ReplaceAll` to make the scanner quiet.**
+That is the one change that would clear the alerts, and it would make this
+function the weaker of the two implementations the package was created to
+unify — its own comment records that four of the five copies it replaced
+"stripped only CR and LF". A tab still ends a field in a TSV-shaped line, an
+ANSI escape still reprograms the terminal reading `docker logs`, and a NUL
+still truncates in some consumers. `TestCleanIsNotReplaceAllOfCRLF`
+(`internal/common/logsafe/logsafe_test.go`) fails if somebody makes the
+scanner happy at the control's expense, and its comment says why.
+
+So the triage rule gains a second question. Ask which argument the tainted
+value reaches — and if the answer is "a field, through `logsafe`", the alert is
+closed by this entry.
+
 ---
 
 ## What the maintainer needs to do
@@ -291,6 +327,10 @@ alert list nobody has triaged is an alert list nobody reads.
    filter cannot remove them from a Go analysis — see the entry above — so the
    UI is the only place this verdict can be recorded, and it has to be
    re-recorded whenever a vendor bump moves those lines.
+3b. Dismiss as **"false positive"**, citing this file: `go/log-injection`
+   alerts 2477–2486, which are on lines that call `logsafe.String`. Read the
+   "nine alerts on lines that ARE sanitised" entry first — the reason matters,
+   because the change that would clear them is a change that must not be made.
 4. Nothing to do for `go/insecure-hostkeycallback`: it is no longer raised.
    Read its entry anyway before concluding the unpinned path went away.
 

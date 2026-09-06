@@ -125,3 +125,51 @@ func TestPlausibleID(t *testing.T) {
 		}
 	}
 }
+
+// TestCleanIsNotReplaceAllOfCRLF exists because of a trap with a name.
+//
+// CodeQL's Go log-injection query recognises exactly two sanitizers
+// (go/ql/lib/semmle/go/security/LogInjectionCustomizations.qll):
+//
+//   - ReplaceSanitizer -- a strings.ReplaceAll whose replaced string is "\r" or "\n"
+//   - SafeFormatArgumentSanitizer -- an argument formatted with %q
+//
+// Clean is neither. It uses strings.Map, so the query follows taint straight
+// through it and raises go/log-injection on every call site that uses this
+// package -- nine of them at the time of writing, all on lines that ARE
+// sanitised. The alerts are recorded in docs/evidence/codeql-triage.md.
+//
+// The tempting fix is to rewrite Clean as strings.ReplaceAll for CR and LF,
+// which would make the scanner quiet. It would also make this function the
+// WEAKER of the two implementations this package was created to unify: the
+// package comment records that four of the five copies it replaced "stripped
+// only CR and LF", and that the weakest copy is the one that decides what an
+// attacker can do. A tab still breaks a TSV log line, an ANSI escape still
+// reprograms the terminal reading it, and a NUL still truncates in some
+// consumers.
+//
+// So the assertion is on the behaviour a ReplaceAll rewrite would lose. If this
+// test goes red because somebody made the scanner happy, the scanner was made
+// happy at the cost of the control.
+func TestCleanIsNotReplaceAllOfCRLF(t *testing.T) {
+	crlfOnly := func(s string) string {
+		s = strings.ReplaceAll(s, "\r", "")
+		return strings.ReplaceAll(s, "\n", "")
+	}
+
+	for _, tc := range []struct {
+		in   string
+		what string
+	}{
+		{"a\tb", "a tab, which ends a field in a TSV-shaped log line"},
+		{"a\x1b[2Jb", "an ANSI escape, which a terminal reading the log acts on"},
+		{"a\x00b", "a NUL, which truncates in some consumers"},
+		{"a\x7fb", "a DEL"},
+		{"a\x9bb", "a raw C1 control that is also invalid UTF-8"},
+	} {
+		if crlfOnly(tc.in) == Clean(tc.in) {
+			t.Errorf("Clean(%q) is indistinguishable from a CR/LF-only ReplaceAll — %s survived; "+
+				"see this test's comment before matching CodeQL's sanitizer shape", tc.in, tc.what)
+		}
+	}
+}
