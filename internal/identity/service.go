@@ -653,7 +653,7 @@ func (s *Service) ListUsers(ctx context.Context, offset, limit int, search ...st
 		searchPattern := "%" + escaped + "%"
 		err = s.db.Pool.QueryRow(ctx, `
 			SELECT COUNT(*) FROM users
-			WHERE (username ILIKE $1 ESCAPE '\\' OR email ILIKE $1 ESCAPE '\\' OR first_name ILIKE $1 ESCAPE '\\' OR last_name ILIKE $1 ESCAPE '\\')
+			WHERE (username ILIKE $1 ESCAPE '\' OR email ILIKE $1 ESCAPE '\' OR first_name ILIKE $1 ESCAPE '\' OR last_name ILIKE $1 ESCAPE '\')
 			  AND org_id = $2
 		`, searchPattern, org.ID).Scan(&total)
 		if err != nil {
@@ -675,18 +675,18 @@ func (s *Service) ListUsers(ctx context.Context, offset, limit int, search ...st
 		escaped := strings.NewReplacer("%", "\\%", "_", "\\_").Replace(searchQuery)
 		searchPattern := "%" + escaped + "%"
 		rows, err = s.db.Pool.Query(ctx, `
-			SELECT id, username, email, first_name, last_name, enabled, email_verified,
+			SELECT id, username, email, COALESCE(first_name, ''), COALESCE(last_name, ''), enabled, email_verified,
 			       created_at, updated_at, last_login_at, password_changed_at,
 			       password_must_change, failed_login_count, last_failed_login_at, locked_until
 			FROM users
-			WHERE (username ILIKE $1 ESCAPE '\\' OR email ILIKE $1 ESCAPE '\\' OR first_name ILIKE $1 ESCAPE '\\' OR last_name ILIKE $1 ESCAPE '\\')
+			WHERE (username ILIKE $1 ESCAPE '\' OR email ILIKE $1 ESCAPE '\' OR first_name ILIKE $1 ESCAPE '\' OR last_name ILIKE $1 ESCAPE '\')
 			  AND org_id = $2
 			ORDER BY created_at DESC
 			OFFSET $3 LIMIT $4
 		`, searchPattern, org.ID, offset, limit)
 	} else {
 		rows, err = s.db.Pool.Query(ctx, `
-			SELECT id, username, email, first_name, last_name, enabled, email_verified,
+			SELECT id, username, email, COALESCE(first_name, ''), COALESCE(last_name, ''), enabled, email_verified,
 			       created_at, updated_at, last_login_at, password_changed_at,
 			       password_must_change, failed_login_count, last_failed_login_at, locked_until
 			FROM users
@@ -1350,7 +1350,7 @@ func (s *Service) SearchUsers(ctx context.Context, query string, limit int) ([]U
 
 	searchPattern := "%" + query + "%"
 	rows, err := s.db.Pool.Query(ctx, `
-		SELECT id, username, email, first_name, last_name, enabled, email_verified,
+		SELECT id, username, email, COALESCE(first_name, ''), COALESCE(last_name, ''), enabled, email_verified,
 		       created_at, updated_at, last_login_at, password_changed_at,
 		       password_must_change, failed_login_count, last_failed_login_at, locked_until
 		FROM users

@@ -245,7 +245,7 @@ func (s *Service) BeginWebAuthnAuthentication(ctx context.Context, username stri
 		return nil, err
 	}
 	// Get user by username
-	query := `SELECT id, username, email, first_name, last_name FROM users WHERE username = $1 AND org_id = $2 AND enabled = true`
+	query := `SELECT id, username, email, COALESCE(first_name, ''), COALESCE(last_name, '') FROM users WHERE username = $1 AND org_id = $2 AND enabled = true`
 	var userID, uname, email, firstName, lastName string
 	err = s.db.Pool.QueryRow(ctx, query, username, org.ID).Scan(&userID, &uname, &email, &firstName, &lastName)
 	if err != nil {
@@ -317,7 +317,7 @@ func (s *Service) FinishWebAuthnAuthentication(ctx context.Context, username str
 		return "", err
 	}
 	// Get user by username
-	query := `SELECT id, username, email, first_name, last_name FROM users WHERE username = $1 AND org_id = $2 AND enabled = true`
+	query := `SELECT id, username, email, COALESCE(first_name, ''), COALESCE(last_name, '') FROM users WHERE username = $1 AND org_id = $2 AND enabled = true`
 	var userID, uname, email, firstName, lastName string
 	err = s.db.Pool.QueryRow(ctx, query, username, org.ID).Scan(&userID, &uname, &email, &firstName, &lastName)
 	if err != nil {
@@ -439,7 +439,7 @@ func (s *Service) FinishWebAuthnDiscoverableAuthentication(ctx context.Context, 
 	userID := userUUID.String()
 
 	// Get user info
-	query := `SELECT id, username, first_name, last_name FROM users WHERE id = $1 AND enabled = true`
+	query := `SELECT id, username, COALESCE(first_name, ''), COALESCE(last_name, '') FROM users WHERE id = $1 AND enabled = true`
 	var uid, uname, firstName, lastName string
 	if err := s.db.Pool.QueryRow(ctx, query, userID).Scan(&uid, &uname, &firstName, &lastName); err != nil {
 		return "", fmt.Errorf("user not found: %w", err)

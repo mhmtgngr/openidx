@@ -32,6 +32,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `super_admin` role -- v134 grants a permission to one and matches nothing --
   so the fixture creates and removes it.
 
+- **A second tenant could not name a role, a service account or a SCIM group
+  the way the first one had.** `roles.name`, `service_accounts.name` and
+  `scim_groups.display_name` were UNIQUE across the whole install while the rows
+  were per-tenant: all three tables already carry `org_id NOT NULL` and FORCE
+  ROW LEVEL SECURITY, and every query that reads them by name already names the
+  organization. Only the key disagreed, and what it cost is a refusal rather
+  than a leak -- the second organization to want a role called `developer` is
+  told `duplicate key value violates unique constraint "roles_name_key"` about a
+  row its own queries can never see. `developer` is not a corner case: the seed
+  creates `admin`, `manager`, `user`, `auditor` and `developer` for the default
+  organization on every install, so the five most ordinary role names are taken
+  before the second tenant arrives, and a SCIM group named `Engineering`
+  colliding across tenants is the ordinary case rather than the unlucky one --
+  there the failure lands inside directory provisioning rather than in front of
+  an operator. Migration **v173** re-keys all three to `(org_id, <name>)`, the
+  same shape v138 gave `ispm_rules`, `ispm_scores` and `ai_agents`; no column is
+  added and no belt changes, because all three tables already have both.
+  `ziti_identities.name` and `ziti_services.name` are deliberately left
+  install-wide: those names live in the Ziti controller, an install has one
+  controller, and widening the local key would move the collision out of a clean
+  database error and into a provisioning failure against the overlay.
+
+- **Searching users returned a 500 on every call.** `ListUsers`'s search branch
+  ends `ILIKE $1 ESCAPE '\\'`, written inside a Go **raw** string, so the SQL
+  text carries two backslashes where Postgres allows exactly one character:
+  `ERROR: invalid escape string ... Escape string must be empty or one
+  character` (SQLSTATE 22025), on every search, on every install. The console's
+  user-search box could never have worked. Both sites now send one backslash,
+  and the escaping the clause exists for is asserted -- a search for `a_b` must
+  not match `axb`.
+
+- **One user with no first name broke the entire user list.** `users.first_name`
+  and `last_name` are nullable and `UserDB` scans them into plain strings, so a
+  single such row failed the whole call with "cannot scan NULL into *string" --
+  not a bad row, a bad page. The product's own create path writes `""`, which is
+  why it stayed hidden; a directory-synced user, a SCIM import or a row predating
+  the column produces one. The three user SELECTs and the three WebAuthn lookups
+  (where the same scan turned a passkey login into "user not found") now
+  COALESCE both columns.
+
+- **The DB-backed benchmark suite had never run, and could not have.** Sixteen
+  benchmarks across `internal/identity` and `internal/oauth` pointed at a
+  hardcoded DSN naming a database (`openidx_test`) that neither CI nor the
+  compose stack creates, so they skipped everywhere -- and the benchmark job runs
+  `go test -bench=. ./...` with no Postgres service at all. Underneath the skip:
+  every id was a string like `bench_role_8f3a` fed to a `uuid` column, the
+  seeding Execs discarded their errors, `ON CONFLICT (name)` named indexes that
+  no longer exist, one insert named three columns `user_sessions` has never had,
+  another seeded the wrong table entirely, and every timed call ran under a bare
+  `context.Background()` so it returned "orgctx: no organization context" before
+  touching the database. They now read `DATABASE_URL`, seed through valid
+  statements under an org-scoped context, fail rather than continue when a
+  fixture does not land, and check after the timed loop that the call they timed
+  did not error on every iteration. `BenchmarkAuthenticate` reports ~80 ms/op
+  now, which is bcrypt actually running; it used to report ~1 µs. The two user
+  defects above are what running them turned up.
+
 - **A resolver that could not answer looked exactly like one that answered
   "no".** `TenantResolver`'s documented precedence promises four steps, but
   steps 2 (JWT `org_id` claim) and 3 (platform-admin `X-Org-ID`) read the gin
