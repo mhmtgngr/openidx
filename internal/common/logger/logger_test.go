@@ -15,6 +15,8 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
+	"net/http"
+	"strings"
 )
 
 func TestNew(t *testing.T) {
@@ -582,5 +584,75 @@ func BenchmarkGinMiddleware(b *testing.B) {
 		w := httptest.NewRecorder()
 		req := httptest.NewRequest("GET", "/test", nil)
 		router.ServeHTTP(w, req)
+	}
+}
+
+// TestGinMiddleware_redactsTheQueryString is about which copy runs.
+//
+// internal/common/middleware has a request logger that has redacted query
+// parameters for its whole life. Nothing mounts it. THIS logger is the one
+// cmd/{identity,oauth,access,admin-api,audit,governance,provisioning,gateway}
+// -service all call, and until the fix beside this test it wrote
+// c.Request.URL.RawQuery into a field verbatim.
+//
+// The values below are not hypothetical: internal/oauth/social_login.go,
+// social_link.go and service.go, and internal/access/service.go and
+// multi_idp.go, all read "code" from the query string, and
+// internal/oauth/handlers_passwordless.go reads "token" -- the magic link
+// itself. Every one went into the log in clear on every request.
+func TestGinMiddleware_redactsTheQueryString(t *testing.T) {
+	secrets := map[string]string{
+		"code":          "AUTHCODE_a1b2c3",
+		"token":         "MAGICLINK_d4e5f6",
+		"session_token": "SESSION_g7h8i9",
+		"state":         "STATE_j0k1l2",
+		"%74oken":       "PERCENTENCODED_m3n4",
+	}
+	keep := map[string]string{
+		"client_id": "console",
+		"page":      "3",
+	}
+
+	query := ""
+	for k, v := range secrets {
+		query += k + "=" + v + "&"
+	}
+	for k, v := range keep {
+		query += k + "=" + v + "&"
+	}
+	query = strings.TrimSuffix(query, "&")
+
+	core, logs := observer.New(zapcore.InfoLevel)
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(GinMiddleware(zap.New(core)))
+	r.GET("/callback", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{}) })
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/callback?"+query, nil))
+
+	entries := logs.All()
+	if len(entries) == 0 {
+		t.Fatal("the request logger produced no entry")
+	}
+	got := ""
+	for _, f := range entries[0].Context {
+		if f.Key == "query" {
+			got = f.String
+		}
+	}
+	if got == "" {
+		t.Fatal("no query field on the entry — this test cannot say anything about it")
+	}
+
+	for name, value := range secrets {
+		if strings.Contains(got, value) {
+			t.Errorf("%s reached the log in clear: %q", name, got)
+		}
+	}
+	for name, value := range keep {
+		if !strings.Contains(got, name+"="+value) {
+			t.Errorf("%s=%s was redacted — an operator cannot read this log any more: %q", name, value, got)
+		}
 	}
 }

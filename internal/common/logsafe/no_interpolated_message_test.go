@@ -438,3 +438,334 @@ func mentionsPlausibleID(body *ast.BlockStmt) bool {
 	})
 	return seen
 }
+
+// TestNoLoggerWritesARawQueryString is the guard for the gap this package's
+// redaction was added to close, and for the reason it went unnoticed.
+//
+// Three request loggers exist in this tree. internal/common/middleware's has
+// redacted query parameters for its whole life and is mounted by NOTHING.
+// internal/gateway/middleware's is mounted by nothing either. The one every
+// service actually mounts -- internal/common/logger.GinMiddleware, used by
+// cmd/{identity,oauth,access,admin-api,audit,governance,provisioning,gateway}
+// -service -- wrote c.Request.URL.RawQuery straight into a field. Five callback
+// routes read the OAuth authorization code from the query string and one reads a
+// magic-link token, so those went to the log in clear on every request.
+//
+// A control that exists in the copy nobody runs is the defect class this whole
+// branch is about, and "which logger is mounted" is not something a reader
+// checks. So the rule is on the VALUE, not on the logger: RawQuery may not reach
+// a log field except through logsafe. Any of the three can be the live one and
+// the property still holds.
+func TestNoLoggerWritesARawQueryString(t *testing.T) {
+	root := repoRoot(t)
+	fset := token.NewFileSet()
+	var found []string
+	scanned := 0
+
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			switch d.Name() {
+			case ".git", "node_modules", "vendor", "third_party", "web", "client", "agent", "docs":
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		f, perr := parser.ParseFile(fset, path, nil, 0)
+		if perr != nil {
+			return nil
+		}
+		scanned++
+		rel, _ := filepath.Rel(root, path)
+		found = append(found, rawQueryReachingALog(fset, f, rel)...)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk: %v", err)
+	}
+	if scanned < 100 {
+		t.Fatalf("scanned only %d non-test Go files — the walk is looking in the wrong place", scanned)
+	}
+
+	if len(found) != 0 {
+		t.Errorf("raw query string reaching a log without redaction — the query carries the OAuth "+
+			"authorization code, the magic-link token and the session token on live routes:\n  %s\n\n"+
+			"Use logsafe.QueryField(key, raw) for a zap field, or logsafe.QueryString(raw, nil) "+
+			"where the value is assigned first.",
+			strings.Join(found, "\n  "))
+	}
+}
+
+// rawQueryReachingALog finds a raw query string reaching a log.
+//
+// Per function: collect the reads of X.RawQuery that are not already inside a
+// logsafe call, note which local variables were assigned from one, then look for
+// a logging call whose arguments mention either. Assignment TARGETS are skipped
+// -- `u.RawQuery = q.Encode()` builds a redirect URL and is not a read at all,
+// which the first draft of this guard reported seven times before the reads it
+// was actually looking for.
+func rawQueryReachingALog(fset *token.FileSet, f *ast.File, rel string) []string {
+	if strings.HasPrefix(rel, "internal/common/logsafe/") {
+		return nil // the implementation itself must touch the raw value
+	}
+
+	var found []string
+	for _, decl := range f.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Body == nil {
+			continue
+		}
+		found = append(found, rawQueryInFunc(fset, fn, rel)...)
+	}
+	return found
+}
+
+func rawQueryInFunc(fset *token.FileSet, fn *ast.FuncDecl, rel string) []string {
+	// 1. RawQuery occurrences that are assignment targets, or already wrapped in
+	//    a logsafe call, are not what this is looking for.
+	skip := map[token.Pos]bool{}
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		switch v := n.(type) {
+		case *ast.AssignStmt:
+			for _, lhs := range v.Lhs {
+				if sel, ok := lhs.(*ast.SelectorExpr); ok && sel.Sel.Name == "RawQuery" {
+					skip[sel.Pos()] = true
+				}
+			}
+		case *ast.CallExpr:
+			sel, ok := v.Fun.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			if pkg, ok := sel.X.(*ast.Ident); !ok || pkg.Name != "logsafe" {
+				return true
+			}
+			// Everything a logsafe call receives is neutralised: the RawQuery
+			// read itself, and any identifier carrying it. Without the second
+			// half, a variable tainted at its assignment stays tainted forever
+			// and `logsafe.QueryField("query", query)` reads as a finding.
+			for _, arg := range v.Args {
+				markSafe(arg, skip)
+			}
+		}
+		return true
+	})
+
+	// 2. Locals assigned from a bare RawQuery read carry the same taint, and so
+	//    do locals assigned from an expression that mentions one of those. The
+	//    second half is not optional: the shape this tree actually uses is
+	//
+	//        query := c.Request.URL.RawQuery
+	//        fields := []zap.Field{..., zap.String("query", query), ...}
+	//        logger.Info("msg", fields...)
+	//
+	//    and a guard that only followed the first assignment could not see the
+	//    live leak it was written for. Iterated to a fixpoint because the
+	//    assignments need not be in dependency order.
+	tainted := map[string]bool{}
+	for pass := 0; pass < 8; pass++ {
+		before := len(tainted)
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			as, ok := n.(*ast.AssignStmt)
+			if !ok || len(as.Lhs) != len(as.Rhs) {
+				return true
+			}
+			for i, rhs := range as.Rhs {
+				if !readsRawQuery(rhs, skip) && !mentionsTainted(rhs, tainted, skip) {
+					continue
+				}
+				if id, ok := as.Lhs[i].(*ast.Ident); ok {
+					tainted[id.Name] = true
+				}
+			}
+			return true
+		})
+		// append(fields, ...) keeps the same variable, so it is already covered
+		// by the assignment form; nothing else grows the set.
+		if len(tainted) == before {
+			break
+		}
+	}
+
+	// 3. A logging call mentioning either is the finding.
+	var found []string
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok || !isLoggingCall(call) {
+			return true
+		}
+		for _, arg := range call.Args {
+			if readsRawQuery(arg, skip) || mentionsTainted(arg, tainted, skip) {
+				found = append(found, rel+":"+strconv.Itoa(fset.Position(call.Pos()).Line)+
+					": "+fn.Name.Name+" logs the raw query string")
+				return false
+			}
+		}
+		return true
+	})
+	return found
+}
+
+// isLoggingCall covers both shapes this tree uses: a structured zap call on a
+// receiver named like a logger, and the gateway's variadic key/value Logger,
+// whose Debug/Info take interface{} pairs rather than zap.Field.
+func isLoggingCall(call *ast.CallExpr) bool {
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok || !zapLevels[sel.Sel.Name] {
+		return false
+	}
+	return strings.Contains(strings.ToLower(rightmostName(sel.X)), "log")
+}
+
+func markSafe(e ast.Expr, into map[token.Pos]bool) {
+	ast.Inspect(e, func(n ast.Node) bool {
+		switch v := n.(type) {
+		case *ast.SelectorExpr:
+			if v.Sel.Name == "RawQuery" {
+				into[v.Pos()] = true
+			}
+		case *ast.Ident:
+			into[v.Pos()] = true
+		}
+		return true
+	})
+}
+
+func readsRawQuery(e ast.Expr, skip map[token.Pos]bool) bool {
+	seen := false
+	ast.Inspect(e, func(n ast.Node) bool {
+		if sel, ok := n.(*ast.SelectorExpr); ok && sel.Sel.Name == "RawQuery" && !skip[sel.Pos()] {
+			seen = true
+			return false
+		}
+		return true
+	})
+	return seen
+}
+
+func mentionsTainted(e ast.Expr, tainted map[string]bool, safe map[token.Pos]bool) bool {
+	seen := false
+	ast.Inspect(e, func(n ast.Node) bool {
+		if id, ok := n.(*ast.Ident); ok && tainted[id.Name] && !safe[id.Pos()] {
+			seen = true
+			return false
+		}
+		return true
+	})
+	return seen
+}
+
+// The raw-query guard rests on telling three shapes apart, and its first draft
+// got one wrong: it reported `u.RawQuery = q.Encode()` -- building a redirect
+// URL -- seven times, which is the kind of noise that gets a guard deleted.
+func TestRawQueryGuardSeparatesReadsFromWrites(t *testing.T) {
+	cases := map[string]struct {
+		src  string
+		want int
+	}{
+		"logged directly": {
+			src: `package p
+func h(c *gin.Context, logger *zap.Logger) {
+	logger.Info("req", zap.String("query", c.Request.URL.RawQuery))
+}`,
+			want: 1,
+		},
+		// The shape that was actually live: assigned first, logged later.
+		"assigned to a local, then logged": {
+			src: `package p
+func h(c *gin.Context, logger *zap.Logger) {
+	query := c.Request.URL.RawQuery
+	logger.Info("req", zap.String("query", query))
+}`,
+			want: 1,
+		},
+		// The shape the live logger uses, and the one the first draft of this
+		// guard could not see: RawQuery into a local, the local into a field
+		// slice, the slice spread into the logging call.
+		"through a field slice": {
+			src: `package p
+func h(c *gin.Context, logger *zap.Logger) {
+	query := c.Request.URL.RawQuery
+	fields := []zap.Field{zap.String("query", query)}
+	logger.Info("req", fields...)
+}`,
+			want: 1,
+		},
+		// ...and the same shape, redacted, must stay quiet.
+		"through a field slice, redacted": {
+			src: `package p
+func h(c *gin.Context, logger *zap.Logger) {
+	query := c.Request.URL.RawQuery
+	fields := []zap.Field{logsafe.QueryField("query", query)}
+	logger.Info("req", fields...)
+}`,
+			want: 0,
+		},
+		// The gateway's variadic key/value logger, which takes no zap.Field.
+		"a variadic key/value logger": {
+			src: `package p
+func h(c *gin.Context, logger gateway.Logger) {
+	logger.Debug("entry", "query", c.Request.URL.RawQuery)
+}`,
+			want: 1,
+		},
+		"redacted on the way in": {
+			src: `package p
+func h(c *gin.Context, logger *zap.Logger) {
+	logger.Info("req", logsafe.QueryField("query", c.Request.URL.RawQuery))
+}`,
+			want: 0,
+		},
+		"redacted at the assignment": {
+			src: `package p
+func h(c *gin.Context, logger *zap.Logger) {
+	query := logsafe.QueryString(c.Request.URL.RawQuery, nil)
+	logger.Info("req", zap.String("query", query))
+}`,
+			want: 0,
+		},
+		// WRITING RawQuery builds a URL. It is not a read at all.
+		"assigned TO, building a redirect": {
+			src: `package p
+func h(c *gin.Context, logger *zap.Logger) {
+	u.RawQuery = q.Encode()
+	logger.Info("redirecting", zap.String("to", u.String()))
+}`,
+			want: 0,
+		},
+		// And a read that never reaches a log is somebody's business, not this
+		// guard's.
+		"read but not logged": {
+			src: `package p
+func h(c *gin.Context) {
+	parsed, _ := url.ParseQuery(c.Request.URL.RawQuery)
+	_ = parsed
+}`,
+			want: 0,
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			p := filepath.Join(dir, "a.go")
+			if err := os.WriteFile(p, []byte(tc.src), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			fset := token.NewFileSet()
+			f, err := parser.ParseFile(fset, p, nil, 0)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			got := rawQueryReachingALog(fset, f, "a.go")
+			if len(got) != tc.want {
+				t.Fatalf("findings = %d, want %d: %v", len(got), tc.want, got)
+			}
+		})
+	}
+}

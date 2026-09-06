@@ -10,6 +10,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/openidx/openidx/internal/gateway"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 // LoggingMiddlewareConfig holds configuration for the logging middleware
@@ -46,7 +48,9 @@ func RequestLogger(logger gateway.Logger, config LoggingMiddlewareConfig) gin.Ha
 	return func(c *gin.Context) {
 		start := time.Now()
 		path := c.Request.URL.Path
-		query := c.Request.URL.RawQuery
+		// Redacted at the point it is read, so no later field can log the raw
+		// value by accident. See internal/common/logsafe.
+		query := logsafe.QueryString(c.Request.URL.RawQuery, nil)
 
 		// Store logger in context
 		c.Set("logger", logger)
@@ -240,7 +244,7 @@ func LogRequestEntry(logger gateway.Logger, c *gin.Context) {
 		"correlation_id", GetCorrelationID(c),
 		"method", c.Request.Method,
 		"path", c.Request.URL.Path,
-		"query", c.Request.URL.RawQuery,
+		"query", logsafe.QueryString(c.Request.URL.RawQuery, nil),
 		"client_ip", c.ClientIP(),
 	)
 }

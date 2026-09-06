@@ -103,11 +103,22 @@ func GinMiddleware(logger *zap.Logger) gin.HandlerFunc {
 		// whatever %-encoding the client chose, the query and user agent are the
 		// client's outright, and ip is X-Forwarded-For behind a trusted proxy.
 		// See internal/common/logsafe.
+		//
+		// The query goes through logsafe.QueryField, which REDACTS before it
+		// cleans. This is the request logger every service actually mounts --
+		// cmd/{identity,oauth,access,admin-api,audit,governance,provisioning,
+		// gateway}-service all call GinMiddleware -- and until this line it wrote
+		// the raw query string. internal/common/middleware has a request logger
+		// that has redacted query parameters for its whole life and is mounted by
+		// nothing, which is the only reason the gap was not obvious: the control
+		// existed, in the copy that never ran. Five callback routes read the OAuth
+		// authorization code from the query string, and one reads a magic-link
+		// token; all of them were logged in clear on every request.
 		fields := []zap.Field{
 			zap.Int("status", status),
 			logsafe.String("method", c.Request.Method),
 			logsafe.String("path", path),
-			logsafe.String("query", query),
+			logsafe.QueryField("query", query),
 			logsafe.String("ip", c.ClientIP()),
 			logsafe.String("user-agent", c.Request.UserAgent()),
 			zap.Duration("latency", latency),

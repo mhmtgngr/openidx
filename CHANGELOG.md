@@ -9,6 +9,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The OAuth authorization code was written to the log in clear, on every
+  callback, by every service.** Three request loggers exist in this tree. The one
+  in `internal/common/middleware` has redacted query parameters for its whole
+  life and is mounted by nothing; the gateway's is mounted by nothing either. The
+  one every service actually mounts -- `internal/common/logger.GinMiddleware`,
+  used by `cmd/{identity,oauth,access,admin-api,audit,governance,provisioning,
+  gateway}-service` -- logged `c.Request.URL.RawQuery` verbatim. Five callback
+  routes read `code` from the query string (`internal/oauth/social_login.go`,
+  `social_link.go`, `service.go`; `internal/access/service.go`, `multi_idp.go`),
+  `internal/oauth/handlers_passwordless.go` reads the magic-link `token`, and two
+  routes read `session_token`; all of them went into the log unredacted. The
+  panic-recovery handler (`internal/middleware/recovery.go`) did the same, on the
+  entry most likely to be forwarded to an error tracker. A control that exists
+  only in the copy nobody runs is not a control.
+  The redaction now lives once, in `internal/common/logsafe`, and all three
+  loggers plus the recovery handler use it. A guard
+  (`TestNoLoggerWritesARawQueryString`) fails on any raw query string reaching a
+  log field, so which copy is mounted stops mattering.
+
+- **The redaction itself missed the values worth redacting, and had a
+  one-character bypass.** The list named secrets from memory: `access_token` and
+  `refresh_token` were there, `id_token_hint` was not; `token` was there,
+  `session_token` was not; `code`, `state`, `nonce`, `user_code`, `SAMLRequest`
+  and `RelayState` were absent entirely. And the parameter name was matched
+  BEFORE URL-decoding while the handler decodes, so the two disagreed about what
+  a parameter was called: `?%74oken=hunter2` was read by the handler as
+  `token=hunter2` and logged as `%74oken=hunter2`, in clear (measured). Names are
+  now matched decoded, an undecodable name is redacted rather than trusted, and
+  the exact list is only half the rule -- the other half matches by WORD, so
+  `session_token`, `backup_code` and `provisioning_key` redact without anybody
+  listing them. A census guard
+  (`internal/common/middleware/query_param_census_test.go`) derives every query
+  parameter the tree reads and requires each to be classified: redacted, or
+  declared public with a reason. Ninety-four are classified today; a
+  ninety-fifth cannot arrive unclassified.
+
+- **`sanitizeJSON` failed open in three ways at once.** Its five "pattern
+  variations" were three byte-identical duplicates plus one with a space, so
+  `"password" : "x"` was missed; it redacted only the first occurrence of each
+  pattern, so a second password survived; and it matched only a quoted string
+  value, so a numeric pin, an array of recovery codes and a nested
+  `{"credentials":{...}}` object went through whole. `LogBody` is off by default
+  and no service sets it, so this never reached a real log -- it was a trap armed
+  for whoever turned the flag on to debug something. It now parses the body and
+  redacts by field name at any depth, in any container; a body that is not JSON
+  is withheld with its size reported rather than guessed at. Related: sanitising
+  ran AFTER the 10 KB truncation, and truncated JSON does not parse, so with the
+  new implementation every large body would have been discarded whole. Redact
+  first, cut second.
+
 - **The correlation id every log line is stamped with was chosen by the
   client.** Seven places read `X-Request-ID`, `X-Correlation-ID` or
   `traceparent` off the request and adopted whatever arrived -- three

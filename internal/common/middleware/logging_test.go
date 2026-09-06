@@ -292,32 +292,63 @@ func TestRequestLogger_BodyLoggingWithSanitization(t *testing.T) {
 	assert.True(t, strings.Contains(bodyField, "REDACTED") || strings.Contains(bodyField, "password"))
 }
 
+// TestRequestLogger_BodyTruncation covers both halves of the size limit, which
+// used to be one: a large JSON body is redacted and THEN cut (the other order
+// discards it whole, because truncated JSON does not parse), and a large body
+// that is not JSON at all is refused with its size named rather than guessed at.
 func TestRequestLogger_BodyTruncation(t *testing.T) {
-	logger, observedLogs := setupTestLogger()
+	post := func(t *testing.T, payload string) string {
+		t.Helper()
+		logger, observedLogs := setupTestLogger()
+		config := DefaultLoggingConfig(logger)
+		config.LogBody = true
 
-	config := DefaultLoggingConfig(logger)
-	config.LogBody = true
+		gin.SetMode(gin.TestMode)
+		router := gin.New()
+		router.Use(RequestLoggerWithConfig(config))
+		router.POST("/upload", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{}) })
 
-	gin.SetMode(gin.TestMode)
-	router := gin.New()
-	router.Use(RequestLoggerWithConfig(config))
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, httptest.NewRequest("POST", "/upload", strings.NewReader(payload)))
 
-	router.POST("/upload", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{})
+		logs := observedLogs.All()
+		require.Greater(t, len(logs), 0)
+		return findField(logs[0], "request_body")
+	}
+
+	t.Run("a large JSON body is redacted and then truncated", func(t *testing.T) {
+		payload := `{"password":"hunter2","filler":"` + strings.Repeat("x", 15*1024) + `"}`
+		body := post(t, payload)
+
+		assert.Contains(t, body, "truncated", "the operator cannot tell the body was cut")
+		assert.NotContains(t, body, "hunter2", "the password survived into the log")
+		assert.Contains(t, body, "xxxx", "redaction should cost the secret, not the whole body")
+		// Not asserted: that the marker itself is still visible. Re-encoding
+		// sorts the keys, so whether "password" lands before or after 10 KB of
+		// "filler" is alphabetical luck. What must hold is that the secret is
+		// gone and the rest is not -- the marker's presence is checked on a body
+		// small enough for the question to be meaningful, below.
 	})
 
-	// Create a large payload (over 10KB)
-	largePayload := strings.Repeat("x", 15*1024)
-	req := httptest.NewRequest("POST", "/upload", strings.NewReader(largePayload))
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
+	t.Run("a small JSON body keeps everything but the secret", func(t *testing.T) {
+		body := post(t, `{"username":"ada","password":"hunter2","recovery_codes":["a1","b2"],`+
+			`"profile":{"client_secret":"cs_live_9","display":"Ada L"}}`)
 
-	logs := observedLogs.All()
-	require.Greater(t, len(logs), 0)
+		assert.NotContains(t, body, "hunter2")
+		assert.NotContains(t, body, "cs_live_9", "a secret nested one level down was left in the log")
+		assert.NotContains(t, body, "a1", "an ARRAY value under a sensitive name was left in the log")
+		assert.Contains(t, body, redactedMarker)
+		assert.Contains(t, body, "ada", "a non-secret field must survive")
+		assert.Contains(t, body, "Ada L", "a non-secret field nested one level down must survive")
+	})
 
-	logEntry := logs[0]
-	bodyField := findField(logEntry, "request_body")
-	assert.Contains(t, bodyField, "truncated")
+	t.Run("a large body that is not JSON is refused with its size", func(t *testing.T) {
+		body := post(t, strings.Repeat("x", 15*1024))
+
+		assert.Contains(t, body, "redacted", "an unparseable body cannot be field-redacted, so none of it may be logged")
+		assert.Contains(t, body, "15360 bytes", "the size is the one thing that can be reported safely")
+		assert.NotContains(t, body, "xxxx")
+	})
 }
 
 func TestRequestLogger_MinDuration(t *testing.T) {
@@ -748,5 +779,103 @@ func TestRequestLogger_RejectsAnImplausibleRequestID(t *testing.T) {
 			assert.Len(t, logged, 36, "the replacement should be a UUID")
 			assert.NotContains(t, echoed, "AAAA", "the rejected value was echoed back to the client")
 		})
+	}
+}
+
+// TestSanitizeQueryParams_percentEncodedKeyIsStillRedacted pins the one-character
+// bypass this redaction had for its whole life.
+//
+// gin decodes a parameter name before matching it, and the sanitiser did not, so
+// the two disagreed about what a parameter was called. Measured before the fix:
+// a request for ?%74oken=hunter2 was read by the handler as token=hunter2 and
+// written to the log as "%74oken=hunter2", in clear. Nothing hostile is required
+// to trip it — a client that percent-encodes more than it needs to is enough.
+func TestSanitizeQueryParams_percentEncodedKeyIsStillRedacted(t *testing.T) {
+	fields := map[string]bool{}
+	for _, f := range DefaultSanitizedFields {
+		fields[strings.ToLower(f)] = true
+	}
+
+	cases := map[string]struct {
+		query    string
+		redacted bool
+	}{
+		"the plain name":                     {"token=hunter2", true},
+		"one letter percent-encoded":         {"%74oken=hunter2", true},
+		"the whole name percent-encoded":     {"%70%61%73%73%77%6f%72%64=hunter2", true},
+		"upper case":                         {"TOKEN=hunter2", true},
+		"a name that will not decode":        {"%zz=hunter2", true},
+		"an ordinary parameter is untouched": {"page=3", false},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			got := sanitizeQueryParams(tc.query, fields)
+			if tc.redacted {
+				if strings.Contains(got, "hunter2") {
+					t.Fatalf("value survived redaction: %q", got)
+				}
+				if !strings.Contains(got, redactedMarker) {
+					t.Fatalf("expected a redaction marker, got %q", got)
+				}
+				return
+			}
+			if got != tc.query {
+				t.Fatalf("an ordinary parameter was changed: %q -> %q", tc.query, got)
+			}
+		})
+	}
+}
+
+// TestSanitizeQueryParams_coversTheCredentialsInQueryStrings names the values the
+// old list missed. Each of these is read by a live handler from the query string,
+// and each went into the log in clear.
+func TestSanitizeQueryParams_coversTheCredentialsInQueryStrings(t *testing.T) {
+	fields := map[string]bool{}
+	for _, f := range DefaultSanitizedFields {
+		fields[strings.ToLower(f)] = true
+	}
+
+	// name -> where it is read from, so a future reader can check the claim.
+	secrets := map[string]string{
+		"code":          "internal/oauth/social_login.go, social_link.go, service.go; internal/access/service.go, multi_idp.go",
+		"state":         "the same five callbacks",
+		"session_token": "internal/oauth/handlers_passwordless.go; internal/identity/handlers_advanced_mfa.go",
+		"token":         "internal/oauth/handlers_passwordless.go (the magic link itself)",
+		"login_session": "internal/oauth/authorize.go",
+		"id_token_hint": "RP-initiated logout",
+		"user_code":     "the device flow",
+		"SAMLRequest":   "the SAML SP endpoints",
+		"RelayState":    "the SAML SP endpoints",
+		"nonce":         "the OIDC authorize request",
+	}
+
+	for param, where := range secrets {
+		t.Run(param, func(t *testing.T) {
+			got := sanitizeQueryParams(param+"=SECRETVALUE", fields)
+			if strings.Contains(got, "SECRETVALUE") {
+				t.Fatalf("%s is read by %s and reached the log in clear: %q", param, where, got)
+			}
+		})
+	}
+}
+
+// And the other direction, because a redactor that redacts everything is a
+// redactor somebody turns off: the parameters an operator actually needs in
+// order to read a log must survive.
+func TestSanitizeQueryParams_keepsWhatMakesALogUseful(t *testing.T) {
+	fields := map[string]bool{}
+	for _, f := range DefaultSanitizedFields {
+		fields[strings.ToLower(f)] = true
+	}
+
+	for _, param := range []string{
+		"page=3", "page_size=50", "limit=100", "offset=20", "q=ada",
+		"status=active", "client_id=console", "org=acme", "user_id=u-1",
+		"response_type=code", "format=csv", "start_date=2026-01-01",
+	} {
+		if got := sanitizeQueryParams(param, fields); got != param {
+			t.Errorf("%q was redacted to %q — an operator cannot read this log any more", param, got)
+		}
 	}
 }

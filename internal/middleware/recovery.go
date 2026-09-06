@@ -11,6 +11,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 // RecoveryConfig holds configuration for the recovery middleware
@@ -66,14 +68,20 @@ func RecoveryWithConfig(cfg RecoveryConfig) gin.HandlerFunc {
 				}
 
 				// Log the panic with correlation ID
+				// The panic log is the one most likely to be forwarded to an
+				// error tracker and read by a human, so the query goes through
+				// logsafe.QueryField: on a callback route it carries the OAuth
+				// authorization code, and a panic mid-callback is exactly when
+				// somebody goes looking at this entry. The rest came off the wire
+				// too, so it is cleaned of control characters.
 				logFields := []zap.Field{
-					zap.String("correlation_id", correlationID),
+					logsafe.String("correlation_id", correlationID),
 					zap.String("panic", fmt.Sprintf("%v", err)),
-					zap.String("method", c.Request.Method),
-					zap.String("path", c.Request.URL.Path),
-					zap.String("query", c.Request.URL.RawQuery),
-					zap.String("ip", c.ClientIP()),
-					zap.String("user_agent", c.Request.UserAgent()),
+					logsafe.String("method", c.Request.Method),
+					logsafe.String("path", c.Request.URL.Path),
+					logsafe.QueryField("query", c.Request.URL.RawQuery),
+					logsafe.String("ip", c.ClientIP()),
+					logsafe.String("user_agent", c.Request.UserAgent()),
 				}
 
 				if userID, exists := c.Get("user_id"); exists {
