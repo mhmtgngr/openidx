@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Two database-backed test suites ran nowhere.** `ci.yml`'s unit matrix gives
+  every package a live Postgres and exports it as `DATABASE_URL`; it does not
+  set `OPENIDX_TEST_DATABASE_URL`, which is the developer escape hatch for a
+  workstation with Postgres but no Docker daemon. `internal/oauth`'s SAML
+  service-provider **tenant isolation** suite and the **v172** migration test
+  (per-organization SET replay protection) read only that variable and skipped
+  when it was unset -- so they skipped on every CI run, and on any workstation
+  where nobody exported it by hand, while the job reported success. A skipped
+  test displays as a pass. Both now prefer the variable and otherwise start a
+  throwaway container, the way the other nine database-backed helpers already
+  did. `scripts/check-test-reachability.sh` fails on the shape, and its
+  self-test puts each of the two suites back into the form it was merged in and
+  requires the guard to go red on both.
+
 - **A dispatched release left the images unstamped.** `release.yml` already had
   a `workflow_dispatch` path, for environments that cannot push a tag ref at
   all -- a branch-scoped git credential answers HTTP 403 for `refs/tags/*`.
@@ -20,8 +34,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   did not exist -- the failure `docker.yml`'s own retag job carries a comment
   against. `release.yml` now hands off to `docker.yml` on that path
   (`workflow_dispatch` being one of the two events `GITHUB_TOKEN` may still
-  start), `docker.yml` accepts the version and stamps `X.Y.Z` / `X.Y` / `X` /
-  `stable` from either trigger, and `scripts/check-release-dispatch.sh` holds
+  start), `docker.yml` accepts the version and stamps both spellings --
+  `X.Y.Z` / `X.Y` / `X` and `vX.Y.Z` / `vX.Y` / `vX`, plus `stable` -- from
+  either trigger. The un-prefixed three are not decoration: on a tag push
+  `docker/metadata-action`'s `type=semver` publishes them and that matches a
+  tag ref and nothing else, so stamping only the `v` form would have left a
+  dispatched release complete-looking while the documented
+  `docker pull ...:1.34.0` returned 404. `scripts/check-release-dispatch.sh` holds
   the two paths together in CI -- its self-test regresses `docker.yml` to the
   pushed-tags-only shape the repository actually had and requires the guard to
   go red.

@@ -180,6 +180,10 @@ jobs:
         run: bash scripts/check-release-dispatch.test.sh
       - name: A dispatched release must stamp images like a tagged one
         run: bash scripts/check-release-dispatch.sh --enforce
+      - name: Verify the test-reachability guard can go red
+        run: bash scripts/check-test-reachability.test.sh
+      - name: No database-backed test may be unreachable from CI
+        run: bash scripts/check-test-reachability.sh --enforce
       - name: The CodeQL alert summary really names the high-severity rule
         run: bash scripts/codeql-alert-summary.test.sh
 
