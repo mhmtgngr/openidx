@@ -2,7 +2,6 @@ package identity
 
 import (
 	"context"
-	"os"
 	"testing"
 
 	"go.uber.org/zap"
@@ -18,30 +17,23 @@ import (
 // The rest of this package's DB tests CREATE the tables they need, which is why
 // a lifecycle action naming a column user_roles does not have survived: a test
 // that defines the column cannot notice that the product's schema lacks it.
+//
+// It delegates to the package's setupTestDB for the database itself -- that
+// helper prefers OPENIDX_TEST_DATABASE_URL and otherwise starts a container --
+// and then applies the migration chain. The first draft read the variable
+// directly and skipped without it, which means it would have run NOWHERE: ci.yml
+// never sets that variable. scripts/check-test-reachability.sh caught it.
 func setupMigratedDB(t *testing.T) (*database.PostgresDB, func()) {
 	t.Helper()
-	url := os.Getenv("OPENIDX_TEST_DATABASE_URL")
-	if url == "" {
-		t.Skip("OPENIDX_TEST_DATABASE_URL not set; this test needs the real migration chain")
+	db, cleanup := setupTestDB(t)
+	if db == nil {
 		return nil, func() {}
 	}
-	ctx := context.Background()
-	db, err := database.NewPostgres(url)
-	if err != nil {
-		t.Skipf("OPENIDX_TEST_DATABASE_URL set but unreachable: %v", err)
-		return nil, func() {}
-	}
-	for _, stmt := range []string{"DROP SCHEMA public CASCADE", "CREATE SCHEMA public"} {
-		if _, err := db.Pool.Exec(ctx, stmt); err != nil {
-			db.Close()
-			t.Fatalf("reset test schema (%s): %v", stmt, err)
-		}
-	}
-	if err := migrations.NewMigrator(db.Pool, zap.NewNop()).MigrateTo(ctx, -1); err != nil {
-		db.Close()
+	if err := migrations.NewMigrator(db.Pool, zap.NewNop()).MigrateTo(context.Background(), -1); err != nil {
+		cleanup()
 		t.Fatalf("migrate to latest: %v", err)
 	}
-	return db, func() { db.Close() }
+	return db, cleanup
 }
 
 // TestLifecycleAssignRoleActuallyAssigns drives the joiner action that granted

@@ -22,32 +22,49 @@ import (
 // then asserts on. The sibling DB tests in this package do exactly that, which
 // is part of why six of these queries survived.
 //
-// Skips rather than fails when no database is available, matching the package's
-// other DB-backed suites.
+// TWO PATHS, AND THE SECOND ONE IS WHY THIS RUNS AT ALL. The first draft took
+// only OPENIDX_TEST_DATABASE_URL and skipped without it -- and ci.yml never
+// sets that variable, so the suite ran NOWHERE while reporting a pass;
+// scripts/check-test-reachability.sh caught it on the first push. The variable
+// stays the preferred path (a developer with a spare Postgres and no Docker),
+// and the container fallback is what makes CI execute this. Both paths reset
+// the schema and apply the chain, so a fixture cannot diverge between them.
 func setupComplianceSchemaDB(t *testing.T) (*database.PostgresDB, func()) {
 	t.Helper()
-	url := os.Getenv("OPENIDX_TEST_DATABASE_URL")
-	if url == "" {
-		t.Skip("OPENIDX_TEST_DATABASE_URL not set; this suite needs the real migration chain")
-		return nil, func() {}
-	}
 	ctx := context.Background()
-	db, err := database.NewPostgres(url)
-	if err != nil {
-		t.Skipf("OPENIDX_TEST_DATABASE_URL set but unreachable: %v", err)
+
+	db, cleanup := complianceSchemaPool(t)
+	if db == nil {
 		return nil, func() {}
 	}
 	for _, stmt := range []string{"DROP SCHEMA public CASCADE", "CREATE SCHEMA public"} {
 		if _, err := db.Pool.Exec(ctx, stmt); err != nil {
-			db.Close()
+			cleanup()
 			t.Fatalf("reset test schema (%s): %v", stmt, err)
 		}
 	}
 	if err := migrations.NewMigrator(db.Pool, zap.NewNop()).MigrateTo(ctx, -1); err != nil {
-		db.Close()
+		cleanup()
 		t.Fatalf("migrate to latest: %v", err)
 	}
-	return db, func() { db.Close() }
+	return db, cleanup
+}
+
+// complianceSchemaPool returns a database to migrate: the one named by
+// OPENIDX_TEST_DATABASE_URL, or a throwaway container.
+func complianceSchemaPool(t *testing.T) (*database.PostgresDB, func()) {
+	t.Helper()
+	if url := os.Getenv("OPENIDX_TEST_DATABASE_URL"); url != "" {
+		db, err := database.NewPostgres(url)
+		if err != nil {
+			t.Skipf("OPENIDX_TEST_DATABASE_URL set but unreachable: %v", err)
+			return nil, func() {}
+		}
+		return db, func() { db.Close() }
+	}
+	// setupTestDB starts postgres:16-alpine and skips when no Docker daemon is
+	// reachable, which is the only condition under which this suite may skip.
+	return setupTestDB(t)
 }
 
 // TestComplianceControlsAgainstTheRealSchema drives the controls that reported
