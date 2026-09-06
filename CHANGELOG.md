@@ -21,6 +21,43 @@ to a spec that describes an eighth of a surface, a documented endpoint that
   the posture score was neither one tenant's nor the install's. All now carry
   `org_id` under FORCE RLS, with the install-wide unique keys re-scoped and an
   isolation test per handler file.
+- **Cancelling a bulk account operation did nothing, and one organization's bulk
+  runs were visible to every other** (migration v161). A bulk operation is the
+  console's "do this to these fifty accounts" control — enable, disable, delete,
+  add or remove a role or a group, force a password change.
+
+  **Pressing Cancel on a running operation stopped nothing.** Cancel marked the
+  operation cancelled in the database, and the code doing the work never looked
+  at that mark: it worked through every account it had been given, and then
+  recorded the operation as "completed", erasing the cancellation. So an
+  administrator who realised mid-run that they were deleting the wrong fifty
+  accounts could press Cancel, watch the screen say it was cancelled, and have
+  every one of those accounts deleted anyway with the record showing a normal
+  completion. Cancel now stops the run before the next account, and a cancelled
+  run stays cancelled.
+
+  **An operation that changed nothing reported success.** Every action was
+  correctly limited to the caller's own organization, so naming an account from
+  another organization changed nothing — and, because that is not an error in
+  the database, each such account was recorded as a success. A run over fifty
+  accounts that belonged to someone else reported fifty successes. Each is now
+  recorded as a failure, with the reason.
+
+  The runs themselves had no organization: the list showed every organization's
+  operations, including what each one did and which role or group it applied,
+  and opening one returned its per-account detail — **which is a list of
+  usernames** — so one administrator could read another organization's
+  directory through it. Cancelling addressed a run by identifier alone, so one
+  organization could cancel another's import mid-flight. All of that is now
+  scoped to the organization that started the run.
+
+  Also fixed: the per-account detail list dropped any row it could not fully
+  read, and the field it stumbled on is empty for every account that succeeded —
+  so a run that worked appeared to have done nothing at all.
+
+  **Operators of installations with more than one organization should note**
+  that existing runs are assigned to the organization of whoever started them,
+  and their per-account records follow the run.
 - **One set of email templates for the whole installation, and an announcement
   another organization could send** (migration v160). Three records had no
   organization: the email templates, the notification routing rules, and the

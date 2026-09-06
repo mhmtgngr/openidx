@@ -712,6 +712,18 @@ func TestRLSBeltTables(t *testing.T) {
 		{"kiosk_policies", `INSERT INTO kiosk_policies (name, mode, enabled, org_id)
 			VALUES ('tbelt-kiosk-` + suffix + `', 'single_app', true, $1)`},
 
+		// v161 — the bulk user operations. The actions were scoped and the
+		// record of them was not; bulk_operation_items stores the username each
+		// item acted on.
+		{"bulk_operations", `INSERT INTO bulk_operations (type, status, total_items, org_id)
+			VALUES ('disable_users', 'completed', 1, $1)`},
+
+		{"bulk_operation_items", `WITH o AS (
+			INSERT INTO bulk_operations (type, status, total_items, org_id)
+			VALUES ('disable_users', 'completed', 1, $1) RETURNING id)
+			INSERT INTO bulk_operation_items (operation_id, entity_name, status, org_id)
+			SELECT o.id, 'tbelt-bulk-` + suffix + `', 'success', $1 FROM o`},
+
 		// v160 — the notification admin surface. email_templates.slug was the
 		// seventh install-wide unique key; handleSendBroadcast resolved the
 		// organization for the recipients and loaded the message by bare id.

@@ -89,11 +89,9 @@ var needsScoping = map[string]string{
 	"webhook_delivery_stats": "delivery statistics per subscription",
 
 	// Admin console and developer surfaces.
-	"bulk_operations":      "bulk import/export runs (v54)",
-	"bulk_operation_items": "per-row results of a bulk run (v54)",
-	"connection_tests":     "connectivity test results per route",
-	"feature_adoption":     "per-user feature usage",
-	"service_features":     "per-route feature toggles (v40)",
+	"connection_tests": "connectivity test results per route",
+	"feature_adoption": "per-user feature usage",
+	"service_features": "per-route feature toggles (v40)",
 }
 
 // needsBelt: OPEN FINDINGS. These carry org_id -- the application filters on
