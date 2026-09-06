@@ -36,6 +36,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The SIEM forwarder created its own cursor table, as a role that cannot
+  create tables.** `internal/audit/siem_forwarder.go` opened with
+  `CREATE TABLE IF NOT EXISTS siem_forward_cursor` executed through the service
+  pool, which connects as `openidx_app` — the runtime role v53 created without
+  DDL rights. Measured against a fully migrated database:
+  `has_schema_privilege('openidx_app','public','CREATE')` is false. So the
+  statement always returned "permission denied for schema public" and every
+  poll after it failed on a missing relation: audit events have never reached a
+  SIEM on any install that uses the app role, which is every deployment this
+  repo ships. The least-privilege work and this forwarder were each correct
+  alone and were never read together. Migration **v175** creates the cursor and
+  grants the forwarder exactly SELECT, INSERT and UPDATE on it; the runtime DDL
+  is replaced by a read that says once which migration is missing.
+
+- **Listing scheduled reports failed outright**, and silently: `recipients` is
+  `TEXT[]` and the query COALESCEd it with the JSON literal `'[]'`, which
+  PostgreSQL rejects while planning, while the error path answers an empty slice
+  and a nil error — so the page was empty rather than broken.
+
+- **No access request had ever been auto-approved.** `access_requests.
+  resource_id` is a UUID and the lookup COALESCEd it with `''`, resolved at plan
+  time, so the query errored on every call.
+
 - **No security alert had ever been written, on any install.**
   `internal/risk/alert.go` INSERTs twenty-one columns into `security_alerts`
   and six of them do not exist — `tenant_id`, `ip_address`, `user_agent`,

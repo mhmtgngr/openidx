@@ -421,7 +421,14 @@ func TestRegistersOnlyShrink(t *testing.T) {
 		// its cross-org reach with the reason on the query: a run the sweep
 		// cannot see never expires.
 		{"predicateAuditPending", len(predicateAuditPending), 0},
-		{"installWideTables", len(installWideTables), 21},
+		// 21 -> 22, and this is the one direction the ratchet is not meant to
+		// stop. It exists so an EXISTING table holding tenant data cannot be
+		// declared away instead of scoped; siem_forward_cursor is a table v175
+		// creates, one row (id = 1) holding one watermark over audit_events for
+		// one outbound SIEM connection. It has no tenant dimension to lose --
+		// the same shape as policy_sync_state above it. If per-tenant SIEM
+		// targets ever exist, this becomes a scoped table and the entry goes.
+		{"installWideTables", len(installWideTables), 22},
 		{"beltExempt", len(beltExempt), 5},
 	} {
 		if c.got > c.max {

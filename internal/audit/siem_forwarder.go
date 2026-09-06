@@ -173,18 +173,21 @@ func (f *siemForwarder) run(ctx context.Context) {
 	}
 }
 
-// ensureCursorTable creates the single-row cursor table (idempotent).
+// ensureCursorTable checks that the cursor migration has run.
+//
+// It used to CREATE the table. The service pool connects as openidx_app, which
+// v53 created without DDL rights on the schema, so that statement always
+// returned "permission denied for schema public" and every forwardBatch after
+// it failed on a relation that does not exist. Migration v175 creates the table
+// and seeds its single row; this reads it, so a forwarder started against an
+// un-migrated database says so once instead of failing every poll.
 func (f *siemForwarder) ensureCursorTable(ctx context.Context) error {
-	_, err := f.svc.db.Pool.Exec(ctx, `
-        CREATE TABLE IF NOT EXISTS siem_forward_cursor (
-            id            INT PRIMARY KEY DEFAULT 1,
-            last_ts       TIMESTAMPTZ NOT NULL DEFAULT 'epoch',
-            last_id       UUID,
-            updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            CONSTRAINT siem_forward_cursor_singleton CHECK (id = 1)
-        );
-        INSERT INTO siem_forward_cursor (id) VALUES (1) ON CONFLICT (id) DO NOTHING;`)
-	return err
+	var id int
+	if err := f.svc.db.Pool.QueryRow(ctx,
+		`SELECT id FROM siem_forward_cursor WHERE id = 1`).Scan(&id); err != nil {
+		return fmt.Errorf("siem_forward_cursor is missing; run migrations (v175): %w", err)
+	}
+	return nil
 }
 
 // forwardBatch ships the next batch of events past the cursor and, on successful

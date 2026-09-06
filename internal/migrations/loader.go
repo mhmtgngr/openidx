@@ -1245,5 +1245,12 @@ func allMigrations() []*Migration {
 			UpSQL:       securityAlertColumnsUp,
 			DownSQL:     securityAlertColumnsDown,
 		},
+		{
+			Version:     175,
+			Name:        "siem_forward_cursor",
+			Description: "Create the SIEM forwarder's cursor in the migration chain, because the forwarder cannot create it itself. internal/audit/siem_forwarder.go opened with CREATE TABLE IF NOT EXISTS siem_forward_cursor executed through the service's own pool, and that pool connects as openidx_app -- the runtime role v53 created WITHOUT DDL rights. Measured against a database with the full chain applied: has_schema_privilege('openidx_app','public','CREATE') is false. So ensureCursorTable has always returned permission denied, the table has never existed, and every forwardBatch after it failed on 'read cursor: relation siem_forward_cursor does not exist' -- audit events have never reached a SIEM on any install that uses the app role, which is every deployment this repo ships. THE TWO HALVES WERE EACH CORRECT AND NEVER READ TOGETHER: the least-privilege work removed DDL from the runtime role, this forwarder assumed it, and nothing connected them because the failure is a startup error the worker logs and retries forever. Schema belongs in the chain, where the owner role runs it, where orgscope can see it and where a restore recreates it; the runtime DDL is deleted in the same commit so there is one place that creates this table. Install-wide by construction and declared so in tools/orgscope: one row (id = 1) holding one watermark over audit_events for one outbound integration, which belongs to the installation and not to a tenant -- the same shape as policy_sync_state. GRANT SELECT, INSERT, UPDATE to openidx_app, which is what the forwarder needs and no more; no DELETE, because nothing deletes a singleton. Found by tools/sqlprepare, whose first sweep reported the relation as missing; the register's initial verdict said 'created by no migration', which was true and not the reason -- the reason is that the code that creates it cannot. Down drops the cursor, and a fresh one re-forwards from the beginning, which SIEMs dedupe on event id -- the same at-least-once property forwardBatch already documents for a delivered batch whose cursor update fails.",
+			UpSQL:       siemForwardCursorUp,
+			DownSQL:     siemForwardCursorDown,
+		},
 	}
 }

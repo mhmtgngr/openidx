@@ -82,18 +82,6 @@ var knownBroken = map[string]string{
 	// internal/audit/compliance_enhanced.go:858  [42703] column "created_at" does not exist
 	"internal/audit/compliance_enhanced.go#de460d4ce663": "created_at absent on that relation; the evidence bundle omits the section.",
 
-	// internal/audit/reports.go:481  [22P02] malformed array literal: "[]" -- "[" must introduce explicitly-specified array dimensions.
-	"internal/audit/reports.go#77193f4d4e67": "scheduled_reports.recipients is TEXT[] and the query COALESCEs it with the JSON literal '[]'; PostgreSQL rejects it at plan time, so LISTING scheduled reports fails outright -- the page is empty, not merely incomplete.",
-
-	// internal/audit/siem_forwarder.go:196  [42P01] relation "siem_forward_cursor" does not exist
-	"internal/audit/siem_forwarder.go#13849830396c": "siem_forward_cursor is created by no migration; the forwarder cannot read its cursor, so it has no idea what it has already shipped.",
-
-	// internal/audit/siem_forwarder.go:249  [42P01] relation "siem_forward_cursor" does not exist
-	"internal/audit/siem_forwarder.go#684d1469cdd8": "siem_forward_cursor again, on the write side: the forwarder cannot record how far it has shipped, so a restart has no watermark.",
-
-	// internal/governance/auto_approve.go:51  [22P02] invalid input syntax for type uuid: ""
-	"internal/governance/auto_approve.go#d52f9f367f71": "access_requests.resource_id is UUID and the query COALESCEs it with ''; PostgreSQL resolves that at plan time, so the auto-approve lookup fails on every call and no request is ever auto-approved.",
-
 	// internal/governance/service.go:495  [42803] column "ar.id" must appear in the GROUP BY clause or be used in an aggregate function
 	"internal/governance/service.go#d3a7d5f31586": "an aggregate query selects ar.id without grouping by it; the campaign roll-up never runs.",
 

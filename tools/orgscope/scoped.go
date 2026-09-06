@@ -33,6 +33,7 @@ var installWideTables = map[string]string{
 	"ip_geolocation_cache": "shared IP->geo cache keyed by address; no tenant dimension",
 	"posture_check_types":  "global enum of posture check kinds",
 	"policy_sync_state":    "global governance->Ziti sync watermark",
+	"siem_forward_cursor":  "single-row watermark over audit_events for one outbound SIEM connection; an install-level integration, not a tenant's (v175)",
 
 	// Operations telemetry about the install, not about anyone's data.
 	"health_check_history": "per-service dependency health for the operator; install-wide by design",

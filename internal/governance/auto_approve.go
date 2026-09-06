@@ -48,7 +48,11 @@ func (s *Service) tryAutoApprove(ctx context.Context, requestID string, cond *Au
 
 	var request AccessRequest
 	if err := s.db.Pool.QueryRow(ctx,
-		`SELECT id, requester_id, resource_type, COALESCE(resource_id, ''), COALESCE(resource_name, ''), expires_at
+		// access_requests.resource_id is UUID, and COALESCE(uuid, '') is
+		// resolved at PLAN time, so this lookup errored on every call and no
+		// request has ever been auto-approved. The cast keeps the empty-string
+		// default the scan expects.
+		`SELECT id, requester_id, resource_type, COALESCE(resource_id::text, ''), COALESCE(resource_name, ''), expires_at
 		 FROM access_requests WHERE id = $1 AND org_id = $2`,
 		requestID, org.ID,
 	).Scan(&request.ID, &request.RequesterID, &request.ResourceType, &request.ResourceID,

@@ -14,12 +14,12 @@ package migrations
 // statement already sets, and ip_address is source_ip. The remaining four are
 // real fields with nowhere to go, so they get columns:
 //
-//   user_agent       the client string captured with the alert
-//   deliveries       AlertDelivery records -- which channel, sent or failed,
-//                    when, and the error -- the only evidence that an alert
-//                    reached anyone
-//   acknowledged_by  AcknowledgeAlert's whole purpose; the table had resolved_by
-//   acknowledged_at  and resolved_at but not the acknowledgement pair
+//	user_agent       the client string captured with the alert
+//	deliveries       AlertDelivery records -- which channel, sent or failed,
+//	                 when, and the error -- the only evidence that an alert
+//	                 reached anyone
+//	acknowledged_by  AcknowledgeAlert's whole purpose; the table had resolved_by
+//	acknowledged_at  and resolved_at but not the acknowledgement pair
 //
 // All four are nullable with no backfill, because there are no rows: a table
 // whose only writer never succeeded is empty by construction. The one exception

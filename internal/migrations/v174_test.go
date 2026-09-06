@@ -108,3 +108,41 @@ func migrationByVersion(t *testing.T, version int) *Migration {
 	t.Fatalf("migration v%d not registered in allMigrations()", version)
 	return nil
 }
+
+// TestMigrationV175_siemForwardCursor pins that the cursor lives in the chain
+// and that the runtime DDL is gone.
+//
+// The forwarder created this table itself, through a pool that connects as
+// openidx_app -- a role v53 created without DDL rights on the schema. So the
+// CREATE always failed and every poll after it failed on a missing relation.
+// A table created by application code is a table the owner role never makes,
+// orgscope never sees and a restore never recreates.
+func TestMigrationV175_siemForwardCursor(t *testing.T) {
+	m := migrationByVersion(t, 175)
+	if m.Name != "siem_forward_cursor" {
+		t.Errorf("v175 Name = %q, want siem_forward_cursor", m.Name)
+	}
+	for _, frag := range []string{
+		"CREATE TABLE IF NOT EXISTS siem_forward_cursor",
+		"INSERT INTO siem_forward_cursor (id) VALUES (1) ON CONFLICT (id) DO NOTHING",
+		"GRANT SELECT, INSERT, UPDATE ON siem_forward_cursor TO openidx_app",
+	} {
+		if !strings.Contains(m.UpSQL, frag) {
+			t.Errorf("v175 UpSQL missing: %q", frag)
+		}
+	}
+	// The forwarder needs no DELETE on a singleton, and a grant wider than the
+	// need is the thing least-privilege exists to stop.
+	if strings.Contains(m.UpSQL, "DELETE ON siem_forward_cursor") {
+		t.Error("v175 grants DELETE on a single-row cursor")
+	}
+
+	src, err := os.ReadFile("../audit/siem_forwarder.go")
+	if err != nil {
+		t.Fatalf("read forwarder: %v", err)
+	}
+	if strings.Contains(string(src), "CREATE TABLE") {
+		t.Error("the forwarder still creates schema at runtime; openidx_app cannot, " +
+			"so the statement fails and every poll after it fails on a missing relation")
+	}
+}
