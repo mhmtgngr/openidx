@@ -58,6 +58,19 @@ to a spec that describes an eighth of a surface, a documented endpoint that
   **Operators of installations with more than one organization should note**
   that existing runs are assigned to the organization of whoever started them,
   and their per-account records follow the run.
+- **The credential vault's permission checks now name the organization
+  themselves.** Whether somebody may reveal a stored credential, who may see the
+  record of past reveals, and which permissions may be withdrawn were all
+  decided by queries that relied on the database's own isolation rule rather
+  than saying so in the query.
+
+  On an ordinary request that is enough. But the vault has one path — the one
+  that injects a credential into a remote session on the product's own behalf —
+  that deliberately steps outside the boundary, and there the database rule is
+  switched off and only what the query says is left. Those five checks now say
+  it, and a test exercises them **in that condition** rather than the ordinary
+  one. No exposure is known to have followed from this; it removes the
+  dependence.
 - **The approval request raised when an untrusted device is refused had never
   once been raised** (migration v171). When a device that has not been marked
   trusted reaches a resource protected by a device check, the product refuses it

@@ -304,7 +304,12 @@ func (s *Service) AddGrant(ctx context.Context, g Grant) (string, error) {
 // RemoveGrant deletes the grant by id. Returns ErrNotFound if no row was
 // deleted.
 func (s *Service) RemoveGrant(ctx context.Context, grantID string) error {
-	ct, err := s.db.Pool.Exec(ctx, `DELETE FROM vault_access_grants WHERE id = $1`, grantID)
+	orgID, err := s.orgID(ctx)
+	if err != nil {
+		return err
+	}
+	ct, err := s.db.Pool.Exec(ctx,
+		`DELETE FROM vault_access_grants WHERE id = $1 AND org_id = $2`, grantID, orgID)
 	if err != nil {
 		return err
 	}
@@ -330,12 +335,16 @@ type GrantRow struct {
 // ListGrants returns all access grants for secretID, ordered by principal_type
 // then principal_id.
 func (s *Service) ListGrants(ctx context.Context, secretID string) ([]GrantRow, error) {
+	orgID, err := s.orgID(ctx)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT id, secret_id, principal_type, principal_id, actions, expires_at,
 		       COALESCE(granted_by::text,'')
 		FROM vault_access_grants
-		WHERE secret_id = $1
-		ORDER BY principal_type, principal_id`, secretID)
+		WHERE secret_id = $1 AND org_id = $2
+		ORDER BY principal_type, principal_id`, secretID, orgID)
 	if err != nil {
 		return nil, err
 	}
@@ -353,30 +362,44 @@ func (s *Service) ListGrants(ctx context.Context, secretID string) ([]GrantRow, 
 }
 
 // RevokeGrantForPrincipal deletes any grant for (secretID, principalType, principalID).
-// Used by the JIT-checkout early-return path for immediate deauthorization; the timeout
-// path relies on the grant's expires_at. Org-scoped by RLS via ctx.
+// Used by the JIT-checkout early-return path for immediate deauthorization; the
+// timeout path relies on the grant's expires_at.
+//
+// A revoke that matches nothing is silent, so the tenant term matters more here
+// than on a read: it is the difference between "this grant is gone" and "no such
+// grant, as far as this connection can see".
 func (s *Service) RevokeGrantForPrincipal(ctx context.Context, secretID, principalType, principalID string) error {
-	_, err := s.db.Pool.Exec(ctx,
-		`DELETE FROM vault_access_grants WHERE secret_id=$1 AND principal_type=$2 AND principal_id=$3`,
-		secretID, principalType, principalID)
+	orgID, err := s.orgID(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Pool.Exec(ctx,
+		`DELETE FROM vault_access_grants
+		 WHERE secret_id=$1 AND principal_type=$2 AND principal_id=$3 AND org_id=$4`,
+		secretID, principalType, principalID, orgID)
 	return err
 }
 
 // hasGrant reports whether principalID holds a non-expired grant carrying
 // action on secretID. userRoles lets a user match role-type grants.
 func (s *Service) hasGrant(ctx context.Context, secretID, principalID string, userRoles []string, action string) (bool, error) {
+	orgID, err := s.orgID(ctx)
+	if err != nil {
+		return false, err
+	}
 	var ok bool
-	err := s.db.Pool.QueryRow(ctx, `
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1 FROM vault_access_grants
 			WHERE secret_id = $1
+			  AND org_id = $5
 			  AND $2 = ANY(actions)
 			  AND (expires_at IS NULL OR expires_at > NOW())
 			  AND (
 			    (principal_type IN ('user','service_account') AND principal_id::text = $3)
 			    OR (principal_type = 'role' AND principal_id::text = ANY($4))
 			  )
-		)`, secretID, action, principalID, userRoles).Scan(&ok)
+		)`, secretID, action, principalID, userRoles, orgID).Scan(&ok)
 	return ok, err
 }
 
@@ -545,9 +568,14 @@ type Checkout struct {
 // Checkouts returns the last 200 checkout ledger entries for a secret, newest
 // first.
 func (s *Service) Checkouts(ctx context.Context, secretID string) ([]Checkout, error) {
+	orgID, err := s.orgID(ctx)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT id, secret_version, COALESCE(principal_id::text,''), mode, COALESCE(reason,''), leased_at, expires_at, status
-		FROM vault_checkouts WHERE secret_id = $1 ORDER BY leased_at DESC LIMIT 200`, secretID)
+		FROM vault_checkouts WHERE secret_id = $1 AND org_id = $2
+		ORDER BY leased_at DESC LIMIT 200`, secretID, orgID)
 	if err != nil {
 		return nil, err
 	}

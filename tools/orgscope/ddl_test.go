@@ -388,7 +388,15 @@ func TestRegistersOnlyShrink(t *testing.T) {
 		// org_id-carrying table without FORCE ROW LEVEL SECURITY fails the
 		// build outright, which is what this whole register existed to reach.
 		{"needsBelt", len(needsBelt), 0},
-		{"predicateAuditPending", len(predicateAuditPending), 18},
+		// 18 -> 16 with v171's follow-up: vault_access_grants and
+		// vault_checkouts, whose every query lives inside internal/vault and
+		// could therefore be audited as one unit. hasGrant is the predicate
+		// behind Reveal, and RevokeGrantForPrincipal is a DELETE whose miss is
+		// silent -- both now name the tenant rather than relying on the belt
+		// alone. The three vault tables that stay are read from five packages,
+		// and Use() runs under an explicit bypass; their register entries say
+		// what retiring them needs.
+		{"predicateAuditPending", len(predicateAuditPending), 16},
 		{"installWideTables", len(installWideTables), 21},
 		{"beltExempt", len(beltExempt), 5},
 	} {

@@ -3686,6 +3686,40 @@ class this whole program exists for.
    What remains on any register is the five deferred `needsScoping` tables, each
    waiting on a product decision (may one external account link to a user in two
    tenants; is the agent fleet per-tenant) rather than a migration.
+
+   **Batch 34 (`predicateAuditPending` 18 → 16): the argument that stops
+   applying where it matters most.**
+
+   With `needsBelt` empty the remaining register is `predicateAuditPending` —
+   tables that *are* belted but carry queries addressing rows by id with no
+   tenant term. They are not live holes: the database scopes them anyway. The
+   register's own note says what the predicate is still for, and the PAM vault
+   is where that note bites.
+
+   `Use()` **refuses to run without a bypass context** — it is the system
+   credential-injection path, and `orgctx.WithBypassRLS` switches the belt off.
+   So "the belt will catch it" is an argument that stops applying exactly where
+   these tables are most sensitive. Five queries in `internal/vault/store.go`
+   now name the tenant themselves:
+
+   - `hasGrant` — **the predicate behind `Reveal`**. If it answers yes for a
+     grant in another organization, a plaintext credential is handed over.
+   - `RevokeGrantForPrincipal` — a `DELETE` whose miss is silent, so the caller
+     is told the grant is gone either way.
+   - `RemoveGrant`, `ListGrants`, `Checkouts` — the last being the ledger of who
+     revealed which credential, when, and why.
+
+   The test runs them **under a bypass**, which is the condition the belt is
+   switched off in. With the five predicates neutralised, five assertions go red
+   and name what each one costs.
+
+   `vault_secrets`, `vault_secret_versions` and `credential_rotation_policies`
+   stay on the register, and their entries now say what retiring them needs
+   rather than just naming the feature: they are read from five packages, and
+   `Use()`'s org would have to be threaded through its nine callers — six of
+   them rotation workers that have no request org of their own. That is a
+   signature change across packages, and it is recorded as such rather than done
+   halfway.
 4. ✅ **OPA `deny` enforced** — *shipped.* — `internal/common/middleware/opa.go`: abort
    unless `Allow && len(Deny)==0`; `authz.rego:15-19`'s "any authenticated
    user may GET anything" removed; `policies/access_control.rego`
