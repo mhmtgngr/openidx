@@ -1,4 +1,5 @@
 import { useLocation } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { ChevronRight } from 'lucide-react'
 import { navigation } from '../config/navigation'
 
@@ -6,17 +7,17 @@ import { navigation } from '../config/navigation'
 const ROOT_PATHS = new Set(['/', '/dashboard'])
 
 interface Match {
-  domainLabel: string
-  itemName: string
+  domainLabelKey?: string
+  itemNameKey: string
 }
 
-/** Find the nav item whose href matches pathname, carrying its domain label. */
+/** Find the nav item whose href matches pathname, carrying its domain label key. */
 function findMatch(pathname: string): Match | null {
   for (const domain of navigation) {
     for (const section of domain.sections) {
       for (const item of section.items) {
         if (item.href === pathname) {
-          return { domainLabel: domain.label, itemName: item.name }
+          return { domainLabelKey: domain.labelKey, itemNameKey: item.nameKey }
         }
       }
     }
@@ -30,6 +31,7 @@ function findMatch(pathname: string): Match | null {
  * path is not in the nav (e.g. detail pages), so pages don't need to wire it up.
  */
 export function Breadcrumbs() {
+  const { t } = useTranslation()
   const { pathname } = useLocation()
   if (ROOT_PATHS.has(pathname)) return null
 
@@ -37,14 +39,14 @@ export function Breadcrumbs() {
   if (!match) return null
 
   return (
-    <nav aria-label="Breadcrumb" className="flex items-center text-sm text-muted-foreground">
-      {match.domainLabel && (
+    <nav aria-label={t('breadcrumb.ariaLabel')} className="flex items-center text-sm text-muted-foreground">
+      {match.domainLabelKey && (
         <>
-          <span>{match.domainLabel}</span>
+          <span>{t(match.domainLabelKey)}</span>
           <ChevronRight className="mx-1 h-4 w-4" aria-hidden="true" />
         </>
       )}
-      <span className="font-medium text-foreground">{match.itemName}</span>
+      <span className="font-medium text-foreground">{t(match.itemNameKey)}</span>
     </nav>
   )
 }

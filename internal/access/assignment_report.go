@@ -425,7 +425,7 @@ func (s *Service) handleAssignmentReport(c *gin.Context) {
 	//
 	// Org scope comes from `applications`, which is the only side that carries
 	// an org: proxy_routes is install-wide and has no org_id column at all
-	// (migrations/016_proxy_routes.up.sql), so joining through a.org_id is what
+	// (internal/migrations/sql.go creates it), so joining through a.org_id is what
 	// keeps another org's routes out of this count — the same anchor the
 	// serviceApp query above uses.
 	routesOutsideReachModel := 0

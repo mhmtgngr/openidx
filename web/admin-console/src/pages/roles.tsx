@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import { Plus, Search, MoreHorizontal, Edit, Trash2, Shield, ShieldCheck, Key, ChevronLeft, ChevronRight } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -52,6 +53,7 @@ interface Permission {
 }
 
 export function RolesPage() {
+  const { t } = useTranslation()
   const queryClient = useQueryClient()
   const { toast } = useToast()
   const [search, setSearch] = useState('')
@@ -103,8 +105,8 @@ export function RolesPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['role-permissions'] })
       toast({
-        title: 'Success',
-        description: 'Permissions updated successfully!',
+        title: t('common.success'),
+        description: t('pages.roles.toasts.permsUpdated'),
         variant: 'success',
       })
       setPermissionsModal(false)
@@ -112,8 +114,8 @@ export function RolesPage() {
     },
     onError: (error: Error) => {
       toast({
-        title: 'Error',
-        description: `Failed to update permissions: ${error.message}`,
+        title: t('common.error'),
+        description: t('pages.roles.toasts.permsUpdateFailed', { message: error.message }),
         variant: 'destructive',
       })
     },
@@ -138,8 +140,8 @@ export function RolesPage() {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['roles'] })
       toast({
-        title: 'Success',
-        description: `Role "${data.name}" created successfully!`,
+        title: t('common.success'),
+        description: t('pages.roles.toasts.created', { name: data.name }),
         variant: 'success',
       })
       setAddRoleModal(false)
@@ -147,8 +149,8 @@ export function RolesPage() {
     },
     onError: (error: Error) => {
       toast({
-        title: 'Error',
-        description: `Failed to create role: ${error.message}`,
+        title: t('common.error'),
+        description: t('pages.roles.toasts.createFailed', { message: error.message }),
         variant: 'destructive',
       })
     },
@@ -161,8 +163,8 @@ export function RolesPage() {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['roles'] })
       toast({
-        title: 'Success',
-        description: `Role "${data.name}" updated successfully!`,
+        title: t('common.success'),
+        description: t('pages.roles.toasts.updated', { name: data.name }),
         variant: 'success',
       })
       setEditRoleModal(false)
@@ -170,8 +172,8 @@ export function RolesPage() {
     },
     onError: (error: Error) => {
       toast({
-        title: 'Error',
-        description: `Failed to update role: ${error.message}`,
+        title: t('common.error'),
+        description: t('pages.roles.toasts.updateFailed', { message: error.message }),
         variant: 'destructive',
       })
     },
@@ -185,15 +187,15 @@ export function RolesPage() {
       queryClient.invalidateQueries({ queryKey: ['roles'] })
       queryClient.invalidateQueries({ queryKey: ['users'] })
       toast({
-        title: 'Success',
-        description: 'Role deleted successfully!',
+        title: t('common.success'),
+        description: t('pages.roles.toasts.deleted'),
         variant: 'success',
       })
     },
     onError: (error: Error) => {
       toast({
-        title: 'Error',
-        description: `Failed to delete role: ${error.message}`,
+        title: t('common.error'),
+        description: t('pages.roles.toasts.deleteFailed', { message: error.message }),
         variant: 'destructive',
       })
     },
@@ -252,11 +254,11 @@ export function RolesPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Roles</h1>
-          <p className="text-muted-foreground">Manage roles and permissions</p>
+          <h1 className="text-3xl font-bold tracking-tight">{t('nav.items.roles')}</h1>
+          <p className="text-muted-foreground">{t('pages.roles.subtitle')}</p>
         </div>
         <Button onClick={handleAddRole}>
-          <Plus className="mr-2 h-4 w-4" /> Add Role
+          <Plus className="mr-2 h-4 w-4" /> {t('pages.roles.addRole')}
         </Button>
       </div>
 
@@ -266,7 +268,7 @@ export function RolesPage() {
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
-                placeholder="Search roles..."
+                placeholder={t('pages.roles.searchPlaceholder')}
                 value={search}
                 onChange={(e) => { setSearch(e.target.value); setPage(0) }}
                 className="pl-9"
@@ -278,23 +280,23 @@ export function RolesPage() {
           {isLoading ? (
             <TableSkeleton rows={8} cols={5} />
           ) : isError ? (
-            <QueryError error={error} resource="roles" />
+            <QueryError error={error} resource={t('pages.roles.resourceName')} />
           ) : filteredRoles.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
               <ShieldCheck className="h-12 w-12 text-muted-foreground/40 mb-3" />
-              <p className="font-medium">No roles found</p>
-              <p className="text-sm">{search ? 'No roles found matching your search' : 'Create a role to define access permissions'}</p>
+              <p className="font-medium">{t('pages.roles.empty')}</p>
+              <p className="text-sm">{search ? t('pages.roles.emptySearchHint') : t('pages.roles.emptyHint')}</p>
             </div>
           ) : (
           <div className="rounded-md border">
             <Table>
               <TableHeader>
                 <TableRow className="border-b bg-muted">
-                  <TableHead className="p-3 text-left text-sm font-medium">Role</TableHead>
-                  <TableHead className="p-3 text-left text-sm font-medium">Description</TableHead>
-                  <TableHead className="p-3 text-left text-sm font-medium">Type</TableHead>
-                  <TableHead className="p-3 text-left text-sm font-medium">Created</TableHead>
-                  <TableHead className="p-3 text-right text-sm font-medium">Actions</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">{t('pages.roles.table.role')}</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">{t('pages.roles.table.description')}</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">{t('pages.roles.table.type')}</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">{t('pages.roles.table.created')}</TableHead>
+                  <TableHead className="p-3 text-right text-sm font-medium">{t('pages.roles.table.actions')}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -315,7 +317,7 @@ export function RolesPage() {
                       </TableCell>
                       <TableCell className="p-3">
                         <Badge variant={role.is_composite ? 'default' : 'secondary'}>
-                          {role.is_composite ? 'Composite' : 'Simple'}
+                          {role.is_composite ? t('pages.roles.badges.composite') : t('pages.roles.badges.simple')}
                         </Badge>
                       </TableCell>
                       <TableCell className="p-3 text-muted-foreground">
@@ -331,7 +333,7 @@ export function RolesPage() {
                           <DropdownMenuContent align="end">
                             <DropdownMenuItem onClick={() => handleEditRole(role)}>
                               <Edit className="mr-2 h-4 w-4" />
-                              Edit Role
+                              {t('pages.roles.menu.edit')}
                             </DropdownMenuItem>
                             <DropdownMenuItem onClick={() => {
                               setPermissionsRole(role)
@@ -339,7 +341,7 @@ export function RolesPage() {
                               setPermissionsModal(true)
                             }}>
                               <Key className="mr-2 h-4 w-4" />
-                              Manage Permissions
+                              {t('pages.roles.menu.permissions')}
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
                             <DropdownMenuItem
@@ -348,7 +350,7 @@ export function RolesPage() {
                               disabled={deleteRoleMutation.isPending}
                             >
                               <Trash2 className="mr-2 h-4 w-4" />
-                              {deleteRoleMutation.isPending ? 'Deleting...' : 'Delete Role'}
+                              {deleteRoleMutation.isPending ? t('pages.roles.menu.deleting') : t('pages.roles.menu.delete')}
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
@@ -365,7 +367,7 @@ export function RolesPage() {
           {totalCount > PAGE_SIZE && (
             <div className="flex items-center justify-between pt-4 px-1">
               <p className="text-sm text-muted-foreground">
-                Showing {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, totalCount)} of {totalCount} roles
+                {t('pages.roles.showing', { from: page * PAGE_SIZE + 1, to: Math.min((page + 1) * PAGE_SIZE, totalCount), total: totalCount })}
               </p>
               <div className="flex items-center gap-2">
                 <Button
@@ -375,10 +377,10 @@ export function RolesPage() {
                   disabled={page === 0}
                 >
                   <ChevronLeft className="h-4 w-4 mr-1" />
-                  Previous
+                  {t('common.pagination.previous')}
                 </Button>
                 <span className="text-sm text-muted-foreground">
-                  Page {page + 1} of {Math.ceil(totalCount / PAGE_SIZE)}
+                  {t('common.pagination.pageOf', { page: page + 1, pages: Math.ceil(totalCount / PAGE_SIZE) })}
                 </span>
                 <Button
                   variant="outline"
@@ -386,7 +388,7 @@ export function RolesPage() {
                   onClick={() => setPage(p => p + 1)}
                   disabled={(page + 1) * PAGE_SIZE >= totalCount}
                 >
-                  Next
+                  {t('common.pagination.next')}
                   <ChevronRight className="h-4 w-4 ml-1" />
                 </Button>
               </div>
@@ -399,28 +401,28 @@ export function RolesPage() {
       <Dialog open={addRoleModal} onOpenChange={setAddRoleModal}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Add New Role</DialogTitle>
+            <DialogTitle>{t('pages.roles.addDialog.title')}</DialogTitle>
           </DialogHeader>
           <form onSubmit={handleFormSubmit} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="name">Role Name *</Label>
+              <Label htmlFor="name">{t('pages.roles.addDialog.nameLabel')}</Label>
               <Input
                 id="name"
                 name="name"
                 value={formData.name}
                 onChange={handleInputChange}
                 required
-                placeholder="e.g., manager, viewer"
+                placeholder={t('pages.roles.addDialog.namePlaceholder')}
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="description">Description</Label>
+              <Label htmlFor="description">{t('pages.roles.addDialog.descLabel')}</Label>
               <Input
                 id="description"
                 name="description"
                 value={formData.description}
                 onChange={handleInputChange}
-                placeholder="Role description..."
+                placeholder={t('pages.roles.addDialog.descPlaceholder')}
               />
             </div>
             <div className="flex items-center space-x-2">
@@ -432,7 +434,7 @@ export function RolesPage() {
                 onChange={handleInputChange}
                 className="rounded"
               />
-              <Label htmlFor="is_composite">Composite Role (contains other roles)</Label>
+              <Label htmlFor="is_composite">{t('pages.roles.addDialog.composite')}</Label>
             </div>
             <div className="flex justify-end gap-2 pt-4">
               <Button
@@ -441,10 +443,10 @@ export function RolesPage() {
                 onClick={() => setAddRoleModal(false)}
                 disabled={createRoleMutation.isPending}
               >
-                Cancel
+                {t('common.cancel')}
               </Button>
               <Button type="submit" disabled={createRoleMutation.isPending}>
-                {createRoleMutation.isPending ? 'Creating...' : 'Create Role'}
+                {createRoleMutation.isPending ? t('pages.roles.addDialog.creating') : t('pages.roles.addDialog.create')}
               </Button>
             </div>
           </form>
@@ -455,11 +457,11 @@ export function RolesPage() {
       <Dialog open={editRoleModal} onOpenChange={setEditRoleModal}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Edit Role</DialogTitle>
+            <DialogTitle>{t('pages.roles.editDialog.title')}</DialogTitle>
           </DialogHeader>
           <form onSubmit={handleFormSubmit} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="edit-name">Role Name *</Label>
+              <Label htmlFor="edit-name">{t('pages.roles.addDialog.nameLabel')}</Label>
               <Input
                 id="edit-name"
                 name="name"
@@ -469,7 +471,7 @@ export function RolesPage() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="edit-description">Description</Label>
+              <Label htmlFor="edit-description">{t('pages.roles.addDialog.descLabel')}</Label>
               <Input
                 id="edit-description"
                 name="description"
@@ -486,7 +488,7 @@ export function RolesPage() {
                 onChange={handleInputChange}
                 className="rounded"
               />
-              <Label htmlFor="edit-is_composite">Composite Role</Label>
+              <Label htmlFor="edit-is_composite">{t('pages.roles.editDialog.composite')}</Label>
             </div>
             <div className="flex justify-end gap-2 pt-4">
               <Button
@@ -495,10 +497,10 @@ export function RolesPage() {
                 onClick={() => setEditRoleModal(false)}
                 disabled={updateRoleMutation.isPending}
               >
-                Cancel
+                {t('common.cancel')}
               </Button>
               <Button type="submit" disabled={updateRoleMutation.isPending}>
-                {updateRoleMutation.isPending ? 'Updating...' : 'Update Role'}
+                {updateRoleMutation.isPending ? t('pages.roles.editDialog.updating') : t('pages.roles.editDialog.update')}
               </Button>
             </div>
           </form>
@@ -509,10 +511,10 @@ export function RolesPage() {
       <Dialog open={permissionsModal} onOpenChange={setPermissionsModal}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Manage Permissions - {permissionsRole?.name}</DialogTitle>
+            <DialogTitle>{t('pages.roles.permsDialog.title', { name: permissionsRole?.name ?? '' })}</DialogTitle>
           </DialogHeader>
           {rolePermsLoading ? (
-            <div className="py-4 text-center">Loading permissions...</div>
+            <div className="py-4 text-center">{t('pages.roles.permsDialog.loading')}</div>
           ) : (
             <form onSubmit={(e) => {
               e.preventDefault()
@@ -554,10 +556,10 @@ export function RolesPage() {
               </div>
               <div className="flex justify-end gap-2 pt-4">
                 <Button type="button" variant="outline" onClick={() => setPermissionsModal(false)}>
-                  Cancel
+                  {t('common.cancel')}
                 </Button>
                 <Button type="submit" disabled={updatePermissionsMutation.isPending}>
-                  {updatePermissionsMutation.isPending ? 'Saving...' : 'Save Permissions'}
+                  {updatePermissionsMutation.isPending ? t('pages.roles.permsDialog.saving') : t('pages.roles.permsDialog.save')}
                 </Button>
               </div>
             </form>
@@ -569,15 +571,15 @@ export function RolesPage() {
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+            <AlertDialogTitle>{t('common.areYouSure')}</AlertDialogTitle>
             <AlertDialogDescription>
-              {deleteTarget ? `Are you sure you want to delete role "${deleteTarget.name}"? This will remove the role from all users.` : ''}
+              {deleteTarget ? t('pages.roles.deleteDialog.description', { name: deleteTarget.name }) : ''}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction onClick={() => { if (deleteTarget) { deleteRoleMutation.mutate(deleteTarget.id); setDeleteTarget(null) } }}>
-              Delete
+              {t('common.delete')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

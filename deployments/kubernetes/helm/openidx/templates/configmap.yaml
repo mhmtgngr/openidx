@@ -5,7 +5,6 @@ metadata:
   labels:
     {{- include "openidx.labels" . | nindent 4 }}
 data:
-  KEYCLOAK_URL: {{ .Values.config.keycloakUrl | default "http://keycloak:8180" | quote }}
   OPA_URL: {{ .Values.config.opaUrl | default "http://opa:8281" | quote }}
   ELASTICSEARCH_URL: {{ .Values.config.elasticsearchUrl | default "http://elasticsearch:9200" | quote }}
   OAUTH_ISSUER: {{ .Values.config.oauthIssuer | default "http://oauth-service:8006" | quote }}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/openidx/openidx/internal/common/orgctx"
 	"testing"
 	"time"
 
@@ -13,9 +14,27 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 )
 
-type staticVault struct{ val []byte }
+// rotTestOrg is the organization a rotation runs under: the engine puts the
+// policy row's org on the context before calling the rotator, and
+// useAdminSecret fails closed without one.
+const rotTestOrg = "00000000-0000-0000-0000-0000000000a7"
 
-func (s staticVault) Use(context.Context, string) ([]byte, error) {
+func rotTestCtx() context.Context {
+	return orgctx.With(context.Background(), orgctx.Org{ID: rotTestOrg})
+}
+
+type staticVault struct {
+	val []byte
+	// gotOrg records the organization the rotator named. A rotation must
+	// decrypt under the tenant whose policy asked for it, and this is where a
+	// regression would show.
+	gotOrg *string
+}
+
+func (s staticVault) Use(_ context.Context, orgID, _ string) ([]byte, error) {
+	if s.gotOrg != nil {
+		*s.gotOrg = orgID
+	}
 	return append([]byte(nil), s.val...), nil
 }
 
@@ -76,7 +95,7 @@ func cfg() map[string]any {
 func TestAWSIAM_MintCreatesAndReturnsJSON(t *testing.T) {
 	f := &fakeIAM{}
 	r := newTestRotator(f, &fakeSTS{})
-	val, err := r.Mint(context.Background(), cfg())
+	val, err := r.Mint(rotTestCtx(), cfg())
 	if err != nil {
 		t.Fatalf("Mint: %v", err)
 	}
@@ -97,7 +116,7 @@ func TestAWSIAM_MintDeletesOldestWhenTwoKeys(t *testing.T) {
 		{AccessKeyId: aws.String("AKIANEWER"), CreateDate: &newer},
 	}}
 	r := newTestRotator(f, &fakeSTS{})
-	if _, err := r.Mint(context.Background(), cfg()); err != nil {
+	if _, err := r.Mint(rotTestCtx(), cfg()); err != nil {
 		t.Fatalf("Mint: %v", err)
 	}
 	if len(f.deleted) != 1 || f.deleted[0] != "AKIAOLD" {
@@ -125,7 +144,7 @@ func TestAWSIAM_CleanupDeletesAllButNewest(t *testing.T) {
 		{AccessKeyId: aws.String("AKIALIVE"), CreateDate: &newest},
 	}}
 	r := newTestRotator(f, &fakeSTS{})
-	if err := r.Cleanup(context.Background(), cfg()); err != nil {
+	if err := r.Cleanup(rotTestCtx(), cfg()); err != nil {
 		t.Fatalf("Cleanup: %v", err)
 	}
 	if len(f.deleted) != 1 || f.deleted[0] != "AKIAOLD" {
@@ -155,5 +174,43 @@ func TestAWSIAM_ValidateConfig(t *testing.T) {
 	}
 	if err := r.ValidateConfig(cfg()); err != nil {
 		t.Errorf("valid config rejected: %v", err)
+	}
+}
+
+// TestRotationNamesThePolicysOrganization pins the tenant on the rotation path.
+//
+// A rotator resolves its bootstrap credential from the vault under an explicit
+// RLS bypass — the database's own tenant rule is off for that read — so the
+// organization has to travel with the call. The engine puts the policy row's
+// org on the context; useAdminSecret carries it into vault.Use; vault.Use
+// refuses an empty one. This asserts the value that arrives is the policy's,
+// not a default and not an empty string.
+func TestRotationNamesThePolicysOrganization(t *testing.T) {
+	var gotOrg string
+	r := &awsIAMRotator{vault: staticVault{val: adminJSON(), gotOrg: &gotOrg}}
+	r.newIAM = func(string, awsCreds) iamAPI { return &fakeIAM{} }
+	r.newSTS = func(string, awsCreds) stsAPI { return &fakeSTS{} }
+	r.verifyRetries = 1
+	r.verifyDelay = 0
+
+	if _, err := r.Mint(rotTestCtx(), cfg()); err != nil {
+		t.Fatalf("Mint: %v", err)
+	}
+	if gotOrg != rotTestOrg {
+		t.Errorf("the vault was asked for the admin secret under org %q, want the "+
+			"rotation policy's %q — a rotation must decrypt a credential belonging "+
+			"to the tenant whose policy asked for it", gotOrg, rotTestOrg)
+	}
+}
+
+// TestRotationRefusesWithoutAnOrganization: the resolution fails closed. Without
+// this a context that never carried a tenant would reach vault.Use, and the read
+// runs under a bypass, so nothing downstream would scope it either.
+func TestRotationRefusesWithoutAnOrganization(t *testing.T) {
+	r := &awsIAMRotator{vault: staticVault{val: adminJSON()}}
+	r.newIAM = func(string, awsCreds) iamAPI { return &fakeIAM{} }
+	r.newSTS = func(string, awsCreds) stsAPI { return &fakeSTS{} }
+	if _, err := r.Mint(context.Background(), cfg()); err == nil {
+		t.Error("a rotation with no organization on its context decrypted a vault secret")
 	}
 }

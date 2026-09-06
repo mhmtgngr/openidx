@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import {
   Search, Smartphone, Tablet, Monitor, Server, CheckCircle, AlertTriangle,
   ShieldCheck, Trash2, QrCode, Copy, MoreHorizontal, Download,
@@ -84,6 +85,7 @@ interface AgentPosture {
 export function AgentFleetPage() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const { t } = useTranslation()
   const [search, setSearch] = useState('')
   const [platformFilter, setPlatformFilter] = useState<string>('all')
   const [confirmRevoke, setConfirmRevoke] = useState<AgentRecord | null>(null)
@@ -107,15 +109,17 @@ export function AgentFleetPage() {
   const generateQrMutation = useMutation({
     mutationFn: () =>
       api.post<QrPayloadResponse>('/api/v1/access/agent/qr', {
+        // Stored against the enrollment token as a wire value, not shown.
         description: qrDescription || 'Admin-generated QR',
         ttl_minutes: qrTTLMinutes,
         // server_url + package_name + receiver_name default server-side.
       }),
     onSuccess: (data) => {
       setQrData(data)
-      toast({ title: 'Enrollment QR generated' })
+      toast({ title: t('pages.agentFleet.toasts.qrGenerated') })
     },
-    onError: () => toast({ title: 'Failed to generate QR', variant: 'destructive' }),
+    onError: () =>
+      toast({ title: t('pages.agentFleet.toasts.qrFailed'), variant: 'destructive' }),
   })
 
   const approveMutation = useMutation({
@@ -123,9 +127,10 @@ export function AgentFleetPage() {
       api.post<{ status: string }>(`/api/v1/access/agents/${agentId}/approve`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['agent-fleet'] })
-      toast({ title: 'Agent approved' })
+      toast({ title: t('pages.agentFleet.toasts.approved') })
     },
-    onError: () => toast({ title: 'Failed to approve', variant: 'destructive' }),
+    onError: () =>
+      toast({ title: t('pages.agentFleet.toasts.approveFailed'), variant: 'destructive' }),
   })
 
   const revokeMutation = useMutation({
@@ -134,9 +139,10 @@ export function AgentFleetPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['agent-fleet'] })
       setConfirmRevoke(null)
-      toast({ title: 'Agent revoked' })
+      toast({ title: t('pages.agentFleet.toasts.revoked') })
     },
-    onError: () => toast({ title: 'Failed to revoke', variant: 'destructive' }),
+    onError: () =>
+      toast({ title: t('pages.agentFleet.toasts.revokeFailed'), variant: 'destructive' }),
   })
 
   const filtered = agents.filter((a) => {
@@ -165,41 +171,41 @@ export function AgentFleetPage() {
 
   function copyToClipboard(text: string) {
     navigator.clipboard.writeText(text)
-    toast({ title: 'Copied to clipboard' })
+    toast({ title: t('pages.agentFleet.toasts.copied') })
   }
 
   return (
     <div className="space-y-6 p-8">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold">Agent Fleet</h1>
-          <p className="text-muted-foreground">
-            Endpoint agents enrolled in OpenIDX — desktop Go agent and Android unified agent.
-          </p>
+          <h1 className="text-3xl font-bold">{t('pages.agentFleet.title')}</h1>
+          <p className="text-muted-foreground">{t('pages.agentFleet.subtitle')}</p>
         </div>
         <Button onClick={openQrDialog}>
           <QrCode className="mr-2 h-4 w-4" />
-          Generate Android enrollment QR
+          {t('pages.agentFleet.generateQr')}
         </Button>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <SummaryCard label="Total agents" value={counts.total} icon={<Smartphone className="h-5 w-5" />} />
-        <SummaryCard label="Active" value={counts.active} icon={<CheckCircle className="h-5 w-5 text-green-600" />} />
-        <SummaryCard label="Pending approval" value={counts.pending} icon={<AlertTriangle className="h-5 w-5 text-amber-600" />} />
-        <SummaryCard label="Non-compliant" value={counts.nonCompliant} icon={<ShieldCheck className="h-5 w-5 text-red-600" />} />
+        <SummaryCard label={t('pages.agentFleet.summary.total')} value={counts.total} icon={<Smartphone className="h-5 w-5" />} />
+        <SummaryCard label={t('pages.agentFleet.summary.active')} value={counts.active} icon={<CheckCircle className="h-5 w-5 text-green-600" />} />
+        <SummaryCard label={t('pages.agentFleet.summary.pending')} value={counts.pending} icon={<AlertTriangle className="h-5 w-5 text-amber-600" />} />
+        <SummaryCard label={t('pages.agentFleet.summary.nonCompliant')} value={counts.nonCompliant} icon={<ShieldCheck className="h-5 w-5 text-red-600" />} />
       </div>
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3">
-          <CardTitle>Enrolled agents</CardTitle>
+          <CardTitle>{t('pages.agentFleet.listHeading')}</CardTitle>
           <div className="flex items-center gap-2">
             <select
+              aria-label={t('pages.agentFleet.platformFilterLabel')}
               value={platformFilter}
               onChange={(e) => setPlatformFilter(e.target.value)}
               className="h-9 rounded-md border border-input bg-background px-3 text-sm"
             >
-              <option value="all">All platforms</option>
+              <option value="all">{t('pages.agentFleet.allPlatforms')}</option>
+              {/* Platform names are product names, so the options stay raw. */}
               <option value="linux">Linux</option>
               <option value="macos">macOS</option>
               <option value="windows">Windows</option>
@@ -209,7 +215,7 @@ export function AgentFleetPage() {
             <div className="relative">
               <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="Search hostname / agent / device id…"
+                placeholder={t('pages.agentFleet.searchPlaceholder')}
                 className="pl-8 w-64"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
@@ -221,16 +227,16 @@ export function AgentFleetPage() {
           {isLoading ? (
             <div className="py-12 flex justify-center"><LoadingSpinner /></div>
           ) : isError ? (
-            <QueryError error={error} resource="agents" />
+            <QueryError error={error} resource={t('pages.agentFleet.resource')} />
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Agent</TableHead>
-                  <TableHead>Platform</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Compliance</TableHead>
-                  <TableHead>Last seen</TableHead>
+                  <TableHead>{t('pages.agentFleet.colAgent')}</TableHead>
+                  <TableHead>{t('pages.agentFleet.colPlatform')}</TableHead>
+                  <TableHead>{t('pages.agentFleet.colStatus')}</TableHead>
+                  <TableHead>{t('pages.agentFleet.colCompliance')}</TableHead>
+                  <TableHead>{t('pages.agentFleet.colLastSeen')}</TableHead>
                   <TableHead className="w-12" />
                 </TableRow>
               </TableHeader>
@@ -250,7 +256,9 @@ export function AgentFleetPage() {
                     </TableCell>
                     <TableCell>
                       <Badge variant="outline">
-                        {agent.platform ? `${agent.platform}${agent.form_factor ? ` · ${agent.form_factor}` : ''}` : 'unknown'}
+                        {agent.platform
+                          ? `${agent.platform}${agent.form_factor ? ` · ${agent.form_factor}` : ''}`
+                          : t('pages.agentFleet.unknownPlatform')}
                       </Badge>
                     </TableCell>
                     <TableCell>
@@ -270,21 +278,21 @@ export function AgentFleetPage() {
                         <DropdownMenuContent align="end">
                           {agent.status === 'pending' && (
                             <DropdownMenuItem onSelect={() => approveMutation.mutate(agent.agent_id)}>
-                              Approve agent
+                              {t('pages.agentFleet.approveAgent')}
                             </DropdownMenuItem>
                           )}
                           <DropdownMenuItem onSelect={() => setPostureAgent(agent)}>
-                            View posture &amp; tier
+                            {t('pages.agentFleet.viewPosture')}
                           </DropdownMenuItem>
                           <DropdownMenuItem onSelect={() => copyToClipboard(agent.agent_id)}>
-                            <Copy className="mr-2 h-4 w-4" /> Copy agent ID
+                            <Copy className="mr-2 h-4 w-4" /> {t('pages.agentFleet.copyAgentId')}
                           </DropdownMenuItem>
                           <DropdownMenuSeparator />
                           <DropdownMenuItem
                             className="text-destructive"
                             onSelect={() => setConfirmRevoke(agent)}
                           >
-                            <Trash2 className="mr-2 h-4 w-4" /> Revoke
+                            <Trash2 className="mr-2 h-4 w-4" /> {t('pages.agentFleet.revoke')}
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
@@ -294,7 +302,7 @@ export function AgentFleetPage() {
                 {filtered.length === 0 && (
                   <TableRow>
                     <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
-                      No agents match the current filters.
+                      {t('pages.agentFleet.empty')}
                     </TableCell>
                   </TableRow>
                 )}
@@ -308,25 +316,22 @@ export function AgentFleetPage() {
       <Dialog open={qrOpen} onOpenChange={setQrOpen}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>Generate Android enrollment QR</DialogTitle>
+            <DialogTitle>{t('pages.agentFleet.qr.title')}</DialogTitle>
           </DialogHeader>
           {!qrData ? (
             <div className="space-y-4">
-              <p className="text-sm text-muted-foreground">
-                Factory-reset an Android device, tap the welcome screen 6 times, scan
-                the QR. The device installs the OpenIDX agent as Device Owner.
-              </p>
+              <p className="text-sm text-muted-foreground">{t('pages.agentFleet.qr.intro')}</p>
               <div>
-                <label className="text-sm font-medium">Description</label>
+                <label className="text-sm font-medium">{t('pages.agentFleet.qr.description')}</label>
                 <Input
-                  placeholder="e.g. front-desk-kiosks"
+                  placeholder={t('pages.agentFleet.qr.descriptionPlaceholder')}
                   value={qrDescription}
                   onChange={(e) => setQrDescription(e.target.value)}
                 />
               </div>
               <div>
-                <label className="text-sm font-medium">Expires in (minutes)</label>
-                <Input
+                <label htmlFor="agent-fleet-expires-in" className="text-sm font-medium">{t('pages.agentFleet.qr.expiresIn')}</label>
+                <Input id="agent-fleet-expires-in"
                   type="number"
                   min={1}
                   max={1440}
@@ -335,12 +340,16 @@ export function AgentFleetPage() {
                 />
               </div>
               <DialogFooter>
-                <Button variant="outline" onClick={() => setQrOpen(false)}>Cancel</Button>
+                <Button variant="outline" onClick={() => setQrOpen(false)}>
+                  {t('common.cancel')}
+                </Button>
                 <Button
                   onClick={() => generateQrMutation.mutate()}
                   disabled={generateQrMutation.isPending}
                 >
-                  {generateQrMutation.isPending ? 'Generating…' : 'Generate'}
+                  {generateQrMutation.isPending
+                    ? t('pages.agentFleet.qr.generating')
+                    : t('pages.agentFleet.qr.generate')}
                 </Button>
               </DialogFooter>
             </div>
@@ -351,7 +360,7 @@ export function AgentFleetPage() {
               </div>
               <div className="grid grid-cols-2 gap-3 text-sm">
                 <div>
-                  <div className="text-muted-foreground">Token</div>
+                  <div className="text-muted-foreground">{t('pages.agentFleet.qr.token')}</div>
                   <div className="flex items-center gap-1 font-mono text-xs">
                     <span className="truncate">{qrData.token}</span>
                     <Button variant="ghost" size="icon" onClick={() => copyToClipboard(qrData.token)}>
@@ -360,25 +369,30 @@ export function AgentFleetPage() {
                   </div>
                 </div>
                 <div>
-                  <div className="text-muted-foreground">Expires</div>
+                  <div className="text-muted-foreground">{t('pages.agentFleet.qr.expires')}</div>
                   <div>{new Date(qrData.expires_at).toLocaleString()}</div>
                 </div>
                 <div className="col-span-2">
-                  <div className="text-muted-foreground">APK</div>
+                  <div className="text-muted-foreground">{t('pages.agentFleet.qr.apk')}</div>
                   <a
                     href={qrData.apk_url}
                     className="inline-flex items-center gap-1 text-primary hover:underline"
                     download
                   >
-                    <Download className="h-4 w-4" /> Download APK ({qrData.apk_checksum ? qrData.apk_checksum.slice(0, 12) + '…' : 'no checksum'})
+                    <Download className="h-4 w-4" />{' '}
+                    {t('pages.agentFleet.qr.downloadApk', {
+                      checksum: qrData.apk_checksum
+                        ? qrData.apk_checksum.slice(0, 12) + '…'
+                        : t('pages.agentFleet.qr.noChecksum'),
+                    })}
                   </a>
                 </div>
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => copyToClipboard(qrData.qr_payload_json)}>
-                  Copy JSON
+                  {t('pages.agentFleet.qr.copyJson')}
                 </Button>
-                <Button onClick={() => setQrOpen(false)}>Done</Button>
+                <Button onClick={() => setQrOpen(false)}>{t('pages.agentFleet.qr.done')}</Button>
               </DialogFooter>
             </div>
           )}
@@ -389,25 +403,31 @@ export function AgentFleetPage() {
       <Dialog open={!!postureAgent} onOpenChange={(open) => !open && setPostureAgent(null)}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>Device posture &amp; Ziti tier</DialogTitle>
+            <DialogTitle>{t('pages.agentFleet.posture.title')}</DialogTitle>
           </DialogHeader>
           {postureLoading ? (
-            <div className="py-8 text-center text-muted-foreground">Loading…</div>
+            <div className="py-8 text-center text-muted-foreground">
+              {t('pages.agentFleet.posture.loading')}
+            </div>
           ) : (
             <div className="space-y-4">
               <div className="flex flex-wrap items-center gap-2 text-sm">
                 <Badge variant={postureData?.compliant ? 'default' : 'destructive'}>
-                  {postureData?.compliant ? 'Compliant' : 'Non-compliant'}
+                  {postureData?.compliant
+                    ? t('pages.agentFleet.posture.compliant')
+                    : t('pages.agentFleet.posture.nonCompliant')}
                 </Badge>
+                {/* `device-trusted` names the Ziti role attribute, so it stays raw. */}
                 <Badge variant={postureData?.device_trusted ? 'default' : 'outline'}>
-                  {postureData?.device_trusted ? 'Tier 2 · device-trusted' : 'Tier 1 · minimum access'}
+                  {postureData?.device_trusted
+                    ? t('pages.agentFleet.posture.tier2')
+                    : t('pages.agentFleet.posture.tier1')}
                 </Badge>
                 <span className="text-muted-foreground font-mono text-xs">{postureAgent?.agent_id}</span>
               </div>
               {!postureData?.device_trusted && (
                 <p className="text-xs text-muted-foreground">
-                  Tier 2 (remote/PAM + admin surfaces) is granted only while the device reports
-                  compliant posture. Tier 1 devices reach self-service + console only.
+                  {t('pages.agentFleet.posture.tierHint')}
                 </p>
               )}
               <div className="rounded-md border divide-y">
@@ -426,19 +446,21 @@ export function AgentFleetPage() {
                       </div>
                       {r.message && <div className="text-xs text-muted-foreground mt-0.5">{r.message}</div>}
                       <div className="text-xs text-muted-foreground mt-0.5">
-                        reported {r.reported_at ? new Date(r.reported_at).toLocaleString() : '—'}
+                        {t('pages.agentFleet.posture.reported', {
+                          when: r.reported_at ? new Date(r.reported_at).toLocaleString() : '—',
+                        })}
                       </div>
                     </div>
                   </div>
                 ))}
                 {(postureData?.results ?? []).length === 0 && (
                   <div className="p-6 text-center text-muted-foreground text-sm">
-                    No posture reports yet from this device.
+                    {t('pages.agentFleet.posture.empty')}
                   </div>
                 )}
               </div>
               <DialogFooter>
-                <Button onClick={() => setPostureAgent(null)}>Close</Button>
+                <Button onClick={() => setPostureAgent(null)}>{t('common.close')}</Button>
               </DialogFooter>
             </div>
           )}
@@ -448,20 +470,20 @@ export function AgentFleetPage() {
       <AlertDialog open={!!confirmRevoke} onOpenChange={(open) => !open && setConfirmRevoke(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Revoke agent?</AlertDialogTitle>
+            <AlertDialogTitle>{t('pages.agentFleet.revokeDialog.title')}</AlertDialogTitle>
             <AlertDialogDescription>
-              {confirmRevoke?.agent_id} will lose Ziti network access immediately and
-              its identity will be removed. This is reversible only by re-enrolling
-              the device.
+              {t('pages.agentFleet.revokeDialog.desc', {
+                agentId: confirmRevoke?.agent_id ?? '',
+              })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => confirmRevoke && revokeMutation.mutate(confirmRevoke.agent_id)}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              Revoke
+              {t('pages.agentFleet.revokeDialog.confirm')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -493,20 +515,40 @@ function PlatformIcon({ platform, formFactor }: { platform?: string; formFactor?
   return <Monitor className={cls} />
 }
 
+/**
+ * `non_compliant` -> `non compliant`, so an agent lifecycle or compliance
+ * value the catalog has not seen yet still reads as words, not as a wire
+ * enum. Both badges are components rather than helpers so the label
+ * re-resolves when the operator switches language.
+ */
+function prettifyStatus(status: string): string {
+  return status.replace(/_/g, ' ')
+}
+
 function StatusBadge({ status }: { status: string }) {
+  const { t } = useTranslation()
   const variant = status === 'active' ? 'success'
     : status === 'pending' ? 'warning'
     : status === 'revoked' ? 'destructive' : 'secondary'
-  return <Badge variant={variant as any}>{status}</Badge>
+  return (
+    <Badge variant={variant as any}>
+      {t(`pages.agentFleet.statuses.${status}`, { defaultValue: prettifyStatus(status) })}
+    </Badge>
+  )
 }
 
 function ComplianceBadge({ status, score, lastReportAt }: { status: string; score: number; lastReportAt?: string | null }) {
+  const { t } = useTranslation()
   const variant = status === 'compliant' ? 'success'
     : status === 'grace_period' ? 'warning'
     : status === 'non_compliant' ? 'destructive' : 'secondary'
   return (
     <div className="flex items-center gap-2" title={complianceTooltip(status, lastReportAt)}>
-      <Badge variant={variant as any}>{status}</Badge>
+      <Badge variant={variant as any}>
+        {t(`pages.agentFleet.complianceStatuses.${status}`, {
+          defaultValue: prettifyStatus(status),
+        })}
+      </Badge>
       <span className="text-xs text-muted-foreground">{formatCompliancePercent(status, score)}</span>
     </div>
   )

@@ -37,7 +37,7 @@ spec:
       {{- end }}
       containers:
         - name: gateway-service
-          image: "{{ .Values.global.imageRegistry }}/{{ .Values.gatewayService.image.repository }}:{{ .Values.gatewayService.image.tag }}"
+          image: "{{ include "openidx.imageRegistry" . }}/{{ .Values.gatewayService.image.repository }}:{{ .Values.gatewayService.image.tag }}"
           imagePullPolicy: {{ .Values.gatewayService.image.pullPolicy }}
           {{- include "openidx.preStopHook" . | nindent 10 }}
           ports:

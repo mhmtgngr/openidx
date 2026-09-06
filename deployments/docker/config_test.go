@@ -440,7 +440,9 @@ func TestProductionReadme(t *testing.T) {
 	// Validate required sections
 	requiredSections := []string{
 		"## Prerequisites",
-		"## Quick Start",
+		// Scoped heading: the repo README owns the one general Quick Start;
+		// this document's section is the production-specific path.
+		"## Production Quick Start",
 		"## Configuration",
 		"## Deployment Steps",
 		"## SSL Certificate Management",

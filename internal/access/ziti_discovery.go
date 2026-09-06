@@ -282,14 +282,17 @@ func (s *Service) importZitiService(ctx context.Context, req *ImportServiceReque
 
 	// Create feature record
 	if s.featureManager != nil {
-		s.featureManager.getOrCreateFeature(ctx, routeID, FeatureZiti)
+		if _, ferr := s.featureManager.getOrCreateFeature(ctx, routeID, org.ID, FeatureZiti); ferr != nil {
+			s.logger.Warn("Failed to create feature record for imported service",
+				zap.String("route_id", routeID), zap.Error(ferr))
+		}
 		s.db.Pool.Exec(ctx, `
 			UPDATE service_features
 			SET enabled = true, status = 'enabled',
 			    resource_ids = $1,
 			    enabled_at = NOW()
-			WHERE route_id = $2 AND feature_name = 'ziti'
-		`, fmt.Sprintf(`{"ziti_service_id": "%s", "ziti_service_name": "%s"}`, req.ZitiID, service.Name), routeID)
+			WHERE route_id = $2 AND feature_name = 'ziti' AND org_id = $3
+		`, fmt.Sprintf(`{"ziti_service_id": "%s", "ziti_service_name": "%s"}`, req.ZitiID, service.Name), routeID, org.ID)
 	}
 
 	s.logger.Info("Imported Ziti service as proxy route",

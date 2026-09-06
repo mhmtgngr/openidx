@@ -181,7 +181,7 @@ func TestApprovedDeviceCodeIsRedeemableExactlyOnce(t *testing.T) {
 	for i := 0; i < pollers; i++ {
 		go func() {
 			defer wg.Done()
-			user, err := s.claimApprovedDeviceCode(ctx, id)
+			user, err := s.claimApprovedDeviceCode(ctx, id, deviceTestOrg)
 			if err == nil && user == deviceTestUser {
 				mu.Lock()
 				wins++
@@ -194,7 +194,7 @@ func TestApprovedDeviceCodeIsRedeemableExactlyOnce(t *testing.T) {
 	if wins != 1 {
 		t.Fatalf("%d of %d concurrent polls redeemed the same device code; want exactly 1", wins, pollers)
 	}
-	if _, err := s.claimApprovedDeviceCode(ctx, id); err == nil {
+	if _, err := s.claimApprovedDeviceCode(ctx, id, deviceTestOrg); err == nil {
 		t.Fatalf("a consumed device code was redeemable again")
 	}
 }
@@ -203,12 +203,12 @@ func TestPendingAndDeniedCodesCannotBeRedeemed(t *testing.T) {
 	s, ctx := deviceTestService(t)
 
 	pending := seedDeviceCode(t, s, ctx, "ACDEFGHK", "pending", 10*time.Minute)
-	if _, err := s.claimApprovedDeviceCode(ctx, pending); err == nil {
+	if _, err := s.claimApprovedDeviceCode(ctx, pending, deviceTestOrg); err == nil {
 		t.Fatalf("a pending device code was redeemed")
 	}
 
 	denied := seedDeviceCode(t, s, ctx, "ACDEFGHM", "denied", 10*time.Minute)
-	if _, err := s.claimApprovedDeviceCode(ctx, denied); err == nil {
+	if _, err := s.claimApprovedDeviceCode(ctx, denied, deviceTestOrg); err == nil {
 		t.Fatalf("a denied device code was redeemed")
 	}
 }
@@ -222,7 +222,7 @@ func TestExpiredApprovedCodeCannotBeRedeemed(t *testing.T) {
 		`UPDATE oauth_device_codes SET user_id = $2 WHERE id = $1`, id, deviceTestUser); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.claimApprovedDeviceCode(ctx, id); err == nil {
+	if _, err := s.claimApprovedDeviceCode(ctx, id, deviceTestOrg); err == nil {
 		t.Fatalf("an expired but approved device code was redeemed")
 	}
 }

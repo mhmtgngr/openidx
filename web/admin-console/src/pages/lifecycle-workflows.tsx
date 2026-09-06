@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Plus,
@@ -91,23 +92,19 @@ const eventColors: Record<string, string> = {
   return: 'bg-purple-100 text-purple-800',
 }
 
-const eventLabels: Record<string, string> = {
-  onboard: 'Onboard',
-  transfer: 'Transfer',
-  offboard: 'Offboard',
-  leave: 'Leave',
-  return: 'Return',
-}
-
-const actionTypeLabels: Record<string, string> = {
-  assign_role: 'Assign Role',
-  remove_role: 'Remove Role',
-  assign_group: 'Add to Group',
-  remove_group: 'Remove from Group',
-  enable_user: 'Enable User',
-  disable_user: 'Disable User',
-  revoke_sessions: 'Revoke Sessions',
-}
+// The wire values the lifecycle service accepts. Labels resolve through the
+// catalog at render, so the filter, the badge and the form cannot drift.
+const EVENT_TYPES = ['onboard', 'transfer', 'offboard', 'leave', 'return'] as const
+const TRIGGER_TYPES = ['manual', 'scheduled', 'webhook'] as const
+const ACTION_TYPES = [
+  'assign_role',
+  'remove_role',
+  'assign_group',
+  'remove_group',
+  'enable_user',
+  'disable_user',
+  'revoke_sessions',
+] as const
 
 const executionStatusColors: Record<string, string> = {
   pending: 'bg-yellow-100 text-yellow-800',
@@ -125,12 +122,13 @@ interface ActionInput {
 
 const formatDate = (dateStr: string | undefined) => {
   if (!dateStr) return '-'
-  return new Date(dateStr).toLocaleDateString('en-US', {
+  return new Date(dateStr).toLocaleDateString(undefined, {
     year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
   })
 }
 
 export function LifecycleWorkflowsPage() {
+  const { t } = useTranslation()
   const queryClient = useQueryClient()
   const { toast } = useToast()
   const [search, setSearch] = useState('')
@@ -183,11 +181,11 @@ export function LifecycleWorkflowsPage() {
     mutationFn: (data: typeof newWorkflow) => api.post('/api/v1/identity/lifecycle/workflows', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['lifecycle-workflows'] })
-      toast({ title: 'Success', description: 'Workflow created', variant: 'success' })
+      toast({ title: t('common.success'), description: t('pages.lifecycleWorkflows.created'), variant: 'success' })
       setCreateModal(false)
       setNewWorkflow({ name: '', description: '', event_type: 'onboard', trigger_type: 'manual', actions: [], require_approval: false, enabled: true })
     },
-    onError: (error: Error) => toast({ title: 'Error', description: error.message, variant: 'destructive' }),
+    onError: (error: Error) => toast({ title: t('common.error'), description: error.message, variant: 'destructive' }),
   })
 
   const executeMutation = useMutation({
@@ -195,20 +193,20 @@ export function LifecycleWorkflowsPage() {
       api.post(`/api/v1/identity/lifecycle/workflows/${id}/execute`, { user_id }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['lifecycle-executions'] })
-      toast({ title: 'Success', description: 'Workflow executed', variant: 'success' })
+      toast({ title: t('common.success'), description: t('pages.lifecycleWorkflows.executed'), variant: 'success' })
       setExecuteModal(false)
       setExecuteUserId('')
     },
-    onError: (error: Error) => toast({ title: 'Error', description: error.message, variant: 'destructive' }),
+    onError: (error: Error) => toast({ title: t('common.error'), description: error.message, variant: 'destructive' }),
   })
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => api.delete(`/api/v1/identity/lifecycle/workflows/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['lifecycle-workflows'] })
-      toast({ title: 'Success', description: 'Workflow deleted', variant: 'success' })
+      toast({ title: t('common.success'), description: t('pages.lifecycleWorkflows.deleted'), variant: 'success' })
     },
-    onError: (error: Error) => toast({ title: 'Error', description: error.message, variant: 'destructive' }),
+    onError: (error: Error) => toast({ title: t('common.error'), description: error.message, variant: 'destructive' }),
   })
 
   const filteredWorkflows = workflows?.filter(w =>
@@ -236,17 +234,17 @@ export function LifecycleWorkflowsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Lifecycle Workflows</h1>
-          <p className="text-muted-foreground">Joiner/Mover/Leaver workflow automation</p>
+          <h1 className="text-3xl font-bold tracking-tight">{t('pages.lifecycleWorkflows.title')}</h1>
+          <p className="text-muted-foreground">{t('pages.lifecycleWorkflows.subtitle')}</p>
         </div>
         <Button onClick={() => setCreateModal(true)}>
-          <Plus className="mr-2 h-4 w-4" /> Create Workflow
+          <Plus className="mr-2 h-4 w-4" /> {t('pages.lifecycleWorkflows.create')}
         </Button>
       </div>
 
       {/* Stats */}
       <div className="grid gap-4 md:grid-cols-5">
-        {(['onboard', 'transfer', 'offboard', 'leave', 'return'] as const).map(evt => (
+        {EVENT_TYPES.map(evt => (
           <Card key={evt}>
             <CardContent className="pt-6">
               <div className="flex items-center gap-3">
@@ -255,7 +253,7 @@ export function LifecycleWorkflowsPage() {
                 </div>
                 <div>
                   <p className="text-xl font-bold">{workflows?.filter(w => w.event_type === evt).length || 0}</p>
-                  <p className="text-xs text-muted-foreground">{eventLabels[evt]}</p>
+                  <p className="text-xs text-muted-foreground">{t(`pages.lifecycleWorkflows.events.${evt}`)}</p>
                 </div>
               </div>
             </CardContent>
@@ -270,23 +268,21 @@ export function LifecycleWorkflowsPage() {
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
-                placeholder="Search workflows..."
+                placeholder={t('pages.lifecycleWorkflows.searchPlaceholder')}
                 value={search}
                 onChange={(e) => { setSearch(e.target.value); setPage(0) }}
                 className="pl-9"
               />
             </div>
             <Select value={eventFilter || 'all'} onValueChange={(val) => { setEventFilter(val === 'all' ? '' : val); setPage(0) }}>
-              <SelectTrigger className="w-[160px]">
-                <SelectValue placeholder="All Events" />
+              <SelectTrigger className="w-[160px]" aria-label={t('pages.lifecycleWorkflows.eventFilterLabel')}>
+                <SelectValue placeholder={t('pages.lifecycleWorkflows.allEvents')} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Events</SelectItem>
-                <SelectItem value="onboard">Onboard</SelectItem>
-                <SelectItem value="transfer">Transfer</SelectItem>
-                <SelectItem value="offboard">Offboard</SelectItem>
-                <SelectItem value="leave">Leave</SelectItem>
-                <SelectItem value="return">Return</SelectItem>
+                <SelectItem value="all">{t('pages.lifecycleWorkflows.allEvents')}</SelectItem>
+                {EVENT_TYPES.map(evt => (
+                  <SelectItem key={evt} value={evt}>{t(`pages.lifecycleWorkflows.events.${evt}`)}</SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
@@ -295,15 +291,15 @@ export function LifecycleWorkflowsPage() {
           {isLoading ? (
             <div className="flex flex-col items-center justify-center py-12">
               <LoadingSpinner size="lg" />
-              <p className="mt-4 text-sm text-muted-foreground">Loading workflows...</p>
+              <p className="mt-4 text-sm text-muted-foreground">{t('pages.lifecycleWorkflows.loading')}</p>
             </div>
           ) : isError ? (
-            <QueryError error={error} resource="lifecycle workflows" />
+            <QueryError error={error} resource={t('pages.lifecycleWorkflows.resource')} />
           ) : !filteredWorkflows || filteredWorkflows.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
               <Workflow className="h-12 w-12 text-muted-foreground/40 mb-3" />
-              <p className="font-medium">No workflows found</p>
-              <p className="text-sm">Create a lifecycle workflow to automate user provisioning</p>
+              <p className="font-medium">{t('pages.lifecycleWorkflows.emptyTitle')}</p>
+              <p className="text-sm">{t('pages.lifecycleWorkflows.emptyDesc')}</p>
             </div>
           ) : (
             <>
@@ -311,12 +307,12 @@ export function LifecycleWorkflowsPage() {
                 <Table>
                   <TableHeader>
                     <TableRow className="border-b bg-muted">
-                      <TableHead className="p-3 text-left text-sm font-medium">Workflow</TableHead>
-                      <TableHead className="p-3 text-left text-sm font-medium">Event</TableHead>
-                      <TableHead className="p-3 text-left text-sm font-medium">Trigger</TableHead>
-                      <TableHead className="p-3 text-left text-sm font-medium">Actions</TableHead>
-                      <TableHead className="p-3 text-left text-sm font-medium">Status</TableHead>
-                      <TableHead className="p-3 text-right text-sm font-medium">Actions</TableHead>
+                      <TableHead className="p-3 text-left text-sm font-medium">{t('pages.lifecycleWorkflows.colWorkflow')}</TableHead>
+                      <TableHead className="p-3 text-left text-sm font-medium">{t('pages.lifecycleWorkflows.colEvent')}</TableHead>
+                      <TableHead className="p-3 text-left text-sm font-medium">{t('pages.lifecycleWorkflows.colTrigger')}</TableHead>
+                      <TableHead className="p-3 text-left text-sm font-medium">{t('pages.lifecycleWorkflows.colActions')}</TableHead>
+                      <TableHead className="p-3 text-left text-sm font-medium">{t('pages.lifecycleWorkflows.colStatus')}</TableHead>
+                      <TableHead className="p-3 text-right text-sm font-medium">{t('pages.lifecycleWorkflows.colRowActions')}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -336,17 +332,23 @@ export function LifecycleWorkflowsPage() {
                         <TableCell className="p-3">
                           <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${eventColors[wf.event_type] || 'bg-muted text-foreground'}`}>
                             {eventIcons[wf.event_type]}
-                            {eventLabels[wf.event_type] || wf.event_type}
+                            {t(`pages.lifecycleWorkflows.events.${wf.event_type}`, { defaultValue: wf.event_type })}
                           </span>
                         </TableCell>
                         <TableCell className="p-3">
-                          <Badge variant="outline">{wf.trigger_type}</Badge>
+                          <Badge variant="outline">
+                            {t(`pages.lifecycleWorkflows.triggers.${wf.trigger_type}`, {
+                              defaultValue: wf.trigger_type,
+                            })}
+                          </Badge>
                         </TableCell>
                         <TableCell className="p-3">
                           <div className="flex gap-1 flex-wrap">
                             {(wf.actions || []).slice(0, 3).map((a, i) => (
                               <Badge key={i} variant="secondary" className="text-xs">
-                                {actionTypeLabels[(a as Record<string, string>).type] || (a as Record<string, string>).type}
+                                {t(`pages.lifecycleWorkflows.actionTypes.${(a as Record<string, string>).type}`, {
+                                  defaultValue: (a as Record<string, string>).type,
+                                })}
                               </Badge>
                             ))}
                             {(wf.actions || []).length > 3 && (
@@ -356,7 +358,9 @@ export function LifecycleWorkflowsPage() {
                         </TableCell>
                         <TableCell className="p-3">
                           <Badge variant={wf.enabled ? 'default' : 'secondary'}>
-                            {wf.enabled ? 'Enabled' : 'Disabled'}
+                            {wf.enabled
+                              ? t('pages.lifecycleWorkflows.enabled')
+                              : t('pages.lifecycleWorkflows.disabled')}
                           </Badge>
                         </TableCell>
                         <TableCell className="p-3 text-right">
@@ -371,19 +375,19 @@ export function LifecycleWorkflowsPage() {
                                 setSelectedWorkflow(wf)
                                 setExecuteModal(true)
                               }}>
-                                <Play className="h-4 w-4 mr-2" /> Execute
+                                <Play className="h-4 w-4 mr-2" /> {t('pages.lifecycleWorkflows.execute')}
                               </DropdownMenuItem>
                               <DropdownMenuItem onClick={() => {
                                 setSelectedWorkflow(wf)
                                 setExecutionsModal(true)
                               }}>
-                                <Eye className="h-4 w-4 mr-2" /> View History
+                                <Eye className="h-4 w-4 mr-2" /> {t('pages.lifecycleWorkflows.viewHistory')}
                               </DropdownMenuItem>
                               <ConfirmAction
-                                title="Delete this workflow?"
-                                description={`This permanently deletes the "${wf.name}" lifecycle workflow and its trigger configuration. Any automation tied to it will stop running. This cannot be undone.`}
+                                title={t('pages.lifecycleWorkflows.deleteTitle')}
+                                description={t('pages.lifecycleWorkflows.deleteDesc', { name: wf.name })}
                                 destructive
-                                confirmLabel="Delete"
+                                confirmLabel={t('pages.lifecycleWorkflows.delete')}
                                 onConfirm={() => deleteMutation.mutateAsync(wf.id)}
                               >
                                 {(open) => (
@@ -391,7 +395,7 @@ export function LifecycleWorkflowsPage() {
                                     onSelect={(e) => { e.preventDefault(); open() }}
                                     className="text-red-600"
                                   >
-                                    <Trash2 className="h-4 w-4 mr-2" /> Delete
+                                    <Trash2 className="h-4 w-4 mr-2" /> {t('pages.lifecycleWorkflows.delete')}
                                   </DropdownMenuItem>
                                 )}
                               </ConfirmAction>
@@ -407,15 +411,24 @@ export function LifecycleWorkflowsPage() {
               {totalCount > PAGE_SIZE && (
                 <div className="flex items-center justify-between pt-4 px-1">
                   <p className="text-sm text-muted-foreground">
-                    Showing {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, totalCount)} of {totalCount}
+                    {t('pages.lifecycleWorkflows.showing', {
+                      from: page * PAGE_SIZE + 1,
+                      to: Math.min((page + 1) * PAGE_SIZE, totalCount),
+                      total: totalCount,
+                    })}
                   </p>
                   <div className="flex items-center gap-2">
                     <Button variant="outline" size="sm" onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0}>
-                      <ChevronLeft className="h-4 w-4 mr-1" /> Previous
+                      <ChevronLeft className="h-4 w-4 mr-1" /> {t('common.pagination.previous')}
                     </Button>
-                    <span className="text-sm text-muted-foreground">Page {page + 1} of {Math.ceil(totalCount / PAGE_SIZE)}</span>
+                    <span className="text-sm text-muted-foreground">
+                      {t('common.pagination.pageOf', {
+                        page: page + 1,
+                        pages: Math.ceil(totalCount / PAGE_SIZE),
+                      })}
+                    </span>
                     <Button variant="outline" size="sm" onClick={() => setPage(p => p + 1)} disabled={(page + 1) * PAGE_SIZE >= totalCount}>
-                      Next <ChevronRight className="h-4 w-4 ml-1" />
+                      {t('common.pagination.next')} <ChevronRight className="h-4 w-4 ml-1" />
                     </Button>
                   </div>
                 </div>
@@ -429,39 +442,37 @@ export function LifecycleWorkflowsPage() {
       <Dialog open={createModal} onOpenChange={setCreateModal}>
         <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Create Lifecycle Workflow</DialogTitle>
+            <DialogTitle>{t('pages.lifecycleWorkflows.form.title')}</DialogTitle>
           </DialogHeader>
           <form onSubmit={(e) => { e.preventDefault(); createMutation.mutate(newWorkflow) }} className="space-y-4">
             <div className="space-y-2">
-              <Label>Workflow Name *</Label>
-              <Input value={newWorkflow.name} onChange={(e) => setNewWorkflow(prev => ({ ...prev, name: e.target.value }))} placeholder="New Employee Onboarding" required />
+              <Label>{t('pages.lifecycleWorkflows.form.name')}</Label>
+              <Input value={newWorkflow.name} onChange={(e) => setNewWorkflow(prev => ({ ...prev, name: e.target.value }))} placeholder={t('pages.lifecycleWorkflows.form.namePlaceholder')} required />
             </div>
             <div className="space-y-2">
-              <Label>Description</Label>
-              <Textarea value={newWorkflow.description} onChange={(e) => setNewWorkflow(prev => ({ ...prev, description: e.target.value }))} rows={2} />
+              <Label htmlFor="lifecycle-workflows-description">{t('pages.lifecycleWorkflows.form.description')}</Label>
+              <Textarea id="lifecycle-workflows-description" value={newWorkflow.description} onChange={(e) => setNewWorkflow(prev => ({ ...prev, description: e.target.value }))} rows={2} />
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>Event Type</Label>
+                <Label htmlFor="lifecycle-workflows-event-type">{t('pages.lifecycleWorkflows.form.eventType')}</Label>
                 <Select value={newWorkflow.event_type} onValueChange={(val) => setNewWorkflow(prev => ({ ...prev, event_type: val }))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger id="lifecycle-workflows-event-type"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="onboard">Onboard</SelectItem>
-                    <SelectItem value="transfer">Transfer</SelectItem>
-                    <SelectItem value="offboard">Offboard</SelectItem>
-                    <SelectItem value="leave">Leave</SelectItem>
-                    <SelectItem value="return">Return</SelectItem>
+                    {EVENT_TYPES.map(evt => (
+                      <SelectItem key={evt} value={evt}>{t(`pages.lifecycleWorkflows.events.${evt}`)}</SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label>Trigger</Label>
+                <Label htmlFor="lifecycle-workflows-trigger">{t('pages.lifecycleWorkflows.form.trigger')}</Label>
                 <Select value={newWorkflow.trigger_type} onValueChange={(val) => setNewWorkflow(prev => ({ ...prev, trigger_type: val }))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger id="lifecycle-workflows-trigger"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="manual">Manual</SelectItem>
-                    <SelectItem value="scheduled">Scheduled</SelectItem>
-                    <SelectItem value="webhook">Webhook</SelectItem>
+                    {TRIGGER_TYPES.map(tt => (
+                      <SelectItem key={tt} value={tt}>{t(`pages.lifecycleWorkflows.triggers.${tt}`)}</SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -469,15 +480,25 @@ export function LifecycleWorkflowsPage() {
 
             {/* Action Builder */}
             <div className="space-y-2">
-              <Label>Actions</Label>
+              <Label>{t('pages.lifecycleWorkflows.form.actions')}</Label>
               {newWorkflow.actions.length > 0 && (
                 <div className="space-y-2">
                   {newWorkflow.actions.map((action, idx) => (
                     <div key={idx} className="flex items-center gap-2 p-2 bg-muted rounded">
                       <Badge variant="secondary">{idx + 1}</Badge>
-                      <span className="text-sm flex-1">{actionTypeLabels[action.type] || action.type}</span>
-                      {action.role_id && <span className="text-xs text-muted-foreground">Role: {action.role_id.slice(0, 8)}...</span>}
-                      {action.group_id && <span className="text-xs text-muted-foreground">Group: {action.group_id.slice(0, 8)}...</span>}
+                      <span className="text-sm flex-1">
+                        {t(`pages.lifecycleWorkflows.actionTypes.${action.type}`, { defaultValue: action.type })}
+                      </span>
+                      {action.role_id && (
+                        <span className="text-xs text-muted-foreground">
+                          {t('pages.lifecycleWorkflows.form.actionRole', { id: action.role_id.slice(0, 8) })}
+                        </span>
+                      )}
+                      {action.group_id && (
+                        <span className="text-xs text-muted-foreground">
+                          {t('pages.lifecycleWorkflows.form.actionGroup', { id: action.group_id.slice(0, 8) })}
+                        </span>
+                      )}
                       <Button type="button" variant="ghost" size="sm" onClick={() => removeAction(idx)} className="h-6 w-6 p-0">
                         <XCircle className="h-4 w-4 text-red-500" />
                       </Button>
@@ -487,20 +508,16 @@ export function LifecycleWorkflowsPage() {
               )}
               <div className="flex gap-2">
                 <Select value={newAction.type} onValueChange={(val) => setNewAction(prev => ({ ...prev, type: val }))}>
-                  <SelectTrigger className="flex-1"><SelectValue /></SelectTrigger>
+                  <SelectTrigger aria-label={t('pages.lifecycleWorkflows.form.actionTypeLabel')} className="flex-1"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="assign_role">Assign Role</SelectItem>
-                    <SelectItem value="remove_role">Remove Role</SelectItem>
-                    <SelectItem value="assign_group">Add to Group</SelectItem>
-                    <SelectItem value="remove_group">Remove from Group</SelectItem>
-                    <SelectItem value="enable_user">Enable User</SelectItem>
-                    <SelectItem value="disable_user">Disable User</SelectItem>
-                    <SelectItem value="revoke_sessions">Revoke Sessions</SelectItem>
+                    {ACTION_TYPES.map(at => (
+                      <SelectItem key={at} value={at}>{t(`pages.lifecycleWorkflows.actionTypes.${at}`)}</SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
                 {(newAction.type === 'assign_role' || newAction.type === 'remove_role') && (
                   <Input
-                    placeholder="Role ID"
+                    placeholder={t('pages.lifecycleWorkflows.form.roleIdPlaceholder')}
                     value={newAction.role_id || ''}
                     onChange={(e) => setNewAction(prev => ({ ...prev, role_id: e.target.value }))}
                     className="w-40"
@@ -508,7 +525,7 @@ export function LifecycleWorkflowsPage() {
                 )}
                 {(newAction.type === 'assign_group' || newAction.type === 'remove_group') && (
                   <Input
-                    placeholder="Group ID"
+                    placeholder={t('pages.lifecycleWorkflows.form.groupIdPlaceholder')}
                     value={newAction.group_id || ''}
                     onChange={(e) => setNewAction(prev => ({ ...prev, group_id: e.target.value }))}
                     className="w-40"
@@ -522,13 +539,15 @@ export function LifecycleWorkflowsPage() {
 
             <div className="flex items-center gap-2">
               <input type="checkbox" id="require_approval" checked={newWorkflow.require_approval} onChange={(e) => setNewWorkflow(prev => ({ ...prev, require_approval: e.target.checked }))} className="rounded border-border" />
-              <Label htmlFor="require_approval">Require approval before execution</Label>
+              <Label htmlFor="require_approval">{t('pages.lifecycleWorkflows.form.requireApproval')}</Label>
             </div>
 
             <div className="flex justify-end gap-2 pt-4">
-              <Button type="button" variant="outline" onClick={() => setCreateModal(false)}>Cancel</Button>
+              <Button type="button" variant="outline" onClick={() => setCreateModal(false)}>{t('common.cancel')}</Button>
               <Button type="submit" disabled={createMutation.isPending}>
-                {createMutation.isPending ? 'Creating...' : 'Create Workflow'}
+                {createMutation.isPending
+                  ? t('pages.lifecycleWorkflows.form.creating')
+                  : t('pages.lifecycleWorkflows.form.submit')}
               </Button>
             </div>
           </form>
@@ -539,7 +558,9 @@ export function LifecycleWorkflowsPage() {
       <Dialog open={executeModal} onOpenChange={setExecuteModal}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Execute Workflow — {selectedWorkflow?.name}</DialogTitle>
+            <DialogTitle>
+              {t('pages.lifecycleWorkflows.executeDialog.title', { name: selectedWorkflow?.name ?? '' })}
+            </DialogTitle>
           </DialogHeader>
           <form onSubmit={(e) => {
             e.preventDefault()
@@ -548,28 +569,34 @@ export function LifecycleWorkflowsPage() {
             }
           }} className="space-y-4">
             <div className="space-y-2">
-              <Label>Target User ID *</Label>
+              <Label>{t('pages.lifecycleWorkflows.executeDialog.targetUser')}</Label>
               <Input
                 value={executeUserId}
                 onChange={(e) => setExecuteUserId(e.target.value)}
-                placeholder="Enter user ID"
+                placeholder={t('pages.lifecycleWorkflows.executeDialog.targetUserPlaceholder')}
                 required
               />
             </div>
             {selectedWorkflow && (
               <div className="p-3 bg-muted rounded-lg text-sm">
-                <p className="font-medium mb-2">Actions to execute:</p>
+                <p className="font-medium mb-2">{t('pages.lifecycleWorkflows.executeDialog.actionsToExecute')}</p>
                 <ol className="list-decimal ml-4 space-y-1">
                   {(selectedWorkflow.actions || []).map((a, i) => (
-                    <li key={i}>{actionTypeLabels[(a as Record<string, string>).type] || (a as Record<string, string>).type}</li>
+                    <li key={i}>
+                      {t(`pages.lifecycleWorkflows.actionTypes.${(a as Record<string, string>).type}`, {
+                        defaultValue: (a as Record<string, string>).type,
+                      })}
+                    </li>
                   ))}
                 </ol>
               </div>
             )}
             <div className="flex justify-end gap-2 pt-4">
-              <Button type="button" variant="outline" onClick={() => setExecuteModal(false)}>Cancel</Button>
+              <Button type="button" variant="outline" onClick={() => setExecuteModal(false)}>{t('common.cancel')}</Button>
               <Button type="submit" disabled={executeMutation.isPending}>
-                {executeMutation.isPending ? 'Executing...' : 'Execute'}
+                {executeMutation.isPending
+                  ? t('pages.lifecycleWorkflows.executeDialog.executing')
+                  : t('pages.lifecycleWorkflows.executeDialog.submit')}
               </Button>
             </div>
           </form>
@@ -580,24 +607,26 @@ export function LifecycleWorkflowsPage() {
       <Dialog open={executionsModal} onOpenChange={setExecutionsModal}>
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Execution History — {selectedWorkflow?.name}</DialogTitle>
+            <DialogTitle>
+              {t('pages.lifecycleWorkflows.history.title', { name: selectedWorkflow?.name ?? '' })}
+            </DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             {!executions || executions.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground">
                 <Clock className="h-10 w-10 mx-auto mb-2 opacity-40" />
-                <p>No executions yet.</p>
+                <p>{t('pages.lifecycleWorkflows.history.empty')}</p>
               </div>
             ) : (
               <div className="rounded-md border">
                 <Table>
                   <TableHeader>
                     <TableRow className="border-b bg-muted">
-                      <TableHead className="p-3 text-left text-sm font-medium">Started</TableHead>
-                      <TableHead className="p-3 text-left text-sm font-medium">User ID</TableHead>
-                      <TableHead className="p-3 text-left text-sm font-medium">Status</TableHead>
-                      <TableHead className="p-3 text-left text-sm font-medium">Completed/Failed</TableHead>
-                      <TableHead className="p-3 text-left text-sm font-medium">Completed At</TableHead>
+                      <TableHead className="p-3 text-left text-sm font-medium">{t('pages.lifecycleWorkflows.history.colStarted')}</TableHead>
+                      <TableHead className="p-3 text-left text-sm font-medium">{t('pages.lifecycleWorkflows.history.colUserId')}</TableHead>
+                      <TableHead className="p-3 text-left text-sm font-medium">{t('pages.lifecycleWorkflows.history.colStatus')}</TableHead>
+                      <TableHead className="p-3 text-left text-sm font-medium">{t('pages.lifecycleWorkflows.history.colCompletedFailed')}</TableHead>
+                      <TableHead className="p-3 text-left text-sm font-medium">{t('pages.lifecycleWorkflows.history.colCompletedAt')}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -608,7 +637,9 @@ export function LifecycleWorkflowsPage() {
                         <TableCell className="p-3">
                           <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${executionStatusColors[exec.status] || 'bg-muted text-foreground'}`}>
                             {exec.status === 'completed' ? <CheckCircle className="h-3 w-3" /> : exec.status === 'failed' ? <XCircle className="h-3 w-3" /> : <Clock className="h-3 w-3" />}
-                            {exec.status}
+                            {t(`pages.lifecycleWorkflows.executionStatuses.${exec.status}`, {
+                              defaultValue: exec.status,
+                            })}
                           </span>
                         </TableCell>
                         <TableCell className="p-3 text-sm">

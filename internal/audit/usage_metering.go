@@ -75,13 +75,20 @@ func (w *meteringWorker) aggregateBatch(ctx context.Context) (int, error) {
 	}
 
 	// Fetch fabric events strictly after the cursor, ordered by (created_at, id)
-	// so the cursor is a total order. Join users for org attribution.
+	// so the cursor is a total order.
+	//
+	// Org attribution reads the event's own org_id (v142) rather than joining
+	// users. That is not just tidier: a fabric event carries a service, not
+	// always a user, and the join yielded '' for every user-less one — so
+	// overlay traffic on a tenant's own route was billed to the zero-UUID
+	// bucket nobody owns. The ingest derives org_id from the route, so those
+	// now land on the tenant that ran them.
+	//orgscope:ignore install-wide billing rollup running under WithBypassRLS; it must read every org's fabric events to attribute each one, and org_id is selected per row below
 	rows, err := w.svc.db.Pool.Query(ctx, `
         SELECT e.id, e.created_at, e.event_type, COALESCE(e.user_id::text,''),
-               COALESCE(u.org_id::text,''), COALESCE(e.details->>'service',''),
+               e.org_id::text, COALESCE(e.details->>'service',''),
                COALESCE(e.details->>'service_name','')
           FROM unified_audit_events e
-          LEFT JOIN users u ON u.id = e.user_id
          WHERE e.source = 'ziti'
            AND e.event_type IN ('ziti.api_session.created', 'ziti.service.dialed')
            AND (e.created_at, e.id) > ($1, $2::uuid)

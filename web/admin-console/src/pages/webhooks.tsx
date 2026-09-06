@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import { Search, Plus, Webhook, Trash2, RefreshCw, CheckCircle, XCircle, Clock } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -38,6 +39,11 @@ interface Delivery {
   delivered_at?: string
 }
 
+/**
+ * The event names a subscriber matches on. They are wire identifiers, not
+ * prose, so they stay raw in the picker, on the subscription card and in
+ * the delivery log.
+ */
 const EVENT_TYPES = [
   'user.created',
   'user.updated',
@@ -54,6 +60,7 @@ const EVENT_TYPES = [
 export function WebhooksPage() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const { t } = useTranslation()
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
   const pageSize = 10
@@ -87,10 +94,10 @@ export function WebhooksPage() {
       setNewUrl('')
       setNewSecret('')
       setSelectedEvents([])
-      toast({ title: 'Webhook subscription created' })
+      toast({ title: t('pages.webhooks.toasts.created') })
     },
     onError: () => {
-      toast({ title: 'Failed to create webhook', variant: 'destructive' })
+      toast({ title: t('pages.webhooks.toasts.createFailed'), variant: 'destructive' })
     },
   })
 
@@ -99,10 +106,10 @@ export function WebhooksPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['webhooks'] })
       setDeleteTarget(null)
-      toast({ title: 'Webhook subscription deleted' })
+      toast({ title: t('pages.webhooks.toasts.deleted') })
     },
     onError: () => {
-      toast({ title: 'Failed to delete webhook', variant: 'destructive' })
+      toast({ title: t('pages.webhooks.toasts.deleteFailed'), variant: 'destructive' })
     },
   })
 
@@ -120,12 +127,12 @@ export function WebhooksPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Webhooks</h1>
-          <p className="text-muted-foreground">Manage webhook subscriptions and delivery history</p>
+          <h1 className="text-3xl font-bold tracking-tight">{t('nav.items.webhooks')}</h1>
+          <p className="text-muted-foreground">{t('pages.webhooks.subtitle')}</p>
         </div>
         <Button onClick={() => setCreateOpen(true)}>
           <Plus className="mr-2 h-4 w-4" />
-          Create Webhook
+          {t('pages.webhooks.create')}
         </Button>
       </div>
 
@@ -133,7 +140,7 @@ export function WebhooksPage() {
         <div className="relative flex-1 max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
-            placeholder="Search webhooks..."
+            placeholder={t('pages.webhooks.searchPlaceholder')}
             className="pl-9"
             value={search}
             onChange={(e) => {
@@ -147,15 +154,15 @@ export function WebhooksPage() {
       {isLoading ? (
         <div className="flex flex-col items-center justify-center py-12">
           <LoadingSpinner size="lg" />
-          <p className="mt-4 text-sm text-muted-foreground">Loading webhooks...</p>
+          <p className="mt-4 text-sm text-muted-foreground">{t('pages.webhooks.loading')}</p>
         </div>
       ) : isError ? (
-        <QueryError error={error} resource="webhooks" />
+        <QueryError error={error} resource={t('pages.webhooks.resource')} />
       ) : subscriptions.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
           <Webhook className="h-12 w-12 text-muted-foreground/40 mb-3" />
-          <p className="font-medium">No webhooks configured</p>
-          <p className="text-sm">Create a webhook to receive event notifications</p>
+          <p className="font-medium">{t('pages.webhooks.emptyTitle')}</p>
+          <p className="text-sm">{t('pages.webhooks.emptyHint')}</p>
         </div>
       ) : (
         <div className="space-y-4">
@@ -171,7 +178,7 @@ export function WebhooksPage() {
                 </div>
                 <div className="flex items-center gap-2">
                   <Badge variant={sub.status === 'active' ? 'default' : 'secondary'}>
-                    {sub.status}
+                    {t(`pages.webhooks.statuses.${sub.status}`, { defaultValue: sub.status })}
                   </Badge>
                   <div className="flex gap-1 flex-wrap max-w-xs">
                     {sub.events.slice(0, 3).map((event) => (
@@ -194,7 +201,7 @@ export function WebhooksPage() {
                       )
                     }
                   >
-                    Deliveries
+                    {t('pages.webhooks.deliveries')}
                   </Button>
                   <Button
                     variant="ghost"
@@ -220,20 +227,21 @@ export function WebhooksPage() {
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>Create Webhook Subscription</DialogTitle>
-            <DialogDescription>Subscribe to events and receive HTTP notifications.</DialogDescription>
+            <DialogTitle>{t('pages.webhooks.form.title')}</DialogTitle>
+            <DialogDescription>{t('pages.webhooks.form.desc')}</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div>
-              <label className="text-sm font-medium">Name</label>
+              <label className="text-sm font-medium">{t('pages.webhooks.form.name')}</label>
               <Input
-                placeholder="My Webhook"
+                placeholder={t('pages.webhooks.form.namePlaceholder')}
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
               />
             </div>
             <div>
-              <label className="text-sm font-medium">URL</label>
+              <label className="text-sm font-medium">{t('pages.webhooks.form.url')}</label>
+              {/* The sample URL teaches the format the API accepts. */}
               <Input
                 placeholder="https://example.com/webhook"
                 value={newUrl}
@@ -241,16 +249,16 @@ export function WebhooksPage() {
               />
             </div>
             <div>
-              <label className="text-sm font-medium">Secret</label>
+              <label className="text-sm font-medium">{t('pages.webhooks.form.secret')}</label>
               <Input
-                placeholder="Signing secret for payload verification"
+                placeholder={t('pages.webhooks.form.secretPlaceholder')}
                 type="password"
                 value={newSecret}
                 onChange={(e) => setNewSecret(e.target.value)}
               />
             </div>
             <div>
-              <label className="text-sm font-medium">Events</label>
+              <label className="text-sm font-medium">{t('pages.webhooks.form.events')}</label>
               <div className="grid grid-cols-2 gap-2 mt-2">
                 {EVENT_TYPES.map((event) => (
                   <label
@@ -270,7 +278,9 @@ export function WebhooksPage() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
+            <Button variant="outline" onClick={() => setCreateOpen(false)}>
+              {t('common.cancel')}
+            </Button>
             <Button
               disabled={!newName.trim() || !newUrl.trim() || selectedEvents.length === 0 || createMutation.isPending}
               onClick={() =>
@@ -282,7 +292,9 @@ export function WebhooksPage() {
                 })
               }
             >
-              {createMutation.isPending ? 'Creating...' : 'Create'}
+              {createMutation.isPending
+                ? t('pages.webhooks.form.creating')
+                : t('pages.webhooks.form.submit')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -292,17 +304,19 @@ export function WebhooksPage() {
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete Webhook</AlertDialogTitle>
+            <AlertDialogTitle>{t('pages.webhooks.deleteDialog.title')}</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete &quot;{deleteTarget?.name}&quot;? You will stop receiving notifications for this subscription. This action cannot be undone.
+              {t('pages.webhooks.deleteDialog.desc', {
+                name: deleteTarget?.name ?? '',
+              })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
             >
-              Delete
+              {t('common.delete')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -314,6 +328,7 @@ export function WebhooksPage() {
 function DeliveryHistorySection({ subscriptionId }: { subscriptionId: string }) {
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const { t } = useTranslation()
 
   const { data: deliveriesData, isLoading, isError, error } = useQuery({
     queryKey: ['webhook-deliveries', subscriptionId],
@@ -328,10 +343,10 @@ function DeliveryHistorySection({ subscriptionId }: { subscriptionId: string }) 
       api.post(`/api/v1/webhooks/deliveries/${deliveryId}/retry`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['webhook-deliveries', subscriptionId] })
-      toast({ title: 'Delivery retry queued' })
+      toast({ title: t('pages.webhooks.toasts.retryQueued') })
     },
     onError: () => {
-      toast({ title: 'Failed to retry delivery', variant: 'destructive' })
+      toast({ title: t('pages.webhooks.toasts.retryFailed'), variant: 'destructive' })
     },
   })
 
@@ -343,38 +358,46 @@ function DeliveryHistorySection({ subscriptionId }: { subscriptionId: string }) 
         return (
           <Badge className="bg-green-100 text-green-800 hover:bg-green-100">
             <CheckCircle className="mr-1 h-3 w-3" />
-            Delivered
+            {t('pages.webhooks.deliveryStatuses.delivered')}
           </Badge>
         )
       case 'failed':
         return (
           <Badge className="bg-red-100 text-red-800 hover:bg-red-100">
             <XCircle className="mr-1 h-3 w-3" />
-            Failed
+            {t('pages.webhooks.deliveryStatuses.failed')}
           </Badge>
         )
       case 'pending':
         return (
           <Badge className="bg-yellow-100 text-yellow-800 hover:bg-yellow-100">
             <Clock className="mr-1 h-3 w-3" />
-            Pending
+            {t('pages.webhooks.deliveryStatuses.pending')}
           </Badge>
         )
       default:
-        return <Badge variant="secondary">{status}</Badge>
+        return (
+          <Badge variant="secondary">
+            {t(`pages.webhooks.deliveryStatuses.${status}`, { defaultValue: status })}
+          </Badge>
+        )
     }
   }
 
   return (
     <div className="space-y-3 border-t pt-4">
-      <h4 className="text-sm font-medium">Delivery History</h4>
+      <h4 className="text-sm font-medium">{t('pages.webhooks.history.title')}</h4>
 
       {isLoading ? (
-        <p className="text-sm text-muted-foreground">Loading deliveries...</p>
+        <p className="text-sm text-muted-foreground">
+          {t('pages.webhooks.history.loading')}
+        </p>
       ) : isError ? (
-        <QueryError error={error} resource="delivery history" />
+        <QueryError error={error} resource={t('pages.webhooks.history.resource')} />
       ) : deliveries.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No deliveries yet</p>
+        <p className="text-sm text-muted-foreground">
+          {t('pages.webhooks.history.empty')}
+        </p>
       ) : (
         <div className="space-y-2">
           {deliveries.map((delivery) => (
@@ -389,11 +412,13 @@ function DeliveryHistorySection({ subscriptionId }: { subscriptionId: string }) 
                 </Badge>
                 {delivery.response_status && (
                   <span className="text-xs text-muted-foreground">
-                    HTTP {delivery.response_status}
+                    {t('pages.webhooks.history.httpStatus', {
+                      code: delivery.response_status,
+                    })}
                   </span>
                 )}
                 <span className="text-xs text-muted-foreground">
-                  Attempt {delivery.attempt}
+                  {t('pages.webhooks.history.attempt', { n: delivery.attempt })}
                 </span>
               </div>
               <div className="flex items-center gap-3">
@@ -408,7 +433,7 @@ function DeliveryHistorySection({ subscriptionId }: { subscriptionId: string }) 
                     onClick={() => retryMutation.mutate(delivery.id)}
                   >
                     <RefreshCw className="mr-1 h-3 w-3" />
-                    Retry
+                    {t('pages.webhooks.history.retry')}
                   </Button>
                 )}
               </div>

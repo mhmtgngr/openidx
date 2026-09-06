@@ -1,5 +1,13 @@
 # OpenIDX Mobile: MFA Authenticator + Posture-Gated Ziti Access
 
+> **The React Native / Expo app this guide was written against has been
+> deleted.** The mobile client is the Flutter app in [`client/`](../client),
+> which drives the same Go engine as the desktop agent (`agent/mobile`), so
+> posture and OpenZiti are one implementation rather than two. Every API
+> contract, endpoint, payload and sequence below is still current and is why
+> this document is kept; the `mobile/src/...` file references are historical
+> and point at code that is no longer in the tree.
+
 Audience: the OpenIDX mobile app developer.
 Scope: the new built-in MFA authenticator and the tiered, posture-gated OpenZiti
 access model. This doc is the contract; the backend pieces described here are

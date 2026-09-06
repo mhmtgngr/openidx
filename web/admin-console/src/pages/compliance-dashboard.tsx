@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import {
   ShieldCheck,
   KeyRound,
@@ -19,6 +20,21 @@ import { QueryError } from '../components/query-error'
 import { api } from '../lib/api'
 import { useNavigate } from 'react-router-dom'
 
+/**
+ * The weights the backend scorer applies, in the order the card lists
+ * them. Keeping them here rather than in the catalogs means the number
+ * lives in one place and a locale only ever writes the wording around it.
+ */
+const SCORE_WEIGHTS = [
+  { key: 'mfa', weight: 25 },
+  { key: 'password', weight: 20 },
+  { key: 'reviews', weight: 15 },
+  { key: 'policy', weight: 15 },
+  { key: 'accounts', weight: 10 },
+  { key: 'campaignCoverage', weight: 10 },
+  { key: 'campaignProgress', weight: 5 },
+] as const
+
 interface CompliancePosture {
   mfa_adoption_rate: number
   password_compliance_rate: number
@@ -33,6 +49,7 @@ interface CompliancePosture {
 }
 
 function ScoreGauge({ score }: { score: number }) {
+  const { t } = useTranslation()
   const getColor = (s: number) => {
     if (s >= 80) return 'text-green-600'
     if (s >= 60) return 'text-yellow-600'
@@ -47,11 +64,13 @@ function ScoreGauge({ score }: { score: number }) {
     return 'bg-red-100'
   }
 
-  const getLabel = (s: number) => {
-    if (s >= 80) return 'Excellent'
-    if (s >= 60) return 'Good'
-    if (s >= 40) return 'Needs Improvement'
-    return 'Critical'
+  // Returns the catalog key rather than a label, so the tier re-resolves
+  // when the operator switches language.
+  const getTierKey = (s: number) => {
+    if (s >= 80) return 'excellent'
+    if (s >= 60) return 'good'
+    if (s >= 40) return 'needsImprovement'
+    return 'critical'
   }
 
   return (
@@ -63,7 +82,7 @@ function ScoreGauge({ score }: { score: number }) {
         </div>
       </div>
       <Badge className={`mt-4 ${getBgColor(score)} ${getColor(score)} border-0`}>
-        {getLabel(score)}
+        {t(`pages.complianceDashboard.tiers.${getTierKey(score)}`)}
       </Badge>
     </div>
   )
@@ -133,6 +152,7 @@ function MetricCard({
 
 export function ComplianceDashboardPage() {
   const navigate = useNavigate()
+  const { t } = useTranslation()
 
   const { data: posture, isLoading, isError, error } = useQuery({
     queryKey: ['compliance-posture'],
@@ -163,7 +183,9 @@ export function ComplianceDashboardPage() {
     return (
       <div className="flex flex-col items-center justify-center py-24">
         <LoadingSpinner size="lg" />
-        <p className="mt-4 text-sm text-muted-foreground">Loading compliance posture...</p>
+        <p className="mt-4 text-sm text-muted-foreground">
+          {t('pages.complianceDashboard.loading')}
+        </p>
       </div>
     )
   }
@@ -172,7 +194,7 @@ export function ComplianceDashboardPage() {
   // posture, which would render a fully-populated dashboard showing 0% for a
   // 403 and read as "perfectly compliant".
   if (isError) {
-    return <QueryError error={error} resource="compliance posture" />
+    return <QueryError error={error} resource={t('pages.complianceDashboard.resource')} />
   }
 
   const p = posture || {
@@ -191,8 +213,10 @@ export function ComplianceDashboardPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold tracking-tight">Compliance Posture</h1>
-        <p className="text-muted-foreground">Organization-wide compliance health at a glance</p>
+        <h1 className="text-3xl font-bold tracking-tight">
+          {t('nav.items.compliancePosture')}
+        </h1>
+        <p className="text-muted-foreground">{t('pages.complianceDashboard.subtitle')}</p>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-3">
@@ -201,21 +225,22 @@ export function ComplianceDashboardPage() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <ShieldCheck className="h-5 w-5" />
-              Overall Score
+              {t('pages.complianceDashboard.overallScore')}
             </CardTitle>
           </CardHeader>
           <CardContent>
             <ScoreGauge score={p.overall_score} />
             <div className="mt-4 space-y-2 text-sm text-muted-foreground">
-              <p>This score is a weighted composite of:</p>
+              <p>{t('pages.complianceDashboard.weightsIntro')}</p>
               <ul className="space-y-1 ml-4 list-disc">
-                <li>MFA adoption (25%)</li>
-                <li>Password compliance (20%)</li>
-                <li>Review timeliness (15%)</li>
-                <li>Policy compliance (15%)</li>
-                <li>Account hygiene (10%)</li>
-                <li>Campaign coverage (10%)</li>
-                <li>Campaign progress (5%)</li>
+                {SCORE_WEIGHTS.map((w) => (
+                  <li key={w.key}>
+                    {t('pages.complianceDashboard.weightLine', {
+                      label: t(`pages.complianceDashboard.weights.${w.key}`),
+                      weight: w.weight,
+                    })}
+                  </li>
+                ))}
               </ul>
             </div>
           </CardContent>
@@ -223,79 +248,79 @@ export function ComplianceDashboardPage() {
 
         {/* Authentication Metrics */}
         <MetricCard
-          title="MFA Adoption"
+          title={t('pages.complianceDashboard.cards.mfaAdoption')}
           value={p.mfa_adoption_rate}
           icon={KeyRound}
-          subtitle="Users with active MFA enrollment"
+          subtitle={t('pages.complianceDashboard.cards.mfaAdoptionSub')}
           color={p.mfa_adoption_rate >= 80 ? 'green' : p.mfa_adoption_rate >= 50 ? 'yellow' : 'red'}
-          action="View Users"
+          action={t('pages.complianceDashboard.actions.viewUsers')}
           onAction={() => navigate('/users')}
         />
 
         <MetricCard
-          title="Password Compliance"
+          title={t('pages.complianceDashboard.cards.passwordCompliance')}
           value={p.password_compliance_rate}
           icon={ShieldCheck}
-          subtitle="Passwords within 90-day policy"
+          subtitle={t('pages.complianceDashboard.cards.passwordComplianceSub')}
           color={p.password_compliance_rate >= 80 ? 'green' : p.password_compliance_rate >= 50 ? 'yellow' : 'red'}
         />
 
         {/* Review Metrics */}
         <MetricCard
-          title="Open Reviews"
+          title={t('pages.complianceDashboard.cards.openReviews')}
           value={p.open_reviews_count}
           icon={ClipboardCheck}
-          subtitle="Pending or in-progress reviews"
+          subtitle={t('pages.complianceDashboard.cards.openReviewsSub')}
           color={p.open_reviews_count === 0 ? 'green' : 'blue'}
-          action="View Reviews"
+          action={t('pages.complianceDashboard.actions.viewReviews')}
           onAction={() => navigate('/access-reviews')}
         />
 
         <MetricCard
-          title="Overdue Reviews"
+          title={t('pages.complianceDashboard.cards.overdueReviews')}
           value={p.overdue_reviews_count}
           icon={AlertTriangle}
-          subtitle="Reviews past their end date"
+          subtitle={t('pages.complianceDashboard.cards.overdueReviewsSub')}
           color={p.overdue_reviews_count === 0 ? 'green' : 'red'}
-          action="View Reviews"
+          action={t('pages.complianceDashboard.actions.viewReviews')}
           onAction={() => navigate('/access-reviews')}
         />
       </div>
 
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
         <MetricCard
-          title="Dormant Accounts"
+          title={t('pages.complianceDashboard.cards.dormantAccounts')}
           value={p.dormant_accounts_count}
           icon={UserX}
-          subtitle="No login in 90+ days"
+          subtitle={t('pages.complianceDashboard.cards.dormantAccountsSub')}
           color={p.dormant_accounts_count === 0 ? 'green' : p.dormant_accounts_count < 5 ? 'yellow' : 'orange'}
-          action="View Users"
+          action={t('pages.complianceDashboard.actions.viewUsers')}
           onAction={() => navigate('/users')}
         />
 
         <MetricCard
-          title="Disabled Accounts"
+          title={t('pages.complianceDashboard.cards.disabledAccounts')}
           value={p.disabled_accounts_count}
           icon={UserMinus}
-          subtitle="Currently disabled users"
+          subtitle={t('pages.complianceDashboard.cards.disabledAccountsSub')}
           color="gray"
         />
 
         <MetricCard
-          title="Active Campaigns"
+          title={t('pages.complianceDashboard.cards.activeCampaigns')}
           value={p.active_campaigns_count}
           icon={Target}
-          subtitle="Certification campaigns running"
+          subtitle={t('pages.complianceDashboard.cards.activeCampaignsSub')}
           color={p.active_campaigns_count > 0 ? 'purple' : 'gray'}
-          action="View Campaigns"
+          action={t('pages.complianceDashboard.actions.viewCampaigns')}
           onAction={() => navigate('/certification-campaigns')}
         />
 
         <MetricCard
-          title="Campaign Completion"
+          title={t('pages.complianceDashboard.cards.campaignCompletion')}
           value={p.campaign_completion_rate}
           icon={TrendingUp}
-          subtitle="Average across active runs"
+          subtitle={t('pages.complianceDashboard.cards.campaignCompletionSub')}
           color={p.campaign_completion_rate >= 80 ? 'green' : p.campaign_completion_rate >= 50 ? 'yellow' : 'orange'}
         />
       </div>
@@ -308,10 +333,13 @@ export function ComplianceDashboardPage() {
             </div>
             <div className="flex-1">
               <p className="text-2xl font-bold">{p.policy_violations_count}</p>
-              <p className="text-sm text-muted-foreground">Policy Violations (last 30 days)</p>
+              <p className="text-sm text-muted-foreground">
+                {t('pages.complianceDashboard.violations')}
+              </p>
             </div>
             <Button variant="outline" size="sm" onClick={() => navigate('/policies')}>
-              View Policies <ExternalLink className="h-3 w-3 ml-1" />
+              {t('pages.complianceDashboard.actions.viewPolicies')}{' '}
+              <ExternalLink className="h-3 w-3 ml-1" />
             </Button>
           </div>
         </CardContent>

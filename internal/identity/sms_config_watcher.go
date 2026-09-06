@@ -61,6 +61,9 @@ func (s *Service) checkAndReloadSMSConfig(ctx context.Context, lastUpdatedAt *ti
 	}
 
 	cfg := settings.ToConfig()
+	// The admin console can store provider "mock"; that must not become a live
+	// provider outside development any more than an env var can.
+	cfg.AllowMock = s.cfg != nil && s.cfg.IsDevelopment()
 
 	newService, err := sms.NewService(cfg, s.logger)
 	if err != nil {

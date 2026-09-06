@@ -145,6 +145,7 @@ type ssfDeliveryItem struct {
 // drainSSFDelivery claims and pushes up to 50 due SETs.
 func (s *Service) drainSSFDelivery(ctx context.Context) (int, error) {
 	rows, err := s.db.Pool.Query(ctx, `
+        --orgscope:ignore install-wide outbox drain: one worker serves every tenant, claims by state alone and never by org, and each claimed row carries its own org_id onward
         UPDATE ssf_stream_delivery d SET state='processing', updated_at=NOW()
          WHERE d.id IN (
              SELECT id FROM ssf_stream_delivery
@@ -196,7 +197,9 @@ func (s *Service) pushSSFItem(ctx context.Context, it ssfDeliveryItem) {
 	defer resp.Body.Close()
 	// RFC 8935: 202 Accepted on success; 200 also tolerated.
 	if resp.StatusCode == http.StatusAccepted || resp.StatusCode == http.StatusOK {
-		_, _ = s.db.Pool.Exec(ctx, `UPDATE ssf_stream_delivery SET state='delivered', updated_at=NOW() WHERE id=$1`, it.id)
+		_, _ = s.db.Pool.Exec(ctx,
+			//orgscope:ignore background push worker marking an outbox row it already claimed in the cross-org drain above; addressed by that row's own id
+			`UPDATE ssf_stream_delivery SET state='delivered', updated_at=NOW() WHERE id=$1`, it.id)
 		return
 	}
 	s.retryOrDeadSSF(ctx, it, fmt.Errorf("receiver returned %d", resp.StatusCode))
@@ -220,6 +223,7 @@ func (s *Service) retryOrDeadSSF(ctx context.Context, it ssfDeliveryItem, cause 
 	attempts := it.attempts + 1
 	if attempts >= ssfMaxAttempts {
 		_, _ = s.db.Pool.Exec(ctx,
+			//orgscope:ignore background push worker dead-lettering an outbox row it already claimed in the cross-org drain; addressed by that row's own id
 			`UPDATE ssf_stream_delivery SET state='dead', attempts=$2, last_error=$3, updated_at=NOW() WHERE id=$1`,
 			it.id, attempts, cause.Error())
 		s.logger.Warn("SSF delivery dead-lettered", zap.Int64("id", it.id), zap.Error(cause))
@@ -230,6 +234,7 @@ func (s *Service) retryOrDeadSSF(ctx context.Context, it ssfDeliveryItem, cause 
 		backoff = time.Hour
 	}
 	_, _ = s.db.Pool.Exec(ctx, `
+        --orgscope:ignore background push worker rescheduling an outbox row it already claimed in the cross-org drain; addressed by that row's own id
         UPDATE ssf_stream_delivery
            SET state='pending', attempts=$2, last_error=$3,
                next_attempt_at=NOW() + $4::interval, updated_at=NOW()
@@ -239,6 +244,7 @@ func (s *Service) retryOrDeadSSF(ctx context.Context, it ssfDeliveryItem, cause 
 
 func (s *Service) failSSFItem(ctx context.Context, it ssfDeliveryItem, cause error) {
 	_, _ = s.db.Pool.Exec(ctx,
+		//orgscope:ignore background push worker failing an outbox row it already claimed in the cross-org drain; addressed by that row's own id
 		`UPDATE ssf_stream_delivery SET state='failed', last_error=$2, updated_at=NOW() WHERE id=$1`,
 		it.id, cause.Error())
 }

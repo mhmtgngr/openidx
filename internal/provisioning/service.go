@@ -24,6 +24,8 @@ import (
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/orgctx"
 	"github.com/openidx/openidx/internal/common/secretcrypt"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 // ctxKey is an unexported type for context keys in this package.
@@ -487,7 +489,7 @@ func (s *Service) resolveManagerID(ctx context.Context, orgID string, user *SCIM
 		`SELECT id FROM users WHERE id::text = $1 AND org_id = $2`, ref, orgID).Scan(&managerID)
 	if err != nil {
 		s.logger.Warn("SCIM manager reference did not resolve to an in-org user; leaving manager unset",
-			zap.String("manager_ref", scrubLogValue(ref)))
+			zap.String("manager_ref", logsafe.Clean(ref)))
 		return nil
 	}
 	return &managerID
@@ -694,7 +696,7 @@ const revokedSessionTTL = 30 * 24 * time.Hour
 func (s *Service) deprovisionUser(ctx context.Context, userID, orgID string, hardDelete bool) {
 	// One scoped logger with the (scrubbed) user id, so the per-step warnings
 	// below never re-embed caller-supplied input directly.
-	log := s.logger.With(zap.String("user_id", scrubLogValue(userID)))
+	log := s.logger.With(zap.String("user_id", logsafe.Clean(userID)))
 
 	rows, err := s.db.Pool.Query(ctx,
 		`SELECT id FROM sessions WHERE user_id = $1 AND org_id = $2`, userID, orgID)
@@ -748,9 +750,6 @@ func (s *Service) deprovisionUser(ctx context.Context, userID, orgID string, har
 // scrubLogValue strips CR/LF from a value before it goes into a log field, so a
 // caller-supplied identifier can't forge extra log lines (clears CodeQL's
 // log-injection sink; defense in depth on top of the JSON encoder).
-func scrubLogValue(s string) string {
-	return strings.NewReplacer("\n", "", "\r", "").Replace(s)
-}
 
 // DeleteSCIMUser deletes a user via SCIM
 func (s *Service) DeleteSCIMUser(ctx context.Context, userID string) error {
@@ -2095,8 +2094,14 @@ func (s *Service) logAuditEvent(ctx context.Context, eventType, category, action
 		orgID = org.ID
 	}
 	go func() {
+		// The org has to travel on the CONTEXT, not just in the row.
+		// audit_events is behind the FORCE-RLS belt, and the pool sets
+		// app.org_id at checkout from orgctx -- so on a bare
+		// context.Background the setting is empty, the policy's WITH CHECK
+		// evaluates to NULL, and Postgres refuses the insert. Every one of
+		// these writes was being rejected and the only trace was a WARN.
 		detailsJSON, _ := json.Marshal(details)
-		_, err := s.db.Pool.Exec(context.Background(), `
+		_, err := s.db.Pool.Exec(orgctx.With(context.Background(), orgctx.Org{ID: orgID}), `
 			INSERT INTO audit_events (id, timestamp, event_type, category, action, outcome,
 			                          actor_id, actor_type, actor_ip, target_id, target_type,
 			                          resource_id, details, org_id)

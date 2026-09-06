@@ -48,14 +48,62 @@ jobs:
           - service: admin-console
             dockerfile: deployments/docker/Dockerfile.admin-console
             target: production
+          # Operational tools (cmd/migrate + cmd/backup) for the Helm chart's
+          # migration Job and backup CronJob.
+          - service: tools
+            dockerfile: deployments/docker/Dockerfile.tools
 
     steps:
       - uses: actions/checkout@v7
 
+      # THE BUILDER BOOTSTRAP IS ITS OWN DOCKER HUB PULL, and it is the one the
+      # retry below the build step never covered. Both of these actions fetch an
+      # image from Docker Hub before any of this repo's code is touched: QEMU
+      # pulls tonistiigi/binfmt, buildx boots moby/buildkit:buildx-stable-1. The
+      # `build (tools)` leg died at "Booting builder" with
+      #
+      #   ERROR: Error response from daemon: Head
+      #   "https://registry-1.docker.io/v2/moby/buildkit/manifests/buildx-stable-1":
+      #   ... net/http: request canceled while waiting for connection
+      #
+      # on a commit whose diff was Go files and a shell script. The job never
+      # compiled anything. The build step next to it has been retried since the
+      # alpine:3.24 502, so the resilience work covered the build and left the
+      # builder -- the two steps that have to succeed BEFORE it -- unguarded.
+      #
+      # Same shape as the build retry: the first attempt may fail, a second runs
+      # only if it did, and the second is not allowed to fail. `continue-on-error`
+      # here would be a silent pass-through if the retry were ever deleted -- the
+      # build would fall back to the default driver and quietly produce a
+      # single-arch image -- so the pairing is enforced by
+      # scripts/check-docker-retry-drift.sh, not by discipline.
       - name: Set up QEMU
+        id: qemu
+        continue-on-error: true
+        uses: docker/setup-qemu-action@v3
+
+      # Docker Hub's rate limiter and its 502s both clear on the order of
+      # seconds, and an immediate retry into a registry that is still timing
+      # out is not a retry. 30s matches the settle used below the build step.
+      - name: Let Docker Hub settle before retrying QEMU
+        if: steps.qemu.outcome == 'failure'
+        run: sleep 30
+
+      - name: Set up QEMU (retry)
+        if: steps.qemu.outcome == 'failure'
         uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
+        id: buildx
+        continue-on-error: true
+        uses: docker/setup-buildx-action@v4
+
+      - name: Let Docker Hub settle before re-booting the builder
+        if: steps.buildx.outcome == 'failure'
+        run: sleep 30
+
+      - name: Set up Docker Buildx (retry)
+        if: steps.buildx.outcome == 'failure'
         uses: docker/setup-buildx-action@v4
 
       # Only authenticate (and therefore push) for non-PR events. PRs from
@@ -91,7 +139,53 @@ jobs:
       # Multi-arch (amd64+arm64) on push so the published manifest serves both
       # platforms from one tag. On PRs build a single arch and load it locally
       # so Trivy can scan it without publishing.
+      #
+      # THE ATTEMPT IS SPELLED TWICE ON PURPOSE. Docker Hub answers the HEAD
+      # for a base-image manifest with a 502 often enough to have turned this
+      # workflow red on a commit that touched no Dockerfile: the job died in
+      # 19 seconds at "load metadata for docker.io/library/alpine:3.24",
+      # before a single layer was built, while the other nine matrix legs
+      # pulled the same images fine. GitHub Actions has no step-level retry
+      # and build-push-action has no retry input, so the first attempt is
+      # allowed to fail and the second runs only if it did. A real Dockerfile
+      # error fails both and the job still ends red -- one outage buys a
+      # second try, never a green.
+      #
+      # The two `with:` blocks MUST stay byte-identical, or the retry would
+      # build something the first attempt never tried. That is not left to
+      # discipline: scripts/check-docker-retry-drift.sh fails CI if they
+      # diverge.
       - name: Build and push
+        id: build
+        continue-on-error: true
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          target: ${{ matrix.target }}
+          # Stamp the binary version: the release tag on tag builds, otherwise
+          # the commit SHA. Surfaces in each service's /health response.
+          build-args: |
+            VERSION=${{ github.ref_type == 'tag' && github.ref_name || github.sha }}
+          platforms: ${{ github.event_name == 'pull_request' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
+          push: ${{ github.event_name != 'pull_request' }}
+          load: ${{ github.event_name == 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,scope=${{ matrix.service }},mode=max
+          provenance: ${{ github.event_name != 'pull_request' }}
+          sbom: ${{ github.event_name != 'pull_request' }}
+
+      # Long enough for a registry to finish rolling whatever it was rolling,
+      # short enough that a genuinely broken build is still red inside a
+      # minute of when it would have been.
+      - name: Let the registry settle before retrying
+        if: steps.build.outcome == 'failure'
+        run: sleep 30
+
+      - name: Build and push (retry)
+        if: steps.build.outcome == 'failure'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -141,7 +235,22 @@ jobs:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     timeout-minutes: 10
     steps:
+      # Same Docker Hub exposure as the build job's bootstrap, and worse
+      # consequences: this job is what turns a pushed :<sha> manifest into the
+      # vX.Y.Z tag a release points at, so an outage here publishes a release
+      # whose version tags do not exist. Retried for the same reason and in the
+      # same shape.
       - name: Set up Docker Buildx
+        id: buildx
+        continue-on-error: true
+        uses: docker/setup-buildx-action@v4
+
+      - name: Let Docker Hub settle before re-booting the builder
+        if: steps.buildx.outcome == 'failure'
+        run: sleep 30
+
+      - name: Set up Docker Buildx (retry)
+        if: steps.buildx.outcome == 'failure'
         uses: docker/setup-buildx-action@v4
 
       - name: Log in to GHCR
@@ -163,7 +272,7 @@ jobs:
         run: |
           for service in identity-service governance-service provisioning-service \
                          audit-service admin-api oauth-service gateway-service \
-                         access-service admin-console; do
+                         access-service admin-console tools; do
             echo "Tagging $service ${{ steps.version.outputs.version }}..."
             docker buildx imagetools create \
               --tag "${{ env.IMAGE_PREFIX }}/$service:${{ steps.version.outputs.version }}" \

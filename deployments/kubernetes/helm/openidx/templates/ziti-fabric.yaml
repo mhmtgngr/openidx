@@ -27,7 +27,12 @@ metadata:
     app.kubernetes.io/component: ziti-controller
 spec:
   serviceName: {{ include "openidx.fullname" . }}-ziti-controller
-  replicas: {{ .Values.zitiFabric.controller.replicas | default 1 }}
+  # `| default N` would be wrong here: Go templates treat 0 as empty, so an
+  # operator scaling this to zero silently got N back — which is how the
+  # kind-install job, whose values-ci.yaml sets every service to 0, still
+  # watched oauth-service scale 0 -> 2 and crash-loop. `dig` returns the value
+  # when the key is present, including 0, and the default only when absent.
+  replicas: {{ dig "replicas" 1 (.Values.zitiFabric.controller | default dict) }}
   podManagementPolicy: Parallel
   selector:
     matchLabels:
@@ -152,7 +157,12 @@ metadata:
     {{- include "openidx.labels" . | nindent 4 }}
     app.kubernetes.io/component: ziti-router
 spec:
-  replicas: {{ .Values.zitiFabric.router.replicas | default 1 }}
+  # `| default N` would be wrong here: Go templates treat 0 as empty, so an
+  # operator scaling this to zero silently got N back — which is how the
+  # kind-install job, whose values-ci.yaml sets every service to 0, still
+  # watched oauth-service scale 0 -> 2 and crash-loop. `dig` returns the value
+  # when the key is present, including 0, and the default only when absent.
+  replicas: {{ dig "replicas" 1 (.Values.zitiFabric.router | default dict) }}
   {{- include "openidx.rollingStrategy" . | nindent 2 }}
   selector:
     matchLabels:

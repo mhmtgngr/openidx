@@ -157,6 +157,13 @@ func DefaultScorerConfig() ScorerConfig {
 type Scorer struct {
 	config ScorerConfig
 	logger *zap.Logger
+	// ipThreatCheck answers whether an IP is on the install's threat list
+	// (Service.CheckIPThreatList in production). Nil scores the ip_reputation
+	// signal 0 — the shape a standalone Scorer in tests gets. It is injected
+	// rather than reached through a DB handle because the Scorer is otherwise
+	// a pure function of its inputs, and the one construction site with a DB
+	// (Service.ScoreLoginRequest) can hand over its own lookup.
+	ipThreatCheck func(ctx context.Context, ip string) (bool, string)
 }
 
 // NewScorer creates a new risk scorer with the given configuration
@@ -168,6 +175,22 @@ func NewScorer(config ScorerConfig, logger *zap.Logger) *Scorer {
 		config: config,
 		logger: logger.With(zap.String("component", "risk_scorer")),
 	}
+}
+
+// SetIPThreatCheck wires the threat-list lookup the ip_reputation signal
+// scores with. Without it the signal is inert — which is exactly the defect
+// this replaces: a placeholder that always answered "not blocked" while the
+// admin console and IBDR maintained a list nothing here read.
+func (s *Scorer) SetIPThreatCheck(fn func(ctx context.Context, ip string) (bool, string)) {
+	s.ipThreatCheck = fn
+}
+
+// ipBlocked consults the injected threat-list checker, if any.
+func (s *Scorer) ipBlocked(ctx context.Context, ip string) (bool, string) {
+	if s.ipThreatCheck == nil || ip == "" {
+		return false, ""
+	}
+	return s.ipThreatCheck(ctx, ip)
 }
 
 // CalculateRiskScore computes a comprehensive risk score from the login context
@@ -227,9 +250,7 @@ func (s *Scorer) calculateIPReputation(ctx context.Context, loginCtx LoginContex
 	score := 0.0
 	description := "IP not on blocklist"
 
-	// Check if IP is blocked - this would integrate with the IP threat list
-	// For now, we'll check the context for any pre-computed blocklist status
-	if blocked, reason := isIPBlocked(ctx, loginCtx.IPAddress); blocked {
+	if blocked, reason := s.ipBlocked(ctx, loginCtx.IPAddress); blocked {
 		score = s.config.BlocklistScore * weight
 		description = fmt.Sprintf("IP on blocklist: %s", reason)
 	}
@@ -469,14 +490,6 @@ func calculateSpeed(distanceKm float64, timeDelta time.Duration) float64 {
 		return 0
 	}
 	return distanceKm / hours
-}
-
-// isIPBlocked checks if an IP is on the blocklist
-// This would integrate with the IP threat list from the database
-func isIPBlocked(ctx context.Context, ip string) (bool, string) {
-	// This is a placeholder - in production, this would query the database
-	// or Redis for the IP threat list
-	return false, ""
 }
 
 // GetSignalSummary returns a formatted summary of all signals

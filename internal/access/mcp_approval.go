@@ -34,7 +34,7 @@ const mcpApprovalWindow = 30 * time.Minute
 // toolRequiresApproval reports whether any matching allowlist entry for this
 // principal set + tool is marked require_approval. Uses the same principal
 // expansion as toolAllowed.
-func (s *Service) toolRequiresApproval(ctx context.Context, serverID, clientID string, roles []string, tool string) bool {
+func (s *Service) toolRequiresApproval(ctx context.Context, orgID, serverID, clientID string, roles []string, tool string) bool {
 	principals := []string{"client:" + clientID}
 	for _, r := range roles {
 		principals = append(principals, "role:"+r)
@@ -43,10 +43,10 @@ func (s *Service) toolRequiresApproval(ctx context.Context, serverID, clientID s
 	if err := s.db.Pool.QueryRow(ctx, `
         SELECT EXISTS (
             SELECT 1 FROM mcp_tool_policies
-             WHERE server_id = $1 AND principal = ANY($2)
+             WHERE server_id = $1 AND org_id::text = $4 AND principal = ANY($2)
                AND (tool = $3 OR tool = '*')
                AND require_approval = true)`,
-		serverID, principals, tool).Scan(&req); err != nil {
+		serverID, principals, tool, orgID).Scan(&req); err != nil {
 		return false
 	}
 	return req
@@ -61,18 +61,20 @@ func requestHash(body []byte) string {
 // consumeApprovedToolCall atomically consumes an 'approved' approval matching
 // this (server, tool, client, request body). Returns true when a call is
 // cleared to proceed. Single-use: the row flips to 'consumed'.
-func (s *Service) consumeApprovedToolCall(ctx context.Context, serverID, tool, clientID string, body []byte) (bool, error) {
+func (s *Service) consumeApprovedToolCall(ctx context.Context, orgID, serverID, tool, clientID string, body []byte) (bool, error) {
 	var id string
 	err := s.db.Pool.QueryRow(ctx, `
         UPDATE mcp_tool_approvals SET status = 'consumed', decided_at = COALESCE(decided_at, NOW())
          WHERE id = (
             SELECT id FROM mcp_tool_approvals
              WHERE server_id = $1 AND tool = $2 AND client_id = $3 AND request_hash = $4
+               AND org_id::text = $5
                AND status = 'approved'
                AND (expires_at IS NULL OR expires_at > NOW())
              ORDER BY created_at DESC LIMIT 1)
+           AND org_id::text = $5
          RETURNING id`,
-		serverID, tool, clientID, requestHash(body)).Scan(&id)
+		serverID, tool, clientID, requestHash(body), orgID).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}
@@ -86,15 +88,27 @@ func (s *Service) consumeApprovedToolCall(ctx context.Context, serverID, tool, c
 // or returns the existing pending/approved one (idempotent so an agent polling
 // with the same body doesn't stack rows). Returns the approval id + status.
 func (s *Service) createOrGetPendingToolApproval(ctx context.Context, orgID, serverID, tool, clientID, subject string, body []byte) (string, string, error) {
+	// v118 left org_id nullable, and this INSERT used to pass it through
+	// NULLIF($1,''), so a tenantless caller wrote an approval with a NULL tenant
+	// — a row handleListPendingToolApprovals cannot see (it carries
+	// AND a.org_id = $1), so the administrator would never be shown the request
+	// and the agent would wait for a decision nobody could make. The invoke path
+	// has refused a tenantless caller since requireMCPOrg landed, so no such row
+	// can be written today; refusing here means it stays that way rather than
+	// resting on a caller.
+	if orgID == "" {
+		return "", "", errors.New("mcp approval: organization context required")
+	}
 	rh := requestHash(body)
 	var id, status string
 	err := s.db.Pool.QueryRow(ctx, `
         SELECT id, status FROM mcp_tool_approvals
          WHERE server_id = $1 AND tool = $2 AND client_id = $3 AND request_hash = $4
+           AND org_id::text = $5
            AND status IN ('pending','approved')
            AND (expires_at IS NULL OR expires_at > NOW())
          ORDER BY created_at DESC LIMIT 1`,
-		serverID, tool, clientID, rh).Scan(&id, &status)
+		serverID, tool, clientID, rh, orgID).Scan(&id, &status)
 	if err == nil {
 		return id, status, nil
 	}
@@ -104,7 +118,7 @@ func (s *Service) createOrGetPendingToolApproval(ctx context.Context, orgID, ser
 	expires := time.Now().Add(mcpApprovalWindow)
 	if err := s.db.Pool.QueryRow(ctx, `
         INSERT INTO mcp_tool_approvals (org_id, server_id, tool, client_id, subject, request_hash, status, expires_at)
-        VALUES (NULLIF($1,'')::uuid, $2, $3, $4, NULLIF($5,''), $6, 'pending', $7)
+        VALUES ($1::uuid, $2, $3, $4, NULLIF($5,''), $6, 'pending', $7)
         RETURNING id`,
 		orgID, serverID, tool, clientID, subject, rh, expires).Scan(&id); err != nil {
 		return "", "", err
@@ -117,17 +131,24 @@ func (s *Service) createOrGetPendingToolApproval(ctx context.Context, orgID, ser
 // handleListPendingToolApprovals — GET /mcp/approvals/pending (admin).
 func (s *Service) handleListPendingToolApprovals(c *gin.Context) {
 	ctx := c.Request.Context()
-	if _, err := orgctx.From(ctx); err != nil {
+	org, err := orgctx.From(ctx)
+	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
 		return
 	}
+	// mcp_tool_approvals has carried the belt since v118, so this list was
+	// already scoped by the database; the explicit terms are the defence in
+	// depth a background caller under orgctx.WithBypassRLS would otherwise lose.
+	// The join predicate goes in the WHERE, not the ON: a tenant term on a LEFT
+	// JOIN's ON filters nothing, which is the v155 lesson.
 	rows, err := s.db.Pool.Query(ctx, `
         SELECT a.id, a.server_id, COALESCE(m.name,''), a.tool, a.client_id, COALESCE(a.subject,''),
                a.created_at, a.expires_at
           FROM mcp_tool_approvals a
           LEFT JOIN mcp_servers m ON m.id = a.server_id
          WHERE a.status = 'pending' AND (a.expires_at IS NULL OR a.expires_at > NOW())
-         ORDER BY a.created_at ASC`)
+           AND a.org_id = $1 AND (m.id IS NULL OR m.org_id = $1)
+         ORDER BY a.created_at ASC`, org.ID)
 	if err != nil {
 		s.logger.Error("handleListPendingToolApprovals: query failed", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list pending approvals"})
@@ -172,20 +193,25 @@ func (s *Service) handleDecideToolApproval(c *gin.Context) {
 		return
 	}
 	ctx := c.Request.Context()
-	if _, err := orgctx.From(ctx); err != nil {
+	org, oerr := orgctx.From(ctx)
+	if oerr != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
 		return
 	}
 	approver := c.GetString("user_id")
 
+	// The organization resolved above used to be discarded, and this UPDATE
+	// addressed the row by the bare id from the URL — the shape guacamole.go's
+	// own comment calls "the whole security of this handler", here on the
+	// approve/deny of an AI agent's tool call.
 	var serverID, tool, clientID string
 	err := s.db.Pool.QueryRow(ctx, `
         UPDATE mcp_tool_approvals
            SET status = $2, approver_id = $3, decided_at = NOW()
-         WHERE id = $1 AND status = 'pending'
+         WHERE id = $1 AND org_id::text = $4 AND status = 'pending'
            AND (expires_at IS NULL OR expires_at > NOW())
          RETURNING server_id::text, tool, client_id`,
-		id, newStatus, approver).Scan(&serverID, &tool, &clientID)
+		id, newStatus, approver, org.ID).Scan(&serverID, &tool, &clientID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		c.JSON(http.StatusConflict, gin.H{"error": "approval is not pending, already decided, or expired"})
 		return
@@ -214,11 +240,11 @@ type mcpApprovalContext struct {
 // approval exists). When approval is required and not yet granted it writes the
 // 202/403 response itself and returns (false, nil).
 func (s *Service) gateToolCall(ctx context.Context, c *gin.Context, ac mcpApprovalContext, roles []string, body []byte) (bool, error) {
-	if !s.toolRequiresApproval(ctx, ac.ServerID, ac.ClientID, roles, ac.Tool) {
+	if !s.toolRequiresApproval(ctx, ac.OrgID, ac.ServerID, ac.ClientID, roles, ac.Tool) {
 		return true, nil
 	}
 	// Already approved for this exact call? Consume and proceed.
-	ok, err := s.consumeApprovedToolCall(ctx, ac.ServerID, ac.Tool, ac.ClientID, body)
+	ok, err := s.consumeApprovedToolCall(ctx, ac.OrgID, ac.ServerID, ac.Tool, ac.ClientID, body)
 	if err != nil {
 		return false, err
 	}
@@ -232,7 +258,7 @@ func (s *Service) gateToolCall(ctx context.Context, c *gin.Context, ac mcpApprov
 	}
 	if status == "approved" {
 		// Race: approved between the consume attempt and now — consume again.
-		if ok, _ := s.consumeApprovedToolCall(ctx, ac.ServerID, ac.Tool, ac.ClientID, body); ok {
+		if ok, _ := s.consumeApprovedToolCall(ctx, ac.OrgID, ac.ServerID, ac.Tool, ac.ClientID, body); ok {
 			return true, nil
 		}
 	}

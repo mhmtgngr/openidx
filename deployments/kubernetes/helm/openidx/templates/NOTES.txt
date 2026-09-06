@@ -1,5 +1,31 @@
 OpenIDX has been deployed successfully!
 
+{{- if .Values.migrations.enabled }}
+
+Database schema: the migration Job ran (or is running) as a post-install
+hook — check it with:
+  kubectl logs -l app.kubernetes.io/instance={{ .Release.Name }},app.kubernetes.io/component=migrate
+Services may restart a few times on a fresh install until the schema lands;
+that converges on its own.
+{{- else }}
+
+NOTE: migrations.enabled=false — run migrations out-of-band (cmd/migrate)
+before the services can become ready.
+{{- end }}
+
+First login: the seed migration creates the initial admin account — see
+docs/GETTING-STARTED.md ("First Login") and rotate the password
+immediately. Production services refuse to start while the seeded
+default still works.
+
+{{- if and .Values.opa.enabled (not .Values.opa.policyConfigMap) }}
+
+NOTE: OPA is running WITHOUT policies (opa.policyConfigMap is empty), so
+governance policy queries evaluate to undefined. Load the bundle with:
+  kubectl create configmap opa-policies --from-file=deployments/docker/opa/policies/
+and set opa.policyConfigMap=opa-policies.
+{{- end }}
+
 {{- if .Values.ingress.enabled }}
 
 API is available at:

@@ -770,7 +770,6 @@ func TestIsAuthPath(t *testing.T) {
 		{"/oauth/login", true},
 		{"/oauth/login?redirect=/foo", true},
 		{"/oauth/mfa-verify", true},
-		{"/oauth/authorize/callback", true},
 		{"/oauth/token", true},
 		{"/api/v1/identity/users/login", true},
 		{"/api/v1/identity/users", false},

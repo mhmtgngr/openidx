@@ -115,16 +115,23 @@ func TestIBDRContinuousAuth_RealTables(t *testing.T) {
 
 	t.Run("device risk reads known_devices", func(t *testing.T) {
 		authCtx := &AuthContext{UserID: userX, DeviceFingerprint: "fp-ca-1"}
-		if got := ca.calculateDeviceRisk(ctxA, authCtx); got != 25 {
-			t.Fatalf("unknown device: want 25, got %v", got)
+		if got, measured := ca.calculateDeviceRisk(ctxA, authCtx); got != 25 || !measured {
+			t.Fatalf("unknown device: want 25/measured, got %v/%v", got, measured)
 		}
 		exec(`INSERT INTO known_devices (user_id, fingerprint, trusted, org_id) VALUES ($1, 'fp-ca-1', true, $2)`, userX, orgA)
-		if got := ca.calculateDeviceRisk(ctxA, authCtx); got != 0 {
-			t.Fatalf("trusted device: want 0, got %v", got)
+		if got, measured := ca.calculateDeviceRisk(ctxA, authCtx); got != 0 || !measured {
+			t.Fatalf("trusted device: want 0/measured, got %v/%v", got, measured)
 		}
 		// Org B must not see org A's device.
-		if got := ca.calculateDeviceRisk(ctxB, authCtx); got != 25 {
-			t.Fatalf("cross-org device: want 25, got %v", got)
+		if got, measured := ca.calculateDeviceRisk(ctxB, authCtx); got != 25 || !measured {
+			t.Fatalf("cross-org device: want 25/measured, got %v/%v", got, measured)
+		}
+		// With no fingerprint the factor reports "not measured" and contributes
+		// nothing, rather than asserting the 25 of an unknown device on every
+		// session. sessions carries no fingerprint today, so this is the live
+		// path until one is recorded at login.
+		if got, measured := ca.calculateDeviceRisk(ctxA, &AuthContext{UserID: userX}); got != 0 || measured {
+			t.Fatalf("no fingerprint: want 0/unmeasured, got %v/%v", got, measured)
 		}
 	})
 

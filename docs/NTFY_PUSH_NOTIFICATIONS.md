@@ -46,7 +46,7 @@ every user's topic; subscribers re-fetch push-config.
 ## Mobile app subscription
 
 The OpenIDX mobile app subscribes automatically
-(`mobile/src/features/notifications/push.ts`, mounted in the authenticated
+(the client's notification subscriber, mounted in the authenticated
 app group): it fetches push-config with its session token, opens a WebSocket
 to `{base}/{topic}/ws`, and shows each message as a local notification
 (expo-notifications) — tapping opens the in-app notification list.

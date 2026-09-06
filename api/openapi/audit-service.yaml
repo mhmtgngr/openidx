@@ -1,8 +1,16 @@
 openapi: 3.0.3
 info:
   title: OpenIDX Audit Service
-  description: Audit event logging, compliance reporting, and export.
-  version: 0.1.0
+  description: |
+    Audit event logging, compliance reporting, and export.
+
+    Every route cmd/audit-service mounts appears here, and nothing
+    that is not mounted does: test/openapi/service_spec_coverage_test.go compares
+    this file against the live route table in both directions. Operations carry an
+    `x-openidx-handler` extension naming the Go handler that serves them; where a
+    payload shape is not yet pinned the body is shown as a free-form JSON object
+    rather than invented.
+  version: 1.34.0
   license:
     name: Apache 2.0
     url: https://www.apache.org/licenses/LICENSE-2.0
@@ -16,9 +24,12 @@ security:
 
 tags:
   - name: Audit Events
-  - name: Statistics
   - name: Compliance Reports
+  - name: Events
   - name: Export
+  - name: Reports
+  - name: Statistics
+  - name: Usage
 
 paths:
   /api/v1/audit/events:
@@ -26,7 +37,39 @@ paths:
       tags: [Audit Events]
       summary: List audit events
       operationId: listEvents
-      parameters:
+      responses:
+    BadRequest:
+      description: The request was malformed or failed validation
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: No valid bearer token was presented
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: The caller is authenticated but not permitted
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: No such resource in the caller's organization
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    ServerError:
+      description: The request could not be completed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  parameters:
         - name: event_type
           in: query
           schema:
@@ -251,6 +294,162 @@ paths:
                 items:
                   $ref: '#/components/schemas/AuditEvent'
 
+  /api/v1/audit/events/search:
+    get:
+      tags: [Events]
+      summary: Search events
+      operationId: searchEvents
+      x-openidx-handler: internal/audit.(*Service).handleSearchEvents
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/audit/reports/gdpr-detailed:
+    post:
+      tags: [Reports]
+      summary: Generate gdpr report
+      operationId: generateGDPRReport
+      x-openidx-handler: internal/audit.(*Service).handleGenerateGDPRReport
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/audit/reports/iso27001-detailed:
+    post:
+      tags: [Reports]
+      summary: Generate iso 27001 detailed V 2
+      operationId: generateISO27001DetailedV2
+      x-openidx-handler: internal/audit.(*Service).handleGenerateISO27001DetailedV2
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/audit/reports/soc2-detailed:
+    post:
+      tags: [Reports]
+      summary: Generate soc 2 detailed V 2
+      operationId: generateSOC2DetailedV2
+      x-openidx-handler: internal/audit.(*Service).handleGenerateSOC2DetailedV2
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/audit/reports/{id}/evidence:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    get:
+      tags: [Reports]
+      summary: Download evidence
+      operationId: downloadEvidence
+      x-openidx-handler: internal/audit.(*Service).handleDownloadEvidence
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/audit/usage:
+    get:
+      tags: [Usage]
+      summary: Get usage
+      operationId: getUsage
+      x-openidx-handler: internal/audit.(*Service).handleGetUsage
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
 components:
   securitySchemes:
     bearerAuth:
@@ -267,6 +466,15 @@ components:
         type: string
 
   schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+          description: A short machine-readable reason
+        error_description:
+          type: string
+          description: Operator-facing detail, when the handler has one
     AuditEvent:
       type: object
       properties:

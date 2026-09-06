@@ -2,12 +2,16 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:openidx_client/mobile/push_token_service.dart';
 
-/// Verifies [PushTokenService] transport selection: a real FCM token when a
-/// Firebase fetcher is wired, otherwise the always-on ntfy synthetic-token
-/// fallback with a stable per-install id.
+/// Verifies [PushTokenService]: an enrolled phone registers with a stable
+/// `ntfy:` synthetic token, and a desktop host registers nothing.
 ///
-/// > Written, not built here: no Flutter SDK in this checkout. Runs in CI via
-/// > `.github/workflows/client-mobile-build.yml` (`flutter test`).
+/// The platform resolver is injected so the mobile branch actually runs here.
+/// The previous version of this file wrapped every assertion in
+/// `if (tok != null)`, and because `flutter test` runs on the desktop host that
+/// condition was always false — three green tests that asserted nothing.
+///
+/// > Runs in CI via `.github/workflows/client-mobile-build.yml` and
+/// > `client-desktop-build.yml` (`flutter test`).
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -43,40 +47,46 @@ void main() {
         .setMockMethodCallHandler(storageChannel, null);
   });
 
-  test('uses the FCM token when a Firebase fetcher yields one', () async {
-    final svc = PushTokenService(firebaseTokenFetcher: () async => 'real-fcm');
-    final tok = await svc.resolve();
-    // Platform in the test host is not android/ios, so resolve() returns null —
-    // guard the assertion to the mobile branch only. On a mobile CI host this
-    // would assert the FCM transport; here we assert the desktop no-op.
-    if (tok != null) {
-      expect(tok.transport, Transport.fcm);
-      expect(tok.token, 'real-fcm');
-    }
+  PushTokenService mobile(String platform) =>
+      PushTokenService(platformResolver: () => platform);
+
+  test('registers an ntfy synthetic token on Android', () async {
+    final tok = await mobile('android').resolve();
+    expect(tok, isNotNull);
+    expect(tok!.platform, 'android');
+    expect(tok.token, startsWith('ntfy:'));
+    // 16 random bytes, hex-encoded, after the prefix.
+    expect(tok.token.substring('ntfy:'.length), matches(RegExp(r'^[0-9a-f]{32}$')));
   });
 
-  test('falls back to a stable ntfy synthetic id when no Firebase', () async {
-    final svc = PushTokenService();
-    final a = await svc.resolve();
-    final b = await svc.resolve();
-    if (a != null && b != null) {
-      // Mobile host: ntfy transport, stable id across calls.
-      expect(a.transport, Transport.ntfy);
-      expect(a.token.startsWith('ntfy:'), isTrue);
-      expect(a.token, b.token);
-    } else {
-      // Desktop host: no push authenticator.
-      expect(a, isNull);
-    }
+  test('registers an ntfy synthetic token on iOS', () async {
+    final tok = await mobile('ios').resolve();
+    expect(tok, isNotNull);
+    expect(tok!.platform, 'ios');
+    expect(tok.token, startsWith('ntfy:'));
   });
 
-  test('a throwing Firebase fetcher degrades instead of throwing', () async {
-    final svc = PushTokenService(
-        firebaseTokenFetcher: () async => throw Exception('firebase down'));
-    // Must not throw regardless of platform.
-    final tok = await svc.resolve();
-    if (tok != null) {
-      expect(tok.transport, Transport.ntfy);
-    }
+  test('the synthetic id is stable across calls and instances', () async {
+    final first = await mobile('android').resolve();
+    final again = await mobile('android').resolve();
+    // A fresh service instance must read the persisted id, not mint a new one:
+    // re-enrolling the same phone updates its device row instead of adding one.
+    final fresh = await mobile('android').resolve();
+
+    expect(first!.token, again!.token);
+    expect(first.token, fresh!.token);
+  });
+
+  test('a fresh install mints a new id rather than reusing a blank', () async {
+    final first = await mobile('android').resolve();
+    store.clear(); // uninstall / keychain wiped
+    final second = await mobile('android').resolve();
+    expect(second!.token, isNot(first!.token));
+    expect(second.token, startsWith('ntfy:'));
+  });
+
+  test('desktop is not a push authenticator', () async {
+    final svc = PushTokenService(platformResolver: () => null);
+    expect(await svc.resolve(), isNull);
   });
 }

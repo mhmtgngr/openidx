@@ -142,13 +142,13 @@ func (s *Service) handleAccessOverview(c *gin.Context) {
 		routes = append(routes, r)
 	}
 
-	// Feature health, org-scoped via join (service_features has no org_id).
+	// Feature health. v162 gave service_features its own org_id, so this no
+	// longer has to reach through proxy_routes to find the tenant.
 	fRows, ferr := s.db.Pool.Query(ctx, `
 		SELECT sf.route_id, sf.feature_name, COALESCE(sf.enabled, false),
 		       COALESCE(sf.status, ''), COALESCE(sf.health_status, '')
 		FROM service_features sf
-		JOIN proxy_routes pr ON pr.id = sf.route_id
-		WHERE pr.org_id = $1`, org.ID)
+		WHERE sf.org_id = $1`, org.ID)
 	if ferr != nil {
 		s.logger.Warn("overview: failed to query feature health", zap.Error(ferr))
 	} else {

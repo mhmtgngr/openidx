@@ -82,12 +82,15 @@ Shared utilities used across all services.
 - `config` - Configuration loading from environment and files
 - `errors` - Standardized error handling
 
-## Go Doc Online
+## Go Doc (local)
 
-Full package documentation is available at:
+The module path (`github.com/openidx/openidx`) is not a published Go
+module, so browse package documentation from a checkout:
 
-```
-https://pkg.go.dev/github.com/openidx/openidx
+```bash
+go doc ./internal/identity
+# or a browsable server on :6060
+go run golang.org/x/tools/cmd/godoc@latest -http=:6060
 ```
 
 ## Contributing to Documentation

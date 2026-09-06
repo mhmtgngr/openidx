@@ -1,4 +1,5 @@
 import { ReactNode, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogFooter,
   AlertDialogTitle, AlertDialogDescription, AlertDialogAction, AlertDialogCancel,
@@ -22,9 +23,10 @@ interface ConfirmActionProps {
  * Security-critical actions pass `requireReason` so the confirmation is auditable.
  */
 export function ConfirmAction({
-  title, description, impact, confirmLabel = 'Confirm',
+  title, description, impact, confirmLabel,
   destructive, requireReason, onConfirm, children,
 }: ConfirmActionProps) {
+  const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const [reason, setReason] = useState('')
   const [busy, setBusy] = useState(false)
@@ -53,23 +55,23 @@ export function ConfirmAction({
           {impact}
           {requireReason && (
             <div className="space-y-1">
-              <Label htmlFor="confirm-reason">Reason (required)</Label>
+              <Label htmlFor="confirm-reason">{t('components.confirmAction.reasonLabel')}</Label>
               <Textarea
                 id="confirm-reason"
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
-                placeholder="Why are you doing this? (recorded in the audit log)"
+                placeholder={t('components.confirmAction.reasonPlaceholder')}
               />
             </div>
           )}
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={busy}>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction
               disabled={disabled}
               onClick={(e) => { e.preventDefault(); void handleConfirm() }}
               className={destructive ? 'bg-red-600 hover:bg-red-700 focus:ring-red-600' : undefined}
             >
-              {confirmLabel}
+              {confirmLabel ?? t('components.confirmAction.confirm')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

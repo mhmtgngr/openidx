@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import { Plus, Search, MoreHorizontal, Edit, Trash2, ChevronLeft, ChevronRight, KeyRound, Shield, ExternalLink } from 'lucide-react'
 import { PROVIDER_TEMPLATES, ProviderTemplate } from '../lib/provider-templates'
 import { GoogleIcon, GitHubIcon, MicrosoftIcon } from '../components/icons/social-providers'
@@ -83,6 +84,7 @@ const emptyForm: ProviderFormData = {
 export function IdentityProvidersPage() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const { t } = useTranslation()
   const [search, setSearch] = useState('')
   const [addModal, setAddModal] = useState(false)
   const [editModal, setEditModal] = useState(false)
@@ -124,10 +126,10 @@ export function IdentityProvidersPage() {
       queryClient.invalidateQueries({ queryKey: ['identity-providers'] })
       setAddModal(false)
       setFormData(emptyForm)
-      toast({ title: 'Identity provider created successfully' })
+      toast({ title: t('pages.identityProviders.toasts.created') })
     },
     onError: () => {
-      toast({ title: 'Error', description: 'Failed to create identity provider.', variant: 'destructive' })
+      toast({ title: t('common.error'), description: t('pages.identityProviders.toasts.createFailed'), variant: 'destructive' })
     },
   })
 
@@ -148,10 +150,10 @@ export function IdentityProvidersPage() {
       queryClient.invalidateQueries({ queryKey: ['identity-providers'] })
       setEditModal(false)
       setSelectedProvider(null)
-      toast({ title: 'Identity provider updated successfully' })
+      toast({ title: t('pages.identityProviders.toasts.updated') })
     },
     onError: () => {
-      toast({ title: 'Error', description: 'Failed to update identity provider.', variant: 'destructive' })
+      toast({ title: t('common.error'), description: t('pages.identityProviders.toasts.updateFailed'), variant: 'destructive' })
     },
   })
 
@@ -159,10 +161,10 @@ export function IdentityProvidersPage() {
     mutationFn: (id: string) => api.deleteIdentityProvider(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['identity-providers'] })
-      toast({ title: 'Identity provider deleted successfully' })
+      toast({ title: t('pages.identityProviders.toasts.deleted') })
     },
     onError: () => {
-      toast({ title: 'Error', description: 'Failed to delete identity provider.', variant: 'destructive' })
+      toast({ title: t('common.error'), description: t('pages.identityProviders.toasts.deleteFailed'), variant: 'destructive' })
     },
   })
 
@@ -227,27 +229,27 @@ export function IdentityProvidersPage() {
   }
 
   if (isError) {
-    return <QueryError error={error} resource="identity providers" />
+    return <QueryError error={error} resource={t('pages.identityProviders.resourceName')} />
   }
 
   const formContent = (
     <div className="space-y-4">
       <div>
-        <Label htmlFor="name">Name</Label>
+        <Label htmlFor="name">{t('pages.identityProviders.form.name')}</Label>
         <Input
           id="name"
           value={formData.name}
           onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-          placeholder="Provider name"
+          placeholder={t('pages.identityProviders.form.namePlaceholder')}
         />
       </div>
       <div>
-        <Label>Provider Type</Label>
+        <Label htmlFor="identity-providers-provider-type">{t('pages.identityProviders.form.providerType')}</Label>
         <Select
           value={formData.provider_type}
           onValueChange={(v) => setFormData({ ...formData, provider_type: v as 'oidc' | 'saml' })}
         >
-          <SelectTrigger>
+          <SelectTrigger id="identity-providers-provider-type">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -257,7 +259,7 @@ export function IdentityProvidersPage() {
         </Select>
       </div>
       <div>
-        <Label htmlFor="issuer_url">Issuer URL</Label>
+        <Label htmlFor="issuer_url">{t('pages.identityProviders.form.issuerUrl')}</Label>
         <Input
           id="issuer_url"
           value={formData.issuer_url}
@@ -266,26 +268,26 @@ export function IdentityProvidersPage() {
         />
       </div>
       <div>
-        <Label htmlFor="client_id">Client ID</Label>
+        <Label htmlFor="client_id">{t('pages.identityProviders.form.clientId')}</Label>
         <Input
           id="client_id"
           value={formData.client_id}
           onChange={(e) => setFormData({ ...formData, client_id: e.target.value })}
-          placeholder="Client ID"
+          placeholder={t('pages.identityProviders.form.clientIdPlaceholder')}
         />
       </div>
       <div>
-        <Label htmlFor="client_secret">Client Secret</Label>
+        <Label htmlFor="client_secret">{t('pages.identityProviders.form.clientSecret')}</Label>
         <SecretField
           id="client_secret"
           mode={editModal ? 'edit' : 'create'}
           value={formData.client_secret}
           onChange={(v, changed) => setFormData({ ...formData, client_secret: v, client_secret_changed: changed })}
-          placeholder="Client secret"
+          placeholder={t('pages.identityProviders.form.clientSecretPlaceholder')}
         />
       </div>
       <div>
-        <Label htmlFor="scopes">Scopes (comma-separated)</Label>
+        <Label htmlFor="scopes">{t('pages.identityProviders.form.scopes')}</Label>
         <Input
           id="scopes"
           value={formData.scopes}
@@ -294,18 +296,18 @@ export function IdentityProvidersPage() {
         />
       </div>
       <div className="flex items-center gap-2">
-        <Switch
+        <Switch id="identity-providers-enabled"
           checked={formData.enabled}
           onCheckedChange={(checked) => setFormData({ ...formData, enabled: checked })}
         />
-        <Label>Enabled</Label>
+        <Label htmlFor="identity-providers-enabled">{t('pages.identityProviders.form.enabled')}</Label>
       </div>
       <div className="flex justify-end gap-2 pt-4">
         <Button variant="outline" onClick={() => { setAddModal(false); setEditModal(false) }}>
-          Cancel
+          {t('common.cancel')}
         </Button>
         <Button onClick={handleFormSubmit} disabled={createMutation.isPending || updateMutation.isPending}>
-          {editModal ? 'Update' : 'Create'}
+          {editModal ? t('pages.identityProviders.form.update') : t('pages.identityProviders.form.create')}
         </Button>
       </div>
     </div>
@@ -314,18 +316,18 @@ export function IdentityProvidersPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Identity Providers</h1>
+        <h1 className="text-2xl font-bold">{t('nav.items.identityProviders')}</h1>
         <Button onClick={handleAdd}>
           <Plus className="h-4 w-4 mr-2" />
-          Add Provider
+          {t('pages.identityProviders.addProvider')}
         </Button>
       </div>
 
       <Card>
         <CardHeader>
-          <CardTitle>Quick Setup</CardTitle>
+          <CardTitle>{t('pages.identityProviders.quickSetup.title')}</CardTitle>
           <CardDescription>
-            Add a popular identity provider with pre-configured settings. You only need your Client ID and Client Secret.
+            {t('pages.identityProviders.quickSetup.description')}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -343,7 +345,7 @@ export function IdentityProvidersPage() {
                 >
                   {IconComponent && <IconComponent className="h-8 w-8" />}
                   <span className="font-medium text-sm">{template.name}</span>
-                  <span className="text-xs text-muted-foreground text-center">{template.description}</span>
+                  <span className="text-xs text-muted-foreground text-center">{t(template.descriptionKey)}</span>
                 </button>
               )
             })}
@@ -352,16 +354,16 @@ export function IdentityProvidersPage() {
               className="flex flex-col items-center gap-2 p-4 border rounded-lg hover:border-blue-400 hover:bg-blue-50/50 dark:hover:bg-blue-950/20 transition-colors"
             >
               <KeyRound className="h-8 w-8 text-muted-foreground" />
-              <span className="font-medium text-sm">Custom OIDC</span>
-              <span className="text-xs text-muted-foreground text-center">Any OIDC-compliant provider</span>
+              <span className="font-medium text-sm">{t('pages.identityProviders.quickSetup.customOidc')}</span>
+              <span className="text-xs text-muted-foreground text-center">{t('pages.identityProviders.quickSetup.customOidcDesc')}</span>
             </button>
             <button
               onClick={() => { setSelectedTemplate(null); setFormData({ ...emptyForm, provider_type: 'saml' }); setAddModal(true) }}
               className="flex flex-col items-center gap-2 p-4 border rounded-lg hover:border-blue-400 hover:bg-blue-50/50 dark:hover:bg-blue-950/20 transition-colors"
             >
               <Shield className="h-8 w-8 text-muted-foreground" />
-              <span className="font-medium text-sm">Custom SAML</span>
-              <span className="text-xs text-muted-foreground text-center">Any SAML 2.0 provider</span>
+              <span className="font-medium text-sm">{t('pages.identityProviders.quickSetup.customSaml')}</span>
+              <span className="text-xs text-muted-foreground text-center">{t('pages.identityProviders.quickSetup.customSamlDesc')}</span>
             </button>
           </div>
         </CardContent>
@@ -369,9 +371,9 @@ export function IdentityProvidersPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Configured Providers</CardTitle>
+          <CardTitle>{t('pages.identityProviders.configured.title')}</CardTitle>
           <CardDescription>
-            Manage external identity providers for Single Sign-On (SSO).
+            {t('pages.identityProviders.configured.description')}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -379,7 +381,7 @@ export function IdentityProvidersPage() {
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="Search providers..."
+                placeholder={t('pages.identityProviders.searchPlaceholder')}
                 value={search}
                 onChange={(e) => { setSearch(e.target.value); setPage(0) }}
                 className="pl-10"
@@ -390,18 +392,18 @@ export function IdentityProvidersPage() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Type</TableHead>
-                <TableHead>Issuer URL</TableHead>
-                <TableHead>Enabled</TableHead>
-                <TableHead>Actions</TableHead>
+                <TableHead>{t('pages.identityProviders.table.name')}</TableHead>
+                <TableHead>{t('pages.identityProviders.table.type')}</TableHead>
+                <TableHead>{t('pages.identityProviders.table.issuerUrl')}</TableHead>
+                <TableHead>{t('pages.identityProviders.table.enabled')}</TableHead>
+                <TableHead>{t('pages.identityProviders.table.actions')}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filteredProviders.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={5} className="text-center">
-                    No identity providers found.
+                    {t('pages.identityProviders.empty')}
                   </TableCell>
                 </TableRow>
               ) : (
@@ -416,7 +418,7 @@ export function IdentityProvidersPage() {
                     <TableCell className="max-w-xs truncate">{provider.issuer_url}</TableCell>
                     <TableCell>
                       <Badge variant={provider.enabled ? 'default' : 'secondary'}>
-                        {provider.enabled ? 'Enabled' : 'Disabled'}
+                        {provider.enabled ? t('pages.identityProviders.enabled') : t('pages.identityProviders.disabled')}
                       </Badge>
                     </TableCell>
                     <TableCell>
@@ -429,11 +431,11 @@ export function IdentityProvidersPage() {
                         <DropdownMenuContent align="end">
                           <DropdownMenuItem onClick={() => handleEdit(provider)}>
                             <Edit className="mr-2 h-4 w-4" />
-                            Edit
+                            {t('pages.directories.menu.edit')}
                           </DropdownMenuItem>
                           <DropdownMenuItem onClick={() => handleDelete(provider)} className="text-red-600">
                             <Trash2 className="mr-2 h-4 w-4" />
-                            Delete
+                            {t('common.delete')}
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
@@ -447,7 +449,7 @@ export function IdentityProvidersPage() {
           {totalCount > PAGE_SIZE && (
             <div className="flex items-center justify-between pt-4">
               <span className="text-sm text-muted-foreground">
-                Page {page + 1} of {Math.ceil(totalCount / PAGE_SIZE)}
+                {t('common.pagination.pageOf', { page: page + 1, pages: Math.ceil(totalCount / PAGE_SIZE) })}
               </span>
               <div className="flex gap-2">
                 <Button
@@ -457,7 +459,7 @@ export function IdentityProvidersPage() {
                   disabled={page === 0}
                 >
                   <ChevronLeft className="h-4 w-4 mr-1" />
-                  Previous
+                  {t('common.pagination.previous')}
                 </Button>
                 <Button
                   variant="outline"
@@ -465,7 +467,7 @@ export function IdentityProvidersPage() {
                   onClick={() => setPage((p) => p + 1)}
                   disabled={(page + 1) * PAGE_SIZE >= totalCount}
                 >
-                  Next
+                  {t('common.pagination.next')}
                   <ChevronRight className="h-4 w-4 ml-1" />
                 </Button>
               </div>
@@ -479,7 +481,9 @@ export function IdentityProvidersPage() {
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>
-              {selectedTemplate ? `Add ${selectedTemplate.name} Provider` : 'Add Identity Provider'}
+              {selectedTemplate
+                ? t('pages.identityProviders.addDialog.titleTemplate', { name: selectedTemplate.name })
+                : t('pages.identityProviders.addDialog.title')}
             </DialogTitle>
             {selectedTemplate && (
               <a
@@ -488,7 +492,7 @@ export function IdentityProvidersPage() {
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
               >
-                Setup guide <ExternalLink className="h-3 w-3" />
+                {t('pages.identityProviders.addDialog.setupGuide')} <ExternalLink className="h-3 w-3" />
               </a>
             )}
           </DialogHeader>
@@ -500,7 +504,7 @@ export function IdentityProvidersPage() {
       <Dialog open={editModal} onOpenChange={setEditModal}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>Edit Identity Provider</DialogTitle>
+            <DialogTitle>{t('pages.identityProviders.editDialog.title')}</DialogTitle>
           </DialogHeader>
           {formContent}
         </DialogContent>
@@ -510,15 +514,15 @@ export function IdentityProvidersPage() {
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+            <AlertDialogTitle>{t('common.areYouSure')}</AlertDialogTitle>
             <AlertDialogDescription>
-              {deleteTarget ? `Are you sure you want to delete identity provider "${deleteTarget.name}"? This action cannot be undone.` : ''}
+              {deleteTarget ? t('pages.identityProviders.deleteDialog.description', { name: deleteTarget.name }) : ''}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction onClick={() => { if (deleteTarget) { deleteMutation.mutate(deleteTarget.id); setDeleteTarget(null) } }}>
-              Delete
+              {t('common.delete')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

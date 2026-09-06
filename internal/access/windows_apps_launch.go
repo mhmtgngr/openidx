@@ -15,6 +15,8 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 // launchAppRow is the app data needed to launch: identity, target, params,
@@ -291,7 +293,7 @@ func (s *Service) endPamSession(ctx context.Context, orgID, sessionID string) {
 	if _, err := s.db.Pool.Exec(ctx,
 		`UPDATE pam_entry_sessions SET status = 'ended', ended_at = NOW()
 		  WHERE id = $1 AND org_id = $2 AND status = 'active'`, sessionID, orgID); err != nil {
-		s.logger.Warn("endPamSession: update failed", zap.String("session_id", scrubLogValue(sessionID)), zap.Error(err))
+		s.logger.Warn("endPamSession: update failed", zap.String("session_id", logsafe.Clean(sessionID)), zap.Error(err))
 	}
 }
 
@@ -643,7 +645,7 @@ func (s *Service) importDiscoveredApps(ctx context.Context, orgID, hostEntryID s
 			RETURNING (xmax = 0)`,
 			orgID, hostEntryID, alias, name, a.Path, a.Args, a.WorkingDir, icon, verified, userID).Scan(&wasInsert)
 		if err != nil {
-			s.logger.Warn("importDiscoveredApps: upsert failed", zap.String("alias", scrubLogValue(alias)), zap.Error(err))
+			s.logger.Warn("importDiscoveredApps: upsert failed", zap.String("alias", logsafe.Clean(alias)), zap.Error(err))
 			continue
 		}
 		if wasInsert {

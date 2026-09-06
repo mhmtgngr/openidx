@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import {
   ShieldAlert, AlertTriangle, Activity, Plane, TrendingUp, Users, Clock,
 } from 'lucide-react'
@@ -75,12 +76,12 @@ function bucketColor(min: number): string {
   return 'bg-green-500'
 }
 
-function bucketLabel(min: number): string {
-  if (min >= 81) return 'Critical'
-  if (min >= 61) return 'High'
-  if (min >= 41) return 'Medium'
-  if (min >= 21) return 'Medium-Low'
-  return 'Low'
+function bucketLabelKey(min: number): string {
+  if (min >= 81) return 'critical'
+  if (min >= 61) return 'high'
+  if (min >= 41) return 'medium'
+  if (min >= 21) return 'mediumLow'
+  return 'low'
 }
 
 function riskScoreColor(score: number): string {
@@ -91,6 +92,7 @@ function riskScoreColor(score: number): string {
 }
 
 export function RiskDashboardPage() {
+  const { t } = useTranslation()
   const { data: riskData, isLoading: riskLoading, isError: riskError, error: riskErrorObj } = useQuery<{ risk: RiskOverview } | { risk: null }>({
     queryKey: ['risk-overview'],
     queryFn: async () => {
@@ -172,13 +174,13 @@ export function RiskDashboardPage() {
   }
 
   if (riskError) {
-    return <QueryError error={riskErrorObj} resource="the risk dashboard" />
+    return <QueryError error={riskErrorObj} resource={t('pages.riskDashboard.resourceName')} />
   }
 
   if (!risk) {
     return (
       <div className="text-center py-12 text-muted-foreground">
-        No risk data available
+        {t('pages.riskDashboard.noData')}
       </div>
     )
   }
@@ -192,17 +194,15 @@ export function RiskDashboardPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight">Risk Dashboard</h1>
-        <p className="text-muted-foreground">
-          Security risk overview, threat indicators, and anomaly detection
-        </p>
+        <h1 className="text-2xl font-bold tracking-tight">{t('nav.items.riskDashboard')}</h1>
+        <p className="text-muted-foreground">{t('pages.riskDashboard.subtitle')}</p>
       </div>
 
       {/* Summary Cards */}
       <div className="grid gap-4 md:grid-cols-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Avg Risk Score</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('pages.riskDashboard.stats.avgRisk')}</CardTitle>
             <Activity className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -221,13 +221,13 @@ export function RiskDashboardPage() {
                 style={{ width: `${risk.avg_risk_score}%` }}
               />
             </div>
-            <p className="text-xs text-muted-foreground mt-1">Out of 100</p>
+            <p className="text-xs text-muted-foreground mt-1">{t('pages.riskDashboard.stats.outOf100')}</p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">High Risk Logins (24h)</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('pages.riskDashboard.stats.highRisk24h')}</CardTitle>
             <AlertTriangle className="h-4 w-4 text-orange-500" />
           </CardHeader>
           <CardContent>
@@ -235,14 +235,14 @@ export function RiskDashboardPage() {
               {risk.high_risk_logins_24h}
             </div>
             <p className="text-xs text-muted-foreground mt-1">
-              Risk score above 60
+              {t('pages.riskDashboard.stats.highRiskHint')}
             </p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Active Alerts</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('pages.riskDashboard.stats.activeAlerts')}</CardTitle>
             <ShieldAlert className="h-4 w-4 text-red-500" />
           </CardHeader>
           <CardContent>
@@ -250,14 +250,14 @@ export function RiskDashboardPage() {
               {risk.active_alerts}
             </div>
             <p className="text-xs text-muted-foreground mt-1">
-              Open or investigating
+              {t('pages.riskDashboard.stats.activeAlertsHint')}
             </p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Impossible Travel</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('pages.riskDashboard.stats.impossibleTravel')}</CardTitle>
             <Plane className="h-4 w-4 text-purple-500" />
           </CardHeader>
           <CardContent>
@@ -265,7 +265,7 @@ export function RiskDashboardPage() {
               {risk.impossible_travel_events}
             </div>
             <p className="text-xs text-muted-foreground mt-1">
-              Geographically implausible logins
+              {t('pages.riskDashboard.stats.impossibleTravelHint')}
             </p>
           </CardContent>
         </Card>
@@ -276,8 +276,8 @@ export function RiskDashboardPage() {
         {/* Risk Score Distribution */}
         <Card>
           <CardHeader>
-            <CardTitle>Risk Score Distribution</CardTitle>
-            <CardDescription>Login distribution by risk score bucket</CardDescription>
+            <CardTitle>{t('pages.riskDashboard.distribution.title')}</CardTitle>
+            <CardDescription>{t('pages.riskDashboard.distribution.description')}</CardDescription>
           </CardHeader>
           <CardContent>
             {risk.risk_distribution && risk.risk_distribution.length > 0 ? (
@@ -298,7 +298,7 @@ export function RiskDashboardPage() {
                             {bucket.min}-{bucket.max}
                           </span>
                           <span className="text-muted-foreground">
-                            ({bucketLabel(bucket.min)})
+                            ({t(`pages.riskDashboard.buckets.${bucketLabelKey(bucket.min)}`)})
                           </span>
                         </div>
                         <span className="text-muted-foreground">
@@ -317,7 +317,7 @@ export function RiskDashboardPage() {
               </div>
             ) : (
               <p className="text-center text-muted-foreground py-6">
-                No distribution data available
+                {t('pages.riskDashboard.distribution.empty')}
               </p>
             )}
           </CardContent>
@@ -328,9 +328,9 @@ export function RiskDashboardPage() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <TrendingUp className="h-5 w-5" />
-              Risk Score Timeline
+              {t('pages.riskDashboard.timeline.title')}
             </CardTitle>
-            <CardDescription>Daily average risk scores over the last 30 days</CardDescription>
+            <CardDescription>{t('pages.riskDashboard.timeline.description')}</CardDescription>
           </CardHeader>
           <CardContent>
             {timeline?.days && timeline.days.length > 0 ? (
@@ -351,7 +351,12 @@ export function RiskDashboardPage() {
                       <div
                         key={day.date}
                         className="flex-1 flex flex-col items-center"
-                        title={`${day.date}: avg ${day.avg_score.toFixed(1)}, max ${day.max_score}, ${day.login_count} logins`}
+                        title={t('pages.riskDashboard.timeline.tooltip', {
+                          date: day.date,
+                          avg: day.avg_score.toFixed(1),
+                          max: day.max_score,
+                          count: day.login_count,
+                        })}
                       >
                         <div
                           className={`w-full ${color} rounded-t transition-all`}
@@ -373,21 +378,21 @@ export function RiskDashboardPage() {
                 <div className="flex items-center gap-4 mt-3 text-xs text-muted-foreground">
                   <div className="flex items-center gap-1">
                     <div className="w-3 h-3 bg-green-500 rounded" />
-                    Low (&lt;40)
+                    {t('pages.riskDashboard.timeline.legendLow')}
                   </div>
                   <div className="flex items-center gap-1">
                     <div className="w-3 h-3 bg-yellow-500 rounded" />
-                    Medium (40-59)
+                    {t('pages.riskDashboard.timeline.legendMedium')}
                   </div>
                   <div className="flex items-center gap-1">
                     <div className="w-3 h-3 bg-red-500 rounded" />
-                    High (60+)
+                    {t('pages.riskDashboard.timeline.legendHigh')}
                   </div>
                 </div>
               </>
             ) : (
               <p className="text-center text-muted-foreground py-6">
-                No timeline data available
+                {t('pages.riskDashboard.timeline.empty')}
               </p>
             )}
           </CardContent>
@@ -401,9 +406,9 @@ export function RiskDashboardPage() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <ShieldAlert className="h-5 w-5 text-red-500" />
-              Active Security Alerts
+              {t('pages.riskDashboard.alerts.title')}
             </CardTitle>
-            <CardDescription>Recent alerts requiring attention</CardDescription>
+            <CardDescription>{t('pages.riskDashboard.alerts.description')}</CardDescription>
           </CardHeader>
           <CardContent>
             {alerts.length > 0 ? (
@@ -442,7 +447,7 @@ export function RiskDashboardPage() {
             ) : (
               <div className="text-center text-muted-foreground py-6">
                 <ShieldAlert className="h-8 w-8 mx-auto mb-2 text-muted-foreground/40" />
-                <p>No active security alerts</p>
+                <p>{t('pages.riskDashboard.alerts.empty')}</p>
               </div>
             )}
           </CardContent>
@@ -453,19 +458,19 @@ export function RiskDashboardPage() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Users className="h-5 w-5" />
-              Top Risky Users
+              {t('pages.riskDashboard.riskyUsers.title')}
             </CardTitle>
-            <CardDescription>Users with highest average risk scores</CardDescription>
+            <CardDescription>{t('pages.riskDashboard.riskyUsers.description')}</CardDescription>
           </CardHeader>
           <CardContent>
             {risk.top_risky_users && risk.top_risky_users.length > 0 ? (
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>User</TableHead>
-                    <TableHead className="text-right">Avg Risk</TableHead>
-                    <TableHead className="text-right">Anomalies</TableHead>
-                    <TableHead>Last Login</TableHead>
+                    <TableHead>{t('pages.riskDashboard.riskyUsers.table.user')}</TableHead>
+                    <TableHead className="text-right">{t('pages.riskDashboard.riskyUsers.table.avgRisk')}</TableHead>
+                    <TableHead className="text-right">{t('pages.riskDashboard.riskyUsers.table.anomalies')}</TableHead>
+                    <TableHead>{t('pages.riskDashboard.riskyUsers.table.lastLogin')}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -495,8 +500,8 @@ export function RiskDashboardPage() {
                       </TableCell>
                       <TableCell className="text-sm text-muted-foreground">
                         {user.last_login
-                          ? new Date(user.last_login).toLocaleDateString()
-                          : 'Never'}
+                          ? new Date(user.last_login).toLocaleDateString(undefined)
+                          : t('pages.riskDashboard.riskyUsers.never')}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -505,7 +510,7 @@ export function RiskDashboardPage() {
             ) : (
               <div className="text-center text-muted-foreground py-6">
                 <Users className="h-8 w-8 mx-auto mb-2 text-muted-foreground/40" />
-                <p>No risky users detected</p>
+                <p>{t('pages.riskDashboard.riskyUsers.empty')}</p>
               </div>
             )}
           </CardContent>

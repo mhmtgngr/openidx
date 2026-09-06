@@ -12,12 +12,15 @@ import (
 // factor?" decision: which factors the user has enrolled, whether this browser
 // is already trusted, and what the risk engine says.
 //
-// It exists because that decision has to be identical on BOTH browser login
-// paths — the JSON one the console SPA drives (POST /oauth/login) and the
-// server-rendered one every public client gets (POST /oauth/authorize/callback).
-// They used to be two independent implementations and only the JSON one
-// evaluated MFA at all, so any user with TOTP/push enrolled could skip their
-// second factor entirely by signing in through the hosted page.
+// It exists because that decision used to have to be identical on two browser
+// login paths — the JSON one the console SPA drives (POST /oauth/login) and a
+// server-rendered one every public client got (POST /oauth/authorize/callback).
+// They were two independent implementations and only the JSON one evaluated
+// MFA at all, so any user with TOTP/push enrolled could skip their second
+// factor entirely by signing in through the hosted page. That page is gone —
+// there is one login UI — so this is now the single implementation rather than
+// the shared one, and it stays a separate unit because the decision is the
+// part worth testing on its own.
 type mfaEvaluation struct {
 	// Enabled reports that the user has at least one PRIMARY factor enrolled
 	// (TOTP, WebAuthn, push, SMS, email OTP). Backup and bypass codes are

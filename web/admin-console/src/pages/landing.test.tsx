@@ -25,20 +25,23 @@ vi.mock('../lib/auth', () => ({
 
 import { LandingPage } from './landing'
 
+const renderLanding = () =>
+  render(
+    <MemoryRouter>
+      <LandingPage />
+    </MemoryRouter>,
+  )
+
 describe('LandingPage', () => {
   beforeEach(() => {
     document.body.innerHTML = ''
   })
 
-  it('renders the marketing hero copy and headline', () => {
-    render(
-      <MemoryRouter>
-        <LandingPage />
-      </MemoryRouter>,
-    )
+  it('renders the hero badge and headline', () => {
+    renderLanding()
 
     expect(
-      screen.getByText(/enterprise-grade security at 70% less cost/i),
+      screen.getByText(/open source · self-hosted · apache-2\.0/i),
     ).toBeInTheDocument()
     // Hero headline + responsive duplicates may render the same line
     // multiple times depending on breakpoint variants.
@@ -50,34 +53,42 @@ describe('LandingPage', () => {
     ).toBeGreaterThan(0)
   })
 
-  it('renders the Start Free Trial + Live Demo CTAs', () => {
-    render(
-      <MemoryRouter>
-        <LandingPage />
-      </MemoryRouter>,
-    )
+  it('renders the Sign In CTA and the documentation/GitHub links', () => {
+    renderLanding()
 
-    // CTAs appear in BOTH the desktop nav AND the hero — allow multiple.
+    // Sign In appears in the nav, the hero, and the CTA card — allow multiple.
     expect(
-      screen.getAllByRole('button', { name: /start free trial/i }).length,
+      screen.getAllByRole('button', { name: /sign in/i }).length,
     ).toBeGreaterThan(0)
     expect(
-      screen.getByRole('button', { name: /live demo/i }),
-    ).toBeInTheDocument()
+      screen.getByRole('link', { name: /view documentation/i }),
+    ).toHaveAttribute('href', expect.stringContaining('mhmtgngr.github.io/openidx'))
+    expect(
+      screen.getByRole('link', { name: /view on github/i }),
+    ).toHaveAttribute('href', expect.stringContaining('github.com/mhmtgngr/openidx'))
   })
 
   it('renders the trust copy and the features section title', () => {
-    render(
-      <MemoryRouter>
-        <LandingPage />
-      </MemoryRouter>,
-    )
+    renderLanding()
 
+    expect(screen.getByText(/100% open source/i)).toBeInTheDocument()
     expect(
-      screen.getByText(/no credit card required/i),
+      screen.getByText(/your data stays on your infrastructure/i),
     ).toBeInTheDocument()
-    expect(screen.getByText(/14-day free trial/i)).toBeInTheDocument()
-    expect(screen.getByText(/setup in minutes/i)).toBeInTheDocument()
+    expect(screen.getByText(/docker compose quick start/i)).toBeInTheDocument()
     expect(screen.getByText(/complete security platform/i)).toBeInTheDocument()
+  })
+
+  it('makes no claims a self-hosted OSS project cannot keep', () => {
+    const { container } = renderLanding()
+
+    // Pins the truthfulness rewrite: no invented trials, pricing, savings,
+    // or adoption numbers — and no dead href="#" links.
+    expect(screen.queryByText(/free trial/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/credit card/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/70%/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/thousands of organizations/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/pricing/i)).not.toBeInTheDocument()
+    expect(container.querySelectorAll('a[href="#"]').length).toBe(0)
   })
 })

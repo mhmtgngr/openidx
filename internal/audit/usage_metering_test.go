@@ -11,7 +11,7 @@ import (
 const meteringSchema = `
 CREATE TABLE IF NOT EXISTS users (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), org_id UUID);
 CREATE TABLE IF NOT EXISTS unified_audit_events (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), source VARCHAR(50) NOT NULL,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), org_id UUID NOT NULL, source VARCHAR(50) NOT NULL,
     event_type VARCHAR(100) NOT NULL, route_id UUID, user_id UUID, actor_ip VARCHAR(45),
     details JSONB DEFAULT '{}', created_at TIMESTAMPTZ DEFAULT NOW());
 CREATE TABLE IF NOT EXISTS usage_metering_daily (
@@ -41,13 +41,15 @@ func TestUsageMeteringAggregation(t *testing.T) {
 	// daily rollup buckets deterministically. Using NOW()-based offsets is flaky
 	// near a UTC midnight boundary (events straddle two days -> split counters).
 	base := "(date_trunc('day', now() at time zone 'utc') at time zone 'utc' + interval '12 hours')"
-	db.Pool.Exec(ctx, `INSERT INTO unified_audit_events (source, event_type, user_id, details, created_at) VALUES
-        ('ziti','ziti.api_session.created',$1,'{}'::jsonb, `+base+` - interval '2 hours'),
-        ('ziti','ziti.api_session.created',$1,'{}'::jsonb, `+base+` - interval '1 hour'),
-        ('ziti','ziti.service.dialed',$1,'{"service":"svc-x"}'::jsonb, `+base+` - interval '90 minutes'),
-        ('ziti','ziti.service.dialed',$1,'{"service":"svc-x"}'::jsonb, `+base+` - interval '30 minutes'),
-        ('ziti','ziti.service.dialed',$1,'{"service":"svc-y"}'::jsonb, `+base+` - interval '10 minutes'),
-        ('agent','agent.report',$1,'{}'::jsonb, `+base+`)`, uA)
+	// org_id is on the event itself since v142; the worker reads it directly
+	// rather than joining users, so the seed has to carry it.
+	db.Pool.Exec(ctx, `INSERT INTO unified_audit_events (org_id, source, event_type, user_id, details, created_at) VALUES
+        ($2,'ziti','ziti.api_session.created',$1,'{}'::jsonb, `+base+` - interval '2 hours'),
+        ($2,'ziti','ziti.api_session.created',$1,'{}'::jsonb, `+base+` - interval '1 hour'),
+        ($2,'ziti','ziti.service.dialed',$1,'{"service":"svc-x"}'::jsonb, `+base+` - interval '90 minutes'),
+        ($2,'ziti','ziti.service.dialed',$1,'{"service":"svc-x"}'::jsonb, `+base+` - interval '30 minutes'),
+        ($2,'ziti','ziti.service.dialed',$1,'{"service":"svc-y"}'::jsonb, `+base+` - interval '10 minutes'),
+        ($2,'agent','agent.report',$1,'{}'::jsonb, `+base+`)`, uA, orgA)
 
 	svc := &Service{db: db, logger: zap.NewNop(), config: &config.Config{}}
 	w := &meteringWorker{svc: svc, logger: zap.NewNop()}
@@ -90,8 +92,8 @@ func TestUsageMeteringAggregation(t *testing.T) {
 	// A new event after the cursor rolls up incrementally (idempotent counter).
 	// Place it 1 minute past the base anchor so it is strictly after the cursor
 	// and still lands in the same UTC day as the rest of the batch.
-	db.Pool.Exec(ctx, `INSERT INTO unified_audit_events (source, event_type, user_id, details, created_at) VALUES
-        ('ziti','ziti.service.dialed',$1,'{"service":"svc-x"}'::jsonb, `+base+` + interval '1 minute')`, uA)
+	db.Pool.Exec(ctx, `INSERT INTO unified_audit_events (org_id, source, event_type, user_id, details, created_at) VALUES
+        ($2,'ziti','ziti.service.dialed',$1,'{"service":"svc-x"}'::jsonb, `+base+` + interval '1 minute')`, uA, orgA)
 	w.aggregateBatch(ctx)
 	db.Pool.QueryRow(ctx,
 		`SELECT count FROM usage_metering_daily WHERE metric='service_dial' AND service='svc-x' AND org_id=$1`, orgA).Scan(&svcx)

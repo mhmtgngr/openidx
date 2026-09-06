@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -13,6 +12,8 @@ import (
 
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/orgctx"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 // vaultPort is the subset of *vault.Service the engine needs.
@@ -67,14 +68,6 @@ func zero(b []byte) {
 // sanitizeLogValue strips CR, LF, and other ASCII control characters from a string before it
 // is written to a log, preventing log-forging via attacker-influenced values (e.g. a connector
 // error that echoes user-provided connector_config).
-func sanitizeLogValue(s string) string {
-	return strings.Map(func(r rune) rune {
-		if r == '\n' || r == '\r' || r == '\t' || r < 0x20 {
-			return -1
-		}
-		return r
-	}, s)
-}
 
 // candidateVault is the minimal vault interface used by runRotation.
 type candidateVault interface {
@@ -238,7 +231,7 @@ func (s *Service) CreatePolicy(ctx context.Context, in PolicyInput) (*Policy, er
 	// returns false → reject with ErrSecretNotFound.
 	var secretExists bool
 	if err := s.db.Pool.QueryRow(ctx,
-		`SELECT EXISTS(SELECT 1 FROM vault_secrets WHERE id=$1)`, in.SecretID,
+		`SELECT EXISTS(SELECT 1 FROM vault_secrets WHERE id=$1 AND org_id=$2)`, in.SecretID, org.ID,
 	).Scan(&secretExists); err != nil {
 		return nil, err
 	}
@@ -411,8 +404,14 @@ func (s *Service) UpdatePolicy(ctx context.Context, policyID string, in PolicyIn
 
 // DeletePolicy removes a rotation policy (org-scoped via RLS).
 func (s *Service) DeletePolicy(ctx context.Context, policyID string) error {
+	org, oerr := orgctx.From(ctx)
+	if oerr != nil {
+		return oerr
+	}
+	// A delete that matches nothing is silent, so without the tenant term the
+	// caller is told the policy is gone either way.
 	ct, err := s.db.Pool.Exec(ctx,
-		`DELETE FROM credential_rotation_policies WHERE id = $1`, policyID)
+		`DELETE FROM credential_rotation_policies WHERE id = $1 AND org_id = $2`, policyID, org.ID)
 	if err != nil {
 		return err
 	}
@@ -531,7 +530,7 @@ func (s *Service) RotateSecret(ctx context.Context, policyID, trigger string) er
 				// characters) before logging to prevent log-forging.
 				s.logger.Warn("credentials: post-rotate cleanup failed (new credential is live; old may linger)",
 					zap.String("run_id", runID),
-					zap.String("error", sanitizeLogValue(cerr.Error())))
+					zap.String("error", logsafe.Clean(cerr.Error())))
 			}
 		}
 	}
@@ -542,9 +541,8 @@ func (s *Service) RotateSecret(ctx context.Context, policyID, trigger string) er
 	var versionTo *int
 	if promoted {
 		var cv int
-		//orgscope:ignore reading current_version to record version_to in the ledger; context already org-scoped via orgCtx
 		if scanErr := s.db.Pool.QueryRow(orgCtx,
-			`SELECT current_version FROM vault_secrets WHERE id = $1`, p.SecretID,
+			`SELECT current_version FROM vault_secrets WHERE id = $1 AND org_id = $2`, p.SecretID, p.OrgID,
 		).Scan(&cv); scanErr == nil {
 			versionTo = &cv
 		}
@@ -641,9 +639,14 @@ type RotationRun struct {
 // ErrPolicyNotFound if no policy is configured for that secret (org-scoped
 // via RLS / request context).
 func (s *Service) policyIDForSecret(ctx context.Context, secretID string) (string, error) {
+	org, oerr := orgctx.From(ctx)
+	if oerr != nil {
+		return "", oerr
+	}
 	var policyID string
 	err := s.db.Pool.QueryRow(ctx,
-		`SELECT id FROM credential_rotation_policies WHERE secret_id = $1 AND enabled = true LIMIT 1`, secretID,
+		`SELECT id FROM credential_rotation_policies WHERE secret_id = $1 AND org_id = $2 AND enabled = true LIMIT 1`,
+		secretID, org.ID,
 	).Scan(&policyID)
 	if err != nil {
 		if err.Error() == "no rows in result set" {

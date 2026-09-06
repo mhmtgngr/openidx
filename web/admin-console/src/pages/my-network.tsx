@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import {
   AppWindow,
   ArrowRight,
@@ -69,23 +70,24 @@ interface MyZitiServicesResponse {
   services: MyZitiService[]
 }
 
-const KIND_META: Record<MyResource['kind'], { icon: typeof Globe; label: string }> = {
-  web: { icon: Globe, label: 'Web app' },
-  remote_desktop: { icon: Monitor, label: 'Remote desktop' },
-  ssh: { icon: Terminal, label: 'Server (SSH)' },
-  database: { icon: Database, label: 'Database' },
+const KIND_META: Record<MyResource['kind'], { icon: typeof Globe; labelKey: string }> = {
+  web: { icon: Globe, labelKey: 'pages.myNetwork.kinds.web' },
+  remote_desktop: { icon: Monitor, labelKey: 'pages.myNetwork.kinds.remoteDesktop' },
+  ssh: { icon: Terminal, labelKey: 'pages.myNetwork.kinds.ssh' },
+  database: { icon: Database, labelKey: 'pages.myNetwork.kinds.database' },
 }
 
 const STATUS_META: Record<
   MyResource['status'],
-  { label: string; variant: 'default' | 'secondary' | 'outline' }
+  { labelKey: string; variant: 'default' | 'secondary' | 'outline' }
 > = {
-  ready: { label: 'Ready', variant: 'default' },
-  request_access: { label: 'Approval needed', variant: 'secondary' },
-  needs_setup: { label: 'Setup needed', variant: 'outline' },
+  ready: { labelKey: 'pages.myNetwork.statuses.ready', variant: 'default' },
+  request_access: { labelKey: 'pages.myNetwork.statuses.requestAccess', variant: 'secondary' },
+  needs_setup: { labelKey: 'pages.myNetwork.statuses.needsSetup', variant: 'outline' },
 }
 
 export function MyNetworkPage() {
+  const { t } = useTranslation()
   const { toast } = useToast()
   const [search, setSearch] = useState('')
   const [busyId, setBusyId] = useState<string | null>(null)
@@ -114,8 +116,8 @@ export function MyNetworkPage() {
     onError: (error: Error) => {
       setBusyId(null)
       toast({
-        title: 'Could not connect',
-        description: error.message || 'Please try again, or ask an administrator.',
+        title: t('pages.myNetwork.toasts.connectFailed'),
+        description: error.message || t('pages.myNetwork.toasts.connectFailedHint'),
         variant: 'destructive',
       })
     },
@@ -129,16 +131,16 @@ export function MyNetworkPage() {
     onSuccess: () => {
       setBusyId(null)
       toast({
-        title: 'Request sent',
-        description: 'You will be notified once it is approved.',
+        title: t('pages.myNetwork.toasts.requestSent'),
+        description: t('pages.myNetwork.toasts.requestSentHint'),
       })
       refetch()
     },
     onError: (error: Error) => {
       setBusyId(null)
       toast({
-        title: 'Could not send request',
-        description: error.message || 'Please try again later.',
+        title: t('pages.myNetwork.toasts.requestFailed'),
+        description: error.message || t('pages.myNetwork.toasts.requestFailedHint'),
         variant: 'destructive',
       })
     },
@@ -167,18 +169,15 @@ export function MyNetworkPage() {
         (r) =>
           r.name.toLowerCase().includes(term) ||
           r.to.toLowerCase().includes(term) ||
-          KIND_META[r.kind]?.label.toLowerCase().includes(term)
+          (KIND_META[r.kind] && t(KIND_META[r.kind].labelKey).toLowerCase().includes(term))
       )
     : resources
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold tracking-tight">My Apps &amp; Network</h1>
-        <p className="text-muted-foreground">
-          Everything you can reach — sign in to your apps, or connect to servers, databases and
-          internal apps. Most of it opens right in this browser with nothing to install.
-        </p>
+        <h1 className="text-3xl font-bold tracking-tight">{t('nav.items.myAppsNetwork')}</h1>
+        <p className="text-muted-foreground">{t('pages.myNetwork.subtitle')}</p>
       </div>
 
       {/* One search box filters both the apps section and the network resources. */}
@@ -186,7 +185,7 @@ export function MyNetworkPage() {
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
         <Input
           className="pl-10"
-          placeholder="Search apps, servers, addresses..."
+          placeholder={t('pages.myNetwork.searchPlaceholder')}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
@@ -201,39 +200,37 @@ export function MyNetworkPage() {
 
       {/* Connect to servers, databases, web + zero-trust over the network. */}
       <div>
-        <h2 className="text-xl font-semibold tracking-tight">Connect over the network</h2>
-        <p className="text-sm text-muted-foreground">
-          Servers, desktops, databases, and internal or zero-trust web apps.
-        </p>
+        <h2 className="text-xl font-semibold tracking-tight">{t('pages.myNetwork.connectTitle')}</h2>
+        <p className="text-sm text-muted-foreground">{t('pages.myNetwork.connectSubtitle')}</p>
       </div>
 
       {!isLoading && resources.length > 0 && (
         <div className="flex flex-wrap items-center gap-3">
           <Badge variant="default" className="gap-1">
             <Check className="h-3 w-3" />
-            {data?.summary.ready ?? 0} ready to use
+            {t('pages.myNetwork.readyCount', { n: data?.summary.ready ?? 0 })}
           </Badge>
           <span className="text-sm text-muted-foreground">
-            {data?.summary.total ?? 0} total
+            {t('pages.myNetwork.totalCount', { n: data?.summary.total ?? 0 })}
           </span>
         </div>
       )}
 
       {isLoading ? (
-        <p className="text-center py-12 text-muted-foreground">Loading your resources...</p>
+        <p className="text-center py-12 text-muted-foreground">{t('pages.myNetwork.loading')}</p>
       ) : isError ? (
-        <QueryError error={error} resource="your network access" />
+        <QueryError error={error} resource={t('pages.myNetwork.resourceName')} />
       ) : shown.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center">
             <AppWindow className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
             <p className="text-lg font-medium">
-              {resources.length === 0 ? 'Nothing assigned yet' : 'No matches'}
+              {resources.length === 0 ? t('pages.myNetwork.emptyTitle') : t('pages.myNetwork.noMatches')}
             </p>
             <p className="text-muted-foreground">
               {resources.length === 0
-                ? 'Ask your administrator for access, or request it from the Access Requests page.'
-                : 'Try a different search.'}
+                ? t('pages.myNetwork.emptyHint')
+                : t('pages.myNetwork.noMatchesHint')}
             </p>
           </CardContent>
         </Card>
@@ -255,10 +252,10 @@ export function MyNetworkPage() {
                       <CardTitle className="text-base truncate">{r.name}</CardTitle>
                       <div className="flex items-center gap-2 mt-1">
                         <Badge variant="outline" className="text-xs">
-                          {meta.label}
+                          {t(meta.labelKey)}
                         </Badge>
                         <Badge variant={status.variant} className="text-xs">
-                          {status.label}
+                          {t(status.labelKey)}
                         </Badge>
                       </div>
                     </div>
@@ -287,7 +284,7 @@ export function MyNetworkPage() {
                     {busy ? (
                       <>
                         <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        Working...
+                        {t('pages.myNetwork.working')}
                       </>
                     ) : (
                       <>
@@ -313,11 +310,11 @@ export function MyNetworkPage() {
         <div className="space-y-3 pt-2">
           <div className="flex items-center gap-2">
             <ShieldCheck className="h-5 w-5 text-primary" />
-            <h2 className="text-xl font-semibold tracking-tight">Zero-trust apps</h2>
+            <h2 className="text-xl font-semibold tracking-tight">{t('pages.myNetwork.ziti.title')}</h2>
           </div>
           <p className="text-sm text-muted-foreground">
-            Private apps you can reach over the secure network. Connect through the OpenIDX
-            agent on your device{ziti?.enrolled ? '' : ' (enroll a device to start using these)'}.
+            {t('pages.myNetwork.ziti.subtitle')}
+            {ziti?.enrolled ? '' : t('pages.myNetwork.ziti.enrollSuffix')}.
           </p>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {zitiServices.map((svc) => (

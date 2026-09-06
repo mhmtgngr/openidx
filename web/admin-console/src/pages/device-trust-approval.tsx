@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Trans, useTranslation } from 'react-i18next'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Smartphone, Check, X, Clock, Settings, CheckCircle2, XCircle, AlertCircle } from 'lucide-react'
 import { Button } from '../components/ui/button'
@@ -28,6 +29,10 @@ import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 import { QueryError } from '../components/query-error'
 
+// The request lifecycle the trust service owns; labels resolve through the
+// catalog so the filter and the badge cannot drift apart.
+const REQUEST_STATUSES = ['pending', 'approved', 'rejected', 'expired'] as const
+
 interface TrustRequest {
   id: string
   user_id: string
@@ -55,6 +60,7 @@ interface TrustSettings {
 }
 
 export function DeviceTrustApprovalPage() {
+  const { t } = useTranslation()
   const { toast } = useToast()
   const queryClient = useQueryClient()
   const [statusFilter, setStatusFilter] = useState('pending')
@@ -99,14 +105,32 @@ export function DeviceTrustApprovalPage() {
   const approveMutation = useMutation({
     mutationFn: ({ requestId, notes }: { requestId: string; notes: string }) =>
       api.post(`/api/v1/identity/device-trust-requests/${requestId}/approve`, { notes }),
-    onSuccess: () => {
+    onSuccess: async () => {
       queryClient.invalidateQueries({ queryKey: ['device-trust-requests'] })
       queryClient.invalidateQueries({ queryKey: ['device-trust-pending-count'] })
-      // Sync Ziti attributes so network access is granted immediately
+      // The approval row lands regardless; the overlay sync is what actually
+      // grants network access. Swallowing its failure and reporting success
+      // told the approver the device was on the network when it was not.
+      let synced = true
       if (selectedRequest?.user_id) {
-        api.post(`/api/v1/access/ziti/sync/device-trust/${selectedRequest.user_id}`).catch(() => {})
+        try {
+          await api.post(`/api/v1/access/ziti/sync/device-trust/${selectedRequest.user_id}`)
+        } catch {
+          synced = false
+        }
       }
-      toast({ title: 'Request Approved', description: 'Device trust granted — network access updated.' })
+      toast(
+        synced
+          ? {
+              title: t('pages.deviceTrustApproval.approved'),
+              description: t('pages.deviceTrustApproval.approvedDesc'),
+            }
+          : {
+              title: t('pages.deviceTrustApproval.approvedOverlayPending'),
+              description: t('pages.deviceTrustApproval.overlaySyncFailed'),
+              variant: 'destructive',
+            },
+      )
       setReviewDialog(false)
     }
   })
@@ -117,7 +141,7 @@ export function DeviceTrustApprovalPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['device-trust-requests'] })
       queryClient.invalidateQueries({ queryKey: ['device-trust-pending-count'] })
-      toast({ title: 'Request Rejected', description: 'Device trust has been denied.' })
+      toast({ title: t('pages.deviceTrustApproval.rejected'), description: t('pages.deviceTrustApproval.rejectedDesc') })
       setReviewDialog(false)
     }
   })
@@ -128,7 +152,10 @@ export function DeviceTrustApprovalPage() {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['device-trust-requests'] })
       queryClient.invalidateQueries({ queryKey: ['device-trust-pending-count'] })
-      toast({ title: 'Bulk Approve', description: `Approved ${data.approved} requests.` })
+      toast({
+        title: t('pages.deviceTrustApproval.bulkApproveTitle'),
+        description: t('pages.deviceTrustApproval.bulkApproveDesc', { n: data.approved }),
+      })
       setSelectedRequests([])
     }
   })
@@ -139,7 +166,10 @@ export function DeviceTrustApprovalPage() {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['device-trust-requests'] })
       queryClient.invalidateQueries({ queryKey: ['device-trust-pending-count'] })
-      toast({ title: 'Bulk Reject', description: `Rejected ${data.rejected} requests.` })
+      toast({
+        title: t('pages.deviceTrustApproval.bulkRejectTitle'),
+        description: t('pages.deviceTrustApproval.bulkRejectDesc', { n: data.rejected }),
+      })
       setSelectedRequests([])
     }
   })
@@ -149,23 +179,26 @@ export function DeviceTrustApprovalPage() {
       api.put('/api/v1/identity/device-trust-settings', newSettings),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['device-trust-settings'] })
-      toast({ title: 'Settings Updated' })
+      toast({ title: t('pages.deviceTrustApproval.settingsUpdated') })
       setSettingsDialog(false)
     }
   })
 
-  const getStatusBadge = (status: string) => {
+  // A component rather than a plain function, so the label re-resolves on a
+  // language switch instead of freezing at first render.
+  const StatusBadge = ({ status }: { status: string }) => {
+    const label = t(`pages.deviceTrustApproval.statuses.${status}`, { defaultValue: status })
     switch (status) {
       case 'pending':
-        return <Badge className="bg-amber-100 text-amber-800"><Clock className="h-3 w-3 mr-1" />Pending</Badge>
+        return <Badge className="bg-amber-100 text-amber-800"><Clock className="h-3 w-3 mr-1" />{label}</Badge>
       case 'approved':
-        return <Badge className="bg-green-100 text-green-800"><CheckCircle2 className="h-3 w-3 mr-1" />Approved</Badge>
+        return <Badge className="bg-green-100 text-green-800"><CheckCircle2 className="h-3 w-3 mr-1" />{label}</Badge>
       case 'rejected':
-        return <Badge className="bg-red-100 text-red-800"><XCircle className="h-3 w-3 mr-1" />Rejected</Badge>
+        return <Badge className="bg-red-100 text-red-800"><XCircle className="h-3 w-3 mr-1" />{label}</Badge>
       case 'expired':
-        return <Badge className="bg-muted text-foreground"><AlertCircle className="h-3 w-3 mr-1" />Expired</Badge>
+        return <Badge className="bg-muted text-foreground"><AlertCircle className="h-3 w-3 mr-1" />{label}</Badge>
       default:
-        return <Badge>{status}</Badge>
+        return <Badge>{label}</Badge>
     }
   }
 
@@ -203,12 +236,12 @@ export function DeviceTrustApprovalPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Device Trust Approval</h1>
-          <p className="text-muted-foreground">Review and approve device trust requests</p>
+          <h1 className="text-2xl font-bold tracking-tight">{t('pages.deviceTrustApproval.title')}</h1>
+          <p className="text-muted-foreground">{t('pages.deviceTrustApproval.subtitle')}</p>
         </div>
         <Button variant="outline" onClick={() => setSettingsDialog(true)}>
           <Settings className="h-4 w-4 mr-2" />
-          Settings
+          {t('pages.deviceTrustApproval.settings')}
         </Button>
       </div>
 
@@ -216,7 +249,7 @@ export function DeviceTrustApprovalPage() {
       <div className="grid gap-4 md:grid-cols-3">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Pending Requests</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('pages.deviceTrustApproval.stats.pending')}</CardTitle>
             <Clock className="h-4 w-4 text-amber-600" />
           </CardHeader>
           <CardContent>
@@ -225,23 +258,33 @@ export function DeviceTrustApprovalPage() {
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Approval Required</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('pages.deviceTrustApproval.stats.approvalRequired')}</CardTitle>
             <Smartphone className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{settings?.require_approval ? 'Yes' : 'No'}</div>
+            <div className="text-2xl font-bold">
+              {settings?.require_approval
+                ? t('pages.deviceTrustApproval.yes')
+                : t('pages.deviceTrustApproval.no')}
+            </div>
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Auto-Approve</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('pages.deviceTrustApproval.stats.autoApprove')}</CardTitle>
             <Check className="h-4 w-4 text-green-600" />
           </CardHeader>
           <CardContent>
             <div className="text-sm">
-              {settings?.auto_approve_known_ips && <span className="mr-2">Known IPs</span>}
-              {settings?.auto_approve_corporate_devices && <span>Corporate</span>}
-              {!settings?.auto_approve_known_ips && !settings?.auto_approve_corporate_devices && 'Disabled'}
+              {settings?.auto_approve_known_ips && (
+                <span className="mr-2">{t('pages.deviceTrustApproval.stats.knownIps')}</span>
+              )}
+              {settings?.auto_approve_corporate_devices && (
+                <span>{t('pages.deviceTrustApproval.stats.corporate')}</span>
+              )}
+              {!settings?.auto_approve_known_ips &&
+                !settings?.auto_approve_corporate_devices &&
+                t('pages.deviceTrustApproval.stats.disabled')}
             </div>
           </CardContent>
         </Card>
@@ -250,15 +293,16 @@ export function DeviceTrustApprovalPage() {
       {/* Filters and Bulk Actions */}
       <div className="flex items-center justify-between">
         <Select value={statusFilter || 'all'} onValueChange={(v) => setStatusFilter(v === 'all' ? '' : v)}>
-          <SelectTrigger className="w-[180px]">
-            <SelectValue placeholder="Filter by status" />
+          <SelectTrigger className="w-[180px]" aria-label={t('pages.deviceTrustApproval.filterStatus')}>
+            <SelectValue placeholder={t('pages.deviceTrustApproval.filterStatus')} />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All</SelectItem>
-            <SelectItem value="pending">Pending</SelectItem>
-            <SelectItem value="approved">Approved</SelectItem>
-            <SelectItem value="rejected">Rejected</SelectItem>
-            <SelectItem value="expired">Expired</SelectItem>
+            <SelectItem value="all">{t('pages.deviceTrustApproval.all')}</SelectItem>
+            {REQUEST_STATUSES.map((status) => (
+              <SelectItem key={status} value={status}>
+                {t(`pages.deviceTrustApproval.statuses.${status}`)}
+              </SelectItem>
+            ))}
           </SelectContent>
         </Select>
 
@@ -271,7 +315,7 @@ export function DeviceTrustApprovalPage() {
               className="text-green-600"
             >
               <Check className="h-4 w-4 mr-1" />
-              Approve ({selectedRequests.length})
+              {t('pages.deviceTrustApproval.bulkApprove', { n: selectedRequests.length })}
             </Button>
             <Button
               variant="outline"
@@ -280,7 +324,7 @@ export function DeviceTrustApprovalPage() {
               className="text-red-600"
             >
               <X className="h-4 w-4 mr-1" />
-              Reject ({selectedRequests.length})
+              {t('pages.deviceTrustApproval.bulkReject', { n: selectedRequests.length })}
             </Button>
           </div>
         )}
@@ -289,8 +333,8 @@ export function DeviceTrustApprovalPage() {
       {/* Requests List */}
       <Card>
         <CardHeader>
-          <CardTitle>Trust Requests</CardTitle>
-          <CardDescription>Users requesting to trust their devices</CardDescription>
+          <CardTitle>{t('pages.deviceTrustApproval.listHeading')}</CardTitle>
+          <CardDescription>{t('pages.deviceTrustApproval.listDesc')}</CardDescription>
         </CardHeader>
         <CardContent>
           {isLoading ? (
@@ -298,11 +342,11 @@ export function DeviceTrustApprovalPage() {
               <LoadingSpinner size="lg" />
             </div>
           ) : isError ? (
-            <QueryError error={error} resource="trust requests" />
+            <QueryError error={error} resource={t('pages.deviceTrustApproval.resource')} />
           ) : requests.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
               <Smartphone className="h-12 w-12 mx-auto mb-3 opacity-40" />
-              <p>No trust requests found</p>
+              <p>{t('pages.deviceTrustApproval.empty')}</p>
             </div>
           ) : (
             <Table className="text-sm">
@@ -310,19 +354,19 @@ export function DeviceTrustApprovalPage() {
                   <TableRow className="border-b">
                     {statusFilter === 'pending' && (
                       <TableHead className="py-3 px-2">
-                        <Checkbox
+                        <Checkbox aria-label={t('common.selectAll')}
                           checked={selectedRequests.length === requests.length}
                           onCheckedChange={selectAll}
                         />
                       </TableHead>
                     )}
-                    <TableHead className="text-left py-3 px-2 font-medium">User</TableHead>
-                    <TableHead className="text-left py-3 px-2 font-medium">Device</TableHead>
-                    <TableHead className="text-left py-3 px-2 font-medium">IP Address</TableHead>
-                    <TableHead className="text-left py-3 px-2 font-medium">Justification</TableHead>
-                    <TableHead className="text-left py-3 px-2 font-medium">Status</TableHead>
-                    <TableHead className="text-left py-3 px-2 font-medium">Requested</TableHead>
-                    <TableHead className="text-left py-3 px-2 font-medium">Actions</TableHead>
+                    <TableHead className="text-left py-3 px-2 font-medium">{t('pages.deviceTrustApproval.colUser')}</TableHead>
+                    <TableHead className="text-left py-3 px-2 font-medium">{t('pages.deviceTrustApproval.colDevice')}</TableHead>
+                    <TableHead className="text-left py-3 px-2 font-medium">{t('pages.deviceTrustApproval.colIp')}</TableHead>
+                    <TableHead className="text-left py-3 px-2 font-medium">{t('pages.deviceTrustApproval.colJustification')}</TableHead>
+                    <TableHead className="text-left py-3 px-2 font-medium">{t('pages.deviceTrustApproval.colStatus')}</TableHead>
+                    <TableHead className="text-left py-3 px-2 font-medium">{t('pages.deviceTrustApproval.colRequested')}</TableHead>
+                    <TableHead className="text-left py-3 px-2 font-medium">{t('pages.deviceTrustApproval.colActions')}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -330,7 +374,7 @@ export function DeviceTrustApprovalPage() {
                     <TableRow key={request.id} className="border-b hover:bg-muted/50">
                       {statusFilter === 'pending' && (
                         <TableCell className="py-3 px-2">
-                          <Checkbox
+                          <Checkbox aria-label={t('pages.deviceTrustApproval.selectRequest', { device: request.device_name })}
                             checked={selectedRequests.includes(request.id)}
                             onCheckedChange={() => toggleSelectRequest(request.id)}
                           />
@@ -352,7 +396,7 @@ export function DeviceTrustApprovalPage() {
                       <TableCell className="py-3 px-2 max-w-[200px] truncate" title={request.justification}>
                         {request.justification || '-'}
                       </TableCell>
-                      <TableCell className="py-3 px-2">{getStatusBadge(request.status)}</TableCell>
+                      <TableCell className="py-3 px-2"><StatusBadge status={request.status} /></TableCell>
                       <TableCell className="py-3 px-2 whitespace-nowrap">
                         {new Date(request.created_at).toLocaleDateString()}
                       </TableCell>
@@ -396,42 +440,49 @@ export function DeviceTrustApprovalPage() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
-              {reviewAction === 'approve' ? 'Approve' : 'Reject'} Trust Request
+              {reviewAction === 'approve'
+                ? t('pages.deviceTrustApproval.review.approveTitle')
+                : t('pages.deviceTrustApproval.review.rejectTitle')}
             </DialogTitle>
           </DialogHeader>
           {selectedRequest && (
             <div className="space-y-4">
               <div className="bg-muted p-4 rounded-lg space-y-2">
-                <p><strong>User:</strong> {selectedRequest.user_name} ({selectedRequest.user_email})</p>
-                <p><strong>Device:</strong> {selectedRequest.device_name}</p>
-                <p><strong>IP:</strong> {selectedRequest.ip_address}</p>
+                <p><strong>{t('pages.deviceTrustApproval.review.user')}</strong> {selectedRequest.user_name} ({selectedRequest.user_email})</p>
+                <p><strong>{t('pages.deviceTrustApproval.review.device')}</strong> {selectedRequest.device_name}</p>
+                <p><strong>{t('pages.deviceTrustApproval.review.ip')}</strong> {selectedRequest.ip_address}</p>
                 {selectedRequest.justification && (
-                  <p><strong>Justification:</strong> {selectedRequest.justification}</p>
+                  <p><strong>{t('pages.deviceTrustApproval.review.justification')}</strong> {selectedRequest.justification}</p>
                 )}
               </div>
               {reviewAction === 'approve' && (
                 <p className="text-sm text-blue-700 bg-blue-50 p-3 rounded-md">
-                  Approving will grant the user's Ziti network identity the <code className="font-mono bg-blue-100 px-1 rounded">device-trusted</code> role, enabling access to policies that require trusted devices.
+                  <Trans
+                    i18nKey="pages.deviceTrustApproval.review.approveHint"
+                    components={[<code key="0" className="font-mono bg-blue-100 px-1 rounded" />]}
+                  />
                 </p>
               )}
               <div className="space-y-2">
-                <Label>Review Notes</Label>
+                <Label>{t('pages.deviceTrustApproval.review.notes')}</Label>
                 <Textarea
                   value={reviewNotes}
                   onChange={(e) => setReviewNotes(e.target.value)}
-                  placeholder="Optional notes for this decision..."
+                  placeholder={t('pages.deviceTrustApproval.review.notesPlaceholder')}
                   rows={3}
                 />
               </div>
             </div>
           )}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setReviewDialog(false)}>Cancel</Button>
+            <Button variant="outline" onClick={() => setReviewDialog(false)}>{t('common.cancel')}</Button>
             <Button
               onClick={submitReview}
               className={reviewAction === 'approve' ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'}
             >
-              {reviewAction === 'approve' ? 'Approve' : 'Reject'}
+              {reviewAction === 'approve'
+                ? t('pages.deviceTrustApproval.review.approve')
+                : t('pages.deviceTrustApproval.review.reject')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -441,16 +492,16 @@ export function DeviceTrustApprovalPage() {
       <Dialog open={settingsDialog} onOpenChange={setSettingsDialog}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Device Trust Settings</DialogTitle>
+            <DialogTitle>{t('pages.deviceTrustApproval.settingsDialog.title')}</DialogTitle>
           </DialogHeader>
           {settings && (
             <div className="space-y-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <Label>Require Admin Approval</Label>
-                  <p className="text-xs text-muted-foreground">All trust requests need admin approval</p>
+                  <Label htmlFor="device-trust-approval-require-approval">{t('pages.deviceTrustApproval.settingsDialog.requireApproval')}</Label>
+                  <p className="text-xs text-muted-foreground">{t('pages.deviceTrustApproval.settingsDialog.requireApprovalHint')}</p>
                 </div>
-                <Switch
+                <Switch id="device-trust-approval-require-approval"
                   checked={settings.require_approval}
                   onCheckedChange={(checked) =>
                     updateSettingsMutation.mutate({ ...settings, require_approval: checked })
@@ -459,10 +510,10 @@ export function DeviceTrustApprovalPage() {
               </div>
               <div className="flex items-center justify-between">
                 <div>
-                  <Label>Auto-approve Known IPs</Label>
-                  <p className="text-xs text-muted-foreground">Trust devices from previously trusted IPs</p>
+                  <Label htmlFor="device-trust-approval-auto-approve-ips">{t('pages.deviceTrustApproval.settingsDialog.autoApproveIps')}</Label>
+                  <p className="text-xs text-muted-foreground">{t('pages.deviceTrustApproval.settingsDialog.autoApproveIpsHint')}</p>
                 </div>
-                <Switch
+                <Switch id="device-trust-approval-auto-approve-ips"
                   checked={settings.auto_approve_known_ips}
                   onCheckedChange={(checked) =>
                     updateSettingsMutation.mutate({ ...settings, auto_approve_known_ips: checked })
@@ -471,10 +522,10 @@ export function DeviceTrustApprovalPage() {
               </div>
               <div className="flex items-center justify-between">
                 <div>
-                  <Label>Auto-approve Corporate Devices</Label>
-                  <p className="text-xs text-muted-foreground">Trust devices identified as corporate-managed</p>
+                  <Label htmlFor="device-trust-approval-auto-approve-corporate">{t('pages.deviceTrustApproval.settingsDialog.autoApproveCorporate')}</Label>
+                  <p className="text-xs text-muted-foreground">{t('pages.deviceTrustApproval.settingsDialog.autoApproveCorporateHint')}</p>
                 </div>
-                <Switch
+                <Switch id="device-trust-approval-auto-approve-corporate"
                   checked={settings.auto_approve_corporate_devices}
                   onCheckedChange={(checked) =>
                     updateSettingsMutation.mutate({ ...settings, auto_approve_corporate_devices: checked })
@@ -483,10 +534,10 @@ export function DeviceTrustApprovalPage() {
               </div>
               <div className="flex items-center justify-between">
                 <div>
-                  <Label>Notify Admins</Label>
-                  <p className="text-xs text-muted-foreground">Send notifications for new requests</p>
+                  <Label htmlFor="device-trust-approval-notify-admins">{t('pages.deviceTrustApproval.settingsDialog.notifyAdmins')}</Label>
+                  <p className="text-xs text-muted-foreground">{t('pages.deviceTrustApproval.settingsDialog.notifyAdminsHint')}</p>
                 </div>
-                <Switch
+                <Switch id="device-trust-approval-notify-admins"
                   checked={settings.notify_admins}
                   onCheckedChange={(checked) =>
                     updateSettingsMutation.mutate({ ...settings, notify_admins: checked })
@@ -495,10 +546,10 @@ export function DeviceTrustApprovalPage() {
               </div>
               <div className="flex items-center justify-between">
                 <div>
-                  <Label>Notify User on Decision</Label>
-                  <p className="text-xs text-muted-foreground">Send email when request is reviewed</p>
+                  <Label htmlFor="device-trust-approval-notify-user">{t('pages.deviceTrustApproval.settingsDialog.notifyUser')}</Label>
+                  <p className="text-xs text-muted-foreground">{t('pages.deviceTrustApproval.settingsDialog.notifyUserHint')}</p>
                 </div>
-                <Switch
+                <Switch id="device-trust-approval-notify-user"
                   checked={settings.notify_user_on_decision}
                   onCheckedChange={(checked) =>
                     updateSettingsMutation.mutate({ ...settings, notify_user_on_decision: checked })
@@ -508,7 +559,7 @@ export function DeviceTrustApprovalPage() {
             </div>
           )}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setSettingsDialog(false)}>Close</Button>
+            <Button variant="outline" onClick={() => setSettingsDialog(false)}>{t('common.close')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

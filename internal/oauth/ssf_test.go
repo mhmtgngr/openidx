@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -18,10 +19,38 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-// ssfSetupTestDB spins a throwaway Postgres for the SSF receiver DB tests.
+// ssfSetupTestDB spins a throwaway Postgres for this package's DB-backed tests.
+// It skips (not fails) when Docker is unavailable.
+//
+// OPENIDX_TEST_DATABASE_URL, when set, points the harness at an existing server
+// instead of starting a container -- for a workstation or sandbox that has
+// Postgres but no Docker daemon. CI does not set it and keeps using throwaway
+// containers. Same escape hatch internal/admin grew in v138 and
+// internal/provisioning in v164.
+//
+// The schema is DROPPED and rebuilt on that path, because these tests build
+// their own subset schemas with CREATE TABLE IF NOT EXISTS and seed fixed ids,
+// so a second run against a persistent database would inherit the first run's
+// rows. Run ONE package at a time against this variable.
 func ssfSetupTestDB(t *testing.T) (*database.PostgresDB, func()) {
 	t.Helper()
 	ctx := context.Background()
+
+	if url := os.Getenv("OPENIDX_TEST_DATABASE_URL"); url != "" {
+		db, err := database.NewPostgres(url)
+		if err != nil {
+			t.Skipf("OPENIDX_TEST_DATABASE_URL set but unreachable: %v", err)
+			return nil, func() {}
+		}
+		for _, stmt := range []string{"DROP SCHEMA public CASCADE", "CREATE SCHEMA public"} {
+			if _, err := db.Pool.Exec(ctx, stmt); err != nil {
+				db.Close()
+				t.Fatalf("reset test schema (%s): %v", stmt, err)
+			}
+		}
+		return db, func() { db.Close() }
+	}
+
 	req := testcontainers.ContainerRequest{
 		Image:        "postgres:16-alpine",
 		ExposedPorts: []string{"5432/tcp"},
@@ -153,7 +182,7 @@ func TestSSFReceiveAppliesSessionRevoked(t *testing.T) {
         CREATE TABLE users (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), email VARCHAR(255), enabled BOOLEAN DEFAULT true, org_id UUID);
         CREATE TABLE sessions (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID, org_id UUID, revoked BOOLEAN DEFAULT false, revoked_at TIMESTAMPTZ);
         CREATE TABLE refresh_tokens (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID, org_id UUID);
-        CREATE TABLE ssf_received_events (jti VARCHAR(255) PRIMARY KEY, org_id UUID, issuer TEXT, event_type TEXT, subject TEXT, outcome VARCHAR(16) NOT NULL DEFAULT 'applied', detail TEXT, received_at TIMESTAMPTZ DEFAULT NOW());`)
+        CREATE TABLE ssf_received_events (jti VARCHAR(255), org_id UUID NOT NULL, issuer TEXT, event_type TEXT, subject TEXT, outcome VARCHAR(16) NOT NULL DEFAULT 'applied', detail TEXT, received_at TIMESTAMPTZ DEFAULT NOW(), PRIMARY KEY (org_id, jti));`)
 
 	orgID := "00000000-0000-0000-0000-0000000000aa"
 	var userID string
@@ -289,7 +318,7 @@ func TestSSFReceiveDedup(t *testing.T) {
         CREATE TABLE users (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), email VARCHAR(255), enabled BOOLEAN DEFAULT true, org_id UUID);
         CREATE TABLE sessions (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID, org_id UUID, revoked BOOLEAN DEFAULT false, revoked_at TIMESTAMPTZ);
         CREATE TABLE refresh_tokens (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID, org_id UUID);
-        CREATE TABLE ssf_received_events (jti VARCHAR(255) PRIMARY KEY, org_id UUID, issuer TEXT, event_type TEXT, subject TEXT, outcome VARCHAR(16) NOT NULL DEFAULT 'applied', detail TEXT, received_at TIMESTAMPTZ DEFAULT NOW());`)
+        CREATE TABLE ssf_received_events (jti VARCHAR(255), org_id UUID NOT NULL, issuer TEXT, event_type TEXT, subject TEXT, outcome VARCHAR(16) NOT NULL DEFAULT 'applied', detail TEXT, received_at TIMESTAMPTZ DEFAULT NOW(), PRIMARY KEY (org_id, jti));`)
 	orgID := "00000000-0000-0000-0000-0000000000bb"
 	var userID string
 	db.Pool.QueryRow(dbctx, `INSERT INTO users (email, org_id) VALUES ('dup@corp.com',$1) RETURNING id`, orgID).Scan(&userID)

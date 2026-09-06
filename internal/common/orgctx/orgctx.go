@@ -115,3 +115,31 @@ func IsBypassRLS(ctx context.Context) bool {
 	v, _ := ctx.Value(bypassRLSKey{}).(bool)
 	return v
 }
+
+// DefaultOrgID is the organization the installer seeds. Audit writers fall back
+// to it (via AuditOrgID) for a record that genuinely belongs to no tenant —
+// install-level infrastructure — so the row lands somewhere an operator can see
+// it. It is a fallback, never a default: code that can resolve the real tenant
+// must do so.
+const DefaultOrgID = "00000000-0000-0000-0000-000000000010"
+
+// AuditOrgID returns the organization an audit row should be filed under, and
+// whether it came from the context.
+//
+// Audit writers are in an awkward spot. Their rows are org-scoped, and under
+// the RLS belt a row with the wrong org — or no org — is either refused or
+// invisible. But an audit write must never fail the operation it is recording,
+// and some of these events (a Ziti fabric event that matches no route, an agent
+// enrolling before it has an owner) genuinely belong to the install rather than
+// a tenant. So: the context's org when there is one, DefaultOrgID otherwise.
+//
+// The second return value is what keeps that from being a silent misattribution.
+// A caller that gets false has filed somebody's row under the primary org and
+// should say so at WARN, because on a multi-tenant install that is a bug in the
+// caller's plumbing, not a property of the event.
+func AuditOrgID(ctx context.Context) (string, bool) {
+	if org, err := From(ctx); err == nil && org.ID != "" {
+		return org.ID, true
+	}
+	return DefaultOrgID, false
+}

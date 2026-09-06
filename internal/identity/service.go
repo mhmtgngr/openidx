@@ -40,6 +40,8 @@ import (
 	"github.com/openidx/openidx/internal/common/pwhash"
 	"github.com/openidx/openidx/internal/common/secretcrypt"
 	"github.com/openidx/openidx/internal/risk"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 // Use the min function from pushmfa.go
@@ -203,7 +205,7 @@ type Service struct {
 	redis             *database.RedisClient
 	cfg               *config.Config
 	logger            *zap.Logger
-	webauthnSessions  sync.Map // In-memory storage for WebAuthn sessions (use Redis in production)
+	webauthnSessions  sync.Map // fallback store for WebAuthn ceremonies; Redis (with TTL) is primary — see webauthn.go
 	directoryService  DirectoryAuthenticator
 	emailService      EmailSender
 	webhookService    WebhookPublisher
@@ -786,9 +788,6 @@ const revokedSessionTTL = 30 * 24 * time.Hour
 // query recognizes, so flows through this helper are provably cut. Behavior is
 // identical; only the shape matters. Mirrors the helper of the same name in
 // internal/access and internal/provisioning.
-func scrubLogValue(s string) string {
-	return strings.ReplaceAll(strings.ReplaceAll(s, "\n", ""), "\r", "")
-}
 
 // deprovisionUser revokes everything that keeps a user's access alive after
 // they are disabled or deleted: active sessions (marked revoked + a Redis
@@ -805,7 +804,7 @@ func scrubLogValue(s string) string {
 func (s *Service) deprovisionUser(ctx context.Context, userID, orgID string, hardDelete bool) {
 	// One scoped logger with the (scrubbed) user id, so the per-step warnings
 	// below never re-embed caller-supplied input directly.
-	log := s.logger.With(zap.String("user_id", scrubLogValue(userID)))
+	log := s.logger.With(zap.String("user_id", logsafe.Clean(userID)))
 
 	// No database configured (unit tests, or a service without a pool): there is
 	// nothing to revoke. deprovision is best-effort, so skip rather than
@@ -1630,7 +1629,7 @@ const (
 )
 
 func (s *Service) recordFailedLogin(ctx context.Context, query, subject string) error {
-	s.logger.Info("Recording failed login", zap.String("subject", scrubLogValue(subject)))
+	s.logger.Info("Recording failed login", zap.String("subject", logsafe.Clean(subject)))
 
 	org, err := orgctx.From(ctx)
 	if err != nil {
@@ -1648,7 +1647,7 @@ func (s *Service) recordFailedLogin(ctx context.Context, query, subject string) 
 
 	if lockedUntil != nil && failures >= maxFailures {
 		s.logger.Warn("Account locked due to failed login attempts",
-			zap.String("subject", scrubLogValue(subject)), zap.Int("failures", failures))
+			zap.String("subject", logsafe.Clean(subject)), zap.Int("failures", failures))
 	}
 	return nil
 }
@@ -1874,7 +1873,7 @@ func (s *Service) AuthenticateUser(ctx context.Context, username, password strin
 		// signal worth seeing.
 		s.logAuditEvent(ctx, "identity", "authentication", "user.login_denied", "failure",
 			userID, userID, "user", map[string]interface{}{
-				"username": scrubLogValue(username),
+				"username": logsafe.Clean(username),
 				"reason":   "account_disabled",
 			})
 		return nil, ErrAccountDisabled
@@ -1885,7 +1884,7 @@ func (s *Service) AuthenticateUser(ctx context.Context, username, password strin
 		s.logger.Warn("Login attempt on locked account", zap.String("username", username))
 		s.logAuditEvent(ctx, "identity", "authentication", "user.login_denied", "failure",
 			userID, userID, "user", map[string]interface{}{
-				"username":     scrubLogValue(username),
+				"username":     logsafe.Clean(username),
 				"reason":       "account_locked",
 				"locked_until": lockedUntil.UTC().Format(time.RFC3339),
 			})
@@ -1921,13 +1920,13 @@ func (s *Service) AuthenticateUser(ctx context.Context, username, password strin
 			// password. Logging it as a failed login would bury it in noise, so
 			// it is recorded distinctly — the login still fails closed.
 			s.logger.Error("Stored password hash is unreadable",
-				zap.String("user_id", scrubLogValue(userID)), zap.Error(verr))
+				zap.String("user_id", logsafe.Clean(userID)), zap.Error(verr))
 			s.onFailedLogin(ctx, userID, username, "unreadable_hash")
 			return nil, ErrInvalidCredentials
 		}
 		if !ok {
 			s.onFailedLogin(ctx, userID, username, "bad_password")
-			s.logger.Debug("Invalid password", zap.String("username", scrubLogValue(username)))
+			s.logger.Debug("Invalid password", zap.String("username", logsafe.Clean(username)))
 			return nil, ErrInvalidCredentials
 		}
 		if needsRehash {
@@ -1952,7 +1951,7 @@ func (s *Service) AuthenticateUser(ctx context.Context, username, password strin
 
 	s.logAuditEvent(ctx, "identity", "authentication", "user.login_succeeded", "success",
 		userID, userID, "user", map[string]interface{}{
-			"username": scrubLogValue(username),
+			"username": logsafe.Clean(username),
 		})
 
 	// Return full user object
@@ -1972,7 +1971,7 @@ func (s *Service) upgradePasswordHash(ctx context.Context, userID, orgID, passwo
 	next, err := pwhash.Hash(password)
 	if err != nil {
 		s.logger.Warn("Could not re-hash password for upgrade",
-			zap.String("user_id", scrubLogValue(userID)), zap.Error(err))
+			zap.String("user_id", logsafe.Clean(userID)), zap.Error(err))
 		return
 	}
 	// Compare-and-swap on the exact hash we just verified. If the password was
@@ -1988,7 +1987,7 @@ func (s *Service) upgradePasswordHash(ctx context.Context, userID, orgID, passwo
 		WHERE id = $1 AND org_id = $3 AND password_hash = $4
 	`, userID, next, orgID, verifiedHash); err != nil {
 		s.logger.Warn("Could not store upgraded password hash",
-			zap.String("user_id", scrubLogValue(userID)), zap.Error(err))
+			zap.String("user_id", logsafe.Clean(userID)), zap.Error(err))
 	}
 }
 
@@ -2004,11 +2003,11 @@ func (s *Service) upgradePasswordHash(ctx context.Context, userID, orgID, passwo
 func (s *Service) onFailedLogin(ctx context.Context, userID, username, reason string) {
 	if err := s.recordFailedLoginForUser(ctx, userID); err != nil {
 		s.logger.Error("Failed to record failed login",
-			zap.String("user_id", scrubLogValue(userID)), zap.Error(err))
+			zap.String("user_id", logsafe.Clean(userID)), zap.Error(err))
 	}
 	s.logAuditEvent(ctx, "identity", "authentication", "user.login_failed", "failure",
 		userID, userID, "user", map[string]interface{}{
-			"username": scrubLogValue(username),
+			"username": logsafe.Clean(username),
 			"reason":   reason,
 		})
 }
@@ -2164,7 +2163,7 @@ func (s *Service) EnrollTOTP(ctx context.Context, userID, secret, verificationCo
 
 // VerifyTOTP verifies a TOTP code for a user
 func (s *Service) VerifyTOTP(ctx context.Context, userID, code string) (bool, error) {
-	s.logger.Debug("Verifying TOTP code", zap.String("user_id", scrubLogValue(userID)))
+	s.logger.Debug("Verifying TOTP code", zap.String("user_id", logsafe.Clean(userID)))
 
 	org, err := orgctx.From(ctx)
 	if err != nil {
@@ -2195,7 +2194,7 @@ func (s *Service) VerifyTOTP(ctx context.Context, userID, code string) (bool, er
 	// the guess was right.
 	if lockedUntil != nil && time.Now().Before(*lockedUntil) {
 		s.logger.Warn("TOTP verification refused: locked out",
-			zap.String("user_id", scrubLogValue(userID)),
+			zap.String("user_id", logsafe.Clean(userID)),
 			zap.Time("locked_until", *lockedUntil))
 		return false, ErrTOTPLockedOut
 	}
@@ -2268,13 +2267,13 @@ func (s *Service) recordFailedTOTP(ctx context.Context, userID, orgID string) {
 	`, userID, orgID, totpMaxAttempts, totpLockoutDuration.String()).Scan(&attempts, &lockedUntil)
 	if err != nil {
 		s.logger.Error("Failed to record TOTP failure; throttling may not be enforced",
-			zap.String("user_id", scrubLogValue(userID)), zap.Error(err))
+			zap.String("user_id", logsafe.Clean(userID)), zap.Error(err))
 		return
 	}
 
 	if lockedUntil != nil && attempts >= totpMaxAttempts {
 		s.logger.Warn("TOTP locked after repeated failures",
-			zap.String("user_id", scrubLogValue(userID)),
+			zap.String("user_id", logsafe.Clean(userID)),
 			zap.Int("attempts", attempts))
 	}
 }
@@ -2423,7 +2422,7 @@ func (s *Service) GenerateBackupCodes(ctx context.Context, userID string, count 
 // in a separate statement, so two requests presenting the same code could both
 // find it unused and both be accepted — a single-use credential honored twice.
 func (s *Service) ValidateBackupCode(ctx context.Context, userID, code string) (bool, error) {
-	s.logger.Info("Validating backup code", zap.String("user_id", scrubLogValue(userID)))
+	s.logger.Info("Validating backup code", zap.String("user_id", logsafe.Clean(userID)))
 
 	org, err := orgctx.From(ctx)
 	if err != nil {
@@ -4857,7 +4856,7 @@ func (s *Service) handleChangePassword(c *gin.Context) {
 	if ok, _, verr := pwhash.Verify(passwordHash, req.CurrentPassword); verr != nil || !ok {
 		if verr != nil {
 			s.logger.Error("Stored password hash is unreadable",
-				zap.String("user_id", scrubLogValue(userID)), zap.Error(verr))
+				zap.String("user_id", logsafe.Clean(userID)), zap.Error(verr))
 		}
 		c.JSON(400, gin.H{"error": "current password is incorrect"})
 		return
@@ -5181,7 +5180,7 @@ func (s *Service) handleForgotPassword(c *gin.Context) {
 	// it to the application log hands anyone with log access (or anything that
 	// ships logs onward) the ability to take over the account. Log only that a
 	// reset was requested, for rate-limit/abuse investigation.
-	s.logger.Info("Password reset token created", zap.String("email", scrubLogValue(req.Email)))
+	s.logger.Info("Password reset token created", zap.String("email", logsafe.Clean(req.Email)))
 
 	// Send password reset email
 	if s.emailService != nil {
@@ -5274,7 +5273,7 @@ func (s *Service) handleResetPassword(c *gin.Context) {
 
 	if err := tx.Commit(ctx); err != nil {
 		s.logger.Error("failed to commit password reset",
-			zap.String("user_id", scrubLogValue(userID)), zap.Error(err))
+			zap.String("user_id", logsafe.Clean(userID)), zap.Error(err))
 		c.JSON(500, gin.H{"error": "Failed to update password"})
 		return
 	}
@@ -5714,7 +5713,7 @@ func (s *Service) handleVerifyEmail(c *gin.Context) {
 		// single-use credential in the log — the same mistake that was fixed on
 		// the password-reset path.
 		s.logger.Error("failed to mark verification token as used",
-			zap.String("user_id", scrubLogValue(userID)), zap.Error(err))
+			zap.String("user_id", logsafe.Clean(userID)), zap.Error(err))
 	}
 
 	c.JSON(200, gin.H{"message": "Email verified successfully"})
@@ -6037,6 +6036,11 @@ type LifecycleExecution struct {
 
 // CreateLifecycleWorkflow inserts a new lifecycle workflow into the database
 func (s *Service) CreateLifecycleWorkflow(ctx context.Context, wf *LifecycleWorkflow) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	wf.ID = uuid.New().String()
 	wf.CreatedAt = time.Now()
 	wf.UpdatedAt = time.Now()
@@ -6052,11 +6056,11 @@ func (s *Service) CreateLifecycleWorkflow(ctx context.Context, wf *LifecycleWork
 	}
 
 	_, err = s.db.Pool.Exec(ctx,
-		`INSERT INTO lifecycle_workflows (id, name, description, event_type, trigger_type, actions, conditions, require_approval, approval_policy_id, enabled, created_by, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+		`INSERT INTO lifecycle_workflows (id, name, description, event_type, trigger_type, actions, conditions, require_approval, approval_policy_id, enabled, created_by, created_at, updated_at, org_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
 		wf.ID, wf.Name, wf.Description, wf.EventType, wf.TriggerType,
 		actionsJSON, conditionsJSON, wf.RequireApproval, wf.ApprovalPolicyID,
-		wf.Enabled, wf.CreatedBy, wf.CreatedAt, wf.UpdatedAt,
+		wf.Enabled, wf.CreatedBy, wf.CreatedAt, wf.UpdatedAt, org.ID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create lifecycle workflow: %w", err)
@@ -6066,24 +6070,28 @@ func (s *Service) CreateLifecycleWorkflow(ctx context.Context, wf *LifecycleWork
 
 // ListLifecycleWorkflows returns paginated lifecycle workflows with optional event_type filter
 func (s *Service) ListLifecycleWorkflows(ctx context.Context, offset, limit int, eventType string) ([]LifecycleWorkflow, int, error) {
-	countQuery := "SELECT COUNT(*) FROM lifecycle_workflows"
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	countQuery := "SELECT COUNT(*) FROM lifecycle_workflows WHERE org_id = $1"
 	listQuery := `SELECT id, name, description, event_type, trigger_type, actions, conditions,
 		require_approval, approval_policy_id, enabled, created_by, created_at, updated_at
-		FROM lifecycle_workflows`
+		FROM lifecycle_workflows WHERE org_id = $1`
 
-	var args []interface{}
-	argIdx := 1
+	args := []interface{}{org.ID}
+	argIdx := 2
 
 	if eventType != "" {
-		countQuery += fmt.Sprintf(" WHERE event_type = $%d", argIdx)
-		listQuery += fmt.Sprintf(" WHERE event_type = $%d", argIdx)
+		countQuery += fmt.Sprintf(" AND event_type = $%d", argIdx)
+		listQuery += fmt.Sprintf(" AND event_type = $%d", argIdx)
 		args = append(args, eventType)
 		argIdx++
 	}
 
 	var total int
-	err := s.db.Pool.QueryRow(ctx, countQuery, args...).Scan(&total)
-	if err != nil {
+	if err := s.db.Pool.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("failed to count lifecycle workflows: %w", err)
 	}
 
@@ -6133,13 +6141,18 @@ func (s *Service) ListLifecycleWorkflows(ctx context.Context, offset, limit int,
 
 // GetLifecycleWorkflow returns a single lifecycle workflow by ID
 func (s *Service) GetLifecycleWorkflow(ctx context.Context, id string) (*LifecycleWorkflow, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	var wf LifecycleWorkflow
 	var actionsBytes, conditionsBytes []byte
 
-	err := s.db.Pool.QueryRow(ctx,
+	err = s.db.Pool.QueryRow(ctx,
 		`SELECT id, name, description, event_type, trigger_type, actions, conditions,
 			require_approval, approval_policy_id, enabled, created_by, created_at, updated_at
-		 FROM lifecycle_workflows WHERE id = $1`, id,
+		 FROM lifecycle_workflows WHERE id = $1 AND org_id = $2`, id, org.ID,
 	).Scan(
 		&wf.ID, &wf.Name, &wf.Description, &wf.EventType, &wf.TriggerType,
 		&actionsBytes, &conditionsBytes, &wf.RequireApproval, &wf.ApprovalPolicyID,
@@ -6165,6 +6178,11 @@ func (s *Service) GetLifecycleWorkflow(ctx context.Context, id string) (*Lifecyc
 
 // UpdateLifecycleWorkflow updates an existing lifecycle workflow
 func (s *Service) UpdateLifecycleWorkflow(ctx context.Context, wf *LifecycleWorkflow) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	wf.UpdatedAt = time.Now()
 
 	actionsJSON, err := json.Marshal(wf.Actions)
@@ -6177,15 +6195,18 @@ func (s *Service) UpdateLifecycleWorkflow(ctx context.Context, wf *LifecycleWork
 		return fmt.Errorf("failed to marshal conditions: %w", err)
 	}
 
+	// `actions` is one of the fields set here, and an action is what disables
+	// or strips an account. Without the org term another tenant could re-point
+	// this rule and leave its owner running it.
 	result, err := s.db.Pool.Exec(ctx,
 		`UPDATE lifecycle_workflows
 		 SET name = $1, description = $2, event_type = $3, trigger_type = $4,
 			 actions = $5, conditions = $6, require_approval = $7, approval_policy_id = $8,
 			 enabled = $9, updated_at = $10
-		 WHERE id = $11`,
+		 WHERE id = $11 AND org_id = $12`,
 		wf.Name, wf.Description, wf.EventType, wf.TriggerType,
 		actionsJSON, conditionsJSON, wf.RequireApproval, wf.ApprovalPolicyID,
-		wf.Enabled, wf.UpdatedAt, wf.ID,
+		wf.Enabled, wf.UpdatedAt, wf.ID, org.ID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update lifecycle workflow: %w", err)
@@ -6200,7 +6221,13 @@ func (s *Service) UpdateLifecycleWorkflow(ctx context.Context, wf *LifecycleWork
 
 // DeleteLifecycleWorkflow deletes a lifecycle workflow by ID
 func (s *Service) DeleteLifecycleWorkflow(ctx context.Context, id string) error {
-	result, err := s.db.Pool.Exec(ctx, "DELETE FROM lifecycle_workflows WHERE id = $1", id)
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
+	result, err := s.db.Pool.Exec(ctx,
+		"DELETE FROM lifecycle_workflows WHERE id = $1 AND org_id = $2", id, org.ID)
 	if err != nil {
 		return fmt.Errorf("failed to delete lifecycle workflow: %w", err)
 	}
@@ -6214,6 +6241,11 @@ func (s *Service) DeleteLifecycleWorkflow(ctx context.Context, id string) error 
 
 // ExecuteLifecycleWorkflow runs a workflow against a target user
 func (s *Service) ExecuteLifecycleWorkflow(ctx context.Context, workflowID, userID, triggeredBy string) (*LifecycleExecution, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	wf, err := s.GetLifecycleWorkflow(ctx, workflowID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get workflow: %w", err)
@@ -6221,6 +6253,19 @@ func (s *Service) ExecuteLifecycleWorkflow(ctx context.Context, workflowID, user
 
 	if !wf.Enabled {
 		return nil, fmt.Errorf("workflow is disabled")
+	}
+
+	// Refuse a target outside the caller's tenant rather than running against
+	// it. Every action below already carries `AND org_id = $N`, so a foreign
+	// user id would match nothing and affect nobody -- and this function would
+	// then write an execution row saying "completed", with every action listed
+	// under actions_completed. A joiner/mover/leaver run that reports success
+	// having touched no account is the failure mode this subsystem was fixed
+	// for once already; silently is the wrong way for it to fail.
+	var one int
+	if err := s.db.Pool.QueryRow(ctx,
+		"SELECT 1 FROM users WHERE id = $1 AND org_id = $2", userID, org.ID).Scan(&one); err != nil {
+		return nil, fmt.Errorf("target user is not in this organization")
 	}
 
 	exec := &LifecycleExecution{
@@ -6238,10 +6283,10 @@ func (s *Service) ExecuteLifecycleWorkflow(ctx context.Context, workflowID, user
 
 	// Insert the initial execution record
 	_, err = s.db.Pool.Exec(ctx,
-		`INSERT INTO lifecycle_executions (id, workflow_id, user_id, triggered_by, trigger_type, status, actions_completed, actions_failed, error, started_at, completed_at, created_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, '[]'::jsonb, '[]'::jsonb, NULL, $7, NULL, $8)`,
+		`INSERT INTO lifecycle_executions (id, workflow_id, user_id, triggered_by, trigger_type, status, actions_completed, actions_failed, error, started_at, completed_at, created_at, org_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, '[]'::jsonb, '[]'::jsonb, NULL, $7, NULL, $8, $9)`,
 		exec.ID, exec.WorkflowID, exec.UserID, exec.TriggeredBy, exec.TriggerType,
-		exec.Status, exec.StartedAt, exec.CreatedAt,
+		exec.Status, exec.StartedAt, exec.CreatedAt, org.ID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create execution record: %w", err)
@@ -6300,8 +6345,8 @@ func (s *Service) ExecuteLifecycleWorkflow(ctx context.Context, workflowID, user
 	_, err = s.db.Pool.Exec(ctx,
 		`UPDATE lifecycle_executions
 		 SET status = $1, actions_completed = $2, actions_failed = $3, error = $4, completed_at = $5
-		 WHERE id = $6`,
-		exec.Status, completedJSON, failedJSON, errPtr, exec.CompletedAt, exec.ID,
+		 WHERE id = $6 AND org_id = $7`,
+		exec.Status, completedJSON, failedJSON, errPtr, exec.CompletedAt, exec.ID, org.ID,
 	)
 	if err != nil {
 		s.logger.Error("Failed to update execution record", zap.String("execution_id", exec.ID), zap.Error(err))
@@ -6388,14 +6433,21 @@ func (s *Service) executeLifecycleAction(ctx context.Context, userID string, act
 
 // ListLifecycleExecutions returns paginated lifecycle executions with optional filters
 func (s *Service) ListLifecycleExecutions(ctx context.Context, offset, limit int, workflowID, userID string) ([]LifecycleExecution, int, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+
 	countQuery := "SELECT COUNT(*) FROM lifecycle_executions"
 	listQuery := `SELECT id, workflow_id, user_id, triggered_by, trigger_type, status,
 		actions_completed, actions_failed, error, started_at, completed_at, created_at
 		FROM lifecycle_executions`
 
-	var conditions []string
-	var args []interface{}
-	argIdx := 1
+	// The org term is not optional the way the others are: an execution row
+	// names a user and records what was done to their account.
+	conditions := []string{"org_id = $1"}
+	args := []interface{}{org.ID}
+	argIdx := 2
 
 	if workflowID != "" {
 		conditions = append(conditions, fmt.Sprintf("workflow_id = $%d", argIdx))
@@ -6408,15 +6460,12 @@ func (s *Service) ListLifecycleExecutions(ctx context.Context, offset, limit int
 		argIdx++
 	}
 
-	if len(conditions) > 0 {
-		whereClause := " WHERE " + strings.Join(conditions, " AND ")
-		countQuery += whereClause
-		listQuery += whereClause
-	}
+	whereClause := " WHERE " + strings.Join(conditions, " AND ")
+	countQuery += whereClause
+	listQuery += whereClause
 
 	var total int
-	err := s.db.Pool.QueryRow(ctx, countQuery, args...).Scan(&total)
-	if err != nil {
+	if err := s.db.Pool.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("failed to count lifecycle executions: %w", err)
 	}
 
@@ -6466,13 +6515,18 @@ func (s *Service) ListLifecycleExecutions(ctx context.Context, offset, limit int
 
 // GetLifecycleExecution returns a single lifecycle execution by ID
 func (s *Service) GetLifecycleExecution(ctx context.Context, id string) (*LifecycleExecution, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	var ex LifecycleExecution
 	var completedBytes, failedBytes []byte
 
-	err := s.db.Pool.QueryRow(ctx,
+	err = s.db.Pool.QueryRow(ctx,
 		`SELECT id, workflow_id, user_id, triggered_by, trigger_type, status,
 			actions_completed, actions_failed, error, started_at, completed_at, created_at
-		 FROM lifecycle_executions WHERE id = $1`, id,
+		 FROM lifecycle_executions WHERE id = $1 AND org_id = $2`, id, org.ID,
 	).Scan(
 		&ex.ID, &ex.WorkflowID, &ex.UserID, &ex.TriggeredBy, &ex.TriggerType,
 		&ex.Status, &completedBytes, &failedBytes, &ex.Error,
@@ -6745,7 +6799,14 @@ func (s *Service) logAuditEvent(ctx context.Context, eventType, category, action
 		return
 	}
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		// The org has to travel on the CONTEXT, not just in the row.
+		// audit_events is behind the FORCE-RLS belt, and the pool sets
+		// app.org_id at checkout from orgctx -- so on a bare
+		// context.Background the setting is empty, the policy's WITH CHECK
+		// evaluates to NULL, and Postgres refuses the insert. Every one of
+		// these writes was being rejected and the only trace was a WARN.
+		ctx, cancel := context.WithTimeout(
+			orgctx.With(context.Background(), orgctx.Org{ID: orgID}), 5*time.Second)
 		defer cancel()
 		detailsJSON, _ := json.Marshal(details)
 		_, err := s.db.Pool.Exec(ctx, `

@@ -1,14 +1,20 @@
 # Architecture
 
-OpenIDX is built as a set of loosely-coupled microservices, each owning a specific domain.
+OpenIDX is a set of loosely-coupled Go services over **one PostgreSQL
+database** — cross-pillar reads are scoped SQL joins, not service-to-service
+integrations. The IdP is OpenIDX's own OAuth/OIDC service (there is no
+Keycloak), and the network plane is an OpenZiti overlay driven by a
+desired-state reconciler.
 
-## System Diagram
+## System diagram
 
 ```mermaid
 graph TB
     subgraph Clients
-        AdminUI[Admin Console<br/>React]
-        ExtApp[External Applications]
+        AdminUI[Console + self-service portal<br/>React]
+        Agent[Endpoint agents<br/>Windows · Android]
+        BrowZer[BrowZer<br/>clientless browser access]
+        ExtApp[External applications<br/>OIDC / SAML / SCIM]
     end
 
     subgraph Gateway
@@ -16,88 +22,82 @@ graph TB
     end
 
     subgraph Services
-        IS[Identity Service<br/>:8001]
-        GS[Governance Service<br/>:8002]
-        PS[Provisioning Service<br/>:8003]
-        AS[Audit Service<br/>:8004]
-        AA[Admin API<br/>:8005]
-        OS[OAuth/OIDC Service<br/>:8006]
+        IS[Identity :8001]
+        GS[Governance :8002]
+        PS[Provisioning :8003]
+        AS[Audit :8004]
+        AA[Admin API :8005]
+        OS[OAuth/OIDC :8006]
+        GW[Gateway Service]
+        AC[Access Service<br/>ZTNA · PAM broker · agents]
     end
 
-    subgraph Infrastructure
-        PG[(PostgreSQL)]
+    subgraph Network plane
+        ZC[Ziti controller]
+        ZR[Ziti router]
+        GD[Guacamole<br/>session broker]
+    end
+
+    subgraph Data layer
+        PG[(PostgreSQL<br/>FORCE row-level security)]
         RD[(Redis)]
-        ES[(Elasticsearch)]
-        OPA[OPA Policy Engine]
-        KC[Keycloak]
-    end
-
-    subgraph Observability
-        PROM[Prometheus]
-        GRAF[Grafana]
+        ES[(Elasticsearch<br/>optional)]
+        OPA[OPA]
     end
 
     AdminUI --> APISIX
     ExtApp --> APISIX
-    APISIX --> IS & GS & PS & AS & AA & OS
+    Agent --> ZC
+    BrowZer --> ZR
+    APISIX --> IS & GS & PS & AS & AA & OS & GW & AC
 
-    IS & GS & PS & AS & AA & OS --> PG
-    IS & GS & PS & AA & OS --> RD
+    IS & GS & PS & AS & AA & OS & GW & AC --> PG
+    IS & OS & AC --> RD
     AS --> ES
-    IS & GS & AA --> OPA
-    IS & PS --> KC
-
-    PROM --> IS & GS & PS & AS & AA & OS
-    GRAF --> PROM
+    GS & AA --> OPA
+    AC --> ZC
+    AC --> GD
+    GD --> ZR
 ```
 
 ## Services
 
-### Identity Service (port 8001)
+| Service | Port | Responsibility |
+|---|---|---|
+| **Identity** | 8001 | Users, groups, roles, sessions, MFA (TOTP, WebAuthn/passkeys, push, hardware tokens), federation (OIDC/SAML), passwordless, account lifecycle & deprovisioning |
+| **Governance** | 8002 | Access reviews & certification campaigns, ABAC policies via OPA, SoD (fail-closed), risk/time-bound assignments, approval workflows |
+| **Provisioning** | 8003 | SCIM 2.0 users & groups, provisioning rules, directory sync (LDAP / AD / Azure AD) |
+| **Audit** | 8004 | Unified tamper-evident audit events (HMAC hash-chain), real-time streaming, Elasticsearch indexing, SOC 2 / ISO 27001 / GDPR reports, SIEM forwarding |
+| **Admin API** | 8005 | Aggregated admin surface behind the console: dashboards, settings, applications, API keys, webhooks, notifications |
+| **OAuth/OIDC** | 8006 | The IdP: authorization code + PKCE, client credentials, refresh rotation with replay detection, token exchange, revocation, JWKS rotation, step-up, SAML 2.0 IdP with Single Logout |
+| **Gateway** | 8088 | APISIX integration, proxy routes, app publishing |
+| **Access** | — | Zero-trust enforcement: OpenZiti identity sync & reconciler, posture, PAM entries/vault/broker, endpoint agents, kiosk & remote support, the cross-pillar kill switch |
 
-Core identity management: users, groups, roles, permissions, sessions, and MFA. Handles user CRUD, search, CSV import/export, password management, and identity provider federation (OIDC/SAML).
+Supporting binaries: `cmd/migrate` (schema migrations, ~137 versions),
+`cmd/backup` (backup/restore with verification), `cmd/rekey` (re-encrypts
+secrets under a new KEK), `cmd/openidx-connect` (PAM CLI).
 
-**MFA support:**
+## The security spine
 
-- TOTP (Time-based One-Time Passwords)
-- WebAuthn / FIDO2 (hardware security keys, biometrics)
-- Push notifications
+- **Multi-tenancy at the database.** Every tenant table carries `org_id`
+  under PostgreSQL **FORCE row-level security**; the tenant is stamped onto
+  each pooled connection at checkout and resolved per request from
+  subdomain, JWT, or header. No tenant context yields zero rows, and a
+  merge-blocking linter (`tools/orgscope`) fails CI on any unscoped query.
+- **One grant model.** Application assignment drives the portal, the
+  proxy, `/oauth/authorize`, and Ziti dial policies through one predicate
+  (`internal/appaccess`) — staged behind flags with a reachability report.
+  See [Concepts](concepts.md).
+- **Fail-closed startup.** `ValidateProduction()` refuses to boot with
+  insecure secrets, wildcard CORS, disabled CSRF, or plaintext datastore
+  links; a DB-backed gate additionally refuses production while the seeded
+  default admin password still authenticates.
+- **Revocation that propagates.** Session revocation publishes Redis
+  markers the OAuth service enforces; deprovisioning and the kill switch
+  sever IAM sessions, API keys, vault checkouts, live privileged sessions,
+  and Ziti circuits.
 
-### Governance Service (port 8002)
-
-Access governance and compliance: access review campaigns, review item decisions (approve/revoke/flag), batch decisions, and policy management with evaluation engine.
-
-**Policy types:** Separation of duty, risk-based, time-bound, location-based.
-
-### Provisioning Service (port 8003)
-
-SCIM 2.0 compliant user and group provisioning for automated identity lifecycle management. Includes provisioning rules engine with triggers, conditions, and actions.
-
-**SCIM operations:** List, Create, Get, Replace, Patch, Delete for both Users and Groups.
-
-### Audit Service (port 8004)
-
-Comprehensive audit trail: event logging with filtering, compliance report generation (SOC2, ISO 27001, GDPR, HIPAA, PCI-DSS), statistics, and CSV/JSON export.
-
-### Admin API (port 8005)
-
-Backend for the Admin Console: dashboard statistics, system settings, application management, SSO configuration, directory integrations (LDAP, Azure AD, Google), and MFA method configuration.
-
-### OAuth/OIDC Service (port 8006)
-
-OAuth 2.0 authorization server with OpenID Connect:
-
-- Authorization code flow with PKCE
-- Client credentials grant
-- Refresh token rotation
-- Token introspection and revocation
-- OIDC discovery and JWKS endpoints
-- SAML 2.0 support
-- OAuth client management
-
-## Data Flow
-
-### Authentication Flow
+## Authentication flow
 
 ```mermaid
 sequenceDiagram
@@ -109,74 +109,34 @@ sequenceDiagram
 
     User->>App: Access protected resource
     App->>OAuth: Redirect to /oauth/authorize
-    OAuth->>User: Show login page
-    User->>OAuth: POST /oauth/login (credentials)
-    OAuth->>Identity: Validate credentials
-    Identity->>OAuth: User validated
+    OAuth->>User: Login page
+    User->>OAuth: Credentials
+    OAuth->>Identity: Validate (Argon2id verify, risk score, MFA policy)
+    Identity->>OAuth: OK / step-up required
     OAuth->>Redis: Store auth code
-    OAuth->>App: Redirect with auth code
+    OAuth->>App: Redirect with code
     App->>OAuth: POST /oauth/token (code + PKCE)
-    OAuth->>Redis: Validate & consume code
-    OAuth->>App: Access token + ID token + refresh token
+    OAuth->>App: Access + ID + refresh tokens
 ```
 
-### Service Communication
+Login risk scoring feeds the MFA decision: new device, unusual location,
+failed attempts, impossible travel, and **the IP threat list** (a listed
+source alone forces MFA and denies MFA-less accounts).
 
-```mermaid
-graph LR
-    subgraph "Service Mesh"
-        IS[Identity<br/>8001]
-        OS[OAuth<br/>8006]
-        GS[Governance<br/>8002]
-        PS[Provisioning<br/>8003]
-        AS[Audit<br/>8004]
-        AA[Admin<br/>8005]
-    end
-
-    IS <--> |validate user| OS
-    IS <--> |log events| AS
-    IS <--> |policies| GS
-    IS <--> |provision| PS
-
-    OS <--> |validate user| IS
-    OS <--> |log auth| AS
-
-    GS <--> |user data| IS
-    GS <--> |log reviews| AS
-
-    PS <--> |sync users| IS
-    PS <--> |log changes| AS
-
-    AA <--> |all services| IS
-    AA <--> |all services| AS
-```
-
-### Database Schema
-
-```mermaid
-erDiagram
-    users ||--o{ sessions : has
-    users ||--o{ mfa_factors : has
-    users ||--o{ user_groups : belongs_to
-    groups ||--o{ user_groups : has
-    users ||--o{ audit_events : creates
-    applications ||--o{ oauth_clients : has
-    reviews ||--o{ review_items : contains
-    review_items ||--|| review_decisions : has
-```
-
-## Technology Stack
+## Technology stack
 
 | Layer | Technology |
 |-------|-----------|
-| Language | Go 1.22 |
-| HTTP Framework | Gin |
-| Database | PostgreSQL 16 (pgx driver) |
-| Cache | Redis 7 (go-redis) |
-| Search | Elasticsearch 8.12 |
-| Frontend | React 18, TypeScript, Vite, Tailwind CSS |
-| API Gateway | Apache APISIX 3.8 |
-| Policy Engine | Open Policy Agent 0.61 |
-| Identity Provider | Keycloak 23 |
-| Observability | Prometheus + Grafana |
-| Infrastructure | Docker, Kubernetes (Helm), Terraform (AWS) |
+| Language | Go 1.26 |
+| HTTP framework | Gin |
+| Database | PostgreSQL 16 (pgx), FORCE row-level security |
+| Cache / coordination | Redis 7 (go-redis) |
+| Search (optional) | Elasticsearch 8 |
+| Frontend | React, TypeScript, Vite, Tailwind, Radix, TanStack Query |
+| API gateway | Apache APISIX |
+| Policy engine | Open Policy Agent |
+| Identity provider | **OpenIDX's own OAuth/OIDC service** (no Keycloak) |
+| Network overlay | OpenZiti (controller + router, BrowZer) |
+| Session broker | Apache Guacamole, plus in-browser wasm-ssh |
+| Observability | Prometheus, Grafana, Loki, Jaeger (OpenTelemetry) |
+| Infrastructure | Docker Compose (prod overlay), Kubernetes (Helm), Terraform (AWS), systemd |

@@ -13,15 +13,29 @@ on:
       - "client/**"
       - "agent/**"
       - ".github/workflows/client-mobile-build.yml"
+      - "scripts/ci-prime-cocoapods.sh"
+      - "scripts/ci-retry.sh"
   pull_request:
     paths:
       - "client/**"
       - "agent/**"
       - ".github/workflows/client-mobile-build.yml"
+      - "scripts/ci-prime-cocoapods.sh"
+      - "scripts/ci-retry.sh"
   workflow_dispatch:
 
 env:
   FLUTTER_VERSION: "3.24.0"
+  # Tracks agent/go.mod, which pins `toolchain go1.25.13` -- NOT the root
+  # module's go1.26; nothing here builds the root module, gomobile binds
+  # ./agent/mobile only. `1.25.x` resolves to the latest 1.25 patch, so it
+  # satisfies that toolchain floor. Keep the two decoupled, and raise this only
+  # for a reason: the stdlib advisories the agent reached are all fixed inside
+  # the 1.25 line, which the toolchain pin guarantees, so 1.26 buys nothing
+  # here today. The link failure that used to make it costly is fixed --
+  # go1.26's darwin resolver pulls libresolv (_res_9_ninit and friends) into
+  # the gomobile static framework, and the openidx_engine podspec now links it
+  # -- so a future move is a version bump, not an investigation.
   GO_VERSION: "1.25.x"
 
 jobs:
@@ -178,9 +192,9 @@ jobs:
   # ---------------------------------------------------------------------------
   build-ios:
     needs: gomobile-ios
-    # macos-15 ships Xcode 16 / Swift 6, required by the firebase-ios-sdk pulled
-    # in by firebase_messaging (uses `sending`, AccessLevelOnImport). macos-14
-    # (Xcode 15) fails to compile it.
+    # macos-15 (Xcode 16). The original reason was firebase-ios-sdk needing
+    # Swift 6; that dependency is gone (push-MFA delivers over ntfy), but the
+    # runner stays current rather than pinned backwards to macos-14.
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
@@ -208,6 +222,10 @@ jobs:
       - name: Resolve dependencies
         working-directory: client
         run: flutter pub get
+
+      # Before the build, not during it: see scripts/ci-prime-cocoapods.sh.
+      - name: Prime the CocoaPods spec source
+        run: bash scripts/ci-prime-cocoapods.sh
 
       - name: Build iOS (no codesign)
         working-directory: client

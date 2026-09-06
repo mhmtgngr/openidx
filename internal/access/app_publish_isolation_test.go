@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -146,6 +147,36 @@ func TestPublishedApps_TenantIsolation(t *testing.T) {
 		}
 		if resp.Total != 0 {
 			t.Fatalf("orgA must not see orgB's app paths, got total=%d", resp.Total)
+		}
+	})
+
+	// A path's classification is not a label: it decides whether the path is
+	// published, behind what auth, and under what device-trust requirement. A
+	// cross-tenant write here is an access decision taken on someone else's
+	// application, so it gets its own case rather than riding on the reads.
+	t.Run("reclassifying a cross-org path is a no-op", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		req := httptest.NewRequest(http.MethodPut, "/apps/x/paths/"+pathB,
+			strings.NewReader(`{"classification":"public"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req = req.WithContext(orgctx.With(req.Context(), orgctx.Org{ID: orgA}))
+		c.Request = req
+		c.Params = gin.Params{{Key: "appId", Value: appB}, {Key: "pathId", Value: pathB}}
+
+		s.handleUpdatePathClassification(c)
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("orgA reclassifying orgB's path: expected 404, got %d (%s)", w.Code, w.Body.String())
+		}
+		var got, src string
+		if err := db.Pool.QueryRow(ctx,
+			`SELECT classification, classification_source FROM discovered_paths WHERE id=$1`,
+			pathB).Scan(&got, &src); err != nil {
+			t.Fatalf("read back: %v", err)
+		}
+		if got != "protected" || src != "auto" {
+			t.Fatalf("orgB's path is now %q/%q, want protected/auto — orgA changed an "+
+				"access decision on another tenant's application", got, src)
 		}
 	})
 

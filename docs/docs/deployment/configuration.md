@@ -62,6 +62,7 @@ redis://[:password@]host:port[/db]
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
 | `OAUTH_ISSUER` | string | - | Token issuer URL |
+| `OAUTH_LOGIN_URL` | url | `<OAUTH_ISSUER>/login` | Where `/oauth/authorize` sends a browser to sign in. Set it when the admin console is served from a different origin than the issuer; the reference compose stack is exactly that case. Must be an absolute URL. |
 | `OAUTH_ACCESS_TOKEN_TTL` | duration | `1h` | Access token lifetime |
 | `OAUTH_REFRESH_TOKEN_TTL` | duration | `720h` | Refresh token lifetime (30 days) |
 | `OAUTH_AUTH_CODE_TTL` | duration | `10m` | Authorization code lifetime |
@@ -107,15 +108,6 @@ redis://[:password@]host:port[/db]
 | `APISIX_ADMIN_KEY` | string | - | APISIX admin key |
 | `APISIX_BASE_URL` | string | `http://localhost:8088` | APISIX proxy URL |
 
-### Keycloak Settings
-
-| Variable | Type | Default | Description |
-|----------|------|---------|-------------|
-| `KEYCLOAK_URL` | string | - | Keycloak base URL |
-| `KEYCLOAK_REALM` | string | `master` | Keycloak realm |
-| `KEYCLOAK_CLIENT_ID` | string | - | Keycloak client ID |
-| `KEYCLOAK_CLIENT_SECRET` | string | - | Keycloak client secret |
-
 ### MFA Settings
 
 | Variable | Type | Default | Description |
@@ -160,6 +152,37 @@ redis://[:password@]host:port[/db]
 | `TRACING_SAMPLER` | float | `0.1` | Trace sampling rate |
 | `TRACING_ENDPOINT` | string | - | Jaeger endpoint |
 | `HEALTH_CHECK_ENABLED` | bool | `true` | Enable health checks |
+
+### Endpoint Agent Downloads
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `AGENT_DOWNLOADS_DIR` | string | `deployments/downloads` | Directory of per-OS agent installers served at `/downloads/<file>` |
+
+`GET /downloads/agent-manifest.json` lists what that directory actually holds,
+one entry per platform with a URL and a SHA-256. The end-user **Add a device**
+wizard reads it: a platform with an entry gets a download button, a platform
+without one is told the installer comes from its administrator. Nothing is
+advertised that is not on disk.
+
+The extension decides the platform — `.msi`/`.exe` → Windows, `.pkg`/`.dmg` →
+macOS, `.deb`/`.rpm` → Linux, `.apk` → Android — so populating it is a copy:
+
+```bash
+# Every artifact from an agent release, into the directory the service serves.
+TAG=agent-v1.2.0
+mkdir -p /var/lib/openidx/downloads
+gh release download "$TAG" --repo <owner>/<repo> \
+  --pattern 'OpenIDX-*.msi' --pattern '*.deb' --pattern '*.rpm' \
+  --dir /var/lib/openidx/downloads
+
+# Point access-service at it.
+export AGENT_DOWNLOADS_DIR=/var/lib/openidx/downloads
+```
+
+The `agent-v*` release publishes the Windows MSI plus `.deb` and `.rpm` for
+amd64 and arm64. There is no macOS or iOS client to download; the wizard says
+so rather than sending users to ask for one.
 
 ## Configuration File Format
 

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type RefObject } from 'react'
+import { useTranslation } from 'react-i18next'
 import { AlertTriangle } from 'lucide-react'
 import { Dialog, DialogContent } from '../ui/dialog'
 import { Button } from '../ui/button'
@@ -112,6 +113,7 @@ export function useGuacSessionPhase(
 }
 
 export function GuacSessionViewer({ url, title, open, onClose }: Props) {
+  const { t } = useTranslation()
   const iframeRef = useRef<HTMLIFrameElement | null>(null)
   // Bumping this remounts the iframe for "Try again" (fresh src load) and
   // restarts the phase monitor's grace window.
@@ -177,16 +179,18 @@ export function GuacSessionViewer({ url, title, open, onClose }: Props) {
                   <AlertTriangle className="h-5 w-5 text-red-600" />
                 </div>
                 <h2 className="text-lg font-semibold">
-                  {phase === 'ended' ? 'Session ended' : `Couldn't connect to ${title}`}
+                  {phase === 'ended'
+                    ? t('components.guacSessionViewer.ended')
+                    : t('components.guacSessionViewer.failed', { target: title })}
                 </h2>
                 <p className="mt-1 text-sm text-muted-foreground">
                   {phase === 'ended'
-                    ? 'The remote session was closed. Reconnect to start a new session.'
-                    : 'The remote session could not be established. This may be temporary, or you may not have access to the target.'}
+                    ? t('components.guacSessionViewer.endedDesc')
+                    : t('components.guacSessionViewer.failedDesc')}
                 </p>
                 <div className="mt-4 flex justify-center gap-2">
-                  <Button variant="outline" onClick={onClose}>Close</Button>
-                  <Button onClick={retry}>Try again</Button>
+                  <Button variant="outline" onClick={onClose}>{t('common.close')}</Button>
+                  <Button onClick={retry}>{t('components.guacSessionViewer.retry')}</Button>
                 </div>
               </div>
             </div>

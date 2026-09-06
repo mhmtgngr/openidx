@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Plus, Edit, Trash2, Lock, LockOpen, MonitorSmartphone, Tag,
@@ -60,6 +61,7 @@ const ALL_FEATURES = [
 ] as const
 
 export function KioskPoliciesPage() {
+  const { t } = useTranslation()
   const queryClient = useQueryClient()
   const { toast } = useToast()
   const [editing, setEditing] = useState<KioskPolicy | null>(null)
@@ -77,9 +79,10 @@ export function KioskPoliciesPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['kiosk-policies'] })
       setConfirmDelete(null)
-      toast({ title: 'Policy deleted' })
+      toast({ title: t('pages.kioskPolicies.toasts.deleted') })
     },
-    onError: () => toast({ title: 'Failed to delete policy', variant: 'destructive' }),
+    onError: () =>
+      toast({ title: t('pages.kioskPolicies.toasts.deleteFailed'), variant: 'destructive' }),
   })
 
   function openCreate() {
@@ -95,35 +98,33 @@ export function KioskPoliciesPage() {
     <div className="space-y-6 p-8">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold">Kiosk policies</h1>
-          <p className="text-muted-foreground">
-            Lockdown configurations distributed to Android agents via /agent/config.
-          </p>
+          <h1 className="text-3xl font-bold">{t('pages.kioskPolicies.title')}</h1>
+          <p className="text-muted-foreground">{t('pages.kioskPolicies.subtitle')}</p>
         </div>
         <Button onClick={openCreate}>
-          <Plus className="mr-2 h-4 w-4" /> New policy
+          <Plus className="mr-2 h-4 w-4" /> {t('pages.kioskPolicies.newPolicy')}
         </Button>
       </div>
 
       <Card>
         <CardHeader>
-          <CardTitle>Policies</CardTitle>
+          <CardTitle>{t('pages.kioskPolicies.listTitle')}</CardTitle>
         </CardHeader>
         <CardContent>
           {isLoading ? (
             <div className="py-12 flex justify-center"><LoadingSpinner /></div>
           ) : isError ? (
-            <QueryError error={error} resource="kiosk policies" />
+            <QueryError error={error} resource={t('pages.kioskPolicies.resourceName')} />
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Mode</TableHead>
-                  <TableHead>Apps</TableHead>
-                  <TableHead>Lock features</TableHead>
-                  <TableHead>Enabled</TableHead>
-                  <TableHead>Updated</TableHead>
+                  <TableHead>{t('pages.kioskPolicies.table.name')}</TableHead>
+                  <TableHead>{t('pages.kioskPolicies.table.mode')}</TableHead>
+                  <TableHead>{t('pages.kioskPolicies.table.apps')}</TableHead>
+                  <TableHead>{t('pages.kioskPolicies.table.lockFeatures')}</TableHead>
+                  <TableHead>{t('pages.kioskPolicies.table.enabled')}</TableHead>
+                  <TableHead>{t('pages.kioskPolicies.table.updated')}</TableHead>
                   <TableHead className="w-32" />
                 </TableRow>
               </TableHeader>
@@ -140,14 +141,20 @@ export function KioskPoliciesPage() {
                     <TableCell>{p.allowed_packages?.length || 0}</TableCell>
                     <TableCell>
                       <span className="text-sm text-muted-foreground">
-                        {p.lock_task_features?.length || 0} feature{(p.lock_task_features?.length || 0) === 1 ? '' : 's'}
+                        {t('pages.kioskPolicies.featureCount', {
+                          count: p.lock_task_features?.length || 0,
+                        })}
                       </span>
                     </TableCell>
                     <TableCell>
-                      {p.enabled ? <Badge variant="success">on</Badge> : <Badge variant="secondary">off</Badge>}
+                      {p.enabled ? (
+                        <Badge variant="success">{t('pages.kioskPolicies.on')}</Badge>
+                      ) : (
+                        <Badge variant="secondary">{t('pages.kioskPolicies.off')}</Badge>
+                      )}
                     </TableCell>
                     <TableCell className="text-muted-foreground text-sm">
-                      {new Date(p.updated_at).toLocaleDateString()}
+                      {new Date(p.updated_at).toLocaleDateString(undefined)}
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-1">
@@ -172,7 +179,7 @@ export function KioskPoliciesPage() {
                 {policies.length === 0 && (
                   <TableRow>
                     <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
-                      No policies yet. Click "New policy" to create one.
+                      {t('pages.kioskPolicies.empty')}
                     </TableCell>
                   </TableRow>
                 )}
@@ -203,19 +210,20 @@ export function KioskPoliciesPage() {
       <AlertDialog open={!!confirmDelete} onOpenChange={(o) => !o && setConfirmDelete(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete "{confirmDelete?.name}"?</AlertDialogTitle>
+            <AlertDialogTitle>
+              {t('pages.kioskPolicies.confirmDelete.title', { name: confirmDelete?.name ?? '' })}
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              All assignments to this policy are also removed. Devices currently in
-              kiosk under this policy will exit lock-task at the next config fetch.
+              {t('pages.kioskPolicies.confirmDelete.description')}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => confirmDelete && deleteMutation.mutate(confirmDelete.id)}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              Delete
+              {t('common.delete')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -225,9 +233,12 @@ export function KioskPoliciesPage() {
 }
 
 function ModeBadge({ mode }: { mode: KioskPolicy['mode'] }) {
-  if (mode === 'single_app') return <Badge><Lock className="mr-1 h-3 w-3" /> single-app</Badge>
-  if (mode === 'multi_app') return <Badge><MonitorSmartphone className="mr-1 h-3 w-3" /> multi-app</Badge>
-  return <Badge variant="secondary"><LockOpen className="mr-1 h-3 w-3" /> off</Badge>
+  const { t } = useTranslation()
+  if (mode === 'single_app')
+    return <Badge><Lock className="mr-1 h-3 w-3" /> {t('pages.kioskPolicies.modes.single_app')}</Badge>
+  if (mode === 'multi_app')
+    return <Badge><MonitorSmartphone className="mr-1 h-3 w-3" /> {t('pages.kioskPolicies.modes.multi_app')}</Badge>
+  return <Badge variant="secondary"><LockOpen className="mr-1 h-3 w-3" /> {t('pages.kioskPolicies.modes.off')}</Badge>
 }
 
 interface PolicyEditorProps {
@@ -237,6 +248,7 @@ interface PolicyEditorProps {
 }
 
 function PolicyEditor({ policy, onClose, onSaved }: PolicyEditorProps) {
+  const { t } = useTranslation()
   const { toast } = useToast()
   const isCreate = !policy
   const [name, setName] = useState(policy?.name ?? '')
@@ -267,10 +279,15 @@ function PolicyEditor({ policy, onClose, onSaved }: PolicyEditorProps) {
       return api.put(`/api/v1/access/kiosk/policies/${policy!.id}`, body)
     },
     onSuccess: () => {
-      toast({ title: isCreate ? 'Policy created' : 'Policy updated' })
+      toast({
+        title: isCreate
+          ? t('pages.kioskPolicies.toasts.created')
+          : t('pages.kioskPolicies.toasts.updated'),
+      })
       onSaved()
     },
-    onError: () => toast({ title: 'Save failed', variant: 'destructive' }),
+    onError: () =>
+      toast({ title: t('pages.kioskPolicies.toasts.saveFailed'), variant: 'destructive' }),
   })
 
   function addPackage() {
@@ -291,58 +308,62 @@ function PolicyEditor({ policy, onClose, onSaved }: PolicyEditorProps) {
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{isCreate ? 'New kiosk policy' : `Edit ${policy?.name}`}</DialogTitle>
+          <DialogTitle>
+            {isCreate
+              ? t('pages.kioskPolicies.editor.createTitle')
+              : t('pages.kioskPolicies.editor.editTitle', { name: policy?.name ?? '' })}
+          </DialogTitle>
           <DialogDescription>
-            Distributed to Android agents on their next /agent/config cycle.
+            {t('pages.kioskPolicies.editor.description')}
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="text-sm font-medium">Name</label>
-              <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Front desk kiosk" />
+              <label className="text-sm font-medium">{t('pages.kioskPolicies.editor.name')}</label>
+              <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={t('pages.kioskPolicies.editor.namePlaceholder')} />
             </div>
             <div>
-              <label className="text-sm font-medium">Mode</label>
-              <select
+              <label htmlFor="kiosk-policies-mode" className="text-sm font-medium">{t('pages.kioskPolicies.editor.mode')}</label>
+              <select id="kiosk-policies-mode"
                 value={mode}
                 onChange={(e) => setMode(e.target.value as KioskPolicy['mode'])}
                 className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
               >
-                <option value="multi_app">multi-app — curated app grid</option>
-                <option value="single_app">single-app — pin one activity</option>
-                <option value="off">off — disable kiosk for this target</option>
+                <option value="multi_app">{t('pages.kioskPolicies.editor.modeMulti')}</option>
+                <option value="single_app">{t('pages.kioskPolicies.editor.modeSingle')}</option>
+                <option value="off">{t('pages.kioskPolicies.editor.modeOff')}</option>
               </select>
             </div>
           </div>
 
           <div>
-            <label className="text-sm font-medium">Description</label>
+            <label className="text-sm font-medium">{t('pages.kioskPolicies.editor.descriptionLabel')}</label>
             <Input
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder="Optional"
+              placeholder={t('pages.kioskPolicies.editor.descriptionPlaceholder')}
             />
           </div>
 
           {mode === 'single_app' && (
             <div>
-              <label className="text-sm font-medium">Primary activity</label>
+              <label className="text-sm font-medium">{t('pages.kioskPolicies.editor.primaryActivity')}</label>
               <Input
                 value={primaryActivity}
                 onChange={(e) => setPrimaryActivity(e.target.value)}
                 placeholder="com.example.app/.MainActivity"
               />
               <p className="text-xs text-muted-foreground mt-1">
-                Component name (package/.Activity) that gets pinned full-screen.
+                {t('pages.kioskPolicies.editor.primaryActivityHint')}
               </p>
             </div>
           )}
 
           {mode !== 'off' && (
             <div>
-              <label className="text-sm font-medium">Allowed packages</label>
+              <label className="text-sm font-medium">{t('pages.kioskPolicies.editor.allowedPackages')}</label>
               <div className="flex gap-2 mt-1">
                 <Input
                   value={packageInput}
@@ -350,7 +371,7 @@ function PolicyEditor({ policy, onClose, onSaved }: PolicyEditorProps) {
                   onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addPackage() } }}
                   placeholder="com.example.app"
                 />
-                <Button onClick={addPackage} variant="outline">Add</Button>
+                <Button onClick={addPackage} variant="outline">{t('common.add')}</Button>
               </div>
               {allowedPackages.length > 0 && (
                 <div className="flex flex-wrap gap-1 mt-2">
@@ -374,7 +395,7 @@ function PolicyEditor({ policy, onClose, onSaved }: PolicyEditorProps) {
 
           {mode !== 'off' && (
             <div>
-              <label className="text-sm font-medium">Lock-task features</label>
+              <label className="text-sm font-medium">{t('pages.kioskPolicies.editor.lockFeatures')}</label>
               <div className="grid grid-cols-2 gap-2 mt-2">
                 {ALL_FEATURES.map((f) => (
                   <label key={f} className="flex items-center gap-2 text-sm">
@@ -388,8 +409,7 @@ function PolicyEditor({ policy, onClose, onSaved }: PolicyEditorProps) {
                 ))}
               </div>
               <p className="text-xs text-muted-foreground mt-1">
-                Features the user can interact with (status bar, notifications, etc.).
-                Unchecked = blocked.
+                {t('pages.kioskPolicies.editor.lockFeaturesHint')}
               </p>
             </div>
           )}
@@ -397,13 +417,17 @@ function PolicyEditor({ policy, onClose, onSaved }: PolicyEditorProps) {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="text-sm font-medium">
-                {policy?.has_exit_pin ? 'Rotate exit PIN' : 'Exit PIN'}
+                {policy?.has_exit_pin
+                  ? t('pages.kioskPolicies.editor.rotatePin')
+                  : t('pages.kioskPolicies.editor.exitPin')}
               </label>
               <Input
                 type="password"
                 value={exitPin}
                 onChange={(e) => setExitPin(e.target.value)}
-                placeholder={policy?.has_exit_pin ? '(leave blank to keep)' : 'optional'}
+                placeholder={policy?.has_exit_pin
+                  ? t('pages.kioskPolicies.editor.pinKeep')
+                  : t('pages.kioskPolicies.editor.pinOptional')}
               />
             </div>
             <div className="flex items-end">
@@ -413,19 +437,21 @@ function PolicyEditor({ policy, onClose, onSaved }: PolicyEditorProps) {
                   checked={enabled}
                   onChange={(e) => setEnabled(e.target.checked)}
                 />
-                Policy enabled
+                {t('pages.kioskPolicies.editor.enabled')}
               </label>
             </div>
           </div>
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button variant="outline" onClick={onClose}>{t('common.cancel')}</Button>
           <Button
             onClick={() => saveMutation.mutate()}
             disabled={!name || saveMutation.isPending}
           >
-            {saveMutation.isPending ? 'Saving…' : 'Save'}
+            {saveMutation.isPending
+              ? t('pages.kioskPolicies.editor.saving')
+              : t('pages.kioskPolicies.editor.save')}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -439,6 +465,7 @@ interface AssignmentsDialogProps {
 }
 
 function AssignmentsDialog({ policy, onClose }: AssignmentsDialogProps) {
+  const { t } = useTranslation()
   const queryClient = useQueryClient()
   const { toast } = useToast()
   const [targetKind, setTargetKind] = useState<'agent' | 'tag'>('agent')
@@ -460,57 +487,61 @@ function AssignmentsDialog({ policy, onClose }: AssignmentsDialogProps) {
       queryClient.invalidateQueries({ queryKey: ['kiosk-policy-assignments', policy.id] })
       setTargetId('')
       setPriority('')
-      toast({ title: 'Assigned' })
+      toast({ title: t('pages.kioskPolicies.toasts.assigned') })
     },
-    onError: () => toast({ title: 'Failed to assign', variant: 'destructive' }),
+    onError: () =>
+      toast({ title: t('pages.kioskPolicies.toasts.assignFailed'), variant: 'destructive' }),
   })
 
   const unassignMutation = useMutation({
     mutationFn: (id: string) => api.delete(`/api/v1/access/kiosk/assignments/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['kiosk-policy-assignments', policy.id] })
-      toast({ title: 'Unassigned' })
+      toast({ title: t('pages.kioskPolicies.toasts.unassigned') })
     },
-    onError: () => toast({ title: 'Failed to unassign', variant: 'destructive' }),
+    onError: () =>
+      toast({ title: t('pages.kioskPolicies.toasts.unassignFailed'), variant: 'destructive' }),
   })
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-xl">
         <DialogHeader>
-          <DialogTitle>Assignments — {policy.name}</DialogTitle>
+          <DialogTitle>{t('pages.kioskPolicies.assignments.title', { name: policy.name })}</DialogTitle>
           <DialogDescription>
-            Agent assignments beat tag assignments. Higher priority wins within a kind.
+            {t('pages.kioskPolicies.assignments.description')}
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-3">
           <div className="flex gap-2">
-            <select
+            <select aria-label={t('pages.kioskPolicies.targetKindLabel')}
               value={targetKind}
               onChange={(e) => setTargetKind(e.target.value as 'agent' | 'tag')}
               className="h-9 rounded-md border border-input bg-background px-3 text-sm"
             >
-              <option value="agent">agent</option>
-              <option value="tag">tag</option>
+              <option value="agent">{t('pages.kioskPolicies.assignments.kindAgent')}</option>
+              <option value="tag">{t('pages.kioskPolicies.assignments.kindTag')}</option>
             </select>
             <Input
               value={targetId}
               onChange={(e) => setTargetId(e.target.value)}
-              placeholder={targetKind === 'agent' ? 'agent-xxxxxxxx' : 'tag (e.g. front-desk)'}
+              placeholder={targetKind === 'agent'
+                ? t('pages.kioskPolicies.assignments.agentPlaceholder')
+                : t('pages.kioskPolicies.assignments.tagPlaceholder')}
             />
             <Input
               type="number"
               value={priority}
               onChange={(e) => setPriority(e.target.value)}
-              placeholder="priority"
+              placeholder={t('pages.kioskPolicies.assignments.priorityPlaceholder')}
               className="w-24"
             />
             <Button
               onClick={() => assignMutation.mutate()}
               disabled={!targetId || assignMutation.isPending}
             >
-              Assign
+              {t('pages.kioskPolicies.assignments.assign')}
             </Button>
           </div>
 
@@ -525,7 +556,9 @@ function AssignmentsDialog({ policy, onClose }: AssignmentsDialogProps) {
                       ? <Smartphone className="h-4 w-4 text-muted-foreground" />
                       : <Tag className="h-4 w-4 text-muted-foreground" />}
                     <span className="font-mono">{a.target_id}</span>
-                    <Badge variant="outline">priority {a.priority}</Badge>
+                    <Badge variant="outline">
+                      {t('pages.kioskPolicies.assignments.priority', { n: a.priority })}
+                    </Badge>
                   </div>
                   <Button
                     variant="ghost"
@@ -538,7 +571,7 @@ function AssignmentsDialog({ policy, onClose }: AssignmentsDialogProps) {
               ))}
               {assignments.length === 0 && (
                 <div className="p-4 text-center text-muted-foreground text-sm">
-                  No assignments yet.
+                  {t('pages.kioskPolicies.assignments.empty')}
                 </div>
               )}
             </div>
@@ -546,7 +579,7 @@ function AssignmentsDialog({ policy, onClose }: AssignmentsDialogProps) {
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Close</Button>
+          <Button variant="outline" onClick={onClose}>{t('common.close')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useMutation } from '@tanstack/react-query'
 import {
   Play,
@@ -92,15 +93,14 @@ function formatJSON(obj: unknown): string {
 // ---------------------------------------------------------------------------
 
 function StepHeader({
-  step,
-  title,
+  label,
   description,
   completed,
   active,
   icon: Icon,
 }: {
-  step: number
-  title: string
+  /** Already-localized "Step N: Title" line. */
+  label: string
   description: string
   completed: boolean
   active: boolean
@@ -118,9 +118,7 @@ function StepHeader({
         )}
       </div>
       <div>
-        <CardTitle className="text-base">
-          Step {step}: {title}
-        </CardTitle>
+        <CardTitle className="text-base">{label}</CardTitle>
         <CardDescription>{description}</CardDescription>
       </div>
     </div>
@@ -132,6 +130,7 @@ function StepHeader({
 // ---------------------------------------------------------------------------
 
 export function OAuthPlaygroundPage() {
+  const { t } = useTranslation()
   const { toast } = useToast()
 
   // Flow state
@@ -168,12 +167,15 @@ export function OAuthPlaygroundPage() {
       setAuthCode('')
       setTokenData(null)
       setUserInfo(null)
-      toast({ title: 'Session Created', description: 'PKCE parameters generated.' })
+      toast({
+        title: t('pages.oauthPlayground.step1.created'),
+        description: t('pages.oauthPlayground.step1.createdDesc'),
+      })
     },
     onError: (error: Error) => {
       toast({
-        title: 'Error',
-        description: error.message || 'Failed to create session.',
+        title: t('common.error'),
+        description: error.message || t('pages.oauthPlayground.step1.failed'),
         variant: 'destructive',
       })
     },
@@ -194,12 +196,15 @@ export function OAuthPlaygroundPage() {
     onSuccess: (data) => {
       setTokenData(data)
       setUserInfo(null)
-      toast({ title: 'Token Received', description: 'Access token and ID token obtained.' })
+      toast({
+        title: t('pages.oauthPlayground.step3.received'),
+        description: t('pages.oauthPlayground.step3.receivedDesc'),
+      })
     },
     onError: (error: Error) => {
       toast({
-        title: 'Token Exchange Failed',
-        description: error.message || 'Failed to exchange authorization code.',
+        title: t('pages.oauthPlayground.step3.failedTitle'),
+        description: error.message || t('pages.oauthPlayground.step3.failed'),
         variant: 'destructive',
       })
     },
@@ -218,12 +223,15 @@ export function OAuthPlaygroundPage() {
       ),
     onSuccess: (data) => {
       setUserInfo(data)
-      toast({ title: 'UserInfo Retrieved', description: 'User profile loaded.' })
+      toast({
+        title: t('pages.oauthPlayground.step4.retrieved'),
+        description: t('pages.oauthPlayground.step4.retrievedDesc'),
+      })
     },
     onError: (error: Error) => {
       toast({
-        title: 'UserInfo Failed',
-        description: error.message || 'Failed to call UserInfo endpoint.',
+        title: t('pages.oauthPlayground.step4.failedTitle'),
+        description: error.message || t('pages.oauthPlayground.step4.failed'),
         variant: 'destructive',
       })
     },
@@ -236,16 +244,19 @@ export function OAuthPlaygroundPage() {
       setDecodedJwt(result)
     } else {
       toast({
-        title: 'Invalid JWT',
-        description: 'Could not decode the provided JWT token.',
+        title: t('pages.oauthPlayground.jwt.invalid'),
+        description: t('pages.oauthPlayground.jwt.invalidDesc'),
         variant: 'destructive',
       })
     }
-  }, [jwtInput, toast])
+  }, [jwtInput, toast, t])
 
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text)
-    toast({ title: 'Copied', description: 'Copied to clipboard.' })
+    toast({
+      title: t('pages.oauthPlayground.copied'),
+      description: t('pages.oauthPlayground.copiedDesc'),
+    })
   }
 
   const resetFlow = () => {
@@ -268,13 +279,11 @@ export function OAuthPlaygroundPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">OAuth Playground</h1>
-          <p className="text-muted-foreground">
-            Step through the OAuth 2.0 Authorization Code + PKCE flow interactively
-          </p>
+          <h1 className="text-3xl font-bold tracking-tight">{t('pages.oauthPlayground.title')}</h1>
+          <p className="text-muted-foreground">{t('pages.oauthPlayground.subtitle')}</p>
         </div>
         <Button variant="outline" onClick={resetFlow}>
-          Reset Flow
+          {t('pages.oauthPlayground.reset')}
         </Button>
       </div>
 
@@ -285,9 +294,11 @@ export function OAuthPlaygroundPage() {
           <Card className={currentStep === 1 ? 'ring-2 ring-blue-200' : ''}>
             <CardHeader>
               <StepHeader
-                step={1}
-                title="Create Session"
-                description="Generate PKCE code_verifier, code_challenge, and state parameters"
+                label={t('pages.oauthPlayground.stepLabel', {
+                  step: 1,
+                  title: t('pages.oauthPlayground.step1.title'),
+                })}
+                description={t('pages.oauthPlayground.step1.desc')}
                 completed={step1Done}
                 active={currentStep === 1}
                 icon={KeyRound}
@@ -303,7 +314,9 @@ export function OAuthPlaygroundPage() {
                 ) : (
                   <Play className="mr-2 h-4 w-4" />
                 )}
-                {step1Done ? 'Regenerate Session' : 'Create Session'}
+                {step1Done
+                  ? t('pages.oauthPlayground.step1.regenerate')
+                  : t('pages.oauthPlayground.step1.create')}
               </Button>
               {session && (
                 <div className="space-y-2 text-xs">
@@ -369,9 +382,11 @@ export function OAuthPlaygroundPage() {
           >
             <CardHeader>
               <StepHeader
-                step={2}
-                title="Authorize"
-                description="Open the authorization URL, sign in, and paste back the authorization code"
+                label={t('pages.oauthPlayground.stepLabel', {
+                  step: 2,
+                  title: t('pages.oauthPlayground.step2.title'),
+                })}
+                description={t('pages.oauthPlayground.step2.desc')}
                 completed={step2Done}
                 active={currentStep === 2}
                 icon={ShieldCheck}
@@ -381,7 +396,7 @@ export function OAuthPlaygroundPage() {
               {session && (
                 <>
                   <div className="space-y-1">
-                    <label className="text-sm font-medium">Authorization URL</label>
+                    <label className="text-sm font-medium">{t('pages.oauthPlayground.step2.authorizeUrl')}</label>
                     <div className="flex gap-1">
                       <code className="flex-1 bg-muted p-2 rounded text-xs font-mono break-all max-h-20 overflow-y-auto">
                         {authorizeUrl}
@@ -400,13 +415,13 @@ export function OAuthPlaygroundPage() {
                     onClick={() => window.open(authorizeUrl, '_blank')}
                   >
                     <ExternalLink className="mr-2 h-4 w-4" />
-                    Open in New Tab
+                    {t('pages.oauthPlayground.step2.openInNewTab')}
                   </Button>
                   <div className="space-y-1">
-                    <label className="text-sm font-medium">Authorization Code</label>
+                    <label className="text-sm font-medium">{t('pages.oauthPlayground.step2.authorizationCode')}</label>
                     <div className="flex gap-2">
                       <Input
-                        placeholder="Paste the authorization code here..."
+                        placeholder={t('pages.oauthPlayground.step2.codePlaceholder')}
                         value={authCode}
                         onChange={(e) => setAuthCode(e.target.value)}
                       />
@@ -416,7 +431,7 @@ export function OAuthPlaygroundPage() {
               )}
               {!session && (
                 <p className="text-sm text-muted-foreground">
-                  Complete Step 1 first to generate PKCE parameters.
+                  {t('pages.oauthPlayground.step2.blocked')}
                 </p>
               )}
             </CardContent>
@@ -434,9 +449,11 @@ export function OAuthPlaygroundPage() {
           >
             <CardHeader>
               <StepHeader
-                step={3}
-                title="Exchange Token"
-                description="Exchange the authorization code + code_verifier for tokens"
+                label={t('pages.oauthPlayground.stepLabel', {
+                  step: 3,
+                  title: t('pages.oauthPlayground.step3.title'),
+                })}
+                description={t('pages.oauthPlayground.step3.desc')}
                 completed={step3Done}
                 active={currentStep === 3}
                 icon={ArrowRightLeft}
@@ -454,7 +471,7 @@ export function OAuthPlaygroundPage() {
                     ) : (
                       <ArrowRightLeft className="mr-2 h-4 w-4" />
                     )}
-                    Exchange Token
+                    {t('pages.oauthPlayground.step3.exchange')}
                   </Button>
                   {tokenData && (
                     <div className="space-y-2 text-xs">
@@ -462,7 +479,10 @@ export function OAuthPlaygroundPage() {
                         <div className="flex items-center gap-2">
                           <label className="text-sm font-medium">access_token</label>
                           <Badge variant="secondary">
-                            {tokenData.token_type} / expires in {tokenData.expires_in}s
+                            {t('pages.oauthPlayground.step3.tokenBadge', {
+                              type: tokenData.token_type,
+                              n: tokenData.expires_in,
+                            })}
                           </Badge>
                         </div>
                         <div className="flex gap-1">
@@ -518,7 +538,7 @@ export function OAuthPlaygroundPage() {
               )}
               {!step2Done && (
                 <p className="text-sm text-muted-foreground">
-                  Complete Step 2 first by pasting an authorization code.
+                  {t('pages.oauthPlayground.step3.blocked')}
                 </p>
               )}
             </CardContent>
@@ -536,9 +556,11 @@ export function OAuthPlaygroundPage() {
           >
             <CardHeader>
               <StepHeader
-                step={4}
-                title="Call UserInfo"
-                description="Use the access_token to fetch the authenticated user's profile"
+                label={t('pages.oauthPlayground.stepLabel', {
+                  step: 4,
+                  title: t('pages.oauthPlayground.step4.title'),
+                })}
+                description={t('pages.oauthPlayground.step4.desc')}
                 completed={step4Done}
                 active={currentStep === 4}
                 icon={User}
@@ -556,7 +578,7 @@ export function OAuthPlaygroundPage() {
                     ) : (
                       <User className="mr-2 h-4 w-4" />
                     )}
-                    Call /oauth/userinfo
+                    {t('pages.oauthPlayground.step4.call')}
                   </Button>
                   {userInfo && (
                     <pre className="text-xs bg-muted rounded p-3 overflow-x-auto">
@@ -567,7 +589,7 @@ export function OAuthPlaygroundPage() {
               )}
               {!step3Done && (
                 <p className="text-sm text-muted-foreground">
-                  Complete Step 3 first to obtain an access token.
+                  {t('pages.oauthPlayground.step4.blocked')}
                 </p>
               )}
             </CardContent>
@@ -578,15 +600,13 @@ export function OAuthPlaygroundPage() {
         <div className="space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">JWT Decoder</CardTitle>
-              <CardDescription>
-                Paste any JWT to view its decoded header and payload
-              </CardDescription>
+              <CardTitle className="text-base">{t('pages.oauthPlayground.jwt.title')}</CardTitle>
+              <CardDescription>{t('pages.oauthPlayground.jwt.desc')}</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
               <Textarea
                 className="font-mono text-xs min-h-[100px]"
-                placeholder="Paste a JWT token here (eyJhbGci...)"
+                placeholder={t('pages.oauthPlayground.jwt.placeholder')}
                 value={jwtInput}
                 onChange={(e) => setJwtInput(e.target.value)}
               />
@@ -596,7 +616,7 @@ export function OAuthPlaygroundPage() {
                 onClick={handleDecodeJWT}
                 disabled={!jwtInput.trim()}
               >
-                Decode JWT
+                {t('pages.oauthPlayground.jwt.decode')}
               </Button>
 
               {/* Quick-fill buttons from flow tokens */}
@@ -612,7 +632,7 @@ export function OAuthPlaygroundPage() {
                       if (result) setDecodedJwt(result)
                     }}
                   >
-                    Use access_token
+                    {t('pages.oauthPlayground.jwt.useAccessToken')}
                   </Button>
                   {tokenData.id_token && (
                     <Button
@@ -625,7 +645,7 @@ export function OAuthPlaygroundPage() {
                         if (result) setDecodedJwt(result)
                       }}
                     >
-                      Use id_token
+                      {t('pages.oauthPlayground.jwt.useIdToken')}
                     </Button>
                   )}
                 </div>
@@ -635,10 +655,10 @@ export function OAuthPlaygroundPage() {
                 <Tabs defaultValue="payload">
                   <TabsList className="w-full">
                     <TabsTrigger value="header" className="flex-1 text-xs">
-                      Header
+                      {t('pages.oauthPlayground.jwt.header')}
                     </TabsTrigger>
                     <TabsTrigger value="payload" className="flex-1 text-xs">
-                      Payload
+                      {t('pages.oauthPlayground.jwt.payload')}
                     </TabsTrigger>
                   </TabsList>
                   <TabsContent value="header">
@@ -652,7 +672,7 @@ export function OAuthPlaygroundPage() {
                     </pre>
                     {decodedJwt.expires_at && (
                       <p className="text-xs text-muted-foreground mt-2">
-                        Expires: {decodedJwt.expires_at}
+                        {t('pages.oauthPlayground.jwt.expiresAt', { date: decodedJwt.expires_at })}
                       </p>
                     )}
                   </TabsContent>
@@ -664,15 +684,15 @@ export function OAuthPlaygroundPage() {
           {/* Flow progress indicator */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Flow Progress</CardTitle>
+              <CardTitle className="text-base">{t('pages.oauthPlayground.progress.title')}</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="space-y-2">
                 {[
-                  { label: 'Create Session', done: step1Done },
-                  { label: 'Authorize', done: step2Done },
-                  { label: 'Exchange Token', done: step3Done },
-                  { label: 'Call UserInfo', done: step4Done },
+                  { label: t('pages.oauthPlayground.step1.title'), done: step1Done },
+                  { label: t('pages.oauthPlayground.step2.title'), done: step2Done },
+                  { label: t('pages.oauthPlayground.step3.title'), done: step3Done },
+                  { label: t('pages.oauthPlayground.step4.title'), done: step4Done },
                 ].map((s, i) => (
                   <div key={i} className="flex items-center gap-2 text-sm">
                     {s.done ? (

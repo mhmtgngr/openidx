@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import { Monitor, MonitorSmartphone, Trash2, Globe, Shield, AlertTriangle, Users } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
@@ -38,6 +39,7 @@ interface Session {
 export function SessionsAdminPage() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const { t } = useTranslation()
   const { hasRole } = useAuth()
   // Admins/operators manage every session in the org; a regular user manages
   // only their own. This drives which endpoint we read and what actions show.
@@ -73,9 +75,9 @@ export function SessionsAdminPage() {
         : api.delete(`/api/v1/identity/sessions/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-sessions'] })
-      toast({ title: isAdmin ? 'Session revoked' : 'Signed out of that session' })
+      toast({ title: isAdmin ? t('pages.sessions.toasts.revoked') : t('pages.sessions.toasts.signedOut') })
     },
-    onError: () => toast({ title: 'Failed to revoke session', variant: 'destructive' }),
+    onError: () => toast({ title: t('pages.sessions.toasts.revokeFailed'), variant: 'destructive' }),
   })
 
   const bulkRevokeMutation = useMutation({
@@ -83,9 +85,9 @@ export function SessionsAdminPage() {
       api.delete(`/api/v1/users/${userId}/sessions`, { data: { reason } }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-sessions'] })
-      toast({ title: 'All user sessions revoked' })
+      toast({ title: t('pages.sessions.toasts.allRevoked') })
     },
-    onError: () => toast({ title: 'Failed to revoke sessions', variant: 'destructive' }),
+    onError: () => toast({ title: t('pages.sessions.toasts.bulkFailed'), variant: 'destructive' }),
   })
 
   const formatDate = (d: string) => new Date(d).toLocaleString()
@@ -108,12 +110,12 @@ export function SessionsAdminPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold tracking-tight">
-          {isAdmin ? 'Session Management' : 'My Sessions'}
+          {isAdmin ? t('pages.sessions.adminTitle') : t('nav.items.mySessions')}
         </h1>
         <p className="text-muted-foreground">
           {isAdmin
-            ? 'View and manage active user sessions'
-            : 'Devices and apps currently signed in to your account'}
+            ? t('pages.sessions.adminSubtitle')
+            : t('pages.sessions.mySubtitle')}
         </p>
       </div>
 
@@ -121,18 +123,18 @@ export function SessionsAdminPage() {
       <div className={`grid gap-4 ${isAdmin ? 'md:grid-cols-4' : 'md:grid-cols-1'}`}>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Active Sessions</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('pages.sessions.stats.active')}</CardTitle>
             <Monitor className="h-4 w-4 text-green-600" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-green-600">{activeSessions.length}</div>
-            <p className="text-xs text-muted-foreground">of {total} total</p>
+            <p className="text-xs text-muted-foreground">{t('pages.sessions.stats.ofTotal', { n: total })}</p>
           </CardContent>
         </Card>
         {isAdmin && (
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Unique Users</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('pages.sessions.stats.uniqueUsers')}</CardTitle>
             <Users className="h-4 w-4 text-primary" />
           </CardHeader>
           <CardContent>
@@ -143,19 +145,19 @@ export function SessionsAdminPage() {
         {isAdmin && (
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">High Risk</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('pages.sessions.stats.highRisk')}</CardTitle>
             <AlertTriangle className="h-4 w-4 text-red-500" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-red-600">{highRiskSessions.length}</div>
-            <p className="text-xs text-muted-foreground">Risk score &ge; 70</p>
+            <p className="text-xs text-muted-foreground">{t('pages.sessions.stats.riskThreshold')}</p>
           </CardContent>
         </Card>
         )}
         {isAdmin && (
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Trusted Devices</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('pages.sessions.stats.trustedDevices')}</CardTitle>
             <Shield className="h-4 w-4 text-green-500" />
           </CardHeader>
           <CardContent>
@@ -168,14 +170,14 @@ export function SessionsAdminPage() {
       <Card>
         <CardHeader>
           <div className="flex items-center gap-4">
-            <CardTitle className="flex items-center gap-2"><Monitor className="h-5 w-5" />Sessions ({total})</CardTitle>
+            <CardTitle className="flex items-center gap-2"><Monitor className="h-5 w-5" />{t('pages.sessions.listTitle', { n: total })}</CardTitle>
             {isAdmin && (
               <>
-                <Input placeholder="Filter by user ID..." className="max-w-xs" value={userIdFilter}
+                <Input placeholder={t('pages.sessions.filterPlaceholder')} className="max-w-xs" value={userIdFilter}
                   onChange={e => setUserIdFilter(e.target.value)} />
                 <label className="flex items-center gap-2 text-sm">
                   <input type="checkbox" checked={activeOnly} onChange={e => setActiveOnly(e.target.checked)} />
-                  Active only
+                  {t('pages.sessions.activeOnly')}
                 </label>
               </>
             )}
@@ -185,22 +187,22 @@ export function SessionsAdminPage() {
           {isLoading ? (
             <div className="flex flex-col items-center justify-center py-12">
               <LoadingSpinner size="lg" />
-              <p className="mt-4 text-sm text-muted-foreground">Loading sessions...</p>
+              <p className="mt-4 text-sm text-muted-foreground">{t('pages.sessions.loading')}</p>
             </div>
           ) : isError ? (
-            <QueryError error={error} resource="sessions" />
+            <QueryError error={error} resource={t('pages.sessions.resourceName')} />
           ) : sessions.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
               <MonitorSmartphone className="h-12 w-12 text-muted-foreground/40 mb-3" />
-              <p className="font-medium">No active sessions</p>
-              <p className="text-sm">{isAdmin ? 'User sessions will appear here when users log in' : 'Your active sessions will appear here'}</p>
+              <p className="font-medium">{t('pages.sessions.emptyTitle')}</p>
+              <p className="text-sm">{isAdmin ? t('pages.sessions.emptyAdminHint') : t('pages.sessions.emptyMyHint')}</p>
             </div>
           ) : (
             <Table>
               <TableHeader><TableRow>
-                {isAdmin && <TableHead>User</TableHead>}<TableHead>Device</TableHead><TableHead>Location</TableHead>
-                {isAdmin && <TableHead>Risk</TableHead>}<TableHead>Started</TableHead><TableHead>Last Active</TableHead>
-                <TableHead>Status</TableHead><TableHead>Actions</TableHead>
+                {isAdmin && <TableHead>{t('pages.sessions.table.user')}</TableHead>}<TableHead>{t('pages.sessions.table.device')}</TableHead><TableHead>{t('pages.sessions.table.location')}</TableHead>
+                {isAdmin && <TableHead>{t('pages.sessions.table.risk')}</TableHead>}<TableHead>{t('pages.sessions.table.started')}</TableHead><TableHead>{t('pages.sessions.table.lastActive')}</TableHead>
+                <TableHead>{t('pages.sessions.table.status')}</TableHead><TableHead>{t('pages.sessions.table.actions')}</TableHead>
               </TableRow></TableHeader>
               <TableBody>
                 {sessions.map(s => (
@@ -245,22 +247,25 @@ export function SessionsAdminPage() {
                     <TableCell className="text-sm">{formatDate(s.last_seen_at)}</TableCell>
                     <TableCell>
                       {s.revoked ? (
-                        <Badge variant="secondary">Revoked</Badge>
+                        <Badge variant="secondary">{t('pages.sessions.badges.revoked')}</Badge>
                       ) : new Date(s.expires_at) < new Date() ? (
-                        <Badge variant="secondary">Expired</Badge>
+                        <Badge variant="secondary">{t('pages.sessions.badges.expired')}</Badge>
                       ) : (
-                        <Badge className="bg-green-100 text-green-800">Active</Badge>
+                        <Badge className="bg-green-100 text-green-800">{t('pages.sessions.badges.active')}</Badge>
                       )}
                     </TableCell>
                     <TableCell>
                       <div className="flex gap-1">
                         {!s.revoked && new Date(s.expires_at) > new Date() && (
                           <ConfirmAction
-                            title="Revoke Session"
-                            description={`Revoke the session for ${s.username} from ${s.ip_address || 'unknown IP'}? The session will be signed out immediately.`}
+                            title={t('pages.sessions.revoke.title')}
+                            description={t('pages.sessions.revoke.description', {
+                              username: s.username,
+                              ip: s.ip_address || t('pages.sessions.revoke.unknownIp'),
+                            })}
                             destructive
                             requireReason
-                            confirmLabel="Revoke"
+                            confirmLabel={t('pages.sessions.revoke.confirm')}
                             onConfirm={(reason) => revokeMutation.mutateAsync({ id: s.id, reason: reason || '' })}
                           >
                             {(open) => (
@@ -272,16 +277,16 @@ export function SessionsAdminPage() {
                         )}
                         {isAdmin && (
                           <ConfirmAction
-                            title="Revoke All User Sessions"
-                            description="This will revoke all active sessions for this user. They will be signed out of every device immediately."
+                            title={t('pages.sessions.revoke.allTitle')}
+                            description={t('pages.sessions.revoke.allDescription')}
                             destructive
                             requireReason
-                            confirmLabel="Revoke All Sessions"
+                            confirmLabel={t('pages.sessions.revoke.allConfirm')}
                             onConfirm={(reason) => bulkRevokeMutation.mutateAsync({ userId: s.user_id, reason: reason || '' })}
                           >
                             {(open) => (
                               <Button variant="outline" size="sm" onClick={open}>
-                                Revoke All
+                                {t('pages.sessions.revoke.allButton')}
                               </Button>
                             )}
                           </ConfirmAction>

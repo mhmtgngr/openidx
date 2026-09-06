@@ -37,7 +37,7 @@ spec:
       {{- end }}
       containers:
         - name: governance-service
-          image: "{{ .Values.global.imageRegistry }}/{{ .Values.governanceService.image.repository }}:{{ .Values.governanceService.image.tag }}"
+          image: "{{ include "openidx.imageRegistry" . }}/{{ .Values.governanceService.image.repository }}:{{ .Values.governanceService.image.tag }}"
           imagePullPolicy: {{ .Values.governanceService.image.pullPolicy }}
           {{- include "openidx.preStopHook" . | nindent 10 }}
           ports:

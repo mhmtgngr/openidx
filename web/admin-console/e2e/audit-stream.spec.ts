@@ -1,24 +1,13 @@
 import { test, expect } from '@playwright/test'
 
 test.describe('Audit Stream Dashboard', () => {
-  test.beforeEach(async ({ page, context }) => {
-    // Mock authentication
-    const mockPayload = {
-      sub: 'test-user-id',
-      email: 'admin@openidx.local',
-      name: 'Test Admin',
-      roles: ['admin'],
-      exp: Math.floor(Date.now() / 1000) + 3600,
-    }
-    const header = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
-    const payload = btoa(JSON.stringify(mockPayload))
-    const mockToken = `${header}.${payload}.mock-signature`
-
-    // Set auth token in context before navigating
-    await context.addInitScript((token) => {
-      localStorage.setItem('token', token)
-      localStorage.setItem('refresh_token', 'mock-refresh-token')
-    }, mockToken)
+  test.beforeEach(async ({ page }) => {
+    // The signed-in storageState from auth.setup.ts is the session. What
+    // stood here overwrote it with a hand-assembled JWT ending in
+    // `mock-signature`: btoa() emits standard base64, JWT requires base64url,
+    // so identity-service logged "token is malformed: could not base64 decode
+    // claim" on every request and the console bounced back to /login. The
+    // route mocks below still stand in for the API; the SESSION has to be real.
 
     // Mock REST API for initial events
     await page.route('**/api/v1/audit/events*', async (route) => {
@@ -90,13 +79,13 @@ test.describe('Audit Stream Dashboard', () => {
   })
 
   test('should display audit dashboard page heading', async ({ page }) => {
-    await page.goto('/audit/audit-dashboard')
+    await page.goto('/audit/dashboard')
     await expect(page.getByRole('heading', { name: /audit dashboard/i })).toBeVisible()
     await expect(page.getByText(/Real-time audit event monitoring/i)).toBeVisible()
   })
 
   test('should display connection status card', async ({ page }) => {
-    await page.goto('/audit/audit-dashboard')
+    await page.goto('/audit/dashboard')
 
     // Check for connection status elements
     await expect(page.getByText(/Audit Stream Connection/i)).toBeVisible()
@@ -104,7 +93,7 @@ test.describe('Audit Stream Dashboard', () => {
   })
 
   test('should display statistics cards', async ({ page }) => {
-    await page.goto('/audit/audit-dashboard')
+    await page.goto('/audit/dashboard')
 
     // Check for statistics cards
     await expect(page.getByText(/Events Received/i)).toBeVisible()
@@ -113,7 +102,7 @@ test.describe('Audit Stream Dashboard', () => {
   })
 
   test('should have search and filter controls', async ({ page }) => {
-    await page.goto('/audit/audit-dashboard')
+    await page.goto('/audit/dashboard')
 
     // Search input
     const searchInput = page.getByPlaceholder(/search by action/i)
@@ -134,7 +123,7 @@ test.describe('Audit Stream Dashboard', () => {
       route.continue()
     })
 
-    await page.goto('/audit/audit-dashboard')
+    await page.goto('/audit/dashboard')
 
     // Click connect button
     const connectButton = page.getByRole('button', { name: /connect/i })
@@ -146,7 +135,7 @@ test.describe('Audit Stream Dashboard', () => {
   })
 
   test('should display audit events', async ({ page }) => {
-    await page.goto('/audit/audit-dashboard')
+    await page.goto('/audit/dashboard')
 
     // Wait for events to load
     await expect(page.getByText('user.login')).toBeVisible()
@@ -154,7 +143,7 @@ test.describe('Audit Stream Dashboard', () => {
   })
 
   test('should show event details when expanded', async ({ page }) => {
-    await page.goto('/audit/audit-dashboard')
+    await page.goto('/audit/dashboard')
 
     // Wait for events to load
     await expect(page.getByText('user.login')).toBeVisible()
@@ -172,7 +161,7 @@ test.describe('Audit Stream Dashboard', () => {
   })
 
   test('should filter events by search', async ({ page }) => {
-    await page.goto('/audit/audit-dashboard')
+    await page.goto('/audit/dashboard')
 
     // Wait for events to load
     await expect(page.getByText('user.login')).toBeVisible()
@@ -186,7 +175,7 @@ test.describe('Audit Stream Dashboard', () => {
   })
 
   test('should filter events by category', async ({ page }) => {
-    await page.goto('/audit/audit-dashboard')
+    await page.goto('/audit/dashboard')
 
     // Wait for events to load
     await expect(page.getByText('authentication')).toBeVisible()
@@ -203,7 +192,7 @@ test.describe('Audit Stream Dashboard', () => {
   })
 
   test('should filter events by outcome', async ({ page }) => {
-    await page.goto('/audit/audit-dashboard')
+    await page.goto('/audit/dashboard')
 
     // Wait for events to load
     await expect(page.getByText('success')).toBeVisible()
@@ -220,7 +209,7 @@ test.describe('Audit Stream Dashboard', () => {
   })
 
   test('should have clear and pause/resume buttons', async ({ page }) => {
-    await page.goto('/audit/audit-dashboard')
+    await page.goto('/audit/dashboard')
 
     // Clear button
     const clearButton = page.getByRole('button', { name: /clear/i })
@@ -241,7 +230,7 @@ test.describe('Audit Stream Dashboard', () => {
       })
     })
 
-    await page.goto('/audit/audit-dashboard')
+    await page.goto('/audit/dashboard')
 
     // Should show empty state message
     await expect(page.getByText(/No events to display/i)).toBeVisible()
@@ -253,7 +242,7 @@ test.describe('Audit Stream Dashboard', () => {
       await route.abort('failed')
     })
 
-    await page.goto('/audit/audit-dashboard')
+    await page.goto('/audit/dashboard')
 
     // Try to connect
     const connectButton = page.getByRole('button', { name: /connect/i })
@@ -269,23 +258,10 @@ test.describe('Audit Stream Dashboard', () => {
 })
 
 test.describe('Audit Stream Origin Validation', () => {
-  test('should display current origin information', async ({ page, context }) => {
-    // Mock authentication
-    const mockPayload = {
-      sub: 'test-user-id',
-      email: 'admin@openidx.local',
-      name: 'Test Admin',
-      roles: ['admin'],
-      exp: Math.floor(Date.now() / 1000) + 3600,
-    }
-    const header = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
-    const payload = btoa(JSON.stringify(mockPayload))
-    const mockToken = `${header}.${payload}.mock-signature`
-
-    await context.addInitScript((token) => {
-      localStorage.setItem('token', token)
-      localStorage.setItem('refresh_token', 'mock-refresh-token')
-    }, mockToken)
+  test('should display current origin information', async ({ page }) => {
+    // Session comes from the signed-in storageState (auth.setup.ts); the
+    // hand-assembled `mock-signature` JWT that stood here was rejected by the
+    // backend on every request. See the note at the top of this file.
 
     // Mock API responses
     await page.route('**/api/v1/audit/events*', async (route) => {
@@ -296,30 +272,17 @@ test.describe('Audit Stream Origin Validation', () => {
       })
     })
 
-    await page.goto('/audit/audit-dashboard')
+    await page.goto('/audit/dashboard')
 
     // Should show origin information when connected or attempting connection
     const currentOriginText = page.getByText(/Current Origin/i)
     // Note: Origin info appears when connection is attempted or connected
   })
 
-  test('should handle origin rejection with appropriate error message', async ({ page, context }) => {
-    // Mock authentication
-    const mockPayload = {
-      sub: 'test-user-id',
-      email: 'admin@openidx.local',
-      name: 'Test Admin',
-      roles: ['admin'],
-      exp: Math.floor(Date.now() / 1000) + 3600,
-    }
-    const header = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
-    const payload = btoa(JSON.stringify(mockPayload))
-    const mockToken = `${header}.${payload}.mock-signature`
-
-    await context.addInitScript((token) => {
-      localStorage.setItem('token', token)
-      localStorage.setItem('refresh_token', 'mock-refresh-token')
-    }, mockToken)
+  test('should handle origin rejection with appropriate error message', async ({ page }) => {
+    // Session comes from the signed-in storageState (auth.setup.ts); the
+    // hand-assembled `mock-signature` JWT that stood here was rejected by the
+    // backend on every request. See the note at the top of this file.
 
     // Mock API responses
     await page.route('**/api/v1/audit/events*', async (route) => {
@@ -330,30 +293,17 @@ test.describe('Audit Stream Origin Validation', () => {
       })
     })
 
-    await page.goto('/audit/audit-dashboard')
+    await page.goto('/audit/dashboard')
 
     // The origin rejection would be handled by the WebSocket connection
     // In a real scenario, this would be triggered by the server rejecting
     // the connection based on the Origin header
   })
 
-  test('should show allowed origins when configured', async ({ page, context }) => {
-    // Mock authentication
-    const mockPayload = {
-      sub: 'test-user-id',
-      email: 'admin@openidx.local',
-      name: 'Test Admin',
-      roles: ['admin'],
-      exp: Math.floor(Date.now() / 1000) + 3600,
-    }
-    const header = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
-    const payload = btoa(JSON.stringify(mockPayload))
-    const mockToken = `${header}.${payload}.mock-signature`
-
-    await context.addInitScript((token) => {
-      localStorage.setItem('token', token)
-      localStorage.setItem('refresh_token', 'mock-refresh-token')
-    }, mockToken)
+  test('should show allowed origins when configured', async ({ page }) => {
+    // Session comes from the signed-in storageState (auth.setup.ts); the
+    // hand-assembled `mock-signature` JWT that stood here was rejected by the
+    // backend on every request. See the note at the top of this file.
 
     // Mock API responses
     await page.route('**/api/v1/audit/events*', async (route) => {
@@ -364,7 +314,7 @@ test.describe('Audit Stream Origin Validation', () => {
       })
     })
 
-    await page.goto('/audit/audit-dashboard')
+    await page.goto('/audit/dashboard')
 
     // Allowed origins would be shown after receiving config from server
     // This would appear in the connection status card
@@ -372,23 +322,10 @@ test.describe('Audit Stream Origin Validation', () => {
 })
 
 test.describe('Audit Stream Real-time Updates', () => {
-  test('should pause and resume event stream', async ({ page, context }) => {
-    // Mock authentication
-    const mockPayload = {
-      sub: 'test-user-id',
-      email: 'admin@openidx.local',
-      name: 'Test Admin',
-      roles: ['admin'],
-      exp: Math.floor(Date.now() / 1000) + 3600,
-    }
-    const header = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
-    const payload = btoa(JSON.stringify(mockPayload))
-    const mockToken = `${header}.${payload}.mock-signature`
-
-    await context.addInitScript((token) => {
-      localStorage.setItem('token', token)
-      localStorage.setItem('refresh_token', 'mock-refresh-token')
-    }, mockToken)
+  test('should pause and resume event stream', async ({ page }) => {
+    // Session comes from the signed-in storageState (auth.setup.ts); the
+    // hand-assembled `mock-signature` JWT that stood here was rejected by the
+    // backend on every request. See the note at the top of this file.
 
     // Mock API responses
     await page.route('**/api/v1/audit/events*', async (route) => {
@@ -399,7 +336,7 @@ test.describe('Audit Stream Real-time Updates', () => {
       })
     })
 
-    await page.goto('/audit/audit-dashboard')
+    await page.goto('/audit/dashboard')
 
     // Click pause button
     const pauseButton = page.getByRole('button', { name: /pause/i })
@@ -417,23 +354,10 @@ test.describe('Audit Stream Real-time Updates', () => {
     await expect(pauseButton).toBeVisible()
   })
 
-  test('should clear events', async ({ page, context }) => {
-    // Mock authentication
-    const mockPayload = {
-      sub: 'test-user-id',
-      email: 'admin@openidx.local',
-      name: 'Test Admin',
-      roles: ['admin'],
-      exp: Math.floor(Date.now() / 1000) + 3600,
-    }
-    const header = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
-    const payload = btoa(JSON.stringify(mockPayload))
-    const mockToken = `${header}.${payload}.mock-signature`
-
-    await context.addInitScript((token) => {
-      localStorage.setItem('token', token)
-      localStorage.setItem('refresh_token', 'mock-refresh-token')
-    }, mockToken)
+  test('should clear events', async ({ page }) => {
+    // Session comes from the signed-in storageState (auth.setup.ts); the
+    // hand-assembled `mock-signature` JWT that stood here was rejected by the
+    // backend on every request. See the note at the top of this file.
 
     // Mock API responses
     await page.route('**/api/v1/audit/events*', async (route) => {
@@ -444,7 +368,7 @@ test.describe('Audit Stream Real-time Updates', () => {
       })
     })
 
-    await page.goto('/audit/audit-dashboard')
+    await page.goto('/audit/dashboard')
 
     // Clear button should be present
     const clearButton = page.getByRole('button', { name: /clear/i })

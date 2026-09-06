@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useTranslation, Trans } from 'react-i18next'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { RefreshCw, ShieldAlert, Power, Activity } from 'lucide-react'
 import { Button } from './ui/button'
@@ -22,11 +23,13 @@ import { api, SelfHealMode, SelfHealFinding } from '../lib/api'
 
 const MODES: SelfHealMode[] = ['off', 'observe', 'tier0', 'tier1']
 
+// Catalog KEYS, not copy: the panel resolves them at render, so the mode help
+// follows the user's language like everything else on the page.
 const MODE_HELP: Record<SelfHealMode, string> = {
-  off: 'Detect nothing, take no action.',
-  observe: 'Detect + record + report. No mutation. (safe default)',
-  tier0: 'Auto-remediate ops issues (restart unit / nginx) inside the safety envelope.',
-  tier1: 'Also allow autonomous code-fix (canary + rollback). Highest risk.',
+  off: 'components.selfHeal.modeHelp.off',
+  observe: 'components.selfHeal.modeHelp.observe',
+  tier0: 'components.selfHeal.modeHelp.tier0',
+  tier1: 'components.selfHeal.modeHelp.tier1',
 }
 
 function sevClass(s: string): string {
@@ -46,6 +49,7 @@ function sevClass(s: string): string {
 // The self-heal control panel. Admin-only; mutations require selfheal:manage
 // server-side. Reflects and drives the on-disk MODE/DISABLE the loop honors.
 export function SelfHealPanel() {
+  const { t } = useTranslation()
   const queryClient = useQueryClient()
   const { toast } = useToast()
   const [tier1Open, setTier1Open] = useState(false)
@@ -68,25 +72,25 @@ export function SelfHealPanel() {
       toast({ title: `Mode → ${v.mode}`, variant: 'success' })
       invalidate()
     },
-    onError: (e: Error) => toast({ title: 'Mode change failed', description: e.message, variant: 'destructive' }),
+    onError: (e: Error) => toast({ title: t('components.selfHeal.modeChangeFailed'), description: e.message, variant: 'destructive' }),
   })
 
   const killSwitch = useMutation({
     mutationFn: (enabled: boolean) => api.selfheal.killSwitch(enabled),
     onSuccess: (_d, enabled) => {
-      toast({ title: enabled ? 'Kill-switch ENGAGED — all autonomy halted' : 'Kill-switch released', variant: enabled ? 'destructive' : 'success' })
+      toast({ title: enabled ? t('components.selfHeal.killEngagedToast') : t('components.selfHeal.killReleasedToast'), variant: enabled ? 'destructive' : 'success' })
       invalidate()
     },
-    onError: (e: Error) => toast({ title: 'Kill-switch failed', description: e.message, variant: 'destructive' }),
+    onError: (e: Error) => toast({ title: t('components.selfHeal.killFailed'), description: e.message, variant: 'destructive' }),
   })
 
   const sweep = useMutation({
     mutationFn: () => api.selfheal.sweep(),
     onSuccess: () => {
-      toast({ title: 'Sweep complete', variant: 'success' })
+      toast({ title: t('components.selfHeal.sweepComplete'), variant: 'success' })
       invalidate()
     },
-    onError: (e: Error) => toast({ title: 'Sweep failed', description: e.message, variant: 'destructive' }),
+    onError: (e: Error) => toast({ title: t('components.selfHeal.sweepFailed'), description: e.message, variant: 'destructive' }),
   })
 
   if (status.isError) return <QueryError error={status.error} resource="self-heal status" />
@@ -111,15 +115,15 @@ export function SelfHealPanel() {
       <div className="flex items-center justify-between mb-4">
         <div>
           <h3 className="text-lg font-semibold flex items-center gap-2">
-            <Activity className="h-5 w-5" /> Self-Heal Loop
+            <Activity className="h-5 w-5" /> {t('components.selfHeal.heading')}
           </h3>
           <p className="text-sm text-muted-foreground">
-            Automated detection + remediation. {s?.stale && <span className="text-yellow-600">(no snapshot yet — run a sweep)</span>}
+            {t('components.selfHeal.subheading')} {s?.stale && <span className="text-yellow-600">{t('components.selfHeal.noSnapshot')}</span>}
           </p>
         </div>
         <Button variant="outline" onClick={() => sweep.mutate()} disabled={sweep.isPending}>
           <RefreshCw className={`mr-2 h-4 w-4 ${sweep.isPending ? 'animate-spin' : ''}`} />
-          {sweep.isPending ? 'Sweeping…' : 'Sweep now'}
+          {sweep.isPending ? t('components.selfHeal.sweeping') : t('components.selfHeal.sweepNow')}
         </Button>
       </div>
 
@@ -127,8 +131,8 @@ export function SelfHealPanel() {
       <Card className={killed ? 'border-red-300' : ''}>
         <CardHeader className="pb-3">
           <CardTitle className="text-base flex items-center justify-between">
-            <span>Autonomy mode</span>
-            {killed && <Badge className="bg-red-100 text-red-800 border-red-200">KILL-SWITCH ENGAGED</Badge>}
+            <span>{t('components.selfHeal.autonomyMode')}</span>
+            {killed && <Badge className="bg-red-100 text-red-800 border-red-200">{t('components.selfHeal.killEngagedBadge')}</Badge>}
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -145,21 +149,21 @@ export function SelfHealPanel() {
               </Button>
             ))}
           </div>
-          <p className="text-xs text-muted-foreground">{MODE_HELP[mode]}</p>
+          <p className="text-xs text-muted-foreground">{t(MODE_HELP[mode])}</p>
 
           <div className="flex items-center justify-between border-t pt-3">
             <div className="flex items-center gap-2">
               <ShieldAlert className="h-4 w-4 text-red-500" />
-              <span className="text-sm font-medium">Kill-switch</span>
+              <span className="text-sm font-medium">{t('components.selfHeal.killSwitch')}</span>
               <span className="text-xs text-muted-foreground">halts ALL autonomy immediately</span>
             </div>
             {killed ? (
               <Button size="sm" variant="outline" disabled={killSwitch.isPending} onClick={() => killSwitch.mutate(false)}>
-                <Power className="mr-1.5 h-3.5 w-3.5" /> Release
+                <Power className="mr-1.5 h-3.5 w-3.5" /> {t('components.selfHeal.release')}
               </Button>
             ) : (
               <Button size="sm" variant="destructive" disabled={killSwitch.isPending} onClick={() => setKillOpen(true)}>
-                <Power className="mr-1.5 h-3.5 w-3.5" /> Engage
+                <Power className="mr-1.5 h-3.5 w-3.5" /> {t('components.selfHeal.engage')}
               </Button>
             )}
           </div>
@@ -168,22 +172,22 @@ export function SelfHealPanel() {
 
       {/* Findings */}
       <div className="mt-6">
-        <h4 className="font-semibold mb-2">Findings ({rows.length})</h4>
+        <h4 className="font-semibold mb-2">{t('components.selfHeal.findings', { count: rows.length })}</h4>
         {findings.isError ? (
           <QueryError error={findings.error} resource="findings" />
         ) : rows.length === 0 ? (
-          <Card><CardContent className="py-6 text-center text-sm text-muted-foreground">No open findings.</CardContent></Card>
+          <Card><CardContent className="py-6 text-center text-sm text-muted-foreground">{t('components.selfHeal.noFindings')}</CardContent></Card>
         ) : (
           <Card>
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Severity</TableHead>
-                  <TableHead>Class</TableHead>
-                  <TableHead>Service</TableHead>
-                  <TableHead>Message</TableHead>
-                  <TableHead className="text-right">Count</TableHead>
-                  <TableHead>Last seen</TableHead>
+                  <TableHead>{t('components.selfHeal.colSeverity')}</TableHead>
+                  <TableHead>{t('components.selfHeal.colClass')}</TableHead>
+                  <TableHead>{t('components.selfHeal.colService')}</TableHead>
+                  <TableHead>{t('components.selfHeal.colMessage')}</TableHead>
+                  <TableHead className="text-right">{t('components.selfHeal.colCount')}</TableHead>
+                  <TableHead>{t('components.selfHeal.colLastSeen')}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -212,9 +216,9 @@ export function SelfHealPanel() {
 
       {/* Remediation history */}
       <div className="mt-6">
-        <h4 className="font-semibold mb-2">Recent remediations</h4>
+        <h4 className="font-semibold mb-2">{t('components.selfHeal.recentRemediations')}</h4>
         {(history.data?.actions ?? []).length === 0 ? (
-          <p className="text-sm text-muted-foreground">No remediation actions recorded.</p>
+          <p className="text-sm text-muted-foreground">{t('components.selfHeal.noRemediations')}</p>
         ) : (
           <div className="space-y-1">
             {(history.data?.actions ?? []).map((a, i) => (
@@ -233,15 +237,14 @@ export function SelfHealPanel() {
       <AlertDialog open={tier1Open} onOpenChange={setTier1Open}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Enable tier1 (autonomous code-fix)?</AlertDialogTitle>
+            <AlertDialogTitle>{t('components.selfHeal.tier1Title')}</AlertDialogTitle>
             <AlertDialogDescription>
-              tier1 lets the loop change code and deploy behind a canary + rollback. This is the highest-risk mode.
-              Type <strong>tier1</strong> to confirm.
+              <Trans i18nKey="components.selfHeal.tier1Desc" components={{ strong: <strong /> }} />
             </AlertDialogDescription>
           </AlertDialogHeader>
           <Input value={tier1Text} onChange={e => setTier1Text(e.target.value)} placeholder="tier1" autoFocus />
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction
               disabled={tier1Text !== 'tier1'}
               onClick={() => {
@@ -249,7 +252,7 @@ export function SelfHealPanel() {
                 setTier1Open(false)
               }}
             >
-              Enable tier1
+              {t('components.selfHeal.tier1Action')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -259,20 +262,20 @@ export function SelfHealPanel() {
       <AlertDialog open={killOpen} onOpenChange={setKillOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Engage kill-switch?</AlertDialogTitle>
+            <AlertDialogTitle>{t('components.selfHeal.killTitle')}</AlertDialogTitle>
             <AlertDialogDescription>
-              This halts ALL self-heal autonomy immediately (no remediation until released). Use in an incident.
+              {t('components.selfHeal.killDesc')}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => {
                 killSwitch.mutate(true)
                 setKillOpen(false)
               }}
             >
-              Engage
+              {t('components.selfHeal.engage')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

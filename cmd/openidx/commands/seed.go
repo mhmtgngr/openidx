@@ -48,15 +48,21 @@ the application.`,
 					return e
 				}
 			} else {
-				// Fallback to SQL file
-				seedFile := ctx.Path("migrations", "010_seed_data.up.sql")
+				// The fallback used to be migrations/010_seed_data.up.sql, in a
+				// tree nothing applied — so a missing seed.sh silently "seeded"
+				// from a file whose statements had never run anywhere. The seed
+				// is deployments/docker/seed.sql, applied by scripts/seed.sh and
+				// by the one-shot `seed` compose service; if the script is gone,
+				// say so rather than pretend.
+				seedFile := ctx.Path("deployments", "docker", "seed.sql")
 				if ctx.Exists(seedFile) {
 					if e := runSQLFile(ctx, dbURL, seedFile); e != nil {
 						errColor.Printf("Failed to run seed file: %v\n", e)
 						return e
 					}
 				} else {
-					success.Println("No seed data found (skipping)")
+					errColor.Printf("No seed found: neither %s nor %s exists\n", seedScript, seedFile)
+					return fmt.Errorf("no seed script or seed SQL found")
 				}
 			}
 
@@ -95,10 +101,11 @@ func runSQLFile(ctx *CommandContext, dbURL, file string) error {
 
 func printSeedData() {
 	fmt.Println("\n📋 Seed data created:")
-	fmt.Println("   Admin user:     admin@openidx.local / admin123")
-	fmt.Println("   Test user:      user@openidx.local / user123")
-	fmt.Println("   Test roles:     Admin, User, Auditor")
-	fmt.Println("   Test policies:  Default access policies")
+	fmt.Println("   Admin user:     admin@openidx.local / Admin@123  ← rotate before production;")
+	fmt.Println("                   the identity/oauth services refuse to start in production")
+	fmt.Println("                   while this default password still works")
+	fmt.Println("   Demo users:     jsmith, jdoe, bwilson, amartin (no passwords set)")
+	fmt.Println("   Test roles:     admin, user, manager, auditor, developer")
 }
 
 const dbTimeout = 30 * 1000000000 // 30 seconds in nanoseconds

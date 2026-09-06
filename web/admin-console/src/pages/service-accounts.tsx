@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import { Search, Plus, Key, Trash2, Copy, ChevronLeft, ChevronRight, Eye, EyeOff, Bot } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -41,6 +42,7 @@ interface APIKey {
 export function ServiceAccountsPage() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const { t } = useTranslation()
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
   const pageSize = 10
@@ -84,10 +86,10 @@ export function ServiceAccountsPage() {
       setCreateOpen(false)
       setNewName('')
       setNewDescription('')
-      toast({ title: 'Service account created' })
+      toast({ title: t('pages.serviceAccounts.toasts.created') })
     },
     onError: () => {
-      toast({ title: 'Failed to create service account', variant: 'destructive' })
+      toast({ title: t('pages.serviceAccounts.toasts.createFailed'), variant: 'destructive' })
     },
   })
 
@@ -96,10 +98,10 @@ export function ServiceAccountsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['service-accounts'] })
       setDeleteTarget(null)
-      toast({ title: 'Service account deleted' })
+      toast({ title: t('pages.serviceAccounts.toasts.deleted') })
     },
     onError: () => {
-      toast({ title: 'Failed to delete service account', variant: 'destructive' })
+      toast({ title: t('pages.serviceAccounts.toasts.deleteFailed'), variant: 'destructive' })
     },
   })
 
@@ -118,7 +120,7 @@ export function ServiceAccountsPage() {
       setShowKeyDialog(true)
     },
     onError: () => {
-      toast({ title: 'Failed to create API key', variant: 'destructive' })
+      toast({ title: t('pages.serviceAccounts.toasts.keyCreateFailed'), variant: 'destructive' })
     },
   })
 
@@ -127,28 +129,28 @@ export function ServiceAccountsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['api-keys'] })
       setRevokeKeyTarget(null)
-      toast({ title: 'API key revoked' })
+      toast({ title: t('pages.serviceAccounts.toasts.keyRevoked') })
     },
     onError: () => {
-      toast({ title: 'Failed to revoke API key', variant: 'destructive' })
+      toast({ title: t('pages.serviceAccounts.toasts.keyRevokeFailed'), variant: 'destructive' })
     },
   })
 
   function copyToClipboard(text: string) {
     navigator.clipboard.writeText(text)
-    toast({ title: 'Copied to clipboard' })
+    toast({ title: t('pages.serviceAccounts.toasts.copied') })
   }
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Service Accounts</h1>
-          <p className="text-muted-foreground">Manage service accounts and their API keys</p>
+          <h1 className="text-3xl font-bold tracking-tight">{t('nav.items.serviceAccounts')}</h1>
+          <p className="text-muted-foreground">{t('pages.serviceAccounts.subtitle')}</p>
         </div>
         <Button onClick={() => setCreateOpen(true)}>
           <Plus className="mr-2 h-4 w-4" />
-          Create Service Account
+          {t('pages.serviceAccounts.create')}
         </Button>
       </div>
 
@@ -156,7 +158,7 @@ export function ServiceAccountsPage() {
         <div className="relative flex-1 max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
-            placeholder="Search service accounts..."
+            placeholder={t('pages.serviceAccounts.searchPlaceholder')}
             className="pl-9"
             value={search}
             onChange={(e) => {
@@ -170,15 +172,15 @@ export function ServiceAccountsPage() {
       {isLoading ? (
         <div className="flex flex-col items-center justify-center py-12">
           <LoadingSpinner size="lg" />
-          <p className="mt-4 text-sm text-muted-foreground">Loading service accounts...</p>
+          <p className="mt-4 text-sm text-muted-foreground">{t('pages.serviceAccounts.loading')}</p>
         </div>
       ) : isError ? (
-        <QueryError error={error} resource="service accounts" />
+        <QueryError error={error} resource={t('pages.serviceAccounts.resourceName')} />
       ) : accounts.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
           <Bot className="h-12 w-12 text-muted-foreground/40 mb-3" />
-          <p className="font-medium">No service accounts found</p>
-          <p className="text-sm">Create a service account for programmatic access</p>
+          <p className="font-medium">{t('pages.serviceAccounts.empty')}</p>
+          <p className="text-sm">{t('pages.serviceAccounts.emptyHint')}</p>
         </div>
       ) : (
         <div className="space-y-4">
@@ -197,7 +199,7 @@ export function ServiceAccountsPage() {
                     {account.status}
                   </Badge>
                   <span className="text-xs text-muted-foreground">
-                    Created {new Date(account.created_at).toLocaleDateString()}
+                    {t('pages.serviceAccounts.created', { date: new Date(account.created_at).toLocaleDateString() })}
                   </span>
                   <Button
                     variant="outline"
@@ -207,7 +209,7 @@ export function ServiceAccountsPage() {
                     }
                   >
                     <Key className="mr-1 h-3 w-3" />
-                    API Keys
+                    {t('pages.serviceAccounts.apiKeys')}
                   </Button>
                   <Button
                     variant="ghost"
@@ -241,7 +243,7 @@ export function ServiceAccountsPage() {
       {totalPages > 1 && (
         <div className="flex items-center justify-between">
           <p className="text-sm text-muted-foreground">
-            Showing {(page - 1) * pageSize + 1}-{Math.min(page * pageSize, total)} of {total}
+            {t('pages.serviceAccounts.showing', { from: (page - 1) * pageSize + 1, to: Math.min(page * pageSize, total), total })}
           </p>
           <div className="flex gap-2">
             <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>
@@ -258,12 +260,12 @@ export function ServiceAccountsPage() {
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Create Service Account</DialogTitle>
-            <DialogDescription>Add a new service account for programmatic access.</DialogDescription>
+            <DialogTitle>{t('pages.serviceAccounts.create')}</DialogTitle>
+            <DialogDescription>{t('pages.serviceAccounts.createDialog.description')}</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div>
-              <label className="text-sm font-medium">Name</label>
+              <label className="text-sm font-medium">{t('pages.serviceAccounts.createDialog.nameLabel')}</label>
               <Input
                 placeholder="my-service-account"
                 value={newName}
@@ -271,21 +273,21 @@ export function ServiceAccountsPage() {
               />
             </div>
             <div>
-              <label className="text-sm font-medium">Description</label>
+              <label className="text-sm font-medium">{t('pages.serviceAccounts.createDialog.descLabel')}</label>
               <Input
-                placeholder="Description of the service account"
+                placeholder={t('pages.serviceAccounts.createDialog.descPlaceholder')}
                 value={newDescription}
                 onChange={(e) => setNewDescription(e.target.value)}
               />
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
+            <Button variant="outline" onClick={() => setCreateOpen(false)}>{t('common.cancel')}</Button>
             <Button
               disabled={!newName.trim() || createMutation.isPending}
               onClick={() => createMutation.mutate({ name: newName, description: newDescription })}
             >
-              {createMutation.isPending ? 'Creating...' : 'Create'}
+              {createMutation.isPending ? t('pages.serviceAccounts.createDialog.creating') : t('pages.serviceAccounts.createDialog.create')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -295,17 +297,17 @@ export function ServiceAccountsPage() {
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete Service Account</AlertDialogTitle>
+            <AlertDialogTitle>{t('pages.serviceAccounts.deleteDialog.title')}</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete &quot;{deleteTarget?.name}&quot;? This will revoke all associated API keys. This action cannot be undone.
+              {t('pages.serviceAccounts.deleteDialog.description', { name: deleteTarget?.name ?? '' })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
             >
-              Delete
+              {t('common.delete')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -315,12 +317,12 @@ export function ServiceAccountsPage() {
       <Dialog open={createKeyOpen} onOpenChange={setCreateKeyOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Create API Key</DialogTitle>
-            <DialogDescription>Generate a new API key for this service account.</DialogDescription>
+            <DialogTitle>{t('pages.serviceAccounts.keyDialog.title')}</DialogTitle>
+            <DialogDescription>{t('pages.serviceAccounts.keyDialog.description')}</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div>
-              <label className="text-sm font-medium">Key Name</label>
+              <label className="text-sm font-medium">{t('pages.serviceAccounts.keyDialog.nameLabel')}</label>
               <Input
                 placeholder="production-key"
                 value={keyName}
@@ -328,7 +330,7 @@ export function ServiceAccountsPage() {
               />
             </div>
             <div>
-              <label className="text-sm font-medium">Scopes (comma-separated)</label>
+              <label className="text-sm font-medium">{t('pages.serviceAccounts.keyDialog.scopesLabel')}</label>
               <Input
                 placeholder="read:users, write:users, read:groups"
                 value={keyScopes}
@@ -337,7 +339,7 @@ export function ServiceAccountsPage() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setCreateKeyOpen(false)}>Cancel</Button>
+            <Button variant="outline" onClick={() => setCreateKeyOpen(false)}>{t('common.cancel')}</Button>
             <Button
               disabled={!keyName.trim() || createKeyMutation.isPending}
               onClick={() =>
@@ -349,7 +351,7 @@ export function ServiceAccountsPage() {
                 })
               }
             >
-              {createKeyMutation.isPending ? 'Creating...' : 'Create Key'}
+              {createKeyMutation.isPending ? t('pages.serviceAccounts.keyDialog.creating') : t('pages.serviceAccounts.keys.create')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -359,9 +361,9 @@ export function ServiceAccountsPage() {
       <Dialog open={showKeyDialog} onOpenChange={setShowKeyDialog}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>API Key Created</DialogTitle>
+            <DialogTitle>{t('pages.serviceAccounts.showKeyDialog.title')}</DialogTitle>
             <DialogDescription>
-              Copy this key now. You will not be able to see it again.
+              {t('pages.serviceAccounts.showKeyDialog.description')}
             </DialogDescription>
           </DialogHeader>
           <div className="flex items-center gap-2 p-3 bg-muted rounded-md font-mono text-sm break-all">
@@ -371,7 +373,7 @@ export function ServiceAccountsPage() {
             </Button>
           </div>
           <DialogFooter>
-            <Button onClick={() => setShowKeyDialog(false)}>Done</Button>
+            <Button onClick={() => setShowKeyDialog(false)}>{t('pages.serviceAccounts.showKeyDialog.done')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -380,17 +382,17 @@ export function ServiceAccountsPage() {
       <AlertDialog open={!!revokeKeyTarget} onOpenChange={(open) => !open && setRevokeKeyTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Revoke API Key</AlertDialogTitle>
+            <AlertDialogTitle>{t('pages.serviceAccounts.revokeDialog.title')}</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to revoke &quot;{revokeKeyTarget?.name}&quot;? Applications using this key will lose access immediately.
+              {t('pages.serviceAccounts.revokeDialog.description', { name: revokeKeyTarget?.name ?? '' })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => revokeKeyTarget && revokeKeyMutation.mutate(revokeKeyTarget.id)}
             >
-              Revoke
+              {t('pages.serviceAccounts.revokeDialog.revoke')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -412,6 +414,7 @@ function APIKeysSection({
   revealedKey: string | null
   setRevealedKey: (id: string | null) => void
 }) {
+  const { t } = useTranslation()
   const { data: keysData, isLoading } = useQuery({
     queryKey: ['api-keys', accountId],
     queryFn: () =>
@@ -423,17 +426,17 @@ function APIKeysSection({
   return (
     <div className="space-y-3 border-t pt-4">
       <div className="flex items-center justify-between">
-        <h4 className="text-sm font-medium">API Keys</h4>
+        <h4 className="text-sm font-medium">{t('pages.serviceAccounts.apiKeys')}</h4>
         <Button variant="outline" size="sm" onClick={onCreateKey}>
           <Plus className="mr-1 h-3 w-3" />
-          Create Key
+          {t('pages.serviceAccounts.keys.create')}
         </Button>
       </div>
 
       {isLoading ? (
-        <p className="text-sm text-muted-foreground">Loading keys...</p>
+        <p className="text-sm text-muted-foreground">{t('pages.serviceAccounts.keys.loading')}</p>
       ) : keys.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No API keys yet</p>
+        <p className="text-sm text-muted-foreground">{t('pages.serviceAccounts.keys.empty')}</p>
       ) : (
         <div className="space-y-2">
           {keys.map((key) => (
@@ -470,8 +473,8 @@ function APIKeysSection({
               <div className="flex items-center gap-3">
                 <span className="text-xs text-muted-foreground">
                   {key.last_used_at
-                    ? `Last used ${new Date(key.last_used_at).toLocaleDateString()}`
-                    : 'Never used'}
+                    ? t('pages.serviceAccounts.keys.lastUsed', { date: new Date(key.last_used_at).toLocaleDateString() })
+                    : t('pages.serviceAccounts.keys.neverUsed')}
                 </span>
                 <Button variant="ghost" size="sm" onClick={() => onRevokeKey(key)}>
                   <Trash2 className="h-4 w-4 text-red-500" />

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { Trans, useTranslation } from 'react-i18next'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Save,
@@ -120,13 +121,15 @@ const ALL_SCOPES = [
   'write:provisioning',
 ] as const
 
+// The expiry choices the API accepts. `0` means "never expires"; the labels
+// resolve through the catalog at render.
 const EXPIRY_OPTIONS = [
-  { value: 30, label: '30 days' },
-  { value: 60, label: '60 days' },
-  { value: 90, label: '90 days' },
-  { value: 180, label: '180 days' },
-  { value: 365, label: '1 year' },
-  { value: 0, label: 'Never expires' },
+  { value: 30, key: 'd30' },
+  { value: 60, key: 'd60' },
+  { value: 90, key: 'd90' },
+  { value: 180, key: 'd180' },
+  { value: 365, key: 'd365' },
+  { value: 0, key: 'never' },
 ] as const
 
 // ---------------------------------------------------------------------------
@@ -134,6 +137,7 @@ const EXPIRY_OPTIONS = [
 // ---------------------------------------------------------------------------
 
 export function DeveloperSettingsPage() {
+  const { t } = useTranslation()
   const queryClient = useQueryClient()
   const { toast } = useToast()
   const [activeTab, setActiveTab] = useState<'api_keys' | 'webhooks' | 'cors' | 'rate_limits'>('api_keys')
@@ -157,12 +161,15 @@ export function DeveloperSettingsPage() {
       api.put('/api/v1/developer/settings', toApi(data, apiSettings?.sandbox_enabled ?? false)),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['developer-settings'] })
-      toast({ title: 'Settings saved', description: 'Developer settings updated successfully.' })
+      toast({
+        title: t('pages.developerSettings.saved'),
+        description: t('pages.developerSettings.savedDesc'),
+      })
     },
     onError: (error: Error) => {
       toast({
-        title: 'Error',
-        description: error.message || 'Failed to save developer settings.',
+        title: t('common.error'),
+        description: error.message || t('pages.developerSettings.saveFailed'),
         variant: 'destructive',
       })
     },
@@ -227,8 +234,8 @@ export function DeveloperSettingsPage() {
   if (isError) {
     return (
       <div className="space-y-6">
-        <h1 className="text-3xl font-bold tracking-tight">Developer Settings</h1>
-        <QueryError error={error} resource="developer settings" />
+        <h1 className="text-3xl font-bold tracking-tight">{t('pages.developerSettings.title')}</h1>
+        <QueryError error={error} resource={t('pages.developerSettings.resource')} />
       </div>
     )
   }
@@ -236,29 +243,31 @@ export function DeveloperSettingsPage() {
   if (isLoading || !formData) {
     return (
       <div className="space-y-6">
-        <h1 className="text-3xl font-bold tracking-tight">Developer Settings</h1>
-        <p className="text-center py-8">Loading developer settings...</p>
+        <h1 className="text-3xl font-bold tracking-tight">{t('pages.developerSettings.title')}</h1>
+        <p className="text-center py-8">{t('pages.developerSettings.loading')}</p>
       </div>
     )
   }
 
   const tabs = [
-    { id: 'api_keys' as const, label: 'API Keys', icon: Key },
-    { id: 'webhooks' as const, label: 'Webhooks', icon: Webhook },
-    { id: 'cors' as const, label: 'CORS', icon: Globe },
-    { id: 'rate_limits' as const, label: 'Rate Limits', icon: Gauge },
+    { id: 'api_keys' as const, icon: Key },
+    { id: 'webhooks' as const, icon: Webhook },
+    { id: 'cors' as const, icon: Globe },
+    { id: 'rate_limits' as const, icon: Gauge },
   ]
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Developer Settings</h1>
-          <p className="text-muted-foreground">Configure API keys, webhooks, CORS, and rate limits</p>
+          <h1 className="text-3xl font-bold tracking-tight">{t('pages.developerSettings.title')}</h1>
+          <p className="text-muted-foreground">{t('pages.developerSettings.subtitle')}</p>
         </div>
         <Button onClick={handleSave} disabled={updateMutation.isPending}>
           <Save className="mr-2 h-4 w-4" />
-          {updateMutation.isPending ? 'Saving...' : 'Save Changes'}
+          {updateMutation.isPending
+            ? t('pages.developerSettings.saving')
+            : t('pages.developerSettings.save')}
         </Button>
       </div>
 
@@ -276,7 +285,7 @@ export function DeveloperSettingsPage() {
               }`}
             >
               <tab.icon className="h-4 w-4" />
-              {tab.label}
+              {t(`pages.developerSettings.tabs.${tab.id}`)}
             </button>
           ))}
         </div>
@@ -288,16 +297,14 @@ export function DeveloperSettingsPage() {
             <div className="space-y-6">
               <Card>
                 <CardHeader>
-                  <CardTitle>API Key Defaults</CardTitle>
-                  <CardDescription>
-                    Configure defaults for developer API key creation
-                  </CardDescription>
+                  <CardTitle>{t('pages.developerSettings.apiKeys.heading')}</CardTitle>
+                  <CardDescription>{t('pages.developerSettings.apiKeys.desc')}</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="grid gap-4 md:grid-cols-2">
                     <div className="space-y-2">
-                      <label className="text-sm font-medium">Max Keys Per User</label>
-                      <Input
+                      <label htmlFor="developer-settings-max-keys" className="text-sm font-medium">{t('pages.developerSettings.apiKeys.maxKeys')}</label>
+                      <Input id="developer-settings-max-keys"
                         type="number"
                         min={1}
                         max={50}
@@ -307,12 +314,12 @@ export function DeveloperSettingsPage() {
                         }
                       />
                       <p className="text-xs text-muted-foreground">
-                        Maximum number of API keys a single user can create
+                        {t('pages.developerSettings.apiKeys.maxKeysHint')}
                       </p>
                     </div>
                     <div className="space-y-2">
-                      <label className="text-sm font-medium">Default Expiry</label>
-                      <select
+                      <label htmlFor="developer-settings-default-expiry" className="text-sm font-medium">{t('pages.developerSettings.apiKeys.defaultExpiry')}</label>
+                      <select id="developer-settings-default-expiry"
                         value={formData.api_keys.default_expiry_days}
                         onChange={(e) =>
                           updateApiKeys('default_expiry_days', parseInt(e.target.value))
@@ -321,7 +328,7 @@ export function DeveloperSettingsPage() {
                       >
                         {EXPIRY_OPTIONS.map((opt) => (
                           <option key={opt.value} value={opt.value}>
-                            {opt.label}
+                            {t(`pages.developerSettings.apiKeys.expiry.${opt.key}`)}
                           </option>
                         ))}
                       </select>
@@ -332,10 +339,8 @@ export function DeveloperSettingsPage() {
 
               <Card>
                 <CardHeader>
-                  <CardTitle>Allowed Scopes</CardTitle>
-                  <CardDescription>
-                    Select which scopes can be assigned to API keys
-                  </CardDescription>
+                  <CardTitle>{t('pages.developerSettings.apiKeys.scopes')}</CardTitle>
+                  <CardDescription>{t('pages.developerSettings.apiKeys.scopesDesc')}</CardDescription>
                 </CardHeader>
                 <CardContent>
                   <div className="grid gap-2 md:grid-cols-2 lg:grid-cols-3">
@@ -364,16 +369,14 @@ export function DeveloperSettingsPage() {
             <div className="space-y-6">
               <Card>
                 <CardHeader>
-                  <CardTitle>Webhook Configuration</CardTitle>
-                  <CardDescription>
-                    Configure webhook delivery settings and IP restrictions
-                  </CardDescription>
+                  <CardTitle>{t('pages.developerSettings.webhooks.heading')}</CardTitle>
+                  <CardDescription>{t('pages.developerSettings.webhooks.desc')}</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="grid gap-4 md:grid-cols-2">
                     <div className="space-y-2">
-                      <label className="text-sm font-medium">Max Retries</label>
-                      <Input
+                      <label htmlFor="developer-settings-max-retries" className="text-sm font-medium">{t('pages.developerSettings.webhooks.maxRetries')}</label>
+                      <Input id="developer-settings-max-retries"
                         type="number"
                         min={0}
                         max={10}
@@ -383,12 +386,12 @@ export function DeveloperSettingsPage() {
                         }
                       />
                       <p className="text-xs text-muted-foreground">
-                        Number of retry attempts for failed webhook deliveries
+                        {t('pages.developerSettings.webhooks.maxRetriesHint')}
                       </p>
                     </div>
                     <div className="space-y-2">
-                      <label className="text-sm font-medium">Retry Delay (seconds)</label>
-                      <Input
+                      <label htmlFor="developer-settings-retry-delay" className="text-sm font-medium">{t('pages.developerSettings.webhooks.retryDelay')}</label>
+                      <Input id="developer-settings-retry-delay"
                         type="number"
                         min={1}
                         max={3600}
@@ -401,7 +404,7 @@ export function DeveloperSettingsPage() {
                         }
                       />
                       <p className="text-xs text-muted-foreground">
-                        Base delay between retry attempts (exponential backoff applied)
+                        {t('pages.developerSettings.webhooks.retryDelayHint')}
                       </p>
                     </div>
                   </div>
@@ -410,10 +413,8 @@ export function DeveloperSettingsPage() {
 
               <Card>
                 <CardHeader>
-                  <CardTitle>IP Allowlist</CardTitle>
-                  <CardDescription>
-                    Restrict webhook delivery to specific IP addresses or CIDR ranges. Leave empty to allow all.
-                  </CardDescription>
+                  <CardTitle>{t('pages.developerSettings.webhooks.allowlist')}</CardTitle>
+                  <CardDescription>{t('pages.developerSettings.webhooks.allowlistDesc')}</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-2">
                   <Textarea
@@ -431,7 +432,7 @@ export function DeveloperSettingsPage() {
                     }
                   />
                   <p className="text-xs text-muted-foreground">
-                    One IP address or CIDR range per line
+                    {t('pages.developerSettings.webhooks.allowlistHint')}
                   </p>
                 </CardContent>
               </Card>
@@ -442,14 +443,12 @@ export function DeveloperSettingsPage() {
           {activeTab === 'cors' && (
             <Card>
               <CardHeader>
-                <CardTitle>CORS Configuration</CardTitle>
-                <CardDescription>
-                  Configure Cross-Origin Resource Sharing (CORS) allowed origins for API access
-                </CardDescription>
+                <CardTitle>{t('pages.developerSettings.cors.heading')}</CardTitle>
+                <CardDescription>{t('pages.developerSettings.cors.desc')}</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-2">
-                  <label className="text-sm font-medium">Allowed Origins</label>
+                  <label className="text-sm font-medium">{t('pages.developerSettings.cors.origins')}</label>
                   <Textarea
                     className="font-mono text-sm min-h-[160px]"
                     placeholder={"https://app.example.com\nhttps://staging.example.com\nhttp://localhost:3000"}
@@ -465,8 +464,10 @@ export function DeveloperSettingsPage() {
                     }
                   />
                   <p className="text-xs text-muted-foreground">
-                    One origin per line. Use <code className="bg-muted px-1 rounded">*</code> to
-                    allow all origins (not recommended for production).
+                    <Trans
+                      i18nKey="pages.developerSettings.cors.originsHint"
+                      components={[<code key="0" className="bg-muted px-1 rounded" />]}
+                    />
                   </p>
                 </div>
               </CardContent>
@@ -477,18 +478,16 @@ export function DeveloperSettingsPage() {
           {activeTab === 'rate_limits' && (
             <Card>
               <CardHeader>
-                <CardTitle>Rate Limit Configuration</CardTitle>
-                <CardDescription>
-                  Set default rate limits applied to API key authenticated requests
-                </CardDescription>
+                <CardTitle>{t('pages.developerSettings.rateLimits.heading')}</CardTitle>
+                <CardDescription>{t('pages.developerSettings.rateLimits.desc')}</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="grid gap-4 md:grid-cols-2">
                   <div className="space-y-2">
-                    <label className="text-sm font-medium">
-                      Default Rate Limit (requests/minute)
+                    <label htmlFor="developer-settings-default-limit" className="text-sm font-medium">
+                      {t('pages.developerSettings.rateLimits.defaultLimit')}
                     </label>
-                    <Input
+                    <Input id="developer-settings-default-limit"
                       type="number"
                       min={1}
                       max={100000}
@@ -501,14 +500,14 @@ export function DeveloperSettingsPage() {
                       }
                     />
                     <p className="text-xs text-muted-foreground">
-                      The sustained request rate allowed per API key per minute
+                      {t('pages.developerSettings.rateLimits.defaultLimitHint')}
                     </p>
                   </div>
                   <div className="space-y-2">
-                    <label className="text-sm font-medium">
-                      Burst Limit (requests)
+                    <label htmlFor="developer-settings-burst-limit" className="text-sm font-medium">
+                      {t('pages.developerSettings.rateLimits.burstLimit')}
                     </label>
-                    <Input
+                    <Input id="developer-settings-burst-limit"
                       type="number"
                       min={1}
                       max={10000}
@@ -518,7 +517,7 @@ export function DeveloperSettingsPage() {
                       }
                     />
                     <p className="text-xs text-muted-foreground">
-                      Maximum number of requests allowed in a short burst above the sustained rate
+                      {t('pages.developerSettings.rateLimits.burstLimitHint')}
                     </p>
                   </div>
                 </div>

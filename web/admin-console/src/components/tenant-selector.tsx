@@ -1,4 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import { Building2 } from 'lucide-react'
 import { useOrgStore } from '@/lib/store'
 import { api } from '@/lib/api'
@@ -28,6 +29,7 @@ const SELF = '__self__'
  * regular admins.
  */
 export function TenantSelector() {
+  const { t } = useTranslation()
   const { selectedOrgSlug, setOrg } = useOrgStore()
   const queryClient = useQueryClient()
 
@@ -49,11 +51,11 @@ export function TenantSelector() {
           queryClient.invalidateQueries()
         }}
       >
-        <SelectTrigger className="h-9 w-48" aria-label="Select organization">
-          <SelectValue placeholder="Your organization" />
+        <SelectTrigger className="h-9 w-48" aria-label={t('components.tenantSelector.label')}>
+          <SelectValue placeholder={t('components.tenantSelector.own')} />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value={SELF}>Your organization</SelectItem>
+          <SelectItem value={SELF}>{t('components.tenantSelector.own')}</SelectItem>
           {orgs.map((o) => (
             <SelectItem key={o.id} value={o.slug}>
               {o.name}

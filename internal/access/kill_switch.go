@@ -29,6 +29,8 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 // killSwitchRedisMarkerTTL mirrors identity's revokedSessionTTL: markers must
@@ -127,7 +129,7 @@ func (s *Service) executeKillSwitch(ctx context.Context, orgID, userID, username
 		Username:   username,
 		ExecutedAt: time.Now().UTC(),
 	}
-	safeUserID := scrubLogValue(userID)
+	safeUserID := logsafe.Clean(userID)
 	warn := func(step string, err error) {
 		s.logger.Warn("kill-switch: step failed",
 			zap.String("step", step), zap.String("user_id", safeUserID), zap.Error(err))
@@ -284,8 +286,8 @@ func (s *Service) executeKillSwitch(ctx context.Context, orgID, userID, username
 
 	s.logger.Info("kill-switch executed",
 		zap.String("user_id", safeUserID),
-		zap.String("actor_id", scrubLogValue(actorID)),
-		zap.String("reason", scrubLogValue(reason)),
+		zap.String("actor_id", logsafe.Clean(actorID)),
+		zap.String("reason", logsafe.Clean(reason)),
 		zap.Bool("disable_user", disableUser),
 		zap.Int64("sessions_revoked", res.SessionsRevoked),
 		zap.Int64("checkouts_revoked", res.CheckoutsRevoked),

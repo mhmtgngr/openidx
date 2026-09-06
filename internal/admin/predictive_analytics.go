@@ -38,13 +38,19 @@ type RiskForecast struct {
 
 // CapacityForecast estimates infrastructure needs
 type CapacityForecast struct {
-	PeakConcurrentSessions int     `json:"peak_concurrent_sessions"`
-	AvgConcurrentSessions  int     `json:"avg_concurrent_sessions"`
-	PeakHour               int     `json:"peak_hour"`
-	PeakDayOfWeek          string  `json:"peak_day_of_week"`
-	SessionGrowthRate      float64 `json:"session_growth_rate_pct"`
-	RecommendedCapacity    int     `json:"recommended_capacity"`
-	LicenseUtilization     float64 `json:"license_utilization_pct"`
+	PeakConcurrentSessions int    `json:"peak_concurrent_sessions"`
+	AvgConcurrentSessions  int    `json:"avg_concurrent_sessions"`
+	PeakHour               int    `json:"peak_hour"`
+	PeakDayOfWeek          string `json:"peak_day_of_week"`
+	// SessionGrowthRate is this week's daily session average against the
+	// previous week's, as a percentage. It is a POINTER because "no prior week
+	// to compare against" is not 0% growth: the field was a hardcoded 0 with
+	// the comment "Would calculate from multi-week data", and the console
+	// rendered that as a measured rate. null lets the UI say "not enough
+	// history" instead.
+	SessionGrowthRate   *float64 `json:"session_growth_rate_pct"`
+	RecommendedCapacity int      `json:"recommended_capacity"`
+	LicenseUtilization  float64  `json:"license_utilization_pct"`
 }
 
 // AccountGrowth projects user count growth
@@ -171,12 +177,32 @@ func (s *Service) handlePredictionsSummary(c *gin.Context) {
 		licenseUtil = float64(activeUsers) / float64(totalUsers) * 100
 	}
 
+	// Session growth: this week's daily average against the previous week's,
+	// as a percentage. It reported a hardcoded 0 with the comment "Would
+	// calculate from multi-week data", and the console rendered that 0 as a
+	// measured growth rate. A nil result when there is no prior week to
+	// compare against is the honest shape — the field is a pointer so the UI
+	// can say "not enough history" rather than "0%".
+	var sessionGrowthRate *float64
+	var thisWeek, lastWeek float64
+	if err := s.db.Pool.QueryRow(ctx, `
+		SELECT
+			COALESCE(COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '7 days'), 0)::float8,
+			COALESCE(COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '14 days'
+			                            AND created_at <  NOW() - INTERVAL '7 days'), 0)::float8
+		FROM user_sessions WHERE org_id = $1`, org.ID).Scan(&thisWeek, &lastWeek); err != nil {
+		s.logger.Warn("predictive analytics: session growth unavailable", zap.Error(err))
+	} else if lastWeek > 0 {
+		rate := math.Round(((thisWeek-lastWeek)/lastWeek)*1000) / 10
+		sessionGrowthRate = &rate
+	}
+
 	summary.CapacityForecast = &CapacityForecast{
 		PeakConcurrentSessions: peakSessions,
 		AvgConcurrentSessions:  avgSessions,
 		PeakHour:               peakHour,
 		PeakDayOfWeek:          peakDayName,
-		SessionGrowthRate:      0, // Would calculate from multi-week data
+		SessionGrowthRate:      sessionGrowthRate,
 		RecommendedCapacity:    int(float64(peakSessions) * 1.5),
 		LicenseUtilization:     math.Round(licenseUtil*10) / 10,
 	}

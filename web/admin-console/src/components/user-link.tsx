@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 import { ExternalLink } from 'lucide-react'
 
@@ -23,6 +24,7 @@ export function UserLink({
   subtitle?: string
   className?: string
 }) {
+  const { t } = useTranslation()
   if (!userId) {
     // No id to route to — show the text without a dead link.
     return (
@@ -36,7 +38,7 @@ export function UserLink({
     <Link
       to={`/users/${userId}/access-360`}
       className={`group inline-block ${className ?? ''}`}
-      title="Open this user's Access 360 (IAM · PAM · Network)"
+      title={t('components.userLink.title')}
     >
       <div className="flex items-center gap-1 font-medium text-blue-600 group-hover:underline dark:text-blue-400">
         <span className="truncate">{name}</span>

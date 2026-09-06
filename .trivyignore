@@ -1,0 +1,28 @@
+# Trivy ignore list.
+#
+# Trivy blocks on CRITICAL/HIGH with fixes available (decision D2 in
+# docs/PROJECT-READINESS-GUIDE.md). Everything unfixed upstream is already
+# excluded by `ignore-unfixed`, so an entry here is a claim that a FIXED
+# vulnerability does not apply to this repository — which needs a reason a
+# reviewer can check, and a way out.
+#
+# Do not add an entry to make a build green. Bump the dependency.
+
+# CVE-2025-46569 — github.com/open-policy-agent/opa, fixed in 1.4.0.
+#
+# The advisory is against the OPA **server's** Data API: a crafted HTTP path
+# can inject Rego into a policy query. This module never runs that server.
+# The only import of the package is internal/governance/policy.go, which uses
+# the embedded evaluator (`ast`, `rego`, `storage/inmem`) on policies loaded
+# from our own database; `opa/server` is not imported anywhere in the tree
+# (verify with: grep -rn "open-policy-agent/opa/server" --include=*.go .).
+# The OPA server this platform talks to is a separate container image
+# (openpolicyagent/opa in docker-compose and the Helm chart), pinned and
+# scanned as an image, not built from this go.mod.
+#
+# The fix is a MAJOR version move: OPA v1 relocated every package under
+# .../opa/v1/... and switched Rego to v1 syntax (`if`, `contains`), so
+# `go get opa@v1.4.0` does not compile — it is a migration of
+# internal/governance/policy.go and the policies it evaluates, not a bump.
+# Tracked as its own piece of work rather than smuggled into a CI fix.
+CVE-2025-46569

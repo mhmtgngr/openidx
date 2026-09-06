@@ -9,6 +9,8 @@
  * the host. The correct pattern is integrated auth (e.g. SSMS `-E`), which
  * signs in as the vault-injected Windows identity with no secret in the args.
  */
+import i18n from '../i18n'
+
 const SECRET_ARG_RE =
   /(^|\s)(-{1,2}p(ass(word)?)?|\/pass(word)?)([\s:=]|$)|(^|\s|;|&)(password|passwd|pwd)\s*=/i
 
@@ -18,7 +20,10 @@ export function remoteAppArgsLookSecret(args: string | undefined | null): boolea
   return SECRET_ARG_RE.test(args)
 }
 
-export const REMOTE_APP_SECRET_HINT =
-  'This looks like it contains a password. RDP command lines are visible in the ' +
-  'target’s process list — use integrated authentication instead (e.g. SSMS “-E”), ' +
-  'which signs in as the injected Windows identity. The server will reject a secret here.'
+/**
+ * The warning shown next to the args field. A function rather than a constant
+ * so it re-resolves when the console language changes.
+ */
+export function remoteAppSecretHint(): string {
+  return i18n.t('pam.remoteAppSecretHint')
+}

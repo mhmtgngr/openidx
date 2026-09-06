@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { Shield, AlertCircle, Loader2, Globe, ArrowLeft, KeyRound, Smartphone, Mail, Phone, Check, Bell } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card'
@@ -11,6 +12,8 @@ import { api, baseURL, IdentityProvider } from '../lib/api'
 import { getProviderIcon } from '../components/icons/social-providers'
 import { decodeCredentialRequestOptions, serializeAssertionResponse, type PublicKeyCredentialRequestOptionsJSON } from '../lib/webauthn'
 import { QRCodeSVG } from 'qrcode.react'
+import { LanguageSwitcher } from '../components/language-switcher'
+import { AuthCardFooter, PoweredBy } from '../components/auth-card-footer'
 
 interface MFAOption {
   method: string
@@ -19,6 +22,7 @@ interface MFAOption {
 }
 
 export function LoginPage() {
+  const { t } = useTranslation()
   const navigate = useNavigate()
   const { login, isAuthenticated, isLoading } = useAuth()
   const [error, setError] = useState('')
@@ -254,7 +258,7 @@ export function LoginPage() {
       // OAuth callback - the auth provider will handle this
       const timer = setTimeout(() => {
         if (!isAuthenticated) {
-          setError('Authentication failed. Please try again.')
+          setError(t('login.errors.authFailed'))
         }
       }, 3000)
 
@@ -308,7 +312,7 @@ export function LoginPage() {
       const data = await response.json()
 
       if (!response.ok) {
-        setError(data.error_description || 'Login failed. Please try again.')
+        setError(data.error_description || t('login.errors.loginFailed'))
         return
       }
 
@@ -359,7 +363,7 @@ export function LoginPage() {
         completeOIDCRedirect(data.redirect_url)
       }
     } catch (err) {
-      setError('Unable to connect to the server. Please try again.')
+      setError(t('login.errors.network'))
       console.error('Login error:', err)
     } finally {
       setIsSubmitting(false)
@@ -383,10 +387,10 @@ export function LoginPage() {
         setTimeout(() => mfaInputRef.current?.focus(), 100)
       } else {
         const data = await response.json()
-        setError(data.error_description || 'Failed to send verification code.')
+        setError(data.error_description || t('login.errors.otpSendFailed'))
       }
     } catch (err) {
-      setError('Unable to send verification code. Please try again.')
+      setError(t('login.errors.otpSendNetwork'))
     }
   }
 
@@ -405,7 +409,7 @@ export function LoginPage() {
 
       if (!response.ok) {
         const data = await response.json()
-        throw new Error(data.error_description || 'Failed to start WebAuthn authentication')
+        throw new Error(data.error_description || t('login.errors.webauthnStart'))
       }
 
       const serverOptions = await response.json()
@@ -416,7 +420,7 @@ export function LoginPage() {
       const credential = await navigator.credentials.get({ publicKey: options }) as PublicKeyCredential
 
       if (!credential) {
-        throw new Error('Authentication was cancelled')
+        throw new Error(t('login.errors.webauthnCancelled'))
       }
 
       // Step 3: Serialize and send to mfa-verify
@@ -436,14 +440,14 @@ export function LoginPage() {
       const verifyData = await verifyResponse.json()
 
       if (!verifyResponse.ok) {
-        throw new Error(verifyData.error_description || 'WebAuthn verification failed')
+        throw new Error(verifyData.error_description || t('login.errors.webauthnVerify'))
       }
 
       if (verifyData.redirect_url) {
         completeOIDCRedirect(verifyData.redirect_url)
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'WebAuthn authentication failed'
+      const message = err instanceof Error ? err.message : t('login.errors.webauthnFailed')
       setError(message)
       setWebauthnLoading(false)
     }
@@ -464,7 +468,7 @@ export function LoginPage() {
 
       if (!response.ok) {
         const data = await response.json()
-        throw new Error(data.error_description || 'Failed to send push notification')
+        throw new Error(data.error_description || t('login.errors.pushStart'))
       }
 
       const data = await response.json()
@@ -496,7 +500,7 @@ export function LoginPage() {
             const verifyData = await verifyResponse.json()
 
             if (!verifyResponse.ok) {
-              setError(verifyData.error_description || 'Push verification failed')
+              setError(verifyData.error_description || t('login.errors.pushVerify'))
               setPushLoading(false)
               return
             }
@@ -507,12 +511,12 @@ export function LoginPage() {
           } else if (statusData.status === 'denied') {
             clearInterval(pollInterval)
             pushPollingRef.current = null
-            setError('Push notification was denied.')
+            setError(t('login.errors.pushDenied'))
             setPushLoading(false)
           } else if (statusData.status === 'expired') {
             clearInterval(pollInterval)
             pushPollingRef.current = null
-            setError('Push challenge has expired. Please try again.')
+            setError(t('login.errors.pushExpired'))
             setPushLoading(false)
           }
         } catch {
@@ -522,7 +526,7 @@ export function LoginPage() {
 
       pushPollingRef.current = pollInterval
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to initiate push challenge'
+      const message = err instanceof Error ? err.message : t('login.errors.pushInit')
       setError(message)
       setPushLoading(false)
     }
@@ -585,7 +589,7 @@ export function LoginPage() {
       const data = await response.json()
 
       if (!response.ok) {
-        setError(data.error_description || 'Invalid verification code. Please try again.')
+        setError(data.error_description || t('login.errors.invalidCode'))
         setMfaCode('')
         mfaInputRef.current?.focus()
         return
@@ -595,7 +599,7 @@ export function LoginPage() {
         completeOIDCRedirect(data.redirect_url)
       }
     } catch (err) {
-      setError('Unable to connect to the server. Please try again.')
+      setError(t('login.errors.network'))
     } finally {
       setIsSubmitting(false)
     }
@@ -644,10 +648,10 @@ export function LoginPage() {
       if (data.redirect_url) {
         completeOIDCRedirect(data.redirect_url)
       } else {
-        setError(data.error_description || 'Failed to force login')
+        setError(data.error_description || t('login.errors.forceLogin'))
       }
     } catch (err) {
-      setError('Failed to force login')
+      setError(t('login.errors.forceLogin'))
     }
     setConcurrentLimitReached(false)
   }
@@ -655,15 +659,15 @@ export function LoginPage() {
   const getMfaMethodInfo = (method: string): MFAOption => {
     switch (method) {
       case 'totp':
-        return { method: 'totp', label: 'Authenticator App', icon: <Smartphone className="h-5 w-5" /> }
+        return { method: 'totp', label: t('login.mfa.totp.label'), icon: <Smartphone className="h-5 w-5" /> }
       case 'sms':
-        return { method: 'sms', label: 'SMS Code', icon: <Phone className="h-5 w-5" /> }
+        return { method: 'sms', label: t('login.mfa.sms.label'), icon: <Phone className="h-5 w-5" /> }
       case 'email':
-        return { method: 'email', label: 'Email Code', icon: <Mail className="h-5 w-5" /> }
+        return { method: 'email', label: t('login.mfa.email.label'), icon: <Mail className="h-5 w-5" /> }
       case 'webauthn':
-        return { method: 'webauthn', label: 'Security Key', icon: <KeyRound className="h-5 w-5" /> }
+        return { method: 'webauthn', label: t('login.mfa.webauthn.label'), icon: <KeyRound className="h-5 w-5" /> }
       case 'push':
-        return { method: 'push', label: 'Push Notification', icon: <Bell className="h-5 w-5" /> }
+        return { method: 'push', label: t('login.mfa.push.label'), icon: <Bell className="h-5 w-5" /> }
       default:
         return { method, label: method.toUpperCase(), icon: <Shield className="h-5 w-5" /> }
     }
@@ -682,14 +686,14 @@ export function LoginPage() {
       })
       if (!beginResp.ok) {
         const d = await beginResp.json()
-        throw new Error(d.error_description || 'No passkeys available')
+        throw new Error(d.error_description || t('login.errors.passkeyNone'))
       }
       const serverOptions = await beginResp.json()
 
       const publicKeyOptions = serverOptions.publicKey || serverOptions
       const options = decodeCredentialRequestOptions(publicKeyOptions as PublicKeyCredentialRequestOptionsJSON)
       const credential = await navigator.credentials.get({ publicKey: options }) as PublicKeyCredential
-      if (!credential) throw new Error('Passkey authentication was cancelled')
+      if (!credential) throw new Error(t('login.errors.passkeyCancelled'))
 
       const assertionJSON = serializeAssertionResponse(credential)
       const finishResp = await fetch(`${baseURL}/oauth/passkey-finish`, {
@@ -701,10 +705,10 @@ export function LoginPage() {
         }),
       })
       const finishData = await finishResp.json()
-      if (!finishResp.ok) throw new Error(finishData.error_description || 'Passkey verification failed')
+      if (!finishResp.ok) throw new Error(finishData.error_description || t('login.errors.passkeyVerify'))
       if (finishData.redirect_url) completeOIDCRedirect(finishData.redirect_url)
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Passkey authentication failed'
+      const msg = err instanceof Error ? err.message : t('login.errors.passkeyFailed')
       setError(msg)
     } finally {
       setPasskeyLoading(false)
@@ -718,7 +722,7 @@ export function LoginPage() {
   const handlePhoneSignIn = async () => {
     if (!loginSession) return
     if (!username.trim()) {
-      setError('Enter your username to sign in with your phone.')
+      setError(t('login.errors.phoneNeedsUsername'))
       return
     }
     setPushLoading(true)
@@ -731,7 +735,7 @@ export function LoginPage() {
       })
       const data = await resp.json()
       if (!resp.ok) {
-        setError(data.error_description || 'Passwordless phone sign-in is unavailable.')
+        setError(data.error_description || t('login.errors.phoneUnavailable'))
         setPushLoading(false)
         return
       }
@@ -742,7 +746,7 @@ export function LoginPage() {
       setSelectedMfaMethod('push')
       beginPushChallenge(data.mfa_session)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Passwordless sign-in failed')
+      setError(err instanceof Error ? err.message : t('login.errors.passwordlessFailed'))
       setPushLoading(false)
     }
   }
@@ -759,7 +763,7 @@ export function LoginPage() {
       })
       setMagicLinkSent(true)
     } catch {
-      setError('Failed to send sign-in link. Please try again.')
+      setError(t('login.errors.magicLinkFailed'))
     } finally {
       setMagicLinkLoading(false)
     }
@@ -794,12 +798,12 @@ export function LoginPage() {
             if (qrPollingRef2.current) clearInterval(qrPollingRef2.current)
             setQrSession(null)
             setShowQRLogin(false)
-            setError('QR session expired. Please try again.')
+            setError(t('login.errors.qrExpired'))
           }
         } catch { /* ignore polling errors */ }
       }, 2000)
     } catch {
-      setError('Failed to create QR login session.')
+      setError(t('login.errors.qrCreateFailed'))
       setShowQRLogin(false)
     } finally {
       setQrLoading(false)
@@ -810,6 +814,9 @@ export function LoginPage() {
   if (mfaRequired && loginSession && mfaMethodSelectionStep) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
+        <div className="absolute top-4 right-4">
+          <LanguageSwitcher />
+        </div>
         <Card className="w-full max-w-md shadow-xl">
           <CardHeader className="text-center space-y-4">
             <div className="flex justify-center">
@@ -819,10 +826,10 @@ export function LoginPage() {
             </div>
             <div>
               <CardTitle className="text-2xl font-bold">
-                Choose Verification Method
+                {t('login.mfa.chooseTitle')}
               </CardTitle>
               <CardDescription className="text-base mt-2">
-                Select how you want to verify your identity
+                {t('login.mfa.chooseSubtitle')}
               </CardDescription>
             </div>
           </CardHeader>
@@ -851,11 +858,11 @@ export function LoginPage() {
                     <div className="text-left">
                       <p className="font-medium">{info.label}</p>
                       <p className="text-xs text-muted-foreground">
-                        {method === 'totp' && 'Enter code from your authenticator app'}
-                        {method === 'sms' && 'Receive a code via text message'}
-                        {method === 'email' && 'Receive a code via email'}
-                        {method === 'webauthn' && 'Use your security key or biometrics'}
-                        {method === 'push' && 'Approve on your mobile device'}
+                        {method === 'totp' && t('login.mfa.totp.hint')}
+                        {method === 'sms' && t('login.mfa.sms.hint')}
+                        {method === 'email' && t('login.mfa.email.hint')}
+                        {method === 'webauthn' && t('login.mfa.webauthn.hint')}
+                        {method === 'push' && t('login.mfa.push.hint')}
                       </p>
                     </div>
                   </div>
@@ -870,19 +877,11 @@ export function LoginPage() {
               onClick={handleBackToOptions}
             >
               <ArrowLeft className="mr-2 h-4 w-4" />
-              Back to login
+              {t('login.mfa.backToLogin')}
             </Button>
           </CardContent>
 
-          <div className="px-6 py-4 bg-muted border-t border-border rounded-b-lg">
-            <div className="flex items-center justify-center gap-4 text-xs text-muted-foreground">
-              <span>Privacy</span>
-              <span>•</span>
-              <span>Terms</span>
-              <span>•</span>
-              <span>Help</span>
-            </div>
-          </div>
+          <AuthCardFooter />
         </Card>
       </div>
     )
@@ -896,6 +895,9 @@ export function LoginPage() {
 
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
+        <div className="absolute top-4 right-4">
+          <LanguageSwitcher />
+        </div>
         <Card className="w-full max-w-md shadow-xl">
           <CardHeader className="text-center space-y-4">
             <div className="flex justify-center">
@@ -912,12 +914,12 @@ export function LoginPage() {
                 {methodInfo.label}
               </CardTitle>
               <CardDescription className="text-base mt-2">
-                {selectedMfaMethod === 'totp' && 'Enter the 6-digit code from your authenticator app'}
-                {selectedMfaMethod === 'sms' && (otpSent ? 'Enter the code sent to your phone' : 'Sending code to your phone...')}
-                {selectedMfaMethod === 'email' && (otpSent ? 'Enter the code sent to your email' : 'Sending code to your email...')}
-                {isWebAuthn && 'Touch your security key or use biometrics to verify'}
-                {isPush && 'Approve the notification on your registered device'}
-                {!selectedMfaMethod && 'Enter the 6-digit code from your authenticator app'}
+                {selectedMfaMethod === 'totp' && t('login.mfa.totp.prompt')}
+                {selectedMfaMethod === 'sms' && (otpSent ? t('login.mfa.sms.promptSent') : t('login.mfa.sms.promptSending'))}
+                {selectedMfaMethod === 'email' && (otpSent ? t('login.mfa.email.promptSent') : t('login.mfa.email.promptSending'))}
+                {isWebAuthn && t('login.mfa.webauthn.prompt')}
+                {isPush && t('login.mfa.push.prompt')}
+                {!selectedMfaMethod && t('login.mfa.totp.prompt')}
               </CardDescription>
             </div>
           </CardHeader>
@@ -942,9 +944,9 @@ export function LoginPage() {
                   className="mt-0.5"
                 />
                 <Label htmlFor="trust-browser" className="text-sm font-normal leading-snug cursor-pointer">
-                  Trust this browser
+                  {t('login.mfa.trustBrowser')}
                   <span className="block text-xs text-muted-foreground">
-                    Skip verification on this device for the next 30 days.
+                    {t('login.mfa.trustBrowserHint')}
                   </span>
                 </Label>
               </div>
@@ -956,9 +958,9 @@ export function LoginPage() {
                 {webauthnLoading ? (
                   <div className="text-center py-6">
                     <Loader2 className="h-10 w-10 animate-spin mx-auto text-primary mb-4" />
-                    <p className="text-lg font-medium">Waiting for your security key...</p>
+                    <p className="text-lg font-medium">{t('login.mfa.webauthn.waiting')}</p>
                     <p className="text-sm text-muted-foreground mt-2">
-                      Touch your security key or use biometrics when prompted by your browser.
+                      {t('login.mfa.webauthn.waitingHint')}
                     </p>
                   </div>
                 ) : (
@@ -969,7 +971,7 @@ export function LoginPage() {
                       size="lg"
                       onClick={() => beginWebAuthnChallenge(mfaSession)}
                     >
-                      Try Again
+                      {t('login.mfa.webauthn.retry')}
                     </Button>
                   </div>
                 )}
@@ -984,15 +986,15 @@ export function LoginPage() {
                     <Loader2 className="h-10 w-10 animate-spin mx-auto text-green-600 mb-4" />
                     {pushChallengeCode && (
                       <div className="mb-4">
-                        <p className="text-sm text-muted-foreground mb-2">Verify this number on your device:</p>
+                        <p className="text-sm text-muted-foreground mb-2">{t('login.mfa.push.verifyNumber')}</p>
                         <div className="text-5xl font-bold font-mono tracking-widest text-blue-700">
                           {pushChallengeCode}
                         </div>
                       </div>
                     )}
-                    <p className="text-lg font-medium">Waiting for approval...</p>
+                    <p className="text-lg font-medium">{t('login.mfa.push.waiting')}</p>
                     <p className="text-sm text-muted-foreground mt-2">
-                      Open the notification on your device and approve the sign-in request.
+                      {t('login.mfa.push.waitingHint')}
                     </p>
                     <Button
                       variant="outline"
@@ -1004,10 +1006,10 @@ export function LoginPage() {
                           pushPollingRef.current = null
                         }
                         setPushLoading(false)
-                        setError('Push challenge cancelled.')
+                        setError(t('login.errors.pushCancelled'))
                       }}
                     >
-                      Cancel
+                      {t('common.cancel')}
                     </Button>
                   </div>
                 ) : (
@@ -1018,7 +1020,7 @@ export function LoginPage() {
                       size="lg"
                       onClick={() => beginPushChallenge(mfaSession)}
                     >
-                      Send Push Notification
+                      {t('login.mfa.push.send')}
                     </Button>
                   </div>
                 )}
@@ -1029,7 +1031,7 @@ export function LoginPage() {
             {!isWebAuthn && !isPush && (
               <form onSubmit={handleMFASubmit} className="space-y-4">
                 <div className="space-y-2">
-                  <Label htmlFor="mfa-code">Verification Code</Label>
+                  <Label htmlFor="mfa-code">{t('login.mfa.codeLabel')}</Label>
                   <Input
                     ref={mfaInputRef}
                     id="mfa-code"
@@ -1054,7 +1056,7 @@ export function LoginPage() {
                     onClick={() => sendOTP(mfaSession, selectedMfaMethod)}
                     disabled={isSubmitting}
                   >
-                    Resend Code
+                    {t('login.mfa.resend')}
                   </Button>
                 )}
 
@@ -1067,10 +1069,10 @@ export function LoginPage() {
                   {isSubmitting ? (
                     <span className="flex items-center gap-2">
                       <Loader2 className="h-4 w-4 animate-spin" />
-                      Verifying...
+                      {t('login.mfa.verifying')}
                     </span>
                   ) : (
-                    'Verify'
+                    t('login.mfa.verify')
                   )}
                 </Button>
               </form>
@@ -1094,7 +1096,7 @@ export function LoginPage() {
                     setOtpSent(false)
                   }}
                 >
-                  Use a different method
+                  {t('login.mfa.differentMethod')}
                 </Button>
               )}
 
@@ -1105,26 +1107,16 @@ export function LoginPage() {
                 onClick={handleBackToOptions}
               >
                 <ArrowLeft className="mr-2 h-4 w-4" />
-                Back to login
+                {t('login.mfa.backToLogin')}
               </Button>
             </div>
           </CardContent>
 
-          <div className="px-6 py-4 bg-muted border-t border-border rounded-b-lg">
-            <div className="flex items-center justify-center gap-4 text-xs text-muted-foreground">
-              <span>Privacy</span>
-              <span>•</span>
-              <span>Terms</span>
-              <span>•</span>
-              <span>Help</span>
-            </div>
-          </div>
+          <AuthCardFooter />
         </Card>
 
         <div className="absolute bottom-4 text-center w-full">
-          <p className="text-sm text-muted-foreground">
-            Powered by <span className="font-semibold text-foreground">OpenIDX</span>
-          </p>
+          <PoweredBy />
         </div>
       </div>
     )
@@ -1134,6 +1126,9 @@ export function LoginPage() {
   if (loginSession) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
+        <div className="absolute top-4 right-4">
+          <LanguageSwitcher />
+        </div>
         <Card className="w-full max-w-md shadow-xl">
           <CardHeader className="text-center space-y-4">
             <div className="flex justify-center">
@@ -1144,7 +1139,7 @@ export function LoginPage() {
                 {branding.portal_title || 'OpenIDX'}
               </CardTitle>
               <CardDescription className="text-base mt-2">
-                {branding.login_page_message || 'Sign in with your credentials'}
+                {branding.login_page_message || t('login.form.signInWithCredentials')}
               </CardDescription>
             </div>
           </CardHeader>
@@ -1159,7 +1154,7 @@ export function LoginPage() {
                   disabled={passkeyLoading}
                 >
                   {passkeyLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
-                  Sign in with a passkey
+                  {t('login.form.passkey')}
                 </Button>
                 <Button
                   type="button"
@@ -1169,12 +1164,12 @@ export function LoginPage() {
                   disabled={pushLoading}
                 >
                   {pushLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Smartphone className="h-4 w-4" />}
-                  Sign in with your phone
+                  {t('login.form.phone')}
                 </Button>
                 <div className="relative my-4">
                   <div className="absolute inset-0 flex items-center"><span className="w-full border-t" /></div>
                   <div className="relative flex justify-center text-xs uppercase">
-                    <span className="bg-background px-2 text-muted-foreground">Or continue with password</span>
+                    <span className="bg-background px-2 text-muted-foreground">{t('login.form.orPassword')}</span>
                   </div>
                 </div>
               </div>
@@ -1189,11 +1184,12 @@ export function LoginPage() {
               )}
 
               <div className="space-y-2">
-                <Label htmlFor="username">Username or Email</Label>
+                <Label htmlFor="username">{t('login.form.usernameLabel')}</Label>
                 <Input
                   id="username"
+                  name="username"
                   type="text"
-                  placeholder="Enter your username or email"
+                  placeholder={t('login.form.usernamePlaceholder')}
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
                   required
@@ -1203,11 +1199,12 @@ export function LoginPage() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="password">Password</Label>
+                <Label htmlFor="password">{t('login.form.passwordLabel')}</Label>
                 <Input
                   id="password"
+                  name="password"
                   type="password"
-                  placeholder="Enter your password"
+                  placeholder={t('login.form.passwordPlaceholder')}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
@@ -1224,16 +1221,16 @@ export function LoginPage() {
                 {isSubmitting ? (
                   <span className="flex items-center gap-2">
                     <Loader2 className="h-4 w-4 animate-spin" />
-                    Signing in...
+                    {t('login.form.signingIn')}
                   </span>
                 ) : (
-                  'Sign In'
+                  t('login.form.signIn')
                 )}
               </Button>
 
               <div className="text-center">
                 <Link to="/forgot-password" className="text-sm text-primary hover:text-blue-800">
-                  Forgot your password?
+                  {t('login.form.forgotPassword')}
                 </Link>
               </div>
 
@@ -1244,7 +1241,7 @@ export function LoginPage() {
                 onClick={handleBackToOptions}
               >
                 <ArrowLeft className="mr-2 h-4 w-4" />
-                Back to login options
+                {t('login.form.backToOptions')}
               </Button>
             </form>
 
@@ -1258,12 +1255,12 @@ export function LoginPage() {
                   onClick={() => setShowMagicLink(true)}
                 >
                   <Mail className="mr-2 h-4 w-4" />
-                  Email me a sign-in link
+                  {t('login.magicLink.request')}
                 </Button>
               )}
               {showMagicLink && !magicLinkSent && (
                 <div className="space-y-2">
-                  <Label htmlFor="magic-email">Email address</Label>
+                  <Label htmlFor="magic-email">{t('login.magicLink.emailLabel')}</Label>
                   <div className="flex gap-2">
                     <Input
                       id="magic-email"
@@ -1274,7 +1271,7 @@ export function LoginPage() {
                       onKeyDown={(e) => e.key === 'Enter' && handleMagicLinkRequest()}
                     />
                     <Button onClick={handleMagicLinkRequest} disabled={magicLinkLoading || !magicLinkEmail}>
-                      {magicLinkLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Send'}
+                      {magicLinkLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : t('login.magicLink.send')}
                     </Button>
                   </div>
                 </div>
@@ -1282,7 +1279,7 @@ export function LoginPage() {
               {magicLinkSent && (
                 <div className="flex items-center gap-2 p-3 bg-green-50 border border-green-200 rounded-md">
                   <Check className="h-4 w-4 text-green-600 flex-shrink-0" />
-                  <p className="text-sm text-green-700">Check your email for a sign-in link.</p>
+                  <p className="text-sm text-green-700">{t('login.magicLink.sent')}</p>
                 </div>
               )}
             </div>
@@ -1298,39 +1295,29 @@ export function LoginPage() {
                   disabled={qrLoading}
                 >
                   <Smartphone className="mr-2 h-4 w-4" />
-                  Sign in with QR code
+                  {t('login.qr.signIn')}
                 </Button>
               )}
               {showQRLogin && qrSession && (
                 <div className="space-y-3 text-center">
-                  <p className="text-sm text-muted-foreground">Scan with the OpenIDX mobile app</p>
+                  <p className="text-sm text-muted-foreground">{t('login.qr.scanHint')}</p>
                   <div className="flex justify-center">
                     <QRCodeSVG value={qrSession.qr_content} size={220} level="H" marginSize={4} />
                   </div>
-                  <p className="text-xs text-muted-foreground">Waiting for approval...</p>
+                  <p className="text-xs text-muted-foreground">{t('login.qr.waiting')}</p>
                   <Button variant="ghost" size="sm" onClick={() => { setShowQRLogin(false); setQrSession(null); if (qrPollingRef2.current) clearInterval(qrPollingRef2.current) }}>
-                    Cancel
+                    {t('common.cancel')}
                   </Button>
                 </div>
               )}
             </div>
           </CardContent>
 
-          <div className="px-6 py-4 bg-muted border-t border-border rounded-b-lg">
-            <div className="flex items-center justify-center gap-4 text-xs text-muted-foreground">
-              <span>Privacy</span>
-              <span>•</span>
-              <span>Terms</span>
-              <span>•</span>
-              <span>Help</span>
-            </div>
-          </div>
+          <AuthCardFooter />
         </Card>
 
         <div className="absolute bottom-4 text-center w-full">
-          <p className="text-sm text-muted-foreground">
-            Powered by <span className="font-semibold text-foreground">OpenIDX</span>
-          </p>
+          <PoweredBy />
         </div>
       </div>
     )
@@ -1339,6 +1326,9 @@ export function LoginPage() {
   // Show login options (SSO + OpenIDX button)
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
+      <div className="absolute top-4 right-4">
+        <LanguageSwitcher />
+      </div>
       <Card className="w-full max-w-md shadow-xl">
         <CardHeader className="text-center space-y-4">
           <div className="flex justify-center">
@@ -1349,7 +1339,7 @@ export function LoginPage() {
               {branding.portal_title || 'OpenIDX'}
             </CardTitle>
             <CardDescription className="text-base mt-2">
-              {branding.login_page_message || 'Identity & Access Management Platform'}
+              {branding.login_page_message || t('login.options.platformSubtitle')}
             </CardDescription>
           </div>
         </CardHeader>
@@ -1364,7 +1354,7 @@ export function LoginPage() {
 
           <div className="space-y-4">
             <p className="text-center text-sm text-muted-foreground">
-              Sign in to access your OpenIDX admin console
+              {t('login.options.accessHint')}
             </p>
 
             {loadingIdPs ? (
@@ -1384,7 +1374,7 @@ export function LoginPage() {
                       disabled={isLoading}
                     >
                       {ProviderIcon ? <ProviderIcon className="mr-2 h-4 w-4" /> : <Globe className="mr-2 h-4 w-4" />}
-                      Sign in with {idp.name}
+                      {t('login.options.ssoWith', { name: idp.name })}
                     </Button>
                   )
                 })}
@@ -1394,7 +1384,7 @@ export function LoginPage() {
                     <span className="w-full border-t" />
                   </div>
                   <div className="relative flex justify-center text-xs uppercase">
-                    <span className="bg-card px-2 text-muted-foreground">Or continue with</span>
+                    <span className="bg-card px-2 text-muted-foreground">{t('login.options.orContinueWith')}</span>
                   </div>
                 </div>}
 
@@ -1407,16 +1397,16 @@ export function LoginPage() {
                   {isLoading ? (
                     <span className="flex items-center gap-2">
                       <Loader2 className="h-4 w-4 animate-spin" />
-                      Signing in...
+                      {t('login.form.signingIn')}
                     </span>
                   ) : (
-                    'Sign in with OpenIDX'
+                    t('login.options.signInOpenidx')
                   )}
                 </Button>
 
                 <div className="text-center">
                   <Link to="/forgot-password" className="text-sm text-primary hover:text-blue-800">
-                    Forgot your password?
+                    {t('login.form.forgotPassword')}
                   </Link>
                 </div>
               </>
@@ -1425,20 +1415,12 @@ export function LoginPage() {
 
           <div className="text-center">
             <p className="text-xs text-muted-foreground">
-              Secured by OpenIDX authentication
+              {t('login.options.securedBy')}
             </p>
           </div>
         </CardContent>
 
-        <div className="px-6 py-4 bg-muted border-t border-border rounded-b-lg">
-          <div className="flex items-center justify-center gap-4 text-xs text-muted-foreground">
-            <span>Privacy</span>
-            <span>•</span>
-            <span>Terms</span>
-            <span>•</span>
-            <span>Help</span>
-          </div>
-        </div>
+        <AuthCardFooter />
       </Card>
 
       {/* Concurrent Session Limit Dialog */}
@@ -1446,9 +1428,9 @@ export function LoginPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <Card className="w-full max-w-md">
             <CardHeader>
-              <CardTitle className="text-lg">Session Limit Reached</CardTitle>
+              <CardTitle className="text-lg">{t('login.concurrent.title')}</CardTitle>
               <CardDescription>
-                You have reached the maximum number of active sessions. Please sign out of an existing session to continue.
+                {t('login.concurrent.description')}
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
@@ -1457,15 +1439,15 @@ export function LoginPage() {
                   <div className="text-sm">
                     <div className="font-medium">{session.ip_address}</div>
                     <div className="text-muted-foreground truncate max-w-[200px]">{session.user_agent?.substring(0, 50)}</div>
-                    <div className="text-muted-foreground text-xs">Last active: {new Date(session.last_seen_at).toLocaleString()}</div>
+                    <div className="text-muted-foreground text-xs">{t('login.concurrent.lastActive', { time: new Date(session.last_seen_at).toLocaleString() })}</div>
                   </div>
                   <Button variant="destructive" size="sm" onClick={() => handleForceLogin(session.id)}>
-                    Sign Out
+                    {t('login.concurrent.signOut')}
                   </Button>
                 </div>
               ))}
               <Button variant="outline" className="w-full" onClick={() => setConcurrentLimitReached(false)}>
-                Cancel
+                {t('common.cancel')}
               </Button>
             </CardContent>
           </Card>
@@ -1478,9 +1460,7 @@ export function LoginPage() {
           <p className="text-sm text-muted-foreground">{branding.custom_footer}</p>
         )}
         {branding.powered_by_visible !== false && (
-          <p className="text-sm text-muted-foreground">
-            Powered by <span className="font-semibold text-foreground">OpenIDX</span>
-          </p>
+          <PoweredBy />
         )}
       </div>
     </div>

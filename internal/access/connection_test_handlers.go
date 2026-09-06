@@ -12,6 +12,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // ConnectionTestRequest represents a request to test a connection
@@ -40,6 +42,15 @@ type TestResult struct {
 // handleTestConnection tests connectivity for a specific route
 func (s *Service) handleTestConnection(c *gin.Context) {
 	routeID := c.Param("id")
+
+	// getRouteByID applies its tenant filter only when the context carries an
+	// organization, and silently drops it when it does not — correct for the
+	// data plane and the background sweep, the wrong direction for a request.
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
 
 	var req ConnectionTestRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -125,25 +136,77 @@ func (s *Service) handleTestConnection(c *gin.Context) {
 	}
 
 	// Save test result
-	if err := s.saveConnectionTest(ctx, routeID, req.TestType, result, userID); err != nil {
+	if err := s.saveConnectionTest(ctx, routeID, org.ID, req.TestType, result, userID); err != nil {
 		s.logger.Warn("Failed to save connection test", zap.Error(err))
 	}
+
+	// Record what the test found against the feature it probed. Until this
+	// call existed, UpdateFeatureHealth had no caller in the tree, so the
+	// health dot beside each feature on the Zero Trust page and the badge on
+	// the route's feature panel could only ever read 'unknown' — while this
+	// handler was already resolving the Ziti service and validating the
+	// Guacamole connection and throwing the verdict away.
+	s.recordFeatureHealth(c.Request.Context(), routeID, result)
 
 	c.JSON(http.StatusOK, result)
 }
 
-// handleGetConnectionTestHistory returns connection test history for a route
+// recordFeatureHealth writes each probed feature's verdict to service_features,
+// which is what the console renders. A test that did not run a feature's probe
+// leaves that feature's health alone: "not measured this time" is not a
+// verdict, and overwriting a real one with 'unknown' would be worse than the
+// constant it replaces.
+func (s *Service) recordFeatureHealth(ctx context.Context, routeID string, result *ConnectionTestResult) {
+	if s.featureManager == nil {
+		return
+	}
+	for probe, feature := range map[string]FeatureName{
+		"ziti":      FeatureZiti,
+		"guacamole": FeatureGuacamole,
+	} {
+		test, ran := result.Tests[probe]
+		if !ran {
+			continue
+		}
+		health := HealthStatusHealthy
+		if !test.Success {
+			health = HealthStatusUnhealthy
+		}
+		if err := s.featureManager.UpdateFeatureHealth(ctx, routeID, feature, health, test.ErrorMessage); err != nil {
+			s.logger.Warn("Failed to record feature health",
+				zap.String("route_id", routeID),
+				zap.String("feature", string(feature)),
+				zap.Error(err))
+		}
+	}
+}
+
+// handleGetConnectionTestHistory returns connection test history for a route.
+//
+// The tenant term matters more here than the row count suggests: `details` is
+// the whole per-test result map, so it carries the route's upstream URL, the
+// "host:port" a TCP probe dialled, the overlay service name and id, and the raw
+// dial error naming the host that could not be reached. Before v162 this read
+// was `WHERE route_id = $1` with no organization and no check that the route
+// belonged to the caller, so a route id was enough to read another tenant's
+// internal topology out of the product.
 func (s *Service) handleGetConnectionTestHistory(c *gin.Context) {
 	routeID := c.Param("id")
 	limit := 20
 
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	rows, err := s.db.Pool.Query(c.Request.Context(), `
 		SELECT id, route_id, test_type, success, latency_ms, error_message, details, tested_at, tested_by
 		FROM connection_tests
-		WHERE route_id = $1
+		WHERE route_id = $1 AND org_id = $2
 		ORDER BY tested_at DESC
-		LIMIT $2
-	`, routeID, limit)
+		LIMIT $3
+	`, routeID, org.ID, limit)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get test history"})
 		return
@@ -172,6 +235,9 @@ func (s *Service) handleGetConnectionTestHistory(c *gin.Context) {
 		err := rows.Scan(&item.ID, &item.RouteID, &item.TestType, &item.Success,
 			&latency, &errorMsg, &detailsJSON, &item.TestedAt, &testedBy)
 		if err != nil {
+			// A dropped row reads as "that test never ran". Say so instead.
+			s.logger.Warn("connection test row skipped",
+				zap.String("route_id", routeID), zap.Error(err))
 			continue
 		}
 
@@ -357,7 +423,7 @@ func (s *Service) testTCPConnectivity(ctx context.Context, host string, port int
 	return result
 }
 
-func (s *Service) saveConnectionTest(ctx context.Context, routeID, testType string, result *ConnectionTestResult, userID string) error {
+func (s *Service) saveConnectionTest(ctx context.Context, routeID, orgID, testType string, result *ConnectionTestResult, userID string) error {
 	detailsJSON, _ := json.Marshal(result.Tests)
 
 	var errorMsg *string
@@ -374,9 +440,9 @@ func (s *Service) saveConnectionTest(ctx context.Context, routeID, testType stri
 	}
 
 	_, err := s.db.Pool.Exec(ctx, `
-		INSERT INTO connection_tests (id, route_id, test_type, success, latency_ms, error_message, details, tested_at, tested_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-	`, uuid.New().String(), routeID, testType, result.Success, result.OverallLatencyMs, errorMsg, detailsJSON, result.TestedAt, testedBy)
+		INSERT INTO connection_tests (id, route_id, org_id, test_type, success, latency_ms, error_message, details, tested_at, tested_by)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+	`, uuid.New().String(), routeID, orgID, testType, result.Success, result.OverallLatencyMs, errorMsg, detailsJSON, result.TestedAt, testedBy)
 
 	return err
 }

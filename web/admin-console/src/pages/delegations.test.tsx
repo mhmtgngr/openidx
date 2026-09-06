@@ -115,6 +115,33 @@ describe('DelegationsPage', () => {
     expect(screen.getByText('All scope types')).toBeInTheDocument()
   })
 
+  // The scope is validated on create, stored, and shown -- and then never
+  // consulted by the permission check, which compares resource and action only.
+  // A badge that reads "Group" with nothing else beside it tells an admin their
+  // delegation is narrowed when it is not, which is the defect class this whole
+  // programme exists to remove. These two tests are the page telling the truth.
+  it('marks a group-scoped delegation as not enforced', async () => {
+    vi.mocked(api.getWithHeaders).mockResolvedValue({
+      data: [enabledDelegation] as unknown as Awaited<ReturnType<typeof api.getWithHeaders>>['data'],
+      headers: { 'x-total-count': '1' },
+    })
+    render(<DelegationsPage />, { wrapper: createWrapper() })
+    await screen.findByText('Bob Baxter')
+    expect(screen.getAllByText('not enforced').length).toBeGreaterThan(0)
+  })
+
+  it('does not mark an organization-scoped delegation, which the org predicate really does scope', async () => {
+    vi.mocked(api.getWithHeaders).mockResolvedValue({
+      data: [
+        { ...enabledDelegation, scope_type: 'organization', scope_name: 'Acme' },
+      ] as unknown as Awaited<ReturnType<typeof api.getWithHeaders>>['data'],
+      headers: { 'x-total-count': '1' },
+    })
+    render(<DelegationsPage />, { wrapper: createWrapper() })
+    await screen.findByText('Bob Baxter')
+    expect(screen.queryAllByText('not enforced')).toHaveLength(0)
+  })
+
   it('opens the Add Delegation dialog when the button is clicked', async () => {
     const user = userEvent.setup()
     render(<DelegationsPage />, { wrapper: createWrapper() })

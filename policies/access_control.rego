@@ -1,5 +1,26 @@
-# OpenIDX Access Control Policy
-# This policy defines authorization rules for the OpenIDX Zero Trust Access Platform
+# OpenIDX Access Control Policy — EXAMPLE, NOT THE ENFORCED POLICY.
+#
+# Read this before assuming it governs anything. Nothing loads this file by
+# default:
+#
+#   - The request-path authorization middleware
+#     (internal/common/middleware/opa.go) queries OPA at
+#     /v1/data/openidx/authz, which is package `openidx.authz` in
+#     deployments/docker/opa/policies/authz.rego — the only directory
+#     docker-compose mounts into OPA, and the only policy a Helm install gets
+#     via opa.policyConfigMap. This file is package `openidx`, so that query
+#     never reaches it.
+#   - It is written for the governance PolicyEvaluator
+#     (internal/governance/policy.go, LoadPoliciesFromDirectory), which sends a
+#     richer input than the middleware client does: input.action,
+#     input.resource.id/attributes, input.context.* and input.user.attributes
+#     below exist in that shape and NOT in internal/common/opa.Input, which
+#     sends only user{id,roles,groups,tenant_id,authenticated},
+#     resource{type,owner}, method and path.
+#
+# So: a rule added here changes no request-path decision. Put it in authz.rego
+# if you mean to enforce it; keep this as the worked example POLICY_README.md
+# refers to.
 
 package openidx
 

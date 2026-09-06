@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import {
   Users,
   Shield,
@@ -28,6 +29,7 @@ import {
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { api } from '../lib/api'
+import i18n from '../i18n'
 import { useAuth } from '../lib/auth'
 import { roleLevel, ROLE_LEVELS } from '../lib/roles'
 import { GettingStarted } from '../components/getting-started'
@@ -108,20 +110,20 @@ function normalizeAlerts(sa: unknown): {
 function eventLabel(e: RecentEvent): string {
   if (e.message) return e.message
   const parts = [e.actor, e.action, e.outcome].filter(Boolean)
-  return parts.length ? parts.join(' · ') : e.type || 'event'
+  return parts.length ? parts.join(' · ') : e.type || i18n.t('pages.dashboard.activity.eventFallback')
 }
 
 function relativeTime(timestamp: string): string {
   const now = Date.now()
   const then = new Date(timestamp).getTime()
   const seconds = Math.floor((now - then) / 1000)
-  if (seconds < 60) return 'just now'
+  if (seconds < 60) return i18n.t('pages.dashboard.time.justNow')
   const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes} min ago`
+  if (minutes < 60) return i18n.t('pages.dashboard.time.minAgo', { n: minutes })
   const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours} hour${hours > 1 ? 's' : ''} ago`
+  if (hours < 24) return i18n.t('pages.dashboard.time.hourAgo', { count: hours })
   const days = Math.floor(hours / 24)
-  return `${days} day${days > 1 ? 's' : ''} ago`
+  return i18n.t('pages.dashboard.time.dayAgo', { count: days })
 }
 
 function activityIcon(type: string) {
@@ -138,31 +140,36 @@ function activityIcon(type: string) {
 // admin stat cards (which linked to /users, /applications, /audit-logs that a
 // plain user cannot open) and org-wide analytics.
 function PersonalDashboard({ name }: { name?: string }) {
-  const firstName = (name ?? '').trim().split(/\s+/)[0] || 'there'
+  const { t } = useTranslation()
+  const firstName = (name ?? '').trim().split(/\s+/)[0]
   const actions = [
-    { title: 'My Apps & Network', description: 'Sign in to your apps, or connect to servers and databases', icon: Rocket, link: '/my-network', color: 'text-primary' },
-    { title: 'My Access', description: 'See your roles and groups; request more', icon: Eye, link: '/my-access', color: 'text-green-600' },
-    { title: 'My Security', description: 'Your security score and recommendations', icon: ShieldCheck, link: '/my-security', color: 'text-purple-600' },
-    { title: 'My Devices', description: 'Manage your registered devices', icon: Smartphone, link: '/my-devices', color: 'text-orange-600' },
-    { title: 'Access Requests', description: 'Request access to roles, groups or apps', icon: GitPullRequest, link: '/access-requests', color: 'text-sky-600' },
-    { title: 'Notifications', description: 'Your inbox and alerts', icon: Bell, link: '/notification-center', color: 'text-rose-600' },
+    { titleKey: 'nav.items.myAppsNetwork', descKey: 'pages.dashboard.personal.myNetworkDesc', icon: Rocket, link: '/my-network', color: 'text-primary' },
+    { titleKey: 'nav.items.myAccess', descKey: 'pages.dashboard.personal.myAccessDesc', icon: Eye, link: '/my-access', color: 'text-green-600' },
+    { titleKey: 'nav.items.mySecurity', descKey: 'pages.dashboard.personal.mySecurityDesc', icon: ShieldCheck, link: '/my-security', color: 'text-purple-600' },
+    { titleKey: 'nav.items.myDevices', descKey: 'pages.dashboard.personal.myDevicesDesc', icon: Smartphone, link: '/my-devices', color: 'text-orange-600' },
+    { titleKey: 'nav.items.accessRequests', descKey: 'pages.dashboard.personal.accessRequestsDesc', icon: GitPullRequest, link: '/access-requests', color: 'text-sky-600' },
+    { titleKey: 'nav.items.notifications', descKey: 'pages.dashboard.personal.notificationsDesc', icon: Bell, link: '/notification-center', color: 'text-rose-600' },
   ]
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold tracking-tight">Welcome, {firstName}</h1>
-        <p className="text-muted-foreground">Your apps, access and security in one place.</p>
+        <h1 className="text-3xl font-bold tracking-tight">
+          {firstName
+            ? t('pages.dashboard.personal.welcome', { name: firstName })
+            : t('pages.dashboard.personal.welcomeNoName')}
+        </h1>
+        <p className="text-muted-foreground">{t('pages.dashboard.personal.subtitle')}</p>
       </div>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {actions.map((a) => (
-          <Link key={a.title} to={a.link} className="block transition-transform hover:scale-[1.02]">
+          <Link key={a.link} to={a.link} className="block transition-transform hover:scale-[1.02]">
             <Card className="cursor-pointer h-full hover:shadow-md transition-shadow">
               <CardHeader className="flex flex-row items-center gap-3 pb-2">
                 <a.icon className={`h-6 w-6 ${a.color}`} />
-                <CardTitle className="text-base font-semibold">{a.title}</CardTitle>
+                <CardTitle className="text-base font-semibold">{t(a.titleKey)}</CardTitle>
               </CardHeader>
               <CardContent>
-                <p className="text-sm text-muted-foreground">{a.description}</p>
+                <p className="text-sm text-muted-foreground">{t(a.descKey)}</p>
               </CardContent>
             </Card>
           </Link>
@@ -173,6 +180,7 @@ function PersonalDashboard({ name }: { name?: string }) {
 }
 
 export function DashboardPage() {
+  const { t } = useTranslation()
   const [period, setPeriod] = useState('30d')
   const { hasRole, user } = useAuth()
 
@@ -266,37 +274,37 @@ export function DashboardPage() {
     return <PersonalDashboard name={user?.name} />
   }
 
-  if (isError) return <QueryError error={error} resource="the dashboard" />
+  if (isError) return <QueryError error={error} resource={t('pages.dashboard.resourceName')} />
 
   const statCards = [
     {
-      title: 'Total Users',
+      title: t('pages.dashboard.stats.totalUsers'),
       value: stats?.total_users || 0,
-      description: `${stats?.active_users || 0} active`,
+      description: t('pages.dashboard.stats.activeCount', { n: stats?.active_users || 0 }),
       icon: Users,
       color: 'text-primary',
       link: '/users',
     },
     {
-      title: 'Applications',
+      title: t('pages.dashboard.stats.applications'),
       value: stats?.total_applications || 0,
-      description: 'Registered apps',
+      description: t('pages.dashboard.stats.registeredApps'),
       icon: Key,
       color: 'text-green-600',
       link: '/applications',
     },
     {
-      title: 'Active Sessions',
+      title: t('pages.dashboard.stats.activeSessions'),
       value: stats?.active_sessions || 0,
-      description: 'Current sessions',
+      description: t('pages.dashboard.stats.currentSessions'),
       icon: Activity,
       color: 'text-purple-600',
       link: '/audit-logs',
     },
     {
-      title: 'Pending Reviews',
+      title: t('pages.dashboard.stats.pendingReviews'),
       value: stats?.pending_reviews || 0,
-      description: 'Access reviews',
+      description: t('pages.dashboard.stats.accessReviews'),
       icon: Clock,
       color: 'text-orange-600',
       link: '/access-reviews',
@@ -309,9 +317,9 @@ export function DashboardPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
+        <h1 className="text-3xl font-bold tracking-tight">{t('nav.items.dashboard')}</h1>
         <p className="text-muted-foreground">
-          Overview of your identity platform
+          {t('pages.dashboard.subtitle')}
         </p>
       </div>
 
@@ -344,33 +352,33 @@ export function DashboardPage() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <AlertTriangle className="h-5 w-5 text-orange-500" />
-              Security Alerts
+              {t('pages.dashboard.alerts.title')}
             </CardTitle>
-            <CardDescription>Recent security events requiring attention</CardDescription>
+            <CardDescription>{t('pages.dashboard.alerts.subtitle')}</CardDescription>
           </CardHeader>
           <CardContent>
             {alerts.total === 0 ? (
               <div className="flex items-center gap-2 text-green-600">
                 <CheckCircle className="h-5 w-5" />
-                <span>No active alerts</span>
+                <span>{t('pages.dashboard.alerts.none')}</span>
               </div>
             ) : (
               <div className="space-y-2">
                 {alerts.failed > 0 && (
                   <div className="flex items-center justify-between p-2 bg-orange-50 rounded-lg">
-                    <span className="text-sm">Failed authentication attempts (24h)</span>
+                    <span className="text-sm">{t('pages.dashboard.alerts.failedLogins')}</span>
                     <span className="text-sm font-semibold text-orange-600">{alerts.failed}</span>
                   </div>
                 )}
                 {alerts.suspicious > 0 && (
                   <div className="flex items-center justify-between p-2 bg-orange-50 rounded-lg">
-                    <span className="text-sm">Suspicious IP addresses</span>
+                    <span className="text-sm">{t('pages.dashboard.alerts.suspiciousIps')}</span>
                     <span className="text-sm font-semibold text-orange-600">{alerts.suspicious}</span>
                   </div>
                 )}
                 {alerts.threats > 0 && (
                   <div className="flex items-center justify-between p-2 bg-red-50 rounded-lg">
-                    <span className="text-sm">Active threats</span>
+                    <span className="text-sm">{t('pages.dashboard.alerts.activeThreats')}</span>
                     <span className="text-sm font-semibold text-red-600">{alerts.threats}</span>
                   </div>
                 )}
@@ -383,14 +391,14 @@ export function DashboardPage() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Activity className="h-5 w-5 text-blue-500" />
-              Recent Activity
+              {t('pages.dashboard.activity.title')}
             </CardTitle>
-            <CardDescription>Latest actions in the system</CardDescription>
+            <CardDescription>{t('pages.dashboard.activity.subtitle')}</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
               {recentActivity.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No recent activity</p>
+                <p className="text-sm text-muted-foreground">{t('pages.dashboard.activity.none')}</p>
               ) : (
                 recentActivity.map((item) => {
                   const Icon = activityIcon(item.type)
@@ -417,16 +425,16 @@ export function DashboardPage() {
             <CardHeader className="pb-2">
               <CardTitle className="flex items-center gap-2 text-sm font-medium">
                 <Network className="h-4 w-4 text-primary" />
-                Zero Trust Network
+                {t('pages.dashboard.ziti.title')}
                 {zitiStatus.controller_reachable ? (
                   <span className="ml-auto flex items-center gap-1.5 text-xs text-green-600">
                     <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
-                    Connected
+                    {t('pages.dashboard.ziti.connected')}
                   </span>
                 ) : (
                   <span className="ml-auto flex items-center gap-1.5 text-xs text-red-500">
                     <span className="h-2 w-2 rounded-full bg-red-500" />
-                    Disconnected
+                    {t('pages.dashboard.ziti.disconnected')}
                   </span>
                 )}
               </CardTitle>
@@ -435,16 +443,16 @@ export function DashboardPage() {
               <div className="flex items-center gap-6 text-sm">
                 <div>
                   <span className="text-2xl font-bold">{zitiStatus.services_count}</span>
-                  <span className="text-muted-foreground ml-1.5">services</span>
+                  <span className="text-muted-foreground ml-1.5">{t('pages.dashboard.ziti.services')}</span>
                 </div>
                 <div>
                   <span className="text-2xl font-bold">{zitiStatus.identities_count}</span>
-                  <span className="text-muted-foreground ml-1.5">identities</span>
+                  <span className="text-muted-foreground ml-1.5">{t('pages.dashboard.ziti.identities')}</span>
                 </div>
                 {zitiSync && zitiSync.unsynced_users > 0 && (
                   <div className="flex items-center gap-1.5 text-orange-600">
                     <RefreshCw className="h-3.5 w-3.5" />
-                    <span className="text-sm font-medium">{zitiSync.unsynced_users} users unsynced</span>
+                    <span className="text-sm font-medium">{t('pages.dashboard.ziti.unsynced', { n: zitiSync.unsynced_users })}</span>
                   </div>
                 )}
               </div>
@@ -459,27 +467,27 @@ export function DashboardPage() {
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-2 text-sm font-medium">
               <Shield className="h-4 w-4 text-purple-600" />
-              Privileged Access
+              {t('pages.dashboard.pam.title')}
             </CardTitle>
-            <CardDescription>Vault secrets, credential rotation, and brokered privileged sessions</CardDescription>
+            <CardDescription>{t('pages.dashboard.pam.subtitle')}</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <Link to="/pam-dashboard" className="flex items-center gap-2 rounded-md border bg-background p-3 text-sm font-medium transition-shadow hover:shadow-md">
                 <Shield className="h-4 w-4 text-purple-600" />
-                PAM Dashboard
+                {t('nav.items.pamDashboard')}
               </Link>
               <Link to="/vault-secrets" className="flex items-center gap-2 rounded-md border bg-background p-3 text-sm font-medium transition-shadow hover:shadow-md">
                 <KeyRound className="h-4 w-4 text-purple-600" />
-                Vault Secrets
+                {t('nav.items.vaultSecrets')}
               </Link>
               <Link to="/rotation-policies" className="flex items-center gap-2 rounded-md border bg-background p-3 text-sm font-medium transition-shadow hover:shadow-md">
                 <RotateCw className="h-4 w-4 text-purple-600" />
-                Rotation Policies
+                {t('nav.items.rotationPolicies')}
               </Link>
               <Link to="/guacamole-sessions" className="flex items-center gap-2 rounded-md border bg-background p-3 text-sm font-medium transition-shadow hover:shadow-md">
                 <MonitorPlay className="h-4 w-4 text-purple-600" />
-                Privileged Sessions
+                {t('nav.items.privilegedSessions')}
               </Link>
             </div>
           </CardContent>
@@ -488,7 +496,7 @@ export function DashboardPage() {
 
       {/* Analytics Section */}
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold">Analytics</h2>
+        <h2 className="text-xl font-semibold">{t('pages.dashboard.analytics.title')}</h2>
         <div className="flex gap-2">
           {['7d', '30d', '90d'].map((p) => (
             <Button key={p} variant={period === p ? 'default' : 'outline'} size="sm" onClick={() => setPeriod(p)}>
@@ -502,7 +510,7 @@ export function DashboardPage() {
         {/* Login Activity Chart */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm font-medium">Login Activity</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('pages.dashboard.analytics.loginActivity')}</CardTitle>
           </CardHeader>
           <CardContent>
             <ResponsiveContainer width="100%" height={250}>
@@ -521,7 +529,7 @@ export function DashboardPage() {
         {/* Risk Distribution */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm font-medium">Risk Distribution</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('pages.dashboard.analytics.riskDistribution')}</CardTitle>
           </CardHeader>
           <CardContent>
             <ResponsiveContainer width="100%" height={250}>
@@ -539,7 +547,7 @@ export function DashboardPage() {
         {/* Event Types */}
         <Card className="md:col-span-2">
           <CardHeader>
-            <CardTitle className="text-sm font-medium">Top Event Types</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('pages.dashboard.analytics.topEventTypes')}</CardTitle>
           </CardHeader>
           <CardContent>
             <ResponsiveContainer width="100%" height={250}>

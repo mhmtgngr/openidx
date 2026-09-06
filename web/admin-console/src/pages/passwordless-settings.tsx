@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import { Link2, QrCode, Mail, Shield, Settings2, Users, CheckCircle2, XCircle } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -39,6 +40,7 @@ interface PasswordlessStats {
 }
 
 export function PasswordlessSettingsPage() {
+  const { t } = useTranslation()
   const { toast } = useToast()
   const queryClient = useQueryClient()
   const [editDialog, setEditDialog] = useState(false)
@@ -91,11 +93,14 @@ export function PasswordlessSettingsPage() {
       api.put('/api/v1/identity/passwordless/settings', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['passwordless-settings'] })
-      toast({ title: 'Settings Updated', description: 'Passwordless settings have been saved.' })
+      toast({
+        title: t('pages.passwordless.toasts.updatedTitle'),
+        description: t('pages.passwordless.toasts.updatedDesc'),
+      })
       setEditDialog(false)
     },
     onError: (error: Error) => {
-      toast({ title: 'Error', description: error.message, variant: 'destructive' })
+      toast({ title: t('common.error'), description: error.message, variant: 'destructive' })
     }
   })
 
@@ -103,12 +108,15 @@ export function PasswordlessSettingsPage() {
     mutationFn: (email: string) =>
       api.post('/api/v1/identity/passwordless/magic-link/test', { email }),
     onSuccess: () => {
-      toast({ title: 'Test Sent', description: 'Test magic link has been sent.' })
+      toast({
+        title: t('pages.passwordless.toasts.testSentTitle'),
+        description: t('pages.passwordless.toasts.testSentDesc'),
+      })
       setTestMagicLinkDialog(false)
       setTestEmail('')
     },
     onError: (error: Error) => {
-      toast({ title: 'Error', description: error.message, variant: 'destructive' })
+      toast({ title: t('common.error'), description: error.message, variant: 'destructive' })
     }
   })
 
@@ -136,24 +144,24 @@ export function PasswordlessSettingsPage() {
   // Do not render any toggle state until real settings load. Surfacing the error
   // (vs. showing default-on toggles) avoids painting a fake security posture.
   if (settingsError) {
-    return <QueryError error={settingsErrorObj} resource="passwordless settings" />
+    return <QueryError error={settingsErrorObj} resource={t('pages.passwordless.resourceName')} />
   }
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Passwordless Authentication</h1>
-          <p className="text-muted-foreground">Configure magic links, QR login, and biometric-only access</p>
+          <h1 className="text-2xl font-bold tracking-tight">{t('pages.passwordless.title')}</h1>
+          <p className="text-muted-foreground">{t('pages.passwordless.subtitle')}</p>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" onClick={() => setTestMagicLinkDialog(true)}>
             <Mail className="h-4 w-4 mr-2" />
-            Test Magic Link
+            {t('pages.passwordless.testMagicLink')}
           </Button>
           <Button onClick={openEditDialog}>
             <Settings2 className="h-4 w-4 mr-2" />
-            Edit Settings
+            {t('pages.passwordless.editSettings')}
           </Button>
         </div>
       </div>
@@ -162,7 +170,7 @@ export function PasswordlessSettingsPage() {
       <div className="grid gap-4 md:grid-cols-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Magic Links Today</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('pages.passwordless.stats.magicLinks')}</CardTitle>
             <Mail className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -171,7 +179,7 @@ export function PasswordlessSettingsPage() {
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">QR Logins Today</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('pages.passwordless.stats.qrLogins')}</CardTitle>
             <QrCode className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -180,7 +188,7 @@ export function PasswordlessSettingsPage() {
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Biometric-Only Users</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('pages.passwordless.stats.biometricUsers')}</CardTitle>
             <Users className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -189,7 +197,7 @@ export function PasswordlessSettingsPage() {
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Adoption Rate</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('pages.passwordless.stats.adoption')}</CardTitle>
             <Shield className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -206,37 +214,37 @@ export function PasswordlessSettingsPage() {
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Link2 className="h-5 w-5 text-primary" />
-                <CardTitle>Magic Links</CardTitle>
+                <CardTitle>{t('pages.passwordless.magicLinks.title')}</CardTitle>
               </div>
-              <Switch
+              <Switch aria-label={t('pages.passwordless.magicLinks.title')}
                 checked={settings.magic_link_enabled}
                 onCheckedChange={(checked) =>
                   toggleSettingMutation.mutate({ key: 'magic_link_enabled', value: checked })
                 }
               />
             </div>
-            <CardDescription>Email-based passwordless login</CardDescription>
+            <CardDescription>{t('pages.passwordless.magicLinks.description')}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex items-center justify-between text-sm">
-              <span className="text-muted-foreground">Status</span>
+              <span className="text-muted-foreground">{t('pages.passwordless.status')}</span>
               {settings.magic_link_enabled ? (
                 <Badge className="bg-green-100 text-green-800">
-                  <CheckCircle2 className="h-3 w-3 mr-1" />Enabled
+                  <CheckCircle2 className="h-3 w-3 mr-1" />{t('pages.passwordless.enabled')}
                 </Badge>
               ) : (
                 <Badge variant="secondary">
-                  <XCircle className="h-3 w-3 mr-1" />Disabled
+                  <XCircle className="h-3 w-3 mr-1" />{t('pages.passwordless.disabled')}
                 </Badge>
               )}
             </div>
             <div className="flex items-center justify-between text-sm">
-              <span className="text-muted-foreground">Link Expiry</span>
-              <span>{settings.magic_link_expiry_minutes} minutes</span>
+              <span className="text-muted-foreground">{t('pages.passwordless.magicLinks.expiry')}</span>
+              <span>{t('pages.passwordless.magicLinks.expiryValue', { n: settings.magic_link_expiry_minutes })}</span>
             </div>
             <div className="flex items-center justify-between text-sm">
-              <span className="text-muted-foreground">Rate Limit</span>
-              <span>{settings.max_magic_links_per_hour}/hour</span>
+              <span className="text-muted-foreground">{t('pages.passwordless.magicLinks.rateLimit')}</span>
+              <span>{t('pages.passwordless.magicLinks.rateLimitValue', { n: settings.max_magic_links_per_hour })}</span>
             </div>
           </CardContent>
         </Card>
@@ -247,37 +255,37 @@ export function PasswordlessSettingsPage() {
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <QrCode className="h-5 w-5 text-purple-600" />
-                <CardTitle>QR Code Login</CardTitle>
+                <CardTitle>{t('pages.passwordless.qrLogin.title')}</CardTitle>
               </div>
-              <Switch
+              <Switch aria-label={t('pages.passwordless.qrLogin.title')}
                 checked={settings.qr_login_enabled}
                 onCheckedChange={(checked) =>
                   toggleSettingMutation.mutate({ key: 'qr_login_enabled', value: checked })
                 }
               />
             </div>
-            <CardDescription>Scan QR code from mobile app</CardDescription>
+            <CardDescription>{t('pages.passwordless.qrLogin.description')}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex items-center justify-between text-sm">
-              <span className="text-muted-foreground">Status</span>
+              <span className="text-muted-foreground">{t('pages.passwordless.status')}</span>
               {settings.qr_login_enabled ? (
                 <Badge className="bg-green-100 text-green-800">
-                  <CheckCircle2 className="h-3 w-3 mr-1" />Enabled
+                  <CheckCircle2 className="h-3 w-3 mr-1" />{t('pages.passwordless.enabled')}
                 </Badge>
               ) : (
                 <Badge variant="secondary">
-                  <XCircle className="h-3 w-3 mr-1" />Disabled
+                  <XCircle className="h-3 w-3 mr-1" />{t('pages.passwordless.disabled')}
                 </Badge>
               )}
             </div>
             <div className="flex items-center justify-between text-sm">
-              <span className="text-muted-foreground">Session Expiry</span>
-              <span>{settings.qr_session_expiry_minutes} minutes</span>
+              <span className="text-muted-foreground">{t('pages.passwordless.qrLogin.expiry')}</span>
+              <span>{t('pages.passwordless.magicLinks.expiryValue', { n: settings.qr_session_expiry_minutes })}</span>
             </div>
             <div className="flex items-center justify-between text-sm">
-              <span className="text-muted-foreground">Device Trust Required</span>
-              <span>{settings.require_device_trust ? 'Yes' : 'No'}</span>
+              <span className="text-muted-foreground">{t('pages.passwordless.qrLogin.deviceTrust')}</span>
+              <span>{settings.require_device_trust ? t('pages.passwordless.yes') : t('pages.passwordless.no')}</span>
             </div>
           </CardContent>
         </Card>
@@ -288,37 +296,37 @@ export function PasswordlessSettingsPage() {
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Shield className="h-5 w-5 text-green-600" />
-                <CardTitle>Biometric Only</CardTitle>
+                <CardTitle>{t('pages.passwordless.biometric.title')}</CardTitle>
               </div>
-              <Switch
+              <Switch aria-label={t('pages.passwordless.biometric.title')}
                 checked={settings.biometric_only_enabled}
                 onCheckedChange={(checked) =>
                   toggleSettingMutation.mutate({ key: 'biometric_only_enabled', value: checked })
                 }
               />
             </div>
-            <CardDescription>WebAuthn-only login for users</CardDescription>
+            <CardDescription>{t('pages.passwordless.biometric.description')}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex items-center justify-between text-sm">
-              <span className="text-muted-foreground">Status</span>
+              <span className="text-muted-foreground">{t('pages.passwordless.status')}</span>
               {settings.biometric_only_enabled ? (
                 <Badge className="bg-green-100 text-green-800">
-                  <CheckCircle2 className="h-3 w-3 mr-1" />Enabled
+                  <CheckCircle2 className="h-3 w-3 mr-1" />{t('pages.passwordless.enabled')}
                 </Badge>
               ) : (
                 <Badge variant="secondary">
-                  <XCircle className="h-3 w-3 mr-1" />Disabled
+                  <XCircle className="h-3 w-3 mr-1" />{t('pages.passwordless.disabled')}
                 </Badge>
               )}
             </div>
             <div className="flex items-center justify-between text-sm">
-              <span className="text-muted-foreground">Enrolled Users</span>
+              <span className="text-muted-foreground">{t('pages.passwordless.biometric.enrolled')}</span>
               <span>{stats.biometric_only_users}</span>
             </div>
             <div className="flex items-center justify-between text-sm">
-              <span className="text-muted-foreground">Requires WebAuthn</span>
-              <span>Yes</span>
+              <span className="text-muted-foreground">{t('pages.passwordless.biometric.requiresWebAuthn')}</span>
+              <span>{t('pages.passwordless.yes')}</span>
             </div>
           </CardContent>
         </Card>
@@ -327,45 +335,45 @@ export function PasswordlessSettingsPage() {
       {/* How It Works */}
       <Card>
         <CardHeader>
-          <CardTitle>How Passwordless Works</CardTitle>
-          <CardDescription>Understanding the different passwordless authentication methods</CardDescription>
+          <CardTitle>{t('pages.passwordless.howItWorks.title')}</CardTitle>
+          <CardDescription>{t('pages.passwordless.howItWorks.description')}</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="grid gap-6 md:grid-cols-3">
             <div className="space-y-2">
               <div className="flex items-center gap-2 text-primary">
                 <Link2 className="h-5 w-5" />
-                <h4 className="font-medium">Magic Links</h4>
+                <h4 className="font-medium">{t('pages.passwordless.magicLinks.title')}</h4>
               </div>
               <ol className="text-sm text-muted-foreground space-y-1 list-decimal list-inside">
-                <li>User enters email on login page</li>
-                <li>Receives email with secure link</li>
-                <li>Clicks link to authenticate</li>
-                <li>Session created automatically</li>
+                <li>{t('pages.passwordless.howItWorks.magic1')}</li>
+                <li>{t('pages.passwordless.howItWorks.magic2')}</li>
+                <li>{t('pages.passwordless.howItWorks.magic3')}</li>
+                <li>{t('pages.passwordless.howItWorks.magic4')}</li>
               </ol>
             </div>
             <div className="space-y-2">
               <div className="flex items-center gap-2 text-purple-600">
                 <QrCode className="h-5 w-5" />
-                <h4 className="font-medium">QR Code Login</h4>
+                <h4 className="font-medium">{t('pages.passwordless.qrLogin.title')}</h4>
               </div>
               <ol className="text-sm text-muted-foreground space-y-1 list-decimal list-inside">
-                <li>QR code displayed on login page</li>
-                <li>User scans with mobile app</li>
-                <li>Approves login on phone</li>
-                <li>Browser session activated</li>
+                <li>{t('pages.passwordless.howItWorks.qr1')}</li>
+                <li>{t('pages.passwordless.howItWorks.qr2')}</li>
+                <li>{t('pages.passwordless.howItWorks.qr3')}</li>
+                <li>{t('pages.passwordless.howItWorks.qr4')}</li>
               </ol>
             </div>
             <div className="space-y-2">
               <div className="flex items-center gap-2 text-green-600">
                 <Shield className="h-5 w-5" />
-                <h4 className="font-medium">Biometric Only</h4>
+                <h4 className="font-medium">{t('pages.passwordless.biometric.title')}</h4>
               </div>
               <ol className="text-sm text-muted-foreground space-y-1 list-decimal list-inside">
-                <li>User registers WebAuthn credential</li>
-                <li>Enables biometric-only mode</li>
-                <li>Login uses Face ID/Touch ID</li>
-                <li>Password completely bypassed</li>
+                <li>{t('pages.passwordless.howItWorks.bio1')}</li>
+                <li>{t('pages.passwordless.howItWorks.bio2')}</li>
+                <li>{t('pages.passwordless.howItWorks.bio3')}</li>
+                <li>{t('pages.passwordless.howItWorks.bio4')}</li>
               </ol>
             </div>
           </div>
@@ -376,13 +384,13 @@ export function PasswordlessSettingsPage() {
       <Dialog open={editDialog} onOpenChange={setEditDialog}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>Edit Passwordless Settings</DialogTitle>
-            <DialogDescription>Configure passwordless authentication options</DialogDescription>
+            <DialogTitle>{t('pages.passwordless.editDialog.title')}</DialogTitle>
+            <DialogDescription>{t('pages.passwordless.editDialog.description')}</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label>Magic Link Expiry (minutes)</Label>
-              <Input
+              <Label htmlFor="passwordless-settings-magic-expiry">{t('pages.passwordless.editDialog.magicExpiry')}</Label>
+              <Input id="passwordless-settings-magic-expiry"
                 type="number"
                 value={editSettings.magic_link_expiry_minutes}
                 onChange={(e) => setEditSettings({
@@ -392,12 +400,12 @@ export function PasswordlessSettingsPage() {
                 min={5}
                 max={60}
               />
-              <p className="text-xs text-muted-foreground">How long magic links remain valid (5-60 minutes)</p>
+              <p className="text-xs text-muted-foreground">{t('pages.passwordless.editDialog.magicExpiryHint')}</p>
             </div>
 
             <div className="space-y-2">
-              <Label>QR Session Expiry (minutes)</Label>
-              <Input
+              <Label htmlFor="passwordless-settings-qr-expiry">{t('pages.passwordless.editDialog.qrExpiry')}</Label>
+              <Input id="passwordless-settings-qr-expiry"
                 type="number"
                 value={editSettings.qr_session_expiry_minutes}
                 onChange={(e) => setEditSettings({
@@ -407,12 +415,12 @@ export function PasswordlessSettingsPage() {
                 min={1}
                 max={15}
               />
-              <p className="text-xs text-muted-foreground">How long QR login sessions remain valid (1-15 minutes)</p>
+              <p className="text-xs text-muted-foreground">{t('pages.passwordless.editDialog.qrExpiryHint')}</p>
             </div>
 
             <div className="space-y-2">
-              <Label>Max Magic Links Per Hour</Label>
-              <Input
+              <Label htmlFor="passwordless-settings-max-links">{t('pages.passwordless.editDialog.maxLinks')}</Label>
+              <Input id="passwordless-settings-max-links"
                 type="number"
                 value={editSettings.max_magic_links_per_hour}
                 onChange={(e) => setEditSettings({
@@ -422,15 +430,15 @@ export function PasswordlessSettingsPage() {
                 min={1}
                 max={20}
               />
-              <p className="text-xs text-muted-foreground">Rate limit for magic link requests per user</p>
+              <p className="text-xs text-muted-foreground">{t('pages.passwordless.editDialog.maxLinksHint')}</p>
             </div>
 
             <div className="flex items-center justify-between">
               <div>
-                <Label>Require Device Trust for QR Login</Label>
-                <p className="text-xs text-muted-foreground">Only allow QR login from trusted devices</p>
+                <Label htmlFor="passwordless-settings-device-trust">{t('pages.passwordless.editDialog.deviceTrust')}</Label>
+                <p className="text-xs text-muted-foreground">{t('pages.passwordless.editDialog.deviceTrustHint')}</p>
               </div>
-              <Switch
+              <Switch id="passwordless-settings-device-trust"
                 checked={editSettings.require_device_trust}
                 onCheckedChange={(checked) => setEditSettings({
                   ...editSettings,
@@ -440,9 +448,11 @@ export function PasswordlessSettingsPage() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setEditDialog(false)}>Cancel</Button>
+            <Button variant="outline" onClick={() => setEditDialog(false)}>
+              {t('common.cancel')}
+            </Button>
             <Button onClick={() => updateSettingsMutation.mutate(editSettings)}>
-              Save Settings
+              {t('pages.passwordless.editDialog.save')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -452,12 +462,12 @@ export function PasswordlessSettingsPage() {
       <Dialog open={testMagicLinkDialog} onOpenChange={setTestMagicLinkDialog}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Send Test Magic Link</DialogTitle>
-            <DialogDescription>Send a test magic link to verify email delivery</DialogDescription>
+            <DialogTitle>{t('pages.passwordless.testDialog.title')}</DialogTitle>
+            <DialogDescription>{t('pages.passwordless.testDialog.description')}</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label>Email Address</Label>
+              <Label>{t('pages.passwordless.testDialog.email')}</Label>
               <Input
                 type="email"
                 value={testEmail}
@@ -467,13 +477,15 @@ export function PasswordlessSettingsPage() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setTestMagicLinkDialog(false)}>Cancel</Button>
+            <Button variant="outline" onClick={() => setTestMagicLinkDialog(false)}>
+              {t('common.cancel')}
+            </Button>
             <Button
               onClick={() => sendTestMagicLinkMutation.mutate(testEmail)}
               disabled={!testEmail}
             >
               <Mail className="h-4 w-4 mr-2" />
-              Send Test
+              {t('pages.passwordless.testDialog.send')}
             </Button>
           </DialogFooter>
         </DialogContent>

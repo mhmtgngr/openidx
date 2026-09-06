@@ -1,0 +1,75 @@
+# Which spec files the CI browser-journey job runs — and, for every one it does
+# not, why.
+#
+# The suite was written against a MOCKED console and never executed until this
+# branch wired it into CI (playwright.config.ts had no `setup` project, so
+# nothing ever signed in). The first real run, against a stack of Postgres,
+# Redis and the eight services, measured 448 passed and 282 failed. Three
+# causes were mechanical and are fixed in the specs; the rest is a long tail of
+# assertions against fixtures, hosts, routes and DOM shapes the product does
+# not have. None of those specs is deleted and none is `test.skip`'d —
+# `npm run test:e2e` still runs all of them — but a gate that is red on arrival
+# is a gate that gets switched off, so the job runs what holds.
+#
+# Format: `run <spec>` or `hold <spec> <reason>`. Every file in e2e/ must
+# appear exactly once; scripts/check-e2e-suite.sh (self-tested, enforced in the
+# UI safety guards job) fails if one is missing, if a hold has no reason, or if
+# a listed file has been renamed away. The register is meant to SHRINK on the
+# hold side: each entry names what has to be true for it to move to `run`.
+
+run  e2e/api-docs.spec.ts
+run  e2e/app-publish.spec.ts
+run  e2e/browzer-management.spec.ts
+run  e2e/client-registration.spec.ts
+run  e2e/dashboard.spec.ts
+run  e2e/identity-provider-templates.spec.ts
+run  e2e/jit-access.spec.ts
+run  e2e/quick-create-service.spec.ts
+run  e2e/sms-settings.spec.ts
+run  e2e/temp-access.spec.ts
+run  e2e/users.spec.ts
+run  e2e/ziti-discovery.spec.ts
+
+# --- held: reaches outside the test environment ---
+hold e2e/production-deployment.spec.ts  53 tests drive https://openidx.tdv.org, a live third-party host. A CI suite must not depend on someone's deployment; retarget at the local stack or delete.
+hold e2e/demo-app-login.spec.ts  needs the sample OIDC client on :8088, which the stack does not start.
+hold e2e/production.spec.ts  asserts production hardening (HSTS, real TLS) that a localhost dev server does not have.
+hold e2e/api.spec.ts  one case simulates ERR_INTERNET_DISCONNECTED against the dev server and one asserts a latency budget; both need a decision about what they are measuring.
+
+# --- held: fixture users and data no seed creates ---
+hold e2e/auth.spec.ts  signs in as mfa-user/password123 and expects an MFA prompt; the seed creates admin only, so 7 cases time out waiting for a form that never appears.
+hold e2e/users-crud.spec.ts  expects the seeded directory to contain alice@example.com.
+hold e2e/audit-logs.spec.ts  expects specific audit rows (user.login.success) that a fresh database has not recorded.
+hold e2e/oauth-apps.spec.ts  expects a seeded "Demo Application" client.
+hold e2e/policies.spec.ts  expects a seeded "MFA Required for Admin Access" policy.
+hold e2e/webauthn-auth.spec.ts  needs two enrolled passkey users and their credentials.
+hold e2e/webauthn-mfa.noauth.spec.ts  needs an enrolled security key.
+hold e2e/push-mfa.noauth.spec.ts  needs an enrolled push device.
+hold e2e/mfa.spec.ts  needs a user with MFA already enrolled.
+hold e2e/ad-password.spec.ts  needs an Active Directory-backed account.
+hold e2e/ziti-setup.spec.ts  expects a configured OpenZiti controller and an "internal-wiki" service.
+hold e2e/ziti-network-full.noauth.spec.ts  drives Ziti service and identity creation against a controller the stack does not run.
+hold e2e/browzer-service-flow.noauth.spec.ts  same, plus a BrowZer bootstrapper.
+hold e2e/enable-vhost.noauth.spec.ts  same, for the vhost flow.
+hold e2e/service-features.spec.ts  expects the Ziti feature toggles enabled.
+hold e2e/device-management.spec.ts  expects an enrolled device with a Ziti identity.
+
+# --- held: assertions against copy or DOM the console no longer has ---
+hold e2e/dashboard-load.spec.ts  page objects locate stat cards as `.grid > div` filtered by text; the cards are not that shape.
+hold e2e/users-management.spec.ts  same class, plus rows expected for seeded users.
+hold e2e/access-reviews-flow.spec.ts  same class, against the review campaign table.
+hold e2e/dashboard-role.spec.ts  expects a heading named exactly "OpenIDX".
+hold e2e/jsmith-all-pages.spec.ts  same heading assertion, walked across every page.
+hold e2e/landing.spec.ts  asserts marketing copy ("Enterprise-Grade Security") the truthful landing rewrite removed.
+hold e2e/login.noauth.spec.ts  asserts the pre-SPA login page's URL and copy.
+hold e2e/user-profile.spec.ts  expects the profile of a seeded "Test Admin" with MFA rows.
+hold e2e/user-self-service.spec.ts  five headings ("My Roles", "My Applications") whose markup changed.
+hold e2e/phase15-18-pages.spec.ts  five page headings that moved.
+hold e2e/settings.spec.ts  expects "General Settings"/"Security Settings" section headings.
+hold e2e/certificates.spec.ts  two toasts asserted by exact English text.
+hold e2e/admin-pages.spec.ts  one page's readiness probe returns false.
+hold e2e/ziti-network.spec.ts  six dialogs and headings in the Ziti pages.
+hold e2e/audit-stream.spec.ts  expects live stream rows without a producer.
+hold e2e/audit-websocket-security.spec.ts  asserts connection-state copy on the same page.
+hold e2e/audit-stream-origin-validation.spec.ts  six cases redefine window.location, which Chromium refuses.
+hold e2e/gateway.spec.ts  probes gateway-service routes that answer HTML, not JSON, through the dev proxy.

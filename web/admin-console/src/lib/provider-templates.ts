@@ -4,7 +4,8 @@ export interface ProviderTemplate {
   provider_type: 'oidc' | 'saml'
   issuer_url: string
   scopes: string
-  description: string
+  /** i18n key for the template's one-line description (pages.identityProviders.templates.*). */
+  descriptionKey: string
   docsUrl: string
   color: string
 }
@@ -16,7 +17,7 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     provider_type: 'oidc',
     issuer_url: 'https://accounts.google.com',
     scopes: 'openid, profile, email',
-    description: 'Google Workspace & personal accounts',
+    descriptionKey: 'pages.identityProviders.templates.google',
     docsUrl: 'https://developers.google.com/identity/openid-connect/openid-connect',
     color: '#4285F4',
   },
@@ -26,7 +27,7 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     provider_type: 'oidc',
     issuer_url: 'https://github.com',
     scopes: 'openid, user:email, read:user',
-    description: 'GitHub personal & organization accounts',
+    descriptionKey: 'pages.identityProviders.templates.github',
     docsUrl: 'https://docs.github.com/en/apps/oauth-apps/building-oauth-apps',
     color: '#24292e',
   },
@@ -36,7 +37,7 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     provider_type: 'oidc',
     issuer_url: 'https://login.microsoftonline.com/{tenant-id}/v2.0',
     scopes: 'openid, profile, email',
-    description: 'Microsoft work, school, or personal accounts',
+    descriptionKey: 'pages.identityProviders.templates.microsoft',
     docsUrl: 'https://learn.microsoft.com/en-us/entra/identity-platform/v2-protocols-oidc',
     color: '#0078D4',
   },

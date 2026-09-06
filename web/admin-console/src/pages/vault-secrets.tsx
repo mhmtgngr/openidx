@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { api, VaultSecretMeta, VaultSecretDetail, VaultGrant, VaultCheckout, VaultRotationRun } from '../lib/api'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
@@ -47,14 +48,14 @@ const typeColors: Record<string, string> = {
   generic: 'bg-muted text-foreground',
 }
 
-const typeLabels: Record<string, string> = {
-  password: 'Password',
-  api_key: 'API Key',
-  ssh_key: 'SSH Key',
-  generic: 'Generic',
-}
-
 export function VaultSecretsPage() {
+  const { t } = useTranslation()
+  const typeLabels: Record<string, string> = {
+    password: t('pages.vaultSecrets.types.password'),
+    api_key: t('pages.vaultSecrets.types.api_key'),
+    ssh_key: t('pages.vaultSecrets.types.ssh_key'),
+    generic: t('pages.vaultSecrets.types.generic'),
+  }
   const queryClient = useQueryClient()
   const { toast } = useToast()
 
@@ -145,7 +146,7 @@ export function VaultSecretsPage() {
       setFormMetaVal('')
       setFormMetaPairs([])
       setShowCreate(false)
-      toast({ title: 'Secret created' })
+      toast({ title: t('pages.vaultSecrets.toasts.created') })
     },
   })
 
@@ -154,7 +155,7 @@ export function VaultSecretsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['vault-secrets'] })
       setSelectedId(null)
-      toast({ title: 'Secret deleted' })
+      toast({ title: t('pages.vaultSecrets.toasts.deleted') })
     },
   })
 
@@ -180,7 +181,7 @@ export function VaultSecretsPage() {
       queryClient.invalidateQueries({ queryKey: ['vault-secrets'] })
       setShowNewVersion(false)
       setNewVersionValue('')
-      toast({ title: 'New version saved' })
+      toast({ title: t('pages.vaultSecrets.toasts.versionSaved') })
     },
   })
 
@@ -201,7 +202,7 @@ export function VaultSecretsPage() {
       setGrantActions(['use'])
       setGrantExpiresAt('')
       setShowAddGrant(false)
-      toast({ title: 'Grant added' })
+      toast({ title: t('pages.vaultSecrets.toasts.grantAdded') })
     },
   })
 
@@ -210,7 +211,7 @@ export function VaultSecretsPage() {
       api.vault.removeGrant(secretId, grantId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['vault-grants', selectedId] })
-      toast({ title: 'Grant removed' })
+      toast({ title: t('pages.vaultSecrets.toasts.grantRemoved') })
     },
   })
 
@@ -222,13 +223,13 @@ export function VaultSecretsPage() {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['vault-rotations', selectedId] })
       const status = (data as { status?: string }).status ?? 'completed'
-      toast({ title: `Rotation ${status}` })
+      toast({ title: t('pages.vaultSecrets.toasts.rotation', { status }) })
     },
     onError: (err: { response?: { status?: number } }) => {
       if (err?.response?.status === 404) {
-        toast({ title: 'No rotation policy configured for this secret', variant: 'destructive' })
+        toast({ title: t('pages.vaultSecrets.toasts.noPolicy'), variant: 'destructive' })
       } else {
-        toast({ title: 'Rotation failed', variant: 'destructive' })
+        toast({ title: t('pages.vaultSecrets.toasts.rotationFailed'), variant: 'destructive' })
       }
     },
   })
@@ -250,12 +251,12 @@ export function VaultSecretsPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Vault Secrets</h1>
-          <p className="text-muted-foreground">Manage encrypted credentials — admin guarded</p>
+          <h1 className="text-2xl font-bold">{t('nav.items.vaultSecrets')}</h1>
+          <p className="text-muted-foreground">{t('pages.vaultSecrets.subtitle')}</p>
         </div>
         <Button onClick={() => setShowCreate(!showCreate)}>
           <Plus className="h-4 w-4 mr-2" />
-          {showCreate ? 'Cancel' : 'New Secret'}
+          {showCreate ? t('common.cancel') : t('pages.vaultSecrets.newSecret')}
         </Button>
       </div>
 
@@ -263,49 +264,49 @@ export function VaultSecretsPage() {
       {showCreate && (
         <Card>
           <CardHeader>
-            <CardTitle>Create New Secret</CardTitle>
+            <CardTitle>{t('pages.vaultSecrets.create.title')}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="text-sm font-medium">Name *</label>
+                <label className="text-sm font-medium">{t('pages.vaultSecrets.create.name')}</label>
                 <Input
                   className="mt-1"
-                  placeholder="my-api-key"
+                  placeholder={t('pages.vaultSecrets.create.namePlaceholder')}
                   value={formName}
                   onChange={(e) => setFormName(e.target.value)}
                 />
               </div>
               <div>
-                <label className="text-sm font-medium">Type</label>
+                <label htmlFor="vault-secrets-type" className="text-sm font-medium">{t('pages.vaultSecrets.create.type')}</label>
                 <Select value={formType} onValueChange={setFormType}>
-                  <SelectTrigger className="mt-1">
+                  <SelectTrigger id="vault-secrets-type" className="mt-1">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="generic">Generic</SelectItem>
-                    <SelectItem value="password">Password</SelectItem>
-                    <SelectItem value="api_key">API Key</SelectItem>
-                    <SelectItem value="ssh_key">SSH Key</SelectItem>
+                    <SelectItem value="generic">{typeLabels.generic}</SelectItem>
+                    <SelectItem value="password">{typeLabels.password}</SelectItem>
+                    <SelectItem value="api_key">{typeLabels.api_key}</SelectItem>
+                    <SelectItem value="ssh_key">{typeLabels.ssh_key}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
             </div>
             <div>
-              <label className="text-sm font-medium">Description</label>
+              <label className="text-sm font-medium">{t('pages.vaultSecrets.create.description')}</label>
               <Input
                 className="mt-1"
-                placeholder="Optional description"
+                placeholder={t('pages.vaultSecrets.create.descriptionPlaceholder')}
                 value={formDesc}
                 onChange={(e) => setFormDesc(e.target.value)}
               />
             </div>
             <div>
-              <label className="text-sm font-medium">Value *</label>
+              <label className="text-sm font-medium">{t('pages.vaultSecrets.create.value')}</label>
               <Input
                 type="password"
                 className="mt-1"
-                placeholder="Enter secret value (write-only)"
+                placeholder={t('pages.vaultSecrets.create.valuePlaceholder')}
                 value={formValue}
                 onChange={(e) => setFormValue(e.target.value)}
               />
@@ -313,22 +314,22 @@ export function VaultSecretsPage() {
 
             {/* Metadata key/value builder */}
             <div>
-              <label className="text-sm font-medium">Metadata (optional)</label>
+              <label className="text-sm font-medium">{t('pages.vaultSecrets.create.metadata')}</label>
               <div className="flex gap-2 mt-1">
                 <Input
-                  placeholder="Key"
+                  placeholder={t('pages.vaultSecrets.create.metaKey')}
                   value={formMetaKey}
                   onChange={(e) => setFormMetaKey(e.target.value)}
                   className="flex-1"
                 />
                 <Input
-                  placeholder="Value"
+                  placeholder={t('pages.vaultSecrets.create.metaValue')}
                   value={formMetaVal}
                   onChange={(e) => setFormMetaVal(e.target.value)}
                   className="flex-1"
                 />
                 <Button type="button" variant="outline" size="sm" onClick={handleAddMetaPair}>
-                  Add
+                  {t('common.add')}
                 </Button>
               </div>
               {formMetaPairs.length > 0 && (
@@ -357,7 +358,9 @@ export function VaultSecretsPage() {
               onClick={handleCreate}
               disabled={!formName || !formValue || createMutation.isPending}
             >
-              {createMutation.isPending ? 'Creating...' : 'Create Secret'}
+              {createMutation.isPending
+                ? t('pages.vaultSecrets.create.creating')
+                : t('pages.vaultSecrets.create.submit')}
             </Button>
           </CardContent>
         </Card>
@@ -368,7 +371,7 @@ export function VaultSecretsPage() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <KeyRound className="h-5 w-5" />
-            Secrets ({secrets.length})
+            {t('pages.vaultSecrets.list.title', { count: secrets.length })}
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -377,15 +380,15 @@ export function VaultSecretsPage() {
               <LoadingSpinner size="lg" />
             </div>
           ) : listError ? (
-            <QueryError error={listError} resource="vault secrets" />
+            <QueryError error={listError} resource={t('pages.vaultSecrets.resourceName')} />
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Version</TableHead>
-                  <TableHead>Updated</TableHead>
+                  <TableHead>{t('pages.vaultSecrets.list.table.name')}</TableHead>
+                  <TableHead>{t('pages.vaultSecrets.list.table.type')}</TableHead>
+                  <TableHead>{t('pages.vaultSecrets.list.table.version')}</TableHead>
+                  <TableHead>{t('pages.vaultSecrets.list.table.updated')}</TableHead>
                   <TableHead></TableHead>
                 </TableRow>
               </TableHeader>
@@ -404,11 +407,11 @@ export function VaultSecretsPage() {
                     </TableCell>
                     <TableCell>v{s.current_version}</TableCell>
                     <TableCell className="text-muted-foreground text-sm">
-                      {new Date(s.updated_at).toLocaleDateString()}
+                      {new Date(s.updated_at).toLocaleDateString(undefined)}
                     </TableCell>
                     <TableCell onClick={(e) => e.stopPropagation()}>
                       {selectedId === s.id && (
-                        <span className="text-xs text-primary">▶ selected</span>
+                        <span className="text-xs text-primary">▶ {t('pages.vaultSecrets.list.selected')}</span>
                       )}
                     </TableCell>
                   </TableRow>
@@ -416,7 +419,7 @@ export function VaultSecretsPage() {
                 {secrets.length === 0 && (
                   <TableRow>
                     <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
-                      No secrets yet
+                      {t('pages.vaultSecrets.list.empty')}
                     </TableCell>
                   </TableRow>
                 )}
@@ -433,14 +436,14 @@ export function VaultSecretsPage() {
             <CardTitle className="flex items-center justify-between">
               <span className="flex items-center gap-2">
                 <Shield className="h-5 w-5" />
-                {detail?.name || 'Loading...'}
+                {detail?.name || t('pages.vaultSecrets.detail.loading')}
               </span>
               <div className="flex gap-2">
                 <ConfirmAction
-                  title="Rotate this secret now?"
-                  description="The current value is replaced immediately. Any dependents must be updated to use the new value or they will start failing."
+                  title={t('pages.vaultSecrets.detail.confirmRotate.title')}
+                  description={t('pages.vaultSecrets.detail.confirmRotate.description')}
                   destructive
-                  confirmLabel="Rotate"
+                  confirmLabel={t('pages.vaultSecrets.detail.confirmRotate.confirm')}
                   onConfirm={() => rotateNowMutation.mutate()}
                 >
                   {(open) => (
@@ -452,13 +455,15 @@ export function VaultSecretsPage() {
                       data-testid="rotate-now-btn"
                     >
                       <RefreshCw className="h-3 w-3 mr-1" />
-                      {rotateNowMutation.isPending ? 'Rotating...' : 'Rotate now'}
+                      {rotateNowMutation.isPending
+                        ? t('pages.vaultSecrets.detail.rotating')
+                        : t('pages.vaultSecrets.detail.rotateNow')}
                     </Button>
                   )}
                 </ConfirmAction>
                 <Button variant="outline" size="sm" onClick={() => setShowReveal(true)}>
                   <Eye className="h-3 w-3 mr-1" />
-                  Reveal
+                  {t('pages.vaultSecrets.detail.reveal')}
                 </Button>
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
@@ -468,24 +473,23 @@ export function VaultSecretsPage() {
                       className="text-red-600 border-red-200 hover:bg-red-50"
                     >
                       <Trash2 className="h-3 w-3 mr-1" />
-                      Delete
+                      {t('common.delete')}
                     </Button>
                   </AlertDialogTrigger>
                   <AlertDialogContent>
                     <AlertDialogHeader>
-                      <AlertDialogTitle>Crypto-erase secret?</AlertDialogTitle>
+                      <AlertDialogTitle>{t('pages.vaultSecrets.detail.confirmDelete.title')}</AlertDialogTitle>
                       <AlertDialogDescription>
-                        This permanently deletes all versions and ciphertext. The secret is
-                        cryptographically unrecoverable.
+                        {t('pages.vaultSecrets.detail.confirmDelete.description')}
                       </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
-                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                      <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
                       <AlertDialogAction
                         onClick={() => deleteMutation.mutate(selectedId)}
                         className="bg-red-600 hover:bg-red-700"
                       >
-                        Delete forever
+                        {t('pages.vaultSecrets.detail.confirmDelete.confirm')}
                       </AlertDialogAction>
                     </AlertDialogFooter>
                   </AlertDialogContent>
@@ -505,11 +509,19 @@ export function VaultSecretsPage() {
               <Tabs defaultValue="versions">
                 <TabsList>
                   <TabsTrigger value="versions">
-                    Versions ({detail?.versions?.length || 0})
+                    {t('pages.vaultSecrets.detail.tabs.versions', {
+                      count: detail?.versions?.length || 0,
+                    })}
                   </TabsTrigger>
-                  <TabsTrigger value="grants">Grants ({grants.length})</TabsTrigger>
-                  <TabsTrigger value="checkouts">Checkouts ({checkouts.length})</TabsTrigger>
-                  <TabsTrigger value="rotations">Rotations ({rotations.length})</TabsTrigger>
+                  <TabsTrigger value="grants">
+                    {t('pages.vaultSecrets.detail.tabs.grants', { count: grants.length })}
+                  </TabsTrigger>
+                  <TabsTrigger value="checkouts">
+                    {t('pages.vaultSecrets.detail.tabs.checkouts', { count: checkouts.length })}
+                  </TabsTrigger>
+                  <TabsTrigger value="rotations">
+                    {t('pages.vaultSecrets.detail.tabs.rotations', { count: rotations.length })}
+                  </TabsTrigger>
                 </TabsList>
 
                 {/* Versions tab */}
@@ -517,7 +529,7 @@ export function VaultSecretsPage() {
                   <div className="flex justify-end pt-2">
                     <Button size="sm" onClick={() => setShowNewVersion(true)}>
                       <RefreshCw className="h-3 w-3 mr-1" />
-                      New Version
+                      {t('pages.vaultSecrets.detail.newVersion')}
                     </Button>
                   </div>
                   <div className="divide-y">
@@ -526,11 +538,17 @@ export function VaultSecretsPage() {
                         <div>
                           <span className="font-medium text-sm">v{v.version}</span>
                           {detail?.current_version === v.version && (
-                            <Badge className="ml-2 bg-green-100 text-green-800">current</Badge>
+                            <Badge className="ml-2 bg-green-100 text-green-800">
+                              {t('pages.vaultSecrets.detail.current')}
+                            </Badge>
                           )}
                         </div>
                         <div className="text-xs text-muted-foreground">
-                          {v.created_by && <span className="mr-3">by {v.created_by}</span>}
+                          {v.created_by && (
+                            <span className="mr-3">
+                              {t('pages.vaultSecrets.detail.by', { name: v.created_by })}
+                            </span>
+                          )}
                           {new Date(v.created_at).toLocaleString()}
                         </div>
                       </div>
@@ -543,7 +561,7 @@ export function VaultSecretsPage() {
                   <div className="flex justify-end pt-2">
                     <Button size="sm" onClick={() => setShowAddGrant(true)}>
                       <Plus className="h-3 w-3 mr-1" />
-                      Add Grant
+                      {t('pages.vaultSecrets.detail.addGrant')}
                     </Button>
                   </div>
                   <div className="divide-y">
@@ -562,7 +580,9 @@ export function VaultSecretsPage() {
                           </div>
                           {g.expires_at && (
                             <p className="text-xs text-muted-foreground">
-                              Expires {new Date(g.expires_at).toLocaleDateString()}
+                              {t('pages.vaultSecrets.detail.expires', {
+                                date: new Date(g.expires_at).toLocaleDateString(undefined),
+                              })}
                             </p>
                           )}
                         </div>
@@ -578,7 +598,9 @@ export function VaultSecretsPage() {
                       </div>
                     ))}
                     {grants.length === 0 && (
-                      <p className="py-4 text-center text-sm text-muted-foreground">No grants</p>
+                      <p className="py-4 text-center text-sm text-muted-foreground">
+                        {t('pages.vaultSecrets.detail.noGrants')}
+                      </p>
                     )}
                   </div>
                 </TabsContent>
@@ -590,7 +612,9 @@ export function VaultSecretsPage() {
                       <div key={c.id} className="py-2 flex items-center justify-between">
                         <div>
                           <span className="text-sm">
-                            {c.mode === 'reveal' ? 'Reveal' : 'Use'}
+                            {c.mode === 'reveal'
+                              ? t('pages.vaultSecrets.detail.checkoutReveal')
+                              : t('pages.vaultSecrets.detail.checkoutUse')}
                           </span>
                           {c.principal_id && (
                             <span className="text-xs text-muted-foreground ml-2">
@@ -619,7 +643,7 @@ export function VaultSecretsPage() {
                     ))}
                     {checkouts.length === 0 && (
                       <p className="py-4 text-center text-sm text-muted-foreground">
-                        No checkouts yet
+                        {t('pages.vaultSecrets.detail.noCheckouts')}
                       </p>
                     )}
                   </div>
@@ -662,7 +686,7 @@ export function VaultSecretsPage() {
                     ))}
                     {rotations.length === 0 && (
                       <p className="py-4 text-center text-sm text-muted-foreground">
-                        No rotations yet
+                        {t('pages.vaultSecrets.detail.noRotations')}
                       </p>
                     )}
                   </div>
@@ -686,19 +710,19 @@ export function VaultSecretsPage() {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Reveal Secret Value</DialogTitle>
+            <DialogTitle>{t('pages.vaultSecrets.revealDialog.title')}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             {!revealedValue ? (
               <>
                 <p className="text-sm text-muted-foreground">
-                  Provide a reason for accessing this secret. This action is audited.
+                  {t('pages.vaultSecrets.revealDialog.prompt')}
                 </p>
                 <div>
-                  <label className="text-sm font-medium">Reason (required)</label>
+                  <label className="text-sm font-medium">{t('pages.vaultSecrets.revealDialog.reason')}</label>
                   <Input
                     className="mt-1"
-                    placeholder="e.g. emergency credential rotation"
+                    placeholder={t('pages.vaultSecrets.revealDialog.reasonPlaceholder')}
                     value={revealReason}
                     onChange={(e) => setRevealReason(e.target.value)}
                   />
@@ -708,18 +732,20 @@ export function VaultSecretsPage() {
                   disabled={!revealReason.trim() || revealMutation.isPending}
                   className="w-full"
                 >
-                  {revealMutation.isPending ? 'Revealing...' : 'Reveal Value'}
+                  {revealMutation.isPending
+                    ? t('pages.vaultSecrets.revealDialog.revealing')
+                    : t('pages.vaultSecrets.revealDialog.submit')}
                 </Button>
               </>
             ) : (
               <div className="space-y-3">
                 <div className="flex items-center gap-2 p-3 bg-amber-50 border border-amber-200 rounded-md">
                   <p className="text-xs text-amber-800 font-medium">
-                    Value shown once and auto-hidden shortly — not stored or logged after this dialog closes.
+                    {t('pages.vaultSecrets.revealDialog.shownOnce')}
                   </p>
                 </div>
                 <div className="flex gap-2">
-                  <Input
+                  <Input aria-label={t('common.revealedValue')}
                     value={revealedValue}
                     readOnly
                     className="font-mono text-sm"
@@ -732,9 +758,13 @@ export function VaultSecretsPage() {
                     onClick={async () => {
                       const ok = await copyWithWarning(revealedValue)
                       if (ok) {
-                        toast({ title: 'Copied', description: 'The clipboard may retain this value — clear it when done.' })
+                        toast({ title: t('common.copied'), description: t('pages.vaultSecrets.toasts.copied') })
                       } else {
-                        toast({ title: 'Copy failed', description: 'Clipboard unavailable — copy the value manually.', variant: 'destructive' })
+                        toast({
+                          title: t('pages.vaultSecrets.toasts.copyFailedTitle'),
+                          description: t('pages.vaultSecrets.toasts.copyFailed'),
+                          variant: 'destructive',
+                        })
                       }
                     }}
                   >
@@ -751,18 +781,18 @@ export function VaultSecretsPage() {
       <Dialog open={showNewVersion} onOpenChange={setShowNewVersion}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>New Secret Version</DialogTitle>
+            <DialogTitle>{t('pages.vaultSecrets.versionDialog.title')}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <p className="text-sm text-muted-foreground">
-              Enter the new value. Previous versions are retained in the audit history.
+              {t('pages.vaultSecrets.versionDialog.prompt')}
             </p>
             <div>
-              <label className="text-sm font-medium">New Value</label>
+              <label className="text-sm font-medium">{t('pages.vaultSecrets.versionDialog.value')}</label>
               <Input
                 type="password"
                 className="mt-1"
-                placeholder="Enter new secret value"
+                placeholder={t('pages.vaultSecrets.versionDialog.valuePlaceholder')}
                 value={newVersionValue}
                 onChange={(e) => setNewVersionValue(e.target.value)}
               />
@@ -772,7 +802,9 @@ export function VaultSecretsPage() {
               disabled={!newVersionValue || newVersionMutation.isPending}
               className="w-full"
             >
-              {newVersionMutation.isPending ? 'Saving...' : 'Save New Version'}
+              {newVersionMutation.isPending
+                ? t('pages.vaultSecrets.versionDialog.saving')
+                : t('pages.vaultSecrets.versionDialog.submit')}
             </Button>
           </div>
         </DialogContent>
@@ -782,32 +814,34 @@ export function VaultSecretsPage() {
       <Dialog open={showAddGrant} onOpenChange={setShowAddGrant}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Add Grant</DialogTitle>
+            <DialogTitle>{t('pages.vaultSecrets.grantDialog.title')}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div>
-              <label className="text-sm font-medium">Principal Type</label>
+              <label htmlFor="vault-secrets-principal-type" className="text-sm font-medium">{t('pages.vaultSecrets.grantDialog.principalType')}</label>
               <Select value={grantPrincipalType} onValueChange={setGrantPrincipalType}>
-                <SelectTrigger className="mt-1">
+                <SelectTrigger id="vault-secrets-principal-type" className="mt-1">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="user">User</SelectItem>
-                  <SelectItem value="role">Role</SelectItem>
-                  <SelectItem value="service_account">Service Account</SelectItem>
+                  <SelectItem value="user">{t('pages.vaultSecrets.grantDialog.principalTypes.user')}</SelectItem>
+                  <SelectItem value="role">{t('pages.vaultSecrets.grantDialog.principalTypes.role')}</SelectItem>
+                  <SelectItem value="service_account">
+                    {t('pages.vaultSecrets.grantDialog.principalTypes.service_account')}
+                  </SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <div>
-              <label className="text-sm font-medium">Principal ID</label>
-              <Input
+              <label htmlFor="vault-secrets-principal-id" className="text-sm font-medium">{t('pages.vaultSecrets.grantDialog.principalId')}</label>
+              <Input id="vault-secrets-principal-id"
                 className="mt-1"
                 value={grantPrincipalId}
                 onChange={(e) => setGrantPrincipalId(e.target.value)}
               />
             </div>
             <div>
-              <label className="text-sm font-medium">Actions</label>
+              <label className="text-sm font-medium">{t('pages.vaultSecrets.grantDialog.actions')}</label>
               <div className="flex gap-3 mt-1">
                 {['use', 'reveal'].map((action) => (
                   <label key={action} className="flex items-center gap-1 text-sm">
@@ -826,8 +860,8 @@ export function VaultSecretsPage() {
               </div>
             </div>
             <div>
-              <label className="text-sm font-medium">Expires At (optional)</label>
-              <Input
+              <label htmlFor="vault-secrets-expires-at" className="text-sm font-medium">{t('pages.vaultSecrets.grantDialog.expiresAt')}</label>
+              <Input id="vault-secrets-expires-at"
                 type="datetime-local"
                 className="mt-1"
                 value={grantExpiresAt}
@@ -841,7 +875,9 @@ export function VaultSecretsPage() {
               }
               className="w-full"
             >
-              {addGrantMutation.isPending ? 'Adding...' : 'Add Grant'}
+              {addGrantMutation.isPending
+                ? t('pages.vaultSecrets.grantDialog.adding')
+                : t('pages.vaultSecrets.grantDialog.submit')}
             </Button>
           </div>
         </DialogContent>

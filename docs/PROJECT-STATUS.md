@@ -1,5 +1,13 @@
 # OpenIDX Project Status
 
+> ⚠️ **STALE — kept for history.** This snapshot is from **2026-05-20** and
+> no longer reflects the project: it drops PAM and IGA from the product
+> definition and calls Helm/Terraform incomplete. For the current state,
+> read **[PROJECT-READINESS-GUIDE.md](./PROJECT-READINESS-GUIDE.md)** (the
+> user-perspective readiness assessment, next steps, and controls) and
+> [PRODUCTION-READINESS.md](./PRODUCTION-READINESS.md) (the deploy-side
+> view).
+
 > **Last refreshed: 2026-05-20.** This document was previously badly out of
 > date (it claimed "2/7 services built" and listed shipped features as TODO).
 > It now reflects the actual state of the codebase. For where the project is
@@ -57,7 +65,7 @@ down incrementally.
 
 | Area | Status |
 |---|---|
-| Database schema + migrations | ✅ Complete (`migrations/`, `deployments/docker/init-db.sql`) |
+| Database schema + migrations | ✅ Complete (`internal/migrations/`, `deployments/docker/init-db.sql`) |
 | Docker Compose (infra) | ✅ Postgres/Redis/Elasticsearch/APISIX/OPA + healthchecks |
 | CI/CD | ✅ GitHub Actions: `ci.yml` (Go), `ci-web.yml` (frontend), `ci-android.yml`, `codeql.yml`, `docker.yml`, `security-scan.yml`, `release.yml`, `docs.yml` |
 | Config validation | ✅ `ValidateProduction()` blocks prod startup on insecure secrets / wildcard CORS / disabled CSRF / non-TLS DB |

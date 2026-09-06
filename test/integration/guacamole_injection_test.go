@@ -68,9 +68,9 @@ func seedProxyRoute(t *testing.T, admin *pgxpool.Pool, orgID, suffix string) str
 }
 
 // seedGuacConnection inserts a guacamole_connections row under bypass and
-// returns its UUID. guacamole_connections is NOT RLS-belted (no org_id column)
-// so a raw admin exec is sufficient; we still use bypass for consistency.
-func seedGuacConnection(t *testing.T, admin *pgxpool.Pool, routeID string) string {
+// returns its UUID. Since v151 the table carries org_id and the FORCE RLS
+// belt, so the bypass is load-bearing here rather than decorative.
+func seedGuacConnection(t *testing.T, admin *pgxpool.Pool, routeID, orgID string) string {
 	t.Helper()
 	ctx := context.Background()
 	tx, err := admin.Begin(ctx)
@@ -81,11 +81,11 @@ func seedGuacConnection(t *testing.T, admin *pgxpool.Pool, routeID string) strin
 	var connID string
 	err = tx.QueryRow(ctx,
 		`INSERT INTO guacamole_connections
-		   (route_id, guacamole_connection_id, protocol, hostname, port,
+		   (route_id, org_id, guacamole_connection_id, protocol, hostname, port,
 		    require_approval, record_session)
-		 VALUES ($1, $2, 'rdp', '10.0.0.1', 3389, true, true)
+		 VALUES ($1, $3, $2, 'rdp', '10.0.0.1', 3389, true, true)
 		 RETURNING id`,
-		routeID, "guac-ext-id-"+routeID).Scan(&connID)
+		routeID, "guac-ext-id-"+routeID, orgID).Scan(&connID)
 	require.NoError(t, err, "seed guacamole_connections")
 	require.NoError(t, tx.Commit(ctx))
 	return connID
@@ -207,7 +207,7 @@ func TestGuacApprovalConsume(t *testing.T) {
 		bypassExec(t, admin, `DELETE FROM proxy_routes WHERE id = $1`, routeID)
 	})
 
-	connID := seedGuacConnection(t, admin, routeID)
+	connID := seedGuacConnection(t, admin, routeID, orgID)
 	t.Cleanup(func() {
 		bypassExec(t, admin, `DELETE FROM guacamole_connections WHERE id = $1`, connID)
 	})
@@ -310,7 +310,7 @@ func TestGuacSessionRecordAndRetention(t *testing.T) {
 		bypassExec(t, admin, `DELETE FROM proxy_routes WHERE id = $1`, routeID)
 	})
 
-	connID := seedGuacConnection(t, admin, routeID)
+	connID := seedGuacConnection(t, admin, routeID, orgID)
 	t.Cleanup(func() {
 		bypassExec(t, admin, `DELETE FROM guacamole_connections WHERE id = $1`, connID)
 	})
@@ -452,7 +452,7 @@ func TestGuacRLSIsolation(t *testing.T) {
 		bypassExec(t, admin, `DELETE FROM proxy_routes WHERE id = $1`, routeID)
 	})
 
-	connID := seedGuacConnection(t, admin, routeID)
+	connID := seedGuacConnection(t, admin, routeID, orgA)
 	t.Cleanup(func() {
 		bypassExec(t, admin, `DELETE FROM guacamole_connections WHERE id = $1`, connID)
 	})

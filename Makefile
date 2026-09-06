@@ -227,8 +227,8 @@ dev:
 	$(DOCKER_COMPOSE) -f deployments/docker/docker-compose.yml up -d
 	@echo "✅ Services running at:"
 	@echo "   - Admin Console: http://localhost:3000"
-	@echo "   - API Gateway:   http://localhost:8080"
-	@echo "   - Keycloak:      http://localhost:8180"
+	@echo "   - API Gateway:   http://localhost:8088"
+	@echo "First login: admin / Admin@123 — rotate immediately (docs/GETTING-STARTED.md)"
 
 dev-stop:
 	@echo "🛑 Stopping development environment..."
@@ -313,7 +313,10 @@ build-agent-all:
 
 test-agent:
 	@echo "Testing openidx-agent..."
-	cd agent && go test -v -race ./...
+# -timeout, as everywhere -race is used here: Go's ten-minute default is a
+# bound for uninstrumented tests and under the race detector it reports a slow
+# machine and a hung test identically.
+	cd agent && go test -v -race -timeout 20m ./...
 
 install-cli: build-cli
 	@echo "📦 Installing OpenIDX CLI..."
@@ -369,9 +372,16 @@ helm-lint:
 
 helm-template:
 	@echo "📄 Rendering Helm templates..."
+	@# The bundled PostgreSQL/Redis passwords are `required`: an empty one used
+	@# to render a DSN that could not authenticate. Rendering supplies
+	@# throwaway values — a real install sets secrets.* for itself.
 	$(HELM) template openidx deployments/kubernetes/helm/openidx \
 		--namespace $(NAMESPACE) \
-		--values deployments/kubernetes/helm/openidx/values.yaml
+		--values deployments/kubernetes/helm/openidx/values.yaml \
+		--set secrets.postgresPassword=render-only-not-a-credential \
+		--set secrets.redisPassword=render-only-not-a-credential \
+		--set secrets.jwtSecret=render-only-not-a-credential-000000 \
+		--set secrets.encryptionKey=render-only-not-a-credential32b
 
 helm-install:
 	@echo "🚀 Installing OpenIDX..."

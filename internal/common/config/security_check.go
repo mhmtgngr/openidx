@@ -6,6 +6,13 @@ import "go.uber.org/zap"
 // deployments. This MUST be called at service startup after configuration is loaded.
 // Returns an error if any critical security issues are found, preventing server startup.
 func ValidateProductionConfig(cfg *Config, log *zap.Logger) error {
+	// Before anything environment-specific: a setting the operator set and
+	// this build does not read. Reported everywhere, because development is
+	// where someone tries a switch and needs to hear that it does nothing.
+	for _, s := range RetiredSettingsInUse() {
+		log.Warn("CONFIG: retired setting", zap.String("detail", s))
+	}
+
 	if !cfg.IsProduction() {
 		return nil
 	}

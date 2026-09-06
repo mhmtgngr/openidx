@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import {
   Users, UserCheck, UserPlus, Layers, Shield, Key, Fingerprint,
   Smartphone, Link2, Globe, BarChart3, ArrowUpRight,
@@ -74,6 +75,7 @@ function methodBadge(method: string) {
 }
 
 export function UsageAnalyticsPage() {
+  const { t } = useTranslation()
   const {
     data: usageData,
     isLoading: usageLoading,
@@ -156,99 +158,105 @@ export function UsageAnalyticsPage() {
   // The primary usage query drives the whole dashboard; a 401/403 here must not
   // fall through to an all-zeros "no usage" view.
   if (usageError) {
-    return <QueryError error={usageErrorObj} resource="usage analytics" />
+    return <QueryError error={usageErrorObj} resource={t('pages.usageAnalytics.resource')} />
   }
 
   const maxRegistration = Math.max(
     ...(usage?.new_registrations?.map((r) => r.count) || [1])
   )
+  // Hoisted because the summary line needs the raw number for the plural
+  // rule and the locale-formatted string for the sentence's own slot.
+  const registrationTotal = (usage?.new_registrations ?? []).reduce(
+    (sum, d) => sum + d.count,
+    0,
+  )
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight">Usage Analytics</h1>
-        <p className="text-muted-foreground">
-          User engagement, feature adoption, and platform utilization
-        </p>
+        <h1 className="text-2xl font-bold tracking-tight">
+          {t('nav.items.usageAnalytics')}
+        </h1>
+        <p className="text-muted-foreground">{t('pages.usageAnalytics.subtitle')}</p>
       </div>
 
       {/* Active User Stats */}
       <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-6">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">DAU</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('pages.usageAnalytics.cards.dau')}</CardTitle>
             <UserCheck className="h-4 w-4 text-green-600" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
               {(usage?.dau ?? 0).toLocaleString()}
             </div>
-            <p className="text-xs text-muted-foreground mt-1">Daily active</p>
+            <p className="text-xs text-muted-foreground mt-1">{t('pages.usageAnalytics.cards.dauHint')}</p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">WAU</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('pages.usageAnalytics.cards.wau')}</CardTitle>
             <UserCheck className="h-4 w-4 text-primary" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
               {(usage?.wau ?? 0).toLocaleString()}
             </div>
-            <p className="text-xs text-muted-foreground mt-1">Weekly active</p>
+            <p className="text-xs text-muted-foreground mt-1">{t('pages.usageAnalytics.cards.wauHint')}</p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">MAU</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('pages.usageAnalytics.cards.mau')}</CardTitle>
             <UserCheck className="h-4 w-4 text-purple-600" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
               {(usage?.mau ?? 0).toLocaleString()}
             </div>
-            <p className="text-xs text-muted-foreground mt-1">Monthly active</p>
+            <p className="text-xs text-muted-foreground mt-1">{t('pages.usageAnalytics.cards.mauHint')}</p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Users</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('pages.usageAnalytics.cards.totalUsers')}</CardTitle>
             <Users className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
               {(usage?.total_users ?? 0).toLocaleString()}
             </div>
-            <p className="text-xs text-muted-foreground mt-1">All registered</p>
+            <p className="text-xs text-muted-foreground mt-1">{t('pages.usageAnalytics.cards.totalUsersHint')}</p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Groups</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('pages.usageAnalytics.cards.totalGroups')}</CardTitle>
             <Layers className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
               {(usage?.total_groups ?? 0).toLocaleString()}
             </div>
-            <p className="text-xs text-muted-foreground mt-1">Active groups</p>
+            <p className="text-xs text-muted-foreground mt-1">{t('pages.usageAnalytics.cards.totalGroupsHint')}</p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Apps</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('pages.usageAnalytics.cards.totalApps')}</CardTitle>
             <ArrowUpRight className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
               {(usage?.total_apps ?? 0).toLocaleString()}
             </div>
-            <p className="text-xs text-muted-foreground mt-1">Registered apps</p>
+            <p className="text-xs text-muted-foreground mt-1">{t('pages.usageAnalytics.cards.totalAppsHint')}</p>
           </CardContent>
         </Card>
       </div>
@@ -258,11 +266,9 @@ export function UsageAnalyticsPage() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Shield className="h-5 w-5" />
-            Feature Adoption
+            {t('pages.usageAnalytics.adoption.title')}
           </CardTitle>
-          <CardDescription>
-            Security and authentication feature usage across your user base
-          </CardDescription>
+          <CardDescription>{t('pages.usageAnalytics.adoption.desc')}</CardDescription>
         </CardHeader>
         <CardContent>
           {adoption?.features && adoption.features.length > 0 ? (
@@ -277,10 +283,13 @@ export function UsageAnalyticsPage() {
                       {featureIcons[feature.name.toLowerCase()] || (
                         <Shield className="h-4 w-4" />
                       )}
-                      <span className="font-medium capitalize">
-                        {feature.name.replace(/_/g, ' ')}
+                      <span className="font-medium">
+                        {t(`pages.usageAnalytics.features.${feature.name.toLowerCase()}`, {
+                          defaultValue: feature.name.replace(/_/g, ' '),
+                        })}
                       </span>
                     </div>
+                    {/* The category is the server's own grouping string. */}
                     <Badge variant="outline" className="text-xs">
                       {feature.category}
                     </Badge>
@@ -288,8 +297,10 @@ export function UsageAnalyticsPage() {
                   <div className="space-y-1">
                     <div className="flex justify-between text-sm">
                       <span className="text-muted-foreground">
-                        {feature.adopted_users.toLocaleString()} of{' '}
-                        {feature.total_users.toLocaleString()} users
+                        {t('pages.usageAnalytics.adoption.ofUsers', {
+                          adopted: feature.adopted_users.toLocaleString(),
+                          total: feature.total_users.toLocaleString(),
+                        })}
                       </span>
                       <span className="font-medium">
                         {feature.adoption_percentage.toFixed(1)}%
@@ -307,7 +318,7 @@ export function UsageAnalyticsPage() {
             </div>
           ) : (
             <p className="text-center text-muted-foreground py-6">
-              No feature adoption data available
+              {t('pages.usageAnalytics.adoption.empty')}
             </p>
           )}
         </CardContent>
@@ -320,25 +331,32 @@ export function UsageAnalyticsPage() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <BarChart3 className="h-5 w-5" />
-              Top API Endpoints
+              {t('pages.usageAnalytics.api.title')}
             </CardTitle>
-            <CardDescription>Most-used endpoints by request volume</CardDescription>
+            <CardDescription>{t('pages.usageAnalytics.api.desc')}</CardDescription>
           </CardHeader>
           <CardContent>
             {apiUsage?.endpoints && apiUsage.endpoints.length > 0 ? (
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Method</TableHead>
-                    <TableHead>Path</TableHead>
-                    <TableHead className="text-right">Requests</TableHead>
-                    <TableHead className="text-right">Avg Latency</TableHead>
-                    <TableHead className="text-right">Error Rate</TableHead>
+                    <TableHead>{t('pages.usageAnalytics.api.colMethod')}</TableHead>
+                    <TableHead>{t('pages.usageAnalytics.api.colPath')}</TableHead>
+                    <TableHead className="text-right">
+                      {t('pages.usageAnalytics.api.colRequests')}
+                    </TableHead>
+                    <TableHead className="text-right">
+                      {t('pages.usageAnalytics.api.colLatency')}
+                    </TableHead>
+                    <TableHead className="text-right">
+                      {t('pages.usageAnalytics.api.colErrorRate')}
+                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {apiUsage.endpoints.slice(0, 10).map((ep, i) => (
                     <TableRow key={i}>
+                      {/* Method and path are the API's wire identifiers. */}
                       <TableCell>
                         <Badge className={`${methodBadge(ep.method)} hover:${methodBadge(ep.method)}`}>
                           {ep.method}
@@ -353,7 +371,9 @@ export function UsageAnalyticsPage() {
                         {ep.request_count.toLocaleString()}
                       </TableCell>
                       <TableCell className="text-right text-muted-foreground">
-                        {ep.avg_latency_ms.toFixed(0)}ms
+                        {t('pages.usageAnalytics.api.latencyMs', {
+                          n: ep.avg_latency_ms.toFixed(0),
+                        })}
                       </TableCell>
                       <TableCell className="text-right">
                         <span
@@ -372,7 +392,7 @@ export function UsageAnalyticsPage() {
               </Table>
             ) : (
               <p className="text-center text-muted-foreground py-6">
-                No API usage data available
+                {t('pages.usageAnalytics.api.empty')}
               </p>
             )}
           </CardContent>
@@ -383,9 +403,9 @@ export function UsageAnalyticsPage() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <UserPlus className="h-5 w-5" />
-              New User Registrations
+              {t('pages.usageAnalytics.registrations.title')}
             </CardTitle>
-            <CardDescription>Daily registration trend over the last 30 days</CardDescription>
+            <CardDescription>{t('pages.usageAnalytics.registrations.desc')}</CardDescription>
           </CardHeader>
           <CardContent>
             {usage?.new_registrations && usage.new_registrations.length > 0 ? (
@@ -400,7 +420,10 @@ export function UsageAnalyticsPage() {
                       <div
                         key={day.date}
                         className="flex-1 flex flex-col items-center"
-                        title={`${day.date}: ${day.count} registrations`}
+                        title={t('pages.usageAnalytics.registrations.dayTooltip', {
+                          date: day.date,
+                          count: day.count,
+                        })}
                       >
                         <div
                           className="w-full bg-emerald-500 rounded-t transition-all hover:bg-emerald-600"
@@ -422,16 +445,15 @@ export function UsageAnalyticsPage() {
                   </span>
                 </div>
                 <p className="text-xs text-muted-foreground text-center mt-1">
-                  Total:{' '}
-                  {usage.new_registrations
-                    .reduce((sum, d) => sum + d.count, 0)
-                    .toLocaleString()}{' '}
-                  new users
+                  {t('pages.usageAnalytics.registrations.total', {
+                    count: registrationTotal,
+                    formatted: registrationTotal.toLocaleString(),
+                  })}
                 </p>
               </>
             ) : (
               <p className="text-center text-muted-foreground py-6">
-                No registration data available
+                {t('pages.usageAnalytics.registrations.empty')}
               </p>
             )}
           </CardContent>

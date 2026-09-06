@@ -10,6 +10,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // AdminAuditEntry represents a single admin action audit log entry
@@ -63,13 +65,26 @@ func (s *Service) RecordAdminAction(
 		}
 	}
 
+	// v141 gave this table an org. The action belongs to the tenant whose
+	// console performed it, and under the RLS belt a write with the wrong org
+	// is refused rather than mis-filed.
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		s.logger.Error("Failed to record admin audit action: no organization context",
+			zap.String("action", action),
+			zap.String("actor_id", actorID),
+			zap.Error(err),
+		)
+		return fmt.Errorf("failed to record admin audit action: %w", err)
+	}
+
 	_, err = s.db.Pool.Exec(ctx, `
 		INSERT INTO admin_audit_log (
 			id, actor_id, actor_email, action, target_type, target_id, target_name,
-			before_state, after_state, ip_address, user_agent, request_id, created_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+			before_state, after_state, ip_address, user_agent, request_id, created_at, org_id
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 	`, id, actorID, actorEmail, action, targetType, targetID, targetName,
-		beforeJSON, afterJSON, ipAddress, userAgent, requestID, time.Now())
+		beforeJSON, afterJSON, ipAddress, userAgent, requestID, time.Now(), org.ID)
 
 	if err != nil {
 		s.logger.Error("Failed to record admin audit action",
@@ -100,6 +115,12 @@ func (s *Service) handleGetAdminAuditLog(c *gin.Context) {
 	}
 	ctx := c.Request.Context()
 
+	org, oerr := orgctx.From(ctx)
+	if oerr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "organization context required"})
+		return
+	}
+
 	// Parse pagination
 	limit := 20
 	offset := 0
@@ -125,11 +146,11 @@ func (s *Service) handleGetAdminAuditLog(c *gin.Context) {
 		before_state, after_state,
 		COALESCE(ip_address, ''), COALESCE(user_agent, ''), COALESCE(request_id, ''),
 		created_at
-		FROM admin_audit_log WHERE 1=1`
-	countQuery := `SELECT COUNT(*) FROM admin_audit_log WHERE 1=1`
+		FROM admin_audit_log WHERE org_id = $1`
+	countQuery := `SELECT COUNT(*) FROM admin_audit_log WHERE org_id = $1`
 
-	args := make([]interface{}, 0)
-	argIndex := 1
+	args := []interface{}{org.ID}
+	argIndex := 2
 
 	if actorID := c.Query("actor_id"); actorID != "" {
 		query += fmt.Sprintf(" AND actor_id = $%d", argIndex)
@@ -230,6 +251,12 @@ func (s *Service) handleGetAdminAuditEntry(c *gin.Context) {
 	id := c.Param("id")
 	ctx := c.Request.Context()
 
+	org, oerr := orgctx.From(ctx)
+	if oerr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "organization context required"})
+		return
+	}
+
 	var entry AdminAuditEntry
 	var beforeJSON, afterJSON []byte
 
@@ -239,8 +266,8 @@ func (s *Service) handleGetAdminAuditEntry(c *gin.Context) {
 			before_state, after_state,
 			COALESCE(ip_address, ''), COALESCE(user_agent, ''), COALESCE(request_id, ''),
 			created_at
-		FROM admin_audit_log WHERE id = $1
-	`, id).Scan(
+		FROM admin_audit_log WHERE id = $1 AND org_id = $2
+	`, id, org.ID).Scan(
 		&entry.ID, &entry.ActorID, &entry.ActorEmail, &entry.Action, &entry.TargetType,
 		&entry.TargetID, &entry.TargetName,
 		&beforeJSON, &afterJSON,
@@ -289,10 +316,16 @@ func (s *Service) handleGetSettingsHistory(c *gin.Context) {
 		offset = 0
 	}
 
+	org, oerr := orgctx.From(ctx)
+	if oerr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "organization context required"})
+		return
+	}
+
 	// Count total settings changes
 	var total int
 	err := s.db.Pool.QueryRow(ctx,
-		"SELECT COUNT(*) FROM admin_audit_log WHERE target_type = 'settings'").Scan(&total)
+		"SELECT COUNT(*) FROM admin_audit_log WHERE target_type = 'settings' AND org_id = $1", org.ID).Scan(&total)
 	if err != nil {
 		s.logger.Error("Failed to count settings history", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to query settings history"})
@@ -306,10 +339,10 @@ func (s *Service) handleGetSettingsHistory(c *gin.Context) {
 			COALESCE(ip_address, ''), COALESCE(user_agent, ''), COALESCE(request_id, ''),
 			created_at
 		FROM admin_audit_log
-		WHERE target_type = 'settings'
+		WHERE target_type = 'settings' AND org_id = $3
 		ORDER BY created_at DESC
 		LIMIT $1 OFFSET $2
-	`, limit, offset)
+	`, limit, offset, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to query settings history", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to query settings history"})

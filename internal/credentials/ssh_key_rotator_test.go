@@ -11,13 +11,15 @@ import (
 // fakeVaultUser is a stub vaultUser for tests that need to construct a rotator without a
 // real vault. Use should never be reached in the validation test (the guard fires first).
 type fakeVaultUser struct {
-	value []byte
-	err   error
-	used  bool
+	value  []byte
+	err    error
+	used   bool
+	gotOrg string
 }
 
-func (f *fakeVaultUser) Use(_ context.Context, _ string) ([]byte, error) {
+func (f *fakeVaultUser) Use(_ context.Context, orgID, _ string) ([]byte, error) {
 	f.used = true
+	f.gotOrg = orgID
 	return f.value, f.err
 }
 

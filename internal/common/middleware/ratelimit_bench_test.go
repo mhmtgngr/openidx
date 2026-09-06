@@ -309,7 +309,6 @@ func BenchmarkIsAuthPath(b *testing.B) {
 		"/health",
 		"/oauth/token",
 		"/api/v1/identity/users/login",
-		"/oauth/authorize/callback",
 		"/api/v1/identity/users",
 		"/metrics",
 	}

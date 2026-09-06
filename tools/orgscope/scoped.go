@@ -1,117 +1,172 @@
 package main
 
-// scopedTables enumerates the tables the v2.0 multi-tenancy design
-// requires org_id scoping for. This list mirrors migration v36 in
-// internal/migrations/sql.go (orgIDConstraintsUp). If a table is added
-// to v36 or a future scoping migration, add it here so the lint tool
-// flags missing filters against it.
+import "github.com/openidx/openidx/internal/migrations"
+
+// The tenant-scope classification. Every table the migration DDL creates must
+// land in exactly one of four states, and the tool decides three of them from
+// the DDL itself (see ddl.go). These maps carry the human judgement the DDL
+// cannot: whether a table WITHOUT org_id is correctly install-wide, and
+// whether a table WITH org_id may go without the RLS belt.
 //
-// Tables deliberately excluded because they are install-wide rather
-// than tenant-data:
+// A reason is mandatory in every map. init() rejects a blank one, so an
+// exception can never be added without saying why -- the same rule the
+// //orgscope:ignore directive follows.
 //
-//	organizations         — the tenant table itself
-//	permissions           — global permission-string catalog
-//	system_settings       — install-wide config
-//	ip_threat_list        — shared threat-intel feed
-//	posture_check_types   — global enum of posture check kinds
-//	policy_sync_state     — global ziti sync watermark
-//	organization_members  — its column is organization_id, not org_id;
-//	                        sibling join, not a scoped child
-var scopedTables = map[string]bool{
-	// v25 set (the original multi-tenancy migration)
-	"users":                 true,
-	"groups":                true,
-	"roles":                 true,
-	"applications":          true,
-	"oauth_clients":         true,
-	"audit_events":          true,
-	"sessions":              true,
-	"policies":              true,
-	"access_reviews":        true,
-	"service_accounts":      true,
-	"webhook_subscriptions": true,
-	"access_requests":       true,
-	"security_alerts":       true,
+// The two "needs" registers below are open findings, not exemptions. They
+// exist because inverting this lint turned an invisible problem into a
+// counted one: the hand-maintained list this file replaced covered ~90
+// tables, the schema has 231, and the difference was never checked by
+// anything. Their sizes are pinned by ddl_test.go so they can only shrink;
+// a table that is in NO map fails the build outright.
 
-	// v28 inline
-	"notifications": true,
+// installWideTables are tables with no org_id that correctly have none: they
+// hold install configuration, a global catalog, infrastructure state, or the
+// tenant registry itself.
+var installWideTables = map[string]string{
+	"organizations":        "the tenant registry itself",
+	"organization_members": "join table; its column is organization_id, not org_id",
+	"permissions":          "global permission-string catalog, identical for every tenant",
+	"system_settings":      "install-wide configuration key/value",
+	"error_catalog":        "global error-code catalog keyed by code; documentation, not data",
+	"oauth_signing_keys":   "install-wide JWKS signing material (v79); one key set serves every tenant",
+	"ip_threat_list":       "shared threat-intel feed consulted before a tenant is resolved",
+	"ip_geolocation_cache": "shared IP->geo cache keyed by address; no tenant dimension",
+	"posture_check_types":  "global enum of posture check kinds",
+	"policy_sync_state":    "global governance->Ziti sync watermark",
 
-	// v34 set
-	"api_keys":                     true,
-	"email_verification_tokens":    true,
-	"known_devices":                true,
-	"login_history":                true,
-	"notification_preferences":     true,
-	"password_history":             true,
-	"password_reset_tokens":        true,
-	"qr_login_sessions":            true,
-	"stepup_challenges":            true,
-	"user_consents":                true,
-	"user_invitations":             true,
-	"user_sessions":                true,
-	"group_memberships":            true,
-	"user_application_assignments": true,
-	"mfa_backup_codes":             true,
-	"risk_factors":                 true,
-	"session_risks":                true,
-	"recording_retention_policies": true,
-	// SSF/CAEP stream config (v99). Registered so a query that drops its org
-	// predicate is caught by the lint, not just by the RLS policy added in
-	// v121 — this table holds each tenant's security-event delivery targets.
-	//
-	// Deliberately NOT registered (and left out of the v121 belt):
-	//   ssf_stream_delivery — outbox drained by a background cross-org worker
-	//   ssf_received_events — install-wide replay-dedup log of INBOUND SETs,
-	//                         written by the public receiver endpoint, which
-	//                         has no tenant context and stores no org_id
-	// Both are addressed by primary key / globally-unique jti rather than by
-	// tenant; forcing RLS on them would break delivery and receipt outright.
-	"ssf_streams":                true,
-	"mfa_policies":               true,
-	"mfa_push_challenges":        true,
-	"mfa_push_devices":           true,
-	"mfa_totp":                   true,
-	"mfa_webauthn":               true,
-	"user_mfa_policies":          true,
-	"oauth_access_tokens":        true,
-	"oauth_authorization_codes":  true,
-	"oauth_refresh_tokens":       true,
-	"composite_roles":            true,
-	"role_permissions":           true,
-	"user_roles":                 true,
-	"application_sso_settings":   true,
-	"group_join_requests":        true,
-	"access_request_approvals":   true,
-	"approval_policies":          true,
-	"compliance_reports":         true,
-	"review_items":               true,
-	"directory_integrations":     true,
-	"directory_sync_logs":        true,
-	"directory_sync_state":       true,
-	"identity_providers":         true,
-	"data_subject_requests":      true,
-	"privacy_assessments":        true,
-	"privacy_retention_policies": true,
-	"provisioning_rules":         true,
-	"scim_groups":                true,
-	"scim_users":                 true,
-	"credential_rotations":       true,
-	"device_posture_results":     true,
-	"posture_checks":             true,
-	"policy_rules":               true,
-	"webhook_deliveries":         true,
-	"proxy_routes":               true,
-	"proxy_sessions":             true,
-	"ziti_certificates":          true,
-	"ziti_identities":            true,
-	"ziti_service_policies":      true,
-	"ziti_services":              true,
+	// Operations telemetry about the install, not about anyone's data.
+	"health_check_history": "per-service dependency health for the operator; install-wide by design",
+	"api_usage_metrics":    "endpoint/method/hour aggregate with no tenant dimension",
 
-	// v81 — PAM connection manager (RDM parity)
-	"pam_folders":               true,
-	"pam_entries":               true,
-	"pam_entry_grants":          true,
-	"pam_entry_favorites":       true,
-	"pam_entry_access_requests": true,
-	"pam_entry_sessions":        true,
+	// Ziti overlay infrastructure. The controller is a single install-wide
+	// component; these mirror its state, and per-org overlay scoping is a
+	// separate opt-in feature (ZITI_PER_ORG_ATTRIBUTES) that does not shard
+	// the controller's own objects.
+	"ziti_edge_routers":         "mirrors the Ziti controller's routers; controller-scoped infrastructure",
+	"ziti_metrics":              "controller metrics",
+	"ziti_ai_anomalies":         "controller-scoped anomaly detection over overlay identities (v110)",
+	"ziti_ai_quarantine":        "controller-scoped quarantine state (v110)",
+	"ziti_identity_activity":    "controller-scoped overlay activity rollup (v110)",
+	"ziti_user_sync":            "single-row sync watermark for the controller identity sync",
+	"ziti_browzer_config":       "one BrowZer/external-JWT-signer configuration per install",
+	"usage_metering_cursor":     "single-row watermark for the metering roll-up job",
+	"external_audit_sync_state": "single-row cursor for the outbound SIEM sync",
+}
+
+// beltExempt are org_id-carrying tables deliberately left out of the FORCE RLS
+// belt. Each one is read or written on a path that has no tenant context yet,
+// so a belt would fail the operation closed rather than scope it.
+var beltExempt = map[string]string{
+	"tenant_branding":     "read during tenant RESOLUTION, before app.org_id can be set (v38)",
+	"tenant_domains":      "the table tenant resolution looks the host up in; belting it makes resolution impossible (v38)",
+	"tenant_settings":     "read alongside tenant_domains during resolution (v38)",
+	"ssf_stream_delivery": "outbox drained by a background worker that spans orgs (v99)",
+	"ssf_received_events": "replay-dedup log of INBOUND SETs from an external transmitter; the receiver DOES resolve a tenant and v172 gives the ledger org_id + a (org_id, jti) key, but the endpoint is public and RLS on it is a separate decision from getting its tenant resolution right",
+}
+
+// needsScoping: OPEN FINDINGS. These tables hold per-user or per-org data and
+// have no org_id, so today they are install-wide by construction -- the exact
+// shape of the ISPM/AI defect that v138 fixed, in tables nobody had looked at
+// because the old hand-maintained list could not see them. Each owes a
+// migration (org_id + backfill + FORCE RLS) and an org predicate in its
+// handlers. Listed with what the table actually holds so the batches are easy
+// to cut.
+//
+// What is left is the DEFERRED half, and it is deferred on a product question
+// rather than on effort. Both groups need a decision this lint cannot make:
+//
+//   - the external identity links: may one external account link to a user in
+//     two tenants at once, and if so which tenant owns the link row?
+//   - the agent fleet: three separate comments in internal/access assert that
+//     the fleet is deliberately install-wide, so an agent id names a device
+//     without naming a tenant. v159 raised this in the readiness guide as an
+//     open product decision after finding that it leaves cross-tenant kiosk
+//     TARGETING open with no tenant term available to close it.
+//
+// Every table on this register that did NOT need such a decision has now been
+// scoped or dropped.
+var needsScoping = map[string]string{
+	// MFA and credentials — the most sensitive per-user rows in the product.
+	"user_identity_links":  "per-user external identity links; needs the one-account-two-tenants decision",
+	"social_account_links": "per-user social provider links; needs the one-account-two-tenants decision",
+
+	// Agent fleet — the devices enrolled by a tenant's users.
+	"enrolled_agents":         "enrolled devices with tokens and compliance state (v43); needs the is-the-fleet-per-tenant decision",
+	"agent_posture_results":   "per-device posture results (v43); follows enrolled_agents",
+	"agent_enrollment_tokens": "enrolment tokens that admit a device to the fleet (v43); follows enrolled_agents",
+}
+
+// needsBelt: EMPTY, AND PINNED AT ZERO.
+//
+// It held tables carrying org_id -- the application filtered on it -- that had
+// never received FORCE ROW LEVEL SECURITY, so the database did not enforce the
+// boundary and a single query forgetting its predicate crossed tenants
+// silently. v37 belted the tables that existed then and v121 extended it;
+// everything added afterwards drifted out, several with their own migrations
+// saying "org-scoped for RLS" while the belt was never applied.
+//
+// It began at 34 and reached zero over v140 through v171. The count after each
+// name used to say why a table was still here: every one had at least one query
+// addressing a row by id without naming org_id, and by the ratchet in ddl.go
+// those queries came under the missing-predicate rule the moment the belt
+// landed. That coupling is what made the register shrink honestly -- belting a
+// table and auditing its queries are the same act -- so they left in
+// feature-sized batches with their query fixes, never in one sweep.
+//
+// ddl_test.go pins len(needsBelt) at 0, so it cannot grow back: a table that
+// carries org_id and lacks FORCE ROW LEVEL SECURITY now fails the build. That
+// is the state this register existed to reach. Leave it empty; fix the table.
+var needsBelt = map[string]string{}
+
+// predicateAuditPending: EMPTY, AND PINNED AT ZERO.
+//
+// It began at 96 queries across 19 tables that deriving the scoped set from the
+// DDL had brought under the missing-predicate rule for the first time. They left
+// in feature-sized batches, each table's queries read rather than bulk-edited,
+// because adding a predicate blind is how a query gets a subtly wrong join.
+//
+// This register's own note used to say the entries were "NOT live cross-tenant
+// holes: every table here carries FORCE ROW LEVEL SECURITY, so a query that
+// omits org_id is scoped by the database anyway". That was true of eighteen of
+// them. It was NOT true of vault_secrets, and the note named the reason two
+// sentences later without following it: a caller that opts into
+// orgctx.WithBypassRLS loses the belt and keeps only what the SQL says -- and
+// vault.Use REQUIRES such a context, because it is the system
+// credential-injection path. POST /pam/connect/cloud passed a caller-supplied
+// secret_id straight to it, so any authenticated user of any tenant could name
+// any secret in the installation and have it used as their cloud broker
+// credential. The register said "defence in depth"; on that one table it was the
+// only defence there was.
+//
+// ddl_test.go pins len(predicateAuditPending) at 0. A table cannot be parked
+// here again: a scoped table whose queries do not name org_id fails the build,
+// and the way out is an //orgscope:ignore carrying the reason on the query
+// itself, where the next reader will see it.
+var predicateAuditPending = map[string]string{}
+
+// census and scopedTables are derived once from the migration registry.
+// scopedTables is what sqlcheck.go asks its missing-predicate question about,
+// so that rule now covers every org_id-carrying table rather than the ~90
+// someone remembered to type.
+var (
+	census       map[string]*tableFacts
+	scopedTables map[string]bool
+)
+
+func init() {
+	for name, m := range map[string]map[string]string{
+		"installWideTables":     installWideTables,
+		"beltExempt":            beltExempt,
+		"needsScoping":          needsScoping,
+		"needsBelt":             needsBelt,
+		"predicateAuditPending": predicateAuditPending,
+	} {
+		for table, reason := range m {
+			if reason == "" {
+				panic("orgscope: " + name + "[" + table + "] has no reason; every entry must say why")
+			}
+		}
+	}
+	census = deriveCensus(migrations.All())
+	scopedTables = scopedFromCensus(census)
 }

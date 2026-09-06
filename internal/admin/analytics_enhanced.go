@@ -310,7 +310,22 @@ func (s *Service) handleAPIUsageMetrics(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"api_usage": result})
 }
 
-// handleFeatureAdoption returns feature adoption metrics from the feature_adoption table.
+// handleFeatureAdoption returns feature adoption metrics, computed live from
+// the tables that record each feature's use.
+//
+// It used to read a stored `feature_adoption` table first and fall back to this
+// computation "if no rows exist". The read was
+//
+//	SELECT feature_name, total_users, trend FROM feature_adoption ...
+//
+// and v54 created that table as (id, feature_name, user_id, first_used_at,
+// last_used_at, usage_count) -- no total_users column, no trend column, and no
+// migration ever added either. So the query returned `column "total_users"
+// does not exist` every time, the handler's `if err == nil` swallowed it, and
+// the "fallback" was in fact the only path the endpoint had ever taken.
+// Nothing in the tree wrote to the table either, so migration v163 drops it and
+// this computation is the whole handler.
+//
 // GET /api/v1/analytics/features
 func (s *Service) handleFeatureAdoption(c *gin.Context) {
 	if !requireAdmin(c) {
@@ -329,68 +344,37 @@ func (s *Service) handleFeatureAdoption(c *gin.Context) {
 	s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM users WHERE enabled = true AND org_id = $1`, org.ID).Scan(&totalUsers)
 
 	features := []map[string]interface{}{}
-	featureNames := []string{"mfa_totp", "mfa_webauthn", "passkey_login", "magic_link", "api_keys", "social_login"}
 
-	rows, err := s.db.Pool.Query(ctx, `
-		SELECT feature_name, total_users, trend
-		FROM feature_adoption
-		WHERE feature_name = ANY($1)
-		ORDER BY total_users DESC
-	`, featureNames)
-	if err == nil {
-		for rows.Next() {
-			var name string
-			var featureUsers int
-			var trend string
-			if rows.Scan(&name, &featureUsers, &trend) == nil {
-				var adoptionRate float64
-				if totalUsers > 0 {
-					adoptionRate = float64(featureUsers) / float64(totalUsers) * 100
-				}
-				features = append(features, map[string]interface{}{
-					"name":          name,
-					"total_users":   featureUsers,
-					"adoption_rate": adoptionRate,
-					"trend":         trend,
-				})
-			}
-		}
-		rows.Close()
+	// Each query is scoped to the caller's org.
+	featureSources := []struct {
+		Name  string
+		Query string
+		Args  []interface{}
+	}{
+		{"mfa_totp", "SELECT COUNT(DISTINCT user_id) FROM mfa_totp WHERE enabled = true AND org_id = $1", []interface{}{org.ID}},
+		{"mfa_webauthn", "SELECT COUNT(DISTINCT user_id) FROM mfa_webauthn WHERE org_id = $1", []interface{}{org.ID}},
+		{"passkey_login", "SELECT COUNT(DISTINCT actor_id) FROM audit_events WHERE action = 'passkey_login' AND timestamp > NOW() - INTERVAL '30 days' AND org_id = $1", []interface{}{org.ID}},
+		{"magic_link", "SELECT COUNT(DISTINCT actor_id) FROM audit_events WHERE action = 'magic_link_login' AND timestamp > NOW() - INTERVAL '30 days' AND org_id = $1", []interface{}{org.ID}},
+		{"api_keys", "SELECT COUNT(DISTINCT COALESCE(user_id, service_account_id)) FROM api_keys WHERE revoked_at IS NULL AND org_id = $1", []interface{}{org.ID}},
+		{"social_login", "SELECT COUNT(DISTINCT actor_id) FROM audit_events WHERE action = 'social_login' AND timestamp > NOW() - INTERVAL '30 days' AND org_id = $1", []interface{}{org.ID}},
 	}
 
-	// If no rows exist in the feature_adoption table, compute from live data
-	if len(features) == 0 {
-		// Compute feature usage from actual tables
-		// Each query is scoped to the caller's org. org_id-bearing tables carry an
-		// `AND org_id = $1` predicate with org.ID passed in Args; webauthn_credentials
-		// is not an org-scoped table so it runs without an org filter.
-		featureSources := []struct {
-			Name  string
-			Query string
-			Args  []interface{}
-		}{
-			{"mfa_totp", "SELECT COUNT(DISTINCT user_id) FROM mfa_totp WHERE enabled = true AND org_id = $1", []interface{}{org.ID}},
-			{"mfa_webauthn", "SELECT COUNT(DISTINCT user_id) FROM mfa_webauthn WHERE org_id = $1", []interface{}{org.ID}},
-			{"passkey_login", "SELECT COUNT(DISTINCT actor_id) FROM audit_events WHERE action = 'passkey_login' AND timestamp > NOW() - INTERVAL '30 days' AND org_id = $1", []interface{}{org.ID}},
-			{"magic_link", "SELECT COUNT(DISTINCT actor_id) FROM audit_events WHERE action = 'magic_link_login' AND timestamp > NOW() - INTERVAL '30 days' AND org_id = $1", []interface{}{org.ID}},
-			{"api_keys", "SELECT COUNT(DISTINCT COALESCE(user_id, service_account_id)) FROM api_keys WHERE revoked_at IS NULL AND org_id = $1", []interface{}{org.ID}},
-			{"social_login", "SELECT COUNT(DISTINCT actor_id) FROM audit_events WHERE action = 'social_login' AND timestamp > NOW() - INTERVAL '30 days' AND org_id = $1", []interface{}{org.ID}},
+	for _, fs := range featureSources {
+		var count int
+		if err := s.db.Pool.QueryRow(ctx, fs.Query, fs.Args...).Scan(&count); err != nil {
+			s.logger.Warn("feature adoption source failed",
+				zap.String("feature", fs.Name), zap.Error(err))
 		}
-
-		for _, fs := range featureSources {
-			var count int
-			s.db.Pool.QueryRow(ctx, fs.Query, fs.Args...).Scan(&count)
-			var adoptionRate float64
-			if totalUsers > 0 {
-				adoptionRate = float64(count) / float64(totalUsers) * 100
-			}
-			features = append(features, map[string]interface{}{
-				"name":          fs.Name,
-				"total_users":   count,
-				"adoption_rate": adoptionRate,
-				"trend":         "stable",
-			})
+		var adoptionRate float64
+		if totalUsers > 0 {
+			adoptionRate = float64(count) / float64(totalUsers) * 100
 		}
+		features = append(features, map[string]interface{}{
+			"name":          fs.Name,
+			"total_users":   count,
+			"adoption_rate": adoptionRate,
+			"trend":         "stable",
+		})
 	}
 
 	c.JSON(http.StatusOK, gin.H{

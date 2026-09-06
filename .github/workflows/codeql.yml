@@ -24,9 +24,20 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.25'
+          go-version: '1.26'
           cache: true
 
+      # No config-file here, and specifically no `paths-ignore`. This branch
+      # tried one, to drop the nine `go/incorrect-integer-conversion` results
+      # in the vendored `agent/third_party/gopsutil` tree, and the run that
+      # followed it produced all nine anyway: a Go database is whatever the
+      # build compiled, and the agent compiles that package, so a path filter
+      # in the config cannot remove it. The filter is honoured for interpreted
+      # languages only. A config that says it excludes a tree and does not is
+      # the exact thing this branch spent itself deleting, so it is gone --
+      # those nine carry a written verdict in docs/evidence/codeql-triage.md
+      # and a dismissal in the code-scanning UI instead. If you reach for a
+      # config-file to quieten a Go alert, read that file first.
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:
@@ -40,6 +51,15 @@ jobs:
         uses: github/codeql-action/analyze@v4
         with:
           category: '/language:go'
+
+      # The results check can fail a PR while this job is green: it fails on a
+      # single alert with a security severity of 7.0 or higher, and names only
+      # a count. The SARIF that would name the rule is on disk here and was
+      # being thrown away with the runner. Print it. Diagnostic only -- the
+      # gate is the code-scanning check, and this step never fails the build.
+      - name: What CodeQL found
+        if: always()
+        run: bash scripts/codeql-alert-summary.sh "${GITHUB_WORKSPACE}/../results"
 
   analyze-javascript:
     name: Analyze JavaScript/TypeScript
@@ -61,3 +81,7 @@ jobs:
         uses: github/codeql-action/analyze@v4
         with:
           category: '/language:javascript-typescript'
+
+      - name: What CodeQL found
+        if: always()
+        run: bash scripts/codeql-alert-summary.sh "${GITHUB_WORKSPACE}/../results"

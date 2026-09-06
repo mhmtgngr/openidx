@@ -155,3 +155,29 @@ strategy:
     maxSurge: {{ dig "maxSurge" 1 $s }}
 {{- end }}
 {{- end }}
+
+{{/*
+The registry OpenIDX's own images come from.
+
+Why this is not `global.imageRegistry`: that key belongs to the Bitnami
+subchart contract. `common.images.image` reads it as
+`default .image.registry .global.imageRegistry`, so the GLOBAL wins — setting
+it to `ghcr.io/mhmtgngr/openidx`, as values.yaml did, rewrote the bundled
+PostgreSQL, Redis and Elasticsearch images to
+`ghcr.io/mhmtgngr/openidx/bitnami/postgresql:...`, which has never existed.
+A default `helm install` therefore could not start its own data plane.
+`helm lint` and `helm template` both pass on it — the image name is only
+wrong once something tries to pull it — and values-prod.yaml disables all
+three subcharts, which is why the reference deployment never hit it.
+
+So OpenIDX images read `global.openidxRegistry`, and `global.imageRegistry`
+is shipped empty so each subchart falls back to its own `image.registry`
+(docker.io). The fallback below keeps an operator who set only the old key
+on their images rather than silently moving them to the default.
+*/}}
+{{- define "openidx.imageRegistry" -}}
+{{- $g := .Values.global | default dict -}}
+{{- $r := dig "openidxRegistry" "" $g -}}
+{{- if not $r -}}{{- $r = dig "imageRegistry" "" $g -}}{{- end -}}
+{{- $r | default "ghcr.io/mhmtgngr/openidx" -}}
+{{- end }}

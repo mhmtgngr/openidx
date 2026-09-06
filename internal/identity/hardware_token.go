@@ -14,7 +14,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/common/orgctx"
 	"github.com/openidx/openidx/internal/common/secretcrypt"
 )
 
@@ -69,6 +71,11 @@ func (s *Service) CreateHardwareToken(ctx context.Context, req *CreateHardwareTo
 		return nil, errors.New("serial number is required")
 	}
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	tokenType := req.TokenType
 	if tokenType == "" {
 		tokenType = "oath-hotp"
@@ -90,23 +97,30 @@ func (s *Service) CreateHardwareToken(ctx context.Context, req *CreateHardwareTo
 		return nil, fmt.Errorf("failed to encrypt token secret: %w", err)
 	}
 
+	// org_id is stamped here rather than derived from a user later, because an
+	// inventory row exists before anyone holds it: `status = 'available'`,
+	// assigned_to NULL. There is no user to derive from at any point until
+	// somebody is issued the token, so the tenant has to come from whoever
+	// registered it.
 	id := uuid.New().String()
 	query := `
 		INSERT INTO hardware_tokens (
-			id, serial_number, name, token_type, secret_key, counter,
+			id, org_id, serial_number, name, token_type, secret_key, counter,
 			manufacturer, model, firmware_version, status, notes, created_at
-		) VALUES ($1, $2, $3, $4, $5, 0, $6, $7, $8, 'available', $9, NOW())
+		) VALUES ($1, $2, $3, $4, $5, $6, 0, $7, $8, $9, 'available', $10, NOW())
 		RETURNING created_at
 	`
 
 	var createdAt time.Time
 	err = s.db.Pool.QueryRow(ctx, query,
-		id, req.SerialNumber, req.Name, tokenType, encryptedSecret,
+		id, org.ID, req.SerialNumber, req.Name, tokenType, encryptedSecret,
 		req.Manufacturer, req.Model, req.FirmwareVersion, req.Notes,
 	).Scan(&createdAt)
 
 	if err != nil {
 		if strings.Contains(err.Error(), "duplicate") {
+			// Since v145 the serial is unique per organization, so this now
+			// means "you already registered it", never "somebody else did".
 			return nil, errors.New("token with this serial number already exists")
 		}
 		return nil, fmt.Errorf("failed to create token: %w", err)
@@ -134,17 +148,27 @@ func (s *Service) CreateHardwareToken(ctx context.Context, req *CreateHardwareTo
 
 // ListHardwareTokens returns all hardware tokens with optional filtering
 func (s *Service) ListHardwareTokens(ctx context.Context, status string, assignedTo string) ([]HardwareToken, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// Before v145 this query had no tenant predicate at all: the two filters
+	// are both optional, so the console's unfiltered inventory page listed
+	// every hardware token in the install — serial, model and assignee —
+	// to any tenant's administrator.
 	query := `
 		SELECT id, serial_number, name, token_type, manufacturer, model,
 			firmware_version, status, assigned_to, assigned_at, assigned_by,
 			last_used_at, use_count, created_at, notes
 		FROM hardware_tokens
-		WHERE ($1 = '' OR status = $1)
-		  AND ($2 = '' OR assigned_to::text = $2)
+		WHERE org_id = $1
+		  AND ($2 = '' OR status = $2)
+		  AND ($3 = '' OR assigned_to::text = $3)
 		ORDER BY created_at DESC
 	`
 
-	rows, err := s.db.Pool.Query(ctx, query, status, assignedTo)
+	rows, err := s.db.Pool.Query(ctx, query, org.ID, status, assignedTo)
 	if err != nil {
 		return nil, err
 	}
@@ -169,16 +193,21 @@ func (s *Service) ListHardwareTokens(ctx context.Context, status string, assigne
 
 // GetHardwareToken returns a specific token
 func (s *Service) GetHardwareToken(ctx context.Context, tokenID string) (*HardwareToken, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	query := `
 		SELECT id, serial_number, name, token_type, manufacturer, model,
 			firmware_version, status, assigned_to, assigned_at, assigned_by,
 			last_used_at, use_count, created_at, notes
 		FROM hardware_tokens
-		WHERE id = $1
+		WHERE id = $1 AND org_id = $2
 	`
 
 	var t HardwareToken
-	err := s.db.Pool.QueryRow(ctx, query, tokenID).Scan(
+	err = s.db.Pool.QueryRow(ctx, query, tokenID, org.ID).Scan(
 		&t.ID, &t.SerialNumber, &t.Name, &t.TokenType, &t.Manufacturer, &t.Model,
 		&t.FirmwareVersion, &t.Status, &t.AssignedTo, &t.AssignedAt, &t.AssignedBy,
 		&t.LastUsedAt, &t.UseCount, &t.CreatedAt, &t.Notes,
@@ -192,9 +221,21 @@ func (s *Service) GetHardwareToken(ctx context.Context, tokenID string) (*Hardwa
 
 // AssignHardwareToken assigns a token to a user
 func (s *Service) AssignHardwareToken(ctx context.Context, tokenID, userID, assignedBy string) error {
-	// Check token is available
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
+	// BOTH ends need checking, and before v145 neither was. The token id was
+	// bare, so an administrator of one tenant could pick a token sitting
+	// available in another tenant's inventory; the user id was bare too, so
+	// they could equally bind their OWN token to a user in somebody else's
+	// tenant. Either direction hands a working second factor across a tenant
+	// boundary, which is why this is a check on the user and not only a
+	// predicate on the update.
 	var status string
-	err := s.db.Pool.QueryRow(ctx, "SELECT status FROM hardware_tokens WHERE id = $1", tokenID).Scan(&status)
+	err = s.db.Pool.QueryRow(ctx,
+		"SELECT status FROM hardware_tokens WHERE id = $1 AND org_id = $2", tokenID, org.ID).Scan(&status)
 	if err != nil {
 		return errors.New("token not found")
 	}
@@ -202,13 +243,22 @@ func (s *Service) AssignHardwareToken(ctx context.Context, tokenID, userID, assi
 		return fmt.Errorf("token is not available (status: %s)", status)
 	}
 
+	var exists bool
+	if err := s.db.Pool.QueryRow(ctx,
+		"SELECT EXISTS (SELECT 1 FROM users WHERE id = $1 AND org_id = $2)", userID, org.ID).Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		return errors.New("user not found")
+	}
+
 	// Assign token
 	query := `
 		UPDATE hardware_tokens
 		SET status = 'assigned', assigned_to = $1, assigned_at = NOW(), assigned_by = $2
-		WHERE id = $3
+		WHERE id = $3 AND org_id = $4
 	`
-	_, err = s.db.Pool.Exec(ctx, query, userID, assignedBy, tokenID)
+	_, err = s.db.Pool.Exec(ctx, query, userID, assignedBy, tokenID, org.ID)
 	if err != nil {
 		return err
 	}
@@ -223,8 +273,14 @@ func (s *Service) AssignHardwareToken(ctx context.Context, tokenID, userID, assi
 
 // UnassignHardwareToken removes token assignment from user
 func (s *Service) UnassignHardwareToken(ctx context.Context, tokenID, unassignedBy string) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	var userID *string
-	err := s.db.Pool.QueryRow(ctx, "SELECT assigned_to FROM hardware_tokens WHERE id = $1", tokenID).Scan(&userID)
+	err = s.db.Pool.QueryRow(ctx,
+		"SELECT assigned_to FROM hardware_tokens WHERE id = $1 AND org_id = $2", tokenID, org.ID).Scan(&userID)
 	if err != nil {
 		return errors.New("token not found")
 	}
@@ -232,9 +288,9 @@ func (s *Service) UnassignHardwareToken(ctx context.Context, tokenID, unassigned
 	query := `
 		UPDATE hardware_tokens
 		SET status = 'available', assigned_to = NULL, assigned_at = NULL, assigned_by = NULL
-		WHERE id = $1
+		WHERE id = $1 AND org_id = $2
 	`
-	_, err = s.db.Pool.Exec(ctx, query, tokenID)
+	_, err = s.db.Pool.Exec(ctx, query, tokenID, org.ID)
 	if err != nil {
 		return err
 	}
@@ -247,12 +303,26 @@ func (s *Service) UnassignHardwareToken(ctx context.Context, tokenID, unassigned
 	return nil
 }
 
+// ErrHardwareTokenNotFound is returned when an operation names a token that
+// does not exist. It exists because an UPDATE that matches no row succeeds:
+// revoking a token that is not there used to return nil and write a "revoked"
+// event for it, so an administrator acting on a stale id — or a typo'd one —
+// was told the credential was dead while it went on working.
+var ErrHardwareTokenNotFound = errors.New("hardware token not found")
+
 // RevokeHardwareToken marks token as revoked (cannot be used)
 func (s *Service) RevokeHardwareToken(ctx context.Context, tokenID, revokedBy, reason string) error {
-	query := `UPDATE hardware_tokens SET status = 'revoked' WHERE id = $1`
-	_, err := s.db.Pool.Exec(ctx, query, tokenID)
+	org, err := orgctx.From(ctx)
 	if err != nil {
 		return err
+	}
+	tag, err := s.db.Pool.Exec(ctx,
+		`UPDATE hardware_tokens SET status = 'revoked' WHERE id = $1 AND org_id = $2`, tokenID, org.ID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrHardwareTokenNotFound
 	}
 
 	s.logTokenEvent(ctx, tokenID, nil, "revoked", "", "", map[string]interface{}{
@@ -265,10 +335,17 @@ func (s *Service) RevokeHardwareToken(ctx context.Context, tokenID, revokedBy, r
 
 // ReportTokenLost marks token as lost
 func (s *Service) ReportTokenLost(ctx context.Context, tokenID, reportedBy string) error {
-	query := `UPDATE hardware_tokens SET status = 'lost' WHERE id = $1`
-	_, err := s.db.Pool.Exec(ctx, query, tokenID)
+	org, err := orgctx.From(ctx)
 	if err != nil {
 		return err
+	}
+	tag, err := s.db.Pool.Exec(ctx,
+		`UPDATE hardware_tokens SET status = 'lost' WHERE id = $1 AND org_id = $2`, tokenID, org.ID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrHardwareTokenNotFound
 	}
 
 	s.logTokenEvent(ctx, tokenID, nil, "lost_reported", "", "", map[string]interface{}{
@@ -280,18 +357,50 @@ func (s *Service) ReportTokenLost(ctx context.Context, tokenID, reportedBy strin
 
 // VerifyHardwareToken validates an OTP from a hardware token
 func (s *Service) VerifyHardwareToken(ctx context.Context, userID, otp string, ipAddress, userAgent string) (bool, error) {
-	// Get user's assigned token
+	// Verification runs with the RLS belt lifted, and the whole function shares
+	// one bypassed context — including the counter advance and the event write
+	// that follow.
+	//
+	// WHY BYPASS. This is a second-factor check on the sign-in path, reached
+	// from the oauth service's step-up as well as from the identity API, and
+	// those callers do not all carry a resolved organization yet. Under FORCE
+	// RLS an unset app.org_id returns zero rows, which this function reports as
+	// "no hardware token assigned to user" — a factor that silently stops
+	// existing, on exactly the path where that is least noticeable. The same
+	// shape already bit VerifyBypassCode once (see its comment about "conn
+	// busy").
+	//
+	// WHY THAT IS SAFE. The tenant is not being trusted to the connection here;
+	// it is in the predicate. `assigned_to = $1` is the authenticated user, and
+	// the org term ties the row to that user's own organization, so a token
+	// belonging to any other tenant cannot match even with the belt lifted.
+	//orgscope:ignore second-factor verification on a path that may not have resolved an org; scoped by the user's own org_id below
 	query := `
-		SELECT id, token_type, secret_key, counter
+		SELECT id, token_type, secret_key, counter, locked_until
 		FROM hardware_tokens
 		WHERE assigned_to = $1 AND status = 'assigned'
+		  AND org_id = (SELECT org_id FROM users WHERE id = $1)
 	`
+
+	ctx = orgctx.WithBypassRLS(ctx)
 
 	var tokenID, tokenType, encryptedSecret string
 	var counter int64
-	err := s.db.Pool.QueryRow(ctx, query, userID).Scan(&tokenID, &tokenType, &encryptedSecret, &counter)
+	var lockedUntil *time.Time
+	err := s.db.Pool.QueryRow(ctx, query, userID).Scan(&tokenID, &tokenType, &encryptedSecret, &counter, &lockedUntil)
 	if err != nil {
 		return false, errors.New("no hardware token assigned to user")
+	}
+
+	// Refuse while locked, before the code is examined at all — the same order
+	// VerifyTOTP uses, and for the same reason: a verifier that checks the code
+	// first and only then notices the lock still leaks whether the guess was
+	// right.
+	if lockedUntil != nil && time.Now().Before(*lockedUntil) {
+		s.logTokenEvent(ctx, tokenID, &userID, "failed", ipAddress, userAgent, map[string]interface{}{
+			"reason": "locked_out",
+		})
+		return false, ErrHardwareTokenLockedOut
 	}
 
 	// Decrypt secret
@@ -316,23 +425,81 @@ func (s *Service) VerifyHardwareToken(ctx context.Context, userID, otp string, i
 	}
 
 	if valid {
-		// Update counter and last used
-		updateQuery := `
+		// Advancing the counter is what makes an HOTP single-use, so this write
+		// is part of the verification, not bookkeeping after it. Its error used
+		// to be discarded: a failed UPDATE left the counter where it was and the
+		// same code kept working, for as long as the write kept failing, with
+		// nothing said. Refuse instead — a code that cannot be spent has not
+		// been verified.
+		if _, err := s.db.Pool.Exec(ctx,
+			//orgscope:ignore token id already resolved under the caller's org predicate; ctx is the bypassed verification context
+			`
 			UPDATE hardware_tokens
-			SET counter = $1, last_used_at = NOW(), use_count = use_count + 1
+			SET counter = $1, last_used_at = NOW(), use_count = use_count + 1,
+			    failed_attempts = 0, last_failed_at = NULL, locked_until = NULL
 			WHERE id = $2
-		`
-		s.db.Pool.Exec(ctx, updateQuery, newCounter, tokenID)
+		`, newCounter, tokenID); err != nil {
+			s.logger.Error("Hardware token accepted but its counter could not be advanced; refusing",
+				zap.String("token_id", tokenID), zap.Error(err))
+			return false, fmt.Errorf("could not spend hardware token code: %w", err)
+		}
 
 		s.logTokenEvent(ctx, tokenID, &userID, "used", ipAddress, userAgent, nil)
 		return true, nil
 	}
 
+	s.recordFailedHardwareToken(ctx, tokenID)
 	s.logTokenEvent(ctx, tokenID, &userID, "failed", ipAddress, userAgent, map[string]interface{}{
 		"reason": "invalid_otp",
 	})
 
 	return false, nil
+}
+
+// Hardware-token verification throttling.
+//
+// The same exposure mfa_totp's throttle closes, and a wider one: verifyHOTP
+// walks a look-ahead of ten counters and verifyTOTP accepts a +/- 1 step
+// window, so roughly eleven of a million six-digit values are live at any
+// instant. Unthrottled, an attacker expects a hit in the tens of thousands of
+// requests. The constants are mfa_totp's, deliberately — one answer to "how
+// many tries do I get" across both factors is easier to reason about than two.
+const (
+	hardwareTokenMaxAttempts     = totpMaxAttempts
+	hardwareTokenLockoutDuration = totpLockoutDuration
+)
+
+// ErrHardwareTokenLockedOut is returned when the token is locked after repeated
+// failures, distinguishable from a wrong code so the caller can say "wait"
+// rather than "try again" — and carrying nothing about the submitted code.
+var ErrHardwareTokenLockedOut = errors.New("too many failed hardware token attempts; try again later")
+
+// recordFailedHardwareToken counts a failed verification and locks the token at
+// the threshold.
+//
+// The increment happens in the database, as recordFailedTOTP's does: reading
+// the count into Go, adding one and writing it back loses increments under
+// exactly the concurrency an attacker generates, so the cap binds later than it
+// claims — or never. The error is logged and swallowed because the caller has
+// already decided the code was wrong; failing the request instead would tell
+// the attacker their guess was interesting.
+// The id is the one VerifyHardwareToken just read under its org predicate, and
+// its context is already bypassed, so no tenant term is repeated here.
+func (s *Service) recordFailedHardwareToken(ctx context.Context, tokenID string) {
+	//orgscope:ignore token id already resolved under the caller's org predicate; ctx is the bypassed verification context
+	if _, err := s.db.Pool.Exec(ctx, `
+		UPDATE hardware_tokens
+		SET failed_attempts = failed_attempts + 1,
+		    last_failed_at  = NOW(),
+		    locked_until = CASE
+		        WHEN failed_attempts + 1 >= $2 THEN NOW() + $3::interval
+		        ELSE locked_until
+		    END
+		WHERE id = $1
+	`, tokenID, hardwareTokenMaxAttempts, hardwareTokenLockoutDuration.String()); err != nil {
+		s.logger.Error("Failed to record hardware token failure; throttling may not be enforced",
+			zap.String("token_id", tokenID), zap.Error(err))
+	}
 }
 
 // verifyHOTP validates HOTP code with look-ahead window
@@ -390,16 +557,21 @@ func generateHOTP(secret []byte, counter int64) string {
 
 // GetUserHardwareToken returns the token assigned to a user
 func (s *Service) GetUserHardwareToken(ctx context.Context, userID string) (*HardwareToken, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	query := `
 		SELECT id, serial_number, name, token_type, manufacturer, model,
 			firmware_version, status, assigned_to, assigned_at, assigned_by,
 			last_used_at, use_count, created_at, notes
 		FROM hardware_tokens
-		WHERE assigned_to = $1 AND status = 'assigned'
+		WHERE assigned_to = $1 AND status = 'assigned' AND org_id = $2
 	`
 
 	var t HardwareToken
-	err := s.db.Pool.QueryRow(ctx, query, userID).Scan(
+	err = s.db.Pool.QueryRow(ctx, query, userID, org.ID).Scan(
 		&t.ID, &t.SerialNumber, &t.Name, &t.TokenType, &t.Manufacturer, &t.Model,
 		&t.FirmwareVersion, &t.Status, &t.AssignedTo, &t.AssignedAt, &t.AssignedBy,
 		&t.LastUsedAt, &t.UseCount, &t.CreatedAt, &t.Notes,
@@ -417,15 +589,20 @@ func (s *Service) GetTokenEvents(ctx context.Context, tokenID string, limit int)
 		limit = 50
 	}
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	query := `
 		SELECT id, token_id, user_id, event_type, ip_address, user_agent, details, created_at
 		FROM hardware_token_events
-		WHERE token_id = $1
+		WHERE token_id = $1 AND org_id = $2
 		ORDER BY created_at DESC
-		LIMIT $2
+		LIMIT $3
 	`
 
-	rows, err := s.db.Pool.Query(ctx, query, tokenID, limit)
+	rows, err := s.db.Pool.Query(ctx, query, tokenID, org.ID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -446,11 +623,28 @@ func (s *Service) GetTokenEvents(ctx context.Context, tokenID string, limit int)
 
 // logTokenEvent records a token event
 func (s *Service) logTokenEvent(ctx context.Context, tokenID string, userID *string, eventType, ipAddress, userAgent string, details map[string]interface{}) {
+	// The event takes its tenant from the token it is about, not from the
+	// connection: this is called from the bypassed verification path as well as
+	// from the org-scoped admin handlers, and the token is the one thing every
+	// caller has. orgctx.AuditOrgID is the floor — a record of a hardware-token
+	// event filed under the primary organization is recoverable; one refused by
+	// the belt's WITH CHECK and dropped is not, and that is the failure mode
+	// this whole programme has already met once.
+	fallback, resolved := orgctx.AuditOrgID(ctx)
 	query := `
-		INSERT INTO hardware_token_events (id, token_id, user_id, event_type, ip_address, user_agent, details, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+		INSERT INTO hardware_token_events (id, org_id, token_id, user_id, event_type, ip_address, user_agent, details, created_at)
+		VALUES ($1,
+		        COALESCE((SELECT org_id FROM hardware_tokens WHERE id = $2),
+		                 (SELECT org_id FROM users WHERE id = $3),
+		                 $8::uuid),
+		        $2, $3, $4, $5, $6, $7, NOW())
 	`
-	s.db.Pool.Exec(ctx, query, uuid.New().String(), tokenID, userID, eventType, ipAddress, userAgent, details)
+	if _, err := s.db.Pool.Exec(orgctx.WithBypassRLS(ctx), query,
+		uuid.New().String(), tokenID, userID, eventType, ipAddress, userAgent, details, fallback); err != nil {
+		s.logger.Error("failed to write hardware token event",
+			zap.String("event_type", eventType), zap.String("token_id", tokenID),
+			zap.Bool("org_resolved", resolved), zap.Error(err))
+	}
 }
 
 // encryptSecret encrypts a hardware-token secret (e.g. a TOTP/HOTP seed) for storage at rest using

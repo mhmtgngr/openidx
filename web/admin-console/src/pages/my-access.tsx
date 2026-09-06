@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import { Shield, Users, Key, Clock, CheckCircle, XCircle, Lock, Network, Laptop, ArrowRight, Fingerprint } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
@@ -59,6 +60,7 @@ interface GroupRequest {
 export function MyAccessPage() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const { t } = useTranslation()
   const [requestOpen, setRequestOpen] = useState(false)
   const [selectedGroup, setSelectedGroup] = useState<AvailableGroup | null>(null)
   const [justification, setJustification] = useState('')
@@ -87,10 +89,10 @@ export function MyAccessPage() {
       queryClient.invalidateQueries({ queryKey: ['available-groups'] })
       queryClient.invalidateQueries({ queryKey: ['my-group-requests'] })
       queryClient.invalidateQueries({ queryKey: ['access-overview'] })
-      toast({ title: 'Group request submitted' })
+      toast({ title: t('pages.myAccess.toasts.submitted') })
       setRequestOpen(false)
     },
-    onError: () => toast({ title: 'Failed to submit request', variant: 'destructive' }),
+    onError: () => toast({ title: t('pages.myAccess.toasts.submitFailed'), variant: 'destructive' }),
   })
 
   const openRequest = (group: AvailableGroup) => {
@@ -119,10 +121,10 @@ export function MyAccessPage() {
     return (
       <div className="space-y-6">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">My Access</h1>
-          <p className="text-muted-foreground">Everything you can reach — identity, privileged access, and zero-trust network — in one place</p>
+          <h1 className="text-3xl font-bold tracking-tight">{t('nav.items.myAccess')}</h1>
+          <p className="text-muted-foreground">{t('pages.myAccess.subtitle')}</p>
         </div>
-        <QueryError error={overviewError} resource="your access overview" />
+        <QueryError error={overviewError} resource={t('pages.myAccess.resourceName')} />
       </div>
     )
   }
@@ -130,8 +132,8 @@ export function MyAccessPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold tracking-tight">My Access</h1>
-        <p className="text-muted-foreground">Everything you can reach — identity, privileged access, and zero-trust network — in one place</p>
+        <h1 className="text-3xl font-bold tracking-tight">{t('nav.items.myAccess')}</h1>
+        <p className="text-muted-foreground">{t('pages.myAccess.subtitle')}</p>
       </div>
 
       {/* Overview Cards */}
@@ -142,7 +144,7 @@ export function MyAccessPage() {
               <div className="p-2 bg-blue-100 rounded-lg"><Shield className="h-6 w-6 text-primary" /></div>
               <div>
                 <p className="text-2xl font-bold">{overview?.roles_count || 0}</p>
-                <p className="text-sm text-muted-foreground">Roles</p>
+                <p className="text-sm text-muted-foreground">{t('pages.myAccess.stats.roles')}</p>
               </div>
             </div>
           </CardContent>
@@ -153,7 +155,7 @@ export function MyAccessPage() {
               <div className="p-2 bg-green-100 rounded-lg"><Users className="h-6 w-6 text-green-600" /></div>
               <div>
                 <p className="text-2xl font-bold">{overview?.groups_count || 0}</p>
-                <p className="text-sm text-muted-foreground">Groups</p>
+                <p className="text-sm text-muted-foreground">{t('pages.myAccess.stats.groups')}</p>
               </div>
             </div>
           </CardContent>
@@ -164,7 +166,7 @@ export function MyAccessPage() {
               <div className="p-2 bg-purple-100 rounded-lg"><Key className="h-6 w-6 text-purple-600" /></div>
               <div>
                 <p className="text-2xl font-bold">{overview?.apps_count || 0}</p>
-                <p className="text-sm text-muted-foreground">Applications</p>
+                <p className="text-sm text-muted-foreground">{t('pages.myAccess.stats.applications')}</p>
               </div>
             </div>
           </CardContent>
@@ -175,7 +177,7 @@ export function MyAccessPage() {
               <div className="p-2 bg-yellow-100 rounded-lg"><Clock className="h-6 w-6 text-yellow-600" /></div>
               <div>
                 <p className="text-2xl font-bold">{overview?.pending_requests || 0}</p>
-                <p className="text-sm text-muted-foreground">Pending</p>
+                <p className="text-sm text-muted-foreground">{t('pages.myAccess.stats.pending')}</p>
               </div>
             </div>
           </CardContent>
@@ -185,7 +187,7 @@ export function MyAccessPage() {
       {/* Current Access */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <Card>
-          <CardHeader><CardTitle className="text-lg">My Roles</CardTitle></CardHeader>
+          <CardHeader><CardTitle className="text-lg">{t('pages.myAccess.myRoles')}</CardTitle></CardHeader>
           <CardContent>
             {overview?.roles && overview.roles.length > 0 ? (
               <div className="space-y-2">
@@ -196,11 +198,11 @@ export function MyAccessPage() {
                   </div>
                 ))}
               </div>
-            ) : <p className="text-sm text-muted-foreground">No roles assigned</p>}
+            ) : <p className="text-sm text-muted-foreground">{t('pages.myAccess.noRoles')}</p>}
           </CardContent>
         </Card>
         <Card>
-          <CardHeader><CardTitle className="text-lg">My Groups</CardTitle></CardHeader>
+          <CardHeader><CardTitle className="text-lg">{t('pages.myAccess.myGroups')}</CardTitle></CardHeader>
           <CardContent>
             {overview?.groups && overview.groups.length > 0 ? (
               <div className="space-y-2">
@@ -211,7 +213,7 @@ export function MyAccessPage() {
                   </div>
                 ))}
               </div>
-            ) : <p className="text-sm text-muted-foreground">No groups assigned</p>}
+            ) : <p className="text-sm text-muted-foreground">{t('pages.myAccess.noGroups')}</p>}
           </CardContent>
         </Card>
       </div>
@@ -222,10 +224,10 @@ export function MyAccessPage() {
           <CardHeader>
             <div className="flex items-center justify-between">
               <CardTitle className="flex items-center gap-2 text-lg">
-                <Lock className="h-5 w-5 text-amber-600" />My Privileged Access
+                <Lock className="h-5 w-5 text-amber-600" />{t('pages.myAccess.privileged.title')}
               </CardTitle>
               <Link to="/my-network">
-                <Button variant="ghost" size="sm">Manage<ArrowRight className="ml-1 h-4 w-4" /></Button>
+                <Button variant="ghost" size="sm">{t('pages.myAccess.privileged.manage')}<ArrowRight className="ml-1 h-4 w-4" /></Button>
               </Link>
             </div>
           </CardHeader>
@@ -236,40 +238,40 @@ export function MyAccessPage() {
                   <Key className="h-5 w-5 text-amber-600" />
                   <div>
                     <p className="text-xl font-bold">{overview.privileged.vault_grants}</p>
-                    <p className="text-xs text-muted-foreground">Vault secrets</p>
+                    <p className="text-xs text-muted-foreground">{t('pages.myAccess.privileged.vaultSecrets')}</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/50">
                   <Clock className="h-5 w-5 text-primary" />
                   <div>
                     <p className="text-xl font-bold">{overview.privileged.active_checkouts}</p>
-                    <p className="text-xs text-muted-foreground">Active checkouts</p>
+                    <p className="text-xs text-muted-foreground">{t('pages.myAccess.privileged.activeCheckouts')}</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/50">
                   <Shield className="h-5 w-5 text-purple-600" />
                   <div>
                     <p className="text-xl font-bold">{overview.privileged.active_jit_grants}</p>
-                    <p className="text-xs text-muted-foreground">JIT elevations</p>
+                    <p className="text-xs text-muted-foreground">{t('pages.myAccess.privileged.jitElevations')}</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/50">
                   <Lock className="h-5 w-5 text-red-600" />
                   <div>
                     <p className="text-xl font-bold">{overview.privileged.active_sessions}</p>
-                    <p className="text-xs text-muted-foreground">Live sessions</p>
+                    <p className="text-xs text-muted-foreground">{t('pages.myAccess.privileged.liveSessions')}</p>
                   </div>
                 </div>
                 {overview.privileged.pending_session_requests > 0 && (
                   <div className="col-span-2">
                     <Badge variant="secondary">
                       <Clock className="mr-1 h-3 w-3" />
-                      {overview.privileged.pending_session_requests} session request(s) pending approval
+                      {t('pages.myAccess.privileged.pendingRequests', { n: overview.privileged.pending_session_requests })}
                     </Badge>
                   </div>
                 )}
               </div>
-            ) : <p className="text-sm text-muted-foreground">No privileged access</p>}
+            ) : <p className="text-sm text-muted-foreground">{t('pages.myAccess.privileged.none')}</p>}
           </CardContent>
         </Card>
 
@@ -277,10 +279,10 @@ export function MyAccessPage() {
           <CardHeader>
             <div className="flex items-center justify-between">
               <CardTitle className="flex items-center gap-2 text-lg">
-                <Network className="h-5 w-5 text-green-600" />My Network Access
+                <Network className="h-5 w-5 text-green-600" />{t('pages.myAccess.network.title')}
               </CardTitle>
               <Link to="/my-devices">
-                <Button variant="ghost" size="sm">Devices<ArrowRight className="ml-1 h-4 w-4" /></Button>
+                <Button variant="ghost" size="sm">{t('pages.myAccess.network.devices')}<ArrowRight className="ml-1 h-4 w-4" /></Button>
               </Link>
             </div>
           </CardHeader>
@@ -289,46 +291,46 @@ export function MyAccessPage() {
               <div className="space-y-3">
                 <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
                   <span className="flex items-center gap-2 text-sm font-medium">
-                    <Network className="h-4 w-4 text-green-600" />Zero-Trust Identity
+                    <Network className="h-4 w-4 text-green-600" />{t('pages.myAccess.network.zeroTrustIdentity')}
                   </span>
                   {overview.network.ziti_linked ? (
                     <Badge variant="outline" className={overview.network.ziti_enrolled
                       ? 'bg-green-50 text-green-700 border-green-200'
                       : 'bg-yellow-50 text-yellow-700 border-yellow-200'}>
-                      {overview.network.ziti_enrolled ? 'Enrolled' : 'Awaiting enrollment'}
+                      {overview.network.ziti_enrolled ? t('pages.myAccess.network.enrolled') : t('pages.myAccess.network.awaitingEnrollment')}
                     </Badge>
                   ) : (
-                    <Badge variant="outline" className="text-muted-foreground">Not linked</Badge>
+                    <Badge variant="outline" className="text-muted-foreground">{t('pages.myAccess.network.notLinked')}</Badge>
                   )}
                 </div>
                 <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
                   <span className="flex items-center gap-2 text-sm font-medium">
-                    <Laptop className="h-4 w-4 text-slate-600" />Enrolled Devices
+                    <Laptop className="h-4 w-4 text-slate-600" />{t('pages.myAccess.network.enrolledDevices')}
                   </span>
                   <span className="text-xl font-bold">{overview.network.devices}</span>
                 </div>
                 {overview.network.trusted_device && (
                   <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
-                    <Fingerprint className="mr-1 h-3 w-3" />You have a trusted device
+                    <Fingerprint className="mr-1 h-3 w-3" />{t('pages.myAccess.network.trustedDevice')}
                   </Badge>
                 )}
                 {!overview.network.ziti_enrolled && overview.network.ziti_linked && (
                   <p className="text-xs text-muted-foreground">
-                    Enroll a device to activate your zero-trust network access.
+                    {t('pages.myAccess.network.enrollHint')}
                   </p>
                 )}
               </div>
-            ) : <p className="text-sm text-muted-foreground">No network access</p>}
+            ) : <p className="text-sm text-muted-foreground">{t('pages.myAccess.network.none')}</p>}
           </CardContent>
         </Card>
       </div>
 
       {/* Available Groups */}
       <Card>
-        <CardHeader><CardTitle>Available Groups to Join</CardTitle></CardHeader>
+        <CardHeader><CardTitle>{t('pages.myAccess.availableGroups.title')}</CardTitle></CardHeader>
         <CardContent>
           {availableGroups.length === 0 ? (
-            <p className="text-center py-6 text-muted-foreground">No groups available for self-join</p>
+            <p className="text-center py-6 text-muted-foreground">{t('pages.myAccess.availableGroups.empty')}</p>
           ) : (
             <div className="space-y-3">
               {availableGroups.map(g => (
@@ -336,14 +338,14 @@ export function MyAccessPage() {
                   <div>
                     <p className="font-medium">{g.name}</p>
                     <p className="text-sm text-muted-foreground">{g.description}</p>
-                    {g.require_approval && <Badge variant="outline" className="mt-1 text-xs">Requires Approval</Badge>}
+                    {g.require_approval && <Badge variant="outline" className="mt-1 text-xs">{t('pages.myAccess.availableGroups.requiresApproval')}</Badge>}
                   </div>
                   {g.is_member ? (
-                    <Badge>Member</Badge>
+                    <Badge>{t('pages.myAccess.availableGroups.member')}</Badge>
                   ) : g.has_pending_request ? (
-                    <Badge variant="secondary"><Clock className="mr-1 h-3 w-3" />Pending</Badge>
+                    <Badge variant="secondary"><Clock className="mr-1 h-3 w-3" />{t('pages.myAccess.availableGroups.pending')}</Badge>
                   ) : (
-                    <Button size="sm" onClick={() => openRequest(g)}>Request to Join</Button>
+                    <Button size="sm" onClick={() => openRequest(g)}>{t('pages.myAccess.availableGroups.requestToJoin')}</Button>
                   )}
                 </div>
               ))}
@@ -354,15 +356,15 @@ export function MyAccessPage() {
 
       {/* My Requests */}
       <Card>
-        <CardHeader><CardTitle>My Group Requests</CardTitle></CardHeader>
+        <CardHeader><CardTitle>{t('pages.myAccess.requests.title')}</CardTitle></CardHeader>
         <CardContent>
           {myRequests.length === 0 ? (
-            <p className="text-center py-6 text-muted-foreground">No group requests</p>
+            <p className="text-center py-6 text-muted-foreground">{t('pages.myAccess.requests.empty')}</p>
           ) : (
             <Table>
               <TableHeader><TableRow>
-                <TableHead>Group</TableHead><TableHead>Justification</TableHead>
-                <TableHead>Status</TableHead><TableHead>Requested</TableHead>
+                <TableHead>{t('pages.myAccess.requests.group')}</TableHead><TableHead>{t('pages.myAccess.requests.justification')}</TableHead>
+                <TableHead>{t('pages.myAccess.requests.status')}</TableHead><TableHead>{t('pages.myAccess.requests.requested')}</TableHead>
               </TableRow></TableHeader>
               <TableBody>
                 {myRequests.map(r => (
@@ -387,24 +389,24 @@ export function MyAccessPage() {
       {/* Request Dialog */}
       <Dialog open={requestOpen} onOpenChange={setRequestOpen}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Request to Join: {selectedGroup?.name}</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{t('pages.myAccess.dialog.title', { name: selectedGroup?.name ?? '' })}</DialogTitle></DialogHeader>
           <div className="space-y-4">
             <p className="text-sm text-muted-foreground">{selectedGroup?.description}</p>
             {selectedGroup?.require_approval && (
-              <p className="text-sm text-yellow-600">This group requires admin approval.</p>
+              <p className="text-sm text-yellow-600">{t('pages.myAccess.dialog.approvalNote')}</p>
             )}
             <div>
-              <label className="text-sm font-medium">Justification</label>
+              <label className="text-sm font-medium">{t('pages.myAccess.dialog.justificationLabel')}</label>
               <textarea className="w-full rounded-md border p-2 text-sm mt-1" rows={3}
                 value={justification} onChange={e => setJustification(e.target.value)}
-                placeholder="Why do you need access to this group?" />
+                placeholder={t('pages.myAccess.dialog.placeholder')} />
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setRequestOpen(false)}>Cancel</Button>
+            <Button variant="outline" onClick={() => setRequestOpen(false)}>{t('common.cancel')}</Button>
             <Button disabled={requestMutation.isPending} onClick={() => selectedGroup && requestMutation.mutate({
               group_id: selectedGroup.id, justification
-            })}>Submit Request</Button>
+            })}>{t('pages.myAccess.dialog.submit')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

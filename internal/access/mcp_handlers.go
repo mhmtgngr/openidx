@@ -11,7 +11,11 @@ import (
 // per-tool allowlist. Registered under /api/v1/mcp by RegisterRoutes.
 
 func (s *Service) handleListMCPServers(c *gin.Context) {
-	servers, err := s.ListMCPServers(c.Request.Context(), mcpOrgID(c))
+	orgID, ok := requireMCPOrg(c)
+	if !ok {
+		return
+	}
+	servers, err := s.ListMCPServers(c.Request.Context(), orgID)
 	if err != nil {
 		s.logger.Error("list mcp servers failed", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
@@ -29,7 +33,11 @@ func (s *Service) handleCreateMCPServer(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	server, err := s.CreateMCPServer(c.Request.Context(), mcpOrgID(c), &in)
+	orgID, ok := requireMCPOrg(c)
+	if !ok {
+		return
+	}
+	server, err := s.CreateMCPServer(c.Request.Context(), orgID, &in)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -39,7 +47,11 @@ func (s *Service) handleCreateMCPServer(c *gin.Context) {
 }
 
 func (s *Service) handleDeleteMCPServer(c *gin.Context) {
-	if err := s.DeleteMCPServer(c.Request.Context(), mcpOrgID(c), c.Param("id")); err != nil {
+	orgID, ok := requireMCPOrg(c)
+	if !ok {
+		return
+	}
+	if err := s.DeleteMCPServer(c.Request.Context(), orgID, c.Param("id")); err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
 	}
@@ -52,7 +64,11 @@ func (s *Service) handleAddMCPToolPolicy(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if err := s.AddMCPToolPolicy(c.Request.Context(), mcpOrgID(c), c.Param("id"), &in); err != nil {
+	orgID, ok := requireMCPOrg(c)
+	if !ok {
+		return
+	}
+	if err := s.AddMCPToolPolicy(c.Request.Context(), orgID, c.Param("id"), &in); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}

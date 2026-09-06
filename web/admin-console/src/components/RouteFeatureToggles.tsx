@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import { Shield, Globe, Loader2 } from 'lucide-react'
 import { Switch } from './ui/switch'
 import { api } from '../lib/api'
@@ -30,6 +31,7 @@ interface RouteFeatureTogglesProps {
 export function RouteFeatureToggles({ routeId, onUpdate }: RouteFeatureTogglesProps) {
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const { t } = useTranslation()
 
   const { data, isLoading } = useQuery({
     queryKey: ['service-status', routeId],
@@ -45,14 +47,18 @@ export function RouteFeatureToggles({ routeId, onUpdate }: RouteFeatureTogglesPr
     onSuccess: (_, { feature, enable }) => {
       queryClient.invalidateQueries({ queryKey: ['service-status', routeId] })
       queryClient.invalidateQueries({ queryKey: ['proxy-routes'] })
+      // The product name stays untranslated; only the sentence around it moves.
+      const name = feature === 'ziti' ? 'OpenZiti' : 'BrowZer'
       toast({
-        title: enable ? 'Enabled' : 'Disabled',
-        description: `${feature === 'ziti' ? 'OpenZiti' : 'BrowZer'} ${enable ? 'enabled' : 'disabled'} on this route.`,
+        title: enable ? t('pages.proxyRoutes.featureToggles.enabled') : t('pages.proxyRoutes.featureToggles.disabled'),
+        description: enable
+          ? t('pages.proxyRoutes.featureToggles.enabledDesc', { feature: name })
+          : t('pages.proxyRoutes.featureToggles.disabledDesc', { feature: name }),
       })
       onUpdate?.()
     },
     onError: (error: Error) => {
-      toast({ title: 'Error', description: error.message, variant: 'destructive' })
+      toast({ title: t('common.error'), description: error.message, variant: 'destructive' })
     },
   })
 
@@ -62,7 +68,10 @@ export function RouteFeatureToggles({ routeId, onUpdate }: RouteFeatureTogglesPr
 
   return (
     <div className="flex items-center gap-4">
-      <label className="flex items-center gap-1.5 text-xs cursor-pointer" title="Route traffic through the secure OpenZiti overlay">
+      <label
+        className="flex items-center gap-1.5 text-xs cursor-pointer"
+        title={t('pages.proxyRoutes.featureToggles.zitiTitle')}
+      >
         <Shield className="h-3.5 w-3.5 text-blue-500" />
         <span className="text-muted-foreground">OpenZiti</span>
         <Switch
@@ -73,7 +82,7 @@ export function RouteFeatureToggles({ routeId, onUpdate }: RouteFeatureTogglesPr
       </label>
       <label
         className={`flex items-center gap-1.5 text-xs cursor-pointer ${!zitiOn ? 'opacity-50' : ''}`}
-        title={zitiOn ? 'Clientless browser access via BrowZer' : 'Enable OpenZiti first'}
+        title={zitiOn ? t('pages.proxyRoutes.featureToggles.browzerTitle') : t('pages.proxyRoutes.featureToggles.browzerDisabledTitle')}
       >
         <Globe className="h-3.5 w-3.5 text-green-500" />
         <span className="text-muted-foreground">BrowZer</span>

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import { GitPullRequest, Plus, Clock, CheckCircle, XCircle, Ban, Timer, KeyRound, Undo2, Copy } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
@@ -58,19 +59,20 @@ const statusBadge = (status: string) => {
 }
 
 const DURATION_OPTIONS = [
-  { value: '', label: 'Permanent' },
-  { value: '4h', label: '4 hours' },
-  { value: '8h', label: '8 hours' },
-  { value: '1d', label: '1 day' },
-  { value: '3d', label: '3 days' },
-  { value: '7d', label: '7 days' },
-  { value: '30d', label: '30 days' },
-  { value: '90d', label: '90 days' },
+  { value: '', labelKey: 'pages.accessRequests.durations.permanent' },
+  { value: '4h', labelKey: 'pages.accessRequests.durations.h4' },
+  { value: '8h', labelKey: 'pages.accessRequests.durations.h8' },
+  { value: '1d', labelKey: 'pages.accessRequests.durations.d1' },
+  { value: '3d', labelKey: 'pages.accessRequests.durations.d3' },
+  { value: '7d', labelKey: 'pages.accessRequests.durations.d7' },
+  { value: '30d', labelKey: 'pages.accessRequests.durations.d30' },
+  { value: '90d', labelKey: 'pages.accessRequests.durations.d90' },
 ]
 
 export function AccessRequestsPage() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const { t } = useTranslation()
   const { hasRole } = useAuth()
   // Only admins may see every user's requests (the "All Requests" org view).
   // The backend enforces this too; this just hides the control from users who
@@ -192,29 +194,42 @@ export function AccessRequestsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['my-requests'] })
       queryClient.invalidateQueries({ queryKey: ['all-requests'] })
-      toast({ title: 'Access request submitted' })
+      toast({ title: t('pages.accessRequests.toasts.submitted') })
       setCreateOpen(false)
       setNewReq({ resource_type: '', resource_name: '', justification: '', priority: 'normal', duration: '', secretId: '' })
     },
-    onError: () => toast({ title: 'Failed to submit request', variant: 'destructive' }),
+    onError: () => toast({ title: t('pages.accessRequests.toasts.submitFailed'), variant: 'destructive' }),
   })
 
   const cancelMutation = useMutation({
     mutationFn: (id: string) => api.post(`/api/v1/governance/requests/${id}/cancel`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['my-requests'] })
-      toast({ title: 'Request cancelled' })
+      toast({ title: t('pages.accessRequests.toasts.cancelled') })
     },
   })
 
+  // Approving is not the same as granting. The endpoint answers 409 when the
+  // decision was recorded but fulfilment failed -- an SoD conflict on the role,
+  // most often -- and without an onError the approver sees nothing at all and
+  // assumes the access exists. The server's own reason is the useful text here;
+  // the key is only the fallback.
   const approveMutation = useMutation({
     mutationFn: ({ id, comments }: { id: string; comments: string }) =>
       api.post(`/api/v1/governance/requests/${id}/approve`, { comments }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['my-approvals'] })
       queryClient.invalidateQueries({ queryKey: ['all-requests'] })
-      toast({ title: 'Request approved' })
+      toast({ title: t('pages.accessRequests.toasts.approved') })
       setApprovalOpen(false)
+    },
+    onError: (err: { response?: { data?: { error?: string } } }) => {
+      queryClient.invalidateQueries({ queryKey: ['my-approvals'] })
+      queryClient.invalidateQueries({ queryKey: ['all-requests'] })
+      toast({
+        title: err.response?.data?.error || t('pages.accessRequests.toasts.approveFailed'),
+        variant: 'destructive',
+      })
     },
   })
 
@@ -224,8 +239,14 @@ export function AccessRequestsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['my-approvals'] })
       queryClient.invalidateQueries({ queryKey: ['all-requests'] })
-      toast({ title: 'Request denied' })
+      toast({ title: t('pages.accessRequests.toasts.denied') })
       setApprovalOpen(false)
+    },
+    onError: (err: { response?: { data?: { error?: string } } }) => {
+      toast({
+        title: err.response?.data?.error || t('pages.accessRequests.toasts.denyFailed'),
+        variant: 'destructive',
+      })
     },
   })
 
@@ -233,7 +254,7 @@ export function AccessRequestsPage() {
     mutationFn: (id: string) => api.post<{ value: string }>(`/api/v1/governance/requests/${id}/credential`),
     onSuccess: (data) => setRetrievedValue(data.value),
     onError: (err: { response?: { data?: { error?: string } } }) => {
-      const msg = err.response?.data?.error || 'Failed to retrieve credential'
+      const msg = err.response?.data?.error || t('pages.accessRequests.toasts.retrieveFailed')
       toast({ title: msg, variant: 'destructive' })
     },
   })
@@ -243,15 +264,15 @@ export function AccessRequestsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['my-requests'] })
       queryClient.invalidateQueries({ queryKey: ['all-requests'] })
-      toast({ title: 'Credential returned' })
+      toast({ title: t('pages.accessRequests.toasts.returned') })
     },
     onError: (err: { response?: { data?: { error?: string } } }) => {
-      const msg = err.response?.data?.error || 'Failed to return credential'
+      const msg = err.response?.data?.error || t('pages.accessRequests.toasts.returnFailed')
       toast({ title: msg, variant: 'destructive' })
     },
   })
 
-  const formatDate = (d: string) => new Date(d).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+  const formatDate = (d: string) => new Date(d).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
 
   const openApproval = (req: AccessRequest, action: 'approve' | 'deny') => {
     setSelectedRequest(req)
@@ -273,40 +294,40 @@ export function AccessRequestsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Access Requests</h1>
-          <p className="text-muted-foreground">Request access to resources and manage approvals</p>
+          <h1 className="text-3xl font-bold tracking-tight">{t('nav.items.accessRequests')}</h1>
+          <p className="text-muted-foreground">{t('pages.accessRequests.subtitle')}</p>
         </div>
         <Button onClick={() => setCreateOpen(true)}>
-          <Plus className="mr-2 h-4 w-4" /> Request Access
+          <Plus className="mr-2 h-4 w-4" /> {t('pages.accessRequests.requestAccess')}
         </Button>
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList>
-          <TabsTrigger value="my-requests"><GitPullRequest className="mr-2 h-4 w-4" />My Requests</TabsTrigger>
+          <TabsTrigger value="my-requests"><GitPullRequest className="mr-2 h-4 w-4" />{t('pages.accessRequests.tabs.my')}</TabsTrigger>
           {/* Approver queue: caller-scoped (only requests awaiting THIS user).
               Hidden for standard users who aren't approvers and have none. */}
           {(isAdmin || pendingApprovals.length > 0) && (
             <TabsTrigger value="pending-approvals">
-              <Clock className="mr-2 h-4 w-4" />Pending Approvals
+              <Clock className="mr-2 h-4 w-4" />{t('pages.accessRequests.tabs.pending')}
               {pendingApprovals.length > 0 && <Badge variant="secondary" className="ml-1">{pendingApprovals.length}</Badge>}
             </TabsTrigger>
           )}
           {/* Org-wide view — admins only. */}
-          {isAdmin && <TabsTrigger value="all-requests">All Requests</TabsTrigger>}
+          {isAdmin && <TabsTrigger value="all-requests">{t('pages.accessRequests.tabs.all')}</TabsTrigger>}
         </TabsList>
 
         <TabsContent value="my-requests">
           <Card>
-            <CardHeader><CardTitle>My Access Requests</CardTitle></CardHeader>
+            <CardHeader><CardTitle>{t('pages.accessRequests.myCard')}</CardTitle></CardHeader>
             <CardContent>
-              {myLoading ? <p className="text-center py-8 text-muted-foreground">Loading...</p> :
-               myError ? <QueryError error={myErrorObj} resource="access requests" /> :
-               myRequests.length === 0 ? <p className="text-center py-8 text-muted-foreground">No requests found</p> : (
+              {myLoading ? <p className="text-center py-8 text-muted-foreground">{t('common.loading')}</p> :
+               myError ? <QueryError error={myErrorObj} resource={t('pages.accessRequests.resourceName')} /> :
+               myRequests.length === 0 ? <p className="text-center py-8 text-muted-foreground">{t('pages.accessRequests.noRequests')}</p> : (
                 <Table>
                   <TableHeader><TableRow>
-                    <TableHead>Resource</TableHead><TableHead>Type</TableHead><TableHead>Status</TableHead>
-                    <TableHead>Priority</TableHead><TableHead>Created</TableHead><TableHead>Actions</TableHead>
+                    <TableHead>{t('pages.accessRequests.table.resource')}</TableHead><TableHead>{t('pages.accessRequests.table.type')}</TableHead><TableHead>{t('pages.accessRequests.table.status')}</TableHead>
+                    <TableHead>{t('pages.accessRequests.table.priority')}</TableHead><TableHead>{t('pages.accessRequests.table.created')}</TableHead><TableHead>{t('pages.accessRequests.table.actions')}</TableHead>
                   </TableRow></TableHeader>
                   <TableBody>
                     {myRequests.map(r => (
@@ -316,7 +337,7 @@ export function AccessRequestsPage() {
                         <TableCell>
                           <span className={`px-2 py-1 rounded-full text-xs font-medium ${statusBadge(r.status)}`}>{r.status}</span>
                           {r.expires_at && r.status !== 'expired' && (
-                            <span className="ml-1 inline-flex items-center gap-0.5 text-xs text-orange-600" title={`Expires ${new Date(r.expires_at).toLocaleString()}`}>
+                            <span className="ml-1 inline-flex items-center gap-0.5 text-xs text-orange-700 dark:text-orange-300" title={t('pages.accessRequests.expiresTitle', { date: new Date(r.expires_at).toLocaleString() })}>
                               <Timer className="h-3 w-3" />{new Date(r.expires_at).toLocaleDateString()}
                             </span>
                           )}
@@ -328,16 +349,16 @@ export function AccessRequestsPage() {
                             {r.status === 'pending' && (
                               <AlertDialog>
                                 <AlertDialogTrigger asChild>
-                                  <Button variant="outline" size="sm"><Ban className="h-3 w-3 mr-1" />Cancel</Button>
+                                  <Button variant="outline" size="sm"><Ban className="h-3 w-3 mr-1" />{t('pages.accessRequests.cancelDialog.trigger')}</Button>
                                 </AlertDialogTrigger>
                                 <AlertDialogContent>
                                   <AlertDialogHeader>
-                                    <AlertDialogTitle>Cancel Request?</AlertDialogTitle>
-                                    <AlertDialogDescription>Cancel this access request for {r.resource_name}?</AlertDialogDescription>
+                                    <AlertDialogTitle>{t('pages.accessRequests.cancelDialog.title')}</AlertDialogTitle>
+                                    <AlertDialogDescription>{t('pages.accessRequests.cancelDialog.description', { name: r.resource_name })}</AlertDialogDescription>
                                   </AlertDialogHeader>
                                   <AlertDialogFooter>
-                                    <AlertDialogCancel>Keep</AlertDialogCancel>
-                                    <AlertDialogAction onClick={() => cancelMutation.mutate(r.id)}>Cancel Request</AlertDialogAction>
+                                    <AlertDialogCancel>{t('pages.accessRequests.keep')}</AlertDialogCancel>
+                                    <AlertDialogAction onClick={() => cancelMutation.mutate(r.id)}>{t('pages.accessRequests.cancelDialog.confirm')}</AlertDialogAction>
                                   </AlertDialogFooter>
                                 </AlertDialogContent>
                               </AlertDialog>
@@ -345,20 +366,20 @@ export function AccessRequestsPage() {
                             {r.resource_type === 'vault_credential' && r.status === 'fulfilled' && (
                               <>
                                 <Button variant="outline" size="sm" onClick={() => { setSelectedRetrieveId(r.id); setRetrieveOpen(true) }}>
-                                  <KeyRound className="h-3 w-3 mr-1" />Retrieve
+                                  <KeyRound className="h-3 w-3 mr-1" />{t('pages.accessRequests.retrieve')}
                                 </Button>
                                 <AlertDialog>
                                   <AlertDialogTrigger asChild>
-                                    <Button variant="outline" size="sm"><Undo2 className="h-3 w-3 mr-1" />Return</Button>
+                                    <Button variant="outline" size="sm"><Undo2 className="h-3 w-3 mr-1" />{t('pages.accessRequests.returnDialog.trigger')}</Button>
                                   </AlertDialogTrigger>
                                   <AlertDialogContent>
                                     <AlertDialogHeader>
-                                      <AlertDialogTitle>Return Credential?</AlertDialogTitle>
-                                      <AlertDialogDescription>Return {r.resource_name} early? This immediately revokes access and triggers credential rotation.</AlertDialogDescription>
+                                      <AlertDialogTitle>{t('pages.accessRequests.returnDialog.title')}</AlertDialogTitle>
+                                      <AlertDialogDescription>{t('pages.accessRequests.returnDialog.description', { name: r.resource_name })}</AlertDialogDescription>
                                     </AlertDialogHeader>
                                     <AlertDialogFooter>
-                                      <AlertDialogCancel>Keep</AlertDialogCancel>
-                                      <AlertDialogAction onClick={() => returnMutation.mutate(r.id)}>Return</AlertDialogAction>
+                                      <AlertDialogCancel>{t('pages.accessRequests.keep')}</AlertDialogCancel>
+                                      <AlertDialogAction onClick={() => returnMutation.mutate(r.id)}>{t('pages.accessRequests.returnDialog.confirm')}</AlertDialogAction>
                                     </AlertDialogFooter>
                                   </AlertDialogContent>
                                 </AlertDialog>
@@ -377,15 +398,15 @@ export function AccessRequestsPage() {
 
         <TabsContent value="pending-approvals">
           <Card>
-            <CardHeader><CardTitle>Pending Approvals</CardTitle></CardHeader>
+            <CardHeader><CardTitle>{t('pages.accessRequests.tabs.pending')}</CardTitle></CardHeader>
             <CardContent>
-              {pendingLoading ? <p className="text-center py-8 text-muted-foreground">Loading...</p> :
-               pendingError ? <QueryError error={pendingErrorObj} resource="pending approvals" /> :
-               pendingApprovals.length === 0 ? <p className="text-center py-8 text-muted-foreground">No pending approvals</p> : (
+              {pendingLoading ? <p className="text-center py-8 text-muted-foreground">{t('common.loading')}</p> :
+               pendingError ? <QueryError error={pendingErrorObj} resource={t('pages.accessRequests.approvalsResourceName')} /> :
+               pendingApprovals.length === 0 ? <p className="text-center py-8 text-muted-foreground">{t('pages.accessRequests.noApprovals')}</p> : (
                 <Table>
                   <TableHeader><TableRow>
-                    <TableHead>Requester</TableHead><TableHead>Resource</TableHead><TableHead>Type</TableHead>
-                    <TableHead>Priority</TableHead><TableHead>Submitted</TableHead><TableHead>Actions</TableHead>
+                    <TableHead>{t('pages.accessRequests.table.requester')}</TableHead><TableHead>{t('pages.accessRequests.table.resource')}</TableHead><TableHead>{t('pages.accessRequests.table.type')}</TableHead>
+                    <TableHead>{t('pages.accessRequests.table.priority')}</TableHead><TableHead>{t('pages.accessRequests.table.submitted')}</TableHead><TableHead>{t('pages.accessRequests.table.actions')}</TableHead>
                   </TableRow></TableHeader>
                   <TableBody>
                     {pendingApprovals.map(r => (
@@ -397,8 +418,8 @@ export function AccessRequestsPage() {
                         <TableCell>{formatDate(r.created_at)}</TableCell>
                         <TableCell>
                           <div className="flex gap-2">
-                            <Button size="sm" onClick={() => openApproval(r, 'approve')}><CheckCircle className="h-3 w-3 mr-1" />Approve</Button>
-                            <Button variant="destructive" size="sm" onClick={() => openApproval(r, 'deny')}><XCircle className="h-3 w-3 mr-1" />Deny</Button>
+                            <Button size="sm" onClick={() => openApproval(r, 'approve')}><CheckCircle className="h-3 w-3 mr-1" />{t('pages.accessRequests.approve')}</Button>
+                            <Button variant="destructive" size="sm" onClick={() => openApproval(r, 'deny')}><XCircle className="h-3 w-3 mr-1" />{t('pages.accessRequests.deny')}</Button>
                           </div>
                         </TableCell>
                       </TableRow>
@@ -414,28 +435,28 @@ export function AccessRequestsPage() {
           <Card>
             <CardHeader>
               <div className="flex items-center justify-between">
-                <CardTitle>All Access Requests</CardTitle>
+                <CardTitle>{t('pages.accessRequests.allCard')}</CardTitle>
                 <Select value={statusFilter} onValueChange={setStatusFilter}>
-                  <SelectTrigger className="w-[180px]"><SelectValue placeholder="Filter by status" /></SelectTrigger>
+                  <SelectTrigger aria-label={t('pages.accessRequests.statusFilter.placeholder')} className="w-[180px]"><SelectValue placeholder={t('pages.accessRequests.statusFilter.placeholder')} /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">All Statuses</SelectItem>
-                    <SelectItem value="pending">Pending</SelectItem>
-                    <SelectItem value="approved">Approved</SelectItem>
-                    <SelectItem value="denied">Denied</SelectItem>
-                    <SelectItem value="fulfilled">Fulfilled</SelectItem>
-                    <SelectItem value="cancelled">Cancelled</SelectItem>
+                    <SelectItem value="all">{t('pages.accessRequests.statusFilter.all')}</SelectItem>
+                    <SelectItem value="pending">{t('pages.accessRequests.statusFilter.pending')}</SelectItem>
+                    <SelectItem value="approved">{t('pages.accessRequests.statusFilter.approved')}</SelectItem>
+                    <SelectItem value="denied">{t('pages.accessRequests.statusFilter.denied')}</SelectItem>
+                    <SelectItem value="fulfilled">{t('pages.accessRequests.statusFilter.fulfilled')}</SelectItem>
+                    <SelectItem value="cancelled">{t('pages.accessRequests.statusFilter.cancelled')}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
             </CardHeader>
             <CardContent>
-              {allLoading ? <p className="text-center py-8 text-muted-foreground">Loading...</p> :
-               allError ? <QueryError error={allErrorObj} resource="access requests" /> :
-               allRequests.length === 0 ? <p className="text-center py-8 text-muted-foreground">No requests found</p> : (
+              {allLoading ? <p className="text-center py-8 text-muted-foreground">{t('common.loading')}</p> :
+               allError ? <QueryError error={allErrorObj} resource={t('pages.accessRequests.resourceName')} /> :
+               allRequests.length === 0 ? <p className="text-center py-8 text-muted-foreground">{t('pages.accessRequests.noRequests')}</p> : (
                 <Table>
                   <TableHeader><TableRow>
-                    <TableHead>Requester</TableHead><TableHead>Resource</TableHead><TableHead>Type</TableHead>
-                    <TableHead>Status</TableHead><TableHead>Priority</TableHead><TableHead>Created</TableHead>
+                    <TableHead>{t('pages.accessRequests.table.requester')}</TableHead><TableHead>{t('pages.accessRequests.table.resource')}</TableHead><TableHead>{t('pages.accessRequests.table.type')}</TableHead>
+                    <TableHead>{t('pages.accessRequests.table.status')}</TableHead><TableHead>{t('pages.accessRequests.table.priority')}</TableHead><TableHead>{t('pages.accessRequests.table.created')}</TableHead>
                   </TableRow></TableHeader>
                   <TableBody>
                     {allRequests.map(r => (
@@ -446,7 +467,7 @@ export function AccessRequestsPage() {
                         <TableCell>
                           <span className={`px-2 py-1 rounded-full text-xs font-medium ${statusBadge(r.status)}`}>{r.status}</span>
                           {r.expires_at && r.status !== 'expired' && (
-                            <span className="ml-1 inline-flex items-center gap-0.5 text-xs text-orange-600" title={`Expires ${new Date(r.expires_at).toLocaleString()}`}>
+                            <span className="ml-1 inline-flex items-center gap-0.5 text-xs text-orange-700 dark:text-orange-300" title={t('pages.accessRequests.expiresTitle', { date: new Date(r.expires_at).toLocaleString() })}>
                               <Timer className="h-3 w-3" />{new Date(r.expires_at).toLocaleDateString()}
                             </span>
                           )}
@@ -466,28 +487,28 @@ export function AccessRequestsPage() {
       {/* Create Dialog */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Request Access</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{t('pages.accessRequests.requestAccess')}</DialogTitle></DialogHeader>
           <div className="space-y-4">
             <div>
-              <label className="text-sm font-medium">Resource Type</label>
+              <label className="text-sm font-medium">{t('pages.accessRequests.create.typeLabel')}</label>
               <Select value={newReq.resource_type} onValueChange={v => setNewReq(p => ({ ...p, resource_type: v, resource_name: '', secretId: '', duration: '' }))}>
-                <SelectTrigger aria-label="Resource Type"><SelectValue placeholder="Select type" /></SelectTrigger>
+                <SelectTrigger aria-label={t('pages.accessRequests.create.typeLabel')}><SelectValue placeholder={t('pages.accessRequests.create.typePlaceholder')} /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="role">Role</SelectItem>
-                  <SelectItem value="group">Group</SelectItem>
-                  <SelectItem value="application">Application</SelectItem>
-                  <SelectItem value="vault_credential">Vault Credential</SelectItem>
+                  <SelectItem value="role">{t('pages.accessRequests.create.types.role')}</SelectItem>
+                  <SelectItem value="group">{t('pages.accessRequests.create.types.group')}</SelectItem>
+                  <SelectItem value="application">{t('pages.accessRequests.create.types.application')}</SelectItem>
+                  <SelectItem value="vault_credential">{t('pages.accessRequests.create.types.vault')}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <div>
-              <label className="text-sm font-medium">Resource Name</label>
+              <label className="text-sm font-medium">{t('pages.accessRequests.create.nameLabel')}</label>
               {isVaultType ? (
                 <Select value={newReq.secretId} onValueChange={v => {
                   const secret = vaultSecrets.find(s => s.id === v)
                   setNewReq(p => ({ ...p, secretId: v, resource_name: secret?.name || '' }))
                 }}>
-                  <SelectTrigger aria-label="Resource Name"><SelectValue placeholder="Select a vault secret" /></SelectTrigger>
+                  <SelectTrigger aria-label={t('pages.accessRequests.create.nameLabel')}><SelectValue placeholder={t('pages.accessRequests.create.vaultPlaceholder')} /></SelectTrigger>
                   <SelectContent>
                     {vaultSecrets.map(s => (
                       <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
@@ -499,8 +520,8 @@ export function AccessRequestsPage() {
                   const res = resourceOptions.find(r => r.id === v)
                   setNewReq(p => ({ ...p, secretId: v, resource_name: res?.name || '' }))
                 }}>
-                  <SelectTrigger aria-label="Resource Name">
-                    <SelectValue placeholder={`Select a ${newReq.resource_type}`} />
+                  <SelectTrigger aria-label={t('pages.accessRequests.create.nameLabel')}>
+                    <SelectValue placeholder={t(`pages.accessRequests.create.pickerPlaceholder.${newReq.resource_type}`)} />
                   </SelectTrigger>
                   <SelectContent>
                     {resourceOptions.map(r => (
@@ -510,52 +531,52 @@ export function AccessRequestsPage() {
                 </Select>
               ) : (
                 <Input
-                  placeholder={newReq.resource_type ? 'Enter resource name' : 'Select a resource type first'}
+                  placeholder={newReq.resource_type ? t('pages.accessRequests.create.namePlaceholder') : t('pages.accessRequests.create.nameFirst')}
                   disabled={!newReq.resource_type}
                   value={newReq.resource_name}
                   onChange={e => setNewReq(p => ({ ...p, resource_name: e.target.value, secretId: '' }))} />
               )}
             </div>
             <div>
-              <label className="text-sm font-medium">Justification</label>
-              <textarea className="w-full rounded-md border p-2 text-sm" rows={3} placeholder="Explain why you need access..."
+              <label className="text-sm font-medium">{t('pages.accessRequests.create.justificationLabel')}</label>
+              <textarea className="w-full rounded-md border p-2 text-sm" rows={3} placeholder={t('pages.accessRequests.create.justificationPlaceholder')}
                 value={newReq.justification} onChange={e => setNewReq(p => ({ ...p, justification: e.target.value }))} />
             </div>
             <div>
-              <label className="text-sm font-medium">Priority</label>
+              <label htmlFor="access-requests-priority-label" className="text-sm font-medium">{t('pages.accessRequests.create.priorityLabel')}</label>
               <Select value={newReq.priority} onValueChange={v => setNewReq(p => ({ ...p, priority: v }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger id="access-requests-priority-label"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="low">Low</SelectItem>
-                  <SelectItem value="normal">Normal</SelectItem>
-                  <SelectItem value="high">High</SelectItem>
-                  <SelectItem value="urgent">Urgent</SelectItem>
+                  <SelectItem value="low">{t('pages.accessRequests.create.priorities.low')}</SelectItem>
+                  <SelectItem value="normal">{t('pages.accessRequests.create.priorities.normal')}</SelectItem>
+                  <SelectItem value="high">{t('pages.accessRequests.create.priorities.high')}</SelectItem>
+                  <SelectItem value="urgent">{t('pages.accessRequests.create.priorities.urgent')}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <div>
-              <label className="text-sm font-medium">Access Duration{isVaultType && <span className="text-red-500 ml-1">*</span>}</label>
+              <label className="text-sm font-medium">{t('pages.accessRequests.create.durationLabel')}{isVaultType && <span className="text-red-500 ml-1">*</span>}</label>
               <Select value={newReq.duration} onValueChange={v => setNewReq(p => ({ ...p, duration: v }))}>
-                <SelectTrigger aria-label="Access Duration"><SelectValue placeholder={isVaultType ? 'Select duration (required)' : 'Permanent'} /></SelectTrigger>
+                <SelectTrigger aria-label={t('pages.accessRequests.create.durationLabel')}><SelectValue placeholder={isVaultType ? t('pages.accessRequests.create.durationRequired') : t('pages.accessRequests.durations.permanent')} /></SelectTrigger>
                 <SelectContent>
                   {durationOptions.map(opt => (
                     <SelectItem key={opt.value || 'permanent'} value={opt.value || 'permanent'}>
-                      {opt.label}
+                      {t(opt.labelKey)}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground mt-1">
                 {isVaultType
-                  ? 'Vault credentials require a time-bound duration.'
-                  : newReq.duration ? 'Access will be automatically revoked after the duration expires.' : 'Access will not expire automatically.'}
+                  ? t('pages.accessRequests.create.durationHintVault')
+                  : newReq.duration ? t('pages.accessRequests.create.durationHintExpires') : t('pages.accessRequests.create.durationHintPermanent')}
               </p>
             </div>
             <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
+              <Button variant="outline" onClick={() => setCreateOpen(false)}>{t('common.cancel')}</Button>
               <Button disabled={submitDisabled}
                 onClick={() => createMutation.mutate(newReq)}>
-                {createMutation.isPending ? 'Submitting...' : 'Submit Request'}
+                {createMutation.isPending ? t('pages.accessRequests.create.submitting') : t('pages.accessRequests.create.submit')}
               </Button>
             </div>
           </div>
@@ -565,29 +586,29 @@ export function AccessRequestsPage() {
       {/* Approve/Deny Dialog */}
       <Dialog open={approvalOpen} onOpenChange={setApprovalOpen}>
         <DialogContent>
-          <DialogHeader><DialogTitle>{approvalAction === 'approve' ? 'Approve' : 'Deny'} Request</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{approvalAction === 'approve' ? t('pages.accessRequests.approval.approveTitle') : t('pages.accessRequests.approval.denyTitle')}</DialogTitle></DialogHeader>
           {selectedRequest && (
             <div className="space-y-4">
               <div className="rounded-lg border p-3 text-sm space-y-1">
-                <p><span className="font-medium">Requester:</span> {selectedRequest.requester_name}</p>
-                <p><span className="font-medium">Resource:</span> {selectedRequest.resource_name}</p>
-                <p><span className="font-medium">Type:</span> {selectedRequest.resource_type}</p>
-                {selectedRequest.justification && <p><span className="font-medium">Justification:</span> {selectedRequest.justification}</p>}
+                <p><span className="font-medium">{t('pages.accessRequests.approval.requester')}</span> {selectedRequest.requester_name}</p>
+                <p><span className="font-medium">{t('pages.accessRequests.approval.resource')}</span> {selectedRequest.resource_name}</p>
+                <p><span className="font-medium">{t('pages.accessRequests.approval.type')}</span> {selectedRequest.resource_type}</p>
+                {selectedRequest.justification && <p><span className="font-medium">{t('pages.accessRequests.approval.justification')}</span> {selectedRequest.justification}</p>}
               </div>
               <div>
-                <label className="text-sm font-medium">Comments</label>
-                <textarea className="w-full rounded-md border p-2 text-sm" rows={3} placeholder="Add comments..."
+                <label className="text-sm font-medium">{t('pages.accessRequests.approval.commentsLabel')}</label>
+                <textarea className="w-full rounded-md border p-2 text-sm" rows={3} placeholder={t('pages.accessRequests.approval.commentsPlaceholder')}
                   value={comments} onChange={e => setComments(e.target.value)} />
               </div>
               <div className="flex justify-end gap-2">
-                <Button variant="outline" onClick={() => setApprovalOpen(false)}>Cancel</Button>
+                <Button variant="outline" onClick={() => setApprovalOpen(false)}>{t('common.cancel')}</Button>
                 <Button variant={approvalAction === 'approve' ? 'default' : 'destructive'}
                   disabled={approveMutation.isPending || denyMutation.isPending}
                   onClick={() => {
                     if (approvalAction === 'approve') approveMutation.mutate({ id: selectedRequest.id, comments })
                     else denyMutation.mutate({ id: selectedRequest.id, comments })
                   }}>
-                  {approvalAction === 'approve' ? 'Approve' : 'Deny'}
+                  {approvalAction === 'approve' ? t('pages.accessRequests.approve') : t('pages.accessRequests.deny')}
                 </Button>
               </div>
             </div>
@@ -607,30 +628,30 @@ export function AccessRequestsPage() {
         }}
       >
         <DialogContent>
-          <DialogHeader><DialogTitle>Retrieve Credential</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{t('pages.accessRequests.retrieveDialog.title')}</DialogTitle></DialogHeader>
           <div className="space-y-4">
             {!retrievedValue ? (
               <>
                 <p className="text-sm text-muted-foreground">
-                  The credential will be shown once. This action is audited.
+                  {t('pages.accessRequests.retrieveDialog.hint')}
                 </p>
                 <Button
                   onClick={() => selectedRetrieveId && retrieveMutation.mutate(selectedRetrieveId)}
                   disabled={retrieveMutation.isPending || !selectedRetrieveId}
                   className="w-full"
                 >
-                  {retrieveMutation.isPending ? 'Retrieving...' : 'Get Credential'}
+                  {retrieveMutation.isPending ? t('pages.accessRequests.retrieveDialog.getting') : t('pages.accessRequests.retrieveDialog.get')}
                 </Button>
               </>
             ) : (
               <div className="space-y-3">
                 <div className="flex items-center gap-2 p-3 bg-amber-50 border border-amber-200 rounded-md">
                   <p className="text-xs text-amber-800 font-medium">
-                    Value shown once — not stored after this dialog closes.
+                    {t('pages.accessRequests.retrieveDialog.shownOnce')}
                   </p>
                 </div>
                 <div className="flex gap-2">
-                  <Input
+                  <Input aria-label={t('common.revealedValue')}
                     value={retrievedValue}
                     readOnly
                     className="font-mono text-sm"
@@ -642,7 +663,7 @@ export function AccessRequestsPage() {
                     size="icon"
                     onClick={() => {
                       navigator.clipboard.writeText(retrievedValue)
-                      toast({ title: 'Copied' })
+                      toast({ title: t('pages.accessRequests.retrieveDialog.copied') })
                     }}
                   >
                     <Copy className="h-4 w-4" />

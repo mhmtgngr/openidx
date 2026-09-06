@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import { ShieldAlert, Plus, Trash2, MoreHorizontal, CheckCircle, Search as SearchIcon, Eye } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
@@ -62,6 +63,7 @@ const statusBadge = (status: string) => {
 }
 
 export function SecurityAlertsPage() {
+  const { t } = useTranslation()
   const queryClient = useQueryClient()
   const { toast } = useToast()
   const [statusFilter, setStatusFilter] = useState('all')
@@ -92,7 +94,7 @@ export function SecurityAlertsPage() {
       api.put(`/api/v1/security-alerts/${id}/status`, { status }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['security-alerts'] })
-      toast({ title: 'Alert status updated' })
+      toast({ title: t('pages.securityAlerts.toasts.statusUpdated') })
       setDetailAlert(null)
     },
   })
@@ -101,18 +103,19 @@ export function SecurityAlertsPage() {
     mutationFn: (data: typeof newIP) => api.post('/api/v1/ip-threats', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['ip-threats'] })
-      toast({ title: 'IP address blocked' })
+      toast({ title: t('pages.securityAlerts.toasts.ipBlocked') })
       setBlockOpen(false)
       setNewIP({ ip_address: '', threat_type: 'manual', reason: '', permanent: false })
     },
-    onError: () => toast({ title: 'Failed to block IP', variant: 'destructive' }),
+    onError: () =>
+      toast({ title: t('pages.securityAlerts.toasts.blockFailed'), variant: 'destructive' }),
   })
 
   const removeIPMutation = useMutation({
     mutationFn: (id: string) => api.delete(`/api/v1/ip-threats/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['ip-threats'] })
-      toast({ title: 'IP threat removed' })
+      toast({ title: t('pages.securityAlerts.toasts.ipRemoved') })
     },
   })
 
@@ -124,29 +127,32 @@ export function SecurityAlertsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold tracking-tight">Security Alerts</h1>
-        <p className="text-muted-foreground">Monitor security threats and manage IP blocklists</p>
+        <h1 className="text-3xl font-bold tracking-tight">{t('nav.items.securityAlerts')}</h1>
+        <p className="text-muted-foreground">{t('pages.securityAlerts.subtitle')}</p>
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">
         <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Open Alerts</CardTitle></CardHeader>
+          <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">{t('pages.securityAlerts.stats.open')}</CardTitle></CardHeader>
           <CardContent><div className="text-2xl font-bold">{openCount}</div></CardContent>
         </Card>
         <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Critical</CardTitle></CardHeader>
+          <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">{t('pages.securityAlerts.stats.critical')}</CardTitle></CardHeader>
           <CardContent><div className="text-2xl font-bold text-red-600">{criticalCount}</div></CardContent>
         </Card>
         <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Blocked IPs</CardTitle></CardHeader>
+          <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">{t('pages.securityAlerts.stats.blockedIps')}</CardTitle></CardHeader>
           <CardContent><div className="text-2xl font-bold">{threats.length}</div></CardContent>
         </Card>
       </div>
 
       <Tabs defaultValue="alerts">
         <TabsList>
-          <TabsTrigger value="alerts"><ShieldAlert className="mr-2 h-4 w-4" />Security Alerts</TabsTrigger>
-          <TabsTrigger value="ip-threats">IP Threat List</TabsTrigger>
+          <TabsTrigger value="alerts">
+            <ShieldAlert className="mr-2 h-4 w-4" />
+            {t('pages.securityAlerts.tabs.alerts')}
+          </TabsTrigger>
+          <TabsTrigger value="ip-threats">{t('pages.securityAlerts.tabs.threats')}</TabsTrigger>
         </TabsList>
 
         <TabsContent value="alerts">
@@ -154,23 +160,27 @@ export function SecurityAlertsPage() {
             <CardHeader>
               <div className="flex items-center gap-4">
                 <Select value={statusFilter} onValueChange={setStatusFilter}>
-                  <SelectTrigger className="w-[150px]"><SelectValue placeholder="Status" /></SelectTrigger>
+                  <SelectTrigger className="w-[150px]" aria-label={t('pages.securityAlerts.statusFilter.label')}>
+                    <SelectValue placeholder={t('pages.securityAlerts.statusFilter.placeholder')} />
+                  </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">All Status</SelectItem>
-                    <SelectItem value="open">Open</SelectItem>
-                    <SelectItem value="investigating">Investigating</SelectItem>
-                    <SelectItem value="resolved">Resolved</SelectItem>
-                    <SelectItem value="false_positive">False Positive</SelectItem>
+                    <SelectItem value="all">{t('pages.securityAlerts.statusFilter.all')}</SelectItem>
+                    <SelectItem value="open">{t('pages.securityAlerts.statusFilter.open')}</SelectItem>
+                    <SelectItem value="investigating">{t('pages.securityAlerts.statusFilter.investigating')}</SelectItem>
+                    <SelectItem value="resolved">{t('pages.securityAlerts.statusFilter.resolved')}</SelectItem>
+                    <SelectItem value="false_positive">{t('pages.securityAlerts.statusFilter.falsePositive')}</SelectItem>
                   </SelectContent>
                 </Select>
                 <Select value={severityFilter} onValueChange={setSeverityFilter}>
-                  <SelectTrigger className="w-[150px]"><SelectValue placeholder="Severity" /></SelectTrigger>
+                  <SelectTrigger className="w-[150px]" aria-label={t('pages.securityAlerts.severityFilter.label')}>
+                    <SelectValue placeholder={t('pages.securityAlerts.severityFilter.placeholder')} />
+                  </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">All Severity</SelectItem>
-                    <SelectItem value="critical">Critical</SelectItem>
-                    <SelectItem value="high">High</SelectItem>
-                    <SelectItem value="medium">Medium</SelectItem>
-                    <SelectItem value="low">Low</SelectItem>
+                    <SelectItem value="all">{t('pages.securityAlerts.severityFilter.all')}</SelectItem>
+                    <SelectItem value="critical">{t('pages.securityAlerts.severityFilter.critical')}</SelectItem>
+                    <SelectItem value="high">{t('pages.securityAlerts.severityFilter.high')}</SelectItem>
+                    <SelectItem value="medium">{t('pages.securityAlerts.severityFilter.medium')}</SelectItem>
+                    <SelectItem value="low">{t('pages.securityAlerts.severityFilter.low')}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -179,22 +189,26 @@ export function SecurityAlertsPage() {
               {alertsLoading ? (
                 <div className="flex flex-col items-center justify-center py-12">
                   <LoadingSpinner size="lg" />
-                  <p className="mt-4 text-sm text-muted-foreground">Loading alerts...</p>
+                  <p className="mt-4 text-sm text-muted-foreground">{t('pages.securityAlerts.loading')}</p>
                 </div>
               ) : alertsError ? (
-                <QueryError error={alertsErrorObj} resource="security alerts" />
+                <QueryError error={alertsErrorObj} resource={t('pages.securityAlerts.resourceName')} />
               ) : alerts.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
                   <ShieldAlert className="h-12 w-12 text-muted-foreground/40 mb-3" />
-                  <p className="font-medium">No alerts found</p>
-                  <p className="text-sm">Security alerts will appear here when threats are detected</p>
+                  <p className="font-medium">{t('pages.securityAlerts.empty')}</p>
+                  <p className="text-sm">{t('pages.securityAlerts.emptyHint')}</p>
                 </div>
               ) : (
                 <div className="rounded-md border">
                   <Table>
                     <TableHeader><TableRow>
-                      <TableHead>Severity</TableHead><TableHead>Type</TableHead><TableHead>Title</TableHead>
-                      <TableHead>Source IP</TableHead><TableHead>Status</TableHead><TableHead>Created</TableHead>
+                      <TableHead>{t('pages.securityAlerts.table.severity')}</TableHead>
+                      <TableHead>{t('pages.securityAlerts.table.type')}</TableHead>
+                      <TableHead>{t('pages.securityAlerts.table.title')}</TableHead>
+                      <TableHead>{t('pages.securityAlerts.table.sourceIp')}</TableHead>
+                      <TableHead>{t('pages.securityAlerts.table.status')}</TableHead>
+                      <TableHead>{t('pages.securityAlerts.table.created')}</TableHead>
                       <TableHead className="w-[50px]"></TableHead>
                     </TableRow></TableHeader>
                     <TableBody>
@@ -216,21 +230,21 @@ export function SecurityAlertsPage() {
                               <DropdownMenuContent align="end">
                                 <DropdownMenuItem onClick={() => setDetailAlert(a)}>
                                   <Eye className="mr-2 h-4 w-4" />
-                                  View Details
+                                  {t('pages.securityAlerts.menu.view')}
                                 </DropdownMenuItem>
                                 {a.status === 'open' && (
                                   <>
                                     <DropdownMenuSeparator />
                                     <DropdownMenuItem onClick={() => updateStatusMutation.mutate({ id: a.id, status: 'investigating' })}>
                                       <SearchIcon className="mr-2 h-4 w-4" />
-                                      Investigating
+                                      {t('pages.securityAlerts.menu.investigating')}
                                     </DropdownMenuItem>
                                     <DropdownMenuItem onClick={() => updateStatusMutation.mutate({ id: a.id, status: 'resolved' })}>
                                       <CheckCircle className="mr-2 h-4 w-4 text-green-600" />
-                                      Resolve
+                                      {t('pages.securityAlerts.menu.resolve')}
                                     </DropdownMenuItem>
                                     <DropdownMenuItem onClick={() => updateStatusMutation.mutate({ id: a.id, status: 'false_positive' })}>
-                                      False Positive
+                                      {t('pages.securityAlerts.menu.falsePositive')}
                                     </DropdownMenuItem>
                                   </>
                                 )}
@@ -251,43 +265,58 @@ export function SecurityAlertsPage() {
           <Card>
             <CardHeader>
               <div className="flex items-center justify-between">
-                <CardTitle>IP Threat List</CardTitle>
-                <Button onClick={() => setBlockOpen(true)}><Plus className="mr-2 h-4 w-4" />Block IP</Button>
+                <CardTitle>{t('pages.securityAlerts.threats.title')}</CardTitle>
+                <Button onClick={() => setBlockOpen(true)}>
+                  <Plus className="mr-2 h-4 w-4" />
+                  {t('pages.securityAlerts.threats.blockIp')}
+                </Button>
               </div>
             </CardHeader>
             <CardContent>
               {threatsLoading ? (
                 <div className="flex flex-col items-center justify-center py-12">
                   <LoadingSpinner size="lg" />
-                  <p className="mt-4 text-sm text-muted-foreground">Loading threat list...</p>
+                  <p className="mt-4 text-sm text-muted-foreground">{t('pages.securityAlerts.threats.loading')}</p>
                 </div>
               ) : threats.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
                   <ShieldAlert className="h-12 w-12 text-muted-foreground/40 mb-3" />
-                  <p className="font-medium">No blocked IPs</p>
-                  <p className="text-sm">Blocked IP addresses will appear here</p>
+                  <p className="font-medium">{t('pages.securityAlerts.threats.empty')}</p>
+                  <p className="text-sm">{t('pages.securityAlerts.threats.emptyHint')}</p>
                 </div>
               ) : (
                 <Table>
                   <TableHeader><TableRow>
-                    <TableHead>IP Address</TableHead><TableHead>Type</TableHead><TableHead>Reason</TableHead>
-                    <TableHead>Permanent</TableHead><TableHead>Blocked Until</TableHead><TableHead>Actions</TableHead>
+                    <TableHead>{t('pages.securityAlerts.threats.table.ip')}</TableHead>
+                    <TableHead>{t('pages.securityAlerts.threats.table.type')}</TableHead>
+                    <TableHead>{t('pages.securityAlerts.threats.table.reason')}</TableHead>
+                    <TableHead>{t('pages.securityAlerts.threats.table.permanent')}</TableHead>
+                    <TableHead>{t('pages.securityAlerts.threats.table.blockedUntil')}</TableHead>
+                    <TableHead>{t('pages.securityAlerts.threats.table.actions')}</TableHead>
                   </TableRow></TableHeader>
                   <TableBody>
-                    {threats.map(t => (
-                      <TableRow key={t.id}>
-                        <TableCell className="font-mono">{t.ip_address}</TableCell>
-                        <TableCell><Badge variant="outline">{t.threat_type}</Badge></TableCell>
-                        <TableCell>{t.reason}</TableCell>
-                        <TableCell>{t.permanent ? <Badge>Permanent</Badge> : 'No'}</TableCell>
-                        <TableCell>{t.blocked_until ? formatDate(t.blocked_until) : '-'}</TableCell>
+                    {threats.map(threat => (
+                      <TableRow key={threat.id}>
+                        <TableCell className="font-mono">{threat.ip_address}</TableCell>
+                        <TableCell><Badge variant="outline">{threat.threat_type}</Badge></TableCell>
+                        <TableCell>{threat.reason}</TableCell>
+                        <TableCell>
+                          {threat.permanent ? (
+                            <Badge>{t('pages.securityAlerts.threats.isPermanent')}</Badge>
+                          ) : (
+                            t('pages.securityAlerts.threats.no')
+                          )}
+                        </TableCell>
+                        <TableCell>{threat.blocked_until ? formatDate(threat.blocked_until) : '-'}</TableCell>
                         <TableCell>
                           <ConfirmAction
-                            title="Unblock this IP address?"
-                            description={`This removes ${t.ip_address} from the IP blocklist. Traffic from this address will be allowed again. This cannot be undone (you would need to re-block it manually).`}
+                            title={t('pages.securityAlerts.threats.confirmUnblock.title')}
+                            description={t('pages.securityAlerts.threats.confirmUnblock.description', {
+                              ip: threat.ip_address,
+                            })}
                             destructive
-                            confirmLabel="Unblock"
-                            onConfirm={() => removeIPMutation.mutateAsync(t.id)}
+                            confirmLabel={t('pages.securityAlerts.threats.confirmUnblock.confirm')}
+                            onConfirm={() => removeIPMutation.mutateAsync(threat.id)}
                           >
                             {(open) => (
                               <Button variant="ghost" size="sm" onClick={open}>
@@ -314,16 +343,22 @@ export function SecurityAlertsPage() {
             <div className="space-y-3 text-sm">
               <p>{detailAlert.description}</p>
               <div className="grid grid-cols-2 gap-2">
-                <p><span className="font-medium">Type:</span> {detailAlert.alert_type}</p>
-                <p><span className="font-medium">Severity:</span> {detailAlert.severity}</p>
-                <p><span className="font-medium">Status:</span> {detailAlert.status}</p>
-                <p><span className="font-medium">Source IP:</span> {detailAlert.source_ip}</p>
+                <p><span className="font-medium">{t('pages.securityAlerts.detail.type')}</span> {detailAlert.alert_type}</p>
+                <p><span className="font-medium">{t('pages.securityAlerts.detail.severity')}</span> {detailAlert.severity}</p>
+                <p><span className="font-medium">{t('pages.securityAlerts.detail.status')}</span> {detailAlert.status}</p>
+                <p><span className="font-medium">{t('pages.securityAlerts.detail.sourceIp')}</span> {detailAlert.source_ip}</p>
               </div>
               {detailAlert.status === 'open' && (
                 <div className="flex gap-2 pt-2">
-                  <Button size="sm" onClick={() => updateStatusMutation.mutate({ id: detailAlert.id, status: 'investigating' })}>Investigating</Button>
-                  <Button size="sm" onClick={() => updateStatusMutation.mutate({ id: detailAlert.id, status: 'resolved' })}>Resolve</Button>
-                  <Button size="sm" variant="outline" onClick={() => updateStatusMutation.mutate({ id: detailAlert.id, status: 'false_positive' })}>False Positive</Button>
+                  <Button size="sm" onClick={() => updateStatusMutation.mutate({ id: detailAlert.id, status: 'investigating' })}>
+                    {t('pages.securityAlerts.menu.investigating')}
+                  </Button>
+                  <Button size="sm" onClick={() => updateStatusMutation.mutate({ id: detailAlert.id, status: 'resolved' })}>
+                    {t('pages.securityAlerts.menu.resolve')}
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => updateStatusMutation.mutate({ id: detailAlert.id, status: 'false_positive' })}>
+                    {t('pages.securityAlerts.menu.falsePositive')}
+                  </Button>
                 </div>
               )}
             </div>
@@ -334,39 +369,41 @@ export function SecurityAlertsPage() {
       {/* Block IP Dialog */}
       <Dialog open={blockOpen} onOpenChange={setBlockOpen}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Block IP Address</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{t('pages.securityAlerts.blockDialog.title')}</DialogTitle></DialogHeader>
           <div className="space-y-4">
             <div>
-              <label className="text-sm font-medium">IP Address</label>
+              <label className="text-sm font-medium">{t('pages.securityAlerts.blockDialog.ip')}</label>
               <Input placeholder="192.168.1.1" value={newIP.ip_address}
                 onChange={e => setNewIP(p => ({ ...p, ip_address: e.target.value }))} />
             </div>
             <div>
-              <label className="text-sm font-medium">Threat Type</label>
+              <label htmlFor="security-alerts-threat-type" className="text-sm font-medium">{t('pages.securityAlerts.blockDialog.threatType')}</label>
               <Select value={newIP.threat_type} onValueChange={v => setNewIP(p => ({ ...p, threat_type: v }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger id="security-alerts-threat-type"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="manual">Manual Block</SelectItem>
-                  <SelectItem value="brute_force">Brute Force</SelectItem>
-                  <SelectItem value="suspicious">Suspicious Activity</SelectItem>
+                  <SelectItem value="manual">{t('pages.securityAlerts.blockDialog.typeManual')}</SelectItem>
+                  <SelectItem value="brute_force">{t('pages.securityAlerts.blockDialog.typeBruteForce')}</SelectItem>
+                  <SelectItem value="suspicious">{t('pages.securityAlerts.blockDialog.typeSuspicious')}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <div>
-              <label className="text-sm font-medium">Reason</label>
-              <Input placeholder="Reason for blocking" value={newIP.reason}
+              <label className="text-sm font-medium">{t('pages.securityAlerts.blockDialog.reason')}</label>
+              <Input placeholder={t('pages.securityAlerts.blockDialog.reasonPlaceholder')} value={newIP.reason}
                 onChange={e => setNewIP(p => ({ ...p, reason: e.target.value }))} />
             </div>
             <label className="flex items-center gap-2 text-sm">
               <input type="checkbox" checked={newIP.permanent} onChange={e => setNewIP(p => ({ ...p, permanent: e.target.checked }))} />
-              Permanent block
+              {t('pages.securityAlerts.blockDialog.permanent')}
             </label>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setBlockOpen(false)}>Cancel</Button>
+            <Button variant="outline" onClick={() => setBlockOpen(false)}>{t('common.cancel')}</Button>
             <Button disabled={!newIP.ip_address || blockIPMutation.isPending}
               onClick={() => blockIPMutation.mutate(newIP)}>
-              {blockIPMutation.isPending ? 'Blocking...' : 'Block IP'}
+              {blockIPMutation.isPending
+                ? t('pages.securityAlerts.blockDialog.blocking')
+                : t('pages.securityAlerts.blockDialog.submit')}
             </Button>
           </DialogFooter>
         </DialogContent>

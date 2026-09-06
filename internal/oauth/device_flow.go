@@ -16,6 +16,8 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 // RFC 8628 — OAuth 2.0 Device Authorization Grant.
@@ -80,9 +82,6 @@ type deviceCodeRecord struct {
 // cannot tell a forged line from a real one. Mirrors the helper of the same name
 // in internal/identity; it is duplicated rather than shared because a one-line
 // string filter is not worth a package dependency between two services.
-func scrubLogValue(s string) string {
-	return strings.ReplaceAll(strings.ReplaceAll(s, "\n", ""), "\r", "")
-}
 
 // hashDeviceCode returns the stored form of a device_code.
 func hashDeviceCode(code string) string {
@@ -252,7 +251,7 @@ func (s *Service) handleDeviceAuthorization(c *gin.Context) {
 	verificationURI := s.deviceVerificationURI(org)
 
 	s.logger.Info("device authorization issued",
-		zap.String("client_id", scrubLogValue(clientID)), zap.String("org_id", org.ID))
+		zap.String("client_id", logsafe.Clean(clientID)), zap.String("org_id", org.ID))
 
 	c.JSON(200, gin.H{
 		"device_code":      deviceCode,
@@ -376,7 +375,7 @@ func (s *Service) handleDeviceCodeGrant(c *gin.Context) {
 	// makes redemption single-use under concurrent polls: exactly one caller can
 	// move consumed_at from NULL, so two simultaneous polls cannot both be
 	// handed a token for one authorization.
-	claimedUser, err := s.claimApprovedDeviceCode(ctx, rec.ID)
+	claimedUser, err := s.claimApprovedDeviceCode(ctx, rec.ID, rec.OrgID)
 	if errors.Is(err, errDeviceCodeNotFound) {
 		c.JSON(400, gin.H{"error": "invalid_grant"})
 		return
@@ -428,7 +427,7 @@ func (s *Service) handleDeviceCodeGrant(c *gin.Context) {
 	}
 
 	s.logger.Info("device grant redeemed",
-		zap.String("client_id", scrubLogValue(clientID)), zap.String("user_id", scrubLogValue(claimedUser)))
+		zap.String("client_id", logsafe.Clean(clientID)), zap.String("user_id", logsafe.Clean(claimedUser)))
 	c.JSON(200, resp)
 }
 
@@ -439,13 +438,14 @@ func (s *Service) handleDeviceCodeGrant(c *gin.Context) {
 // polls: only one caller can move consumed_at off NULL, so two simultaneous
 // polls cannot both be handed a token for one authorization. Doing this check in
 // Go would be the same read-then-write race that makes a "used" flag useless.
-func (s *Service) claimApprovedDeviceCode(ctx context.Context, id string) (string, error) {
+func (s *Service) claimApprovedDeviceCode(ctx context.Context, id, orgID string) (string, error) {
 	var userID string
 	err := s.db.Pool.QueryRow(ctx, `
 		UPDATE oauth_device_codes
 		   SET consumed_at = NOW()
-		 WHERE id = $1 AND consumed_at IS NULL AND state = 'approved' AND expires_at > NOW()
-		RETURNING COALESCE(user_id::text, '')`, id).Scan(&userID)
+		 WHERE id = $1 AND org_id = $2
+		   AND consumed_at IS NULL AND state = 'approved' AND expires_at > NOW()
+		RETURNING COALESCE(user_id::text, '')`, id, orgID).Scan(&userID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", errDeviceCodeNotFound
 	}
@@ -488,7 +488,8 @@ func (s *Service) throttleDevicePoll(ctx context.Context, rec *deviceCodeRecord)
 	now := time.Now()
 	if rec.LastPolledAt == nil {
 		if _, err := s.db.Pool.Exec(ctx,
-			`UPDATE oauth_device_codes SET last_polled_at = $2 WHERE id = $1`, rec.ID, now); err != nil {
+			`UPDATE oauth_device_codes SET last_polled_at = $2 WHERE id = $1 AND org_id = $3`,
+			rec.ID, now, rec.OrgID); err != nil {
 			s.logger.Warn("failed to record device poll", zap.Error(err))
 		}
 		return false, rec.Interval
@@ -496,7 +497,8 @@ func (s *Service) throttleDevicePoll(ctx context.Context, rec *deviceCodeRecord)
 
 	if now.Sub(*rec.LastPolledAt) >= time.Duration(rec.Interval)*time.Second {
 		if _, err := s.db.Pool.Exec(ctx,
-			`UPDATE oauth_device_codes SET last_polled_at = $2 WHERE id = $1`, rec.ID, now); err != nil {
+			`UPDATE oauth_device_codes SET last_polled_at = $2 WHERE id = $1 AND org_id = $3`,
+			rec.ID, now, rec.OrgID); err != nil {
 			s.logger.Warn("failed to record device poll", zap.Error(err))
 		}
 		return false, rec.Interval
@@ -504,8 +506,8 @@ func (s *Service) throttleDevicePoll(ctx context.Context, rec *deviceCodeRecord)
 
 	next := rec.Interval + devicePollInterval
 	if _, err := s.db.Pool.Exec(ctx,
-		`UPDATE oauth_device_codes SET interval_secs = $2, last_polled_at = $3 WHERE id = $1`,
-		rec.ID, next, now); err != nil {
+		`UPDATE oauth_device_codes SET interval_secs = $2, last_polled_at = $3 WHERE id = $1 AND org_id = $4`,
+		rec.ID, next, now, rec.OrgID); err != nil {
 		s.logger.Warn("failed to raise device poll interval", zap.Error(err))
 	}
 	return true, next

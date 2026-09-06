@@ -11,16 +11,30 @@ import (
 // Admin HTTP surface for EDR/MDM posture sources, under
 // /api/v1/access/ziti/posture/edr. Registered by RegisterRoutes.
 
-func edrOrgID(c *gin.Context) string {
+// requireEDROrg resolves the caller's org id, refusing the request when there is
+// none.
+//
+// It used to return "" instead, and the store paired that with an
+// OR-empty-string escape hatch on get, list and delete — so an absent
+// organization meant EVERY organization. Nothing reached it, because
+// TenantResolver runs in front of these routes and either attaches an
+// organization or aborts, but the wildcard contradicts the FORCE RLS belt v165
+// applies, under which an unscoped read returns nothing rather than everything.
+func requireEDROrg(c *gin.Context) (string, bool) {
 	org, err := orgctx.From(c.Request.Context())
-	if err != nil {
-		return ""
+	if err != nil || org.ID == "" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return "", false
 	}
-	return org.ID
+	return org.ID, true
 }
 
 func (s *Service) handleListEDRSources(c *gin.Context) {
-	sources, err := s.ListEDRSources(c.Request.Context(), edrOrgID(c))
+	orgID, ok := requireEDROrg(c)
+	if !ok {
+		return
+	}
+	sources, err := s.ListEDRSources(c.Request.Context(), orgID)
 	if err != nil {
 		s.logger.Error("list edr sources failed", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
@@ -38,7 +52,11 @@ func (s *Service) handleCreateEDRSource(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	src, err := s.CreateEDRSource(c.Request.Context(), edrOrgID(c), &in)
+	orgID, ok := requireEDROrg(c)
+	if !ok {
+		return
+	}
+	src, err := s.CreateEDRSource(c.Request.Context(), orgID, &in)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -49,7 +67,11 @@ func (s *Service) handleCreateEDRSource(c *gin.Context) {
 }
 
 func (s *Service) handleGetEDRSource(c *gin.Context) {
-	src, err := s.GetEDRSource(c.Request.Context(), edrOrgID(c), c.Param("id"))
+	orgID, ok := requireEDROrg(c)
+	if !ok {
+		return
+	}
+	src, err := s.GetEDRSource(c.Request.Context(), orgID, c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "source not found"})
 		return
@@ -58,7 +80,11 @@ func (s *Service) handleGetEDRSource(c *gin.Context) {
 }
 
 func (s *Service) handleDeleteEDRSource(c *gin.Context) {
-	if err := s.DeleteEDRSource(c.Request.Context(), edrOrgID(c), c.Param("id")); err != nil {
+	orgID, ok := requireEDROrg(c)
+	if !ok {
+		return
+	}
+	if err := s.DeleteEDRSource(c.Request.Context(), orgID, c.Param("id")); err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
 	}
@@ -68,7 +94,11 @@ func (s *Service) handleDeleteEDRSource(c *gin.Context) {
 // handleTestEDRSource verifies connectivity + credentials without side effects.
 func (s *Service) handleTestEDRSource(c *gin.Context) {
 	id := c.Param("id")
-	if _, err := s.GetEDRSource(c.Request.Context(), edrOrgID(c), id); err != nil {
+	orgID, ok := requireEDROrg(c)
+	if !ok {
+		return
+	}
+	if _, err := s.GetEDRSource(c.Request.Context(), orgID, id); err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "source not found"})
 		return
 	}
@@ -87,7 +117,11 @@ func (s *Service) handleTestEDRSource(c *gin.Context) {
 // handleSyncEDRSource runs an ingestion pass now and returns the summary.
 func (s *Service) handleSyncEDRSource(c *gin.Context) {
 	id := c.Param("id")
-	if _, err := s.GetEDRSource(c.Request.Context(), edrOrgID(c), id); err != nil {
+	orgID, ok := requireEDROrg(c)
+	if !ok {
+		return
+	}
+	if _, err := s.GetEDRSource(c.Request.Context(), orgID, id); err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "source not found"})
 		return
 	}

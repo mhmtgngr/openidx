@@ -92,13 +92,13 @@ test.describe('Dashboard - Load and Display', () => {
   test.beforeEach(async ({ page }) => {
     dashboardPage = new DashboardPage(page);
 
-    // Mock authentication
-    await page.evaluate(() => {
-      localStorage.setItem('auth_tokens', JSON.stringify({
-        access_token: 'test-token',
-        refresh_token: 'test-refresh',
-      }));
-    });
+    // The signed-in storageState from auth.setup.ts is the session; there is
+    // nothing to fake here. What stood in this place threw on every run:
+    // page.evaluate reaches into the CURRENT document, and a fresh page is
+    // still on about:blank, whose origin is opaque -- "SecurityError: Failed
+    // to read the 'localStorage' property from 'Window'". It also wrote
+    // `auth_tokens`, a key lib/auth.tsx has never read (it reads `token` and
+    // `refresh_token`), so even on a real origin it authenticated nothing.
 
     // Mock dashboard API
     await page.route('**/api/v1/dashboard', async (route) => {
@@ -250,12 +250,10 @@ test.describe('Dashboard - Navigation', () => {
   test.beforeEach(async ({ page }) => {
     dashboardPage = new DashboardPage(page);
 
-    await page.evaluate(() => {
-      localStorage.setItem('auth_tokens', JSON.stringify({
-        access_token: 'test-token',
-        refresh_token: 'test-refresh',
-      }));
-    });
+    // Session comes from the signed-in storageState (auth.setup.ts). See the
+    // note in the first beforeEach: page.evaluate reaches into the current
+    // document, and before the first goto that is about:blank, whose origin is
+    // opaque -- so this threw every time it ran.
 
     // Mock dashboard API
     await page.route('**/api/v1/dashboard', async (route) => {
@@ -380,12 +378,10 @@ test.describe('Dashboard - Navigation', () => {
 
 test.describe('Dashboard - Loading States', () => {
   test('should show loading state while fetching data', async ({ page }) => {
-    await page.evaluate(() => {
-      localStorage.setItem('auth_tokens', JSON.stringify({
-        access_token: 'test-token',
-        refresh_token: 'test-refresh',
-      }));
-    });
+    // Session comes from the signed-in storageState (auth.setup.ts). See the
+    // note in the first beforeEach: page.evaluate reaches into the current
+    // document, and before the first goto that is about:blank, whose origin is
+    // opaque -- so this threw every time it ran.
 
     // Slow API response
     await page.route('**/api/v1/dashboard', async (route) => {
@@ -439,12 +435,10 @@ test.describe('Dashboard - Loading States', () => {
 
 test.describe('Dashboard - Error Handling', () => {
   test('should handle API error gracefully', async ({ page }) => {
-    await page.evaluate(() => {
-      localStorage.setItem('auth_tokens', JSON.stringify({
-        access_token: 'test-token',
-        refresh_token: 'test-refresh',
-      }));
-    });
+    // Session comes from the signed-in storageState (auth.setup.ts). See the
+    // note in the first beforeEach: page.evaluate reaches into the current
+    // document, and before the first goto that is about:blank, whose origin is
+    // opaque -- so this threw every time it ran.
 
     // Mock API error
     await page.route('**/api/v1/dashboard', async (route) => {
@@ -462,12 +456,10 @@ test.describe('Dashboard - Error Handling', () => {
   });
 
   test('should handle partial data response', async ({ page }) => {
-    await page.evaluate(() => {
-      localStorage.setItem('auth_tokens', JSON.stringify({
-        access_token: 'test-token',
-        refresh_token: 'test-refresh',
-      }));
-    });
+    // Session comes from the signed-in storageState (auth.setup.ts). See the
+    // note in the first beforeEach: page.evaluate reaches into the current
+    // document, and before the first goto that is about:blank, whose origin is
+    // opaque -- so this threw every time it ran.
 
     // Mock partial data
     await page.route('**/api/v1/dashboard', async (route) => {
@@ -495,12 +487,10 @@ test.describe('Dashboard - Error Handling', () => {
 
 test.describe('Dashboard - Real-time Updates', () => {
   test('should refresh data when navigating back to dashboard', async ({ page }) => {
-    await page.evaluate(() => {
-      localStorage.setItem('auth_tokens', JSON.stringify({
-        access_token: 'test-token',
-        refresh_token: 'test-refresh',
-      }));
-    });
+    // Session comes from the signed-in storageState (auth.setup.ts). See the
+    // note in the first beforeEach: page.evaluate reaches into the current
+    // document, and before the first goto that is about:blank, whose origin is
+    // opaque -- so this threw every time it ran.
 
     let requestCount = 0;
 

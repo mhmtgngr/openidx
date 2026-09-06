@@ -7,6 +7,10 @@ import (
 	"go.uber.org/zap"
 )
 
+// mcpTestOrgID is the tenant these tests run as. They used to pass the empty
+// string and rely on the store's OR-empty-string wildcard, which v168 removed.
+const mcpTestOrgID = "00000000-0000-0000-0000-0000000000d1"
+
 const mcpSchema = `
 CREATE TABLE IF NOT EXISTS mcp_servers (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(), org_id UUID, name VARCHAR(128) NOT NULL,
@@ -30,10 +34,10 @@ func TestMCPServerCRUD(t *testing.T) {
 	s := &Service{db: db, logger: zap.NewNop()}
 
 	// Requires an endpoint.
-	if _, err := s.CreateMCPServer(ctx, "", &MCPServerInput{Name: "nowhere"}); err == nil {
+	if _, err := s.CreateMCPServer(ctx, mcpTestOrgID, &MCPServerInput{Name: "nowhere"}); err == nil {
 		t.Error("expected error without ziti_service or upstream_url")
 	}
-	srv, err := s.CreateMCPServer(ctx, "", &MCPServerInput{
+	srv, err := s.CreateMCPServer(ctx, mcpTestOrgID, &MCPServerInput{
 		Name: "tools-a", UpstreamURL: "https://mcp.internal", Enabled: true,
 	})
 	if err != nil {
@@ -43,15 +47,15 @@ func TestMCPServerCRUD(t *testing.T) {
 		t.Fatal("expected server id")
 	}
 	// Lookup by name (enabled only).
-	got, err := s.getMCPServerByName(ctx, "", "tools-a")
+	got, err := s.getMCPServerByName(ctx, mcpTestOrgID, "tools-a")
 	if err != nil || got.ID != srv.ID {
 		t.Fatalf("getMCPServerByName: %v", err)
 	}
-	list, _ := s.ListMCPServers(ctx, "")
+	list, _ := s.ListMCPServers(ctx, mcpTestOrgID)
 	if len(list) != 1 {
 		t.Fatalf("expected 1 server, got %d", len(list))
 	}
-	if err := s.DeleteMCPServer(ctx, "", srv.ID); err != nil {
+	if err := s.DeleteMCPServer(ctx, mcpTestOrgID, srv.ID); err != nil {
 		t.Fatalf("DeleteMCPServer: %v", err)
 	}
 }
@@ -64,25 +68,25 @@ func TestMCPToolAllowlist(t *testing.T) {
 	db.Pool.Exec(ctx, mcpSchema)
 	s := &Service{db: db, logger: zap.NewNop()}
 
-	srv, _ := s.CreateMCPServer(ctx, "", &MCPServerInput{Name: "a", UpstreamURL: "https://x", Enabled: true})
+	srv, _ := s.CreateMCPServer(ctx, mcpTestOrgID, &MCPServerInput{Name: "a", UpstreamURL: "https://x", Enabled: true})
 
 	// client:agent-1 may call tool "search"; role:analyst may call anything (*).
-	s.AddMCPToolPolicy(ctx, "", srv.ID, &MCPToolPolicyInput{Principal: "client:agent-1", Tool: "search"})
-	s.AddMCPToolPolicy(ctx, "", srv.ID, &MCPToolPolicyInput{Principal: "role:analyst", Tool: "*"})
+	s.AddMCPToolPolicy(ctx, mcpTestOrgID, srv.ID, &MCPToolPolicyInput{Principal: "client:agent-1", Tool: "search"})
+	s.AddMCPToolPolicy(ctx, mcpTestOrgID, srv.ID, &MCPToolPolicyInput{Principal: "role:analyst", Tool: "*"})
 
 	// agent-1 can call search, not delete.
-	if !s.toolAllowed(ctx, srv.ID, "agent-1", nil, "search") {
+	if !s.toolAllowed(ctx, srv.OrgID, srv.ID, "agent-1", nil, "search") {
 		t.Error("agent-1 should be allowed to call search")
 	}
-	if s.toolAllowed(ctx, srv.ID, "agent-1", nil, "delete") {
+	if s.toolAllowed(ctx, srv.OrgID, srv.ID, "agent-1", nil, "delete") {
 		t.Error("agent-1 should NOT be allowed to call delete")
 	}
 	// A principal with role:analyst can call any tool via the wildcard.
-	if !s.toolAllowed(ctx, srv.ID, "agent-2", []string{"analyst"}, "delete") {
+	if !s.toolAllowed(ctx, srv.OrgID, srv.ID, "agent-2", []string{"analyst"}, "delete") {
 		t.Error("role:analyst wildcard should allow delete")
 	}
 	// An unknown agent with no roles is denied.
-	if s.toolAllowed(ctx, srv.ID, "stranger", nil, "search") {
+	if s.toolAllowed(ctx, srv.OrgID, srv.ID, "stranger", nil, "search") {
 		t.Error("unknown agent should be denied")
 	}
 }

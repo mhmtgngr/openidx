@@ -232,15 +232,37 @@ func (s *Service) checkServiceHealth(ctx context.Context, serviceName, serviceUR
 	}
 }
 
-// Logging helpers - simplified without type assertion
+// Logging helpers.
+//
+// These were empty bodies with a "would use proper logger" comment, so the
+// gateway's shutdown sequence and every per-request line went nowhere — while
+// NewService REQUIRES cfg.Logger and refuses to start without one. A service
+// that demands a logger and then throws each line away is the same defect
+// class as a switch that renders but enforces nothing, and it is worse here
+// than on a screen: the gateway is the one process whose logs say whether a
+// request was proxied, to where, and how long it took.
 func (s *Service) logInfo(msg string, fields ...zap.Field) {
-	// In production, would use proper logger
-	// For now, this is a placeholder
+	if s.config.Logger != nil {
+		s.config.Logger.Info(msg, anyFields(fields)...)
+	}
 }
 
 func (s *Service) logError(msg string, fields ...zap.Field) {
-	// In production, would use proper logger
-	// For now, this is a placeholder
+	if s.config.Logger != nil {
+		s.config.Logger.Error(msg, anyFields(fields)...)
+	}
+}
+
+// The Logger interface (config.go) is variadic over interface{} so that a
+// caller need not depend on zap; cmd/gateway-service's wrapper type-asserts
+// each element back to zap.Field. Widening here rather than at every call
+// site keeps the strongly-typed zap.Field API the rest of this file uses.
+func anyFields(fields []zap.Field) []interface{} {
+	out := make([]interface{}, len(fields))
+	for i, f := range fields {
+		out[i] = f
+	}
+	return out
 }
 
 // Create middleware implementations

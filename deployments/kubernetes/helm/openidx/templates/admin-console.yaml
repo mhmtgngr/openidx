@@ -37,7 +37,7 @@ spec:
       {{- end }}
       containers:
         - name: admin-console
-          image: "{{ .Values.global.imageRegistry }}/{{ .Values.adminConsole.image.repository }}:{{ .Values.adminConsole.image.tag }}"
+          image: "{{ include "openidx.imageRegistry" . }}/{{ .Values.adminConsole.image.repository }}:{{ .Values.adminConsole.image.tag }}"
           imagePullPolicy: {{ .Values.adminConsole.image.pullPolicy }}
           {{- include "openidx.preStopHook" . | nindent 10 }}
           ports:

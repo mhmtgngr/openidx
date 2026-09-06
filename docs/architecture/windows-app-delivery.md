@@ -151,7 +151,7 @@ launch because RemoteApp windows don't repaint with the GFX pipeline on, which
 | Schema | `internal/migrations/sql_v119.go`, `internal/migrations/sql_v120.go` |
 | Host prep / discovery script | `scripts/windows/Prepare-OpenIDXAppHost.ps1` |
 | Console (admin catalog, pools, discovery) | `web/admin-console/src/pages/windows-apps.tsx` |
-| End-user portal tiles | `web/admin-console/src/pages/my-windows-apps.tsx` (`GET /pam/my-apps`) |
+| End-user portal tiles | `web/admin-console/src/components/my-windows-apps-section.tsx` (`GET /pam/my-apps`) |
 | Eval host (non-production) | `deployments/docker/docker-compose.windows-apphost.yml` |
 
 ## App-V and other packaging layers

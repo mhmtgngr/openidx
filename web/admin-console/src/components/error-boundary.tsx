@@ -1,7 +1,17 @@
 import { Component, ErrorInfo, ReactNode } from 'react'
+import i18n from '../i18n'
 
 interface Props {
   children: ReactNode
+  /**
+   * What "Try again" should do. The default just clears the boundary's own
+   * state, which is the right thing for the per-route boundary inside the
+   * layout: the route remounts and usually succeeds. It is the WRONG thing
+   * at the root, where the thing that threw is the app shell itself --
+   * clearing state there re-renders the same broken tree and throws again
+   * on the next frame. The root mount passes a reload.
+   */
+  onReset?: () => void
 }
 
 interface State {
@@ -25,6 +35,10 @@ class ErrorBoundary extends Component<Props, State> {
   }
 
   handleReset = (): void => {
+    if (this.props.onReset) {
+      this.props.onReset()
+      return
+    }
     this.setState({ hasError: false, error: null })
   }
 
@@ -53,7 +67,7 @@ class ErrorBoundary extends Component<Props, State> {
               </div>
 
               <h2 className="mb-2 text-xl font-semibold text-foreground">
-                Something went wrong
+                {i18n.t('components.errorBoundary.title')}
               </h2>
 
               {this.state.error && (
@@ -62,7 +76,13 @@ class ErrorBoundary extends Component<Props, State> {
                 </p>
               )}
 
-              {this.state.error && (
+              {/* The stack is a developer aid. Since this boundary now also
+                  wraps the whole app -- including the login screen, which
+                  anyone can reach -- it is shown in development only. The
+                  message above stays: it is what a user quotes to support,
+                  and componentDidCatch still logs the full stack to the
+                  console in every build. */}
+              {import.meta.env.DEV && this.state.error && (
                 <pre className="mb-6 max-h-32 w-full overflow-auto rounded-md bg-muted p-3 text-left text-xs text-muted-foreground">
                   {this.state.error.stack}
                 </pre>
@@ -72,7 +92,7 @@ class ErrorBoundary extends Component<Props, State> {
                 onClick={this.handleReset}
                 className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
               >
-                Try again
+                {i18n.t('components.errorBoundary.tryAgain')}
               </button>
             </div>
           </div>

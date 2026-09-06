@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import { Shield, Key, Smartphone, Mail, Fingerprint, Plus, Edit2, Trash2, CheckCircle2, XCircle, Users } from 'lucide-react'
 import { Card, CardContent } from '../components/ui/card'
 import { Button } from '../components/ui/button'
@@ -61,15 +62,15 @@ const emptyPolicy: Partial<MFAPolicy> = {
   grace_period_hours: 24,
 }
 
-const methodLabels: Record<string, string> = {
-  totp: 'TOTP',
-  sms: 'SMS',
-  email: 'Email OTP',
-  push: 'Push',
-  webauthn: 'WebAuthn',
-}
-
 export default function MFAManagement() {
+  const { t } = useTranslation()
+  const methodLabels: Record<string, string> = {
+    totp: t('pages.mfaManagement.methods.totp'),
+    sms: t('pages.mfaManagement.methods.sms'),
+    email: t('pages.mfaManagement.methods.email'),
+    push: t('pages.mfaManagement.methods.push'),
+    webauthn: t('pages.mfaManagement.methods.webauthn'),
+  }
   const { toast } = useToast()
   const queryClient = useQueryClient()
 
@@ -133,12 +134,12 @@ export default function MFAManagement() {
     mutationFn: (data: Partial<MFAPolicy>) => api.post('/api/v1/mfa/policies', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['mfa-policies'] })
-      toast({ title: 'Success', description: 'MFA policy has been created.' })
+      toast({ title: t('common.success'), description: t('pages.mfaManagement.toasts.created') })
       setPolicyDialogOpen(false)
       setFormData(emptyPolicy)
     },
     onError: (error: Error) => {
-      toast({ variant: 'destructive', title: 'Error', description: error.message })
+      toast({ variant: 'destructive', title: t('common.error'), description: error.message })
     },
   })
 
@@ -147,11 +148,11 @@ export default function MFAManagement() {
       api.put(`/api/v1/mfa/policies/${id}`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['mfa-policies'] })
-      toast({ title: 'Success', description: 'MFA policy has been updated.' })
+      toast({ title: t('common.success'), description: t('pages.mfaManagement.toasts.updated') })
       setPolicyDialogOpen(false)
     },
     onError: (error: Error) => {
-      toast({ variant: 'destructive', title: 'Error', description: error.message })
+      toast({ variant: 'destructive', title: t('common.error'), description: error.message })
     },
   })
 
@@ -159,10 +160,10 @@ export default function MFAManagement() {
     mutationFn: (id: string) => api.delete(`/api/v1/mfa/policies/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['mfa-policies'] })
-      toast({ title: 'Success', description: 'MFA policy has been deleted.' })
+      toast({ title: t('common.success'), description: t('pages.mfaManagement.toasts.deleted') })
     },
     onError: (error: Error) => {
-      toast({ variant: 'destructive', title: 'Error', description: error.message })
+      toast({ variant: 'destructive', title: t('common.error'), description: error.message })
     },
   })
 
@@ -206,23 +207,23 @@ export default function MFAManagement() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold tracking-tight">MFA Management</h1>
-        <p className="text-muted-foreground">Manage multi-factor authentication enrollment, policies, and user status</p>
+        <h1 className="text-3xl font-bold tracking-tight">{t('nav.items.mfaManagement')}</h1>
+        <p className="text-muted-foreground">{t('pages.mfaManagement.subtitle')}</p>
       </div>
 
       <Tabs defaultValue="enrollment">
         <TabsList>
           <TabsTrigger value="enrollment">
             <Shield className="mr-2 h-4 w-4" />
-            Enrollment Overview
+            {t('pages.mfaManagement.tabs.enrollment')}
           </TabsTrigger>
           <TabsTrigger value="policies">
             <Key className="mr-2 h-4 w-4" />
-            MFA Policies
+            {t('pages.mfaManagement.tabs.policies')}
           </TabsTrigger>
           <TabsTrigger value="users">
             <Users className="mr-2 h-4 w-4" />
-            User MFA Status
+            {t('pages.mfaManagement.tabs.users')}
           </TabsTrigger>
         </TabsList>
 
@@ -231,10 +232,10 @@ export default function MFAManagement() {
           {statsLoading ? (
             <div className="flex flex-col items-center justify-center py-12">
               <LoadingSpinner size="lg" />
-              <p className="mt-4 text-sm text-muted-foreground">Loading enrollment stats...</p>
+              <p className="mt-4 text-sm text-muted-foreground">{t('pages.mfaManagement.enrollment.loading')}</p>
             </div>
           ) : statsIsError ? (
-            <QueryError error={statsError} resource="enrollment stats" />
+            <QueryError error={statsError} resource={t('pages.mfaManagement.enrollment.resourceName')} />
           ) : (
             <div className="grid gap-4 md:grid-cols-4">
               <Card>
@@ -242,7 +243,7 @@ export default function MFAManagement() {
                   <div className="flex items-center justify-between">
                     <div>
                       <div className="text-2xl font-bold">{stats.total_users}</div>
-                      <p className="text-xs text-muted-foreground">Total Users</p>
+                      <p className="text-xs text-muted-foreground">{t('pages.mfaManagement.enrollment.totalUsers')}</p>
                     </div>
                     <Users className="h-8 w-8 text-muted-foreground" />
                   </div>
@@ -253,7 +254,9 @@ export default function MFAManagement() {
                   <div className="flex items-center justify-between">
                     <div>
                       <div className="text-2xl font-bold">{stats.mfa_enabled_count}</div>
-                      <p className="text-xs text-muted-foreground">MFA Enabled ({mfaPercentage}%)</p>
+                      <p className="text-xs text-muted-foreground">
+                        {t('pages.mfaManagement.enrollment.mfaEnabled', { pct: mfaPercentage })}
+                      </p>
                     </div>
                     <Shield className="h-8 w-8 text-green-500" />
                   </div>
@@ -264,7 +267,7 @@ export default function MFAManagement() {
                   <div className="flex items-center justify-between">
                     <div>
                       <div className="text-2xl font-bold">{stats.totp_count}</div>
-                      <p className="text-xs text-muted-foreground">TOTP Enrolled</p>
+                      <p className="text-xs text-muted-foreground">{t('pages.mfaManagement.enrollment.totp')}</p>
                     </div>
                     <Key className="h-8 w-8 text-blue-500" />
                   </div>
@@ -275,7 +278,7 @@ export default function MFAManagement() {
                   <div className="flex items-center justify-between">
                     <div>
                       <div className="text-2xl font-bold">{stats.sms_count}</div>
-                      <p className="text-xs text-muted-foreground">SMS Enrolled</p>
+                      <p className="text-xs text-muted-foreground">{t('pages.mfaManagement.enrollment.sms')}</p>
                     </div>
                     <Smartphone className="h-8 w-8 text-purple-500" />
                   </div>
@@ -286,7 +289,7 @@ export default function MFAManagement() {
                   <div className="flex items-center justify-between">
                     <div>
                       <div className="text-2xl font-bold">{stats.email_otp_count}</div>
-                      <p className="text-xs text-muted-foreground">Email OTP Enrolled</p>
+                      <p className="text-xs text-muted-foreground">{t('pages.mfaManagement.enrollment.emailOtp')}</p>
                     </div>
                     <Mail className="h-8 w-8 text-orange-500" />
                   </div>
@@ -297,7 +300,7 @@ export default function MFAManagement() {
                   <div className="flex items-center justify-between">
                     <div>
                       <div className="text-2xl font-bold">{stats.push_count}</div>
-                      <p className="text-xs text-muted-foreground">Push Enrolled</p>
+                      <p className="text-xs text-muted-foreground">{t('pages.mfaManagement.enrollment.push')}</p>
                     </div>
                     <Smartphone className="h-8 w-8 text-teal-500" />
                   </div>
@@ -308,7 +311,7 @@ export default function MFAManagement() {
                   <div className="flex items-center justify-between">
                     <div>
                       <div className="text-2xl font-bold">{stats.webauthn_count}</div>
-                      <p className="text-xs text-muted-foreground">WebAuthn Enrolled</p>
+                      <p className="text-xs text-muted-foreground">{t('pages.mfaManagement.enrollment.webauthn')}</p>
                     </div>
                     <Fingerprint className="h-8 w-8 text-indigo-500" />
                   </div>
@@ -322,25 +325,25 @@ export default function MFAManagement() {
         <TabsContent value="policies">
           <Card>
             <div className="flex items-center justify-between p-6 pb-0">
-              <h2 className="text-lg font-semibold">MFA Policies</h2>
+              <h2 className="text-lg font-semibold">{t('pages.mfaManagement.policies.title')}</h2>
               <Button onClick={openCreatePolicy}>
                 <Plus className="mr-2 h-4 w-4" />
-                Create Policy
+                {t('pages.mfaManagement.policies.create')}
               </Button>
             </div>
             <CardContent className="pt-6">
               {policiesLoading ? (
                 <div className="flex flex-col items-center justify-center py-12">
                   <LoadingSpinner size="lg" />
-                  <p className="mt-4 text-sm text-muted-foreground">Loading policies...</p>
+                  <p className="mt-4 text-sm text-muted-foreground">{t('pages.mfaManagement.policies.loading')}</p>
                 </div>
               ) : policiesIsError ? (
-                <QueryError error={policiesError} resource="MFA policies" />
+                <QueryError error={policiesError} resource={t('pages.mfaManagement.policies.resourceName')} />
               ) : policies.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
                   <Key className="h-12 w-12 text-muted-foreground/40 mb-3" />
-                  <p className="font-medium">No MFA policies configured</p>
-                  <p className="text-sm">Create a policy to enforce multi-factor authentication</p>
+                  <p className="font-medium">{t('pages.mfaManagement.policies.empty')}</p>
+                  <p className="text-sm">{t('pages.mfaManagement.policies.emptyHint')}</p>
                 </div>
               ) : (
                 <>
@@ -348,13 +351,13 @@ export default function MFAManagement() {
                     <Table>
                       <TableHeader>
                         <TableRow>
-                          <TableHead>Name</TableHead>
-                          <TableHead>Description</TableHead>
-                          <TableHead>Required Methods</TableHead>
-                          <TableHead>Grace Period</TableHead>
-                          <TableHead>Priority</TableHead>
-                          <TableHead>Enabled</TableHead>
-                          <TableHead className="w-[100px]">Actions</TableHead>
+                          <TableHead>{t('pages.mfaManagement.policies.table.name')}</TableHead>
+                          <TableHead>{t('pages.mfaManagement.policies.table.description')}</TableHead>
+                          <TableHead>{t('pages.mfaManagement.policies.table.methods')}</TableHead>
+                          <TableHead>{t('pages.mfaManagement.policies.table.gracePeriod')}</TableHead>
+                          <TableHead>{t('pages.mfaManagement.policies.table.priority')}</TableHead>
+                          <TableHead>{t('pages.mfaManagement.policies.table.enabled')}</TableHead>
+                          <TableHead className="w-[100px]">{t('pages.mfaManagement.policies.table.actions')}</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -373,14 +376,14 @@ export default function MFAManagement() {
                                 ))}
                               </div>
                             </TableCell>
-                            <TableCell>{policy.grace_period_hours}h</TableCell>
+                            <TableCell>{t('pages.mfaManagement.policies.graceHours', { n: policy.grace_period_hours })}</TableCell>
                             <TableCell>
                               <span className="text-xs font-mono bg-muted px-2 py-1 rounded">
                                 #{policy.priority}
                               </span>
                             </TableCell>
                             <TableCell>
-                              <Switch
+                              <Switch aria-label={t('pages.mfaManagement.togglePolicy', { name: policy.name })}
                                 checked={policy.enabled}
                                 onCheckedChange={(checked) => {
                                   updatePolicyMutation.mutate({
@@ -396,10 +399,12 @@ export default function MFAManagement() {
                                   <Edit2 className="h-4 w-4" />
                                 </Button>
                                 <ConfirmAction
-                                  title="Delete MFA Policy"
-                                  description={`Are you sure you want to delete the MFA policy ${policy.name}? This action cannot be undone.`}
+                                  title={t('pages.mfaManagement.policies.confirmDelete.title')}
+                                  description={t('pages.mfaManagement.policies.confirmDelete.description', {
+                                    name: policy.name,
+                                  })}
                                   destructive
-                                  confirmLabel="Delete"
+                                  confirmLabel={t('common.delete')}
                                   onConfirm={() => deletePolicyMutation.mutateAsync(policy.id)}
                                 >
                                   {(open) => (
@@ -418,7 +423,7 @@ export default function MFAManagement() {
                   {policiesTotalPages > 1 && (
                     <div className="flex items-center justify-between pt-4">
                       <p className="text-sm text-muted-foreground">
-                        Page {policyPage} of {policiesTotalPages}
+                        {t('common.pagination.pageOf', { page: policyPage, pages: policiesTotalPages })}
                       </p>
                       <div className="flex gap-2">
                         <Button
@@ -427,7 +432,7 @@ export default function MFAManagement() {
                           disabled={policyPage <= 1}
                           onClick={() => setPolicyPage((p) => p - 1)}
                         >
-                          Previous
+                          {t('common.pagination.previous')}
                         </Button>
                         <Button
                           variant="outline"
@@ -435,7 +440,7 @@ export default function MFAManagement() {
                           disabled={policyPage >= policiesTotalPages}
                           onClick={() => setPolicyPage((p) => p + 1)}
                         >
-                          Next
+                          {t('common.pagination.next')}
                         </Button>
                       </div>
                     </div>
@@ -453,15 +458,15 @@ export default function MFAManagement() {
               {usersLoading ? (
                 <div className="flex flex-col items-center justify-center py-12">
                   <LoadingSpinner size="lg" />
-                  <p className="mt-4 text-sm text-muted-foreground">Loading user MFA status...</p>
+                  <p className="mt-4 text-sm text-muted-foreground">{t('pages.mfaManagement.users.loading')}</p>
                 </div>
               ) : usersIsError ? (
-                <QueryError error={usersError} resource="user MFA status" />
+                <QueryError error={usersError} resource={t('pages.mfaManagement.users.resourceName')} />
               ) : users.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
                   <Users className="h-12 w-12 text-muted-foreground/40 mb-3" />
-                  <p className="font-medium">No users found</p>
-                  <p className="text-sm">User MFA enrollment status will appear here</p>
+                  <p className="font-medium">{t('pages.mfaManagement.users.empty')}</p>
+                  <p className="text-sm">{t('pages.mfaManagement.users.emptyHint')}</p>
                 </div>
               ) : (
                 <>
@@ -469,13 +474,13 @@ export default function MFAManagement() {
                     <Table>
                       <TableHeader>
                         <TableRow>
-                          <TableHead>Username</TableHead>
-                          <TableHead>Email</TableHead>
-                          <TableHead className="text-center">TOTP</TableHead>
-                          <TableHead className="text-center">SMS</TableHead>
-                          <TableHead className="text-center">Email OTP</TableHead>
-                          <TableHead className="text-center">Push</TableHead>
-                          <TableHead className="text-center">WebAuthn</TableHead>
+                          <TableHead>{t('pages.mfaManagement.users.table.username')}</TableHead>
+                          <TableHead>{t('pages.mfaManagement.users.table.email')}</TableHead>
+                          <TableHead className="text-center">{methodLabels.totp}</TableHead>
+                          <TableHead className="text-center">{methodLabels.sms}</TableHead>
+                          <TableHead className="text-center">{methodLabels.email}</TableHead>
+                          <TableHead className="text-center">{methodLabels.push}</TableHead>
+                          <TableHead className="text-center">{methodLabels.webauthn}</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -526,7 +531,7 @@ export default function MFAManagement() {
                   {usersTotalPages > 1 && (
                     <div className="flex items-center justify-between pt-4">
                       <p className="text-sm text-muted-foreground">
-                        Page {userPage} of {usersTotalPages}
+                        {t('common.pagination.pageOf', { page: userPage, pages: usersTotalPages })}
                       </p>
                       <div className="flex gap-2">
                         <Button
@@ -535,7 +540,7 @@ export default function MFAManagement() {
                           disabled={userPage <= 1}
                           onClick={() => setUserPage((p) => p - 1)}
                         >
-                          Previous
+                          {t('common.pagination.previous')}
                         </Button>
                         <Button
                           variant="outline"
@@ -543,7 +548,7 @@ export default function MFAManagement() {
                           disabled={userPage >= usersTotalPages}
                           onClick={() => setUserPage((p) => p + 1)}
                         >
-                          Next
+                          {t('common.pagination.next')}
                         </Button>
                       </div>
                     </div>
@@ -559,37 +564,41 @@ export default function MFAManagement() {
       <Dialog open={policyDialogOpen} onOpenChange={setPolicyDialogOpen}>
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>{selectedPolicy ? 'Edit MFA Policy' : 'Create MFA Policy'}</DialogTitle>
+            <DialogTitle>
+              {selectedPolicy
+                ? t('pages.mfaManagement.dialog.editTitle')
+                : t('pages.mfaManagement.dialog.createTitle')}
+            </DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label>Policy Name *</Label>
+              <Label>{t('pages.mfaManagement.dialog.name')}</Label>
               <Input
                 value={formData.name || ''}
                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                placeholder="e.g., Enforce TOTP for All Users"
+                placeholder={t('pages.mfaManagement.dialog.namePlaceholder')}
               />
             </div>
             <div className="space-y-2">
-              <Label>Description</Label>
+              <Label>{t('pages.mfaManagement.dialog.description')}</Label>
               <Input
                 value={formData.description || ''}
                 onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                placeholder="What does this policy enforce?"
+                placeholder={t('pages.mfaManagement.dialog.descriptionPlaceholder')}
               />
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>Priority (lower = first)</Label>
-                <Input
+                <Label htmlFor="mfa-management-priority">{t('pages.mfaManagement.dialog.priority')}</Label>
+                <Input id="mfa-management-priority"
                   type="number"
                   value={formData.priority ?? 100}
                   onChange={(e) => setFormData({ ...formData, priority: parseInt(e.target.value) || 0 })}
                 />
               </div>
               <div className="space-y-2">
-                <Label>Grace Period (hours)</Label>
-                <Input
+                <Label htmlFor="mfa-management-grace-period">{t('pages.mfaManagement.dialog.gracePeriod')}</Label>
+                <Input id="mfa-management-grace-period"
                   type="number"
                   value={formData.grace_period_hours ?? 24}
                   onChange={(e) => setFormData({ ...formData, grace_period_hours: parseInt(e.target.value) || 0 })}
@@ -597,7 +606,7 @@ export default function MFAManagement() {
               </div>
             </div>
             <div className="space-y-2">
-              <Label>Required Methods</Label>
+              <Label>{t('pages.mfaManagement.dialog.requiredMethods')}</Label>
               <div className="grid grid-cols-2 gap-3 pt-1">
                 {Object.entries(methodLabels).map(([method, label]) => (
                   <div key={method} className="flex items-center space-x-2">
@@ -619,20 +628,22 @@ export default function MFAManagement() {
                 checked={formData.enabled ?? true}
                 onCheckedChange={(checked) => setFormData({ ...formData, enabled: checked })}
               />
-              <Label htmlFor="policy-enabled">Enabled</Label>
+              <Label htmlFor="policy-enabled">{t('pages.mfaManagement.dialog.enabled')}</Label>
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setPolicyDialogOpen(false)}>Cancel</Button>
+            <Button variant="outline" onClick={() => setPolicyDialogOpen(false)}>
+              {t('common.cancel')}
+            </Button>
             <Button
               onClick={handleSavePolicy}
               disabled={!formData.name || createPolicyMutation.isPending || updatePolicyMutation.isPending}
             >
               {createPolicyMutation.isPending || updatePolicyMutation.isPending
-                ? 'Saving...'
+                ? t('pages.mfaManagement.dialog.saving')
                 : selectedPolicy
-                  ? 'Update Policy'
-                  : 'Create Policy'}
+                  ? t('pages.mfaManagement.dialog.update')
+                  : t('pages.mfaManagement.dialog.create')}
             </Button>
           </DialogFooter>
         </DialogContent>

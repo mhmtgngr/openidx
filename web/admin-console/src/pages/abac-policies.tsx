@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Plus, Search, Edit, Trash2, X, ChevronLeft, ChevronRight,
@@ -65,36 +66,52 @@ interface ABACEvaluationResult {
   allowed: boolean
   reason?: string
   policy_id?: string
+  /**
+   * Whether any policy applied. A decision that matched nothing is an absence
+   * of opinion, not an approval — showing "Allowed" for it without saying so
+   * is how this page implied a policy was doing work it was not.
+   */
+  matched: boolean
+  /**
+   * The configured ABAC_ENFORCE state: off | observe | enforce. Until this
+   * existed, the evaluator behind this button had no other caller in the
+   * product, so a policy could be authored, tested, saved — and decide
+   * nothing, with nothing on screen saying so.
+   */
+  mode: string
 }
 
+// These lists are module-level, so they carry catalog keys rather than
+// English. `value` is the wire value; `labelKey` is the catalog key -- they
+// differ only for the '*' wildcard, which is not a valid key segment.
 const resourceTypes = [
-  { value: 'application', label: 'Application' },
-  { value: 'route', label: 'Route' },
-  { value: 'service', label: 'Service' },
-  { value: '*', label: 'All Resources (*)' },
+  { value: 'application', labelKey: 'application' },
+  { value: 'route', labelKey: 'route' },
+  { value: 'service', labelKey: 'service' },
+  { value: '*', labelKey: 'all' },
 ]
 
 const attributeOptions = [
-  { value: 'department', label: 'Department' },
-  { value: 'location', label: 'Location' },
-  { value: 'device_trust_level', label: 'Device Trust Level' },
-  { value: 'time_of_day', label: 'Time of Day' },
-  { value: 'risk_score', label: 'Risk Score' },
-  { value: 'group_membership', label: 'Group Membership' },
-  { value: 'ip_range', label: 'IP Range' },
+  'department',
+  'location',
+  'device_trust_level',
+  'time_of_day',
+  'risk_score',
+  'group_membership',
+  'ip_range',
 ]
 
 const operatorOptions = [
-  { value: 'eq', label: 'Equals (eq)' },
-  { value: 'neq', label: 'Not Equals (neq)' },
-  { value: 'in', label: 'In (in)' },
-  { value: 'not_in', label: 'Not In (not_in)' },
-  { value: 'gt', label: 'Greater Than (gt)' },
-  { value: 'gte', label: 'Greater or Equal (gte)' },
-  { value: 'lt', label: 'Less Than (lt)' },
-  { value: 'lte', label: 'Less or Equal (lte)' },
-  { value: 'between', label: 'Between (between)' },
-  { value: 'contains', label: 'Contains (contains)' },
+  'eq',
+  'neq',
+  'in',
+  'not_in',
+  'gt',
+  'gte',
+  'lt',
+  'lte',
+  'between',
+  'contains',
 ]
 
 const emptyCondition: ABACCondition = { attribute: 'department', operator: 'eq', value: '' }
@@ -119,6 +136,7 @@ function conditionValueToString(val: unknown): string {
 }
 
 export function ABACPoliciesPage() {
+  const { t } = useTranslation()
   const { toast } = useToast()
   const queryClient = useQueryClient()
   const [search, setSearch] = useState('')
@@ -167,10 +185,10 @@ export function ABACPoliciesPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['abac-policies'] })
       setEditDialogOpen(false)
-      toast({ title: 'ABAC policy created successfully' })
+      toast({ title: t('pages.abacPolicies.toast.created') })
     },
     onError: (err: Error) => {
-      toast({ title: 'Failed to create policy', description: err.message, variant: 'destructive' })
+      toast({ title: t('pages.abacPolicies.toast.createFailed'), description: err.message, variant: 'destructive' })
     },
   })
 
@@ -180,10 +198,10 @@ export function ABACPoliciesPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['abac-policies'] })
       setEditDialogOpen(false)
-      toast({ title: 'ABAC policy updated successfully' })
+      toast({ title: t('pages.abacPolicies.toast.updated') })
     },
     onError: (err: Error) => {
-      toast({ title: 'Failed to update policy', description: err.message, variant: 'destructive' })
+      toast({ title: t('pages.abacPolicies.toast.updateFailed'), description: err.message, variant: 'destructive' })
     },
   })
 
@@ -192,10 +210,10 @@ export function ABACPoliciesPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['abac-policies'] })
       setDeleteDialogOpen(false)
-      toast({ title: 'ABAC policy deleted' })
+      toast({ title: t('pages.abacPolicies.toast.deleted') })
     },
     onError: (err: Error) => {
-      toast({ title: 'Failed to delete policy', description: err.message, variant: 'destructive' })
+      toast({ title: t('pages.abacPolicies.toast.deleteFailed'), description: err.message, variant: 'destructive' })
     },
   })
 
@@ -217,7 +235,7 @@ export function ABACPoliciesPage() {
       setTestResult(result)
     },
     onError: (err: Error) => {
-      toast({ title: 'Evaluation failed', description: err.message, variant: 'destructive' })
+      toast({ title: t('pages.abacPolicies.toast.evalFailed'), description: err.message, variant: 'destructive' })
     },
   })
 
@@ -316,7 +334,11 @@ export function ABACPoliciesPage() {
         resource_id: testResourceId,
       })
     } catch {
-      toast({ title: 'Invalid JSON', description: 'Please enter valid JSON for user attributes', variant: 'destructive' })
+      toast({
+        title: t('pages.abacPolicies.toast.invalidJson'),
+        description: t('pages.abacPolicies.toast.invalidJsonDesc'),
+        variant: 'destructive',
+      })
     }
   }
 
@@ -333,19 +355,19 @@ export function ABACPoliciesPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">ABAC Policies</h1>
+          <h1 className="text-2xl font-bold tracking-tight">{t('nav.items.abacPolicies')}</h1>
           <p className="text-muted-foreground">
-            Attribute-Based Access Control policies for fine-grained resource authorization
+            {t('pages.abacPolicies.subtitle')}
           </p>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" onClick={() => setTestDialogOpen(true)}>
             <FlaskConical className="mr-2 h-4 w-4" />
-            Test Policy
+            {t('pages.abacPolicies.testPolicy')}
           </Button>
           <Button onClick={openCreate}>
             <Plus className="mr-2 h-4 w-4" />
-            Create Policy
+            {t('pages.abacPolicies.createPolicy')}
           </Button>
         </div>
       </div>
@@ -357,20 +379,20 @@ export function ABACPoliciesPage() {
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
-                placeholder="Search policies..."
+                placeholder={t('pages.abacPolicies.searchPlaceholder')}
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="pl-10"
               />
             </div>
             <Select value={resourceTypeFilter} onValueChange={(val) => { setResourceTypeFilter(val === 'all' ? '' : val); setOffset(0) }}>
-              <SelectTrigger className="w-[200px]">
-                <SelectValue placeholder="All Resource Types" />
+              <SelectTrigger className="w-[200px]" aria-label={t('pages.abacPolicies.resourceTypeFilterLabel')}>
+                <SelectValue placeholder={t('pages.abacPolicies.allResourceTypes')} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Resource Types</SelectItem>
+                <SelectItem value="all">{t('pages.abacPolicies.allResourceTypes')}</SelectItem>
                 {resourceTypes.map(rt => (
-                  <SelectItem key={rt.value} value={rt.value}>{rt.label}</SelectItem>
+                  <SelectItem key={rt.value} value={rt.value}>{t(`pages.abacPolicies.resourceTypes.${rt.labelKey}`)}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -384,13 +406,13 @@ export function ABACPoliciesPage() {
           <LoadingSpinner size="lg" />
         </div>
       ) : isError ? (
-        <QueryError error={error} resource="ABAC policies" />
+        <QueryError error={error} resource={t('pages.abacPolicies.resourceName')} />
       ) : (
         <Card>
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
               <p className="text-sm text-muted-foreground">
-                {policies?.total || 0} {(policies?.total || 0) === 1 ? 'policy' : 'policies'}
+                {t('pages.abacPolicies.policyCount', { count: policies?.total || 0 })}
               </p>
             </div>
           </CardHeader>
@@ -399,13 +421,13 @@ export function ABACPoliciesPage() {
               <Table>
                 <TableHeader>
                   <TableRow className="border-b bg-muted/50">
-                    <TableHead className="p-3 text-left text-sm font-medium">Name</TableHead>
-                    <TableHead className="p-3 text-left text-sm font-medium">Resource Type</TableHead>
-                    <TableHead className="p-3 text-left text-sm font-medium">Conditions</TableHead>
-                    <TableHead className="p-3 text-left text-sm font-medium">Effect</TableHead>
-                    <TableHead className="p-3 text-left text-sm font-medium">Priority</TableHead>
-                    <TableHead className="p-3 text-left text-sm font-medium">Enabled</TableHead>
-                    <TableHead className="p-3 text-right text-sm font-medium">Actions</TableHead>
+                    <TableHead className="p-3 text-left text-sm font-medium">{t('pages.abacPolicies.columns.name')}</TableHead>
+                    <TableHead className="p-3 text-left text-sm font-medium">{t('pages.abacPolicies.columns.resourceType')}</TableHead>
+                    <TableHead className="p-3 text-left text-sm font-medium">{t('pages.abacPolicies.columns.conditions')}</TableHead>
+                    <TableHead className="p-3 text-left text-sm font-medium">{t('pages.abacPolicies.columns.effect')}</TableHead>
+                    <TableHead className="p-3 text-left text-sm font-medium">{t('pages.abacPolicies.columns.priority')}</TableHead>
+                    <TableHead className="p-3 text-left text-sm font-medium">{t('pages.abacPolicies.columns.enabled')}</TableHead>
+                    <TableHead className="p-3 text-right text-sm font-medium">{t('pages.abacPolicies.columns.actions')}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -413,7 +435,7 @@ export function ABACPoliciesPage() {
                     <TableRow>
                       <TableCell colSpan={7} className="p-8 text-center text-muted-foreground">
                         <Filter className="mx-auto mb-2 h-8 w-8 opacity-50" />
-                        <p>No ABAC policies found</p>
+                        <p>{t('pages.abacPolicies.empty')}</p>
                       </TableCell>
                     </TableRow>
                   ) : (
@@ -434,7 +456,7 @@ export function ABACPoliciesPage() {
                           )}
                         </TableCell>
                         <TableCell className="p-3">
-                          <Badge variant="secondary">{policy.conditions?.length || 0} condition{(policy.conditions?.length || 0) !== 1 ? 's' : ''}</Badge>
+                          <Badge variant="secondary">{t('pages.abacPolicies.conditionCount', { count: policy.conditions?.length || 0 })}</Badge>
                         </TableCell>
                         <TableCell className="p-3">
                           <Badge className={policy.effect === 'allow' ? 'bg-green-100 text-green-800 hover:bg-green-100' : 'bg-red-100 text-red-800 hover:bg-red-100'}>
@@ -444,7 +466,7 @@ export function ABACPoliciesPage() {
                         </TableCell>
                         <TableCell className="p-3 text-sm">{policy.priority}</TableCell>
                         <TableCell className="p-3">
-                          <Switch
+                          <Switch aria-label={t('pages.abacPolicies.togglePolicy', { name: policy.name })}
                             checked={policy.enabled}
                             onCheckedChange={() => toggleMutation.mutate(policy)}
                           />
@@ -458,11 +480,11 @@ export function ABACPoliciesPage() {
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
                               <DropdownMenuItem onClick={() => openEdit(policy)}>
-                                <Edit className="mr-2 h-4 w-4" /> Edit
+                                <Edit className="mr-2 h-4 w-4" /> {t('pages.abacPolicies.edit')}
                               </DropdownMenuItem>
                               <DropdownMenuSeparator />
                               <DropdownMenuItem onClick={() => openDelete(policy)} className="text-red-600">
-                                <Trash2 className="mr-2 h-4 w-4" /> Delete
+                                <Trash2 className="mr-2 h-4 w-4" /> {t('common.delete')}
                               </DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>
@@ -478,7 +500,7 @@ export function ABACPoliciesPage() {
             {totalPages > 1 && (
               <div className="flex items-center justify-between pt-4">
                 <p className="text-sm text-muted-foreground">
-                  Page {currentPage} of {totalPages}
+                  {t('common.pagination.pageOf', { page: currentPage, pages: totalPages })}
                 </p>
                 <div className="flex gap-2">
                   <Button
@@ -488,7 +510,7 @@ export function ABACPoliciesPage() {
                     disabled={offset === 0}
                   >
                     <ChevronLeft className="h-4 w-4" />
-                    Previous
+                    {t('common.pagination.previous')}
                   </Button>
                   <Button
                     variant="outline"
@@ -496,7 +518,7 @@ export function ABACPoliciesPage() {
                     onClick={() => setOffset(offset + limit)}
                     disabled={currentPage >= totalPages}
                   >
-                    Next
+                    {t('common.pagination.next')}
                     <ChevronRight className="h-4 w-4" />
                   </Button>
                 </div>
@@ -510,20 +532,20 @@ export function ABACPoliciesPage() {
       <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>{isCreating ? 'Create ABAC Policy' : 'Edit ABAC Policy'}</DialogTitle>
+            <DialogTitle>{t(isCreating ? 'pages.abacPolicies.dialog.createTitle' : 'pages.abacPolicies.dialog.editTitle')}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>Name</Label>
+                <Label>{t('pages.abacPolicies.dialog.name')}</Label>
                 <Input
-                  placeholder="Policy name"
+                  placeholder={t('pages.abacPolicies.dialog.namePlaceholder')}
                   value={formName}
                   onChange={(e) => setFormName(e.target.value)}
                 />
               </div>
               <div className="space-y-2">
-                <Label>Priority</Label>
+                <Label>{t('pages.abacPolicies.dialog.priority')}</Label>
                 <Input
                   type="number"
                   placeholder="0"
@@ -533,31 +555,31 @@ export function ABACPoliciesPage() {
               </div>
             </div>
             <div className="space-y-2">
-              <Label>Description</Label>
+              <Label>{t('pages.abacPolicies.dialog.description')}</Label>
               <Textarea
-                placeholder="Policy description..."
+                placeholder={t('pages.abacPolicies.dialog.descriptionPlaceholder')}
                 value={formDescription}
                 onChange={(e) => setFormDescription(e.target.value)}
               />
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>Resource Type</Label>
+                <Label htmlFor="abac-policies-resource-type">{t('pages.abacPolicies.dialog.resourceType')}</Label>
                 <Select value={formResourceType} onValueChange={setFormResourceType}>
-                  <SelectTrigger>
+                  <SelectTrigger id="abac-policies-resource-type">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
                     {resourceTypes.map(rt => (
-                      <SelectItem key={rt.value} value={rt.value}>{rt.label}</SelectItem>
+                      <SelectItem key={rt.value} value={rt.value}>{t(`pages.abacPolicies.resourceTypes.${rt.labelKey}`)}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label>Resource ID (optional)</Label>
+                <Label>{t('pages.abacPolicies.dialog.resourceId')}</Label>
                 <Input
-                  placeholder="Specific resource ID"
+                  placeholder={t('pages.abacPolicies.dialog.resourceIdPlaceholder')}
                   value={formResourceId}
                   onChange={(e) => setFormResourceId(e.target.value)}
                 />
@@ -565,58 +587,64 @@ export function ABACPoliciesPage() {
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>Effect</Label>
+                <Label htmlFor="abac-policies-effect">{t('pages.abacPolicies.dialog.effect')}</Label>
                 <Select value={formEffect} onValueChange={setFormEffect}>
-                  <SelectTrigger>
+                  <SelectTrigger id="abac-policies-effect">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="allow">Allow</SelectItem>
-                    <SelectItem value="deny">Deny</SelectItem>
+                    <SelectItem value="allow">{t('pages.abacPolicies.dialog.allow')}</SelectItem>
+                    <SelectItem value="deny">{t('pages.abacPolicies.dialog.deny')}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
               <div className="flex items-center gap-3 pt-6">
-                <Switch checked={formEnabled} onCheckedChange={setFormEnabled} />
-                <Label>Enabled</Label>
+                <Switch id="abac-policies-enabled" checked={formEnabled} onCheckedChange={setFormEnabled} />
+                <Label htmlFor="abac-policies-enabled">{t('pages.abacPolicies.dialog.enabled')}</Label>
               </div>
             </div>
 
             {/* Conditions Builder */}
             <div className="space-y-3">
               <div className="flex items-center justify-between">
-                <Label className="text-base font-semibold">Conditions</Label>
+                <Label className="text-base font-semibold">{t('pages.abacPolicies.dialog.conditions')}</Label>
                 <Button type="button" variant="outline" size="sm" onClick={addCondition}>
-                  <Plus className="mr-1 h-3 w-3" /> Add Condition
+                  <Plus className="mr-1 h-3 w-3" /> {t('pages.abacPolicies.dialog.addCondition')}
                 </Button>
               </div>
-              <p className="text-sm text-muted-foreground">All conditions must match for the policy to apply.</p>
+              <p className="text-sm text-muted-foreground">{t('pages.abacPolicies.dialog.conditionsHint')}</p>
               {formConditions.map((cond, i) => (
                 <div key={i} className="flex gap-2 items-start rounded-md border p-3 bg-muted/30">
                   <div className="flex-1 space-y-2">
                     <div className="grid grid-cols-3 gap-2">
                       <Select value={cond.attribute} onValueChange={(val) => updateCondition(i, 'attribute', val)}>
-                        <SelectTrigger className="text-xs">
-                          <SelectValue placeholder="Attribute" />
+                        <SelectTrigger aria-label={t('pages.abacPolicies.dialog.attribute')} className="text-xs">
+                          <SelectValue placeholder={t('pages.abacPolicies.dialog.attribute')} />
                         </SelectTrigger>
                         <SelectContent>
                           {attributeOptions.map(a => (
-                            <SelectItem key={a.value} value={a.value}>{a.label}</SelectItem>
+                            <SelectItem key={a} value={a}>{t(`pages.abacPolicies.attributes.${a}`)}</SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
                       <Select value={cond.operator} onValueChange={(val) => updateCondition(i, 'operator', val)}>
-                        <SelectTrigger className="text-xs">
-                          <SelectValue placeholder="Operator" />
+                        <SelectTrigger aria-label={t('pages.abacPolicies.dialog.operator')} className="text-xs">
+                          <SelectValue placeholder={t('pages.abacPolicies.dialog.operator')} />
                         </SelectTrigger>
                         <SelectContent>
                           {operatorOptions.map(o => (
-                            <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                            <SelectItem key={o} value={o}>{t(`pages.abacPolicies.operators.${o}`)}</SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
                       <Input
-                        placeholder={cond.operator === 'in' || cond.operator === 'not_in' ? 'val1, val2, ...' : cond.operator === 'between' ? 'min, max' : 'value'}
+                        placeholder={t(
+                          cond.operator === 'in' || cond.operator === 'not_in'
+                            ? 'pages.abacPolicies.dialog.listPlaceholder'
+                            : cond.operator === 'between'
+                              ? 'pages.abacPolicies.dialog.rangePlaceholder'
+                              : 'pages.abacPolicies.dialog.valuePlaceholder',
+                        )}
                         value={conditionInputs[i] || ''}
                         onChange={(e) => updateConditionInput(i, e.target.value)}
                         className="text-xs"
@@ -639,13 +667,13 @@ export function ABACPoliciesPage() {
             </div>
 
             <div className="flex justify-end gap-2 pt-4">
-              <Button variant="outline" onClick={() => setEditDialogOpen(false)}>Cancel</Button>
+              <Button variant="outline" onClick={() => setEditDialogOpen(false)}>{t('common.cancel')}</Button>
               <Button
                 onClick={handleSave}
                 disabled={!formName || !formResourceType || createMutation.isPending || updateMutation.isPending}
               >
                 {(createMutation.isPending || updateMutation.isPending) && <LoadingSpinner className="mr-2 h-4 w-4" />}
-                {isCreating ? 'Create' : 'Save Changes'}
+                {t(isCreating ? 'pages.abacPolicies.dialog.create' : 'pages.abacPolicies.dialog.saveChanges')}
               </Button>
             </div>
           </div>
@@ -656,19 +684,19 @@ export function ABACPoliciesPage() {
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete ABAC Policy</AlertDialogTitle>
+            <AlertDialogTitle>{t('pages.abacPolicies.deleteTitle')}</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete the policy &quot;{selectedPolicy?.name}&quot;? This action cannot be undone.
+              {t('pages.abacPolicies.deleteDesc', { name: selectedPolicy?.name ?? '' })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => selectedPolicy && deleteMutation.mutate(selectedPolicy.id)}
               className="bg-red-600 hover:bg-red-700"
             >
               {deleteMutation.isPending ? <LoadingSpinner className="mr-2 h-4 w-4" /> : null}
-              Delete
+              {t('common.delete')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -678,35 +706,35 @@ export function ABACPoliciesPage() {
       <Dialog open={testDialogOpen} onOpenChange={(open) => { setTestDialogOpen(open); if (!open) setTestResult(null) }}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>Test ABAC Policy Evaluation</DialogTitle>
+            <DialogTitle>{t('pages.abacPolicies.test.title')}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>Resource Type</Label>
+                <Label htmlFor="abac-policies-resource-type-2">{t('pages.abacPolicies.dialog.resourceType')}</Label>
                 <Select value={testResourceType} onValueChange={setTestResourceType}>
-                  <SelectTrigger>
+                  <SelectTrigger id="abac-policies-resource-type-2">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
                     {resourceTypes.filter(rt => rt.value !== '*').map(rt => (
-                      <SelectItem key={rt.value} value={rt.value}>{rt.label}</SelectItem>
+                      <SelectItem key={rt.value} value={rt.value}>{t(`pages.abacPolicies.resourceTypes.${rt.labelKey}`)}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label>Resource ID</Label>
+                <Label>{t('pages.abacPolicies.test.resourceId')}</Label>
                 <Input
-                  placeholder="Resource ID"
+                  placeholder={t('pages.abacPolicies.test.resourceIdPlaceholder')}
                   value={testResourceId}
                   onChange={(e) => setTestResourceId(e.target.value)}
                 />
               </div>
             </div>
             <div className="space-y-2">
-              <Label>User Attributes (JSON)</Label>
-              <Textarea
+              <Label htmlFor="abac-policies-attributes">{t('pages.abacPolicies.test.attributes')}</Label>
+              <Textarea id="abac-policies-attributes"
                 className="font-mono text-sm"
                 rows={6}
                 value={testAttributes}
@@ -715,7 +743,7 @@ export function ABACPoliciesPage() {
             </div>
             <Button onClick={handleTest} disabled={evaluateMutation.isPending} className="w-full">
               {evaluateMutation.isPending && <LoadingSpinner className="mr-2 h-4 w-4" />}
-              Evaluate
+              {t('pages.abacPolicies.test.evaluate')}
             </Button>
 
             {testResult && (
@@ -726,7 +754,7 @@ export function ABACPoliciesPage() {
                     : <ShieldOff className="h-5 w-5 text-red-600" />
                   }
                   <span className={`font-semibold ${testResult.allowed ? 'text-green-800' : 'text-red-800'}`}>
-                    {testResult.allowed ? 'ALLOWED' : 'DENIED'}
+                    {t(testResult.allowed ? 'pages.abacPolicies.test.allowed' : 'pages.abacPolicies.test.denied')}
                   </span>
                 </div>
                 {testResult.reason && (
@@ -736,9 +764,19 @@ export function ABACPoliciesPage() {
                 )}
                 {testResult.policy_id && (
                   <p className="mt-1 text-xs text-muted-foreground">
-                    Matched Policy: {testResult.policy_id}
+                    {t('pages.abacPolicies.test.matchedPolicy', { id: testResult.policy_id })}
                   </p>
                 )}
+                {!testResult.matched && (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {t('pages.abacPolicies.test.noPolicyMatched')}
+                  </p>
+                )}
+                <p className="mt-2 text-xs text-muted-foreground">
+                  {t(`pages.abacPolicies.test.mode.${testResult.mode || 'off'}`, {
+                    defaultValue: t('pages.abacPolicies.test.mode.off'),
+                  })}
+                </p>
               </div>
             )}
           </div>

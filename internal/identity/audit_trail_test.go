@@ -570,8 +570,13 @@ func TestMFABypassIsMirroredIntoTheUnifiedTrail(t *testing.T) {
 	s, db, ctx := newAuditService(t)
 
 	if _, err := db.Pool.Exec(ctx, `
+		CREATE TABLE mfa_bypass_codes (
+		    id     UUID PRIMARY KEY,
+		    org_id UUID NOT NULL
+		);
 		CREATE TABLE mfa_bypass_audit (
 		    id            UUID PRIMARY KEY,
+		    org_id        UUID NOT NULL,
 		    bypass_code_id UUID,
 		    user_id       UUID,
 		    action        VARCHAR(50) NOT NULL,

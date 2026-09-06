@@ -2,6 +2,7 @@
 package identity
 
 import (
+	"errors"
 	"net/http"
 	"net/url"
 	"strings"
@@ -11,6 +12,16 @@ import (
 
 	apperrors "github.com/openidx/openidx/internal/common/errors"
 )
+
+// phoneCallErrStatus maps a phone-call MFA error to its HTTP status: an
+// unconfigured factor is the installation's limitation (501), not the
+// caller's mistake (400).
+func phoneCallErrStatus(err error) int {
+	if errors.Is(err, ErrPhoneCallMFANotConfigured) {
+		return http.StatusNotImplemented
+	}
+	return http.StatusBadRequest
+}
 
 // identityCallerIsAdmin reports whether the authenticated caller holds an
 // administrative role, for handlers that need their own authorization check
@@ -205,7 +216,7 @@ func (s *Service) handleEnrollPhoneCall(c *gin.Context) {
 
 	challenge, err := s.EnrollPhoneCall(c.Request.Context(), userID, req.PhoneNumber, req.CountryCode)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(phoneCallErrStatus(err), gin.H{"error": err.Error()})
 		return
 	}
 
@@ -270,7 +281,7 @@ func (s *Service) handleRequestCallback(c *gin.Context) {
 
 	challenge, err := s.RequestCallback(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(phoneCallErrStatus(err), gin.H{"error": err.Error()})
 		return
 	}
 

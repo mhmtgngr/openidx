@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 
@@ -16,10 +17,43 @@ import (
 
 // setupPAMTestDB creates a throwaway PostgreSQL container (same pattern as the
 // internal/access test harness) and migrates it to latest.
+//
+// OPENIDX_TEST_DATABASE_URL, when set, points the harness at an existing
+// server instead of starting a container — for a workstation or sandbox that
+// has Postgres but no Docker daemon. CI does not set it and keeps using
+// throwaway containers.
+//
+// The schema is DROPPED and rebuilt on that path. It has to be: several tests
+// in this package seed fixed UUIDs (org-b-mfa-test, org-c-posture-test, the
+// vault fixtures) and do not clean up, which is harmless against a fresh
+// container and produces a wall of duplicate-key failures on the second run
+// against a persistent database — failures that look like regressions and are
+// not. Because the reset is per call, run ONE package at a time against this
+// variable; two packages sharing the URL would rebuild the schema underneath
+// each other.
 func setupPAMTestDB(t *testing.T) (*database.PostgresDB, func()) {
 	t.Helper()
 
 	ctx := context.Background()
+
+	if url := os.Getenv("OPENIDX_TEST_DATABASE_URL"); url != "" {
+		db, err := database.NewPostgres(url)
+		if err != nil {
+			t.Skipf("OPENIDX_TEST_DATABASE_URL set but unreachable: %v", err)
+			return nil, func() {}
+		}
+		for _, stmt := range []string{"DROP SCHEMA public CASCADE", "CREATE SCHEMA public"} {
+			if _, err := db.Pool.Exec(ctx, stmt); err != nil {
+				db.Close()
+				t.Fatalf("reset test schema (%s): %v", stmt, err)
+			}
+		}
+		if err := migrations.NewMigrator(db.Pool, zap.NewNop()).MigrateTo(ctx, -1); err != nil {
+			db.Close()
+			t.Fatalf("migrate to latest: %v", err)
+		}
+		return db, func() { db.Close() }
+	}
 
 	req := testcontainers.ContainerRequest{
 		Image:        "postgres:16-alpine",
@@ -160,8 +194,8 @@ func TestAggregatePAMOverview(t *testing.T) {
 		t.Fatalf("seed active session: %v", err)
 	}
 	if _, err := db.Pool.Exec(ctx, `
-		INSERT INTO guacamole_recording_legal_holds (session_id, reason) VALUES ($1::uuid, 'litigation')`,
-		heldSessionID); err != nil {
+		INSERT INTO guacamole_recording_legal_holds (session_id, reason, org_id) VALUES ($1::uuid, 'litigation', $2::uuid)`,
+		heldSessionID, orgA); err != nil {
 		t.Fatalf("seed legal hold: %v", err)
 	}
 	if _, err := db.Pool.Exec(ctx, `

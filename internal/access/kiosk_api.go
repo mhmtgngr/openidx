@@ -18,6 +18,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // KioskAPIHandler exposes the admin-side kiosk policy CRUD + assignment
@@ -120,20 +121,34 @@ func (h *KioskAPIHandler) HandleCreatePolicy(c *gin.Context) {
 		enabled = *req.Enabled
 	}
 
+	org, ok := requireKioskOrg(c)
+	if !ok {
+		return
+	}
+
 	id := uuid.New().String()
 	createdBy := getUserID(c)
 
 	_, err := h.db.Pool.Exec(c.Request.Context(), `
         INSERT INTO kiosk_policies
             (id, name, description, mode, allowed_packages, primary_activity,
-             lock_task_features, branding, exit_pin_hash, enabled, created_by)
+             lock_task_features, branding, exit_pin_hash, enabled, created_by, org_id)
         VALUES ($1,$2,$3,$4, COALESCE($5,'[]'::jsonb), NULLIF($6,''),
                 COALESCE($7,'[]'::jsonb), COALESCE($8,'{}'::jsonb),
-                NULLIF($9,''), $10, NULLIF($11,'')::uuid)
+                NULLIF($9,''), $10, NULLIF($11,'')::uuid, $12)
     `, id, req.Name, req.Description, normalizeKioskMode(req.Mode),
-		string(req.AllowedPackages), req.PrimaryActivity,
-		string(req.LockTaskFeatures), string(req.Branding),
-		pinHash, enabled, createdBy)
+		// nilIfEmpty, not string(...). The COALESCE above says "use the default
+		// when the caller omitted this", and an omitted json.RawMessage
+		// stringifies to "" rather than NULL, so COALESCE never saw a NULL and
+		// Postgres was handed the empty string as jsonb: every create that left
+		// allowed_packages, lock_task_features or branding out — all three are
+		// optional in the request type — failed with "invalid input syntax for
+		// type json" and a bare 500. HandleUpdatePolicy has always used this
+		// helper; the helper was written for this problem and create never
+		// called it.
+		nilIfEmpty(req.AllowedPackages), req.PrimaryActivity,
+		nilIfEmpty(req.LockTaskFeatures), nilIfEmpty(req.Branding),
+		pinHash, enabled, createdBy, org)
 	if err != nil {
 		h.logger.Error("HandleCreatePolicy: insert failed", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create policy"})
@@ -144,13 +159,24 @@ func (h *KioskAPIHandler) HandleCreatePolicy(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"id": id})
 }
 
-// HandleListPolicies returns every kiosk policy (admin view, no filtering).
+// HandleListPolicies returns this organization's kiosk policies.
+//
+// It used to return every policy on the installation, and said so: the doc
+// comment here read "returns every kiosk policy (admin view, no filtering)".
+// A kiosk policy is a device lockdown -- which packages may run, which activity
+// is pinned to the screen, and the hash of the PIN required to leave -- so the
+// list handed one tenant's administrator another tenant's lockdown estate.
 func (h *KioskAPIHandler) HandleListPolicies(c *gin.Context) {
 	if h.db == nil || h.db.Pool == nil {
 		c.JSON(http.StatusOK, []kioskPolicyRow{})
 		return
 	}
-	rows, err := h.db.Pool.Query(c.Request.Context(), kioskPolicySelect+` ORDER BY created_at DESC`)
+	org, ok := requireKioskOrg(c)
+	if !ok {
+		return
+	}
+	rows, err := h.db.Pool.Query(c.Request.Context(),
+		kioskPolicySelect+` WHERE org_id = $1 ORDER BY created_at DESC`, org)
 	if err != nil {
 		h.logger.Error("HandleListPolicies: query failed", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list policies"})
@@ -177,7 +203,12 @@ func (h *KioskAPIHandler) HandleGetPolicy(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "database unavailable"})
 		return
 	}
-	row := h.db.Pool.QueryRow(c.Request.Context(), kioskPolicySelect+` WHERE id = $1`, id)
+	org, ok := requireKioskOrg(c)
+	if !ok {
+		return
+	}
+	row := h.db.Pool.QueryRow(c.Request.Context(),
+		kioskPolicySelect+` WHERE id = $1 AND org_id = $2`, id, org)
 	rec, err := scanKioskPolicyRow(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -211,6 +242,11 @@ func (h *KioskAPIHandler) HandleUpdatePolicy(c *gin.Context) {
 		return
 	}
 
+	org, ok := requireKioskOrg(c)
+	if !ok {
+		return
+	}
+
 	pinHash := ""
 	if req.ExitPIN != "" {
 		pinHash = sha256Hex(req.ExitPIN)
@@ -228,11 +264,11 @@ func (h *KioskAPIHandler) HandleUpdatePolicy(c *gin.Context) {
             exit_pin_hash = COALESCE(NULLIF($9,''), exit_pin_hash),
             enabled = COALESCE($10, enabled),
             updated_at = NOW()
-        WHERE id = $1
+        WHERE id = $1 AND org_id = $11
     `, id, req.Name, req.Description, normalizeKioskMode(req.Mode),
 		nilIfEmpty(req.AllowedPackages), req.PrimaryActivity,
 		nilIfEmpty(req.LockTaskFeatures), nilIfEmpty(req.Branding),
-		pinHash, req.Enabled)
+		pinHash, req.Enabled, org)
 	if err != nil {
 		h.logger.Error("HandleUpdatePolicy: update failed", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update policy"})
@@ -255,10 +291,21 @@ func (h *KioskAPIHandler) HandleDeletePolicy(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "database unavailable"})
 		return
 	}
-	_, err := h.db.Pool.Exec(c.Request.Context(), `DELETE FROM kiosk_policies WHERE id = $1`, id)
+	org, ok := requireKioskOrg(c)
+	if !ok {
+		return
+	}
+	tag, err := h.db.Pool.Exec(c.Request.Context(),
+		`DELETE FROM kiosk_policies WHERE id = $1 AND org_id = $2`, id, org)
 	if err != nil {
 		h.logger.Error("HandleDeletePolicy: delete failed", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete policy"})
+		return
+	}
+	// Answering "deleted" on a predicate that matched nothing is how a
+	// cross-tenant id looked like a successful delete from the console.
+	if tag.RowsAffected() == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "policy not found"})
 		return
 	}
 	h.auditKiosk(c.Request.Context(), "kiosk.policy_deleted", id, "success", "")
@@ -292,15 +339,26 @@ func (h *KioskAPIHandler) HandleAssignPolicy(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "database unavailable"})
 		return
 	}
+	org, ok := requireKioskOrg(c)
+	if !ok {
+		return
+	}
+	// The policy must be the caller's. This handler took the id straight from
+	// the URL and wrote the row, so an administrator could aim ANOTHER tenant's
+	// lockdown policy, and its exit PIN, at a device.
+	if !h.policyInOrg(c, policyID, org) {
+		return
+	}
+
 	id := uuid.New().String()
 	createdBy := getUserID(c)
 	_, err := h.db.Pool.Exec(c.Request.Context(), `
         INSERT INTO kiosk_policy_assignments
-            (id, policy_id, target_kind, target_id, priority, created_by)
-        VALUES ($1,$2,$3,$4,$5, NULLIF($6,'')::uuid)
+            (id, policy_id, target_kind, target_id, priority, created_by, org_id)
+        VALUES ($1,$2,$3,$4,$5, NULLIF($6,'')::uuid, $7)
         ON CONFLICT (policy_id, target_kind, target_id) DO UPDATE
             SET priority = EXCLUDED.priority
-    `, id, policyID, req.TargetKind, req.TargetID, priority, createdBy)
+    `, id, policyID, req.TargetKind, req.TargetID, priority, createdBy, org)
 	if err != nil {
 		h.logger.Error("HandleAssignPolicy: insert failed", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to assign policy"})
@@ -318,12 +376,16 @@ func (h *KioskAPIHandler) HandleListAssignments(c *gin.Context) {
 		c.JSON(http.StatusOK, []kioskPolicyAssignmentRow{})
 		return
 	}
+	org, ok := requireKioskOrg(c)
+	if !ok {
+		return
+	}
 	rows, err := h.db.Pool.Query(c.Request.Context(), `
         SELECT id, policy_id, target_kind, target_id, priority, created_at
           FROM kiosk_policy_assignments
-         WHERE policy_id = $1
+         WHERE policy_id = $1 AND org_id = $2
          ORDER BY priority DESC, created_at DESC
-    `, policyID)
+    `, policyID, org)
 	if err != nil {
 		h.logger.Error("HandleListAssignments: query failed", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list assignments"})
@@ -349,15 +411,24 @@ func (h *KioskAPIHandler) HandleUnassignPolicy(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "database unavailable"})
 		return
 	}
+	org, ok := requireKioskOrg(c)
+	if !ok {
+		return
+	}
 	var policyID string
 	_ = h.db.Pool.QueryRow(c.Request.Context(),
-		`SELECT policy_id FROM kiosk_policy_assignments WHERE id = $1`,
-		assignmentID).Scan(&policyID)
-	_, err := h.db.Pool.Exec(c.Request.Context(),
-		`DELETE FROM kiosk_policy_assignments WHERE id = $1`, assignmentID)
+		`SELECT policy_id FROM kiosk_policy_assignments WHERE id = $1 AND org_id = $2`,
+		assignmentID, org).Scan(&policyID)
+	tag, err := h.db.Pool.Exec(c.Request.Context(),
+		`DELETE FROM kiosk_policy_assignments WHERE id = $1 AND org_id = $2`, assignmentID, org)
 	if err != nil {
 		h.logger.Error("HandleUnassignPolicy: delete failed", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to unassign"})
+		return
+	}
+	// Removing another tenant's assignment lifts a lockdown from their device.
+	if tag.RowsAffected() == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "assignment not found"})
 		return
 	}
 	h.auditKiosk(c.Request.Context(), "kiosk.policy_unassigned", policyID, "success", assignmentID)
@@ -375,6 +446,25 @@ func (h *KioskAPIHandler) HandleUnassignPolicy(c *gin.Context) {
 //
 // Group support is reserved for future identity-service integration; we
 // query for it so the schema is exercised, but no rows ever match today.
+//
+// THIS READ RUNS UNDER orgctx.WithBypassRLS, deliberately, and it is the only
+// read of these tables that does. /agent/config is called by a device holding
+// an agent token: there is no user and no organization on the context, so under
+// v159's belt this query would return nothing at all. The caller treats a
+// resolution failure as "no policy applies" and omits the kiosk block, so a
+// device that should be locked down would quietly stop being locked down — the
+// belt failing the operation closed rather than scoping it. The same explicit
+// opt-out the SAML and SSF pre-tenant paths use applies here.
+//
+// That leaves the cross-tenant TARGET open, and it is worth being plain about
+// it: target_id names an agent, enrolled_agents has no org_id by a decision
+// recorded in three comments in this package, and so there is no tenant term to
+// put on the match below. v159 stops one tenant from aiming ANOTHER tenant's
+// policy (the assignment handlers now verify the policy is the caller's); it
+// does not stop a tenant aiming their OWN policy at a device enrolled by
+// somebody else, because "somebody else's device" is not a thing this schema
+// can express. Whether the fleet is per-tenant is a product decision, and it is
+// recorded in the readiness guide rather than settled here.
 func resolveEffectiveKioskPolicy(
 	ctx context.Context,
 	db *database.PostgresDB,
@@ -403,7 +493,7 @@ SELECT kp.id, kp.name, COALESCE(kp.description, ''), kp.mode,
    )
  ORDER BY kpa.priority DESC, kpa.created_at DESC
  LIMIT 1`
-	row := db.Pool.QueryRow(ctx, query, agentID)
+	row := db.Pool.QueryRow(orgctx.WithBypassRLS(ctx), query, agentID)
 	rec, err := scanKioskPolicyRow(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -412,6 +502,37 @@ SELECT kp.id, kp.name, COALESCE(kp.description, ''), kp.mode,
 		return nil, err
 	}
 	return &rec, nil
+}
+
+// requireKioskOrg resolves the caller's organization or answers 403. Every
+// admin handler in this file goes through it: before v159 none of them named an
+// organization at all.
+func requireKioskOrg(c *gin.Context) (string, bool) {
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return "", false
+	}
+	return org.ID, true
+}
+
+// policyInOrg reports whether the policy belongs to the caller's organization,
+// answering 404 when it does not. A policy that exists elsewhere and one that
+// does not exist are the same answer on purpose.
+func (h *KioskAPIHandler) policyInOrg(c *gin.Context, policyID, org string) bool {
+	var one int
+	err := h.db.Pool.QueryRow(c.Request.Context(),
+		`SELECT 1 FROM kiosk_policies WHERE id = $1 AND org_id = $2`, policyID, org).Scan(&one)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "policy not found"})
+			return false
+		}
+		h.logger.Error("policyInOrg: lookup failed", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to resolve policy"})
+		return false
+	}
+	return true
 }
 
 func (h *KioskAPIHandler) auditKiosk(ctx context.Context, action, policyID, outcome, detail string) {

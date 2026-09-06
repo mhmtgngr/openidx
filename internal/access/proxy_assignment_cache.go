@@ -26,7 +26,17 @@ import (
 // data plane resolves its tenant from the host, before any org context
 // exists, and `applications` / `user_application_assignments` /
 // `group_memberships` / `group_application_assignments` are all
-// FORCE ROW LEVEL SECURITY. Without the bypass, appaccess.Allowed's explicit
+// FORCE ROW LEVEL SECURITY.
+//
+// That sentence was not true when it was written: v136 gave
+// `group_application_assignments` ENABLE and a policy and no FORCE, so it read
+// relforcerowsecurity=f while the three tables named beside it read t. ENABLE
+// applies a policy to every role except the table's OWNER, so the belt on that
+// one table held only while the migrating role and the runtime role differed.
+// Migration v167 applies the FORCE, and an integration case now asserts that
+// every policied table carries it -- the sentence is checked now, not asserted.
+//
+// Without the bypass, appaccess.Allowed's explicit
 // `a.org_id = $2` predicate would additionally be filtered by whatever
 // `app.org_id` happens to be set to (the default org, or nothing) — silently
 // returning "not assigned" for every correctly assigned user whose org isn't

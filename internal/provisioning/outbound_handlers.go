@@ -32,20 +32,33 @@ func (s *Service) registerOutboundRoutes(group *gin.RouterGroup) {
 	}
 }
 
-// orgIDFromRequest resolves the caller's org id, or "" when running
-// single-tenant (no org context / default org). Errors from a missing resolver
-// are treated as single-tenant rather than 500 so the endpoints work in both
-// deployment modes, matching the rest of the service.
-func orgIDFromRequest(ctx context.Context) string {
-	org, err := orgctx.From(ctx)
-	if err != nil {
-		return ""
+// requireOrgID resolves the caller's org id, refusing the request when there
+// is none.
+//
+// It used to return "" instead, "when running single-tenant", and every store
+// query paired that with an OR-empty-string escape hatch, so an absent
+// organization meant EVERY
+// organization: the list returned every tenant's SCIM connections, delete
+// removed any of them, and the full sync pushed the whole installation's
+// directory into one tenant's downstream SaaS. Nothing reached it, because
+// TenantResolver runs in front of every route here and either attaches an
+// organization or aborts, but the wildcard was one middleware change away from
+// being load-bearing and it contradicts the FORCE RLS belt v164 applies, under
+// which an unscoped query returns nothing rather than everything.
+func requireOrgID(c *gin.Context) (string, bool) {
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil || org.ID == "" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return "", false
 	}
-	return org.ID
+	return org.ID, true
 }
 
 func (s *Service) handleListTargets(c *gin.Context) {
-	orgID := orgIDFromRequest(c.Request.Context())
+	orgID, ok := requireOrgID(c)
+	if !ok {
+		return
+	}
 	targets, err := s.ListTargetApps(c.Request.Context(), orgID)
 	if err != nil {
 		s.logger.Error("list scim targets failed", zap.Error(err))
@@ -64,7 +77,10 @@ func (s *Service) handleCreateTarget(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	orgID := orgIDFromRequest(c.Request.Context())
+	orgID, ok := requireOrgID(c)
+	if !ok {
+		return
+	}
 	target, err := s.CreateTargetApp(c.Request.Context(), orgID, &in)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -76,7 +92,10 @@ func (s *Service) handleCreateTarget(c *gin.Context) {
 }
 
 func (s *Service) handleGetTarget(c *gin.Context) {
-	orgID := orgIDFromRequest(c.Request.Context())
+	orgID, ok := requireOrgID(c)
+	if !ok {
+		return
+	}
 	target, err := s.GetTargetApp(c.Request.Context(), orgID, c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "target not found"})
@@ -91,7 +110,10 @@ func (s *Service) handleUpdateTarget(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	orgID := orgIDFromRequest(c.Request.Context())
+	orgID, ok := requireOrgID(c)
+	if !ok {
+		return
+	}
 	target, err := s.UpdateTargetApp(c.Request.Context(), orgID, c.Param("id"), &in)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -101,7 +123,10 @@ func (s *Service) handleUpdateTarget(c *gin.Context) {
 }
 
 func (s *Service) handleDeleteTarget(c *gin.Context) {
-	orgID := orgIDFromRequest(c.Request.Context())
+	orgID, ok := requireOrgID(c)
+	if !ok {
+		return
+	}
 	if err := s.DeleteTargetApp(c.Request.Context(), orgID, c.Param("id")); err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
@@ -112,14 +137,17 @@ func (s *Service) handleDeleteTarget(c *gin.Context) {
 // handleTestTarget probes the target's ServiceProviderConfig to verify the base
 // URL is reachable and the credentials are accepted, without mutating anything.
 func (s *Service) handleTestTarget(c *gin.Context) {
-	orgID := orgIDFromRequest(c.Request.Context())
+	orgID, ok := requireOrgID(c)
+	if !ok {
+		return
+	}
 	id := c.Param("id")
 	target, err := s.GetTargetApp(c.Request.Context(), orgID, id)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "target not found"})
 		return
 	}
-	token, err := s.bearerTokenFor(c.Request.Context(), id)
+	token, err := s.bearerTokenFor(c.Request.Context(), orgID, id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to resolve credentials"})
 		return
@@ -148,7 +176,10 @@ func (s *Service) handleTestTarget(c *gin.Context) {
 // brought into line with the current directory. The worker drains it
 // asynchronously.
 func (s *Service) handleSyncTarget(c *gin.Context) {
-	orgID := orgIDFromRequest(c.Request.Context())
+	orgID, ok := requireOrgID(c)
+	if !ok {
+		return
+	}
 	id := c.Param("id")
 	target, err := s.GetTargetApp(c.Request.Context(), orgID, id)
 	if err != nil {
@@ -167,13 +198,16 @@ func (s *Service) handleSyncTarget(c *gin.Context) {
 // handleTargetStatus reports per-target provisioning counts (records by status,
 // queue depth) for the admin UI.
 func (s *Service) handleTargetStatus(c *gin.Context) {
-	orgID := orgIDFromRequest(c.Request.Context())
+	orgID, ok := requireOrgID(c)
+	if !ok {
+		return
+	}
 	id := c.Param("id")
 	if _, err := s.GetTargetApp(c.Request.Context(), orgID, id); err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "target not found"})
 		return
 	}
-	status, err := s.TargetStatus(c.Request.Context(), id)
+	status, err := s.TargetStatus(c.Request.Context(), orgID, id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
 		return

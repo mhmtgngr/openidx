@@ -92,6 +92,15 @@ func main() {
 	}
 	defer db.Close()
 
+	// Same gate as the identity-service: this binary serves the login flow,
+	// so it too refuses production traffic while the seeded default admin
+	// password still authenticates.
+	if cfg.IsProduction() {
+		if err := identity.EnsureDefaultAdminRotated(context.Background(), db, log); err != nil {
+			log.Fatal("Default-credential validation failed", zap.Error(err))
+		}
+	}
+
 	// Initialize Redis connection
 	// Export DB pool saturation gauges (openidx_db_connections{state=...}).
 	metrics.NewTracedPool(db.Pool, "oauth-service").StartPoolStatsCollector(context.Background())

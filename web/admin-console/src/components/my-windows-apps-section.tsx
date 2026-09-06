@@ -12,6 +12,7 @@ import {
 import { api, MyWindowsApp, WindowsAppLaunchConflict } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 import { isAxiosError } from 'axios'
+import { useTranslation } from 'react-i18next'
 
 // A launch conflict the user must resolve (server replied 409).
 type Conflict = { app: MyWindowsApp; body: WindowsAppLaunchConflict }
@@ -24,6 +25,7 @@ type Conflict = { app: MyWindowsApp; body: WindowsAppLaunchConflict }
  * box; the section hides itself when the user has no published apps.
  */
 export function MyWindowsAppsSection({ search }: { search: string }) {
+  const { t } = useTranslation()
   const { toast } = useToast()
   const [conflict, setConflict] = useState<Conflict | null>(null)
 
@@ -45,14 +47,17 @@ export function MyWindowsAppsSection({ search }: { search: string }) {
     onSuccess: (r) => {
       setConflict(null)
       window.open(r.connect_url, '_blank', 'noopener')
-      toast({ title: 'Launching', description: `${r.host_name} — session ${r.recorded ? 'recorded' : 'live'}` })
+      toast({
+        title: t('components.windowsApps.launching'),
+        description: t(r.recorded ? 'components.windowsApps.sessionRecorded' : 'components.windowsApps.sessionLive', { host: r.host_name }),
+      })
     },
     onError: (e: unknown, v) => {
       if (isAxiosError(e) && e.response?.status === 409 && e.response.data) {
         setConflict({ app: v.app, body: e.response.data as WindowsAppLaunchConflict })
         return
       }
-      toast({ title: 'Launch failed', description: (e as Error).message, variant: 'destructive' })
+      toast({ title: t('components.windowsApps.launchFailed'), description: (e as Error).message, variant: 'destructive' })
     },
   })
 
@@ -64,18 +69,18 @@ export function MyWindowsAppsSection({ search }: { search: string }) {
   return (
     <section className="space-y-3">
       <div>
-        <h2 className="text-xl font-semibold tracking-tight">Windows apps</h2>
+        <h2 className="text-xl font-semibold tracking-tight">{t('components.windowsApps.heading')}</h2>
         <p className="text-sm text-muted-foreground">
-          Windows programs published to you. Launch one in your browser — no install, no full desktop.
+          {t('components.windowsApps.subtitle')}
         </p>
       </div>
 
       {isLoading ? (
         <div className="flex justify-center py-8"><LoadingSpinner /></div>
       ) : isError ? (
-        <QueryError error={error} resource="your Windows apps" />
+        <QueryError error={error} resource={t('components.windowsApps.resource')} />
       ) : apps.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No Windows apps match “{search}”.</p>
+        <p className="text-sm text-muted-foreground">{t('components.windowsApps.noMatch', { search })}</p>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {apps.map((app) => (
@@ -99,11 +104,11 @@ export function MyWindowsAppsSection({ search }: { search: string }) {
                 </div>
                 {app.require_approval && (
                   <Badge variant="outline" className="text-amber-700 border-amber-300">
-                    <ShieldCheck className="h-3 w-3 mr-1" /> needs approval
+                    <ShieldCheck className="h-3 w-3 mr-1" /> {t('components.windowsApps.needsApproval')}
                   </Badge>
                 )}
                 <Button className="w-full" onClick={() => launch.mutate({ app })} disabled={launch.isPending}>
-                  <Play className="h-4 w-4 mr-1" /> Launch
+                  <Play className="h-4 w-4 mr-1" /> {t('components.windowsApps.launch')}
                 </Button>
               </CardContent>
             </Card>
@@ -117,7 +122,7 @@ export function MyWindowsAppsSection({ search }: { search: string }) {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <AlertTriangle className="h-5 w-5 text-amber-500" />
-              {conflict?.body.reason === 'no_capacity' ? 'No free host' : 'You have an active session'}
+              {t(conflict?.body.reason === 'no_capacity' ? 'components.windowsApps.noFreeHost' : 'components.windowsApps.activeSession')}
             </DialogTitle>
           </DialogHeader>
           {conflict && (
@@ -131,26 +136,26 @@ export function MyWindowsAppsSection({ search }: { search: string }) {
                         <Server className="h-3.5 w-3.5 shrink-0" /> {c.host_name}
                       </p>
                       <p className="text-xs text-muted-foreground truncate">
-                        {c.app_name ? `${c.app_name} · ` : ''}since {new Date(c.started_at).toLocaleTimeString()}
+                        {c.app_name ? `${c.app_name} · ` : ''}{t('components.windowsApps.since', { time: new Date(c.started_at).toLocaleTimeString() })}
                       </p>
                     </div>
                     <Button
                       size="sm" variant="outline" disabled={launch.isPending}
                       onClick={() => conflict && launch.mutate({ app: conflict.app, replaceSessionId: c.session_id })}
                     >
-                      Disconnect &amp; launch here
+                      {t('components.windowsApps.disconnectAndLaunch')}
                     </Button>
                   </div>
                 ))}
               </div>
               <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
                 <CheckCircle2 className="h-3.5 w-3.5 shrink-0 mt-px" />
-                Nothing is disconnected unless you choose a session above.
+                {t('components.windowsApps.nothingDisconnected')}
               </p>
             </div>
           )}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setConflict(null)}>Cancel</Button>
+            <Button variant="outline" onClick={() => setConflict(null)}>{t('common.cancel')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

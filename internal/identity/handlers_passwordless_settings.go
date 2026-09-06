@@ -144,10 +144,14 @@ func (s *Service) handleGetPasswordlessStats(c *gin.Context) {
 		return
 	}
 
-	// Count today's magic links
+	// Count today's magic links. The QR count immediately below has carried
+	// `AND org_id = $1` all along; this one, on the same card of the same page,
+	// counted the whole install. Two adjacent statistics, one scoped and one
+	// not, is what a missing column looks like from the outside.
 	var magicLinksToday int
 	err = s.db.Pool.QueryRow(ctx,
-		"SELECT COUNT(*) FROM magic_links WHERE created_at >= CURRENT_DATE",
+		"SELECT COUNT(*) FROM magic_links WHERE created_at >= CURRENT_DATE AND org_id = $1",
+		org.ID,
 	).Scan(&magicLinksToday)
 	if err != nil {
 		s.logger.Warn("failed to count magic links", zap.Error(err))
@@ -165,10 +169,17 @@ func (s *Service) handleGetPasswordlessStats(c *gin.Context) {
 		qrLoginsToday = 0
 	}
 
-	// Count biometric-only users (handle table not existing gracefully)
+	// Count this organization's biometric-only users. Every other figure on
+	// this page carries AND org_id = $1 — magic links, QR logins, total users —
+	// and this one did not, so the numerator counted the whole installation
+	// while the denominator two blocks below counts one tenant. On a small
+	// tenant sharing an installation with a large one the adoption rate came
+	// out above 100%: not merely wrong but arithmetically impossible, printed
+	// beside figures that were correct.
 	var biometricOnlyUsers int
 	err = s.db.Pool.QueryRow(ctx,
-		"SELECT COUNT(*) FROM biometric_preferences WHERE biometric_only_enabled = true",
+		"SELECT COUNT(*) FROM biometric_preferences WHERE biometric_only_enabled = true AND org_id = $1",
+		org.ID,
 	).Scan(&biometricOnlyUsers)
 	if err != nil {
 		s.logger.Warn("failed to count biometric-only users", zap.Error(err))

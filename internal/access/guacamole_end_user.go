@@ -51,8 +51,15 @@ type GuacMySessionRequest struct {
 // Lists the org's brokered Guacamole connections (enabled routes only) with
 // the PAM flags the launcher UI needs: whether pre-session approval is
 // required, whether the session is recorded, and whether a credential is
-// injected server-side. RLS scopes guacamole_connections via the request
-// context; the explicit pr.org_id predicate is defence in depth.
+// injected server-side.
+//
+// The predicate is the scope. This comment used to read "RLS scopes
+// guacamole_connections via the request context; the explicit pr.org_id
+// predicate is defence in depth" — exactly backwards: until v151 the table had
+// no org_id and no policy, so the belt it credited did not exist and the
+// predicate it called defence in depth was the entire defence. Since v151 the
+// table is belted and gc.org_id is checked alongside the route's, so the
+// sentence is finally true in both halves.
 func (s *Service) handleListMyGuacConnections(c *gin.Context) {
 	ctx := c.Request.Context()
 
@@ -68,7 +75,7 @@ func (s *Service) handleListMyGuacConnections(c *gin.Context) {
 		        (gc.vault_secret_id IS NOT NULL) AS credential_injected
 		   FROM guacamole_connections gc
 		   JOIN proxy_routes pr ON pr.id = gc.route_id
-		  WHERE pr.org_id = $1 AND pr.enabled = true
+		  WHERE gc.org_id = $1 AND pr.org_id = $1 AND pr.enabled = true
 		  ORDER BY pr.name`,
 		org.ID)
 	if err != nil {

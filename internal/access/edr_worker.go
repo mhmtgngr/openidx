@@ -37,6 +37,7 @@ func (s *Service) runEDRIngestion(ctx context.Context) {
 // runDueEDRSources syncs every enabled source whose last_sync_at is older than
 // its poll interval (or has never synced).
 func (s *Service) runDueEDRSources(ctx context.Context) {
+	//orgscope:ignore install-wide poll sweep (runs under bypass_rls): a source the sweep cannot see never polls, and a device that stops reporting must still age out to failing; each source's own organization then scopes everything the sync does
 	rows, err := s.db.Pool.Query(ctx, `
         SELECT id::text FROM edr_posture_sources
          WHERE enabled

@@ -9,6 +9,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // enrollCodeAlphabet is an unambiguous base-31 set (no 0/O/1/I/L) so a code can
@@ -167,11 +169,16 @@ func (h *AgentAPIHandler) HandleEnrollSessionStatus(c *gin.Context) {
 	}
 	var status, agentID string
 	var trusted bool
+	org, orgErr := orgctx.From(c.Request.Context())
+	if orgErr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
 	err := h.db.Pool.QueryRow(c.Request.Context(), `
 		SELECT status, COALESCE(agent_id,''), trusted
 		FROM enrollment_sessions
-		WHERE id = $1 AND created_by_user_id = $2
-	`, c.Param("id"), userID).Scan(&status, &agentID, &trusted)
+		WHERE id = $1 AND created_by_user_id = $2 AND org_id = $3
+	`, c.Param("id"), userID, org.ID).Scan(&status, &agentID, &trusted)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "session not found"})
 		return
@@ -192,12 +199,17 @@ func (h *AgentAPIHandler) HandleCancelEnrollSession(c *gin.Context) {
 		return
 	}
 	ctx := c.Request.Context()
+	org, orgErr := orgctx.From(ctx)
+	if orgErr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
 	var tokenHash string
 	err := h.db.Pool.QueryRow(ctx, `
 		UPDATE enrollment_sessions SET status = 'canceled'
-		WHERE id = $1 AND created_by_user_id = $2 AND status = 'pending'
+		WHERE id = $1 AND created_by_user_id = $2 AND org_id = $3 AND status = 'pending'
 		RETURNING token_hash
-	`, c.Param("id"), userID).Scan(&tokenHash)
+	`, c.Param("id"), userID, org.ID).Scan(&tokenHash)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "session not found or not cancelable"})
 		return
@@ -207,35 +219,55 @@ func (h *AgentAPIHandler) HandleCancelEnrollSession(c *gin.Context) {
 }
 
 // lookupEnrollmentSession returns the pending, unexpired enrollment session for
-// a token hash, or nil. Read by the public /agent/enroll path (no tenant JWT);
-// enrollment_sessions is a global table like agent_enrollment_tokens, so no RLS
-// bypass is needed for this high-entropy-keyed read.
+// a token hash, or nil.
+//
+// THIS IS THE ONE GENUINE PRE-TENANT PATH ON THIS TABLE, which is why the
+// orgscope register said to confirm it before belting. An agent redeems its
+// enrolment token at the public /agent/enroll endpoint: no JWT, no subdomain
+// the resolver can trust to be the enroling tenant's, and on an install with
+// the default-org fallback on it would be handed the PRIMARY org, which for a
+// device enroling into any other tenant is the wrong one.
+//
+// So this read opts out explicitly, which is what orgctx.WithBypassRLS is for.
+// The comment this replaces said "enrollment_sessions is a global table like
+// agent_enrollment_tokens, so no RLS bypass is needed" -- true until v171
+// belted it, and exactly the kind of standing claim that stops being true
+// without anyone editing it. The tenant is not the key here; the SHA-256 of the
+// enrolment token is, and the session's own org_id is what the caller scopes by
+// afterwards.
 func (h *AgentAPIHandler) lookupEnrollmentSession(ctx context.Context, tokenHash string) *enrollmentSession {
 	if h.db == nil || h.db.Pool == nil {
 		return nil
 	}
+	ctx = orgctx.WithBypassRLS(ctx)
 	var s enrollmentSession
-	err := h.db.Pool.QueryRow(ctx, `
-		SELECT id, created_by_user_id, org_id, mfa_verified, status
+	err := h.db.Pool.QueryRow(ctx,
+		//orgscope:ignore public agent-enrolment redemption: keyed by the high-entropy token hash before any tenant is resolvable; the session's own org_id scopes everything after
+		`SELECT id, created_by_user_id, org_id, mfa_verified, status
 		FROM enrollment_sessions
-		WHERE token_hash = $1 AND status = 'pending' AND expires_at > NOW()
-	`, tokenHash).Scan(&s.ID, &s.CreatedByUID, &s.OrgID, &s.MFAVerified, &s.Status)
+		WHERE token_hash = $1 AND status = 'pending' AND expires_at > NOW()`,
+		tokenHash).Scan(&s.ID, &s.CreatedByUID, &s.OrgID, &s.MFAVerified, &s.Status)
 	if err != nil {
 		return nil
 	}
 	return &s
 }
 
-// markEnrollmentSessionEnrolled records the outcome of a redeemed session.
-func (h *AgentAPIHandler) markEnrollmentSessionEnrolled(ctx context.Context, sessionID, agentID, deviceID string, trusted bool) {
+// markEnrollmentSessionEnrolled records the outcome of a redeemed session. Runs
+// on the same public path as lookupEnrollmentSession, so it takes the same
+// explicit bypass -- and it now names the tenant the session itself carries,
+// rather than addressing the row by id alone.
+func (h *AgentAPIHandler) markEnrollmentSessionEnrolled(ctx context.Context, sessionID, orgID, agentID, deviceID string, trusted bool) {
 	if h.db == nil || h.db.Pool == nil {
 		return
 	}
-	if _, err := h.db.Pool.Exec(ctx, `
-		UPDATE enrollment_sessions
+	ctx = orgctx.WithBypassRLS(ctx)
+	if _, err := h.db.Pool.Exec(ctx,
+		//orgscope:ignore public agent-enrolment redemption: the org comes from the session row this update scopes by
+		`UPDATE enrollment_sessions
 		SET status = 'enrolled', agent_id = $2, device_id = $3, trusted = $4, enrolled_at = NOW()
-		WHERE id = $1
-	`, sessionID, agentID, deviceID, trusted); err != nil {
+		WHERE id = $1 AND org_id = $5`,
+		sessionID, agentID, deviceID, trusted, orgID); err != nil {
 		h.logger.Warn("markEnrollmentSessionEnrolled failed",
 			zap.String("session_id", sessionID), zap.Error(err))
 	}

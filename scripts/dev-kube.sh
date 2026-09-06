@@ -189,6 +189,47 @@ load_images() {
     log_success "Images loaded to kind cluster"
 }
 
+# Create the openidx-secrets Secret with random values on first deploy.
+# The old flow applied dev-kube/secrets-env.yaml verbatim, so every dev
+# cluster ran on the same committed changeme-* values. The template file
+# stays in git as the documentation of these keys; the real values are
+# generated here once and live only in the cluster.
+ensure_dev_secrets() {
+    if kubectl get secret openidx-secrets -n openidx-dev >/dev/null 2>&1; then
+        return
+    fi
+    log_info "Generating openidx-secrets with random values (first deploy)..."
+    local pg_pw redis_pw jwt enc oauth_secret
+    pg_pw="$(openssl rand -hex 16)"
+    redis_pw="$(openssl rand -hex 16)"
+    jwt="$(openssl rand -hex 32)"
+    enc="$(openssl rand -hex 16)"          # 32 chars, satisfies the >=32-byte gate
+    oauth_secret="$(openssl rand -hex 24)"
+
+    kubectl create namespace openidx-dev --dry-run=client -o yaml | kubectl apply -f -
+    kubectl create secret generic openidx-secrets -n openidx-dev \
+        --from-literal=POSTGRES_PASSWORD="${pg_pw}" \
+        --from-literal=DATABASE_URL="postgres://openidx:${pg_pw}@postgres:5432/openidx?sslmode=disable" \
+        --from-literal=REDIS_PASSWORD="${redis_pw}" \
+        --from-literal=REDIS_URL="redis://:${redis_pw}@redis:6379" \
+        --from-literal=JWT_SECRET="${jwt}" \
+        --from-literal=ENCRYPTION_KEY="${enc}" \
+        --from-literal=OAUTH_ISSUER="http://oauth-service.openidx-dev.svc.cluster.local:8006" \
+        --from-literal=OAUTH_JWKS_URL="http://oauth-service.openidx-dev.svc.cluster.local:8006/.well-known/jwks.json" \
+        --from-literal=OAUTH_CLIENT_ID="admin-console" \
+        --from-literal=OAUTH_CLIENT_SECRET="${oauth_secret}" \
+        --from-literal=SMTP_HOST="" \
+        --from-literal=SMTP_PORT="587" \
+        --from-literal=SMTP_USERNAME="" \
+        --from-literal=SMTP_PASSWORD="" \
+        --from-literal=SMTP_FROM="noreply@openidx.local" \
+        --from-literal=ELASTICSEARCH_URL="http://elasticsearch:9200" \
+        --from-literal=OPA_URL="http://opa:8281" \
+        --from-literal=VITE_API_URL="http://localhost:8088" \
+        --from-literal=VITE_OAUTH_URL="http://localhost:8006"
+    log_success "openidx-secrets created"
+}
+
 # Deploy services to cluster
 deploy() {
     log_info "Deploying services to cluster..."
@@ -197,6 +238,10 @@ deploy() {
 
     # Ensure cluster context
     kubectl config use-context "kind-${CLUSTER_NAME}"
+
+    # Secrets first: the kustomization no longer carries the changeme template,
+    # so pods would otherwise start with no secret to mount.
+    ensure_dev_secrets
 
     # Apply secrets and configs
     log_info "Applying infrastructure..."

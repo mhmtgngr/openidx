@@ -26,6 +26,8 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 // AccessMapUser is the identity header of the access map.
@@ -172,7 +174,7 @@ func (s *Service) handleUserAccessMap(c *gin.Context) {
 			return
 		}
 		s.logger.Error("handleUserAccessMap: aggregation failed",
-			zap.String("user_id", scrubLogValue(userID)), zap.Error(err))
+			zap.String("user_id", logsafe.Clean(userID)), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to build access map"})
 		return
 	}
@@ -215,15 +217,15 @@ func (s *Service) buildUserAccessMap(ctx context.Context, orgID, userID string) 
 	}
 
 	// --- Cross-pillar activity (unified audit: openidx + ziti + guacamole) ---
-	// unified_audit_events has no org_id column; scoping is inherited from the
-	// org-verified user_id key above.
-	//orgscope:ignore unified_audit_events is keyed by the org-verified user_id resolved above
+	// Scoped on org_id since v142, not on the org-verified user_id alone: a
+	// user's events could be filed under another org by a mis-plumbed writer,
+	// and this view is the one place an admin would take that at face value.
 	rows, err := s.db.Pool.Query(ctx,
 		`SELECT source, event_type, COALESCE(actor_ip, ''), created_at
 		   FROM unified_audit_events
-		  WHERE user_id = $1
+		  WHERE org_id = $1 AND user_id = $2
 		  ORDER BY created_at DESC
-		  LIMIT 25`, userID)
+		  LIMIT 25`, orgID, userID)
 	if err != nil {
 		return nil, err
 	}

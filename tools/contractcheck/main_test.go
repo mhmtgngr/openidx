@@ -1,11 +1,36 @@
 package main
 
 import (
+	"crypto/tls"
 	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
 )
+
+// TestProbeVerifiesCertificatesUnlessAsked pins the one security decision this
+// tool makes. It probes a live deployment to prove what that deployment really
+// answers; a probe that accepts any certificate has not proved it reached the
+// deployment it names. Skipping verification is therefore a thing the operator
+// asks for with -insecure, never the default and never hard-coded.
+func TestProbeVerifiesCertificatesUnlessAsked(t *testing.T) {
+	if defaultInsecure {
+		t.Error("-insecure defaults to on: contractcheck would silently accept any " +
+			"certificate from the deployment it claims to have verified")
+	}
+	if probeTLS(defaultInsecure).InsecureSkipVerify {
+		t.Error("the default probe transport skips certificate verification")
+	}
+	if !probeTLS(true).InsecureSkipVerify {
+		t.Error("-insecure no longer reaches the transport: probing a self-signed " +
+			"local edge would fail with no way to opt out")
+	}
+	for _, skip := range []bool{false, true} {
+		if got := probeTLS(skip).MinVersion; got != tls.VersionTLS12 {
+			t.Errorf("probeTLS(%v).MinVersion = %d, want TLS 1.2", skip, got)
+		}
+	}
+}
 
 func TestExtractKeys(t *testing.T) {
 	cases := []struct {

@@ -179,16 +179,6 @@ func SetCorrelationID(c *gin.Context, id string) {
 	c.Header(CorrelationIDHeader, id)
 }
 
-// WithCorrelationID creates a context with correlation ID for use with loggers
-func WithCorrelationID(c *gin.Context, baseCtx interface{}) interface{} {
-	correlationID := GetCorrelationID(c)
-	if correlationID == "" {
-		return baseCtx
-	}
-	// This is a placeholder - actual implementation depends on context type
-	return baseCtx
-}
-
 // generateID generates a new unique correlation ID
 func generateID() string {
 	return uuid.New().String()

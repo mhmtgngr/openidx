@@ -10,8 +10,6 @@ import (
 	"time"
 
 	gomysql "github.com/go-sql-driver/mysql"
-
-	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // mysqlIdentRE constrains MySQL identifiers (target_user / target_host) to a safe
@@ -153,7 +151,7 @@ func (r *mysqlRotator) Apply(ctx context.Context, cfg map[string]any, newValue [
 		return err
 	}
 
-	admin, err := r.vault.Use(orgctx.WithBypassRLS(ctx), conf.adminSecretID)
+	admin, err := useAdminSecret(ctx, r.vault, conf.adminSecretID)
 	if err != nil {
 		return fmt.Errorf("mysql: resolve admin secret: %w", err)
 	}

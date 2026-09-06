@@ -32,7 +32,15 @@ func setupTestDB(t *testing.T) (*database.PostgresDB, func()) {
 			"POSTGRES_PASSWORD": "test",
 			"POSTGRES_DB":       "testdb",
 		},
-		WaitingFor: wait.ForListeningPort("5432/tcp").WithStartupTimeout(60 * time.Second),
+		// Log-based readiness, same as the portal/access/admin harnesses: the
+		// port starts listening before Postgres accepts connections, so a
+		// port wait intermittently hands tests a database that answers
+		// "the database system is starting up" (SQLSTATE 57P03). The message
+		// appears twice — once during initdb's throwaway start — hence
+		// WithOccurrence(2).
+		WaitingFor: wait.ForLog("database system is ready to accept connections").
+			WithOccurrence(2).
+			WithStartupTimeout(60 * time.Second),
 	}
 	container := testsupport.RunOrSkip(t, req.Image, func() (testcontainers.Container, error) {
 		return testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{

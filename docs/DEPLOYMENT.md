@@ -215,9 +215,13 @@ backend):
 
 ### Migrations and the RLS belt
 
-Migrations are **forward-only** and run automatically at service startup when
-`AUTO_MIGRATE=true` (the default); they can also be applied out-of-band with the
-`cmd/migrate` CLI (`go run ./cmd/migrate` against `DATABASE_URL`). Migration
+Migrations are **forward-only**. Three ways to run them, in order of
+preference: the Helm chart's migration Job (a post-install/pre-upgrade
+hook, `migrations.enabled: true` by default — nothing to do on Kubernetes);
+setting `AUTO_MIGRATE=true` on a service so it migrates at startup (**not**
+the default — unset means off, and concurrent replicas racing migrations is
+why the Job exists); or out-of-band with the `cmd/migrate` CLI
+(`go run ./cmd/migrate up` against `DATABASE_URL`). Migration
 **v37** is the RLS cutover — after it applies, every org-scoped table is
 `ENABLE`+`FORCE ROW LEVEL SECURITY` with a `pol_<table>_org_scope` policy keyed
 on the `app.org_id` GUC. The pool's `BeforeAcquire` hook stamps that GUC from
@@ -319,7 +323,7 @@ backends:
 | UI | URL (local compose) |
 |----|---------------------|
 | Prometheus | http://localhost:9090 |
-| Grafana | http://localhost:3001 (admin / admin) |
+| Grafana | http://localhost:3001 (admin / `$GRAFANA_ADMIN_PASSWORD` from your `.env` — the old admin/admin fallback is gone; compose refuses to start without the variable) |
 | Jaeger | http://localhost:16686 |
 
 Traces are emitted when `TRACING_ENABLED=true` (services export OTLP to
@@ -374,8 +378,9 @@ helm upgrade openidx . -n openidx -f values-prod.yaml   # after bumping image.ta
 helm rollback openidx -n openidx
 ```
 
-Database migrations run on service startup (`AUTO_MIGRATE=true`) or via
-`go run ./cmd/migrate`; deploy is forward-only — take an RDS snapshot before
+Database migrations run via the chart's hook Job (default), on service
+startup only if you set `AUTO_MIGRATE=true`, or via
+`go run ./cmd/migrate up`; deploy is forward-only — take an RDS snapshot before
 major upgrades. Crossing the **v37 RLS** boundary on an existing cluster has an
 ordered cutover (backfill → NOT NULL/FK → FORCE RLS); follow
 [`multitenancy-upgrade-runbook.md`](./multitenancy-upgrade-runbook.md) rather than

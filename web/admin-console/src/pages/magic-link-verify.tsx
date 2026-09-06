@@ -1,8 +1,10 @@
 import { useEffect } from 'react'
+import { useTranslation } from 'react-i18next'
 import { baseURL } from '../lib/api'
 import { Loader2 } from 'lucide-react'
 
 export function MagicLinkVerifyPage() {
+  const { t } = useTranslation()
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     const token = params.get('token')
@@ -18,7 +20,9 @@ export function MagicLinkVerifyPage() {
     <div className="min-h-screen flex items-center justify-center">
       <div className="text-center space-y-4">
         <Loader2 className="h-8 w-8 animate-spin mx-auto text-primary" />
-        <p className="text-sm text-muted-foreground">Verifying your sign-in link...</p>
+        <p className="text-sm text-muted-foreground">
+          {t('pages.magicLinkVerify.verifying')}
+        </p>
       </div>
     </div>
   )

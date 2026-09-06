@@ -19,8 +19,6 @@ import (
 	"golang.org/x/oauth2/google"
 	iam "google.golang.org/api/iam/v1"
 	"google.golang.org/api/option"
-
-	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 const gcpMaxKeys = 10
@@ -82,7 +80,7 @@ func (r *gcpSARotator) ValidateConfig(cfg map[string]any) error {
 func saResource(email string) string { return "projects/-/serviceAccounts/" + email }
 
 func (r *gcpSARotator) admin(ctx context.Context, conf gcpSAConf) ([]byte, error) {
-	raw, err := r.vault.Use(orgctx.WithBypassRLS(ctx), conf.adminSecretID)
+	raw, err := useAdminSecret(ctx, r.vault, conf.adminSecretID)
 	if err != nil {
 		return nil, fmt.Errorf("gcp_sa: fetch admin secret: %w", err)
 	}

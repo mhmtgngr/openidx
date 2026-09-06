@@ -68,10 +68,14 @@ func (s *Service) handleFederationDiscover(c *gin.Context) {
 	var providerID, providerName, issuerURL string
 	var autoRedirect bool
 	err = s.db.Pool.QueryRow(c.Request.Context(),
+		// The inner join on ip.org_id already confined this read; fr.org_id is
+		// the direct term, and it is what the scope lint requires now that
+		// federation_rules carries a tenant of its own. The admin list of the
+		// same table wrote this clause as a LEFT JOIN and so scoped nothing.
 		`SELECT fr.provider_id, ip.name, ip.issuer_url, fr.auto_redirect
 		 FROM federation_rules fr
 		 JOIN identity_providers ip ON fr.provider_id = ip.id AND ip.org_id = $2
-		 WHERE fr.email_domain = $1 AND fr.enabled = true
+		 WHERE fr.email_domain = $1 AND fr.enabled = true AND fr.org_id = $2
 		 ORDER BY fr.priority LIMIT 1`, domain, org.ID).Scan(&providerID, &providerName, &issuerURL, &autoRedirect)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"found": false, "message": "No federation rule for this domain"})

@@ -1,0 +1,119 @@
+# Gitleaks configuration for OpenIDX.
+#
+# This file exists so the secret scan can BLOCK. It was `continue-on-error:
+# true` before, which for a secret scanner means the finding is written to a
+# summary nobody reads and the merge proceeds — the exact posture the readiness
+# guide calls a control that displays without enforcing.
+#
+# Turning it on surfaced 75 findings. Every one was triaged by hand and none was
+# a live credential: they are documentation placeholders (`YOUR_ACCESS_TOKEN`),
+# the repository's canonical test key, RFC example values, and protocol header
+# names that happen to look like base64. Each is allowlisted below BY VALUE OR
+# BY SHAPE, with the reason, rather than by fingerprint: a fingerprint allowlist
+# silently stops matching the moment a line moves, and rots into a file nobody
+# can reason about. Broad path exemptions are avoided for the same reason — a
+# real secret pasted into docs/ must still be caught.
+#
+# When a new finding appears: work out whether it is real first. If it is,
+# rotate it and remove it from history. Only then consider an entry here, and
+# only with a reason a reviewer can check.
+
+title = "OpenIDX"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Documentation and code-sample placeholders. These are the literal strings a reader is told to replace; they authenticate nothing."
+regexTarget = "line"
+regexes = [
+  '''YOUR_ACCESS_TOKEN''',
+  '''YOUR_TOKEN''',
+  '''YOUR_API_KEY''',
+  '''YOUR_CLIENT_SECRET''',
+  '''<your[- _]?(token|secret|api[- _]?key)>''',
+  '''\$\{?(ACCESS_)?TOKEN\}?''',
+  '''ADMIN_TOKEN''',
+  '''EXPIRED_TOKEN''',
+  '''YOUR_REFRESH_TOKEN''',
+  '''secret_xyz789''',
+  '''ak_live_abc123def456''',
+]
+
+[[allowlists]]
+description = "RFC example values. 7Fjfp0ZBr1KtDRbnfVdmIw is the client secret printed in RFC 6749 §A; dGhlIHNhbXBsZSBub25jZQ== and x3JJHMbDL1EzLkh9GBhXDw== are the Sec-WebSocket-Key nonces from RFC 6455 §1.2; GEZDGNBVGY3TQOJQ... is the RFC 6238 test seed (base32 of '12345678901234567890')."
+regexTarget = "line"
+regexes = [
+  '''Sec-WebSocket-Key''',
+  '''7Fjfp0ZBr1KtDRbnfVdmIw''',
+  '''GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ''',
+]
+
+[[allowlists]]
+description = "The repository's canonical 32-byte test key material. These are counting sequences and labelled literals used to make encryption tests deterministic; they decrypt nothing outside a test process."
+regexes = [
+  '''^0123456789abcdef0123456789abcdef$''',
+  '''^oidx_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$''',
+  '''^vault-integration-test-kek-00000$''',
+  '''^test-family-123$''',
+  '''^oidx_[0-9a-f]{64}$''',
+  '''^abcd1234efgh5678$''',
+]
+
+[[allowlists]]
+description = "The joke password from the redaction test: pam_launch_test.go asserts that '--password hunter2' is scrubbed from a launch command line before it is logged. The string has to be there for the test to mean anything."
+regexTarget = "line"
+regexes = [
+  '''hunter2''',
+]
+
+[[allowlists]]
+description = "Truncated illustrative tokens in API docs: an elided JWT header and an elided access_token, both ending in '...' so they cannot be pasted anywhere."
+regexTarget = "line"
+regexes = [
+  '''eyJ[A-Za-z0-9_-]{5,}\.{3}''',
+  '''eyJ[A-Za-z0-9_.-]{20,}\.\.\.''',
+]
+
+[[allowlists]]
+description = "Environment variable NAMES, not values. config.go lists the keys whose values must be redacted from diagnostics; matching the list itself is the scanner reading the redaction table as a leak."
+regexTarget = "line"
+regexes = [
+  '''RECORDINGS_S3_(ACCESS|SECRET)_KEY''',
+  '''recordings_s3_secret_key''',
+  '''APISIX_STAND_ALONE''',
+]
+
+[[allowlists]]
+description = "Prose that happens to tokenise like a key: 'guacamole token mint: empty/invalid response' is an error message, and the threat model's 'key, vault/recording' is a table cell."
+regexTarget = "line"
+regexes = [
+  '''token mint: (empty/invalid|HTTP)''',
+  '''vault/recording''',
+]
+
+[[allowlists]]
+description = "Playwright fixtures. e2e/ signs its own unsigned JWTs so the console can be driven without a backend; they are rejected by any real verifier."
+paths = [
+  '''web/admin-console/e2e/.*\.spec\.ts''',
+]
+
+[[allowlists]]
+description = "alg=none attack fixture: the enrolment handler test asserts this forged token is REJECTED. Removing it would delete the test."
+regexTarget = "line"
+regexes = [
+  '''eyJhbGciOiJub25lIn0\.''',
+]
+
+
+[[allowlists]]
+description = "Placeholder credentials that exist so the Helm chart can be rendered and installed without real ones. templates/secrets.yaml wraps four values in `required`, so `helm template` and `helm install` both refuse to run without them: values-ci.yaml carries the four the kind job installs into a cluster that lives for the length of one job, and the `render-only-*` strings are what Makefile:helm-template, helm.yml and check-chart-images.sh pass on the command line purely to get a render. Each is listed as an anchored literal rather than by path, so a real secret added to any of those files is still caught."
+regexes = [
+  '''^ci-postgres-password$''',
+  '''^ci-redis-password$''',
+  '''^ci-jwt-secret-at-least-32-bytes-long!!$''',
+  '''^ci-encryption-key-exactly-32-byte$''',
+  '''^render-only-not-a-credential$''',
+  '''^render-only-not-a-credential-000000$''',
+  '''^render-only-not-a-credential32b$''',
+]

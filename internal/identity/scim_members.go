@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 // SCIM group membership.
@@ -156,7 +158,7 @@ func (s *Service) syncGroupMembers(ctx context.Context, groupID string, before, 
 	for _, userID := range removed {
 		// The id is echoed into error text that is both logged and returned, so
 		// it is scrubbed here rather than at each sink (CodeQL go/log-injection).
-		safeID := scrubLogValue(userID)
+		safeID := logsafe.Clean(userID)
 		err := s.RemoveGroupMember(ctx, groupID, userID)
 		switch {
 		case err == nil:
@@ -169,7 +171,7 @@ func (s *Service) syncGroupMembers(ctx context.Context, groupID string, before, 
 	}
 
 	for _, userID := range added {
-		safeID := scrubLogValue(userID)
+		safeID := logsafe.Clean(userID)
 		err := s.AddGroupMember(ctx, groupID, userID)
 		switch {
 		case err == nil:
@@ -178,7 +180,7 @@ func (s *Service) syncGroupMembers(ctx context.Context, groupID string, before, 
 		case errors.Is(err, ErrUserNotFound):
 			return fmt.Errorf("member %s is not a user in this organization: %w", safeID, errSCIMInvalidValue)
 		case errors.Is(err, ErrGroupMemberLimit):
-			return fmt.Errorf("group %s is at its member limit: %w", scrubLogValue(groupID), errSCIMInvalidValue)
+			return fmt.Errorf("group %s is at its member limit: %w", logsafe.Clean(groupID), errSCIMInvalidValue)
 		default:
 			return fmt.Errorf("add member %s: %w", safeID, err)
 		}

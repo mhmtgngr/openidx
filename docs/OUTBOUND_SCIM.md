@@ -10,6 +10,33 @@ OpenIDX already ships a SCIM 2.0 **server** (be provisioned *into*, in
 `internal/provisioning`); this feature is the complementary **client** direction
 (provision *out*).
 
+!!! info "API-only today"
+
+    This ships as a **documented API**, not a console screen — a ratified
+    post-GA decision, recorded so nobody goes hunting for a page that is not
+    there. Everything below is served, routed, worker-backed and tested; the
+    only missing piece is the admin UI. Create a target with a POST:
+
+    ```bash
+    curl -X POST https://openidx.example.com/api/v1/provisioning/targets \
+      -H "Authorization: Bearer $TOKEN" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "name": "Slack",
+        "base_url": "https://api.slack.com/scim/v2",
+        "auth_type": "bearer",
+        "bearer_token": "xoxp-...",
+        "provision_users": true,
+        "provision_groups": true,
+        "deprovision_action": "deactivate",
+        "enabled": true
+      }'
+    ```
+
+    Then `GET /targets` to list, `GET /targets/{id}/status` for the outbox
+    state, `POST /targets/{id}/test` to check credentials without writing, and
+    `POST /targets/{id}/sync` to force a reconciliation.
+
 ## Architecture
 
 ```

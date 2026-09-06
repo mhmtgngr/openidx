@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { Trans, useTranslation } from 'react-i18next'
 import { Plus, Search, MoreHorizontal, Globe, Smartphone, Server, ExternalLink, Edit, Trash2, Settings, Copy, RefreshCw, ChevronLeft, ChevronRight, AppWindow, Users } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -70,6 +71,7 @@ const typeColors: Record<string, string> = {
 export function ApplicationsPage() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const { t } = useTranslation()
   const [search, setSearch] = useState('')
   const [registerAppModal, setRegisterAppModal] = useState(false)
   const [editAppModal, setEditAppModal] = useState(false)
@@ -123,8 +125,8 @@ export function ApplicationsPage() {
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ['applications'] })
       toast({
-        title: 'Success',
-        description: `OAuth client created! Client ID: ${data.client_id}`,
+        title: t('common.success'),
+        description: t('pages.applications.toasts.created', { id: data.client_id }),
         variant: 'success',
       })
       setRegisterAppModal(false)
@@ -141,8 +143,8 @@ export function ApplicationsPage() {
     },
     onError: (error: Error) => {
       toast({
-        title: 'Error',
-        description: `Failed to create OAuth client: ${error.message}`,
+        title: t('common.error'),
+        description: t('pages.applications.toasts.createFailed', { message: error.message }),
         variant: 'destructive',
       })
     },
@@ -155,8 +157,8 @@ export function ApplicationsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['applications'] })
       toast({
-        title: 'Success',
-        description: 'Application updated successfully!',
+        title: t('common.success'),
+        description: t('pages.applications.toasts.updated'),
         variant: 'success',
       })
       setEditAppModal(false)
@@ -164,8 +166,8 @@ export function ApplicationsPage() {
     },
     onError: (error: Error) => {
       toast({
-        title: 'Error',
-        description: `Failed to update application: ${error.message}`,
+        title: t('common.error'),
+        description: t('pages.applications.toasts.updateFailed', { message: error.message }),
         variant: 'destructive',
       })
     },
@@ -178,15 +180,15 @@ export function ApplicationsPage() {
     onSuccess: (data: { client_secret: string }) => {
       setNewSecret(data.client_secret)
       toast({
-        title: 'Success',
-        description: 'Client secret regenerated successfully!',
+        title: t('common.success'),
+        description: t('pages.applications.toasts.secretRegenerated'),
         variant: 'success',
       })
     },
     onError: (error: Error) => {
       toast({
-        title: 'Error',
-        description: `Failed to regenerate secret: ${error.message}`,
+        title: t('common.error'),
+        description: t('pages.applications.toasts.regenerateFailed', { message: error.message }),
         variant: 'destructive',
       })
     },
@@ -199,15 +201,15 @@ export function ApplicationsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['applications'] })
       toast({
-        title: 'Success',
-        description: 'Application deleted successfully!',
+        title: t('common.success'),
+        description: t('pages.applications.toasts.deleted'),
         variant: 'success',
       })
     },
     onError: (error: Error) => {
       toast({
-        title: 'Error',
-        description: `Failed to delete application: ${error.message}`,
+        title: t('common.error'),
+        description: t('pages.applications.toasts.deleteFailed', { message: error.message }),
         variant: 'destructive',
       })
     },
@@ -234,8 +236,8 @@ export function ApplicationsPage() {
   const handleCopyClientId = (clientId: string) => {
     navigator.clipboard.writeText(clientId)
     toast({
-      title: 'Success',
-      description: 'Client ID copied to clipboard!',
+      title: t('common.success'),
+      description: t('pages.applications.toasts.clientIdCopied'),
       variant: 'success',
     })
   }
@@ -347,8 +349,8 @@ export function ApplicationsPage() {
         queryKey: ['sso-settings', selectedApp?.id]
       })
       toast({
-        title: 'Success',
-        description: `SSO settings updated for "${selectedApp?.name}"`,
+        title: t('common.success'),
+        description: t('pages.applications.toasts.ssoUpdated', { name: selectedApp?.name ?? '' }),
         variant: 'success',
       })
       setSsoSettingsModal(false)
@@ -356,8 +358,8 @@ export function ApplicationsPage() {
     },
     onError: (error: Error) => {
       toast({
-        title: 'Error',
-        description: `Failed to update SSO settings: ${error.message}`,
+        title: t('common.error'),
+        description: t('pages.applications.toasts.ssoUpdateFailed', { message: error.message }),
         variant: 'destructive',
       })
     },
@@ -379,11 +381,11 @@ export function ApplicationsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Applications</h1>
-          <p className="text-muted-foreground">Manage registered applications and SSO configurations</p>
+          <h1 className="text-3xl font-bold tracking-tight">{t('nav.items.applications')}</h1>
+          <p className="text-muted-foreground">{t('pages.applications.subtitle')}</p>
         </div>
         <Button onClick={() => setRegisterAppModal(true)}>
-          <Plus className="mr-2 h-4 w-4" /> Register Application
+          <Plus className="mr-2 h-4 w-4" /> {t('pages.applications.register')}
         </Button>
       </div>
 
@@ -393,7 +395,7 @@ export function ApplicationsPage() {
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
-                placeholder="Search applications..."
+                placeholder={t('pages.applications.searchPlaceholder')}
                 value={search}
                 onChange={(e) => { setSearch(e.target.value); setPage(0) }}
                 className="pl-9"
@@ -405,24 +407,24 @@ export function ApplicationsPage() {
           {isLoading ? (
             <TableSkeleton rows={8} cols={6} />
           ) : isError ? (
-            <QueryError error={error} resource="applications" />
+            <QueryError error={error} resource={t('pages.applications.resourceName')} />
           ) : !filteredApps || filteredApps.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
               <AppWindow className="h-12 w-12 text-muted-foreground/40 mb-3" />
-              <p className="font-medium">No applications found</p>
-              <p className="text-sm">Register an application to get started</p>
+              <p className="font-medium">{t('pages.applications.empty')}</p>
+              <p className="text-sm">{t('pages.applications.emptyHint')}</p>
             </div>
           ) : (
           <div className="rounded-md border">
             <Table>
               <TableHeader>
                 <TableRow className="border-b bg-muted">
-                  <TableHead className="p-3 text-left text-sm font-medium">Application</TableHead>
-                  <TableHead className="p-3 text-left text-sm font-medium">Client ID</TableHead>
-                  <TableHead className="p-3 text-left text-sm font-medium">Type</TableHead>
-                  <TableHead className="p-3 text-left text-sm font-medium">Protocol</TableHead>
-                  <TableHead className="p-3 text-left text-sm font-medium">Status</TableHead>
-                  <TableHead className="p-3 text-right text-sm font-medium">Actions</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">{t('pages.applications.table.application')}</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">{t('pages.applications.table.clientId')}</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">{t('pages.applications.table.type')}</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">{t('pages.applications.table.protocol')}</TableHead>
+                  <TableHead className="p-3 text-left text-sm font-medium">{t('pages.applications.table.status')}</TableHead>
+                  <TableHead className="p-3 text-right text-sm font-medium">{t('pages.applications.table.actions')}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -452,7 +454,7 @@ export function ApplicationsPage() {
                       </TableCell>
                       <TableCell className="p-3">
                         <Badge variant={app.enabled ? 'default' : 'secondary'}>
-                          {app.enabled ? 'Active' : 'Disabled'}
+                          {app.enabled ? t('pages.applications.active') : t('pages.applications.disabled')}
                         </Badge>
                       </TableCell>
                       <TableCell className="p-3 text-right">
@@ -473,11 +475,11 @@ export function ApplicationsPage() {
                             <DropdownMenuContent align="end">
                               <DropdownMenuItem onClick={() => handleEditApp(app)}>
                                 <Edit className="mr-2 h-4 w-4" />
-                                Edit Application
+                                {t('pages.applications.menu.edit')}
                               </DropdownMenuItem>
                               <DropdownMenuItem onClick={() => handleCopyClientId(app.client_id)}>
                                 <Copy className="mr-2 h-4 w-4" />
-                                Copy Client ID
+                                {t('pages.applications.menu.copyClientId')}
                               </DropdownMenuItem>
                               <DropdownMenuItem onClick={() => {
                                 setRegenerateApp(app)
@@ -485,18 +487,18 @@ export function ApplicationsPage() {
                                 setRegenerateModal(true)
                               }}>
                                 <RefreshCw className="mr-2 h-4 w-4" />
-                                Regenerate Secret
+                                {t('pages.applications.menu.regenerateSecret')}
                               </DropdownMenuItem>
                               <DropdownMenuItem onClick={() => handleSsoSettings(app)}>
                                 <Settings className="mr-2 h-4 w-4" />
-                                SSO Settings
+                                {t('pages.applications.menu.ssoSettings')}
                               </DropdownMenuItem>
                               <DropdownMenuItem
                                 onClick={() => setManageAccessApp(app)}
-                                title="The single grant surface — assigning access here is what decides real access"
+                                title={t('pages.applications.menu.manageAccessTitle')}
                               >
                                 <Users className="mr-2 h-4 w-4" />
-                                Manage Access
+                                {t('pages.applications.menu.manageAccess')}
                               </DropdownMenuItem>
                               <DropdownMenuSeparator />
                               <DropdownMenuItem
@@ -505,7 +507,7 @@ export function ApplicationsPage() {
                                 disabled={deleteApplicationMutation.isPending}
                               >
                                 <Trash2 className="mr-2 h-4 w-4" />
-                                {deleteApplicationMutation.isPending ? 'Deleting...' : 'Delete Application'}
+                                {deleteApplicationMutation.isPending ? t('pages.applications.menu.deleting') : t('pages.applications.menu.delete')}
                               </DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>
@@ -523,7 +525,7 @@ export function ApplicationsPage() {
           {totalCount > PAGE_SIZE && (
             <div className="flex items-center justify-between pt-4 px-1">
               <p className="text-sm text-muted-foreground">
-                Showing {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, totalCount)} of {totalCount} applications
+                {t('pages.applications.showing', { from: page * PAGE_SIZE + 1, to: Math.min((page + 1) * PAGE_SIZE, totalCount), total: totalCount })}
               </p>
               <div className="flex items-center gap-2">
                 <Button
@@ -533,10 +535,10 @@ export function ApplicationsPage() {
                   disabled={page === 0}
                 >
                   <ChevronLeft className="h-4 w-4 mr-1" />
-                  Previous
+                  {t('common.pagination.previous')}
                 </Button>
                 <span className="text-sm text-muted-foreground">
-                  Page {page + 1} of {Math.ceil(totalCount / PAGE_SIZE)}
+                  {t('common.pagination.pageOf', { page: page + 1, pages: Math.ceil(totalCount / PAGE_SIZE) })}
                 </span>
                 <Button
                   variant="outline"
@@ -544,7 +546,7 @@ export function ApplicationsPage() {
                   onClick={() => setPage(p => p + 1)}
                   disabled={(page + 1) * PAGE_SIZE >= totalCount}
                 >
-                  Next
+                  {t('common.pagination.next')}
                   <ChevronRight className="h-4 w-4 ml-1" />
                 </Button>
               </div>
@@ -557,50 +559,50 @@ export function ApplicationsPage() {
       <Dialog open={registerAppModal} onOpenChange={setRegisterAppModal}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>Register OAuth/OIDC Application</DialogTitle>
+            <DialogTitle>{t('pages.applications.registerDialog.title')}</DialogTitle>
           </DialogHeader>
           <form onSubmit={handleRegisterSubmit} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="name">Application Name *</Label>
+              <Label htmlFor="name">{t('pages.applications.registerDialog.nameLabel')}</Label>
               <Input
                 id="name"
                 name="name"
                 value={formData.name}
                 onChange={handleInputChange}
-                placeholder="My Application"
+                placeholder={t('pages.applications.registerDialog.namePlaceholder')}
                 required
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="description">Description</Label>
+              <Label htmlFor="description">{t('pages.applications.descLabel')}</Label>
               <Input
                 id="description"
                 name="description"
                 value={formData.description}
                 onChange={handleInputChange}
-                placeholder="Application description"
+                placeholder={t('pages.applications.registerDialog.descPlaceholder')}
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="type">Application Type *</Label>
+              <Label htmlFor="type">{t('pages.applications.registerDialog.typeLabel')}</Label>
               <Select value={formData.type} onValueChange={(value) => setFormData(prev => ({ ...prev, type: value }))}>
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Select application type" />
+                <SelectTrigger id="type" className="w-full">
+                  <SelectValue placeholder={t('pages.applications.registerDialog.typePlaceholder')} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="web">Web Application</SelectItem>
-                  <SelectItem value="native">Native/Mobile App</SelectItem>
-                  <SelectItem value="service">Service/Machine-to-Machine</SelectItem>
+                  <SelectItem value="web">{t('pages.applications.registerDialog.typeWeb')}</SelectItem>
+                  <SelectItem value="native">{t('pages.applications.registerDialog.typeNative')}</SelectItem>
+                  <SelectItem value="service">{t('pages.applications.registerDialog.typeService')}</SelectItem>
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">
-                {formData.type === 'web' && 'Server-side web applications (confidential client)'}
-                {formData.type === 'native' && 'Mobile or desktop applications (public client with PKCE)'}
-                {formData.type === 'service' && 'Backend services using client credentials'}
+                {formData.type === 'web' && t('pages.applications.registerDialog.hintWeb')}
+                {formData.type === 'native' && t('pages.applications.registerDialog.hintNative')}
+                {formData.type === 'service' && t('pages.applications.registerDialog.hintService')}
               </p>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="redirect_uris">Redirect URIs * (one per line)</Label>
+              <Label htmlFor="redirect_uris">{t('pages.applications.registerDialog.redirectsLabel')}</Label>
               <textarea
                 id="redirect_uris"
                 name="redirect_uris"
@@ -612,11 +614,11 @@ export function ApplicationsPage() {
                 required
               />
               <p className="text-xs text-muted-foreground">
-                Valid OAuth 2.0 redirect URIs for your application
+                {t('pages.applications.registerDialog.redirectsHint')}
               </p>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="scopes">Scopes (comma-separated)</Label>
+              <Label htmlFor="scopes">{t('pages.applications.registerDialog.scopesLabel')}</Label>
               <Input
                 id="scopes"
                 name="scopes"
@@ -625,7 +627,7 @@ export function ApplicationsPage() {
                 placeholder="openid,profile,email,offline_access"
               />
               <p className="text-xs text-muted-foreground">
-                OAuth/OIDC scopes this client can request
+                {t('pages.applications.registerDialog.scopesHint')}
               </p>
             </div>
             <div className="flex items-center space-x-2">
@@ -637,14 +639,14 @@ export function ApplicationsPage() {
                 onChange={(e) => setFormData(prev => ({ ...prev, pkce_required: e.target.checked }))}
                 className="rounded"
               />
-              <Label htmlFor="pkce_required">Require PKCE (Recommended for mobile/SPA)</Label>
+              <Label htmlFor="pkce_required">{t('pages.applications.registerDialog.pkce')}</Label>
             </div>
             <div className="bg-blue-50 border border-blue-200 rounded-md p-3 text-sm">
-              <p className="font-medium text-blue-900 mb-1">After registration:</p>
+              <p className="font-medium text-blue-900 mb-1">{t('pages.applications.registerDialog.afterTitle')}</p>
               <ul className="text-blue-800 space-y-1 list-disc list-inside">
-                <li>You'll receive a <strong>Client ID</strong> and <strong>Client Secret</strong></li>
-                <li>Store the Client Secret securely - it won't be shown again</li>
-                <li>Use these credentials to integrate OAuth 2.0 / OIDC</li>
+                <li><Trans i18nKey="pages.applications.registerDialog.afterReceive" components={{ b: <strong /> }} /></li>
+                <li>{t('pages.applications.registerDialog.afterStore')}</li>
+                <li>{t('pages.applications.registerDialog.afterUse')}</li>
               </ul>
             </div>
             <div className="flex justify-end gap-2 pt-4">
@@ -654,10 +656,10 @@ export function ApplicationsPage() {
                 onClick={() => setRegisterAppModal(false)}
                 disabled={createClientMutation.isPending}
               >
-                Cancel
+                {t('common.cancel')}
               </Button>
               <Button type="submit" disabled={createClientMutation.isPending}>
-                {createClientMutation.isPending ? 'Registering...' : 'Register Application'}
+                {createClientMutation.isPending ? t('pages.applications.registerDialog.registering') : t('pages.applications.register')}
               </Button>
             </div>
           </form>
@@ -668,11 +670,11 @@ export function ApplicationsPage() {
       <Dialog open={editAppModal} onOpenChange={setEditAppModal}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Edit Application</DialogTitle>
+            <DialogTitle>{t('pages.applications.editDialog.title')}</DialogTitle>
           </DialogHeader>
           <form onSubmit={handleFormSubmit} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="name">Application Name</Label>
+              <Label htmlFor="name">{t('pages.applications.editDialog.nameLabel')}</Label>
               <Input
                 id="name"
                 name="name"
@@ -682,17 +684,17 @@ export function ApplicationsPage() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="description">Description</Label>
+              <Label htmlFor="description">{t('pages.applications.descLabel')}</Label>
               <Input
                 id="description"
                 name="description"
                 value={formData.description}
                 onChange={handleInputChange}
-                placeholder="Enter application description"
+                placeholder={t('pages.applications.editDialog.descPlaceholder')}
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="base_url">Base URL</Label>
+              <Label htmlFor="base_url">{t('pages.applications.editDialog.baseUrl')}</Label>
               <Input
                 id="base_url"
                 name="base_url"
@@ -702,7 +704,7 @@ export function ApplicationsPage() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="redirect_uris">Redirect URIs (one per line)</Label>
+              <Label htmlFor="redirect_uris">{t('pages.applications.editDialog.redirectsLabel')}</Label>
               <textarea
                 id="redirect_uris"
                 name="redirect_uris"
@@ -722,7 +724,7 @@ export function ApplicationsPage() {
                 onChange={(e) => setFormData(prev => ({ ...prev, pkce_required: e.target.checked }))}
                 className="rounded"
               />
-              <Label htmlFor="edit_pkce_required">Require PKCE (Recommended for mobile/SPA)</Label>
+              <Label htmlFor="edit_pkce_required">{t('pages.applications.registerDialog.pkce')}</Label>
             </div>
             <div className="flex justify-end gap-2 pt-4">
               <Button
@@ -731,10 +733,10 @@ export function ApplicationsPage() {
                 onClick={() => setEditAppModal(false)}
                 disabled={updateApplicationMutation.isPending}
               >
-                Cancel
+                {t('common.cancel')}
               </Button>
               <Button type="submit" disabled={updateApplicationMutation.isPending}>
-                {updateApplicationMutation.isPending ? 'Updating...' : 'Update Application'}
+                {updateApplicationMutation.isPending ? t('pages.applications.editDialog.updating') : t('pages.applications.editDialog.update')}
               </Button>
             </div>
           </form>
@@ -745,7 +747,7 @@ export function ApplicationsPage() {
       <Dialog open={ssoSettingsModal} onOpenChange={setSsoSettingsModal}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>SSO Settings - {selectedApp?.name}</DialogTitle>
+            <DialogTitle>{t('pages.applications.ssoDialog.title', { name: selectedApp?.name ?? '' })}</DialogTitle>
           </DialogHeader>
           <form onSubmit={handleSsoSubmit} className="space-y-4">
             <div className="space-y-3">
@@ -758,7 +760,7 @@ export function ApplicationsPage() {
                   onChange={handleSsoChange}
                   className="rounded"
                 />
-                <Label htmlFor="enabled">SSO Enabled</Label>
+                <Label htmlFor="enabled">{t('pages.applications.ssoDialog.enabled')}</Label>
               </div>
               <div className="flex items-center space-x-2">
                 <input
@@ -769,7 +771,7 @@ export function ApplicationsPage() {
                   onChange={handleSsoChange}
                   className="rounded"
                 />
-                <Label htmlFor="refreshToken">Use Refresh Tokens</Label>
+                <Label htmlFor="refreshToken">{t('pages.applications.ssoDialog.refreshTokens')}</Label>
               </div>
               <div className="flex items-center space-x-2">
                 <input
@@ -780,12 +782,12 @@ export function ApplicationsPage() {
                   onChange={handleSsoChange}
                   className="rounded"
                 />
-                <Label htmlFor="consentRequired">Require User Consent</Label>
+                <Label htmlFor="consentRequired">{t('pages.applications.ssoDialog.consent')}</Label>
               </div>
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="accessTokenLifetime">Access Token Lifetime (seconds)</Label>
+                <Label htmlFor="accessTokenLifetime">{t('pages.applications.ssoDialog.accessLifetime')}</Label>
                 <Input
                   id="accessTokenLifetime"
                   name="accessTokenLifetime"
@@ -795,7 +797,7 @@ export function ApplicationsPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="refreshTokenLifetime">Refresh Token Lifetime (seconds)</Label>
+                <Label htmlFor="refreshTokenLifetime">{t('pages.applications.ssoDialog.refreshLifetime')}</Label>
                 <Input
                   id="refreshTokenLifetime"
                   name="refreshTokenLifetime"
@@ -807,9 +809,9 @@ export function ApplicationsPage() {
             </div>
             <div className="flex justify-end gap-2 pt-4">
               <Button type="button" variant="outline" onClick={() => setSsoSettingsModal(false)}>
-                Cancel
+                {t('common.cancel')}
               </Button>
-              <Button type="submit">Save SSO Settings</Button>
+              <Button type="submit">{t('pages.applications.ssoDialog.save')}</Button>
             </div>
           </form>
         </DialogContent>
@@ -825,21 +827,21 @@ export function ApplicationsPage() {
       }}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Regenerate Client Secret</DialogTitle>
+            <DialogTitle>{t('pages.applications.regenDialog.title')}</DialogTitle>
           </DialogHeader>
           {newSecret ? (
             <div className="space-y-4">
               <div className="bg-yellow-50 border border-yellow-200 rounded-md p-3 text-sm text-yellow-800">
-                <p className="font-medium mb-1">Save this secret now!</p>
-                <p>This is the only time the client secret will be shown. Store it securely.</p>
+                <p className="font-medium mb-1">{t('pages.applications.regenDialog.saveNow')}</p>
+                <p>{t('pages.applications.regenDialog.saveNowDetail')}</p>
               </div>
               <div className="space-y-2">
-                <Label>New Client Secret</Label>
+                <Label>{t('pages.applications.regenDialog.newSecret')}</Label>
                 <div className="flex items-center gap-2">
                   <code className="flex-1 p-2 bg-muted rounded text-sm break-all">{newSecret}</code>
                   <Button variant="outline" size="sm" onClick={() => {
                     navigator.clipboard.writeText(newSecret)
-                    toast({ title: 'Copied', description: 'Secret copied to clipboard!', variant: 'success' })
+                    toast({ title: t('common.copied'), description: t('pages.applications.toasts.secretCopied'), variant: 'success' })
                   }}>
                     <Copy className="h-4 w-4" />
                   </Button>
@@ -847,26 +849,29 @@ export function ApplicationsPage() {
               </div>
               <div className="flex justify-end">
                 <Button onClick={() => { setRegenerateModal(false); setRegenerateApp(null); setNewSecret(null) }}>
-                  Done
+                  {t('pages.applications.regenDialog.done')}
                 </Button>
               </div>
             </div>
           ) : (
             <div className="space-y-4">
               <p className="text-sm text-muted-foreground">
-                Are you sure you want to regenerate the client secret for <strong>{regenerateApp?.name}</strong>?
-                This will invalidate the current secret and any integrations using it will stop working.
+                <Trans
+                  i18nKey="pages.applications.regenDialog.confirm"
+                  values={{ name: regenerateApp?.name ?? '' }}
+                  components={{ b: <strong /> }}
+                />
               </p>
               <div className="flex justify-end gap-2">
                 <Button variant="outline" onClick={() => { setRegenerateModal(false); setRegenerateApp(null) }}>
-                  Cancel
+                  {t('common.cancel')}
                 </Button>
                 <Button
                   variant="destructive"
                   disabled={regenerateSecretMutation.isPending}
                   onClick={() => regenerateApp && regenerateSecretMutation.mutate(regenerateApp.client_id)}
                 >
-                  {regenerateSecretMutation.isPending ? 'Regenerating...' : 'Regenerate Secret'}
+                  {regenerateSecretMutation.isPending ? t('pages.applications.regenDialog.regenerating') : t('pages.applications.menu.regenerateSecret')}
                 </Button>
               </div>
             </div>
@@ -878,15 +883,15 @@ export function ApplicationsPage() {
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+            <AlertDialogTitle>{t('common.areYouSure')}</AlertDialogTitle>
             <AlertDialogDescription>
-              {deleteTarget ? `Are you sure you want to delete application "${deleteTarget.name}"? This action cannot be undone.` : ''}
+              {deleteTarget ? t('pages.applications.deleteDialog.description', { name: deleteTarget.name }) : ''}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction onClick={() => { if (deleteTarget) { deleteApplicationMutation.mutate(deleteTarget.id); setDeleteTarget(null) } }}>
-              Delete
+              {t('common.delete')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

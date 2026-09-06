@@ -514,6 +514,14 @@ DROP INDEX IF EXISTS idx_users_email;`
 	// Migration 010: Seed Data
 	seedDataUp = `-- Migration 010: Initial Seed Data
 INSERT INTO users (id, username, email, password_hash, first_name, last_name, enabled, email_verified)
+-- The default admin's bcrypt hash. It is public by design: it is the
+-- documented first-run credential (Admin@123), the setup gate refuses to
+-- let the console out of first-run until it is changed, and
+-- ValidateProduction() refuses to start a production process that still
+-- has it. A scanner cannot know any of that, so the rule is silenced HERE,
+-- at the line, by id -- not by excluding the file, which would also stop
+-- catching a real credential pasted into the same migration.
+-- nosemgrep: generic.secrets.security.detected-bcrypt-hash.detected-bcrypt-hash
 VALUES ('00000000-0000-0000-0000-000000000001', 'admin', 'admin@openidx.local', '$2b$12$oX..0F6dHbNip8vASE5VdOgXiBfyqRZ768PU5vArjeOMxG5MGEEdq', 'System', 'Admin', true, true)
 ON CONFLICT (id) DO NOTHING;
 
@@ -605,10 +613,6 @@ DELETE FROM group_memberships WHERE user_id LIKE '00000000-0000-0000-0000-000000
 DELETE FROM groups WHERE id LIKE '10000000-0000-0000-0000-000000000%';
 DELETE FROM roles WHERE id LIKE '60000000-0000-0000-0000-000000000%';
 DELETE FROM users WHERE id LIKE '00000000-0000-0000-0000-000000000%';`
-
-	// Migration 011-029 would be similarly defined...
-	// For brevity, I'm including a placeholder for the rest
-	// In production, these would be auto-generated from the migration files
 
 	identityProvidersUp = `-- Migration 011: External Identity Providers
 CREATE TABLE IF NOT EXISTS identity_providers (

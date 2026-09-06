@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table'
 import { QueryError } from '../components/query-error'
@@ -81,12 +82,13 @@ interface Report {
 }
 
 export function AssignmentReportPage() {
+  const { t } = useTranslation()
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ['assignment-report'],
     queryFn: () => api.get<Report>('/api/v1/access/assignment-report'),
   })
 
-  if (isError) return <QueryError error={error} resource="the assignment report" />
+  if (isError) return <QueryError error={error} resource={t('pages.assignmentReport.resource')} />
 
   const entries = data?.entries ?? []
   const summary = data?.summary
@@ -95,7 +97,14 @@ export function AssignmentReportPage() {
   // Trust the reach half only when the server says it came from the live
   // controller. Fail closed on anything else.
   const fromController = data?.reachability_source === 'controller'
-  const wouldLose = `${summary?.users ?? 0} user(s) would lose access to ${summary?.applications ?? 0} application(s)`
+  // Two counts in one sentence: each is pluralized on its own and dropped
+  // into the line, so neither language has to write "user(s)".
+  const wouldLose = t('pages.assignmentReport.wouldLose', {
+    users: t('pages.assignmentReport.userCount', { count: summary?.users ?? 0 }),
+    applications: t('pages.assignmentReport.applicationCount', {
+      count: summary?.applications ?? 0,
+    }),
+  })
 
   // The denominator. A response that omits the counts is not a response
   // reporting zeros: it simply did not say how much of the org it covered, and
@@ -113,26 +122,26 @@ export function AssignmentReportPage() {
   // Anything but an explicit true — including a missing field — fails closed.
   const complete = summary?.evaluation_complete === true
   const headline = isLoading
-    ? 'Checking…'
+    ? t('pages.assignmentReport.checking')
     : !fromController
-      ? 'Reachability unavailable'
+      ? t('pages.assignmentReport.reachUnavailable')
       : !complete
         ? entries.length === 0
-          ? 'Report incomplete — some users could not be evaluated'
+          ? t('pages.assignmentReport.reportIncomplete')
           : wouldLose
         : entries.length === 0
           ? // Scoped deliberately. This report models overlay reach; the same
             // flag also enforces at the reverse proxy, which this page never
             // looked at. The headline may only speak for what was measured.
-            'No one would lose Ziti overlay reach — safe to enforce for the overlay'
+            t('pages.assignmentReport.safe')
           : wouldLose
 
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-2xl font-semibold">Assignment report</h1>
+        <h1 className="text-2xl font-semibold">{t('nav.items.assignmentReport')}</h1>
         <p className="text-sm text-muted-foreground">
-          Who would lose access when ACCESS_ASSIGNMENT_ENFORCE is turned on.
+          {t('pages.assignmentReport.subtitle')}
         </p>
       </div>
 
@@ -145,16 +154,12 @@ export function AssignmentReportPage() {
               silently imply it covered. */}
           {!isLoading && (
             <p className="text-sm text-muted-foreground">
-              This report models Ziti overlay reach only. Assignment enforcement also applies at
-              the reverse proxy for every application-backed route, including routes with no Ziti
-              service, and to users with no Ziti identity. Those are not measured here.
+              {t('pages.assignmentReport.overlayOnly')}
               {routesOutside !== undefined && (
                 <>
                   {' '}
                   <span className="font-medium">
-                    {routesOutside} application-backed route{routesOutside === 1 ? '' : 's'}{' '}
-                    {routesOutside === 1 ? 'is' : 'are'} enforced at the proxy and{' '}
-                    {routesOutside === 1 ? 'is' : 'are'} not covered by this report.
+                    {t('pages.assignmentReport.routesOutside', { count: routesOutside })}
                   </span>
                 </>
               )}
@@ -166,9 +171,9 @@ export function AssignmentReportPage() {
               className="rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm"
             >
               <p className="font-medium text-destructive">
-                Could not read the Ziti controller, so this report cannot tell you who would lose
-                access. Do not enable enforcement based on this page.
+                {t('pages.assignmentReport.controllerUnavailable')}
               </p>
+              {/* The controller's own error text. */}
               {data?.reachability_error && (
                 <p className="mt-1 text-muted-foreground">{data.reachability_error}</p>
               )}
@@ -176,10 +181,11 @@ export function AssignmentReportPage() {
           )}
           {!isLoading && fromController && incompleteUsers > 0 && (
             <p className="text-sm font-medium text-amber-600">
-              {entries.length === 0 ? 'But ' : ''}
-              {incompleteUsers} user{incompleteUsers === 1 ? '' : 's'} could not be evaluated and{' '}
-              {incompleteUsers === 1 ? 'is' : 'are'} excluded from this report. Treat this report as
-              incomplete until that count is zero.
+              {/* The leading connective is part of the sentence, so each
+                  form is its own key rather than a prefix glued on. */}
+              {entries.length === 0
+                ? t('pages.assignmentReport.incompleteBut', { count: incompleteUsers })
+                : t('pages.assignmentReport.incomplete', { count: incompleteUsers })}
             </p>
           )}
           {/* Informational, not alarming, and shown even beside a clean
@@ -188,23 +194,26 @@ export function AssignmentReportPage() {
               of them should have had an identity. */}
           {!isLoading && fromController && usersWithoutIdentity > 0 && (
             <p className="text-sm text-muted-foreground">
-              {usersWithoutIdentity} of {usersTotal} user{usersTotal === 1 ? '' : 's'} in this
-              organization {usersWithoutIdentity === 1 ? 'has' : 'have'} no Ziti identity, so{' '}
-              {usersWithoutIdentity === 1 ? 'that user has' : 'those users have'} no Ziti reach to
-              lose and {usersWithoutIdentity === 1 ? 'was' : 'were'} not evaluated. Check that none
-              of them should have been enrolled.
+              {/* The subject agrees with the total, the rest of the sentence
+                  with how many lack an identity, so the subject is composed
+                  first and the sentence pluralizes around it. */}
+              {t('pages.assignmentReport.identityless', {
+                count: usersWithoutIdentity,
+                subject: t('pages.assignmentReport.identitylessSubject', {
+                  count: usersTotal,
+                  n: usersWithoutIdentity,
+                }),
+              })}
             </p>
           )}
           {!isLoading && fromController && countsReported && usersTotal === 0 && (
             <p className="text-sm font-medium text-amber-600">
-              No users were found in this organization, so nothing was evaluated. An empty
-              evaluation is not evidence that enforcement is safe.
+              {t('pages.assignmentReport.noUsers')}
             </p>
           )}
           {!isLoading && fromController && !countsReported && (
             <p className="text-sm font-medium text-amber-600">
-              This response did not carry the user counts, so how much of the organization was
-              evaluated is unknown. Do not read it as a clean result.
+              {t('pages.assignmentReport.countsMissing')}
             </p>
           )}
         </CardHeader>
@@ -212,23 +221,25 @@ export function AssignmentReportPage() {
           {!isLoading && (
             <p className="text-sm text-muted-foreground">
               {countsReported
-                ? `Evaluated ${usersEvaluated} of ${usersTotal} user${usersTotal === 1 ? '' : 's'} in this organization.`
-                : 'User counts not reported by the server, so this report cannot say how much of the organization it covered.'}
+                ? t('pages.assignmentReport.evaluated', {
+                    count: usersTotal,
+                    n: usersEvaluated,
+                  })
+                : t('pages.assignmentReport.countsMissingBody')}
             </p>
           )}
           {!isLoading && !fromController && (
             <p className="text-sm text-muted-foreground">
-              Assignment currently grants {assignments.length} user–application pair
-              {assignments.length === 1 ? '' : 's'} in this organization. That half of the report is
-              read from the database and is still accurate; only the "who can reach what today" half
-              is missing.
+              {t('pages.assignmentReport.grants', { count: assignments.length })}
             </p>
           )}
           {/* F2: the line above asks the operator to adjudicate these users, so
               the page has to name them rather than hand over a count. */}
           {!isLoading && fromController && identitylessUsers.length > 0 && (
             <div className="mt-3">
-              <p className="text-sm font-medium">Users with no Ziti identity</p>
+              <p className="text-sm font-medium">
+                {t('pages.assignmentReport.identitylessTitle')}
+              </p>
               <ul className="mt-1 text-sm text-muted-foreground">
                 {identitylessUsers.map((u) => (
                   <li key={u.user_id}>{u.username || u.user_id}</li>
@@ -240,10 +251,10 @@ export function AssignmentReportPage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>User</TableHead>
-                  <TableHead>Application</TableHead>
-                  <TableHead>Enforced at</TableHead>
-                  <TableHead>Why</TableHead>
+                  <TableHead>{t('pages.assignmentReport.colUser')}</TableHead>
+                  <TableHead>{t('pages.assignmentReport.colApplication')}</TableHead>
+                  <TableHead>{t('pages.assignmentReport.colEnforcedAt')}</TableHead>
+                  <TableHead>{t('pages.assignmentReport.colWhy')}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -251,6 +262,7 @@ export function AssignmentReportPage() {
                   <TableRow key={`${e.user_id}-${e.application_id}`}>
                     <TableCell>{e.username || e.user_id}</TableCell>
                     <TableCell>{e.application_name || e.application_id}</TableCell>
+                    {/* Enforcement point and reason are composed server-side. */}
                     <TableCell>{e.enforcement_point}</TableCell>
                     <TableCell className="text-muted-foreground">{e.reason}</TableCell>
                   </TableRow>

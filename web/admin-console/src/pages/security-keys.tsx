@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { KeyRound, Plus, Trash2, Loader2, AlertCircle, Shield } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card'
@@ -12,6 +13,7 @@ import {
 } from '../lib/webauthn'
 
 export function SecurityKeysPage() {
+  const { t } = useTranslation()
   const { toast } = useToast()
   const [credentials, setCredentials] = useState<WebAuthnCredential[]>([])
   const [loading, setLoading] = useState(true)
@@ -26,7 +28,11 @@ export function SecurityKeysPage() {
       const data = await api.getWebAuthnCredentials()
       setCredentials(data || [])
     } catch {
-      toast({ title: 'Error', description: 'Failed to load security keys', variant: 'destructive' })
+      toast({
+        title: t('common.error'),
+        description: t('pages.securityKeys.toasts.loadFailed'),
+        variant: 'destructive',
+      })
     } finally {
       setLoading(false)
     }
@@ -51,20 +57,21 @@ export function SecurityKeysPage() {
       // Step 2: Create credential via browser API
       const credential = await navigator.credentials.create({ publicKey: options }) as PublicKeyCredential
       if (!credential) {
-        throw new Error('Registration was cancelled')
+        throw new Error(t('pages.securityKeys.toasts.cancelled'))
       }
 
       // Step 3: Send credential to server
       const attestationJSON = serializeAttestationResponse(credential)
       await api.finishWebAuthnRegistration(JSON.parse(attestationJSON))
 
-      toast({ title: 'Success', description: 'Security key registered successfully' })
+      toast({ title: t('common.success'), description: t('pages.securityKeys.toasts.registered') })
       setShowRegisterForm(false)
       setKeyName('')
       fetchCredentials()
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to register security key'
-      toast({ title: 'Error', description: message, variant: 'destructive' })
+      const message =
+        err instanceof Error ? err.message : t('pages.securityKeys.toasts.registerFailed')
+      toast({ title: t('common.error'), description: message, variant: 'destructive' })
     } finally {
       setRegistering(false)
     }
@@ -74,10 +81,14 @@ export function SecurityKeysPage() {
     try {
       setDeleting(credentialId)
       await api.deleteWebAuthnCredential(credentialId)
-      toast({ title: 'Success', description: 'Security key removed' })
+      toast({ title: t('common.success'), description: t('pages.securityKeys.toasts.removed') })
       setCredentials(credentials.filter(c => c.id !== credentialId))
     } catch {
-      toast({ title: 'Error', description: 'Failed to remove security key', variant: 'destructive' })
+      toast({
+        title: t('common.error'),
+        description: t('pages.securityKeys.toasts.removeFailed'),
+        variant: 'destructive',
+      })
     } finally {
       setDeleting(null)
     }
@@ -89,12 +100,12 @@ export function SecurityKeysPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Security Keys</h1>
-          <p className="text-muted-foreground">Manage your WebAuthn/FIDO2 security keys for passwordless authentication</p>
+          <h1 className="text-3xl font-bold tracking-tight">{t('nav.items.securityKeys')}</h1>
+          <p className="text-muted-foreground">{t('pages.securityKeys.subtitle')}</p>
         </div>
         {isWebAuthnSupported && (
           <Button onClick={() => setShowRegisterForm(true)} disabled={showRegisterForm}>
-            <Plus className="mr-2 h-4 w-4" /> Register Security Key
+            <Plus className="mr-2 h-4 w-4" /> {t('pages.securityKeys.register')}
           </Button>
         )}
       </div>
@@ -104,9 +115,7 @@ export function SecurityKeysPage() {
           <CardContent className="pt-6">
             <div className="flex items-center gap-3">
               <AlertCircle className="h-5 w-5 text-yellow-600" />
-              <p className="text-sm text-yellow-800">
-                Your browser does not support WebAuthn. Please use a modern browser (Chrome, Firefox, Safari, or Edge) to manage security keys.
-              </p>
+              <p className="text-sm text-yellow-800">{t('pages.securityKeys.unsupported')}</p>
             </div>
           </CardContent>
         </Card>
@@ -115,18 +124,16 @@ export function SecurityKeysPage() {
       {showRegisterForm && (
         <Card>
           <CardHeader>
-            <CardTitle>Register New Security Key</CardTitle>
-            <CardDescription>
-              Insert your security key and give it a name for easy identification
-            </CardDescription>
+            <CardTitle>{t('pages.securityKeys.registerCard.title')}</CardTitle>
+            <CardDescription>{t('pages.securityKeys.registerCard.description')}</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="flex items-end gap-4">
               <div className="flex-1 space-y-2">
-                <Label htmlFor="key-name">Key Name</Label>
+                <Label htmlFor="key-name">{t('pages.securityKeys.registerCard.keyName')}</Label>
                 <Input
                   id="key-name"
-                  placeholder="e.g., YubiKey 5C, Titan Key"
+                  placeholder={t('pages.securityKeys.registerCard.keyNamePlaceholder')}
                   value={keyName}
                   onChange={(e) => setKeyName(e.target.value)}
                   disabled={registering}
@@ -136,14 +143,14 @@ export function SecurityKeysPage() {
                 {registering ? (
                   <span className="flex items-center gap-2">
                     <Loader2 className="h-4 w-4 animate-spin" />
-                    Waiting for key...
+                    {t('pages.securityKeys.registerCard.waiting')}
                   </span>
                 ) : (
-                  'Register'
+                  t('pages.securityKeys.registerCard.submit')
                 )}
               </Button>
               <Button variant="outline" onClick={() => { setShowRegisterForm(false); setKeyName('') }} disabled={registering}>
-                Cancel
+                {t('common.cancel')}
               </Button>
             </div>
           </CardContent>
@@ -154,10 +161,10 @@ export function SecurityKeysPage() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <KeyRound className="h-5 w-5" />
-            Registered Security Keys
+            {t('pages.securityKeys.listTitle')}
           </CardTitle>
           <CardDescription>
-            {credentials.length} security key{credentials.length !== 1 ? 's' : ''} registered
+            {t('pages.securityKeys.count', { count: credentials.length })}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -168,10 +175,8 @@ export function SecurityKeysPage() {
           ) : credentials.length === 0 ? (
             <div className="text-center py-8">
               <Shield className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-              <p className="text-muted-foreground">No security keys registered yet.</p>
-              <p className="text-sm text-muted-foreground mt-1">
-                Register a FIDO2/WebAuthn security key for passwordless sign-in.
-              </p>
+              <p className="text-muted-foreground">{t('pages.securityKeys.empty')}</p>
+              <p className="text-sm text-muted-foreground mt-1">{t('pages.securityKeys.emptyHint')}</p>
             </div>
           ) : (
             <div className="space-y-3">
@@ -185,14 +190,22 @@ export function SecurityKeysPage() {
                       <KeyRound className="h-5 w-5 text-primary" />
                     </div>
                     <div>
-                      <p className="font-medium">{cred.name || 'Security Key'}</p>
+                      <p className="font-medium">{cred.name || t('pages.securityKeys.fallbackName')}</p>
                       <p className="text-sm text-muted-foreground">
-                        Registered {new Date(cred.created_at).toLocaleDateString()}
+                        {t('pages.securityKeys.registered', {
+                          date: new Date(cred.created_at).toLocaleDateString(undefined),
+                        })}
                         {cred.last_used_at && (
-                          <> &middot; Last used {new Date(cred.last_used_at).toLocaleDateString()}</>
+                          <>
+                            {' '}
+                            &middot;{' '}
+                            {t('pages.securityKeys.lastUsed', {
+                              date: new Date(cred.last_used_at).toLocaleDateString(undefined),
+                            })}
+                          </>
                         )}
                         {cred.sign_count > 0 && (
-                          <> &middot; Used {cred.sign_count} times</>
+                          <> &middot; {t('pages.securityKeys.usedTimes', { n: cred.sign_count })}</>
                         )}
                       </p>
                     </div>

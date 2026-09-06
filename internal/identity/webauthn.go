@@ -666,23 +666,67 @@ func (s *Service) updateWebAuthnCredential(ctx context.Context, userID, credenti
 	return err
 }
 
+// webauthnSessionTTL bounds one registration/login ceremony. Challenges are
+// single-use and short-lived; five minutes comfortably covers the library's
+// ceremony timeout while keeping abandoned challenges from accumulating.
+const webauthnSessionTTL = 5 * time.Minute
+
+func webauthnSessionKey(userID, sessionType string) string {
+	return "webauthn_session:" + userID + ":" + sessionType
+}
+
+// webauthnMemSession is the in-memory fallback entry. The sync.Map used to be
+// the only store ("use Redis in production") with no TTL: the challenge lived
+// on whichever replica began the ceremony, so the finish request failed the
+// moment a different replica answered it — passkeys broke nondeterministically
+// past one replica — and abandoned challenges accumulated forever. Redis is
+// now the primary store; this fallback keeps a redis-less dev box or a
+// degraded instance working on a single replica, with lazy expiry.
+type webauthnMemSession struct {
+	data      string
+	expiresAt time.Time
+}
+
 func (s *Service) storeWebAuthnSession(ctx context.Context, userID, sessionType, data string) {
-	// In production, store in Redis with TTL
-	// For now, store in memory (not production-ready)
-	s.webauthnSessions.Store(userID+":"+sessionType, data)
+	if s.redis != nil && s.redis.Client != nil {
+		err := s.redis.Client.Set(ctx, webauthnSessionKey(userID, sessionType), data, webauthnSessionTTL).Err()
+		if err == nil {
+			return
+		}
+		s.logger.Warn("webauthn session redis write failed; falling back to in-memory (completes on this replica only)",
+			zap.Error(err))
+	}
+	s.webauthnSessions.Store(userID+":"+sessionType,
+		webauthnMemSession{data: data, expiresAt: time.Now().Add(webauthnSessionTTL)})
 }
 
 func (s *Service) getWebAuthnSession(ctx context.Context, userID, sessionType string) (string, error) {
-	// In production, get from Redis
-	data, ok := s.webauthnSessions.Load(userID + ":" + sessionType)
+	if s.redis != nil && s.redis.Client != nil {
+		data, err := s.redis.Client.Get(ctx, webauthnSessionKey(userID, sessionType)).Result()
+		if err == nil {
+			return data, nil
+		}
+		// Miss or error: fall through to memory so a ceremony stored during a
+		// redis outage can still complete on the replica that began it.
+	}
+	v, ok := s.webauthnSessions.Load(userID + ":" + sessionType)
 	if !ok {
 		return "", fmt.Errorf("session not found")
 	}
-	return data.(string), nil
+	entry, ok := v.(webauthnMemSession)
+	if !ok || time.Now().After(entry.expiresAt) {
+		s.webauthnSessions.Delete(userID + ":" + sessionType)
+		return "", fmt.Errorf("session not found")
+	}
+	return entry.data, nil
 }
 
 func (s *Service) deleteWebAuthnSession(ctx context.Context, userID, sessionType string) {
-	// In production, delete from Redis
+	if s.redis != nil && s.redis.Client != nil {
+		if err := s.redis.Client.Del(ctx, webauthnSessionKey(userID, sessionType)).Err(); err != nil {
+			s.logger.Warn("webauthn session redis delete failed", zap.Error(err))
+		}
+	}
 	s.webauthnSessions.Delete(userID + ":" + sessionType)
 }
 

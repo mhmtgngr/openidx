@@ -11,11 +11,26 @@ allow if {
     "admin" in input.user.roles
 }
 
-# ─── Authenticated read access ───────────────────────────────────
-# Any authenticated user can read (GET/HEAD/OPTIONS)
+# ─── Privileged read access ──────────────────────────────────────
+# This used to read "any authenticated user can GET anything", which made
+# every rule below it unreachable -- the fine-grained RBAC table, the helpdesk
+# and auditor rules and the path-scoped self-service rules were all consulted
+# only for writes. Turning ENABLE_OPA_AUTHZ on therefore WIDENED read access
+# on admin-api, governance and provisioning rather than restricting it: any
+# authenticated end user could read every admin resource those services serve.
+#
+# Reads are now granted by role, using the role names the product actually
+# issues (see internal/auth: super_admin > admin > operator > auditor > user).
+# `admin` already has the bypass above. End users reach their own data through
+# the path-scoped self-service rules further down, not through this.
 allow if {
     input.method in {"GET", "HEAD", "OPTIONS"}
-    input.user.authenticated
+    some role in {"super_admin", "operator", "auditor"}
+    role in input.user.roles
+}
+
+allow if {
+    "super_admin" in input.user.roles
 }
 
 # ─── Resource ownership ─────────────────────────────────────────

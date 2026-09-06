@@ -29,6 +29,8 @@ import (
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // recordingStore is the storage backend the recording handlers talk to.
@@ -459,7 +461,12 @@ func (h *RemoteSupportHandler) HandleUploadRecordingChunk(c *gin.Context) {
 	// just the accounting (which the finalize step will reconcile from
 	// the file size when needed).
 	if h.db != nil && h.db.Pool != nil {
-		_, _ = h.db.Pool.Exec(c.Request.Context(), `
+		// TENANCY (v150): the chunk stream is uploaded by the ADMIN viewer's
+		// MediaRecorder, but the request carries no tenant on every deployment,
+		// and a missed tally only loses accounting the finalize step
+		// reconciles from the file size. Keyed on the session id, bypassed.
+		//orgscope:ignore recording chunk tally — keyed on the session id; accounting only, reconciled at finalize
+		_, _ = h.db.Pool.Exec(orgctx.WithBypassRLS(c.Request.Context()), `
             UPDATE remote_support_sessions
                SET recording_size_bytes = recording_size_bytes + $2,
                    recording_chunk_count = recording_chunk_count + 1,
@@ -489,13 +496,21 @@ func (h *RemoteSupportHandler) HandleFinalizeRecording(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "database unavailable"})
 		return
 	}
+	// TENANCY (v150): finalizing starts the retention clock on a recording of
+	// someone's screen, so this one is scoped to the caller's organization
+	// rather than bypassed.
+	org := remoteSupportOrg(c)
+	if org == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "organization context required"})
+		return
+	}
 	publicURL := fmt.Sprintf("/api/v1/access/remote-support/sessions/%s/recording", sessionID)
 	_, err := h.db.Pool.Exec(c.Request.Context(), `
         UPDATE remote_support_sessions
            SET recording_finalized_at = NOW(),
                recording_url = $2
-         WHERE id = $1
-    `, sessionID, publicURL)
+         WHERE id = $1 AND org_id = $3
+    `, sessionID, publicURL, org)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "finalize failed"})
 		return

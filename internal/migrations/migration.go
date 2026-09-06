@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 )
@@ -301,6 +302,33 @@ func (m *Migrator) MigrateTo(ctx context.Context, targetVersion int) error {
 	return nil
 }
 
+// bypassRLSInTx makes the migration transaction exempt from the v37 RLS belt.
+//
+// The belt's policies read `current_setting('app.bypass_rls', true) = 'on' OR
+// org_id = current_setting('app.org_id', ...)`, and the tables carry FORCE ROW
+// LEVEL SECURITY precisely so the OWNER is subject to them too. A migration is
+// cross-org by definition — v84 seeds an OAuth client, v138 backfills nine
+// tables — so with neither GUC set the policy is fail-closed and the seed dies
+// with 42501, "new row violates row-level security policy".
+//
+// It never showed up because every environment that ran migrations connected as
+// a superuser: docker-compose, the CI harness and the test databases all use
+// `postgres`, which has BYPASSRLS and is exempt before any policy is consulted.
+// The bundled Helm data plane is the first deployment where the migration Job
+// connects as the plain database owner the subchart creates, and it is the one
+// an operator gets from `helm install`.
+//
+// SET LOCAL, so the setting lasts exactly as long as this transaction and
+// cannot escape onto a pooled connection that a request later checks out. The
+// per-request hook in internal/common/database sets both GUCs from orgctx at
+// checkout; this overrides only within the migration's own transaction.
+func bypassRLSInTx(ctx context.Context, tx pgx.Tx) error {
+	if _, err := tx.Exec(ctx, `SET LOCAL app.bypass_rls = 'on'`); err != nil {
+		return fmt.Errorf("enable RLS bypass for migration transaction: %w", err)
+	}
+	return nil
+}
+
 // applyMigration executes a single migration within a transaction
 func (m *Migrator) applyMigration(ctx context.Context, mig *Migration) error {
 	tx, err := m.db.Begin(ctx)
@@ -308,6 +336,10 @@ func (m *Migrator) applyMigration(ctx context.Context, mig *Migration) error {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
 	defer tx.Rollback(ctx)
+
+	if err := bypassRLSInTx(ctx, tx); err != nil {
+		return err
+	}
 
 	// Split SQL by semicolons and execute each statement
 	statements := m.splitSQL(mig.UpSQL)
@@ -414,6 +446,10 @@ func (m *Migrator) rollbackMigration(ctx context.Context, mig *Migration) error 
 		return fmt.Errorf("begin transaction: %w", err)
 	}
 	defer tx.Rollback(ctx)
+
+	if err := bypassRLSInTx(ctx, tx); err != nil {
+		return err
+	}
 
 	// Split SQL by semicolons and execute each statement
 	statements := m.splitSQL(mig.DownSQL)

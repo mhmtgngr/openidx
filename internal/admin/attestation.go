@@ -62,15 +62,26 @@ func (s *Service) handleListAttestationCampaigns(c *gin.Context) {
 		return
 	}
 
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	rows, err := s.db.Pool.Query(c.Request.Context(),
-		`SELECT ac.id, ac.name, ac.description, ac.campaign_type, ac.scope, ac.reviewer_strategy,
+		// COALESCE on description: the column is nullable, this scans it into a
+		// string, and a scan failure is swallowed by the loop's `continue` — so a
+		// NULL-description row would drop out of the certification list with no
+		// error anywhere. The create path always writes "", so this is not
+		// reachable through the API; a row inserted any other way would vanish.
+		`SELECT ac.id, ac.name, COALESCE(ac.description, ''), ac.campaign_type, ac.scope, ac.reviewer_strategy,
 		        ac.status, ac.due_date, ac.reminder_days, ac.escalation_after_days, ac.auto_revoke_on_expiry,
 		        ac.created_by, ac.created_at, ac.completed_at,
-		        COALESCE((SELECT COUNT(*) FROM attestation_items WHERE campaign_id = ac.id), 0),
-		        COALESCE((SELECT COUNT(*) FROM attestation_items WHERE campaign_id = ac.id AND decision = 'certified'), 0),
-		        COALESCE((SELECT COUNT(*) FROM attestation_items WHERE campaign_id = ac.id AND decision = 'revoked'), 0),
-		        COALESCE((SELECT COUNT(*) FROM attestation_items WHERE campaign_id = ac.id AND decision = 'pending'), 0)
-		 FROM attestation_campaigns ac ORDER BY ac.created_at DESC`)
+		        COALESCE((SELECT COUNT(*) FROM attestation_items WHERE campaign_id = ac.id AND org_id = $1), 0),
+		        COALESCE((SELECT COUNT(*) FROM attestation_items WHERE campaign_id = ac.id AND org_id = $1 AND decision = 'certified'), 0),
+		        COALESCE((SELECT COUNT(*) FROM attestation_items WHERE campaign_id = ac.id AND org_id = $1 AND decision = 'revoked'), 0),
+		        COALESCE((SELECT COUNT(*) FROM attestation_items WHERE campaign_id = ac.id AND org_id = $1 AND decision = 'pending'), 0)
+		 FROM attestation_campaigns ac WHERE ac.org_id = $1 ORDER BY ac.created_at DESC`, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to list attestation campaigns", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list campaigns"})
@@ -178,12 +189,18 @@ func (s *Service) handleGetAttestationCampaign(c *gin.Context) {
 		return
 	}
 
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	id := c.Param("id")
 	var ac AttestationCampaign
 	err := s.db.Pool.QueryRow(c.Request.Context(),
-		`SELECT id, name, description, campaign_type, scope, reviewer_strategy, status, due_date,
+		`SELECT id, name, COALESCE(description, ''), campaign_type, scope, reviewer_strategy, status, due_date,
 		        reminder_days, escalation_after_days, auto_revoke_on_expiry, created_by, created_at, completed_at
-		 FROM attestation_campaigns WHERE id = $1`, id,
+		 FROM attestation_campaigns WHERE id = $1 AND org_id = $2`, id, org.ID,
 	).Scan(&ac.ID, &ac.Name, &ac.Description, &ac.CampaignType, &ac.Scope, &ac.ReviewerStrategy,
 		&ac.Status, &ac.DueDate, &ac.ReminderDays, &ac.EscalationAfterDays,
 		&ac.AutoRevokeOnExpiry, &ac.CreatedBy, &ac.CreatedAt, &ac.CompletedAt)
@@ -194,13 +211,13 @@ func (s *Service) handleGetAttestationCampaign(c *gin.Context) {
 
 	// Get item counts
 	_ = s.db.Pool.QueryRow(c.Request.Context(),
-		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1", id).Scan(&ac.TotalItems)
+		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND org_id = $2", id, org.ID).Scan(&ac.TotalItems)
 	_ = s.db.Pool.QueryRow(c.Request.Context(),
-		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND decision = 'certified'", id).Scan(&ac.CertifiedCount)
+		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND org_id = $2 AND decision = 'certified'", id, org.ID).Scan(&ac.CertifiedCount)
 	_ = s.db.Pool.QueryRow(c.Request.Context(),
-		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND decision = 'revoked'", id).Scan(&ac.RevokedCount)
+		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND org_id = $2 AND decision = 'revoked'", id, org.ID).Scan(&ac.RevokedCount)
 	_ = s.db.Pool.QueryRow(c.Request.Context(),
-		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND decision = 'pending'", id).Scan(&ac.PendingCount)
+		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND org_id = $2 AND decision = 'pending'", id, org.ID).Scan(&ac.PendingCount)
 
 	c.JSON(http.StatusOK, ac)
 }
@@ -210,12 +227,18 @@ func (s *Service) handleUpdateAttestationCampaign(c *gin.Context) {
 		return
 	}
 
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	id := c.Param("id")
 
 	// Only allow updating draft campaigns
 	var status string
 	err := s.db.Pool.QueryRow(c.Request.Context(),
-		"SELECT status FROM attestation_campaigns WHERE id = $1", id).Scan(&status)
+		"SELECT status FROM attestation_campaigns WHERE id = $1 AND org_id = $2", id, org.ID).Scan(&status)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Campaign not found"})
 		return
@@ -284,8 +307,9 @@ func (s *Service) handleUpdateAttestationCampaign(c *gin.Context) {
 		return
 	}
 
-	args = append(args, id)
-	query := pf("UPDATE attestation_campaigns SET %s WHERE id = $%d", joinSetClauses(sets), argIdx)
+	args = append(args, id, org.ID)
+	query := pf("UPDATE attestation_campaigns SET %s WHERE id = $%d AND org_id = $%d",
+		joinSetClauses(sets), argIdx, argIdx+1)
 	_, err = s.db.Pool.Exec(c.Request.Context(), query, args...)
 	if err != nil {
 		s.logger.Error("Failed to update campaign", zap.Error(err))
@@ -300,11 +324,17 @@ func (s *Service) handleLaunchAttestationCampaign(c *gin.Context) {
 		return
 	}
 
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	id := c.Param("id")
 	var ac AttestationCampaign
 	err := s.db.Pool.QueryRow(c.Request.Context(),
 		`SELECT id, campaign_type, scope, reviewer_strategy, status
-		 FROM attestation_campaigns WHERE id = $1`, id,
+		 FROM attestation_campaigns WHERE id = $1 AND org_id = $2`, id, org.ID,
 	).Scan(&ac.ID, &ac.CampaignType, &ac.Scope, &ac.ReviewerStrategy, &ac.Status)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Campaign not found"})
@@ -320,7 +350,7 @@ func (s *Service) handleLaunchAttestationCampaign(c *gin.Context) {
 
 	// Update campaign status
 	_, _ = s.db.Pool.Exec(c.Request.Context(),
-		"UPDATE attestation_campaigns SET status = 'active' WHERE id = $1", id)
+		"UPDATE attestation_campaigns SET status = 'active' WHERE id = $1 AND org_id = $2", id, org.ID)
 
 	c.JSON(http.StatusOK, gin.H{"message": "Campaign launched", "items_created": itemsCreated})
 }
@@ -539,7 +569,7 @@ func (s *Service) handleListAttestationItems(c *gin.Context) {
 		 FROM attestation_items ai
 		 LEFT JOIN users r ON ai.reviewer_id = r.id AND r.org_id = $2
 		 LEFT JOIN users u ON ai.user_id = u.id AND u.org_id = $2
-		 WHERE ai.campaign_id = $1
+		 WHERE ai.campaign_id = $1 AND ai.org_id = $2
 		 ORDER BY ai.decision = 'pending' DESC, ai.created_at`, campaignID, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to list attestation items", zap.Error(err))
@@ -595,8 +625,8 @@ func (s *Service) handleDecideAttestationItem(c *gin.Context) {
 
 	tag, err := s.db.Pool.Exec(c.Request.Context(),
 		`UPDATE attestation_items SET decision = $1, comments = $2, decided_at = NOW()
-		 WHERE id = $3 AND campaign_id = $4 AND decision = 'pending'`,
-		req.Decision, req.Comments, itemID, campaignID)
+		 WHERE id = $3 AND campaign_id = $4 AND org_id = $5 AND decision = 'pending'`,
+		req.Decision, req.Comments, itemID, campaignID, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to decide attestation item", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update decision"})
@@ -611,8 +641,11 @@ func (s *Service) handleDecideAttestationItem(c *gin.Context) {
 	if req.Decision == "revoked" {
 		var resourceType string
 		var userID, resourceID *string
+		// The row this reads decides WHICH access is torn down by the four
+		// deletes below. Those deletes have always named the caller's org; the
+		// read that chose their subject did not.
 		_ = s.db.Pool.QueryRow(c.Request.Context(),
-			"SELECT resource_type, user_id, resource_id FROM attestation_items WHERE id = $1", itemID,
+			"SELECT resource_type, user_id, resource_id FROM attestation_items WHERE id = $1 AND org_id = $2", itemID, org.ID,
 		).Scan(&resourceType, &userID, &resourceID)
 
 		if userID != nil && resourceID != nil {
@@ -645,11 +678,11 @@ func (s *Service) handleDecideAttestationItem(c *gin.Context) {
 	// Check if all items are decided - auto-complete campaign
 	var pendingCount int
 	_ = s.db.Pool.QueryRow(c.Request.Context(),
-		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND decision = 'pending'", campaignID,
+		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND org_id = $2 AND decision = 'pending'", campaignID, org.ID,
 	).Scan(&pendingCount)
 	if pendingCount == 0 {
 		_, _ = s.db.Pool.Exec(c.Request.Context(),
-			"UPDATE attestation_campaigns SET status = 'completed', completed_at = NOW() WHERE id = $1", campaignID)
+			"UPDATE attestation_campaigns SET status = 'completed', completed_at = NOW() WHERE id = $1 AND org_id = $2", campaignID, org.ID)
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Decision recorded", "decision": req.Decision})
@@ -657,6 +690,12 @@ func (s *Service) handleDecideAttestationItem(c *gin.Context) {
 
 func (s *Service) handleDelegateAttestationItem(c *gin.Context) {
 	if !requireAdmin(c) {
+		return
+	}
+
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
 		return
 	}
 
@@ -671,10 +710,29 @@ func (s *Service) handleDelegateAttestationItem(c *gin.Context) {
 		return
 	}
 
+	// The delegate becomes the reviewer of record for an access certification
+	// item. Nothing checked it: whatever uuid the caller sent was written onto
+	// reviewer_id and delegated_to as-is, so an item could be delegated to a
+	// user of another organization, to a deleted user, or to a uuid naming
+	// nobody. The reviewer's name is read through an org-scoped join, so such an
+	// item renders with a blank reviewer, stays 'pending' for ever, and — because
+	// a campaign auto-completes only when its pending count reaches zero — one
+	// delegation freezes the campaign permanently. resolveItemReviewer already
+	// resolves generated reviewers within the org; this is the same rule on the
+	// path an administrator drives by hand.
+	var delegateID string
+	if err := s.db.Pool.QueryRow(c.Request.Context(),
+		`SELECT id::text FROM users WHERE id = $1 AND org_id = $2 AND enabled = true`,
+		req.DelegateTo, org.ID,
+	).Scan(&delegateID); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "delegate_to must name an enabled user in this organization"})
+		return
+	}
+
 	tag, err := s.db.Pool.Exec(c.Request.Context(),
 		`UPDATE attestation_items SET reviewer_id = $1, delegated_to = $1, delegated_at = NOW()
-		 WHERE id = $2 AND campaign_id = $3 AND decision = 'pending'`,
-		req.DelegateTo, itemID, campaignID)
+		 WHERE id = $2 AND campaign_id = $3 AND org_id = $4 AND decision = 'pending'`,
+		delegateID, itemID, campaignID, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to delegate attestation item", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delegate"})
@@ -692,19 +750,25 @@ func (s *Service) handleAttestationProgress(c *gin.Context) {
 		return
 	}
 
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	campaignID := c.Param("id")
 
 	var total, certified, revoked, pending, delegated int
 	_ = s.db.Pool.QueryRow(c.Request.Context(),
-		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1", campaignID).Scan(&total)
+		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND org_id = $2", campaignID, org.ID).Scan(&total)
 	_ = s.db.Pool.QueryRow(c.Request.Context(),
-		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND decision = 'certified'", campaignID).Scan(&certified)
+		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND org_id = $2 AND decision = 'certified'", campaignID, org.ID).Scan(&certified)
 	_ = s.db.Pool.QueryRow(c.Request.Context(),
-		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND decision = 'revoked'", campaignID).Scan(&revoked)
+		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND org_id = $2 AND decision = 'revoked'", campaignID, org.ID).Scan(&revoked)
 	_ = s.db.Pool.QueryRow(c.Request.Context(),
-		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND decision = 'pending'", campaignID).Scan(&pending)
+		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND org_id = $2 AND decision = 'pending'", campaignID, org.ID).Scan(&pending)
 	_ = s.db.Pool.QueryRow(c.Request.Context(),
-		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND delegated_to IS NOT NULL", campaignID).Scan(&delegated)
+		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND org_id = $2 AND delegated_to IS NOT NULL", campaignID, org.ID).Scan(&delegated)
 
 	completionPct := 0.0
 	if total > 0 {

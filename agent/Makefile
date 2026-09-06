@@ -57,11 +57,12 @@ build-all: clean
 package-linux: build-all
 	@command -v nfpm >/dev/null || { echo "nfpm not installed: https://nfpm.goreleaser.com"; exit 1; }
 	@mkdir -p $(OUT_DIR)/pkg
-	@for arch in amd64 arm64; do \
+	@set -e; for arch in amd64 arm64; do \
+		cp $(OUT_DIR)/$(BINARY)-linux-$$arch $(OUT_DIR)/$(BINARY)-linux ; \
 		for pkg in deb rpm; do \
 			VERSION=$(VERSION) ARCH=$$arch nfpm pkg -f packaging/nfpm.yaml -p $$pkg -t $(OUT_DIR)/pkg/ ; \
 		done ; \
-	done
+	done; rm -f $(OUT_DIR)/$(BINARY)-linux
 	@ls -lh $(OUT_DIR)/pkg/
 
 ## help: print this help

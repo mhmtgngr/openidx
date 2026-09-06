@@ -46,8 +46,13 @@ docker compose up -d
 
 ```
 Email: admin@openidx.local
-Password: Admin123!
+Password: Admin@123
 ```
+
+Rotate this immediately after first login (see
+[GETTING-STARTED.md — First Login](./GETTING-STARTED.md#1-first-login),
+the authoritative credential reference). In production the identity and
+oauth services refuse to start while this default still authenticates.
 
 ---
 
@@ -420,7 +425,9 @@ curl -X POST http://localhost:8006/oauth/token \
 **Method 2: User Token (via Admin Console)**
 
 1. Open http://localhost:3000 in your browser
-2. Log in with `admin@openidx.local` / `Admin123!`
+2. Log in as `admin` — the seeded password is in
+   [GETTING-STARTED § First Login](GETTING-STARTED.md#1-first-login), which
+   is the authoritative source for it, and you should have rotated it
 3. Open DevTools (F12) > Application > Local Storage > http://localhost:3000
 4. Copy the `token` value
 

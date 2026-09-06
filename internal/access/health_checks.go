@@ -266,6 +266,7 @@ func registerChecks(s *Service) []Check {
 		// published_app status consistency — safe: mark published if it has a linked route.
 		&fnCheck{id: "published-app", domain: "apps",
 			detect: func(ctx context.Context) ([]Finding, error) {
+				//orgscope:ignore Relations & Integrity Doctor: published-app status scan across the whole install (all orgs by design); runs under WithBypassRLS and behind adminOnly
 				rows, err := s.db.Pool.Query(ctx, `
 					SELECT pa.id::text, pa.name FROM published_apps pa
 					WHERE pa.status <> 'published'
@@ -288,6 +289,9 @@ func registerChecks(s *Service) []Check {
 				return out, nil
 			},
 			fix: func(ctx context.Context, f Finding) error {
+				// The subject came from this check's own detect pass, which
+				// spans orgs by design; the fix follows it. Behind adminOnly.
+				//orgscope:ignore Relations & Integrity Doctor: heals a finding its own install-wide scan produced
 				_, err := s.db.Pool.Exec(ctx, `UPDATE published_apps SET status='published', updated_at=NOW() WHERE id=$1`, f.Subject)
 				return err
 			}},

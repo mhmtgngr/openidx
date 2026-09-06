@@ -333,20 +333,35 @@ func (s *Service) handleRevokeTempAccess(c *gin.Context) {
 func (s *Service) handleUseTempAccess(c *gin.Context) {
 	token := c.Param("token")
 
+	// TENANCY (v148). This is a pre-tenant-resolution lookup: the vendor
+	// redeeming the link has no session and no organization on the context, and
+	// the token is the globally-unique secret that identifies the link. v148
+	// puts temp_access_links under FORCE RLS, so this read and the use-count
+	// write below run BYPASSED — the same treatment as v145's magic-link
+	// redemption, api-key-by-hash and route-by-host, and pinned the same way by
+	// TestPreResolutionLookupsUnderRLS. Without the bypass the belt returns zero
+	// rows here and every vendor link stops redeeming, which is exactly the
+	// breakage v71 declined the belt to avoid.
+	//
+	// The org_id the read returns is what scopes the usage row that follows, so
+	// the record of the access lands in the tenant that issued the link.
+	redeemCtx := orgctx.WithBypassRLS(c.Request.Context())
+
 	//orgscope:ignore public token-redemption path — no authenticated org context; keyed by a globally-unique unguessable secret token, not an enumerable id
 	query := `
 		SELECT id, token, name, protocol, target_host, target_port, username,
 			expires_at, max_uses, current_uses, allowed_ips, require_mfa,
-			notify_on_use, notify_email, guacamole_connection_id, status
+			notify_on_use, notify_email, guacamole_connection_id, status, org_id
 		FROM temp_access_links
 		WHERE token = $1`
 
 	var link TempAccessLink
-	err := s.db.Pool.QueryRow(c.Request.Context(), query, token).Scan(
+	var linkOrgID string
+	err := s.db.Pool.QueryRow(redeemCtx, query, token).Scan(
 		&link.ID, &link.Token, &link.Name, &link.Protocol, &link.TargetHost,
 		&link.TargetPort, &link.Username, &link.ExpiresAt, &link.MaxUses,
 		&link.CurrentUses, &link.AllowedIPs, &link.RequireMFA, &link.NotifyOnUse,
-		&link.NotifyEmail, &link.GuacConnectionID, &link.Status,
+		&link.NotifyEmail, &link.GuacConnectionID, &link.Status, &linkOrgID,
 	)
 	if err != nil {
 		c.HTML(http.StatusNotFound, "error.html", gin.H{
@@ -402,20 +417,31 @@ func (s *Service) handleUseTempAccess(c *gin.Context) {
 		}
 	}
 
-	// Update usage stats
+	// Update usage stats. Bypassed for the same reason as the read above; the
+	// org term is still in the predicate so the write cannot wander off the link
+	// the token resolved.
 	//orgscope:ignore public token-redemption path — id resolved from the unique-token lookup above; redeemer has no org context
 	updateQuery := `
 		UPDATE temp_access_links
 		SET current_uses = current_uses + 1, last_used_at = $1, last_used_ip = $2, updated_at = $1
-		WHERE id = $3`
-	s.db.Pool.Exec(c.Request.Context(), updateQuery, time.Now(), clientIP, link.ID)
+		WHERE id = $3 AND org_id = $4`
+	if _, err := s.db.Pool.Exec(redeemCtx, updateQuery, time.Now(), clientIP, link.ID, linkOrgID); err != nil {
+		s.logger.Error("temp access: failed to record link use",
+			zap.String("link_id", link.ID), zap.Error(err))
+	}
 
-	// Log usage
+	// Log usage. This is the record that an outside party connected to an
+	// internal host, so a failure to write it is not something to swallow: the
+	// access happens either way, and an unrecorded one is worse than a refused
+	// one. Both Execs here discarded their errors before v148.
 	usageID := uuid.New().String()
 	usageQuery := `
-		INSERT INTO temp_access_usage (id, link_id, ip_address, user_agent, connected_at)
-		VALUES ($1, $2, $3, $4, $5)`
-	s.db.Pool.Exec(c.Request.Context(), usageQuery, usageID, link.ID, clientIP, c.Request.UserAgent(), time.Now())
+		INSERT INTO temp_access_usage (id, link_id, ip_address, user_agent, connected_at, org_id)
+		VALUES ($1, $2, $3, $4, $5, $6)`
+	if _, err := s.db.Pool.Exec(redeemCtx, usageQuery, usageID, link.ID, clientIP, c.Request.UserAgent(), time.Now(), linkOrgID); err != nil {
+		s.logger.Error("temp access: failed to record vendor connection",
+			zap.String("link_id", link.ID), zap.String("target_host", link.TargetHost), zap.Error(err))
+	}
 
 	// Audit log
 	s.auditLog(c, "temp_access.used", map[string]interface{}{
@@ -451,8 +477,8 @@ func (s *Service) handleGetTempAccessUsage(c *gin.Context) {
 		return
 	}
 
-	// Verify the link belongs to the caller's org before returning its usage
-	// history, so a cross-org id can't read another tenant's access record.
+	// Verify the link belongs to the caller's org, so a cross-org id gets the
+	// same 404 as an id that does not exist rather than an empty history.
 	var ok bool
 	if err := s.db.Pool.QueryRow(c.Request.Context(),
 		`SELECT EXISTS(SELECT 1 FROM temp_access_links WHERE id = $1 AND org_id = $2)`, linkID, org.ID).Scan(&ok); err != nil || !ok {
@@ -460,14 +486,20 @@ func (s *Service) handleGetTempAccessUsage(c *gin.Context) {
 		return
 	}
 
+	// The org predicate below is not redundant with that check. Until v148 this
+	// query read `WHERE link_id = $1` alone and was safe only because the
+	// statement above happened to run first — safety living in the order two
+	// statements are written in, which is the shape v143 and v147 both found
+	// recorded as though it were a property of the schema. The check above
+	// proves the LINK is the caller's; only this predicate proves the ROWS are.
 	query := `
 		SELECT id, link_id, ip_address, user_agent, connected_at, disconnected_at
 		FROM temp_access_usage
-		WHERE link_id = $1
+		WHERE link_id = $1 AND org_id = $2
 		ORDER BY connected_at DESC
 		LIMIT 50`
 
-	rows, err := s.db.Pool.Query(c.Request.Context(), query, linkID)
+	rows, err := s.db.Pool.Query(c.Request.Context(), query, linkID, org.ID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get usage history"})
 		return

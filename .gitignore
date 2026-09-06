@@ -21,6 +21,21 @@ bin/
 /oauth-service
 /provisioning-service
 
+# Compiled tool binaries (root level). `go build ./tools/<name>` drops the
+# binary in the working directory, not next to its package.
+/contractcheck
+/orgscope
+
+# Playwright output. test-results/ (videos, screenshots, error contexts) and
+# playwright-report/ are generated per run. e2e/.auth/user.json is the SESSION
+# auth.setup.ts saves and every authenticated spec loads -- a real token once
+# the setup signs in for real, so it belongs on disk and never in a commit.
+# (The version that was tracked held a hand-written `mock-signature` JWT, which
+# is the other half of why the authenticated specs proved nothing.)
+web/admin-console/test-results/
+web/admin-console/playwright-report/
+web/admin-console/e2e/.auth/
+
 # Go test binaries
 *.test
 
@@ -92,7 +107,6 @@ docs/MARKET_REANALYSIS_AND_GTM_2026-07.md
 docs/IAM_COMPETITOR_ANALYSIS.md
 docs/ULTIMATE_PRODUCT_PLAN.md
 docs/SESSION_HANDOFF_2026-07-22.md
-mobile/HANDOFF.md
 
 # Local-only agent orchestration + throwaway scripts / internal snapshots
 autopilot.sh
@@ -106,7 +120,6 @@ run-claude.sh
 run-claude-socket.sh
 run-claude-ssh.sh
 .autopilot/
-mobile/.claude/
 update_password.sql
 ACCESS_SETUP.md
 CLIENT_ACCESS_INSTRUCTIONS.md
@@ -129,3 +142,11 @@ __pycache__/
 *-firebase-adminsdk-*.json
 GoogleService-Info.plist
 google-services.json
+
+# stray root-level build outputs (e.g. `go build ./cmd/openidx/`)
+/openidx
+
+# mkdocs build output. `mkdocs build` writes it into the tree, and a stray
+# `git add -A` committed 83 files of it once; docs/doc-citations.txt waives the
+# path on the understanding that it is never checked in.
+docs/site/

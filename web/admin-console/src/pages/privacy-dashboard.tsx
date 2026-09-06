@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import { Shield, FileCheck, AlertTriangle, Users, Clock, Eye } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
@@ -62,7 +63,15 @@ function SummaryCard({
   )
 }
 
-function getStatusBadge(status: string) {
+/**
+ * A component rather than a helper, so the label re-resolves when the
+ * operator switches language. The status vocabulary is the privacy
+ * service's own and already lives under `consentManagement`, so this page
+ * reads from there instead of keeping a second copy that could drift from
+ * the page it links to.
+ */
+function StatusBadge({ status }: { status: string }) {
+  const { t } = useTranslation()
   const styles: Record<string, string> = {
     pending: 'bg-yellow-100 text-yellow-800',
     in_progress: 'bg-blue-100 text-blue-800',
@@ -70,16 +79,9 @@ function getStatusBadge(status: string) {
     rejected: 'bg-red-100 text-red-800',
   }
 
-  const labels: Record<string, string> = {
-    pending: 'Pending',
-    in_progress: 'In Progress',
-    completed: 'Completed',
-    rejected: 'Rejected',
-  }
-
   return (
     <Badge className={styles[status] || 'bg-muted text-foreground'}>
-      {labels[status] || status}
+      {t(`pages.consentManagement.statuses.${status}`, { defaultValue: status })}
     </Badge>
   )
 }
@@ -87,27 +89,16 @@ function getStatusBadge(status: string) {
 function formatDate(dateStr: string): string {
   if (!dateStr) return '-'
   const date = new Date(dateStr)
-  return date.toLocaleDateString('en-US', {
+  return date.toLocaleDateString(undefined, {
     year: 'numeric',
     month: 'short',
     day: 'numeric',
   })
 }
 
-function formatRequestType(type: string): string {
-  const labels: Record<string, string> = {
-    export: 'Data Export',
-    delete: 'Data Deletion',
-    restrict: 'Restrict Processing',
-    access: 'Data Access',
-    rectify: 'Rectification',
-    portability: 'Data Portability',
-  }
-  return labels[type] || type
-}
-
 export function PrivacyDashboardPage() {
   const navigate = useNavigate()
+  const { t } = useTranslation()
 
   const { data: dashboard, isLoading, error } = useQuery({
     queryKey: ['privacy-dashboard'],
@@ -119,13 +110,15 @@ export function PrivacyDashboardPage() {
     return (
       <div className="flex flex-col items-center justify-center py-24">
         <LoadingSpinner size="lg" />
-        <p className="mt-4 text-sm text-muted-foreground">Loading privacy dashboard...</p>
+        <p className="mt-4 text-sm text-muted-foreground">
+          {t('pages.privacyDashboard.loading')}
+        </p>
       </div>
     )
   }
 
   if (error) {
-    return <QueryError error={error} resource="the privacy dashboard" />
+    return <QueryError error={error} resource={t('pages.privacyDashboard.resource')} />
   }
 
   const d = dashboard || {
@@ -140,37 +133,39 @@ export function PrivacyDashboardPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold tracking-tight">Privacy Dashboard</h1>
+        <h1 className="text-3xl font-bold tracking-tight">
+          {t('nav.items.privacyDashboard')}
+        </h1>
         <p className="text-muted-foreground">
-          GDPR compliance overview and data subject request management
+          {t('pages.privacyDashboard.subtitle')}
         </p>
       </div>
 
       {/* Summary Cards */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <SummaryCard
-          title="Total Consents"
+          title={t('pages.privacyDashboard.cards.consents')}
           value={d.total_consents}
           icon={Users}
           iconBg="bg-blue-100"
           iconColor="text-blue-700"
         />
         <SummaryCard
-          title="Active DSARs"
+          title={t('pages.privacyDashboard.cards.activeDsars')}
           value={d.active_dsars}
           icon={Clock}
           iconBg="bg-purple-100"
           iconColor="text-purple-700"
         />
         <SummaryCard
-          title="Overdue DSARs"
+          title={t('pages.privacyDashboard.cards.overdueDsars')}
           value={d.overdue_dsars}
           icon={AlertTriangle}
           iconBg={d.overdue_dsars > 0 ? 'bg-red-100' : 'bg-green-100'}
           iconColor={d.overdue_dsars > 0 ? 'text-red-700' : 'text-green-700'}
         />
         <SummaryCard
-          title="Impact Assessments"
+          title={t('pages.privacyDashboard.cards.assessments')}
           value={d.total_assessments}
           icon={FileCheck}
           iconBg="bg-green-100"
@@ -183,7 +178,7 @@ export function PrivacyDashboardPage() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Shield className="h-5 w-5" />
-            Quick Actions
+            {t('pages.privacyDashboard.quickActions.title')}
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -193,21 +188,21 @@ export function PrivacyDashboardPage() {
               onClick={() => navigate('/consent-management?tab=dsars')}
             >
               <Eye className="h-4 w-4 mr-2" />
-              View All DSARs
+              {t('pages.privacyDashboard.quickActions.viewDsars')}
             </Button>
             <Button
               variant="outline"
               onClick={() => navigate('/consent-management?tab=consents')}
             >
               <Users className="h-4 w-4 mr-2" />
-              Manage Consents
+              {t('pages.privacyDashboard.quickActions.manageConsents')}
             </Button>
             <Button
               variant="outline"
               onClick={() => navigate('/consent-management?tab=retention')}
             >
               <Clock className="h-4 w-4 mr-2" />
-              Retention Policies
+              {t('pages.privacyDashboard.quickActions.retention')}
             </Button>
           </div>
         </CardContent>
@@ -218,29 +213,29 @@ export function PrivacyDashboardPage() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Shield className="h-5 w-5" />
-            Consent Breakdown
+            {t('pages.privacyDashboard.breakdown.title')}
           </CardTitle>
         </CardHeader>
         <CardContent>
           {d.consent_breakdown.length === 0 ? (
             <p className="text-sm text-muted-foreground py-4 text-center">
-              No consent data available
+              {t('pages.privacyDashboard.breakdown.empty')}
             </p>
           ) : (
             <Table className="text-sm">
                 <TableHeader>
                   <TableRow className="border-b">
                     <TableHead className="text-left py-3 px-4 font-medium text-muted-foreground">
-                      Consent Type
+                      {t('pages.privacyDashboard.breakdown.colType')}
                     </TableHead>
                     <TableHead className="text-right py-3 px-4 font-medium text-muted-foreground">
-                      Granted
+                      {t('pages.privacyDashboard.breakdown.colGranted')}
                     </TableHead>
                     <TableHead className="text-right py-3 px-4 font-medium text-muted-foreground">
-                      Revoked
+                      {t('pages.privacyDashboard.breakdown.colRevoked')}
                     </TableHead>
                     <TableHead className="text-right py-3 px-4 font-medium text-muted-foreground">
-                      Rate
+                      {t('pages.privacyDashboard.breakdown.colRate')}
                     </TableHead>
                   </TableRow>
                 </TableHeader>
@@ -250,6 +245,8 @@ export function PrivacyDashboardPage() {
                     const rate = total > 0 ? Math.round((item.granted / total) * 100) : 0
                     return (
                       <TableRow key={item.consent_type} className="border-b last:border-0">
+                        {/* A free-form consent key the privacy service owns;
+                            Consent Management renders it raw too. */}
                         <TableCell className="py-3 px-4 font-medium capitalize">
                           {item.consent_type.replace(/_/g, ' ')}
                         </TableCell>
@@ -283,40 +280,52 @@ export function PrivacyDashboardPage() {
           <div className="flex items-center justify-between">
             <CardTitle className="flex items-center gap-2">
               <FileCheck className="h-5 w-5" />
-              Recent Data Subject Access Requests
+              {t('pages.privacyDashboard.recent.title')}
             </CardTitle>
             <Button
               variant="ghost"
               size="sm"
               onClick={() => navigate('/consent-management?tab=dsars')}
             >
-              View All
+              {t('pages.privacyDashboard.recent.viewAll')}
             </Button>
           </div>
         </CardHeader>
         <CardContent>
           {d.recent_dsars.length === 0 ? (
             <p className="text-sm text-muted-foreground py-4 text-center">
-              No recent DSARs
+              {t('pages.privacyDashboard.recent.empty')}
             </p>
           ) : (
             <Table className="text-sm">
                 <TableHeader>
                   <TableRow className="border-b">
-                    <TableHead className="text-left py-3 px-4 font-medium text-muted-foreground">Type</TableHead>
-                    <TableHead className="text-left py-3 px-4 font-medium text-muted-foreground">User</TableHead>
-                    <TableHead className="text-left py-3 px-4 font-medium text-muted-foreground">Status</TableHead>
-                    <TableHead className="text-left py-3 px-4 font-medium text-muted-foreground">Created</TableHead>
+                    <TableHead className="text-left py-3 px-4 font-medium text-muted-foreground">
+                      {t('pages.privacyDashboard.recent.colType')}
+                    </TableHead>
+                    <TableHead className="text-left py-3 px-4 font-medium text-muted-foreground">
+                      {t('pages.privacyDashboard.recent.colUser')}
+                    </TableHead>
+                    <TableHead className="text-left py-3 px-4 font-medium text-muted-foreground">
+                      {t('pages.privacyDashboard.recent.colStatus')}
+                    </TableHead>
+                    <TableHead className="text-left py-3 px-4 font-medium text-muted-foreground">
+                      {t('pages.privacyDashboard.recent.colCreated')}
+                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {d.recent_dsars.map((dsar) => (
                     <TableRow key={dsar.id} className="border-b last:border-0 hover:bg-muted">
                       <TableCell className="py-3 px-4 font-medium">
-                        {formatRequestType(dsar.request_type)}
+                        {t(`pages.consentManagement.requestTypes.${dsar.request_type}`, {
+                          defaultValue: dsar.request_type,
+                        })}
                       </TableCell>
                       <TableCell className="py-3 px-4 text-muted-foreground">{dsar.username}</TableCell>
-                      <TableCell className="py-3 px-4">{getStatusBadge(dsar.status)}</TableCell>
+                      <TableCell className="py-3 px-4">
+                        <StatusBadge status={dsar.status} />
+                      </TableCell>
                       <TableCell className="py-3 px-4 text-muted-foreground">
                         {formatDate(dsar.created_at)}
                       </TableCell>

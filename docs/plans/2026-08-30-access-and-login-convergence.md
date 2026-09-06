@@ -14,6 +14,7 @@
 
 - Migration high-water mark is **v136** in both the tree and the box; this plan adds exactly **v137**. Do not renumber.
 - Every behaviour change ships behind a flag defaulting to today's behaviour: `ACCESS_ASSIGNMENT_ENFORCE=false`, `OAUTH_LOGIN_UI=server`, and (for MFA) an empty `mfa_policies` table.
+  *(Superseded for the login UI: Task 15 is done and `OAUTH_LOGIN_UI` no longer exists — see that task.)*
 - Ziti role attributes are keyed on the application **UUID**, never its name — the attribute set is wholesale-replaced on every sync, so a rename would silently drop reach.
 - Migrations must not contain `DO $$` blocks (the splitter cannot handle them); use plain statements.
 - SQL that reads org-scoped tables takes `orgID` as an explicit parameter. `internal/appaccess` never reads `orgctx` itself — callers resolve it.
@@ -2103,15 +2104,50 @@ Default stays server; the flip is one env var and reverts the same way."
 
 ---
 
-### Task 15: Delete the server-rendered login
+### Task 15: Delete the server-rendered login — ✅ DONE (in code, not on the box)
 
-**Do not start this task until `OAUTH_LOGIN_UI=spa` has held on the box through a console, mobile and BrowZer sign-in** (see Task 16 step 3). Deleting first removes the fallback.
+**This task was never an ops step and the ordering below was wrong.** It says
+to wait for `OAUTH_LOGIN_UI=spa` to hold in production before deleting, which
+made Task 16 step 3 read as "the legacy login is now off" when the routes were
+still registered unconditionally: `GET /oauth/login`, `POST
+/oauth/authorize/callback` and the five `/oauth/authorize/mfa*` routes had no
+`OAuthLoginUI` guard at all, and `/oauth/authorize/v2` rendered the page
+regardless of the flag. An operator following the plan would have believed a
+second credential pipeline was retired while it was still serving.
 
-**Files:**
-- Delete: `internal/oauth/hosted_mfa.go`, `internal/oauth/hosted_mfa_test.go`
-- Modify: `internal/oauth/service.go` (remove `renderLoginPage`, `renderBrandedPage`, `handleAuthorizeCallback`, the `/oauth/authorize/callback` and `/oauth/authorize/mfa*` routes, and the `OAuthLoginUI` branch)
+It is done now, as source:
+
+- Deleted: `internal/oauth/hosted_mfa.go` (+ its test), `branding_test.go`,
+  `handleLoginPage`, `renderLoginPage`, `renderBrandedPage`,
+  `handleAuthorizeCallback`, `loadLoginBranding`, `defaultLoginBranding`,
+  `type loginBranding`, and the seven routes above.
+- `createMFASession` moved to `internal/oauth/mfa_session.go` — it is shared
+  with the surviving JSON path.
+- **`OAUTH_LOGIN_UI` is deleted, not flipped**: a flag choosing between one
+  option is dead code. It is replaced by **`OAUTH_LOGIN_URL`** (default
+  `<issuer>/login`), because the reference compose stack serves the console on
+  a different origin from the issuer and the redirect has to be addressable.
+- `authorize.go`'s `redirectToLogin` was repaired in the same change: it wrote
+  an `auth_request:<id>` HMSet hash that `POST /oauth/login` never read (that
+  endpoint reads a JSON string under `login_session:<id>`) and redirected to
+  the relative `/oauth/login` — so the `/oauth/authorize/v2` hop had never
+  completed for any client.
+
+Guards, so it cannot come back: `internal/oauth/routes_legacy_login_test.go`
+asserts the routes are absent from the built route table (with `POST
+/oauth/login` as the positive control) and AST-scans the package for the eleven
+deleted function names; `test/integration/enforced_posture_test.go` probes the
+running service for 404s and drives both authorize endpoints through the login
+UI to a code.
+
+**Files (as executed):**
+- Delete: `internal/oauth/hosted_mfa.go`, `internal/oauth/hosted_mfa_test.go`, `internal/oauth/branding_test.go`
+- Add: `internal/oauth/mfa_session.go`, `internal/oauth/routes_legacy_login_test.go`, `test/integration/enforced_posture_test.go`
+- Modify: `internal/oauth/service.go` (remove `renderLoginPage`, `renderBrandedPage`, `handleLoginPage`, `handleAuthorizeCallback`, the branding loader, the `/oauth/login`, `/oauth/authorize/callback` and `/oauth/authorize/mfa*` routes, and the `OAuthLoginUI` branch; add `loginURL()`)
+- Modify: `internal/oauth/authorize.go` (`redirectToLogin` writes `login_session:` and redirects to the login UI)
 - Modify: `internal/common/middleware/ratelimit.go` (remove `/oauth/authorize/mfa` from `authPaths` and `/oauth/authorize/mfa/wait` from `pollPaths`)
-- Modify: `internal/common/config/config.go` (remove `OAuthLoginUI`)
+- Modify: `internal/common/config/config.go` (`OAuthLoginUI` → `OAuthLoginURL`)
+- Modify: `deployments/docker/docker-compose.yml`, `.github/workflows/ci.yml` (`OAUTH_LOGIN_URL`)
 
 **Interfaces:**
 - Consumes: nothing.
@@ -2156,9 +2192,9 @@ a single consumer; the divergence that produced #873 is gone."
 
 - [ ] **Step 2: Review the report.** Open `/assignment-report`, create the assignments you actually want, and re-check until the entries you care about are gone. The report is only a go/no-go signal when its `reachability_source` is `controller` and `incomplete_users` is 0 — the page says so in place of the headline otherwise. An "unavailable" report means the Ziti controller could not be read, NOT that nobody would lose access; do not proceed to step 5 on one.
 
-- [ ] **Step 3: Flip the login UI.** Set `OAUTH_LOGIN_UI=spa`, restart oauth, then sign in through the console, the mobile client and BrowZer. BrowZer is the one to watch: it bootstraps its own OIDC dance from `browzer.tdv.org`, so verify the cross-origin bounce to `openidx.tdv.org/login` and back lands on `browzer.tdv.org/auth/callback` with a working code. Revert the env var if any flow fails.
+- [ ] **Step 3: Point the login UI at the console.** There is no flag to flip any more — Task 15 deleted the server-rendered page, so the binary you deploy has one login UI. Set `OAUTH_LOGIN_URL` to the console's login page if it is not on the issuer origin (it defaults to `<issuer>/login`), restart oauth, then sign in through the console, the mobile client and BrowZer. BrowZer is the one to watch: it bootstraps its own OIDC dance from `browzer.tdv.org`, so verify the cross-origin bounce to `openidx.tdv.org/login` and back lands on `browzer.tdv.org/auth/callback` with a working code. **There is no fallback UI** — rehearse this on staging, because reverting means redeploying the previous binary.
 
-- [ ] **Step 4: Execute Task 15** once step 3 has held.
+- [x] **Step 4: Task 15** — already done in code; nothing to execute here.
 
 - [ ] **Step 5: Enforce assignment.** Set `ACCESS_ASSIGNMENT_ENFORCE=true`, restart access and oauth. Verify a user with no assignment to `Es-Dev` can no longer dial it and the audit trail records the denial.
 

@@ -1,0 +1,101 @@
+{{- if .Values.backup.enabled }}
+# Scheduled database backups via cmd/backup (`backup create`): encrypted with
+# BACKUP_ENCRYPTION_KEY (wired to the chart's ENCRYPTION_KEY), pruned to
+# retentionCount, optionally offloaded to S3. Restore/verify with the same
+# image: `kubectl run` a pod from it and use `/app/backup restore|verify`
+# (see docs/disaster-recovery.md — a backup nobody has restored is a wish,
+# not a control).
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "openidx.fullname" . }}-backup
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backup
+spec:
+  schedule: {{ .Values.backup.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            {{- include "openidx.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: backup
+        spec:
+          restartPolicy: OnFailure
+          serviceAccountName: {{ .Values.serviceAccount.name | default "openidx" }}
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+          containers:
+            - name: backup
+              image: "{{ include "openidx.imageRegistry" . }}/{{ .Values.backup.image.repository }}:{{ .Values.backup.image.tag }}"
+              imagePullPolicy: {{ .Values.backup.image.pullPolicy | default "IfNotPresent" }}
+              command: ["/app/backup", "create"]
+              env:
+                - name: BACKUP_DIR
+                  value: /backups
+                - name: BACKUP_RETENTION_COUNT
+                  value: {{ .Values.backup.retentionCount | default 7 | quote }}
+                - name: BACKUP_ENCRYPTION_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ include "openidx.fullname" . }}-secrets
+                      key: ENCRYPTION_KEY
+                      optional: true
+                {{- if .Values.backup.s3.bucket }}
+                - name: BACKUP_S3_BUCKET
+                  value: {{ .Values.backup.s3.bucket | quote }}
+                - name: BACKUP_S3_REGION
+                  value: {{ .Values.backup.s3.region | quote }}
+                {{- if .Values.backup.s3.endpoint }}
+                - name: BACKUP_S3_ENDPOINT
+                  value: {{ .Values.backup.s3.endpoint | quote }}
+                {{- end }}
+                {{- end }}
+              envFrom:
+                - secretRef:
+                    name: {{ include "openidx.fullname" . }}-db-url
+                {{- if .Values.backup.s3.credentialsSecret }}
+                # Secret carrying BACKUP_S3_ACCESS_KEY / BACKUP_S3_SECRET_KEY.
+                - secretRef:
+                    name: {{ .Values.backup.s3.credentialsSecret }}
+                {{- end }}
+              volumeMounts:
+                - name: backups
+                  mountPath: /backups
+              resources:
+                {{- toYaml .Values.backup.resources | nindent 16 }}
+              securityContext:
+                {{- toYaml .Values.securityContext | nindent 16 }}
+          volumes:
+            - name: backups
+              {{- if .Values.backup.pvc.create }}
+              persistentVolumeClaim:
+                claimName: {{ include "openidx.fullname" . }}-backups
+              {{- else }}
+              emptyDir: {}
+              {{- end }}
+{{- if .Values.backup.pvc.create }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "openidx.fullname" . }}-backups
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backup
+spec:
+  accessModes:
+    - {{ .Values.backup.pvc.accessMode | default "ReadWriteOnce" }}
+  resources:
+    requests:
+      storage: {{ .Values.backup.pvc.size | default "20Gi" }}
+  {{- if .Values.backup.pvc.storageClass }}
+  storageClassName: {{ .Values.backup.pvc.storageClass }}
+  {{- end }}
+{{- end }}
+{{- end }}

@@ -46,9 +46,16 @@ type RiskPolicy struct {
 type CreateRiskPolicyRequest struct {
 	Name        string `json:"name" binding:"required"`
 	Description string `json:"description"`
-	// TenantID is optional. The policy is org-scoped by the request context; the
-	// admin console does not send a tenant_id, so requiring it produced a 400 on
-	// every create. Kept for API compatibility / cross-tenant tooling.
+	// TenantID is IGNORED on the way in, and the response carries the
+	// organization the row was actually written to.
+	//
+	// This field used to be documented as "optional -- the policy is org-scoped
+	// by the request context", which was not true of anything: until migration
+	// v153 risk_policies had no org_id column and no query carried a predicate,
+	// and CreateRiskPolicy assigned this value to the RESPONSE STRUCT without
+	// ever writing it, so a caller who supplied a tenant was handed it back as
+	// though it had been recorded. It is kept for wire compatibility with
+	// clients that still send it.
 	TenantID string `json:"tenant_id"`
 	// Priority, Conditions and Actions are the model the admin console actually
 	// sends. When present they are persisted verbatim into the JSONB columns.

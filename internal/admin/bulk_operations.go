@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgconn"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
@@ -91,9 +92,9 @@ func (s *Service) handleCreateBulkOperation(c *gin.Context) {
 	// Create the bulk operation
 	var opID string
 	err = s.db.Pool.QueryRow(ctx,
-		`INSERT INTO bulk_operations (type, status, total_items, parameters, created_by)
-		 VALUES ($1, 'running', $2, $3, $4) RETURNING id`,
-		req.Type, len(req.UserIDs), params, nilIfEmpty(userIDStr),
+		`INSERT INTO bulk_operations (type, status, total_items, parameters, created_by, org_id)
+		 VALUES ($1, 'running', $2, $3, $4, $5) RETURNING id`,
+		req.Type, len(req.UserIDs), params, nilIfEmpty(userIDStr), org.ID,
 	).Scan(&opID)
 	if err != nil {
 		s.logger.Error("Failed to create bulk operation", zap.Error(err))
@@ -110,8 +111,8 @@ func (s *Service) handleCreateBulkOperation(c *gin.Context) {
 			username = uid
 		}
 		_, _ = s.db.Pool.Exec(ctx,
-			`INSERT INTO bulk_operation_items (operation_id, entity_id, entity_name, status)
-			 VALUES ($1, $2, $3, 'pending')`, opID, uid, username)
+			`INSERT INTO bulk_operation_items (operation_id, entity_id, entity_name, status, org_id)
+			 VALUES ($1, $2, $3, 'pending', $4)`, opID, uid, username, org.ID)
 	}
 
 	// Execute the operation (org captured above and threaded into the detached goroutine)
@@ -121,36 +122,50 @@ func (s *Service) handleCreateBulkOperation(c *gin.Context) {
 }
 
 func (s *Service) executeBulkOperation(orgID, opID, opType string, userIDs []string, params json.RawMessage) {
-	// Use timeout context for bulk operation execution. The org was captured from
-	// the request in the handler and is threaded in so every mutation stays scoped.
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	// The org must travel on the CONTEXT, not only as an argument. Every table
+	// touched below is behind the FORCE-RLS belt, and the pool sets app.org_id
+	// at checkout from orgctx -- on a bare context.Background it is empty, so
+	// reads return nothing and writes are refused. The orgID parameter was
+	// already threaded here for the SQL predicates; this puts it where the
+	// database can see it too.
+	ctx, cancel := context.WithTimeout(
+		orgctx.With(context.Background(), orgctx.Org{ID: orgID}), 15*time.Minute)
 	defer cancel()
 	successCount := 0
 	errorCount := 0
+	cancelled := false
 	var errors []map[string]string
 
 	var paramMap map[string]string
 	_ = json.Unmarshal(params, &paramMap)
 
 	for _, uid := range userIDs {
+		// Cancel used to be a lie. handleCancelBulkOperation writes
+		// status = 'cancelled' on the row and this loop never read that column:
+		// it walked every id it was given and then wrote 'completed' over the
+		// top, so pressing Cancel on a running bulk DELETE stopped nothing and
+		// left no sign it had been ignored. Check before each account.
+		var status string
+		if err := s.db.Pool.QueryRow(ctx,
+			"SELECT status FROM bulk_operations WHERE id = $1 AND org_id = $2", opID, orgID).Scan(&status); err == nil {
+			if status == "cancelled" {
+				cancelled = true
+				break
+			}
+		}
+
 		var errMsg string
 
 		switch opType {
 		case "enable_users":
-			_, err := s.db.Pool.Exec(ctx, "UPDATE users SET enabled = true, updated_at = NOW() WHERE id = $1 AND org_id = $2", uid, orgID)
-			if err != nil {
-				errMsg = err.Error()
-			}
+			tag, err := s.db.Pool.Exec(ctx, "UPDATE users SET enabled = true, updated_at = NOW() WHERE id = $1 AND org_id = $2", uid, orgID)
+			errMsg = bulkActionResult(tag, err)
 		case "disable_users":
-			_, err := s.db.Pool.Exec(ctx, "UPDATE users SET enabled = false, updated_at = NOW() WHERE id = $1 AND org_id = $2", uid, orgID)
-			if err != nil {
-				errMsg = err.Error()
-			}
+			tag, err := s.db.Pool.Exec(ctx, "UPDATE users SET enabled = false, updated_at = NOW() WHERE id = $1 AND org_id = $2", uid, orgID)
+			errMsg = bulkActionResult(tag, err)
 		case "delete_users":
-			_, err := s.db.Pool.Exec(ctx, "DELETE FROM users WHERE id = $1 AND org_id = $2", uid, orgID)
-			if err != nil {
-				errMsg = err.Error()
-			}
+			tag, err := s.db.Pool.Exec(ctx, "DELETE FROM users WHERE id = $1 AND org_id = $2", uid, orgID)
+			errMsg = bulkActionResult(tag, err)
 		case "assign_role":
 			roleID := paramMap["role_id"]
 			if roleID == "" {
@@ -196,10 +211,8 @@ func (s *Service) executeBulkOperation(orgID, opID, opType string, userIDs []str
 				}
 			}
 		case "reset_passwords":
-			_, err := s.db.Pool.Exec(ctx, "UPDATE users SET password_must_change = true, updated_at = NOW() WHERE id = $1 AND org_id = $2", uid, orgID)
-			if err != nil {
-				errMsg = err.Error()
-			}
+			tag, err := s.db.Pool.Exec(ctx, "UPDATE users SET password_must_change = true, updated_at = NOW() WHERE id = $1 AND org_id = $2", uid, orgID)
+			errMsg = bulkActionResult(tag, err)
 		}
 
 		now := time.Now()
@@ -207,29 +220,55 @@ func (s *Service) executeBulkOperation(orgID, opID, opType string, userIDs []str
 			errorCount++
 			errors = append(errors, map[string]string{"user_id": uid, "error": errMsg})
 			_, _ = s.db.Pool.Exec(ctx,
-				"UPDATE bulk_operation_items SET status = 'error', error_message = $1, processed_at = $2 WHERE operation_id = $3 AND entity_id = $4",
-				errMsg, now, opID, uid)
+				"UPDATE bulk_operation_items SET status = 'error', error_message = $1, processed_at = $2 WHERE operation_id = $3 AND entity_id = $4 AND org_id = $5",
+				errMsg, now, opID, uid, orgID)
 		} else {
 			successCount++
 			_, _ = s.db.Pool.Exec(ctx,
-				"UPDATE bulk_operation_items SET status = 'success', processed_at = $1 WHERE operation_id = $2 AND entity_id = $3",
-				now, opID, uid)
+				"UPDATE bulk_operation_items SET status = 'success', processed_at = $1 WHERE operation_id = $2 AND entity_id = $3 AND org_id = $4",
+				now, opID, uid, orgID)
 		}
 
 		// Update progress
 		_, _ = s.db.Pool.Exec(ctx,
-			"UPDATE bulk_operations SET processed_items = processed_items + 1, success_count = $1, error_count = $2 WHERE id = $3",
-			successCount, errorCount, opID)
+			"UPDATE bulk_operations SET processed_items = processed_items + 1, success_count = $1, error_count = $2 WHERE id = $3 AND org_id = $4",
+			successCount, errorCount, opID, orgID)
 	}
 
-	// Mark completed
+	// Mark completed. The status predicate is what stops this overwriting a
+	// run the administrator cancelled: the old statement wrote 'completed'
+	// unconditionally, so a cancel that had already landed was erased and the
+	// console showed a run that finished normally.
 	errorsJSON, _ := json.Marshal(errors)
 	if errors == nil {
 		errorsJSON = []byte("[]")
 	}
+	final := "completed"
+	if cancelled {
+		final = "cancelled"
+	}
 	_, _ = s.db.Pool.Exec(ctx,
-		"UPDATE bulk_operations SET status = 'completed', errors = $1, completed_at = NOW() WHERE id = $2",
-		errorsJSON, opID)
+		`UPDATE bulk_operations SET status = $1, errors = $2, completed_at = NOW()
+		 WHERE id = $3 AND org_id = $4 AND status <> 'cancelled'`,
+		final, errorsJSON, opID, orgID)
+}
+
+// bulkActionResult turns one action's outcome into an error string.
+//
+// An action that matched no row is an error. `UPDATE users SET enabled = false
+// WHERE id = $1 AND org_id = $2` against an id outside the caller's
+// organization affects nothing and returns no error, so every such item used to
+// be recorded 'success': a bulk disable over fifty foreign ids reported fifty
+// successes and changed nothing. Same shape as v154's ExecuteLifecycleWorkflow,
+// which reported a completed run having touched no account.
+func bulkActionResult(tag pgconn.CommandTag, err error) string {
+	if err != nil {
+		return err.Error()
+	}
+	if tag.RowsAffected() == 0 {
+		return "no matching user in this organization"
+	}
+	return ""
 }
 
 func (s *Service) handleListBulkOperations(c *gin.Context) {
@@ -237,10 +276,19 @@ func (s *Service) handleListBulkOperations(c *gin.Context) {
 		return
 	}
 
+	org, ok := requireOrg(c)
+	if !ok {
+		return
+	}
+
+	// The org term. Without it this list returned every organization's bulk
+	// runs -- their type ("delete_users"), their counts, and the role or group
+	// id each applied.
 	rows, err := s.db.Pool.Query(c.Request.Context(),
-		`SELECT id, type, status, total_items, processed_items, success_count, error_count,
-		        errors, parameters, created_by, created_at, completed_at
-		 FROM bulk_operations ORDER BY created_at DESC LIMIT 50`)
+		`SELECT id, COALESCE(type, ''), COALESCE(status, ''), COALESCE(total_items, 0),
+		        COALESCE(processed_items, 0), COALESCE(success_count, 0), COALESCE(error_count, 0),
+		        COALESCE(errors, '[]'), COALESCE(parameters, '{}'), created_by, created_at, completed_at
+		 FROM bulk_operations WHERE org_id = $1 ORDER BY created_at DESC LIMIT 50`, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to list bulk operations", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list operations"})
@@ -254,6 +302,7 @@ func (s *Service) handleListBulkOperations(c *gin.Context) {
 		if err := rows.Scan(&op.ID, &op.Type, &op.Status, &op.TotalItems, &op.ProcessedItems,
 			&op.SuccessCount, &op.ErrorCount, &op.Errors, &op.Parameters,
 			&op.CreatedBy, &op.CreatedAt, &op.CompletedAt); err != nil {
+			s.logger.Warn("skipping unreadable bulk operation row", zap.Error(err))
 			continue
 		}
 		ops = append(ops, op)
@@ -269,12 +318,18 @@ func (s *Service) handleGetBulkOperation(c *gin.Context) {
 		return
 	}
 
+	org, ok := requireOrg(c)
+	if !ok {
+		return
+	}
+
 	id := c.Param("id")
 	var op BulkOperation
 	err := s.db.Pool.QueryRow(c.Request.Context(),
-		`SELECT id, type, status, total_items, processed_items, success_count, error_count,
-		        errors, parameters, created_by, created_at, completed_at
-		 FROM bulk_operations WHERE id = $1`, id,
+		`SELECT id, COALESCE(type, ''), COALESCE(status, ''), COALESCE(total_items, 0),
+		        COALESCE(processed_items, 0), COALESCE(success_count, 0), COALESCE(error_count, 0),
+		        COALESCE(errors, '[]'), COALESCE(parameters, '{}'), created_by, created_at, completed_at
+		 FROM bulk_operations WHERE id = $1 AND org_id = $2`, id, org.ID,
 	).Scan(&op.ID, &op.Type, &op.Status, &op.TotalItems, &op.ProcessedItems,
 		&op.SuccessCount, &op.ErrorCount, &op.Errors, &op.Parameters,
 		&op.CreatedBy, &op.CreatedAt, &op.CompletedAt)
@@ -283,10 +338,14 @@ func (s *Service) handleGetBulkOperation(c *gin.Context) {
 		return
 	}
 
-	// Fetch items
+	// Fetch items. entity_name is the USERNAME the item acted on, so this list
+	// is a directory extract: without the org term, opening another
+	// organization's run returned their accounts, one row each, with what was
+	// done to them and why it failed.
 	itemRows, err := s.db.Pool.Query(c.Request.Context(),
-		`SELECT id, operation_id, entity_id, entity_name, status, error_message, processed_at
-		 FROM bulk_operation_items WHERE operation_id = $1 ORDER BY entity_name`, id)
+		`SELECT id, operation_id, entity_id, COALESCE(entity_name, ''), COALESCE(status, ''),
+		        COALESCE(error_message, ''), processed_at
+		 FROM bulk_operation_items WHERE operation_id = $1 AND org_id = $2 ORDER BY entity_name`, id, org.ID)
 	if err == nil {
 		defer itemRows.Close()
 		var items []BulkOperationItem
@@ -294,6 +353,13 @@ func (s *Service) handleGetBulkOperation(c *gin.Context) {
 			var item BulkOperationItem
 			if err := itemRows.Scan(&item.ID, &item.OperationID, &item.EntityID, &item.EntityName,
 				&item.Status, &item.ErrorMessage, &item.ProcessedAt); err != nil {
+				// error_message is NULL on every pending and every SUCCESSFUL
+				// item, and it was scanned into a plain string with `continue`
+				// on failure -- so this list showed only the items that had
+				// already failed, and a run that succeeded looked empty. The
+				// same defect v154 found in the lifecycle run log, in a
+				// different file. COALESCEd above; a skip is now a logged fault.
+				s.logger.Warn("skipping unreadable bulk operation item", zap.Error(err))
 				continue
 			}
 			items = append(items, item)
@@ -313,9 +379,15 @@ func (s *Service) handleCancelBulkOperation(c *gin.Context) {
 		return
 	}
 
+	org, ok := requireOrg(c)
+	if !ok {
+		return
+	}
+
 	id := c.Param("id")
 	tag, err := s.db.Pool.Exec(c.Request.Context(),
-		"UPDATE bulk_operations SET status = 'cancelled', completed_at = NOW() WHERE id = $1 AND status IN ('pending', 'running')", id)
+		`UPDATE bulk_operations SET status = 'cancelled', completed_at = NOW()
+		 WHERE id = $1 AND org_id = $2 AND status IN ('pending', 'running')`, id, org.ID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to cancel operation"})
 		return

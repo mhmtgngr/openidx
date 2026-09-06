@@ -9,13 +9,13 @@ Install OpenIDX on your system or infrastructure.
 | Resource | Minimum | Recommended |
 |----------|---------|-------------|
 | CPU | 2 cores | 4+ cores |
-| RAM | 4 GB | 8+ GB |
+| RAM | 8 GB | 10+ GB |
 | Disk | 20 GB | 50+ GB SSD |
 | OS | Linux (Ubuntu 22.04+, RHEL 9+) | Linux |
 
 ### Software Requirements
 
-- **Go**: 1.22+ (for development)
+- **Go**: 1.25+ (for development)
 - **Node.js**: 18+ (for Admin Console)
 - **Docker**: 24.0+ (for containerized deployment)
 - **PostgreSQL**: 16+
@@ -29,7 +29,7 @@ The easiest way to run OpenIDX:
 
 ```bash
 # Clone the repository
-git clone https://github.com/openidx/openidx.git
+git clone https://github.com/mhmtgngr/openidx.git
 cd openidx
 
 # Generate secrets
@@ -41,15 +41,13 @@ docker compose -f deployments/docker/docker-compose.yml up -d
 
 ### Kubernetes (Helm)
 
-For production deployments:
+For production deployments. Each tagged release publishes the chart to
+GHCR as a cosign-signed OCI artifact (chart version = release version —
+pick one from the [releases page](https://github.com/mhmtgngr/openidx/releases)):
 
 ```bash
-# Add the OpenIDX Helm repository
-helm repo add openidx https://charts.openidx.org
-helm repo update
-
-# Install OpenIDX
-helm install openidx openidx/openidx \
+helm install openidx oci://ghcr.io/mhmtgngr/openidx/charts/openidx \
+  --version <X.Y.Z> \
   --namespace openidx \
   --create-namespace \
   --set postgresql.enabled=true \
@@ -60,17 +58,19 @@ See [Kubernetes Deployment](../deployment/kubernetes.md) for detailed configurat
 
 ### Binary Installation
 
-Download pre-built binaries for Linux:
+Each release attaches one Linux binary per service
+(`<service>-linux-amd64`) plus a cosign-signed `SHA256SUMS` file — see
+[RELEASING.md](https://github.com/mhmtgngr/openidx/blob/main/docs/RELEASING.md)
+for signature verification:
 
 ```bash
-# Download the latest release
-wget https://github.com/openidx/openidx/releases/latest/download/openidx-linux-amd64.tar.gz
+# Download a service binary and the signed checksums
+wget https://github.com/mhmtgngr/openidx/releases/latest/download/identity-service-linux-amd64
+wget https://github.com/mhmtgngr/openidx/releases/latest/download/SHA256SUMS
 
-# Extract
-tar -xzf openidx-linux-amd64.tar.gz
-
-# Install binaries
-sudo cp openidx/*/openidx* /usr/local/bin/
+# Verify and install
+sha256sum --ignore-missing -c SHA256SUMS
+sudo install -m 0755 identity-service-linux-amd64 /usr/local/bin/identity-service
 ```
 
 ### Build from Source
@@ -79,7 +79,7 @@ For development or custom builds:
 
 ```bash
 # Clone the repository
-git clone https://github.com/openidx/openidx.git
+git clone https://github.com/mhmtgngr/openidx.git
 cd openidx
 
 # Build all services
@@ -108,22 +108,23 @@ docker run -d \
   postgres:16-alpine
 
 # Run migrations
-make migrate-up
+go run ./cmd/migrate up
 ```
 
 ### Database Schema
 
-The schema is versioned and managed via migrations:
+The schema is versioned and managed via migrations (the `migrate` CLI
+reads the standard `DB_*`/`DATABASE_URL` environment):
 
 ```bash
 # Run all migrations
-make migrate-up
+go run ./cmd/migrate up
 
 # Rollback one migration
-make migrate-down
+go run ./cmd/migrate down
 
 # View migration status
-make migrate-status
+go run ./cmd/migrate status
 ```
 
 ## Redis Setup
@@ -196,7 +197,7 @@ docker compose -f deployments/docker/docker-compose.yml pull
 docker compose -f deployments/docker/docker-compose.yml up -d
 
 # Run any pending migrations
-make migrate-up
+go run ./cmd/migrate up
 ```
 
 ## Troubleshooting
@@ -212,5 +213,5 @@ See [Troubleshooting](../troubleshooting.md) for common issues.
 ### Migration errors
 
 1. Verify database version: `psql --version`
-2. Check migration status: `make migrate-status`
-3. Review migration logs in `/var/log/openidx/migrate.log`
+2. Check migration status: `go run ./cmd/migrate status`
+3. Review the migration output — the `migrate` CLI logs to stdout

@@ -5,7 +5,6 @@ import (
 	"compress/flate"
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"encoding/xml"
@@ -702,7 +701,7 @@ func (s *Service) buildSAMLResponseForUser(user *SAMLUser, sp *SAMLServiceProvid
 		nameID = user.ID
 	case NameIDFormatTransient:
 		// Generate a transient ID - should be stored and consistent for the SP-user pair
-		nameID = generateTransientID(user.ID, sp.EntityID)
+		nameID = generateTransientID()
 	}
 
 	// Build attributes with mappings
@@ -780,13 +779,28 @@ func getNameIDFormat(policy *NameIDPolicy) string {
 	return policy.Format
 }
 
-// generateTransientID creates a transient NameID for a user-SP pair
-func generateTransientID(userID, spEntityID string) string {
-	// In production, this should be stored in the database and consistently returned
-	// For now, generate a deterministic value
-	data := userID + "|" + spEntityID
-	hash := sha256.Sum256([]byte(data))
-	return base64.URLEncoding.EncodeToString(hash[:])[:32]
+// generateTransientID creates a transient NameID.
+//
+// It must be unpredictable and unlinkable ACROSS assertions: that is what
+// urn:oasis:names:tc:SAML:2.0:nameid-format:transient means, and an SP or a
+// pair of colluding SPs relying on that property is the reason an
+// administrator picks it. This used to return sha256(userID|spEntityID) —
+// stable for the life of the account, so every assertion carried the same
+// identifier and the format's one guarantee was false while the metadata
+// advertised it. A stable pairwise identifier is what
+// nameid-format:persistent is for; if that is what an SP wants, configure that
+// format instead of this one.
+//
+// The user and SP are no longer inputs at all: taking them would invite the
+// same mistake back.
+func generateTransientID() string {
+	b := make([]byte, 24)
+	if _, err := rand.Read(b); err != nil {
+		// crypto/rand failing is not recoverable into a weaker identifier:
+		// a predictable "transient" NameID is the defect this replaced.
+		panic("saml: transient NameID requires crypto/rand: " + err.Error())
+	}
+	return base64.RawURLEncoding.EncodeToString(b)
 }
 
 // sendSAMLResponseToSP sends the SAML Response to the SP's ACS endpoint
@@ -1094,9 +1108,19 @@ func (s *Service) logAuditEvent(ctx context.Context, eventType, category, action
 	if s.db == nil || s.db.Pool == nil {
 		return
 	}
+	orgID := auditOrgID(ctx)
 	args := buildAuditInsertArgs(ctx, eventType, category, action, status, userID, ipAddress, resourceID, resourceType, metadata)
 	go func() {
-		bg, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		// The org has to travel on the CONTEXT, not just in the row.
+		// audit_events is behind the FORCE-RLS belt, and the pool sets
+		// app.org_id at checkout from orgctx -- so on a bare
+		// context.Background the setting is empty, the policy's WITH CHECK
+		// evaluates to NULL, and Postgres refuses the insert. Every one of
+		// these writes was being rejected and the only trace was a WARN,
+		// which is why audit_events had taken almost no rows while
+		// unified_audit_events (no org_id, no policy) took them all.
+		bg, cancel := context.WithTimeout(
+			orgctx.With(context.Background(), orgctx.Org{ID: orgID}), 5*time.Second)
 		defer cancel()
 		if _, err := s.db.Pool.Exec(bg, `
 			INSERT INTO audit_events (id, timestamp, event_type, category, action, outcome,
@@ -1116,12 +1140,20 @@ func (s *Service) logAuditEvent(ctx context.Context, eventType, category, action
 // context) and marshals the metadata, returning the positional args for the
 // audit_events INSERT in logAuditEvent. Extracted for unit testing the org fallback
 // and field mapping without a database.
+// auditOrgID resolves the tenant for an audit write. Shared by the row's org_id
+// column and by the detached context the write runs on, so the two can never
+// disagree -- a row whose org_id differs from app.org_id is refused by the RLS
+// policy. The fallback lives in orgctx now, because the unified audit stream
+// (v142) needs exactly the same rule and two copies of a default org id is how
+// they drift apart.
+func auditOrgID(ctx context.Context) string {
+	id, _ := orgctx.AuditOrgID(ctx)
+	return id
+}
+
 func buildAuditInsertArgs(ctx context.Context, eventType, category, action, status,
 	userID, ipAddress, resourceID, resourceType string, metadata map[string]interface{}) []interface{} {
-	orgID := "00000000-0000-0000-0000-000000000010"
-	if org, err := orgctx.From(ctx); err == nil && org.ID != "" {
-		orgID = org.ID
-	}
+	orgID := auditOrgID(ctx)
 	detailsJSON, _ := json.Marshal(metadata)
 	return []interface{}{eventType, category, action, status, userID, ipAddress, resourceID, resourceType, string(detailsJSON), orgID}
 }

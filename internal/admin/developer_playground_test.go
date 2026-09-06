@@ -3,12 +3,16 @@ package admin
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // TestPlaygroundSessionCreateAndExecute is the regression guard for QA 11.2:
@@ -31,10 +35,30 @@ func TestPlaygroundSessionCreateAndExecute(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	s := &Service{db: db, logger: zap.NewNop()}
 
+	// Since v156 both playground handlers require an administrator, an
+	// organization and a real owner: the row they touch holds the PKCE verifier
+	// for a live flow. What this test guards -- the body-less create, the
+	// text[] scopes round trip -- is unchanged.
+	const orgA = "00000000-0000-0000-0000-000000000010" // seeded by migrations
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	var userA string
+	if err := db.Pool.QueryRow(context.Background(), `
+		INSERT INTO users (org_id, username, email, enabled)
+		VALUES ($1::uuid, $2, $3, true) RETURNING id::text`,
+		orgA, "pg-owner-"+suffix, "pg-owner-"+suffix+"@example.test").Scan(&userA); err != nil {
+		t.Fatalf("seed owner: %v", err)
+	}
+	admin := func(c *gin.Context) {
+		c.Request = c.Request.WithContext(orgctx.With(context.Background(), orgctx.Org{ID: orgA}))
+		c.Set("roles", []string{"admin"})
+		c.Set("user_id", userA)
+	}
+
 	// --- create with NO body (the failing case) ---
 	cw := httptest.NewRecorder()
 	cc, _ := gin.CreateTestContext(cw)
 	cc.Request = httptest.NewRequest("POST", "/api/v1/developer/playground/sessions", nil)
+	admin(cc)
 	s.handleCreatePlaygroundSession(cc)
 
 	if cw.Code != 201 {
@@ -67,6 +91,7 @@ func TestPlaygroundSessionCreateAndExecute(t *testing.T) {
 	ec, _ := gin.CreateTestContext(ew)
 	ec.Request = httptest.NewRequest("POST", "/api/v1/developer/playground/execute", strings.NewReader(string(body)))
 	ec.Request.Header.Set("Content-Type", "application/json")
+	admin(ec)
 	s.handleExecutePlayground(ec)
 
 	if ew.Code != 200 {

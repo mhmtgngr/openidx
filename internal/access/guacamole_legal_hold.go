@@ -7,15 +7,34 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
-// guacSessionVisible reports whether the guacamole_sessions row is visible under the
-// caller's org context (RLS on guacamole_sessions enforces the scope).
-func (s *Service) guacSessionVisible(ctx context.Context, sessionID string) (bool, error) {
-	var ok bool
-	err := s.db.Pool.QueryRow(ctx,
-		`SELECT EXISTS(SELECT 1 FROM guacamole_sessions WHERE id=$1::uuid)`, sessionID).Scan(&ok)
-	return ok, err
+// guacSessionOrg resolves the organization of the guacamole_sessions row a
+// legal-hold request names, or reports not-visible.
+//
+// Until v149 this was guacSessionVisible, and it carried no tenant term at all:
+// `SELECT EXISTS(SELECT 1 FROM guacamole_sessions WHERE id=$1)`, under a comment
+// sourcing the scope from "RLS on guacamole_sessions". That is true on a
+// correctly configured connection and false on any connection with BYPASSRLS —
+// which is what every test pool in this repo is, and what an operator gets by
+// pointing the app at a superuser DSN. A control whose only defence is a
+// database setting has no defence in the code, so the organization is in the
+// query now and the belt is the second layer rather than the only one.
+func (s *Service) guacSessionOrg(ctx context.Context, sessionID string) (string, bool, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return "", false, err
+	}
+	var found string
+	err = s.db.Pool.QueryRow(ctx,
+		`SELECT org_id::text FROM guacamole_sessions WHERE id=$1::uuid AND org_id=$2`,
+		sessionID, org.ID).Scan(&found)
+	if err != nil {
+		return "", false, nil
+	}
+	return found, true, nil
 }
 
 // POST /api/v1/access/guacamole/sessions/:id/legal-hold — place a hold (409 if one is active).
@@ -33,10 +52,10 @@ func (s *Service) handlePlaceGuacLegalHold(c *gin.Context) {
 		return
 	}
 	ctx := c.Request.Context()
-	vis, err := s.guacSessionVisible(ctx, sessionID)
+	orgID, vis, err := s.guacSessionOrg(ctx, sessionID)
 	if err != nil {
 		s.logger.Error("place guac legal hold: session lookup", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "organization context required"})
 		return
 	}
 	if !vis {
@@ -50,10 +69,10 @@ func (s *Service) handlePlaceGuacLegalHold(c *gin.Context) {
 	}
 	var id string
 	err = s.db.Pool.QueryRow(ctx, `
-        INSERT INTO guacamole_recording_legal_holds (session_id, reason, placed_by)
-        VALUES ($1::uuid, $2, NULLIF($3,'')::uuid)
+        INSERT INTO guacamole_recording_legal_holds (session_id, reason, placed_by, org_id)
+        VALUES ($1::uuid, $2, NULLIF($3,'')::uuid, $4)
         RETURNING id::text
-    `, sessionID, req.Reason, placedByArg).Scan(&id)
+    `, sessionID, req.Reason, placedByArg, orgID).Scan(&id)
 	if err != nil {
 		if isUniqueViolation(err) {
 			c.JSON(http.StatusConflict, gin.H{"error": "an active legal hold already exists for this session"})
@@ -79,7 +98,8 @@ func (s *Service) handleReleaseGuacLegalHold(c *gin.Context) {
 		return
 	}
 	ctx := c.Request.Context()
-	if vis, err := s.guacSessionVisible(ctx, sessionID); err != nil || !vis {
+	orgID, vis, err := s.guacSessionOrg(ctx, sessionID)
+	if err != nil || !vis {
 		c.JSON(http.StatusNotFound, gin.H{"error": "session not found"})
 		return
 	}
@@ -88,11 +108,14 @@ func (s *Service) handleReleaseGuacLegalHold(c *gin.Context) {
 	if releasedBy != "" {
 		releasedByArg = releasedBy
 	}
+	// Releasing a hold is what lets sweepExpiredGuacRecordings purge the
+	// recording, so the tenant belongs in this predicate, not only in the
+	// visibility check above.
 	tag, err := s.db.Pool.Exec(ctx, `
         UPDATE guacamole_recording_legal_holds
            SET released_at=NOW(), released_by=NULLIF($2,'')::uuid, released_reason=NULLIF($3,'')
-         WHERE session_id=$1::uuid AND released_at IS NULL
-    `, sessionID, releasedByArg, req.Reason)
+         WHERE session_id=$1::uuid AND released_at IS NULL AND org_id=$4
+    `, sessionID, releasedByArg, req.Reason, orgID)
 	if err != nil {
 		s.logger.Error("release guac legal hold: update", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to release hold"})
@@ -114,7 +137,8 @@ func (s *Service) handleListGuacLegalHolds(c *gin.Context) {
 		return
 	}
 	ctx := c.Request.Context()
-	if vis, err := s.guacSessionVisible(ctx, sessionID); err != nil || !vis {
+	orgID, vis, err := s.guacSessionOrg(ctx, sessionID)
+	if err != nil || !vis {
 		c.JSON(http.StatusNotFound, gin.H{"error": "session not found"})
 		return
 	}
@@ -122,8 +146,8 @@ func (s *Service) handleListGuacLegalHolds(c *gin.Context) {
         SELECT id::text, reason, placed_at, COALESCE(placed_by::text,''),
                released_at, COALESCE(released_by::text,''), COALESCE(released_reason,'')
           FROM guacamole_recording_legal_holds
-         WHERE session_id=$1::uuid ORDER BY placed_at DESC
-    `, sessionID)
+         WHERE session_id=$1::uuid AND org_id=$2 ORDER BY placed_at DESC
+    `, sessionID, orgID)
 	if err != nil {
 		s.logger.Error("list guac legal holds", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed"})

@@ -174,7 +174,10 @@ router.Use(registry.Build()...)
 
 **Purpose:** Abstract data access from business logic.
 
-**Location:** `internal/common/repository/`
+**Status: proposed, not built.** Six of the eight patterns below are in the
+tree at the location named; this one and the Builder below are not. Services
+reach `*pgxpool.Pool` directly through their own store types today. The sketch
+stands as a proposal.
 
 ```go
 // Repository interface for data access
@@ -198,7 +201,10 @@ type UserRepository interface {
 
 **Purpose:** Fluent configuration building with validation.
 
-**Location:** `internal/common/config/builder.go`
+**Status: proposed, not built.** Configuration is loaded by
+`internal/common/config` through viper and validated by `Validate()` /
+`ValidateProduction()`; there is no fluent builder. The sketch stands as a
+proposal.
 
 ```go
 // ServiceBuilder for fluent service construction

@@ -167,17 +167,24 @@ second branch is why the hosted page had to exist — `openidx-mobile`, whose
 redirect_uri is `openidx://oauth-callback`, cannot host a login page.
 
 Both branches are replaced by one: always redirect to
-`<issuer>/login?login_session=…`. The SPA already lives at the issuer origin and
-already fetches tenant branding (`/api/v1/identity/branding?domain=`).
+`<issuer>/login?login_session=…`, or to `OAUTH_LOGIN_URL` when the console is
+not on the issuer origin (the reference compose stack is exactly that case).
+The SPA already fetches tenant branding (`/api/v1/identity/branding?domain=`).
 
-### B.2 Removed
+### B.2 Removed — ✅ done
 
-`renderLoginPage`, `renderBrandedPage`, `handleAuthorizeCallback`, all of
-`internal/oauth/hosted_mfa.go`, the routes `/oauth/authorize/callback` and
-`/oauth/authorize/mfa*`, and their entries in `authPaths` / `pollPaths` — about
-600 lines, including the hosted second-factor flow shipped in #873 and #876.
-Those remain correct in the interim: they closed a live bypass, and this section
-supersedes rather than reverts them.
+`handleLoginPage`, `renderLoginPage`, `renderBrandedPage`,
+`handleAuthorizeCallback`, `loadLoginBranding`, `defaultLoginBranding`, `type
+loginBranding`, all of `internal/oauth/hosted_mfa.go`, the routes `GET
+/oauth/login`, `/oauth/authorize/callback` and `/oauth/authorize/mfa*`, and
+their entries in `authPaths` / `pollPaths` — about 900 lines, including the
+hosted second-factor flow shipped in #873 and #876. Those remain correct in the
+interim: they closed a live bypass, and this section supersedes rather than
+reverts them.
+
+`GET /oauth/login` was not in the original list and had to be: it rendered the
+same page unconditionally, with no `OAuthLoginUI` guard, so removing only the
+callback would have left the form reachable.
 
 ### B.3 Retained
 
@@ -188,11 +195,17 @@ along with `createMFASession` and `verifyStepUpFactor`. Session creation,
 BrowZer device-trust gate (`:2085`), so deleting the hosted path loses neither.
 Consent is already JSON-rendered by the SPA and is unaffected.
 
-### B.4 Staging
+### B.4 Staging — superseded
 
-`OAUTH_LOGIN_UI` (env, `server` | `spa`, default `server`). Flip after verifying
-the three flows below; delete the server branch in a follow-up once the flip has
-held. Rollback is one environment variable.
+The original staging was `OAUTH_LOGIN_UI` (env, `server` | `spa`, default
+`server`), flipped after verifying the three flows below, with the server branch
+deleted in a follow-up. That is not what shipped, because the flag never guarded
+the whole page: `GET /oauth/login` and `/oauth/authorize/v2` rendered it
+regardless, so "flipped" would not have retired the second pipeline. The page
+was deleted outright and the flag with it; what remains is
+**`OAUTH_LOGIN_URL`** (default `<issuer>/login`), which says *where* the one
+login UI is, not *whether* to use it. Rollback is a redeploy, not an env var —
+so verify the three flows on staging first.
 
 The flow least likely to work unchanged is BrowZer: it bootstraps its own OIDC
 dance from `browzer.tdv.org`, so the cross-origin bounce to
@@ -250,9 +263,11 @@ last.
    change; the report starts filling.
 2. **C wired, no policy rows.** Behaviour identical; `IsMFARequired` is now
    reachable and tested.
-3. **B behind `OAUTH_LOGIN_UI=server`.** No behaviour change until flipped.
-4. **Flip B to `spa`** after the three login flows verify. Delete the server
-   branch once it holds.
+3. **B: the server-rendered login is deleted** and every client is redirected
+   to the one login UI at `OAUTH_LOGIN_URL` (default `<issuer>/login`). This
+   ships in the binary, so it is not separately flippable — see B.4.
+4. **Verify the three login flows** (console, mobile, BrowZer) on staging
+   before this binary reaches production.
 5. **Review the A report, create the assignments you want, flip
    `ACCESS_ASSIGNMENT_ENFORCE=true`.** This is the step that removes access.
 6. **Create the MFA policy** after confirming a push challenge can actually be

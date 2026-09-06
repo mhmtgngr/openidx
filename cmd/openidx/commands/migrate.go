@@ -4,10 +4,15 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
+	"unicode"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/spf13/cobra"
+
+	"github.com/openidx/openidx/internal/migrations"
 )
 
 // NewMigrateCommand creates the migrate command
@@ -217,50 +222,109 @@ func verifyDBConnection(dbURL string) error {
 	return conn.Ping(ctx)
 }
 
-func createMigration(ctx *CommandContext, name string) error {
-	success, errColor, _, _, _ := ctx.GetColors()
-
-	// List existing migrations to determine next number
-	migrationsDir := ctx.Path("migrations")
-	entries, err := os.ReadDir(migrationsDir)
-	if err != nil {
-		errColor.Printf("Failed to read migrations directory: %v\n", err)
-		return err
+// nextMigrationVersion is one past the highest version the registry really
+// carries. It reads the registry rather than a directory listing: the registry
+// is what every service applies, and it is the only thing that knows how far
+// the schema has actually got.
+func nextMigrationVersion() int {
+	highest := 0
+	for _, m := range migrations.All() {
+		if m.Version > highest {
+			highest = m.Version
+		}
 	}
+	return highest + 1
+}
 
-	// Find the highest migration number
-	maxNum := 0
-	for _, entry := range entries {
-		var num int
-		if _, err := fmt.Sscanf(entry.Name(), "%d_", &num); err == nil {
-			if num > maxNum {
-				maxNum = num
+// sqlConstIdent turns a migration name into the Go identifier its SQL
+// constants are declared under: "add_widget_table" -> "addWidgetTable".
+func sqlConstIdent(name string) string {
+	var b strings.Builder
+	upperNext := false
+	for _, r := range name {
+		switch {
+		case r == '_' || r == '-' || r == ' ' || r == '.':
+			upperNext = b.Len() > 0
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			if upperNext {
+				b.WriteRune(unicode.ToUpper(r))
+				upperNext = false
+			} else if b.Len() == 0 {
+				b.WriteRune(unicode.ToLower(r))
+			} else {
+				b.WriteRune(r)
 			}
 		}
 	}
+	if b.Len() == 0 || (b.String()[0] >= '0' && b.String()[0] <= '9') {
+		return "migration" + b.String()
+	}
+	return b.String()
+}
 
-	nextNum := maxNum + 1
-	prefix := fmt.Sprintf("%03d", nextNum)
+// createMigration writes the file the product actually applies.
+//
+// It used to write migrations/NNN_<name>.up.sql and .down.sql — a numbered
+// pair in a directory nothing read. Every service applies the registry in
+// internal/migrations: Go string constants in sql_v<N>.go, listed in
+// loader.go. The loose SQL tree stopped tracking that registry at 52 of 172
+// migrations and nobody noticed, precisely because nothing read it. A
+// contributor who followed this command wrote SQL that never ran, and then
+// watched `openidx migrate up` report success — it had applied the registry.
+//
+// So it now writes internal/migrations/sql_v<N>.go and prints the loader entry
+// to add. Registering stays a deliberate edit rather than a generated append:
+// loader.go is the list tools/orgscope derives the tenant-scope census from,
+// and a machine appending to it is one bad merge away from reordering the
+// schema.
+func createMigration(ctx *CommandContext, name string) error {
+	success, errColor, _, _, _ := ctx.GetColors()
 
-	upFile := fmt.Sprintf("%s_%s.up.sql", prefix, name)
-	downFile := fmt.Sprintf("%s_%s.down.sql", prefix, name)
+	version := nextMigrationVersion()
+	ident := sqlConstIdent(name)
+	rel := filepath.Join("internal", "migrations", fmt.Sprintf("sql_v%d.go", version))
+	path := ctx.Path("internal", "migrations", fmt.Sprintf("sql_v%d.go", version))
 
-	upPath := ctx.Path("migrations", upFile)
-	downPath := ctx.Path("migrations", downFile)
+	if _, err := os.Stat(path); err == nil {
+		errColor.Printf("%s already exists — v%d is taken; check internal/migrations/loader.go\n", rel, version)
+		return fmt.Errorf("migration v%d already has a file at %s", version, rel)
+	}
 
-	// Create up migration
-	if err := os.WriteFile(upPath, []byte(fmt.Sprintf("-- Migration %s: %s\n-- Up\n\n", prefix, name)), 0644); err != nil {
+	body := fmt.Sprintf(`package migrations
+
+// Migration v%d — %s.
+//
+// Say here what this migration changes and why the change is needed. A
+// migration is the one place a schema decision is written down for good.
+//
+// Plain statements only, no DO $$ blocks: the migrator runs each statement in
+// its own round trip. A table holding tenant data needs org_id, an index on
+// it, a policy, and ENABLE + FORCE ROW LEVEL SECURITY — tools/orgscope fails
+// the build for a table that carries org_id without the belt, and for a
+// scoped table whose queries do not name it.
+const %sUp = `+"`"+`
+`+"`"+`
+
+// The reverse of %sUp. Down migrations are run in tests, so this has to work.
+const %sDown = `+"`"+`
+`+"`"+`
+`, version, name, ident, ident, ident)
+
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		errColor.Printf("Failed to write %s: %v\n", rel, err)
 		return err
 	}
 
-	// Create down migration
-	if err := os.WriteFile(downPath, []byte(fmt.Sprintf("-- Migration %s: %s\n-- Down\n\n", prefix, name)), 0644); err != nil {
-		return err
-	}
-
-	success.Printf("✅ Created migration files:\n")
-	success.Printf("   %s\n", upFile)
-	success.Printf("   %s\n", downFile)
+	success.Printf("✅ Created %s\n\n", rel)
+	fmt.Printf("Now register it in internal/migrations/loader.go, after v%d:\n\n", version-1)
+	fmt.Printf("\t\t{\n")
+	fmt.Printf("\t\t\tVersion:     %d,\n", version)
+	fmt.Printf("\t\t\tName:        %q,\n", name)
+	fmt.Printf("\t\t\tDescription: \"\",\n")
+	fmt.Printf("\t\t\tUpSQL:       %sUp,\n", ident)
+	fmt.Printf("\t\t\tDownSQL:     %sDown,\n", ident)
+	fmt.Printf("\t\t},\n\n")
+	fmt.Println("Until it is in that list, nothing applies it.")
 
 	return nil
 }

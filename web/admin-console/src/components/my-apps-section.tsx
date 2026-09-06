@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import { AppWindow, ExternalLink } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card'
 import { Badge } from './ui/badge'
@@ -25,6 +26,7 @@ interface UserApp {
  * empty block above the network resources.
  */
 export function MyAppsSection({ search }: { search: string }) {
+  const { t } = useTranslation()
   const { toast } = useToast()
 
   const { data, isLoading, isError, error } = useQuery({
@@ -46,8 +48,8 @@ export function MyAppsSection({ search }: { search: string }) {
       window.open(url, '_blank', 'noopener,noreferrer')
     } else {
       toast({
-        title: 'Cannot launch application',
-        description: `${app.name} has no valid launch URL configured. Contact your administrator.`,
+        title: t('components.myApps.launchFailedTitle'),
+        description: t('components.myApps.launchFailedDesc', { name: app.name }),
         variant: 'destructive',
       })
     }
@@ -62,18 +64,18 @@ export function MyAppsSection({ search }: { search: string }) {
   return (
     <section className="space-y-3">
       <div>
-        <h2 className="text-xl font-semibold tracking-tight">Sign in to your apps</h2>
+        <h2 className="text-xl font-semibold tracking-tight">{t('components.myApps.heading')}</h2>
         <p className="text-sm text-muted-foreground">
-          Click one and OpenIDX signs you in automatically (single sign-on) — no separate password.
+          {t('components.myApps.subtitle')}
         </p>
       </div>
 
       {isLoading ? (
-        <p className="text-center py-8 text-muted-foreground">Loading applications...</p>
+        <p className="text-center py-8 text-muted-foreground">{t('components.myApps.loading')}</p>
       ) : isError ? (
-        <QueryError error={error} resource="applications" />
+        <QueryError error={error} resource={t('components.myApps.resource')} />
       ) : apps.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No apps match “{search}”.</p>
+        <p className="text-sm text-muted-foreground">{t('components.myApps.noMatch', { search })}</p>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {apps.map(app => (
@@ -97,10 +99,10 @@ export function MyAppsSection({ search }: { search: string }) {
                 </div>
               </CardHeader>
               <CardContent>
-                <p className="text-sm text-muted-foreground line-clamp-2 mb-3">{app.description || 'No description available'}</p>
+                <p className="text-sm text-muted-foreground line-clamp-2 mb-3">{app.description || t('components.myApps.noDescription')}</p>
                 <Button variant="outline" size="sm" className="w-full group-hover:bg-blue-50 group-hover:text-blue-700 group-hover:border-blue-200">
                   <ExternalLink className="mr-2 h-4 w-4" />
-                  Launch
+                  {t('components.myApps.launch')}
                 </Button>
               </CardContent>
             </Card>

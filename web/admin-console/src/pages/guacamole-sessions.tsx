@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   MonitorPlay,
@@ -36,6 +37,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { QueryError } from '../components/query-error'
+import i18n from '../i18n'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 
@@ -90,20 +92,19 @@ interface GuacSessionRow {
 // ──────────────────────────────────────────────────────────────────────────────
 
 export function GuacamoleSessionsPage() {
+  const { t } = useTranslation()
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold">Privileged Sessions</h1>
-        <p className="text-muted-foreground">
-          Manage Guacamole session requests, active connections, and session history.
-        </p>
+        <h1 className="text-2xl font-bold">{t('nav.items.privilegedSessions')}</h1>
+        <p className="text-muted-foreground">{t('pages.guacSessions.subtitle')}</p>
       </div>
 
       <Tabs defaultValue="requests">
         <TabsList>
-          <TabsTrigger value="requests">Pending Requests</TabsTrigger>
-          <TabsTrigger value="active">Active Sessions</TabsTrigger>
-          <TabsTrigger value="history">Session History</TabsTrigger>
+          <TabsTrigger value="requests">{t('pages.guacSessions.tabs.requests')}</TabsTrigger>
+          <TabsTrigger value="active">{t('pages.guacSessions.tabs.active')}</TabsTrigger>
+          <TabsTrigger value="history">{t('pages.guacSessions.tabs.history')}</TabsTrigger>
         </TabsList>
 
         <TabsContent value="requests">
@@ -127,6 +128,7 @@ export function GuacamoleSessionsPage() {
 // ──────────────────────────────────────────────────────────────────────────────
 
 function PendingRequestsTab() {
+  const { t } = useTranslation()
   const queryClient = useQueryClient()
   const { toast } = useToast()
 
@@ -145,9 +147,13 @@ function PendingRequestsTab() {
       api.post(`/api/v1/access/guacamole/session-requests/${id}/approve`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['guac-session-requests'] })
-      toast({ title: 'Request approved' })
+      toast({ title: t('pages.guacSessions.requests.toasts.approved') })
     },
-    onError: () => toast({ title: 'Failed to approve request', variant: 'destructive' }),
+    onError: () =>
+      toast({
+        title: t('pages.guacSessions.requests.toasts.approveFailed'),
+        variant: 'destructive',
+      }),
   })
 
   const denyMutation = useMutation({
@@ -155,9 +161,13 @@ function PendingRequestsTab() {
       api.post(`/api/v1/access/guacamole/session-requests/${id}/deny`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['guac-session-requests'] })
-      toast({ title: 'Request denied' })
+      toast({ title: t('pages.guacSessions.requests.toasts.denied') })
     },
-    onError: () => toast({ title: 'Failed to deny request', variant: 'destructive' }),
+    onError: () =>
+      toast({
+        title: t('pages.guacSessions.requests.toasts.denyFailed'),
+        variant: 'destructive',
+      }),
   })
 
   return (
@@ -165,7 +175,7 @@ function PendingRequestsTab() {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Clock className="h-5 w-5" />
-          Pending Session Requests
+          {t('pages.guacSessions.requests.title')}
         </CardTitle>
       </CardHeader>
       <CardContent>
@@ -174,16 +184,16 @@ function PendingRequestsTab() {
             <LoadingSpinner />
           </div>
         ) : isError ? (
-          <QueryError error={error} resource="session requests" />
+          <QueryError error={error} resource={t('pages.guacSessions.requests.resourceName')} />
         ) : (
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Requester</TableHead>
-                <TableHead>Connection</TableHead>
-                <TableHead>Reason</TableHead>
-                <TableHead>Requested</TableHead>
-                <TableHead>Expires</TableHead>
+                <TableHead>{t('pages.guacSessions.requests.table.requester')}</TableHead>
+                <TableHead>{t('pages.guacSessions.requests.table.connection')}</TableHead>
+                <TableHead>{t('pages.guacSessions.requests.table.reason')}</TableHead>
+                <TableHead>{t('pages.guacSessions.requests.table.requested')}</TableHead>
+                <TableHead>{t('pages.guacSessions.requests.table.expires')}</TableHead>
                 <TableHead className="w-40" />
               </TableRow>
             </TableHeader>
@@ -211,7 +221,7 @@ function PendingRequestsTab() {
                         onClick={() => approveMutation.mutate(r.id)}
                       >
                         <CheckCircle2 className="mr-1 h-3 w-3" />
-                        Approve
+                        {t('pages.guacSessions.requests.approve')}
                       </Button>
                       <Button
                         size="sm"
@@ -221,7 +231,7 @@ function PendingRequestsTab() {
                         onClick={() => denyMutation.mutate(r.id)}
                       >
                         <XCircle className="mr-1 h-3 w-3" />
-                        Deny
+                        {t('pages.guacSessions.requests.deny')}
                       </Button>
                     </div>
                   </TableCell>
@@ -233,7 +243,7 @@ function PendingRequestsTab() {
                     colSpan={6}
                     className="text-center py-8 text-muted-foreground"
                   >
-                    No pending requests.
+                    {t('pages.guacSessions.requests.empty')}
                   </TableCell>
                 </TableRow>
               )}
@@ -250,6 +260,7 @@ function PendingRequestsTab() {
 // ──────────────────────────────────────────────────────────────────────────────
 
 function ActiveSessionsTab() {
+  const { t } = useTranslation()
   const queryClient = useQueryClient()
   const { toast } = useToast()
   const [terminateTarget, setTerminateTarget] = useState<GuacActiveSession | null>(null)
@@ -271,11 +282,15 @@ function ActiveSessionsTab() {
       api.post(`/api/v1/access/guacamole/sessions/${identifier}/terminate`, { reason }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['guac-active-sessions'] })
-      toast({ title: 'Session terminated' })
+      toast({ title: t('pages.guacSessions.active.toasts.terminated') })
       setTerminateTarget(null)
       setTerminateReason('')
     },
-    onError: () => toast({ title: 'Failed to terminate session', variant: 'destructive' }),
+    onError: () =>
+      toast({
+        title: t('pages.guacSessions.active.toasts.terminateFailed'),
+        variant: 'destructive',
+      }),
   })
 
   const monitorMutation = useMutation({
@@ -290,11 +305,14 @@ function ActiveSessionsTab() {
       const status = (err as { response?: { status?: number } })?.response?.status
       if (status === 501) {
         toast({
-          title: 'Live monitor not supported by this Guacamole server',
+          title: t('pages.guacSessions.active.toasts.monitorUnsupported'),
           variant: 'destructive',
         })
       } else {
-        toast({ title: 'Failed to get monitor URL', variant: 'destructive' })
+        toast({
+          title: t('pages.guacSessions.active.toasts.monitorFailed'),
+          variant: 'destructive',
+        })
       }
     },
   })
@@ -312,7 +330,7 @@ function ActiveSessionsTab() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <MonitorPlay className="h-5 w-5" />
-            Active Sessions
+            {t('pages.guacSessions.active.title')}
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -322,18 +340,18 @@ function ActiveSessionsTab() {
             </div>
           ) : is503 ? (
             <p className="py-8 text-center text-muted-foreground">
-              Guacamole is not configured.
+              {t('pages.guacSessions.active.unconfigured')}
             </p>
           ) : isError ? (
-            <QueryError error={error} resource="active sessions" />
+            <QueryError error={error} resource={t('pages.guacSessions.active.resourceName')} />
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>User</TableHead>
-                  <TableHead>Remote host</TableHead>
-                  <TableHead>Connection</TableHead>
-                  <TableHead>Started</TableHead>
+                  <TableHead>{t('pages.guacSessions.active.table.user')}</TableHead>
+                  <TableHead>{t('pages.guacSessions.active.table.remoteHost')}</TableHead>
+                  <TableHead>{t('pages.guacSessions.active.table.connection')}</TableHead>
+                  <TableHead>{t('pages.guacSessions.active.table.started')}</TableHead>
                   <TableHead className="w-48" />
                 </TableRow>
               </TableHeader>
@@ -344,7 +362,7 @@ function ActiveSessionsTab() {
                       {s.openidx_user || s.username}
                       {s.openidx_user && (
                         <span className="block text-xs font-normal text-muted-foreground">
-                          via {s.username}
+                          {t('pages.guacSessions.active.via', { username: s.username })}
                         </span>
                       )}
                     </TableCell>
@@ -364,7 +382,7 @@ function ActiveSessionsTab() {
                           onClick={() => monitorMutation.mutate(s.identifier)}
                         >
                           <Eye className="mr-1 h-3 w-3" />
-                          Monitor
+                          {t('pages.guacSessions.active.monitor')}
                         </Button>
                         <Button
                           size="sm"
@@ -376,7 +394,7 @@ function ActiveSessionsTab() {
                           }}
                         >
                           <StopCircle className="mr-1 h-3 w-3" />
-                          Terminate
+                          {t('pages.guacSessions.active.terminate')}
                         </Button>
                       </div>
                     </TableCell>
@@ -388,7 +406,7 @@ function ActiveSessionsTab() {
                       colSpan={5}
                       className="text-center py-8 text-muted-foreground"
                     >
-                      No active sessions.
+                      {t('pages.guacSessions.active.empty')}
                     </TableCell>
                   </TableRow>
                 )}
@@ -411,24 +429,28 @@ function ActiveSessionsTab() {
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Terminate session?</AlertDialogTitle>
+            <AlertDialogTitle>{t('pages.guacSessions.active.confirmTerminate.title')}</AlertDialogTitle>
             <AlertDialogDescription>
-              This will forcibly disconnect{' '}
-              <span className="font-medium">{terminateTarget?.openidx_user || terminateTarget?.username}</span> from{' '}
-              <span className="font-mono text-xs">{terminateTarget?.connectionIdentifier}</span>.
+              {t('pages.guacSessions.active.confirmTerminate.descriptionBefore')}
+              <span className="font-medium">{terminateTarget?.openidx_user || terminateTarget?.username}</span>
+              {t('pages.guacSessions.active.confirmTerminate.descriptionMiddle')}
+              <span className="font-mono text-xs">{terminateTarget?.connectionIdentifier}</span>
+              {t('pages.guacSessions.active.confirmTerminate.descriptionAfter')}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div className="py-2">
-            <label className="text-sm font-medium">Reason (optional)</label>
+            <label className="text-sm font-medium">
+              {t('pages.guacSessions.active.confirmTerminate.reason')}
+            </label>
             <Input
               className="mt-1"
-              placeholder="e.g. session limit exceeded"
+              placeholder={t('pages.guacSessions.active.confirmTerminate.reasonPlaceholder')}
               value={terminateReason}
               onChange={(e) => setTerminateReason(e.target.value)}
             />
           </div>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction
               className="bg-destructive hover:bg-destructive/90"
               onClick={() => {
@@ -440,7 +462,7 @@ function ActiveSessionsTab() {
                 }
               }}
             >
-              Terminate
+              {t('pages.guacSessions.active.terminate')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -454,6 +476,7 @@ function ActiveSessionsTab() {
 // ──────────────────────────────────────────────────────────────────────────────
 
 function SessionHistoryTab() {
+  const { t } = useTranslation()
   const { toast } = useToast()
   const queryClient = useQueryClient()
   const [holdTarget, setHoldTarget] = useState<{
@@ -467,12 +490,12 @@ function SessionHistoryTab() {
       api.post(`/api/v1/access/guacamole/sessions/${id}/legal-hold`, { reason }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['guac-session-history'] })
-      toast({ title: 'Recording placed on legal hold — exempt from retention sweep.' })
+      toast({ title: t('pages.guacSessions.history.toasts.held') })
       setHoldTarget(null)
       setHoldReason('')
     },
     onError: (err: any) => {
-      const msg = err?.response?.data?.error || 'Failed to place hold'
+      const msg = err?.response?.data?.error || t('pages.guacSessions.history.toasts.holdFailed')
       toast({ title: msg, variant: 'destructive' })
     },
   })
@@ -484,12 +507,12 @@ function SessionHistoryTab() {
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['guac-session-history'] })
-      toast({ title: 'Legal hold released — recording subject to retention again.' })
+      toast({ title: t('pages.guacSessions.history.toasts.released') })
       setHoldTarget(null)
       setHoldReason('')
     },
     onError: (err: any) => {
-      const msg = err?.response?.data?.error || 'Failed to release hold'
+      const msg = err?.response?.data?.error || t('pages.guacSessions.history.toasts.releaseFailed')
       toast({ title: msg, variant: 'destructive' })
     },
   })
@@ -510,7 +533,7 @@ function SessionHistoryTab() {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <MonitorPlay className="h-5 w-5" />
-          Session History
+          {t('pages.guacSessions.history.title')}
         </CardTitle>
       </CardHeader>
       <CardContent>
@@ -519,16 +542,16 @@ function SessionHistoryTab() {
             <LoadingSpinner />
           </div>
         ) : isError ? (
-          <QueryError error={error} resource="session history" />
+          <QueryError error={error} resource={t('pages.guacSessions.history.resourceName')} />
         ) : (
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>User</TableHead>
-                <TableHead>Connection</TableHead>
-                <TableHead>Started</TableHead>
-                <TableHead>Ended</TableHead>
-                <TableHead>Status</TableHead>
+                <TableHead>{t('pages.guacSessions.history.table.user')}</TableHead>
+                <TableHead>{t('pages.guacSessions.history.table.connection')}</TableHead>
+                <TableHead>{t('pages.guacSessions.history.table.started')}</TableHead>
+                <TableHead>{t('pages.guacSessions.history.table.ended')}</TableHead>
+                <TableHead>{t('pages.guacSessions.history.table.status')}</TableHead>
                 <TableHead className="w-64" />
               </TableRow>
             </TableHeader>
@@ -556,45 +579,45 @@ function SessionHistoryTab() {
                         disabled={!s.transcript_available}
                         title={
                           s.transcript_available
-                            ? 'Download keystroke transcript'
-                            : 'Transcript not available'
+                            ? t('pages.guacSessions.history.transcriptAvailable')
+                            : t('pages.guacSessions.history.transcriptUnavailable')
                         }
                         onClick={() => downloadTranscript(s.id, toast)}
                       >
                         <Download className="mr-1 h-3 w-3" />
-                        Transcript
+                        {t('pages.guacSessions.history.transcript')}
                       </Button>
                       {s.recording_available &&
                         (s.on_legal_hold ? (
                           <>
                             <Badge variant="secondary" className="text-amber-700">
-                              On hold
+                              {t('pages.guacSessions.history.onHold')}
                             </Badge>
                             <Button
                               size="sm"
                               variant="outline"
-                              title="Release legal hold (recording becomes subject to retention again)"
+                              title={t('pages.guacSessions.history.releaseHoldTitle')}
                               onClick={() => {
                                 setHoldTarget({ session: s, action: 'release' })
                                 setHoldReason('')
                               }}
                             >
                               <Unlock className="mr-1 h-3 w-3 text-amber-600" />
-                              Release hold
+                              {t('pages.guacSessions.history.releaseHold')}
                             </Button>
                           </>
                         ) : (
                           <Button
                             size="sm"
                             variant="outline"
-                            title="Place this recording on legal hold (exempt from retention sweep)"
+                            title={t('pages.guacSessions.history.placeHoldTitle')}
                             onClick={() => {
                               setHoldTarget({ session: s, action: 'place' })
                               setHoldReason('')
                             }}
                           >
                             <Lock className="mr-1 h-3 w-3" />
-                            Place hold
+                            {t('pages.guacSessions.history.placeHold')}
                           </Button>
                         ))}
                     </div>
@@ -607,7 +630,7 @@ function SessionHistoryTab() {
                     colSpan={6}
                     className="text-center py-8 text-muted-foreground"
                   >
-                    No session history.
+                    {t('pages.guacSessions.history.empty')}
                   </TableCell>
                 </TableRow>
               )}
@@ -631,28 +654,31 @@ function SessionHistoryTab() {
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>
-            {holdTarget?.action === 'place' ? 'Place legal hold?' : 'Release legal hold?'}
+            {holdTarget?.action === 'place'
+              ? t('pages.guacSessions.history.holdDialog.placeTitle')
+              : t('pages.guacSessions.history.holdDialog.releaseTitle')}
           </AlertDialogTitle>
           <AlertDialogDescription>
             {holdTarget?.action === 'place'
-              ? 'The recording will be exempt from the retention sweep until the hold is released.'
-              : 'The recording becomes subject to retention again.'}{' '}
-            The reason is logged in the audit trail.
+              ? t('pages.guacSessions.history.holdDialog.placeDescription')
+              : t('pages.guacSessions.history.holdDialog.releaseDescription')}{' '}
+            {t('pages.guacSessions.history.holdDialog.audited')}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <div className="py-2">
           <label className="text-sm font-medium">
-            Reason{holdTarget?.action === 'place' && <span className="text-red-500 ml-1">*</span>}
+            {t('pages.guacSessions.history.holdDialog.reason')}
+            {holdTarget?.action === 'place' && <span className="text-red-500 ml-1">*</span>}
           </label>
           <Input
             className="mt-1"
-            placeholder='e.g. "litigation case #1234"'
+            placeholder={t('pages.guacSessions.history.holdDialog.reasonPlaceholder')}
             value={holdReason}
             onChange={(e) => setHoldReason(e.target.value)}
           />
         </div>
         <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
           <AlertDialogAction
             disabled={holdTarget?.action === 'place' && !holdReason.trim()}
             onClick={() => {
@@ -664,7 +690,9 @@ function SessionHistoryTab() {
               }
             }}
           >
-            {holdTarget?.action === 'place' ? 'Place hold' : 'Release hold'}
+            {holdTarget?.action === 'place'
+              ? t('pages.guacSessions.history.placeHold')
+              : t('pages.guacSessions.history.releaseHold')}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
@@ -678,12 +706,13 @@ function SessionHistoryTab() {
 // ──────────────────────────────────────────────────────────────────────────────
 
 function SessionStatusBadge({ status }: { status: string }) {
+  const { t } = useTranslation()
   switch (status) {
     case 'active':
       return (
         <Badge variant="success">
           <CheckCircle2 className="mr-1 h-3 w-3" />
-          active
+          {t('pages.guacSessions.statuses.active')}
         </Badge>
       )
     case 'ended':
@@ -722,9 +751,15 @@ async function downloadTranscript(
   } catch (err: unknown) {
     const status = (err as { response?: { status?: number } })?.response?.status
     if (status === 404) {
-      toast({ title: 'Transcript not found', variant: 'destructive' })
+      toast({
+        title: i18n.t('pages.guacSessions.history.toasts.transcriptMissing'),
+        variant: 'destructive',
+      })
     } else {
-      toast({ title: 'Failed to download transcript', variant: 'destructive' })
+      toast({
+        title: i18n.t('pages.guacSessions.history.toasts.transcriptFailed'),
+        variant: 'destructive',
+      })
     }
   }
 }

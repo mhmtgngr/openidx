@@ -86,8 +86,9 @@ class LoginQrLink extends OpenidxDeepLink {
 }
 
 /// Listens for inbound deep links (cold-start + while running) via `app_links`
-/// and exposes them as a stream. The router/UI subscribes and navigates;
-/// `AuthService.browserAuthorize` awaits the next [OAuthCallbackLink].
+/// and exposes them as a stream. `MobileOAuthLoginHandler` awaits the next
+/// [OAuthCallbackLink] and hands its `code` to the engine; the router/UI
+/// subscribes for the enrolment and QR-login links.
 class DeepLinkService {
   DeepLinkService({AppLinks? appLinks}) : _appLinks = appLinks ?? AppLinks();
 

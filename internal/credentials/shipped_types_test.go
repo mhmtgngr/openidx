@@ -114,19 +114,79 @@ func TestShippedTypesAreRegistered(t *testing.T) {
 // TestConsoleOffersEveryShippedType closes the last gap. The engine can support
 // a connector while the admin console never offers it, which looks to the
 // operator exactly like it does not exist.
+//
+// The connector dropdown is generated from the page's CONNECTOR_TYPES list and
+// labelled from the i18n catalog, so both halves are checked: a type missing
+// from the list has no option at all, and one missing from the catalog renders
+// as a raw key, which is just as unusable. English is the source of truth here;
+// the i18n suite pins the same keys in every other declared language.
 func TestConsoleOffersEveryShippedType(t *testing.T) {
 	root := repoRoot(t)
 	page := filepath.Join(root, "web", "admin-console", "src", "pages", "rotation-policies.tsx")
+	catalog := filepath.Join(root, "web", "admin-console", "src", "i18n", "locales", "en.ts")
 	if _, err := os.Stat(page); err != nil {
 		t.Skipf("console page not present in this checkout: %v", err)
 	}
-	src := mustRead(t, page)
+
+	offered := consoleConnectorTypes(t, mustRead(t, page))
+	labelled := catalogConnectorLabels(t, mustRead(t, catalog))
 
 	for _, typ := range ShippedTypes {
-		if !strings.Contains(src, `<SelectItem value="`+typ+`"`) {
+		if !offered[typ] {
 			t.Errorf("rotation type %q ships in the binary but the console offers no option for it", typ)
+			continue
+		}
+		if !labelled[typ] {
+			t.Errorf("rotation type %q is offered by the console but has no label in the English catalog "+
+				"(pages.rotationPolicies.connectors.%s); the dropdown would show a raw key", typ, typ)
 		}
 	}
+}
+
+// consoleConnectorTypes reads the CONNECTOR_TYPES literal that drives the
+// connector dropdown.
+func consoleConnectorTypes(t *testing.T, src string) map[string]bool {
+	t.Helper()
+	block := betweenDelimiters(t, src, "const CONNECTOR_TYPES = [", "]",
+		"rotation-policies.tsx no longer declares CONNECTOR_TYPES; if the dropdown moved, update this test")
+	return quotedIdents(block)
+}
+
+// catalogConnectorLabels reads pages.rotationPolicies.connectors from the
+// English catalog.
+func catalogConnectorLabels(t *testing.T, src string) map[string]bool {
+	t.Helper()
+	section := betweenDelimiters(t, src, "    rotationPolicies: {", "\n    },",
+		"en.ts no longer has a pages.rotationPolicies section")
+	block := betweenDelimiters(t, section, "connectors: {", "}",
+		"pages.rotationPolicies has no connectors block")
+	keys := map[string]bool{}
+	for _, m := range regexp.MustCompile(`(?m)^\s*([a-z_]+):`).FindAllStringSubmatch(block, -1) {
+		keys[m[1]] = true
+	}
+	return keys
+}
+
+func betweenDelimiters(t *testing.T, src, open, close, missing string) string {
+	t.Helper()
+	start := strings.Index(src, open)
+	if start < 0 {
+		t.Fatal(missing)
+	}
+	rest := src[start+len(open):]
+	end := strings.Index(rest, close)
+	if end < 0 {
+		t.Fatalf("%s: block starting at %q is not terminated", missing, open)
+	}
+	return rest[:end]
+}
+
+func quotedIdents(block string) map[string]bool {
+	out := map[string]bool{}
+	for _, m := range regexp.MustCompile(`'([a-z_]+)'`).FindAllStringSubmatch(block, -1) {
+		out[m[1]] = true
+	}
+	return out
 }
 
 // TestDocsStateTheShippedCount is the check that was missing, and its absence

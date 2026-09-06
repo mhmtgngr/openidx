@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import {
   Brain,
   Cpu,
@@ -78,6 +79,7 @@ const levelBadge = (level: string) => {
 
 export function AIIdentityIntelligencePage() {
   const { toast } = useToast()
+  const { t } = useTranslation()
   const [question, setQuestion] = useState('')
   const [answer, setAnswer] = useState('')
 
@@ -89,7 +91,12 @@ export function AIIdentityIntelligencePage() {
   const briefing = useMutation({
     mutationFn: async () => api.get<Briefing>('/api/v1/ai/intelligence/briefing'),
     onError: (error: Error) => {
-      toast({ title: 'Briefing Failed', description: error.message, variant: 'destructive' })
+      toast({
+        title: t('pages.identityIntelligence.briefing.failed'),
+        // The message is composed by the backend or the model provider.
+        description: error.message,
+        variant: 'destructive',
+      })
     },
   })
 
@@ -98,7 +105,11 @@ export function AIIdentityIntelligencePage() {
       api.post<{ answer: string }>('/api/v1/ai/intelligence/ask', { question: q }),
     onSuccess: (data) => setAnswer(data.answer),
     onError: (error: Error) => {
-      toast({ title: 'Ask Failed', description: error.message, variant: 'destructive' })
+      toast({
+        title: t('pages.identityIntelligence.ask.failed'),
+        description: error.message,
+        variant: 'destructive',
+      })
     },
   })
 
@@ -113,7 +124,7 @@ export function AIIdentityIntelligencePage() {
   }
 
   if (isError) {
-    return <QueryError error={error} resource="identity intelligence" />
+    return <QueryError error={error} resource={t('pages.identityIntelligence.resource')} />
   }
 
   return (
@@ -122,25 +133,25 @@ export function AIIdentityIntelligencePage() {
         <div>
           <h1 className="text-3xl font-bold flex items-center gap-2">
             <Brain className="h-8 w-8 text-purple-500" />
-            Identity Intelligence
+            {t('nav.items.identityIntelligence')}
           </h1>
           <p className="text-muted-foreground mt-1">
-            Cross-pillar identity risk fusion — logins, alerts, MFA, devices, breaches and the zero-trust overlay in one score
+            {t('pages.identityIntelligence.subtitle')}
           </p>
         </div>
         <Button variant="outline" onClick={() => refetch()}>
           <RefreshCw className="h-4 w-4 mr-2" />
-          Refresh
+          {t('common.refresh')}
         </Button>
       </div>
 
-      <RelatedLinks links={[{ to: '/ziti-ai-insights', label: 'Ziti AI Insights' }]} />
+      <RelatedLinks links={[{ to: '/ziti-ai-insights', label: t('pages.zitiAiInsights.title') }]} />
 
       {/* Summary cards */}
       <div className="grid gap-4 md:grid-cols-4">
         <Card>
           <CardHeader className="pb-2">
-            <CardDescription>Identities at Risk</CardDescription>
+            <CardDescription>{t('pages.identityIntelligence.cards.atRisk')}</CardDescription>
             <CardTitle className="text-2xl text-orange-600">
               {overview?.identities_at_risk ?? 0}
               <span className="text-sm font-normal text-muted-foreground"> / {overview?.total_users ?? 0}</span>
@@ -149,13 +160,15 @@ export function AIIdentityIntelligencePage() {
         </Card>
         <Card>
           <CardHeader className="pb-2">
-            <CardDescription>Open Security Alerts</CardDescription>
+            <CardDescription>
+              {t('pages.identityIntelligence.cards.openAlerts')}
+            </CardDescription>
             <CardTitle className="text-2xl text-red-600">{overview?.open_alerts ?? 0}</CardTitle>
           </CardHeader>
         </Card>
         <Card>
           <CardHeader className="pb-2">
-            <CardDescription>MFA Coverage</CardDescription>
+            <CardDescription>{t('pages.identityIntelligence.cards.mfaCoverage')}</CardDescription>
             <CardTitle className="text-2xl text-primary">
               {(overview?.mfa_coverage_pct ?? 0).toFixed(0)}%
             </CardTitle>
@@ -164,16 +177,28 @@ export function AIIdentityIntelligencePage() {
         <Card>
           <CardHeader className="pb-2">
             <CardDescription className="flex items-center gap-1">
-              <Cpu className="h-3 w-3" /> Local AI
+              <Cpu className="h-3 w-3" />
+              {t('pages.identityIntelligence.cards.localAi')}
             </CardDescription>
             <CardTitle className="text-2xl">
-              {ai?.enabled ? (ai.reachable ? 'Online' : 'Unreachable') : 'Off'}
+              {ai?.enabled
+                ? ai.reachable
+                  ? t('pages.identityIntelligence.cards.aiOnline')
+                  : t('pages.identityIntelligence.cards.aiUnreachable')
+                : t('pages.identityIntelligence.cards.aiOff')}
             </CardTitle>
             <div className="flex flex-wrap gap-1 pt-1">
+              {/* The model name is the provider's own identifier. */}
               {ai?.enabled && ai.model && <Badge variant="secondary">{ai.model}</Badge>}
-              {ai?.enabled && <Badge variant="secondary">on-premises</Badge>}
+              {ai?.enabled && (
+                <Badge variant="secondary">
+                  {t('pages.identityIntelligence.cards.onPremises')}
+                </Badge>
+              )}
               {!ai?.enabled && (
-                <span className="text-xs text-muted-foreground">Set AI_ENABLED=true (Ollama etc.)</span>
+                <span className="text-xs text-muted-foreground">
+                  {t('pages.identityIntelligence.cards.aiOffHint')}
+                </span>
               )}
             </div>
           </CardHeader>
@@ -186,22 +211,31 @@ export function AIIdentityIntelligencePage() {
           <div>
             <CardTitle className="flex items-center gap-2">
               <Newspaper className="h-5 w-5 text-blue-500" />
-              Security Briefing
+              {t('pages.identityIntelligence.briefing.title')}
             </CardTitle>
             <CardDescription>
-              Generated from live facts{ai?.enabled ? ` and narrated by ${ai.model} running locally` : ' (template mode — enable local AI for narrated briefings)'}
+              {t('pages.identityIntelligence.briefing.desc', {
+                clause: ai?.enabled
+                  ? t('pages.identityIntelligence.briefing.clauseNarrated', { model: ai.model })
+                  : t('pages.identityIntelligence.briefing.clauseTemplate'),
+              })}
             </CardDescription>
           </div>
           <Button onClick={() => briefing.mutate()} disabled={briefing.isPending}>
             {briefing.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-            Generate Briefing
+            {t('pages.identityIntelligence.briefing.generate')}
           </Button>
         </CardHeader>
         {briefing.data && (
           <CardContent>
+            {/* The briefing is composed end to end by the backend (or the
+                local model), so it renders exactly as sent. */}
             <p className="whitespace-pre-wrap text-sm">{briefing.data.briefing}</p>
             <p className="text-xs text-muted-foreground mt-3">
-              Generated by {briefing.data.generated_by} at {new Date(briefing.data.generated_at).toLocaleString()}
+              {t('pages.identityIntelligence.briefing.generatedBy', {
+                by: briefing.data.generated_by,
+                when: new Date(briefing.data.generated_at).toLocaleString(),
+              })}
             </p>
           </CardContent>
         )}
@@ -212,18 +246,18 @@ export function AIIdentityIntelligencePage() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <MessageCircleQuestion className="h-5 w-5 text-purple-500" />
-            Ask the Security Copilot
+            {t('pages.identityIntelligence.ask.title')}
           </CardTitle>
           <CardDescription>
             {ai?.enabled
-              ? 'Answers are grounded strictly on the current fused facts and computed by your local model — nothing leaves this deployment.'
-              : 'Requires the local AI provider (AI_ENABLED=true with an on-prem OpenAI-compatible endpoint such as Ollama).'}
+              ? t('pages.identityIntelligence.ask.descEnabled')
+              : t('pages.identityIntelligence.ask.descDisabled')}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="flex gap-2">
             <Input
-              placeholder="e.g. Which identities need attention first, and why?"
+              placeholder={t('pages.identityIntelligence.ask.placeholder')}
               value={question}
               onChange={(e) => setQuestion(e.target.value)}
               onKeyDown={(e) => {
@@ -236,9 +270,10 @@ export function AIIdentityIntelligencePage() {
               disabled={!ai?.enabled || !question.trim() || ask.isPending}
             >
               {ask.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-              Ask
+              {t('pages.identityIntelligence.ask.submit')}
             </Button>
           </div>
+          {/* The answer is the model's own text. */}
           {answer && <p className="whitespace-pre-wrap text-sm p-3 bg-muted rounded-lg">{answer}</p>}
         </CardContent>
       </Card>
@@ -248,22 +283,34 @@ export function AIIdentityIntelligencePage() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <ShieldAlert className="h-5 w-5 text-orange-500" />
-            Highest-Risk Identities
+            {t('pages.identityIntelligence.risks.title')}
           </CardTitle>
           <CardDescription>
-            Fused from login risk, open alerts, MFA enrollment, device trust, breach involvement and overlay anomalies
+            {t('pages.identityIntelligence.risks.desc')}
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
             <Table>
               <TableHeader className="bg-muted">
                 <TableRow>
-                  <TableHead className="text-left p-4 font-medium">User</TableHead>
-                  <TableHead className="text-left p-4 font-medium">Score</TableHead>
-                  <TableHead className="text-left p-4 font-medium">Level</TableHead>
-                  <TableHead className="text-left p-4 font-medium">MFA</TableHead>
-                  <TableHead className="text-left p-4 font-medium">Friction</TableHead>
-                  <TableHead className="text-left p-4 font-medium">Why</TableHead>
+                  <TableHead className="text-left p-4 font-medium">
+                    {t('pages.identityIntelligence.risks.colUser')}
+                  </TableHead>
+                  <TableHead className="text-left p-4 font-medium">
+                    {t('pages.identityIntelligence.risks.colScore')}
+                  </TableHead>
+                  <TableHead className="text-left p-4 font-medium">
+                    {t('pages.identityIntelligence.risks.colLevel')}
+                  </TableHead>
+                  <TableHead className="text-left p-4 font-medium">
+                    {t('pages.identityIntelligence.risks.colMfa')}
+                  </TableHead>
+                  <TableHead className="text-left p-4 font-medium">
+                    {t('pages.identityIntelligence.risks.colFriction')}
+                  </TableHead>
+                  <TableHead className="text-left p-4 font-medium">
+                    {t('pages.identityIntelligence.risks.colWhy')}
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody className="divide-y">
@@ -274,18 +321,29 @@ export function AIIdentityIntelligencePage() {
                     </TableCell>
                     <TableCell className="p-4 font-mono">{u.score}</TableCell>
                     <TableCell className="p-4">
-                      <Badge className={levelBadge(u.level)}>{u.level}</Badge>
+                      <Badge className={levelBadge(u.level)}>
+                        {t(`pages.zitiAiInsights.severities.${u.level}`, {
+                          defaultValue: u.level,
+                        })}
+                      </Badge>
                     </TableCell>
                     <TableCell className="p-4">
                       {u.mfa_enrolled ? (
                         <ShieldCheck className="h-4 w-4 text-green-600" />
                       ) : (
-                        <Badge variant="secondary">none</Badge>
+                        <Badge variant="secondary">
+                          {t('pages.identityIntelligence.risks.noMfa')}
+                        </Badge>
                       )}
                     </TableCell>
                     <TableCell className="p-4">
-                      <Badge variant="secondary">{u.friction}</Badge>
+                      <Badge variant="secondary">
+                        {t(`pages.identityIntelligence.frictions.${u.friction}`, {
+                          defaultValue: u.friction,
+                        })}
+                      </Badge>
                     </TableCell>
+                    {/* Each reason is a phrase the fusion engine composes. */}
                     <TableCell className="p-4 text-sm text-muted-foreground max-w-md">
                       {u.reasons?.length ? u.reasons.join('; ') : '—'}
                     </TableCell>
@@ -294,7 +352,7 @@ export function AIIdentityIntelligencePage() {
                 {(overview?.top_risks || []).length === 0 && (
                   <TableRow>
                     <TableCell colSpan={6} className="p-8 text-center text-muted-foreground">
-                      No identities found
+                      {t('pages.identityIntelligence.risks.empty')}
                     </TableCell>
                   </TableRow>
                 )}

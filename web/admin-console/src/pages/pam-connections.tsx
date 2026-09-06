@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Folder, FolderPlus, Plus, Search, Star, Play, Eye, Trash2, Pencil, Upload,
@@ -28,7 +29,7 @@ import { QueryError } from '../components/query-error'
 import { useRevealedSecret, copyWithWarning } from '../lib/secret-reveal'
 import { TerminalSession } from '../components/remote/terminal-session'
 import { connectionPathSteps } from '../lib/connection-path'
-import { remoteAppArgsLookSecret, REMOTE_APP_SECRET_HINT } from '../lib/remote-app'
+import { remoteAppArgsLookSecret, remoteAppSecretHint } from '../lib/remote-app'
 
 // Random, unguessable key for the single-use /pam-session localStorage handoff.
 // Prefer crypto.randomUUID, but fall back to getRandomValues hex so this still
@@ -71,6 +72,7 @@ const kindBadge: Record<string, string> = {
 // Common RemoteApp publications; picking one pre-fills the alias/args so
 // admins don't have to know Guacamole's parameter names. Aliases must match
 // what the RDS host publishes (New-RDRemoteApp -Alias ...).
+// Product names — deliberately untranslated.
 const remoteAppPresets: { label: string; alias: string; args?: string }[] = [
   { label: 'SQL Server Management Studio', alias: 'SSMS', args: '-E' },
   { label: 'PowerShell', alias: 'PowerShell' },
@@ -86,6 +88,7 @@ const emptyForm: PamEntryInput = {
 }
 
 export function PamConnectionsPage() {
+  const { t } = useTranslation()
   const queryClient = useQueryClient()
   const { toast } = useToast()
 
@@ -205,9 +208,18 @@ export function PamConnectionsPage() {
       setShowEntryDialog(false)
       setForm(emptyForm)
       setEditingId(null)
-      toast({ title: editingId ? 'Entry updated' : 'Entry created' })
+      toast({
+        title: editingId
+          ? t('pages.pamConnections.toasts.entryUpdated')
+          : t('pages.pamConnections.toasts.entryCreated'),
+      })
     },
-    onError: (e: Error) => toast({ title: 'Save failed', description: e.message, variant: 'destructive' }),
+    onError: (e: Error) =>
+      toast({
+        title: t('pages.pamConnections.toasts.saveFailed'),
+        description: e.message,
+        variant: 'destructive',
+      }),
   })
 
   const createFolder = useMutation({
@@ -216,7 +228,7 @@ export function PamConnectionsPage() {
       queryClient.invalidateQueries({ queryKey: ['pam-folders'] })
       setShowFolderDialog(false)
       setFolderName('')
-      toast({ title: 'Folder created' })
+      toast({ title: t('pages.pamConnections.toasts.folderCreated') })
     },
   })
 
@@ -249,20 +261,28 @@ export function PamConnectionsPage() {
         } catch { /* private-mode / quota — window will show the expired card */ }
         window.open('/pam-session?k=' + key, '_blank')
         toast({
-          title: 'Session launched',
+          title: t('pages.pamConnections.toasts.launched'),
           description: res.credential_injected
-            ? 'Credential injected server-side — no password shown.'
+            ? t('pages.pamConnections.toasts.launchedInjected')
             : undefined,
         })
       } else {
-        toast({ title: 'Nothing to launch', variant: 'destructive' })
+        toast({ title: t('pages.pamConnections.toasts.nothingToLaunch'), variant: 'destructive' })
       }
     },
     onError: (e: Error & { status?: number; body?: PamConnectResult }) => {
       if (e.body?.approval_required || /requires approval/i.test(e.message)) {
-        toast({ title: 'Approval required', description: 'Request access, then launch once approved.', variant: 'destructive' })
+        toast({
+          title: t('pages.pamConnections.toasts.approvalRequired'),
+          description: t('pages.pamConnections.toasts.approvalRequiredDesc'),
+          variant: 'destructive',
+        })
       } else {
-        toast({ title: 'Launch failed', description: e.message, variant: 'destructive' })
+        toast({
+          title: t('pages.pamConnections.toasts.launchFailed'),
+          description: e.message,
+          variant: 'destructive',
+        })
       }
     },
   })
@@ -284,7 +304,7 @@ export function PamConnectionsPage() {
     onSuccess: () => {
       invalidate()
       setDeleteEntry(null)
-      toast({ title: 'Entry deleted' })
+      toast({ title: t('pages.pamConnections.toasts.entryDeleted') })
     },
   })
 
@@ -300,19 +320,31 @@ export function PamConnectionsPage() {
     onSuccess: (res: { reach_mode: string }) => {
       invalidate()
       toast({
-        title: res.reach_mode === 'ziti' ? 'Ziti reach enabled' : 'Ziti reach disabled',
+        title: res.reach_mode === 'ziti'
+          ? t('pages.pamConnections.toasts.zitiEnabled')
+          : t('pages.pamConnections.toasts.zitiDisabled'),
         description: res.reach_mode === 'ziti'
-          ? 'This connection now reaches its target over the OpenZiti overlay — no inbound target exposure.'
-          : 'Reverted to direct reach.',
+          ? t('pages.pamConnections.toasts.zitiEnabledDesc')
+          : t('pages.pamConnections.toasts.zitiDisabledDesc'),
       })
     },
-    onError: (e: Error) => toast({ title: 'Ziti toggle failed', description: e.message, variant: 'destructive' }),
+    onError: (e: Error) =>
+      toast({
+        title: t('pages.pamConnections.toasts.zitiFailed'),
+        description: e.message,
+        variant: 'destructive',
+      }),
   })
 
   const reveal = useMutation({
     mutationFn: () => api.pam.reveal(revealFor!.id, revealReason),
     onSuccess: (res: { value: string }) => revealSecret(res.value),
-    onError: (e: Error) => toast({ title: 'Reveal failed', description: e.message, variant: 'destructive' }),
+    onError: (e: Error) =>
+      toast({
+        title: t('pages.pamConnections.toasts.revealFailed'),
+        description: e.message,
+        variant: 'destructive',
+      }),
   })
 
   const requestAccess = useMutation({
@@ -320,7 +352,10 @@ export function PamConnectionsPage() {
     onSuccess: () => {
       setRequestFor(null)
       setRequestReason('')
-      toast({ title: 'Access requested', description: 'An approver will review your request.' })
+      toast({
+        title: t('pages.pamConnections.toasts.accessRequested'),
+        description: t('pages.pamConnections.toasts.accessRequestedDesc'),
+      })
     },
   })
 
@@ -330,9 +365,20 @@ export function PamConnectionsPage() {
       setImportResult(res)
       setImportData('')
       invalidate()
-      toast({ title: 'Import complete', description: `${res.entries_created} entries, ${res.folders_created} folders.` })
+      toast({
+        title: t('pages.pamConnections.toasts.importComplete'),
+        description: t('pages.pamConnections.toasts.importCompleteDesc', {
+          entries: res.entries_created,
+          folders: res.folders_created,
+        }),
+      })
     },
-    onError: (e: Error) => toast({ title: 'Import failed', description: e.message, variant: 'destructive' }),
+    onError: (e: Error) =>
+      toast({
+        title: t('pages.pamConnections.toasts.importFailed'),
+        description: e.message,
+        variant: 'destructive',
+      }),
   })
 
   const openCreate = () => {
@@ -360,22 +406,19 @@ export function PamConnectionsPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Server className="h-6 w-6" /> Connections
+            <Server className="h-6 w-6" /> {t('nav.items.connections')}
           </h1>
-          <p className="text-muted-foreground">
-            Devolutions RDM-style connection manager — launch RDP/SSH/VNC sessions with the
-            credential injected server-side. You never see the password.
-          </p>
+          <p className="text-muted-foreground">{t('pages.pamConnections.subtitle')}</p>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" onClick={() => { setImportResult(null); setShowImport(true) }}>
-            <Upload className="h-4 w-4 mr-1" /> Import from RDM
+            <Upload className="h-4 w-4 mr-1" /> {t('pages.pamConnections.importRdm')}
           </Button>
           <Button variant="outline" onClick={() => setShowFolderDialog(true)}>
-            <FolderPlus className="h-4 w-4 mr-1" /> New Folder
+            <FolderPlus className="h-4 w-4 mr-1" /> {t('pages.pamConnections.newFolder')}
           </Button>
           <Button onClick={openCreate}>
-            <Plus className="h-4 w-4 mr-1" /> New Entry
+            <Plus className="h-4 w-4 mr-1" /> {t('pages.pamConnections.newEntry')}
           </Button>
         </div>
       </div>
@@ -383,13 +426,13 @@ export function PamConnectionsPage() {
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
         {/* Folder tree */}
         <Card className="lg:col-span-1 h-fit">
-          <CardHeader><CardTitle className="text-sm">Folders</CardTitle></CardHeader>
+          <CardHeader><CardTitle className="text-sm">{t('pages.pamConnections.folders')}</CardTitle></CardHeader>
           <CardContent className="space-y-1">
             <button
               className={`w-full text-left px-2 py-1.5 rounded text-sm flex items-center gap-2 ${selectedFolder === null ? 'bg-primary/10 font-medium' : 'hover:bg-muted'}`}
               onClick={() => setSelectedFolder(null)}
             >
-              <Folder className="h-4 w-4" /> All Connections
+              <Folder className="h-4 w-4" /> {t('pages.pamConnections.allConnections')}
             </button>
             {folders.map((f) => (
               <button
@@ -412,7 +455,7 @@ export function PamConnectionsPage() {
               <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
               <Input
                 className="pl-8"
-                placeholder="Search connections, hosts, tags…"
+                placeholder={t('pages.pamConnections.searchPlaceholder')}
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
@@ -421,17 +464,17 @@ export function PamConnectionsPage() {
               variant={favoritesOnly ? 'default' : 'outline'}
               onClick={() => setFavoritesOnly((v) => !v)}
             >
-              <Star className="h-4 w-4 mr-1" /> Favorites
+              <Star className="h-4 w-4 mr-1" /> {t('pages.pamConnections.favorites')}
             </Button>
           </div>
 
           {isLoading ? (
             <div className="flex justify-center py-12"><LoadingSpinner /></div>
           ) : isError ? (
-            <QueryError error={error} resource="connections" />
+            <QueryError error={error} resource={t('pages.pamConnections.resourceName')} />
           ) : entries.length === 0 ? (
             <Card><CardContent className="py-12 text-center text-muted-foreground">
-              No connections yet. Create one, or import your Devolutions RDM export.
+              {t('pages.pamConnections.empty')}
             </CardContent></Card>
           ) : (
             <div className="space-y-2">
@@ -441,7 +484,7 @@ export function PamConnectionsPage() {
                 return (
                   <Card key={entry.id} className="hover:border-primary/40 transition-colors">
                     <CardContent className="flex items-center gap-3 py-3">
-                      <button onClick={() => toggleFavorite.mutate(entry)} title="Favorite">
+                      <button onClick={() => toggleFavorite.mutate(entry)} title={t('pages.pamConnections.badges.favorite')}>
                         <Star className={`h-4 w-4 ${entry.favorite ? 'fill-yellow-400 text-yellow-500' : 'text-muted-foreground'}`} />
                       </button>
                       <Icon className="h-5 w-5 text-muted-foreground shrink-0" />
@@ -449,40 +492,59 @@ export function PamConnectionsPage() {
                         <div className="flex items-center gap-2">
                           <span className="font-medium truncate">{entry.name}</span>
                           <Badge className={kindBadge[entry.kind] || ''}>{entry.entry_type}</Badge>
-                          {entry.require_approval && <Badge variant="outline" title="Requires approval"><Lock className="h-3 w-3" /></Badge>}
-                          {entry.record_session && <Badge variant="outline">rec</Badge>}
+                          {entry.require_approval && <Badge variant="outline" title={t('pages.pamConnections.badges.requiresApproval')}><Lock className="h-3 w-3" /></Badge>}
+                          {entry.record_session && <Badge variant="outline">{t('pages.pamConnections.badges.recording')}</Badge>}
                           {typeof entry.settings['remote-app'] === 'string' && entry.settings['remote-app'] !== '' && (
-                            <Badge variant="outline" title="Launches a single published RemoteApp instead of the full desktop">
-                              app: {String(entry.settings['remote-app']).replace(/^\|\|/, '')}
+                            <Badge
+                              variant="outline"
+                              title={t('pages.pamConnections.badges.remoteAppTitle')}
+                            >
+                              {t('pages.pamConnections.badges.remoteApp', {
+                                alias: String(entry.settings['remote-app']).replace(/^\|\|/, ''),
+                              })}
                             </Badge>
                           )}
-                          {entry.has_secret && <Badge variant="outline" title="Vaulted secret"><KeyRound className="h-3 w-3" /></Badge>}
-                          {entry.ziti_enabled && <Badge className="bg-emerald-100 text-emerald-800" title="Reaches target over the OpenZiti overlay (zero-trust)"><Shield className="h-3 w-3 mr-1" />via Ziti</Badge>}
+                          {entry.has_secret && <Badge variant="outline" title={t('pages.pamConnections.badges.vaultedSecret')}><KeyRound className="h-3 w-3" /></Badge>}
+                          {entry.ziti_enabled && <Badge className="bg-emerald-100 text-emerald-800" title={t('pages.pamConnections.badges.zitiTitle')}><Shield className="h-3 w-3 mr-1" />{t('pages.pamConnections.badges.ziti')}</Badge>}
                           {entry.kind === 'credential' && (credentialUsage.get(entry.id)?.length ?? 0) > 0 && (
-                            <Badge variant="outline" title={`Injected into: ${credentialUsage.get(entry.id)!.join(', ')}`}>
-                              used by {credentialUsage.get(entry.id)!.length}
+                            <Badge
+                              variant="outline"
+                              title={t('pages.pamConnections.badges.usedByTitle', {
+                                names: credentialUsage.get(entry.id)!.join(', '),
+                              })}
+                            >
+                              {t('pages.pamConnections.badges.usedBy', {
+                                count: credentialUsage.get(entry.id)!.length,
+                              })}
                             </Badge>
                           )}
                         </div>
                         <div className="text-xs text-muted-foreground truncate">
                           {entry.hostname && <span>{entry.username ? `${entry.username}@` : ''}{entry.hostname}{entry.port ? `:${entry.port}` : ''}</span>}
                           {entry.url && <span>{entry.url}</span>}
-                          {entry.credential_entry_name && <span> · linked credential: {entry.credential_entry_name}</span>}
+                          {entry.credential_entry_name && (
+                            <span>
+                              {' · '}
+                              {t('pages.pamConnections.badges.linkedCredential', {
+                                name: entry.credential_entry_name,
+                              })}
+                            </span>
+                          )}
                         </div>
                       </div>
                       <div className="flex items-center gap-1 shrink-0">
                         {launchable && (
                           <Button size="sm" onClick={() => launch(entry)} disabled={connect.isPending}>
-                            <Play className="h-4 w-4 mr-1" /> Connect
+                            <Play className="h-4 w-4 mr-1" /> {t('pages.pamConnections.actions.connect')}
                           </Button>
                         )}
                         {entry.require_approval && (
-                          <Button size="sm" variant="outline" onClick={() => { setRequestFor(entry); setRequestReason('') }} title="Request access">
+                          <Button size="sm" variant="outline" onClick={() => { setRequestFor(entry); setRequestReason('') }} title={t('pages.pamConnections.actions.requestAccess')}>
                             <Send className="h-4 w-4" />
                           </Button>
                         )}
                         {entry.has_secret && entry.allow_reveal && (
-                          <Button size="sm" variant="outline" onClick={() => { setRevealFor(entry); setRevealReason(''); clearRevealed() }} title="Reveal secret">
+                          <Button size="sm" variant="outline" onClick={() => { setRevealFor(entry); setRevealReason(''); clearRevealed() }} title={t('pages.pamConnections.actions.revealSecret')}>
                             <Eye className="h-4 w-4" />
                           </Button>
                         )}
@@ -492,20 +554,22 @@ export function PamConnectionsPage() {
                             variant={entry.ziti_enabled ? 'default' : 'outline'}
                             onClick={() => toggleZiti.mutate(entry)}
                             disabled={toggleZiti.isPending}
-                            title={entry.ziti_enabled ? 'Disable Ziti reach (revert to direct)' : 'Enable Ziti reach (zero-trust overlay to target)'}
+                            title={entry.ziti_enabled
+                              ? t('pages.pamConnections.actions.zitiDisable')
+                              : t('pages.pamConnections.actions.zitiEnable')}
                           >
                             <Shield className="h-4 w-4" />
                           </Button>
                         )}
                         {launchable && (
-                          <Button size="sm" variant="ghost" onClick={() => setPathEntry(entry)} title="Launch path">
+                          <Button size="sm" variant="ghost" onClick={() => setPathEntry(entry)} title={t('pages.pamConnections.actions.launchPath')}>
                             <Route className="h-4 w-4" />
                           </Button>
                         )}
-                        <Button size="sm" variant="ghost" onClick={() => openEdit(entry)} title="Edit">
+                        <Button size="sm" variant="ghost" onClick={() => openEdit(entry)} title={t('pages.pamConnections.actions.edit')}>
                           <Pencil className="h-4 w-4" />
                         </Button>
-                        <Button size="sm" variant="ghost" onClick={() => setDeleteEntry(entry)} title="Delete">
+                        <Button size="sm" variant="ghost" onClick={() => setDeleteEntry(entry)} title={t('pages.pamConnections.actions.delete')}>
                           <Trash2 className="h-4 w-4 text-destructive" />
                         </Button>
                       </div>
@@ -521,13 +585,19 @@ export function PamConnectionsPage() {
       {/* Entry create/edit dialog */}
       <Dialog open={showEntryDialog} onOpenChange={setShowEntryDialog}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader><DialogTitle>{editingId ? 'Edit Entry' : 'New Entry'}</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>
+              {editingId
+                ? t('pages.pamConnections.entryDialog.editTitle')
+                : t('pages.pamConnections.entryDialog.createTitle')}
+            </DialogTitle>
+          </DialogHeader>
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="text-sm font-medium">Type</label>
+                <label htmlFor="pam-connections-type" className="text-sm font-medium">{t('pages.pamConnections.entryDialog.type')}</label>
                 <Select value={form.entry_type} onValueChange={(v) => setForm((f) => ({ ...f, entry_type: v }))} disabled={!!editingId}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger id="pam-connections-type"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {entryTypes.map((t) => (
                       <SelectItem key={t.type} value={t.type}>{t.label}</SelectItem>
@@ -536,40 +606,40 @@ export function PamConnectionsPage() {
                 </Select>
               </div>
               <div>
-                <label className="text-sm font-medium">Name</label>
-                <Input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} placeholder="DC01 – Domain Controller" />
+                <label className="text-sm font-medium">{t('pages.pamConnections.entryDialog.name')}</label>
+                <Input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} placeholder={t('pages.pamConnections.entryDialog.namePlaceholder')} />
               </div>
             </div>
 
             {selectedType?.protocol && (
               <div className="grid grid-cols-3 gap-4">
                 <div className="col-span-2">
-                  <label className="text-sm font-medium">Hostname</label>
-                  <Input value={form.hostname} onChange={(e) => setForm((f) => ({ ...f, hostname: e.target.value }))} placeholder="dc01.corp.local" />
+                  <label className="text-sm font-medium">{t('pages.pamConnections.entryDialog.hostname')}</label>
+                  <Input value={form.hostname} onChange={(e) => setForm((f) => ({ ...f, hostname: e.target.value }))} placeholder={t('pages.pamConnections.entryDialog.hostnamePlaceholder')} />
                 </div>
                 <div>
-                  <label className="text-sm font-medium">Port</label>
-                  <Input type="number" value={form.port || ''} onChange={(e) => setForm((f) => ({ ...f, port: Number(e.target.value) }))} placeholder="auto" />
+                  <label className="text-sm font-medium">{t('pages.pamConnections.entryDialog.port')}</label>
+                  <Input type="number" value={form.port || ''} onChange={(e) => setForm((f) => ({ ...f, port: Number(e.target.value) }))} placeholder={t('pages.pamConnections.entryDialog.portPlaceholder')} />
                 </div>
               </div>
             )}
 
             {form.entry_type === 'website' && (
               <div>
-                <label className="text-sm font-medium">URL</label>
+                <label className="text-sm font-medium">{t('pages.pamConnections.entryDialog.url')}</label>
                 <Input value={form.url} onChange={(e) => setForm((f) => ({ ...f, url: e.target.value }))} placeholder="https://portal.corp" />
               </div>
             )}
 
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="text-sm font-medium">Username</label>
-                <Input value={form.username} onChange={(e) => setForm((f) => ({ ...f, username: e.target.value }))} placeholder="administrator" />
+                <label className="text-sm font-medium">{t('pages.pamConnections.entryDialog.username')}</label>
+                <Input value={form.username} onChange={(e) => setForm((f) => ({ ...f, username: e.target.value }))} placeholder={t('pages.pamConnections.entryDialog.usernamePlaceholder')} />
               </div>
               {form.entry_type === 'rdp' && (
                 <div>
-                  <label className="text-sm font-medium">Domain</label>
-                  <Input value={form.domain} onChange={(e) => setForm((f) => ({ ...f, domain: e.target.value }))} placeholder="CORP" />
+                  <label className="text-sm font-medium">{t('pages.pamConnections.entryDialog.domain')}</label>
+                  <Input value={form.domain} onChange={(e) => setForm((f) => ({ ...f, domain: e.target.value }))} placeholder={t('pages.pamConnections.entryDialog.domainPlaceholder')} />
                 </div>
               )}
             </div>
@@ -577,36 +647,34 @@ export function PamConnectionsPage() {
             {form.entry_type === 'rdp' && (
               <div className="rounded-md border p-3 space-y-3">
                 <div>
-                  <label className="text-sm font-medium">Security mode</label>
+                  <label className="text-sm font-medium">{t('pages.pamConnections.entryDialog.securityMode')}</label>
                   <p className="text-xs text-muted-foreground">
-                    RDP security negotiation. Default is NLA (most secure). If the target
-                    refuses with &quot;wrong security type&quot;, pick <strong>Any</strong> so
-                    guacd negotiates whatever the server accepts.
+                    {t('pages.pamConnections.entryDialog.securityHintBefore')}
+                    <strong>{t('pages.pamConnections.entryDialog.securityHintStrong')}</strong>
+                    {t('pages.pamConnections.entryDialog.securityHintAfter')}
                   </p>
                   <Select
                     value={settingStr('security') || 'default'}
                     onValueChange={(v) => setSetting('security', v === 'default' ? '' : v)}
                   >
-                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectTrigger aria-label={t('pages.pamConnections.entryDialog.securityModeLabel')}><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="default">Default (NLA)</SelectItem>
-                      <SelectItem value="any">Any (most compatible)</SelectItem>
+                      <SelectItem value="default">{t('pages.pamConnections.entryDialog.securityDefault')}</SelectItem>
+                      <SelectItem value="any">{t('pages.pamConnections.entryDialog.securityAny')}</SelectItem>
                       <SelectItem value="nla">NLA</SelectItem>
                       <SelectItem value="tls">TLS</SelectItem>
-                      <SelectItem value="rdp">Standard RDP</SelectItem>
+                      <SelectItem value="rdp">{t('pages.pamConnections.entryDialog.securityStandard')}</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
                 <div>
-                  <p className="text-sm font-medium">RemoteApp (optional)</p>
+                  <p className="text-sm font-medium">{t('pages.pamConnections.entryDialog.remoteAppTitle')}</p>
                   <p className="text-xs text-muted-foreground">
-                    Publish a single application (e.g. SSMS) instead of the full desktop.
-                    Requires the program to be published as a RemoteApp on the RDS host.
-                    Credentials stay vault-injected; recording and approval work as usual.
+                    {t('pages.pamConnections.entryDialog.remoteAppHint')}
                   </p>
                 </div>
                 <div>
-                  <label className="text-sm font-medium">Preset</label>
+                  <label className="text-sm font-medium">{t('pages.pamConnections.entryDialog.preset')}</label>
                   <Select
                     value="custom"
                     onValueChange={(v) => {
@@ -622,9 +690,11 @@ export function PamConnectionsPage() {
                       }))
                     }}
                   >
-                    <SelectTrigger><SelectValue placeholder="Pick a common app…" /></SelectTrigger>
+                    <SelectTrigger aria-label={t('pages.pamConnections.entryDialog.presetPlaceholder')}>
+                      <SelectValue placeholder={t('pages.pamConnections.entryDialog.presetPlaceholder')} />
+                    </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="custom">Custom…</SelectItem>
+                      <SelectItem value="custom">{t('pages.pamConnections.entryDialog.presetCustom')}</SelectItem>
                       {remoteAppPresets.map((p) => (
                         <SelectItem key={p.alias} value={p.alias}>{p.label}</SelectItem>
                       ))}
@@ -633,7 +703,7 @@ export function PamConnectionsPage() {
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="text-sm font-medium">Program alias</label>
+                    <label className="text-sm font-medium">{t('pages.pamConnections.entryDialog.programAlias')}</label>
                     <Input
                       value={settingStr('remote-app').replace(/^\|\|/, '')}
                       onChange={(e) => setRemoteAppAlias(e.target.value)}
@@ -641,7 +711,7 @@ export function PamConnectionsPage() {
                     />
                   </div>
                   <div>
-                    <label className="text-sm font-medium">Working directory</label>
+                    <label className="text-sm font-medium">{t('pages.pamConnections.entryDialog.workingDirectory')}</label>
                     <Input
                       value={settingStr('remote-app-dir')}
                       onChange={(e) => setSetting('remote-app-dir', e.target.value)}
@@ -650,7 +720,7 @@ export function PamConnectionsPage() {
                   </div>
                 </div>
                 <div>
-                  <label className="text-sm font-medium">Command-line arguments</label>
+                  <label className="text-sm font-medium">{t('pages.pamConnections.entryDialog.args')}</label>
                   <Input
                     value={settingStr('remote-app-args')}
                     onChange={(e) => setSetting('remote-app-args', e.target.value)}
@@ -661,7 +731,7 @@ export function PamConnectionsPage() {
                   {remoteAppArgsLookSecret(settingStr('remote-app-args')) && (
                     <p className="mt-1 flex items-start gap-1.5 text-xs text-destructive">
                       <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px" />
-                      <span>{REMOTE_APP_SECRET_HINT}</span>
+                      <span>{remoteAppSecretHint()}</span>
                     </p>
                   )}
                 </div>
@@ -671,14 +741,16 @@ export function PamConnectionsPage() {
             {/* Credential: own secret or linked credential entry */}
             {selectedType?.kind === 'session' && credentialEntries.length > 0 && (
               <div>
-                <label className="text-sm font-medium">Linked credential (optional)</label>
+                <label htmlFor="pam-connections-linked-credential" className="text-sm font-medium">{t('pages.pamConnections.entryDialog.linkedCredential')}</label>
                 <Select
                   value={form.credential_entry_id || 'none'}
                   onValueChange={(v) => setForm((f) => ({ ...f, credential_entry_id: v === 'none' ? '' : v }))}
                 >
-                  <SelectTrigger><SelectValue placeholder="Use this entry's own secret" /></SelectTrigger>
+                  <SelectTrigger id="pam-connections-linked-credential">
+                    <SelectValue placeholder={t('pages.pamConnections.entryDialog.ownSecret')} />
+                  </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="none">Use this entry's own secret</SelectItem>
+                    <SelectItem value="none">{t('pages.pamConnections.entryDialog.ownSecret')}</SelectItem>
                     {credentialEntries.map((c) => (
                       <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
                     ))}
@@ -690,34 +762,35 @@ export function PamConnectionsPage() {
             {!form.credential_entry_id && (
               <div>
                 <label className="text-sm font-medium">
-                  {selectedType?.secret_label || 'Secret'}{editingId ? ' (leave blank to keep current)' : ''}
+                  {selectedType?.secret_label || t('pages.pamConnections.entryDialog.secret')}
+                  {editingId ? t('pages.pamConnections.entryDialog.secretKeepCurrent') : ''}
                 </label>
                 <Textarea
                   value={form.secret}
                   onChange={(e) => setForm((f) => ({ ...f, secret: e.target.value }))}
-                  placeholder="Stored envelope-encrypted in the vault; injected server-side at connect time."
+                  placeholder={t('pages.pamConnections.entryDialog.secretPlaceholder')}
                   rows={form.entry_type === 'ssh_key' ? 4 : 2}
                 />
               </div>
             )}
 
             <div>
-              <label className="text-sm font-medium">Description</label>
-              <Input value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} />
+              <label htmlFor="pam-connections-description" className="text-sm font-medium">{t('pages.pamConnections.entryDialog.description')}</label>
+              <Input id="pam-connections-description" value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} />
             </div>
 
             <div className="flex flex-wrap gap-4 pt-2">
               <label className="flex items-center gap-2 text-sm">
                 <Checkbox checked={form.allow_reveal} onCheckedChange={(v) => setForm((f) => ({ ...f, allow_reveal: !!v }))} />
-                Allow password reveal
+                {t('pages.pamConnections.entryDialog.allowReveal')}
               </label>
               <label className="flex items-center gap-2 text-sm">
                 <Checkbox checked={form.require_approval} onCheckedChange={(v) => setForm((f) => ({ ...f, require_approval: !!v }))} />
-                Require approval to connect
+                {t('pages.pamConnections.entryDialog.requireApproval')}
               </label>
               <label className="flex items-center gap-2 text-sm">
                 <Checkbox checked={form.record_session} onCheckedChange={(v) => setForm((f) => ({ ...f, record_session: !!v }))} />
-                Record session
+                {t('pages.pamConnections.entryDialog.recordSession')}
               </label>
             </div>
             {selectedType?.protocol === 'ssh' && (
@@ -726,17 +799,21 @@ export function PamConnectionsPage() {
                   checked={form.renderer === 'wasm-ssh'}
                   onCheckedChange={(v) => setForm((f) => ({ ...f, renderer: v ? 'wasm-ssh' : 'guacamole' }))}
                 />
-                Open in browser terminal (clientless SSH, no Guacamole tab)
+                {t('pages.pamConnections.entryDialog.browserTerminal')}
               </label>
             )}
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowEntryDialog(false)}>Cancel</Button>
+            <Button variant="outline" onClick={() => setShowEntryDialog(false)}>
+              {t('common.cancel')}
+            </Button>
             <Button
               onClick={() => saveEntry.mutate()}
               disabled={saveEntry.isPending || !form.name || remoteAppArgsLookSecret(settingStr('remote-app-args'))}
             >
-              {editingId ? 'Save' : 'Create'}
+              {editingId
+                ? t('pages.pamConnections.entryDialog.save')
+                : t('pages.pamConnections.entryDialog.create')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -745,7 +822,11 @@ export function PamConnectionsPage() {
       {/* Connection path explainer: the launch chain with this entry's real config */}
       <Dialog open={!!pathEntry} onOpenChange={(o) => { if (!o) setPathEntry(null) }}>
         <DialogContent className="max-w-md">
-          <DialogHeader><DialogTitle>How “{pathEntry?.name}” connects</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>
+              {t('pages.pamConnections.pathDialog.title', { name: pathEntry?.name ?? '' })}
+            </DialogTitle>
+          </DialogHeader>
           {pathEntry && (
             <div>
               {connectionPathSteps(pathEntry).map((step, i, arr) => {
@@ -773,12 +854,14 @@ export function PamConnectionsPage() {
       {/* New folder dialog */}
       <Dialog open={showFolderDialog} onOpenChange={setShowFolderDialog}>
         <DialogContent>
-          <DialogHeader><DialogTitle>New Folder</DialogTitle></DialogHeader>
-          <Input value={folderName} onChange={(e) => setFolderName(e.target.value)} placeholder="Folder name" />
-          {selectedFolder && <p className="text-xs text-muted-foreground">Created under the selected folder.</p>}
+          <DialogHeader><DialogTitle>{t('pages.pamConnections.folderDialog.title')}</DialogTitle></DialogHeader>
+          <Input value={folderName} onChange={(e) => setFolderName(e.target.value)} placeholder={t('pages.pamConnections.folderDialog.placeholder')} />
+          {selectedFolder && <p className="text-xs text-muted-foreground">{t('pages.pamConnections.folderDialog.underSelected')}</p>}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowFolderDialog(false)}>Cancel</Button>
-            <Button onClick={() => createFolder.mutate()} disabled={!folderName || createFolder.isPending}>Create</Button>
+            <Button variant="outline" onClick={() => setShowFolderDialog(false)}>{t('common.cancel')}</Button>
+            <Button onClick={() => createFolder.mutate()} disabled={!folderName || createFolder.isPending}>
+              {t('pages.pamConnections.folderDialog.create')}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -786,14 +869,14 @@ export function PamConnectionsPage() {
       {/* RDM import dialog */}
       <Dialog open={showImport} onOpenChange={setShowImport}>
         <DialogContent className="max-w-2xl">
-          <DialogHeader><DialogTitle>Import from Devolutions RDM</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{t('pages.pamConnections.importDialog.title')}</DialogTitle></DialogHeader>
           {importResult ? (
             <div className="space-y-3">
-              <div className="flex items-center gap-2 text-green-600"><ShieldCheck className="h-5 w-5" /> Import complete</div>
+              <div className="flex items-center gap-2 text-green-600"><ShieldCheck className="h-5 w-5" /> {t('pages.pamConnections.importDialog.complete')}</div>
               <div className="grid grid-cols-3 gap-3 text-center">
-                <Card><CardContent className="py-3"><div className="text-2xl font-bold">{importResult.entries_created}</div><div className="text-xs text-muted-foreground">Entries</div></CardContent></Card>
-                <Card><CardContent className="py-3"><div className="text-2xl font-bold">{importResult.folders_created}</div><div className="text-xs text-muted-foreground">Folders</div></CardContent></Card>
-                <Card><CardContent className="py-3"><div className="text-2xl font-bold">{importResult.secrets_stored}</div><div className="text-xs text-muted-foreground">Secrets vaulted</div></CardContent></Card>
+                <Card><CardContent className="py-3"><div className="text-2xl font-bold">{importResult.entries_created}</div><div className="text-xs text-muted-foreground">{t('pages.pamConnections.importDialog.entries')}</div></CardContent></Card>
+                <Card><CardContent className="py-3"><div className="text-2xl font-bold">{importResult.folders_created}</div><div className="text-xs text-muted-foreground">{t('pages.pamConnections.importDialog.folders')}</div></CardContent></Card>
+                <Card><CardContent className="py-3"><div className="text-2xl font-bold">{importResult.secrets_stored}</div><div className="text-xs text-muted-foreground">{t('pages.pamConnections.importDialog.secrets')}</div></CardContent></Card>
               </div>
               {Object.keys(importResult.by_type).length > 0 && (
                 <div className="flex flex-wrap gap-2">
@@ -804,19 +887,25 @@ export function PamConnectionsPage() {
               )}
               {importResult.skipped.length > 0 && (
                 <div className="text-xs text-muted-foreground">
-                  {importResult.skipped.length} skipped: {importResult.skipped.slice(0, 5).map((s) => s.name).join(', ')}
+                  {t('pages.pamConnections.importDialog.skipped', {
+                    count: importResult.skipped.length,
+                    names: importResult.skipped.slice(0, 5).map((s) => s.name).join(', '),
+                  })}
                   {importResult.skipped.length > 5 ? '…' : ''}
                 </div>
               )}
               <DialogFooter>
-                <Button onClick={() => setShowImport(false)}>Done</Button>
+                <Button onClick={() => setShowImport(false)}>{t('pages.pamConnections.importDialog.done')}</Button>
               </DialogFooter>
             </div>
           ) : (
             <div className="space-y-3">
               <p className="text-sm text-muted-foreground">
-                In RDM: <strong>File → Export</strong> → choose <strong>.json</strong>. Paste the export below.
-                Groups become folders, sessions/credentials become entries, and passwords are sealed into the vault.
+                {t('pages.pamConnections.importDialog.instructionsBefore')}
+                <strong>{t('pages.pamConnections.importDialog.instructionsExport')}</strong>
+                {t('pages.pamConnections.importDialog.instructionsMiddle')}
+                <strong>{t('pages.pamConnections.importDialog.instructionsFormat')}</strong>
+                {t('pages.pamConnections.importDialog.instructionsAfter')}
               </p>
               <Textarea
                 value={importData}
@@ -826,9 +915,9 @@ export function PamConnectionsPage() {
                 className="font-mono text-xs"
               />
               <DialogFooter>
-                <Button variant="outline" onClick={() => setShowImport(false)}>Cancel</Button>
+                <Button variant="outline" onClick={() => setShowImport(false)}>{t('common.cancel')}</Button>
                 <Button onClick={() => runImport.mutate()} disabled={!importData || runImport.isPending}>
-                  <Upload className="h-4 w-4 mr-1" /> Import
+                  <Upload className="h-4 w-4 mr-1" /> {t('pages.pamConnections.importDialog.submit')}
                 </Button>
               </DialogFooter>
             </div>
@@ -839,35 +928,45 @@ export function PamConnectionsPage() {
       {/* Reveal dialog */}
       <Dialog open={!!revealFor} onOpenChange={(o) => { if (!o) { clearRevealed(); setRevealFor(null) } }}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Reveal secret — {revealFor?.name}</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>
+              {t('pages.pamConnections.revealDialog.title', { name: revealFor?.name ?? '' })}
+            </DialogTitle>
+          </DialogHeader>
           {revealedValue === null ? (
             <div className="space-y-3">
-              <p className="text-sm text-muted-foreground">Revealing is audited and reason-stamped.</p>
-              <Textarea value={revealReason} onChange={(e) => setRevealReason(e.target.value)} placeholder="Reason for reveal (required)" rows={2} />
+              <p className="text-sm text-muted-foreground">{t('pages.pamConnections.revealDialog.audited')}</p>
+              <Textarea value={revealReason} onChange={(e) => setRevealReason(e.target.value)} placeholder={t('pages.pamConnections.revealDialog.reasonPlaceholder')} rows={2} />
               <DialogFooter>
-                <Button variant="outline" onClick={() => { clearRevealed(); setRevealFor(null) }}>Cancel</Button>
+                <Button variant="outline" onClick={() => { clearRevealed(); setRevealFor(null) }}>
+                  {t('common.cancel')}
+                </Button>
                 <Button onClick={() => reveal.mutate()} disabled={!revealReason || reveal.isPending}>
-                  <Eye className="h-4 w-4 mr-1" /> Reveal
+                  <Eye className="h-4 w-4 mr-1" /> {t('pages.pamConnections.revealDialog.submit')}
                 </Button>
               </DialogFooter>
             </div>
           ) : (
             <div className="space-y-3">
               <div className="flex items-center gap-2">
-                <Input readOnly value={revealedValue} className="font-mono" />
+                <Input aria-label={t('common.revealedValue')} readOnly value={revealedValue} className="font-mono" />
                 <Button size="sm" variant="outline" onClick={async () => {
                   const ok = await copyWithWarning(revealedValue)
                   if (ok) {
-                    toast({ title: 'Copied', description: 'The clipboard may retain this value — clear it when done.' })
+                    toast({ title: t('common.copied'), description: t('pages.pamConnections.toasts.copied') })
                   } else {
-                    toast({ title: 'Copy failed', description: 'Clipboard unavailable — copy the value manually.', variant: 'destructive' })
+                    toast({
+                      title: t('pages.pamConnections.toasts.copyFailedTitle'),
+                      description: t('pages.pamConnections.toasts.copyFailed'),
+                      variant: 'destructive',
+                    })
                   }
                 }}>
                   <Copy className="h-4 w-4" />
                 </Button>
               </div>
               <DialogFooter>
-                <Button onClick={() => { clearRevealed(); setRevealFor(null) }}>Close</Button>
+                <Button onClick={() => { clearRevealed(); setRevealFor(null) }}>{t('common.close')}</Button>
               </DialogFooter>
             </div>
           )}
@@ -877,12 +976,16 @@ export function PamConnectionsPage() {
       {/* Request access dialog */}
       <Dialog open={!!requestFor} onOpenChange={(o) => { if (!o) setRequestFor(null) }}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Request access — {requestFor?.name}</DialogTitle></DialogHeader>
-          <Textarea value={requestReason} onChange={(e) => setRequestReason(e.target.value)} placeholder="Why do you need this session? (optional)" rows={3} />
+          <DialogHeader>
+            <DialogTitle>
+              {t('pages.pamConnections.requestDialog.title', { name: requestFor?.name ?? '' })}
+            </DialogTitle>
+          </DialogHeader>
+          <Textarea value={requestReason} onChange={(e) => setRequestReason(e.target.value)} placeholder={t('pages.pamConnections.requestDialog.reasonPlaceholder')} rows={3} />
           <DialogFooter>
-            <Button variant="outline" onClick={() => setRequestFor(null)}>Cancel</Button>
+            <Button variant="outline" onClick={() => setRequestFor(null)}>{t('common.cancel')}</Button>
             <Button onClick={() => requestAccess.mutate()} disabled={requestAccess.isPending}>
-              <Send className="h-4 w-4 mr-1" /> Request
+              <Send className="h-4 w-4 mr-1" /> {t('pages.pamConnections.requestDialog.submit')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -892,14 +995,18 @@ export function PamConnectionsPage() {
       <AlertDialog open={!!deleteEntry} onOpenChange={(o) => { if (!o) setDeleteEntry(null) }}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete “{deleteEntry?.name}”?</AlertDialogTitle>
+            <AlertDialogTitle>
+              {t('pages.pamConnections.confirmDelete.title', { name: deleteEntry?.name ?? '' })}
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              The vaulted secret is cryptographically erased and the brokered connection removed. This cannot be undone.
+              {t('pages.pamConnections.confirmDelete.description')}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => deleteEntry && del.mutate(deleteEntry.id)}>Delete</AlertDialogAction>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+            <AlertDialogAction onClick={() => deleteEntry && del.mutate(deleteEntry.id)}>
+              {t('common.delete')}
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

@@ -305,12 +305,16 @@ func (s *Service) handleCallbackWithIDP(c *gin.Context, idpID, idpIssuer, verifi
 		"UPDATE proxy_sessions SET idp_id=$1 WHERE id=$2 AND org_id=$3", idpID, session.ID, org.ID)
 
 	// Set session cookie with SameSite=Lax for CSRF protection
+	// The Secure flag is computed, not a literal, so the scanner cannot see it;
+	// sessionCookieSecure (session_cookie.go) sets it from the request's real
+	// transport and is covered by session_cookie_test.go.
+	// nosemgrep: go.lang.security.audit.net.cookie-missing-secure.cookie-missing-secure
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     "_openidx_proxy_session",
 		Value:    session.SessionToken,
 		MaxAge:   session.AbsoluteTimeout(),
 		Path:     "/",
-		Secure:   s.config.IsProduction(),
+		Secure:   sessionCookieSecure(c, s.config),
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 	})

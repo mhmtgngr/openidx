@@ -28,6 +28,8 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 // DevicePostureSummary is one posture check's latest result for an agent.
@@ -99,7 +101,7 @@ func (s *Service) handleUserDevices(c *gin.Context) {
 	devices, err := s.collectUserDevices(ctx, org.ID, userID)
 	if err != nil {
 		s.logger.Error("handleUserDevices: aggregation failed",
-			zap.String("user_id", scrubLogValue(userID)), zap.Error(err))
+			zap.String("user_id", logsafe.Clean(userID)), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to correlate devices"})
 		return
 	}
@@ -132,7 +134,7 @@ func (s *Service) handleMyDevices(c *gin.Context) {
 	devices, err := s.collectUserDevices(ctx, org.ID, userID)
 	if err != nil {
 		s.logger.Error("handleMyDevices: aggregation failed",
-			zap.String("user_id", scrubLogValue(userID)), zap.Error(err))
+			zap.String("user_id", logsafe.Clean(userID)), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to correlate devices"})
 		return
 	}
@@ -331,7 +333,7 @@ func (s *Service) handleRevokeUserDevice(c *gin.Context) {
 	if zm := s.ziti(); zm != nil {
 		if err := zm.SyncDeviceTrustForUser(ctx, userID); err != nil {
 			s.logger.Warn("device revoke: device-trust attribute resync failed",
-				zap.String("user_id", scrubLogValue(userID)), zap.Error(err))
+				zap.String("user_id", logsafe.Clean(userID)), zap.Error(err))
 		}
 	}
 
@@ -362,7 +364,7 @@ func (s *Service) handleRevokeUserDevice(c *gin.Context) {
 // each pillar failing is a warning, never aborts the rest.
 func (s *Service) executeDeviceRevoke(ctx context.Context, orgID, agentID, zitiIdentityID, knownDeviceID string) *DeviceRevokeResult {
 	res := &DeviceRevokeResult{AgentID: agentID, ExecutedAt: time.Now().UTC()}
-	safeAgentID := scrubLogValue(agentID)
+	safeAgentID := logsafe.Clean(agentID)
 	warn := func(step string, err error) {
 		s.logger.Warn("device revoke: step failed",
 			zap.String("step", step), zap.String("agent_id", safeAgentID), zap.Error(err))

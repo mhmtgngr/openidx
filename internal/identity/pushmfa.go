@@ -11,13 +11,22 @@ import (
 	"io"
 	"math/big"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
+
+// ntfyDeviceTokenPrefix marks a device token minted by the native client for
+// the self-hosted ntfy transport rather than by a push provider. The client
+// ships no Firebase/APNs SDK (see client/lib/mobile/push_token_service.dart),
+// so its token is a stable synthetic id used only to identify the device row.
+const ntfyDeviceTokenPrefix = "ntfy:"
 
 // PushMFADevice represents a registered push notification device
 type PushMFADevice struct {
@@ -339,7 +348,7 @@ func (s *Service) VerifyPushMFAChallenge(ctx context.Context, response *PushMFAC
 		s.logger.Warn("Push MFA challenge reported as suspicious by user",
 			zap.String("challenge_id", challenge.ID),
 			zap.String("user_id", challenge.UserID),
-			zap.String("ip_address", scrubLogValue(challenge.IPAddress)),
+			zap.String("ip_address", logsafe.Clean(challenge.IPAddress)),
 			zap.String("location", challenge.Location))
 	}
 
@@ -637,6 +646,20 @@ func (s *Service) sendPushNotification(ctx context.Context, device *PushMFADevic
 	if s.cfg.PushMFA.AutoApprove {
 		s.logger.Info("Auto-approving push challenge (development mode)",
 			zap.String("challenge_id", challenge.ID))
+		return nil
+	}
+
+	// The native client registers a synthetic `ntfy:<id>` token: it does not ship
+	// a Firebase/APNs SDK, so it has no provider token to give, and delivery for
+	// that device happens over the per-user ntfy topic published below. Handing
+	// the synthetic id to FCM/APNs would fail on every single challenge (an
+	// INVALID_ARGUMENT that is not UNREGISTERED, so it is not even pruned) and
+	// bury the real provider errors under noise. Skip the provider hop and let
+	// ntfy carry it.
+	if strings.HasPrefix(device.DeviceToken, ntfyDeviceTokenPrefix) {
+		s.logger.Debug("push device uses the ntfy transport; skipping provider send",
+			zap.String("device_id", device.ID),
+			zap.String("platform", device.Platform))
 		return nil
 	}
 

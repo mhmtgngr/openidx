@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { AlertTriangle } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { useGuacSessionPhase } from '../components/remote/guac-session-viewer'
+import i18n from '../i18n'
 
 /**
  * Standalone, chrome-less window that hosts ONE Apache Guacamole session.
@@ -49,7 +51,16 @@ export function consumeHandoff(key: string): Handoff | null {
   try {
     const parsed = JSON.parse(raw) as Partial<Handoff>
     if (typeof parsed?.url === 'string' && parsed.url) {
-      return { url: parsed.url, title: typeof parsed.title === 'string' ? parsed.title : 'Session' }
+      return {
+        url: parsed.url,
+        // The opener normally supplies the connection's own name; the
+        // fallback goes through the singleton because this runs outside a
+        // component (it is the window title, set before first render).
+        title:
+          typeof parsed.title === 'string'
+            ? parsed.title
+            : i18n.t('pages.pamSessionWindow.defaultTitle'),
+      }
     }
   } catch {
     // fall through to null
@@ -58,6 +69,7 @@ export function consumeHandoff(key: string): Handoff | null {
 }
 
 export function PamSessionWindow() {
+  const { t } = useTranslation()
   const [params] = useSearchParams()
   const key = params.get('k') ?? ''
 
@@ -78,8 +90,8 @@ export function PamSessionWindow() {
   if (!handoff) {
     return (
       <SessionCard
-        heading="This session link has expired"
-        body="Launch it again from the Connections console to start a new session."
+        heading={t('pages.pamSessionWindow.expiredHeading')}
+        body={t('pages.pamSessionWindow.expiredBody')}
       />
     )
   }
@@ -90,6 +102,7 @@ export function PamSessionWindow() {
     <div className="fixed inset-0 flex flex-col bg-black">
       <div className="flex items-center justify-between px-3 py-2 border-b bg-muted/40 shrink-0">
         <div className="flex items-center gap-2 text-sm min-w-0">
+          {/* The connection's own name, as the launch supplied it. */}
           <span className="font-medium truncate">{handoff.title}</span>
           <span
             className={
@@ -100,14 +113,14 @@ export function PamSessionWindow() {
                   : 'text-muted-foreground'
             }
           >
-            ● {phase === 'active' ? 'connected' : phase === 'loading' ? 'connecting' : phase}
+            ● {t(`pages.pamSessionWindow.phases.${phase}`, { defaultValue: phase })}
           </span>
         </div>
         <button
           className="text-sm px-3 py-1 rounded-md border hover:bg-muted"
           onClick={() => window.close()}
         >
-          Disconnect
+          {t('pages.pamSessionWindow.disconnect')}
         </button>
       </div>
 
@@ -127,16 +140,24 @@ export function PamSessionWindow() {
 
         {showOverlay && (
           <SessionCard
-            heading={phase === 'ended' ? 'Session ended' : `Couldn't connect to ${handoff.title}`}
+            heading={
+              phase === 'ended'
+                ? t('pages.pamSessionWindow.endedHeading')
+                : t('pages.pamSessionWindow.failedHeading', { target: handoff.title })
+            }
             body={
               phase === 'ended'
-                ? 'The remote session was closed. Launch it again from the console to start a new session.'
-                : 'The remote session could not be established. This may be temporary, or you may not have access to the target.'
+                ? t('pages.pamSessionWindow.endedBody')
+                : t('pages.pamSessionWindow.failedBody')
             }
             actions={
               <>
-                <Button variant="outline" onClick={() => window.close()}>Close window</Button>
-                <Button onClick={() => setReloadKey((k) => k + 1)}>Try again</Button>
+                <Button variant="outline" onClick={() => window.close()}>
+                  {t('pages.pamSessionWindow.closeWindow')}
+                </Button>
+                <Button onClick={() => setReloadKey((k) => k + 1)}>
+                  {t('pages.pamSessionWindow.tryAgain')}
+                </Button>
               </>
             }
           />
@@ -156,6 +177,7 @@ function SessionCard({
   body: string
   actions?: React.ReactNode
 }) {
+  const { t } = useTranslation()
   return (
     <div className="fixed inset-0 flex items-center justify-center bg-background p-6">
       <div className="max-w-md w-full rounded-lg border bg-card p-6 text-center shadow-sm">
@@ -165,7 +187,11 @@ function SessionCard({
         <h2 className="text-lg font-semibold">{heading}</h2>
         <p className="mt-1 text-sm text-muted-foreground">{body}</p>
         <div className="mt-4 flex justify-center gap-2">
-          {actions ?? <Button onClick={() => window.close()}>Close window</Button>}
+          {actions ?? (
+            <Button onClick={() => window.close()}>
+              {t('pages.pamSessionWindow.closeWindow')}
+            </Button>
+          )}
         </div>
       </div>
     </div>

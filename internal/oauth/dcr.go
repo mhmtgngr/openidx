@@ -14,6 +14,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // Dynamic Client Registration (RFC 7591) + management (RFC 7592).
@@ -178,8 +180,11 @@ func (s *Service) handleDeleteRegisteredClient(c *gin.Context) {
 		dcrError(c, http.StatusInternalServerError, "invalid_client_id", "could not delete client")
 		return
 	}
-	_, _ = s.db.Pool.Exec(c.Request.Context(),
-		`DELETE FROM oauth_registration_tokens WHERE client_id = $1`, clientID)
+	if org, err := orgctx.From(c.Request.Context()); err == nil {
+		_, _ = s.db.Pool.Exec(c.Request.Context(),
+			`DELETE FROM oauth_registration_tokens WHERE client_id = $1 AND org_id = $2`,
+			clientID, org.ID)
+	}
 	c.Status(http.StatusNoContent)
 }
 
@@ -289,12 +294,23 @@ func (s *Service) dcrAuthorized(c *gin.Context) bool {
 }
 
 // storeRegistrationToken persists the hash of a registration access token.
+//
+// v97 gave this table an org_id and nothing ever wrote it, so every row on every
+// installation carried a NULL tenant -- which under v170's belt is a row no
+// scoped read returns, i.e. a client whose management calls all answer 401. The
+// tenant is written here now, and the column is NOT NULL, so that cannot recur
+// quietly.
 func (s *Service) storeRegistrationToken(ctx context.Context, clientID, hash string) error {
-	_, err := s.db.Pool.Exec(ctx, `
-		INSERT INTO oauth_registration_tokens (client_id, token_hash, created_at)
-		VALUES ($1, $2, NOW())
-		ON CONFLICT (client_id) DO UPDATE SET token_hash = EXCLUDED.token_hash`,
-		clientID, hash)
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Pool.Exec(ctx, `
+		INSERT INTO oauth_registration_tokens (client_id, token_hash, org_id, created_at)
+		VALUES ($1, $2, $3, NOW())
+		ON CONFLICT (client_id) DO UPDATE SET token_hash = EXCLUDED.token_hash,
+		                                      org_id     = EXCLUDED.org_id`,
+		clientID, hash, org.ID)
 	return err
 }
 
@@ -305,9 +321,14 @@ func (s *Service) registrationTokenValid(c *gin.Context, clientID string) bool {
 	if tok == "" {
 		return false
 	}
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		return false
+	}
 	var stored string
 	if err := s.db.Pool.QueryRow(c.Request.Context(),
-		`SELECT token_hash FROM oauth_registration_tokens WHERE client_id = $1`, clientID).Scan(&stored); err != nil {
+		`SELECT token_hash FROM oauth_registration_tokens WHERE client_id = $1 AND org_id = $2`,
+		clientID, org.ID).Scan(&stored); err != nil {
 		return false
 	}
 	return subtle.ConstantTimeCompare([]byte(hashRegistrationToken(tok)), []byte(stored)) == 1

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import { Search, Smartphone, Monitor, Tablet, MoreHorizontal, ShieldCheck, ShieldX, Trash2, Copy, ChevronLeft, ChevronRight, Network, Wifi, WifiOff } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -48,6 +49,7 @@ interface EnrichedDevice {
 export function DevicesPage() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const { t } = useTranslation()
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
   const [deleteDevice, setDeleteDevice] = useState<EnrichedDevice | null>(null)
@@ -63,34 +65,63 @@ export function DevicesPage() {
     queryFn: () => api.get<Record<string, number>>('/api/v1/risk/stats'),
   })
 
-  const syncDeviceTrust = (userId: string) => {
-    if (userId) {
-      api.post(`/api/v1/access/ziti/sync/device-trust/${userId}`).catch(() => {})
+  // Pushing the trust decision into the Ziti overlay is what actually changes
+  // what the device can reach. The DB row is written either way, so the toast
+  // used to say "trusted" whether or not the overlay ever heard about it —
+  // `.catch(() => {})` and an unconditional success. An operator would then
+  // tell the user their machine was trusted while the network still refused
+  // it, and nothing on screen said otherwise. Await it, and say which of the
+  // two happened.
+  const syncDeviceTrust = async (userId: string): Promise<boolean> => {
+    if (!userId) return true
+    try {
+      await api.post(`/api/v1/access/ziti/sync/device-trust/${userId}`)
+      return true
+    } catch {
+      return false
     }
   }
 
   const trustMutation = useMutation({
     mutationFn: (deviceId: string) => api.post<{ user_id: string }>(`/api/v1/devices/${deviceId}/trust`),
-    onSuccess: (data) => {
+    onSuccess: async (data) => {
       queryClient.invalidateQueries({ queryKey: ['devices'] })
-      if (data?.user_id) syncDeviceTrust(data.user_id)
-      toast({ title: 'Device trusted — network access updated' })
+      const synced = data?.user_id ? await syncDeviceTrust(data.user_id) : true
+      toast(
+        synced
+          ? { title: t('pages.devices.toasts.trusted') }
+          : {
+              title: t('pages.devices.toasts.trustedOverlayPending'),
+              description: t('pages.devices.toasts.overlaySyncFailed'),
+              variant: 'destructive',
+            },
+      )
     },
     onError: () => {
-      toast({ title: 'Failed to trust device', variant: 'destructive' })
+      toast({ title: t('pages.devices.toasts.trustFailed'), variant: 'destructive' })
     },
   })
 
   const revokeMutation = useMutation({
     mutationFn: (deviceId: string) => api.delete<{ user_id: string }>(`/api/v1/devices/${deviceId}`),
-    onSuccess: (data) => {
+    onSuccess: async (data) => {
       queryClient.invalidateQueries({ queryKey: ['devices'] })
       setDeleteDevice(null)
-      if (data?.user_id) syncDeviceTrust(data.user_id)
-      toast({ title: 'Device removed — network access updated' })
+      // Same reason as trust: a removed device whose overlay grant survives is
+      // still on the network, which is the direction that matters most.
+      const synced = data?.user_id ? await syncDeviceTrust(data.user_id) : true
+      toast(
+        synced
+          ? { title: t('pages.devices.toasts.removed') }
+          : {
+              title: t('pages.devices.toasts.removedOverlayPending'),
+              description: t('pages.devices.toasts.overlaySyncFailed'),
+              variant: 'destructive',
+            },
+      )
     },
     onError: () => {
-      toast({ title: 'Failed to remove device', variant: 'destructive' })
+      toast({ title: t('pages.devices.toasts.removeFailed'), variant: 'destructive' })
     },
   })
 
@@ -117,16 +148,18 @@ export function DevicesPage() {
     return <Monitor className="h-4 w-4 text-muted-foreground" />
   }
 
-  const deviceType = (userAgent: string) => {
+  // Returns the catalog key rather than an English word, so the icon
+  // column and the badge beside it are driven off one list.
+  const deviceTypeKey = (userAgent: string) => {
     const ua = userAgent.toLowerCase()
-    if (ua.includes('mobile') || ua.includes('android') || ua.includes('iphone')) return 'Mobile'
-    if (ua.includes('tablet') || ua.includes('ipad')) return 'Tablet'
-    return 'Desktop'
+    if (ua.includes('mobile') || ua.includes('android') || ua.includes('iphone')) return 'mobile'
+    if (ua.includes('tablet') || ua.includes('ipad')) return 'tablet'
+    return 'desktop'
   }
 
   const copyFingerprint = (fp: string) => {
     navigator.clipboard.writeText(fp)
-    toast({ title: 'Fingerprint copied to clipboard' })
+    toast({ title: t('pages.devices.toasts.fingerprintCopied') })
   }
 
   const getZitiStatus = (device: EnrichedDevice) => {
@@ -142,8 +175,8 @@ export function DevicesPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold tracking-tight">Devices</h1>
-        <p className="text-muted-foreground">Unified device management — trust status controls network access automatically</p>
+        <h1 className="text-3xl font-bold tracking-tight">{t('nav.items.devices')}</h1>
+        <p className="text-muted-foreground">{t('pages.devices.subtitle')}</p>
       </div>
 
       {/* Risk Stats */}
@@ -152,25 +185,25 @@ export function DevicesPage() {
           <Card>
             <CardContent className="pt-6">
               <div className="text-2xl font-bold">{riskStats.total_devices ?? 0}</div>
-              <p className="text-xs text-muted-foreground">Total Devices</p>
+              <p className="text-xs text-muted-foreground">{t('pages.devices.stats.total')}</p>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-6">
               <div className="text-2xl font-bold text-green-600">{riskStats.trusted_devices ?? 0}</div>
-              <p className="text-xs text-muted-foreground">Trusted Devices</p>
+              <p className="text-xs text-muted-foreground">{t('pages.devices.stats.trusted')}</p>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-6">
               <div className="text-2xl font-bold text-primary">{riskStats.new_devices_today ?? 0}</div>
-              <p className="text-xs text-muted-foreground">New Devices Today</p>
+              <p className="text-xs text-muted-foreground">{t('pages.devices.stats.newToday')}</p>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-6">
               <div className="text-2xl font-bold text-red-600">{riskStats.high_risk_logins_today ?? 0}</div>
-              <p className="text-xs text-muted-foreground">High-Risk Logins Today</p>
+              <p className="text-xs text-muted-foreground">{t('pages.devices.stats.highRiskToday')}</p>
             </CardContent>
           </Card>
         </div>
@@ -183,7 +216,7 @@ export function DevicesPage() {
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="Search by name, IP, user, or fingerprint..."
+                placeholder={t('pages.devices.searchPlaceholder')}
                 className="pl-10"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
@@ -193,17 +226,19 @@ export function DevicesPage() {
         </CardHeader>
         <CardContent>
           {isError ? (
-            <QueryError error={error} resource="devices" />
+            <QueryError error={error} resource={t('pages.devices.resource')} />
           ) : isLoading ? (
             <div className="flex flex-col items-center justify-center py-12">
               <LoadingSpinner size="lg" />
-              <p className="mt-4 text-sm text-muted-foreground">Loading devices...</p>
+              <p className="mt-4 text-sm text-muted-foreground">
+                {t('pages.devices.loading')}
+              </p>
             </div>
           ) : filteredDevices.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
               <Smartphone className="h-12 w-12 text-muted-foreground/40 mb-3" />
-              <p className="font-medium">No devices found</p>
-              <p className="text-sm">Devices will appear here when users log in</p>
+              <p className="font-medium">{t('pages.devices.emptyTitle')}</p>
+              <p className="text-sm">{t('pages.devices.emptyHint')}</p>
             </div>
           ) : (
             <>
@@ -211,14 +246,14 @@ export function DevicesPage() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Device</TableHead>
-                      <TableHead>User</TableHead>
-                      <TableHead>Type</TableHead>
-                      <TableHead>IP Address</TableHead>
-                      <TableHead>Trust</TableHead>
-                      <TableHead>Ziti Status</TableHead>
-                      <TableHead>Network Access</TableHead>
-                      <TableHead>Last Seen</TableHead>
+                      <TableHead>{t('pages.devices.colDevice')}</TableHead>
+                      <TableHead>{t('pages.devices.colUser')}</TableHead>
+                      <TableHead>{t('pages.devices.colType')}</TableHead>
+                      <TableHead>{t('pages.devices.colIp')}</TableHead>
+                      <TableHead>{t('pages.devices.colTrust')}</TableHead>
+                      <TableHead>{t('pages.devices.colZiti')}</TableHead>
+                      <TableHead>{t('pages.devices.colNetwork')}</TableHead>
+                      <TableHead>{t('pages.devices.colLastSeen')}</TableHead>
                       <TableHead className="w-[50px]"></TableHead>
                     </TableRow>
                   </TableHeader>
@@ -231,7 +266,9 @@ export function DevicesPage() {
                           <TableCell>
                             <div className="flex items-center gap-2">
                               {deviceIcon(device.user_agent)}
-                              <span className="font-medium">{device.name || 'Unknown Device'}</span>
+                              <span className="font-medium">
+                                {device.name || t('pages.devices.unknownDevice')}
+                              </span>
                             </div>
                           </TableCell>
                           <TableCell>
@@ -241,38 +278,48 @@ export function DevicesPage() {
                             </div>
                           </TableCell>
                           <TableCell>
-                            <Badge variant="outline">{deviceType(device.user_agent)}</Badge>
+                            <Badge variant="outline">
+                              {t(
+                                `pages.devices.deviceTypes.${deviceTypeKey(device.user_agent)}`,
+                              )}
+                            </Badge>
                           </TableCell>
                           <TableCell className="font-mono text-xs">{device.ip_address}</TableCell>
                           <TableCell>
                             {device.trusted ? (
-                              <Badge className="bg-green-100 text-green-800">Trusted</Badge>
+                              <Badge className="bg-green-100 text-green-800">
+                                {t('pages.devices.trusted')}
+                              </Badge>
                             ) : (
-                              <Badge variant="outline">Untrusted</Badge>
+                              <Badge variant="outline">{t('pages.devices.untrusted')}</Badge>
                             )}
                           </TableCell>
                           <TableCell>
                             {zitiStatus === 'enrolled' ? (
                               <Badge className="bg-blue-100 text-blue-800">
                                 <Network className="h-3 w-3 mr-1" />
-                                Enrolled
+                                {t('pages.devices.zitiStatuses.enrolled')}
                               </Badge>
                             ) : zitiStatus === 'pending' ? (
-                              <Badge className="bg-yellow-100 text-yellow-800">Pending</Badge>
+                              <Badge className="bg-yellow-100 text-yellow-800">
+                                {t('pages.devices.zitiStatuses.pending')}
+                              </Badge>
                             ) : (
-                              <Badge variant="outline" className="text-muted-foreground">Not Linked</Badge>
+                              <Badge variant="outline" className="text-muted-foreground">
+                                {t('pages.devices.zitiStatuses.none')}
+                              </Badge>
                             )}
                           </TableCell>
                           <TableCell>
                             {networkAccess ? (
                               <Badge className="bg-emerald-100 text-emerald-800">
                                 <Wifi className="h-3 w-3 mr-1" />
-                                Active
+                                {t('pages.devices.networkActive')}
                               </Badge>
                             ) : (
                               <Badge variant="outline" className="text-muted-foreground">
                                 <WifiOff className="h-3 w-3 mr-1" />
-                                Inactive
+                                {t('pages.devices.networkInactive')}
                               </Badge>
                             )}
                           </TableCell>
@@ -293,7 +340,7 @@ export function DevicesPage() {
                                     disabled={trustMutation.isPending}
                                   >
                                     <ShieldCheck className="mr-2 h-4 w-4 text-green-600" />
-                                    Trust Device
+                                    {t('pages.devices.trustDevice')}
                                   </DropdownMenuItem>
                                 ) : (
                                   <DropdownMenuItem
@@ -301,14 +348,14 @@ export function DevicesPage() {
                                     disabled={trustMutation.isPending}
                                   >
                                     <ShieldX className="mr-2 h-4 w-4 text-yellow-600" />
-                                    Revoke Trust
+                                    {t('pages.devices.revokeTrust')}
                                   </DropdownMenuItem>
                                 )}
                                 <DropdownMenuItem
                                   onClick={() => copyFingerprint(device.fingerprint)}
                                 >
                                   <Copy className="mr-2 h-4 w-4" />
-                                  Copy Fingerprint
+                                  {t('pages.devices.copyFingerprint')}
                                 </DropdownMenuItem>
                                 <DropdownMenuSeparator />
                                 <DropdownMenuItem
@@ -316,7 +363,7 @@ export function DevicesPage() {
                                   className="text-red-600 focus:text-red-600"
                                 >
                                   <Trash2 className="mr-2 h-4 w-4" />
-                                  Delete Device
+                                  {t('pages.devices.deleteDevice')}
                                 </DropdownMenuItem>
                               </DropdownMenuContent>
                             </DropdownMenu>
@@ -332,7 +379,12 @@ export function DevicesPage() {
               {totalPages > 1 && (
                 <div className="flex items-center justify-between mt-4">
                   <p className="text-sm text-muted-foreground">
-                    Showing {(page - 1) * pageSize + 1} to {Math.min(page * pageSize, total)} of {total} devices
+                    {t('pages.devices.showing', {
+                      from: (page - 1) * pageSize + 1,
+                      to: Math.min(page * pageSize, total),
+                      total,
+                      count: total,
+                    })}
                   </p>
                   <div className="flex items-center gap-2">
                     <Button
@@ -344,7 +396,7 @@ export function DevicesPage() {
                       <ChevronLeft className="h-4 w-4" />
                     </Button>
                     <span className="text-sm">
-                      Page {page} of {totalPages}
+                      {t('common.pagination.pageOf', { page, pages: totalPages })}
                     </span>
                     <Button
                       variant="outline"
@@ -366,9 +418,10 @@ export function DevicesPage() {
       <AlertDialog open={!!deleteDevice} onOpenChange={() => setDeleteDevice(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Remove Device</AlertDialogTitle>
+            <AlertDialogTitle>{t('pages.devices.removeDialog.title')}</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to remove this device? This will revoke trust and update network access.
+              {t('pages.devices.removeDialog.desc')}
+              {/* Name, IP and username are the device record as stored. */}
               {deleteDevice && (
                 <span className="block mt-2 font-medium">
                   {deleteDevice.name} ({deleteDevice.ip_address}) — {deleteDevice.username}
@@ -377,12 +430,12 @@ export function DevicesPage() {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction
               className="bg-red-600 hover:bg-red-700"
               onClick={() => deleteDevice && revokeMutation.mutate(deleteDevice.id)}
             >
-              Remove
+              {t('pages.devices.removeDialog.confirm')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

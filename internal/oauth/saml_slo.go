@@ -3,9 +3,14 @@ package oauth
 
 import (
 	"context"
+	"crypto"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/xml"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -16,6 +21,10 @@ import (
 	"github.com/openidx/openidx/internal/common/orgctx"
 	"go.uber.org/zap"
 )
+
+// samlRedirectSigAlg is the SigAlg URI for RSA-SHA256 under the HTTP-Redirect
+// binding (SAML Bindings 3.4.4.1).
+const samlRedirectSigAlg = "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"
 
 // SAML Single Logout constants
 const (
@@ -272,8 +281,14 @@ func (s *Service) findUserByNameID(ctx context.Context, nameID string) (string, 
 
 // findUserBySessionIndex finds a user by their SAML session index
 func (s *Service) findUserBySessionIndex(ctx context.Context, sessionIndex, spEntityID string) (string, string, error) {
+	// PRE-TENANT-RESOLUTION, like the entity-id lookup in saml_sp.go: an
+	// incoming LogoutRequest names a session index and an SP entity id, and the
+	// session this finds is what identifies the user -- and through the user,
+	// the tenant. UNIQUE(user_id, sp_entity_id, session_index) keeps the answer
+	// unambiguous.
 	var userID, nameID string
-	err := s.db.Pool.QueryRow(ctx, `
+	//orgscope:ignore pre-tenant-resolution lookup: an inbound SAML LogoutRequest names only a session index and SP entity id, and this is the query that resolves which user (and so which org) it belongs to
+	err := s.db.Pool.QueryRow(orgctx.WithBypassRLS(ctx), `
 		SELECT user_id, name_id FROM saml_sessions
 		WHERE session_index = $1 AND sp_entity_id = $2
 	`, sessionIndex, spEntityID).Scan(&userID, &nameID)
@@ -294,7 +309,9 @@ func (s *Service) performUserLogout(ctx context.Context, userID, spEntityID stri
 	}
 
 	// Delete SAML sessions for this SP
-	_, err = s.db.Pool.Exec(ctx, "DELETE FROM saml_sessions WHERE user_id = $1 AND sp_entity_id = $2", userID, spEntityID)
+	_, err = s.db.Pool.Exec(ctx,
+		"DELETE FROM saml_sessions WHERE user_id = $1 AND sp_entity_id = $2 AND org_id = $3",
+		userID, spEntityID, org.ID)
 	if err != nil {
 		return fmt.Errorf("failed to delete SAML sessions: %w", err)
 	}
@@ -374,7 +391,8 @@ func (s *Service) getSAMLSessionsForUser(ctx context.Context, userID string) ([]
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT id, user_id, sp_id, sp_entity_id, session_index, name_id, name_id_format, created_at, expires_at
 		FROM saml_sessions
-		WHERE user_id = $1 AND expires_at > NOW()
+		WHERE user_id = $1 AND org_id = (SELECT org_id FROM users WHERE id = $1)
+		  AND expires_at > NOW()
 	`, userID)
 	if err != nil {
 		return nil, err
@@ -449,7 +467,29 @@ func (s *Service) createLogoutRequest(session SAMLSession, sp *SAMLServiceProvid
 	}
 }
 
-// sendLogoutRequestToSP sends a logout request to an SP (async)
+// signRedirectBinding signs the exact query-string a redirect-binding message
+// carries ("SAMLRequest=...&SigAlg=...", values already URL-encoded) per SAML
+// Bindings 3.4.4.1, returning the base64 signature for the Signature
+// parameter.
+func (s *Service) signRedirectBinding(signedQuery string) (string, error) {
+	if s.privateKey == nil {
+		return "", fmt.Errorf("no signing key available")
+	}
+	digest := sha256.Sum256([]byte(signedQuery))
+	sig, err := rsa.SignPKCS1v15(rand.Reader, s.privateKey, crypto.SHA256, digest[:])
+	if err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(sig), nil
+}
+
+// sendLogoutRequestToSP delivers a LogoutRequest to the SP's SLO endpoint
+// over the HTTP-Redirect binding, signed with SigAlg+Signature query
+// parameters. This is a back-channel dispatch: SLO identifies the session by
+// NameID/SessionIndex inside the message, so the SP terminates it without
+// needing the user's browser cookies. This function used to build the URL and
+// only log it — the IdP told the user their SP sessions were ended while no
+// SP had ever been contacted.
 func (s *Service) sendLogoutRequestToSP(ctx context.Context, logoutReq LogoutRequest, sloURL string) {
 	xmlData, err := xml.Marshal(logoutReq)
 	if err != nil {
@@ -463,23 +503,46 @@ func (s *Service) sendLogoutRequestToSP(ctx context.Context, logoutReq LogoutReq
 		return
 	}
 
-	// Build the logout URL
-	logoutURL := sloURL
-	if strings.Contains(logoutURL, "?") {
-		logoutURL += "&"
+	// The signature covers exactly the encoded query as sent, in this
+	// parameter order — re-encoding or reordering breaks verification.
+	signedQuery := "SAMLRequest=" + url.QueryEscape(encoded) + "&SigAlg=" + url.QueryEscape(samlRedirectSigAlg)
+	fullQuery := signedQuery
+	if sig, serr := s.signRedirectBinding(signedQuery); serr != nil {
+		// An unsigned LogoutRequest is still processable by SPs that don't
+		// require SLO signatures; deliver it and say so, rather than
+		// silently dropping the logout.
+		s.logger.Warn("sending unsigned SAML LogoutRequest", zap.Error(serr))
 	} else {
-		logoutURL += "?"
+		fullQuery += "&Signature=" + url.QueryEscape(sig)
 	}
-	logoutURL += "SAMLRequest=" + url.QueryEscape(encoded)
 
-	s.logger.Info("Sending SAML LogoutRequest to SP",
-		zap.String("slo_url", sloURL),
-		zap.String("request_id", logoutReq.ID),
-	)
+	sep := "?"
+	if strings.Contains(sloURL, "?") {
+		sep = "&"
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, sloURL+sep+fullQuery, nil)
+	if err != nil {
+		s.logger.Error("Failed to build LogoutRequest dispatch", zap.String("sp_slo_url", sloURL), zap.Error(err))
+		return
+	}
 
-	// In production, you would make an HTTP request here
-	// For now, just log it
-	s.logger.Debug("SAML LogoutRequest URL", zap.String("url", logoutURL))
+	client := s.outboundHTTPClient("saml-slo", 10*time.Second)
+	resp, err := client.Do(req)
+	if err != nil {
+		s.logger.Warn("SAML LogoutRequest delivery failed — the SP session may outlive the IdP session",
+			zap.String("sp_slo_url", sloURL), zap.String("request_id", logoutReq.ID), zap.Error(err))
+		return
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
+
+	if resp.StatusCode >= http.StatusBadRequest {
+		s.logger.Warn("SP rejected SAML LogoutRequest",
+			zap.String("sp_slo_url", sloURL), zap.Int("status", resp.StatusCode), zap.String("request_id", logoutReq.ID))
+		return
+	}
+	s.logger.Info("SAML LogoutRequest delivered",
+		zap.String("sp_slo_url", sloURL), zap.Int("status", resp.StatusCode), zap.String("request_id", logoutReq.ID))
 }
 
 // extractUserIDFromSession extracts user ID from a session token
@@ -552,9 +615,12 @@ func (s *Service) recordSAMLSession(ctx context.Context, userID, spID, spEntityI
 	// Set expiry to 8 hours
 	expiresAt := time.Now().Add(8 * time.Hour)
 
+	// org_id comes from the session's own user, so the two cannot disagree and
+	// the v144 WITH CHECK cannot refuse a legitimate write -- which would lose
+	// the record SLO needs to log this user out of this SP later.
 	_, err := s.db.Pool.Exec(ctx, `
-		INSERT INTO saml_sessions (id, user_id, sp_id, sp_entity_id, session_index, name_id, name_id_format, created_at, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8)
+		INSERT INTO saml_sessions (id, org_id, user_id, sp_id, sp_entity_id, session_index, name_id, name_id_format, created_at, expires_at)
+		VALUES ($1, (SELECT org_id FROM users WHERE id = $2), $2, $3, $4, $5, $6, $7, NOW(), $8)
 		ON CONFLICT (user_id, sp_entity_id, session_index) DO UPDATE SET
 			expires_at = EXCLUDED.expires_at
 	`, uuid.New().String(), userID, spID, spEntityID, sessionIndex, nameID, nameIDFormat, expiresAt)
@@ -564,7 +630,10 @@ func (s *Service) recordSAMLSession(ctx context.Context, userID, spID, spEntityI
 
 // cleanupExpiredSAMLSessions removes expired SAML sessions
 func (s *Service) cleanupExpiredSAMLSessions(ctx context.Context) error {
-	_, err := s.db.Pool.Exec(ctx, "DELETE FROM saml_sessions WHERE expires_at < NOW()")
+	// Install-wide sweeper: expiry is not a tenant's property and a per-org
+	// sweep would need a loop over orgs to do the same work.
+	//orgscope:ignore install-wide expiry sweep; deletes only rows whose expires_at has passed, in every org
+	_, err := s.db.Pool.Exec(orgctx.WithBypassRLS(ctx), "DELETE FROM saml_sessions WHERE expires_at < NOW()")
 	return err
 }
 

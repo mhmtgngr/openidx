@@ -126,4 +126,56 @@ describe('ErrorBoundary', () => {
 
     expect(screen.getByText('Something went wrong')).toBeInTheDocument()
   })
+
+  // The root mount in main.tsx wraps the whole app, including the app shell
+  // and the login screen. Both of these pin behaviour that only matters there.
+  describe('as the root boundary', () => {
+    it('calls onReset instead of clearing its own state', async () => {
+      // At the root, clearing state re-renders the same broken shell and
+      // throws again, so the root passes a reload. Prove the override wins:
+      // the fallback must still be on screen after the click.
+      const onReset = vi.fn()
+      render(
+        <ErrorBoundary onReset={onReset}>
+          <ThrowError shouldThrow={true} />
+        </ErrorBoundary>
+      )
+
+      await userEvent.click(screen.getByRole('button', { name: 'Try again' }))
+
+      expect(onReset).toHaveBeenCalledTimes(1)
+      expect(screen.getByText('Something went wrong')).toBeInTheDocument()
+    })
+
+    it('does not print a stack trace outside development', () => {
+      vi.stubEnv('DEV', false)
+      try {
+        const { container } = render(
+          <ErrorBoundary>
+            <ThrowError shouldThrow={true} />
+          </ErrorBoundary>
+        )
+
+        // The message a user can quote to support stays; the stack does not.
+        expect(screen.getByText('Test error')).toBeInTheDocument()
+        expect(container.querySelector('pre')).toBeNull()
+      } finally {
+        vi.unstubAllEnvs()
+      }
+    })
+
+    it('prints the stack in development', () => {
+      vi.stubEnv('DEV', true)
+      try {
+        const { container } = render(
+          <ErrorBoundary>
+            <ThrowError shouldThrow={true} />
+          </ErrorBoundary>
+        )
+        expect(container.querySelector('pre')).not.toBeNull()
+      } finally {
+        vi.unstubAllEnvs()
+      }
+    })
+  })
 })

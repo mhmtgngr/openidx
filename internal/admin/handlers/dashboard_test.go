@@ -158,10 +158,7 @@ func TestDashboardStatsSerialization(t *testing.T) {
 			},
 		},
 		SystemMetrics: SystemMetrics{
-			CPUUsage:    45.5,
-			MemoryUsage: 62.3,
-			DiskUsage:   78.1,
-			Uptime:      86400,
+			Uptime: 86400,
 		},
 		SecurityAlerts: SecurityAlerts{
 			FailedLogins24h: 5,
@@ -183,7 +180,6 @@ func TestDashboardStatsSerialization(t *testing.T) {
 	assert.Equal(t, int64(3), decoded.PendingReviews)
 	assert.Len(t, decoded.RecentEvents, 1)
 	assert.Equal(t, "authentication", decoded.RecentEvents[0].Type)
-	assert.Equal(t, 45.5, decoded.SystemMetrics.CPUUsage)
 	assert.Equal(t, int64(5), decoded.SecurityAlerts.FailedLogins24h)
 }
 
@@ -259,40 +255,10 @@ func TestGetDashboardStatsResponseStructure(t *testing.T) {
 	assert.Contains(t, response, "security_alerts")
 }
 
-// TestRefreshCacheSuccess tests cache refresh endpoint structure
-func TestRefreshCacheSuccess(t *testing.T) {
-	// Test that RefreshCache can be called without panicking
-	logger := zap.NewNop()
-	handler := NewDashboardHandler(logger, nil)
-	assert.NotNil(t, handler)
-
-	// The actual endpoint would require a request context
-	// This test verifies the handler exists and is properly structured
-}
-
-// TestGetMetricsSuccess tests system metrics endpoint structure
-func TestGetMetricsSuccess(t *testing.T) {
-	logger := zap.NewNop()
-	handler := NewDashboardHandler(logger, nil)
-	assert.NotNil(t, handler)
-
-	// Verify SystemMetrics can be serialized
-	metrics := SystemMetrics{
-		Uptime: 86400,
-	}
-
-	data, err := json.Marshal(metrics)
-	require.NoError(t, err)
-	assert.NotEmpty(t, data)
-}
-
 // TestSystemMetricsSerialization tests SystemMetrics JSON serialization
 func TestSystemMetricsSerialization(t *testing.T) {
 	metrics := SystemMetrics{
-		CPUUsage:    45.5,
-		MemoryUsage: 62.3,
-		DiskUsage:   78.1,
-		Uptime:      86400,
+		Uptime: 86400,
 	}
 
 	data, err := json.Marshal(metrics)
@@ -301,9 +267,6 @@ func TestSystemMetricsSerialization(t *testing.T) {
 	var decoded SystemMetrics
 	err = json.Unmarshal(data, &decoded)
 	require.NoError(t, err)
-	assert.Equal(t, 45.5, decoded.CPUUsage)
-	assert.Equal(t, 62.3, decoded.MemoryUsage)
-	assert.Equal(t, 78.1, decoded.DiskUsage)
 	assert.Equal(t, int64(86400), decoded.Uptime)
 }
 
@@ -366,8 +329,13 @@ func TestDashboardRoutesRegistration(t *testing.T) {
 	}
 
 	assert.True(t, routePaths["/api/v1/dashboard"])
-	assert.True(t, routePaths["/api/v1/dashboard/metrics"])
-	assert.True(t, routePaths["/api/v1/dashboard/refresh"])
+	// /dashboard/metrics and /dashboard/refresh are deliberately gone: one
+	// returned a zero SystemMetrics under swagger promising real CPU, memory
+	// and disk usage, the other reported a cache refresh it never performed.
+	assert.False(t, routePaths["/api/v1/dashboard/metrics"],
+		"the metrics endpoint reported measurements it never took; it must stay removed")
+	assert.False(t, routePaths["/api/v1/dashboard/refresh"],
+		"the refresh endpoint reported success for work it never did; it must stay removed")
 }
 
 // TestRegisterAllRoutes tests all admin routes registration
@@ -420,9 +388,6 @@ func TestSystemMetricsEmpty(t *testing.T) {
 	var decoded SystemMetrics
 	err = json.Unmarshal(data, &decoded)
 	require.NoError(t, err)
-	assert.Equal(t, float64(0), decoded.CPUUsage)
-	assert.Equal(t, float64(0), decoded.MemoryUsage)
-	assert.Equal(t, float64(0), decoded.DiskUsage)
 	assert.Equal(t, int64(0), decoded.Uptime)
 }
 

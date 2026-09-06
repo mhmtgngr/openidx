@@ -2,6 +2,7 @@ import { useState, useMemo, useCallback } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { QRCodeCanvas } from 'qrcode.react'
 import { useNavigate } from 'react-router-dom'
+import { Trans, useTranslation } from 'react-i18next'
 import { Laptop, Smartphone, Apple, Monitor, Copy, CheckCircle2, Loader2, ArrowLeft } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card'
 import { Button } from '../components/ui/button'
@@ -12,6 +13,7 @@ import { QueryError } from '../components/query-error'
 
 type OSKey = 'windows' | 'macos' | 'linux' | 'android' | 'ios'
 
+/** Operating-system names are product names, so they render as they are. */
 const OSES: { key: OSKey; label: string; icon: typeof Laptop }[] = [
   { key: 'windows', label: 'Windows', icon: Monitor },
   { key: 'macos', label: 'macOS', icon: Apple },
@@ -19,6 +21,16 @@ const OSES: { key: OSKey; label: string; icon: typeof Laptop }[] = [
   { key: 'android', label: 'Android', icon: Smartphone },
   { key: 'ios', label: 'iPhone / iPad', icon: Apple },
 ]
+
+/**
+ * Platforms with no published client. iOS builds in CI but is never
+ * distributed (no Apple credentials), and there is no macOS installer target at
+ * all -- `agent/Makefile` cross-compiles a darwin binary, nothing packages it.
+ * A manifest entry still wins: the day a build exists and lands in
+ * AGENT_DOWNLOADS_DIR, the download button appears and this copy stops being
+ * reached.
+ */
+const NO_PUBLISHED_CLIENT = new Set<OSKey>(['ios', 'macos'])
 
 function detectOS(): OSKey {
   const ua = navigator.userAgent.toLowerCase()
@@ -44,6 +56,7 @@ interface AgentManifestEntry {
 
 export function AddDevicePage() {
   const navigate = useNavigate()
+  const { t } = useTranslation()
   const { toast } = useToast()
   const [os, setOs] = useState<OSKey>(detectOS())
 
@@ -61,7 +74,11 @@ export function AddDevicePage() {
   const createSession = useMutation({
     mutationFn: () => api.post<EnrollSession>('/api/v1/access/agent/enroll/session', {}),
     onError: (e: Error) =>
-      toast({ title: 'Could not start', description: e.message, variant: 'destructive' }),
+      toast({
+        title: t('pages.addDevice.startFailed'),
+        description: e.message,
+        variant: 'destructive',
+      }),
   })
   const session = createSession.data
 
@@ -81,9 +98,12 @@ export function AddDevicePage() {
   const copy = useCallback(
     (text: string, what: string) => {
       navigator.clipboard.writeText(text)
-      toast({ title: 'Copied', description: `${what} copied to clipboard.` })
+      toast({
+        title: t('common.copied'),
+        description: t('pages.addDevice.copiedItem', { what }),
+      })
     },
-    [toast]
+    [toast, t]
   )
 
   const androidNote = useMemo(() => os === 'android' || os === 'ios', [os])
@@ -92,18 +112,20 @@ export function AddDevicePage() {
     <div className="mx-auto max-w-2xl space-y-6">
       <div>
         <Button variant="ghost" size="sm" className="mb-2 -ml-2" onClick={() => navigate('/my-devices')}>
-          <ArrowLeft className="mr-1.5 h-4 w-4" /> My Devices
+          <ArrowLeft className="mr-1.5 h-4 w-4" /> {t('nav.items.myDevices')}
         </Button>
-        <h1 className="text-2xl font-bold tracking-tight">Add a device to the network</h1>
+        <h1 className="text-2xl font-bold tracking-tight">
+          {t('pages.addDevice.title')}
+        </h1>
         <p className="text-muted-foreground">
-          Connect this device to Zero Trust access in three steps — no keys to copy.
+          {t('pages.addDevice.subtitle')}
         </p>
       </div>
 
       {/* Step 1 — pick the OS */}
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-base">1. Choose your device type</CardTitle>
+          <CardTitle className="text-base">{t('pages.addDevice.step1')}</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="flex flex-wrap gap-2">
@@ -124,21 +146,36 @@ export function AddDevicePage() {
       {/* Step 2 — get the app */}
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-base">2. Install the OpenIDX app</CardTitle>
+          <CardTitle className="text-base">{t('pages.addDevice.step2')}</CardTitle>
           <CardDescription>
             {androidNote
-              ? 'Install the OpenIDX app on your phone, then scan the code below from inside the app.'
-              : 'Install the OpenIDX client for your operating system, then continue below.'}
+              ? t('pages.addDevice.step2Mobile')
+              : t('pages.addDevice.step2Desktop')}
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap items-center gap-3">
           {installer ? (
             <Button asChild size="sm">
-              <a href={installer.url}>Download for {OSES.find((o) => o.key === os)?.label}</a>
+              <a href={installer.url}>
+                {t('pages.addDevice.download', {
+                  os: OSES.find((o) => o.key === os)?.label,
+                })}
+              </a>
             </Button>
           ) : (
             <p className="text-sm text-muted-foreground">
-              Installer for {OSES.find((o) => o.key === os)?.label} is provided by your administrator.
+              {/* Two different truths. Windows, Linux and Android are built and
+                  released (agent-v* publishes the MSI, the deb/rpm pair and the
+                  APK) -- if there is no download button, this deployment has
+                  not put them in AGENT_DOWNLOADS_DIR. iOS and macOS have no
+                  published client at all, so telling the user to ask an
+                  administrator for one sends them after something nobody has. */}
+              {t(
+                NO_PUBLISHED_CLIENT.has(os)
+                  ? 'pages.addDevice.installerNoBuild'
+                  : 'pages.addDevice.installerFromAdmin',
+                { os: OSES.find((o) => o.key === os)?.label }
+              )}
             </p>
           )}
         </CardContent>
@@ -147,65 +184,73 @@ export function AddDevicePage() {
       {/* Step 3 — connect */}
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-base">3. Connect this device</CardTitle>
+          <CardTitle className="text-base">{t('pages.addDevice.step3')}</CardTitle>
         </CardHeader>
         <CardContent>
           {!session ? (
             <Button onClick={() => createSession.mutate()} disabled={createSession.isPending}>
               {createSession.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Generate connect code
+              {t('pages.addDevice.generate')}
             </Button>
           ) : done ? (
             <div className="flex flex-col items-center gap-3 py-6 text-center">
               <CheckCircle2 className="h-12 w-12 text-green-600" />
-              <p className="text-lg font-medium">Device connected</p>
+              <p className="text-lg font-medium">{t('pages.addDevice.connected')}</p>
               <Badge variant={status?.device_trusted ? 'default' : 'secondary'}>
-                {status?.device_trusted ? 'Trusted — full access' : 'Pending trust approval'}
+                {status?.device_trusted
+                  ? t('pages.addDevice.trusted')
+                  : t('pages.addDevice.pendingTrust')}
               </Badge>
               <Button className="mt-2" onClick={() => navigate('/my-devices')}>
-                Done
+                {t('pages.addDevice.done')}
               </Button>
             </div>
           ) : isError ? (
-            <QueryError error={error} resource="enrollment status" />
+            <QueryError error={error} resource={t('pages.addDevice.resource')} />
           ) : (
             <div className="flex flex-col items-center gap-4">
               {/* The code is short — the easiest path is to just type it in the
                   OpenIDX app (or tap "Open in app" on this phone). Scanning is
                   the secondary option. */}
               <p className="text-sm text-muted-foreground text-center">
-                Type this code in the OpenIDX app (Add a device), or tap{' '}
-                <span className="font-medium">Open in app</span> on this phone.
+                <Trans
+                  i18nKey="pages.addDevice.typeCode"
+                  components={[<span key="0" className="font-medium" />]}
+                />
               </p>
               {/* Big, grouped, selectable code — the primary path. Display is
                   grouped for readability; copy emits the raw code. */}
               <button
                 type="button"
-                onClick={() => copy(session.code, 'Enrollment code')}
+                onClick={() => copy(session.code, t('pages.addDevice.enrollmentCode'))}
                 className="rounded-lg border bg-muted px-6 py-4 text-center font-mono text-2xl font-semibold tracking-[0.2em] select-all hover:bg-muted/70"
-                title="Click to copy"
+                title={t('pages.addDevice.clickToCopy')}
               >
                 {(session.code.match(/.{1,4}/g) ?? [session.code]).join('-')}
               </button>
               <div className="flex flex-wrap justify-center gap-2">
                 <Button asChild>
-                  <a href={session.deep_link}>Open in app</a>
+                  <a href={session.deep_link}>{t('pages.addDevice.openInApp')}</a>
                 </Button>
-                <Button variant="outline" onClick={() => copy(session.code, 'Enrollment code')}>
-                  <Copy className="mr-1.5 h-3.5 w-3.5" /> Copy code
+                <Button
+                  variant="outline"
+                  onClick={() => copy(session.code, t('pages.addDevice.enrollmentCode'))}
+                >
+                  <Copy className="mr-1.5 h-3.5 w-3.5" /> {t('pages.addDevice.copyCode')}
                 </Button>
               </div>
               <details className="text-sm text-muted-foreground">
-                <summary className="cursor-pointer">Prefer to scan? Show QR</summary>
+                <summary className="cursor-pointer">{t('pages.addDevice.showQr')}</summary>
                 <div className="mt-3 flex flex-col items-center gap-2">
                   <div className="rounded-lg border bg-background p-4">
                     <QRCodeCanvas value={session.deep_link} size={240} level="H" includeMargin />
                   </div>
-                  <span>Scan this from inside the OpenIDX app.</span>
+                  <span>{t('pages.addDevice.scanHint')}</span>
                 </div>
               </details>
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Loader2 className="h-4 w-4 animate-spin" /> Waiting for this device to connect…
+                <Loader2 className="h-4 w-4 animate-spin" />{' '}
+                {t('pages.addDevice.waiting')}
               </div>
             </div>
           )}

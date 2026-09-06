@@ -27,20 +27,10 @@ type NotificationRoutingRule struct {
 	UpdatedAt         time.Time       `json:"updated_at"`
 }
 
-// NotificationDigest represents a digest configuration for batching notifications
-type NotificationDigest struct {
-	ID                string          `json:"id"`
-	UserID            string          `json:"user_id"`
-	DigestType        string          `json:"digest_type"` // daily, weekly
-	Channel           string          `json:"channel"`
-	LastSentAt        *time.Time      `json:"last_sent_at"`
-	NextScheduledAt   *time.Time      `json:"next_scheduled_at"`
-	NotificationCount int             `json:"notification_count"`
-	Enabled           bool            `json:"enabled"`
-	Settings          json.RawMessage `json:"settings"`
-	CreatedAt         time.Time       `json:"created_at"`
-	UpdatedAt         time.Time       `json:"updated_at"`
-}
+// The digest configuration is served by internal/notifications, which owns the
+// notification_digests table. A NotificationDigest struct declared here was
+// referenced by nothing in the tree -- no handler, no query, no test -- and was
+// removed with migration v163 rather than left to look like a second reader.
 
 // BroadcastMessage represents a broadcast notification sent to multiple users
 type BroadcastMessage struct {
@@ -69,9 +59,19 @@ func (s *Service) handleListRoutingRules(c *gin.Context) {
 		return
 	}
 
+	org, ok := requireOrg(c)
+	if !ok {
+		return
+	}
+
+	// A routing rule decides which channels an event reaches. Without the org
+	// term one tenant could see, and through the handlers below switch,
+	// another tenant's security-alert rule from ["in_app","email"] to
+	// ["in_app"] -- and their alerts would stop arriving by mail with nothing
+	// on screen to say so.
 	rows, err := s.db.Pool.Query(c.Request.Context(),
 		`SELECT id, name, event_type, conditions, channels, template_overrides, priority, enabled, created_by, created_at, updated_at
-		 FROM notification_routing_rules ORDER BY priority, event_type`)
+		 FROM notification_routing_rules WHERE org_id = $1 ORDER BY priority, event_type`, org.ID)
 	if err != nil {
 		respondError(c, s.logger, apperrors.Internal("Failed to list routing rules", err))
 		return
@@ -95,6 +95,10 @@ func (s *Service) handleListRoutingRules(c *gin.Context) {
 
 func (s *Service) handleCreateRoutingRule(c *gin.Context) {
 	if !requireAdmin(c) {
+		return
+	}
+	org, ok := requireOrg(c)
+	if !ok {
 		return
 	}
 
@@ -129,10 +133,10 @@ func (s *Service) handleCreateRoutingRule(c *gin.Context) {
 
 	var rule NotificationRoutingRule
 	err := s.db.Pool.QueryRow(c.Request.Context(),
-		`INSERT INTO notification_routing_rules (name, event_type, conditions, channels, priority, created_by)
-		 VALUES ($1, $2, $3, $4, $5, $6)
+		`INSERT INTO notification_routing_rules (name, event_type, conditions, channels, priority, created_by, org_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)
 		 RETURNING id, name, event_type, conditions, channels, template_overrides, priority, enabled, created_by, created_at, updated_at`,
-		req.Name, req.EventType, conditions, channels, req.Priority, nilIfEmpty(userIDStr),
+		req.Name, req.EventType, conditions, channels, req.Priority, nilIfEmpty(userIDStr), org.ID,
 	).Scan(&rule.ID, &rule.Name, &rule.EventType, &rule.Conditions, &rule.Channels,
 		&rule.TemplateOverrides, &rule.Priority, &rule.Enabled, &rule.CreatedBy, &rule.CreatedAt, &rule.UpdatedAt)
 	if err != nil {
@@ -147,12 +151,16 @@ func (s *Service) handleGetRoutingRule(c *gin.Context) {
 	if !requireAdmin(c) {
 		return
 	}
+	org, ok := requireOrg(c)
+	if !ok {
+		return
+	}
 
 	id := c.Param("id")
 	var r NotificationRoutingRule
 	err := s.db.Pool.QueryRow(c.Request.Context(),
 		`SELECT id, name, event_type, conditions, channels, template_overrides, priority, enabled, created_by, created_at, updated_at
-		 FROM notification_routing_rules WHERE id = $1`, id,
+		 FROM notification_routing_rules WHERE id = $1 AND org_id = $2`, id, org.ID,
 	).Scan(&r.ID, &r.Name, &r.EventType, &r.Conditions, &r.Channels,
 		&r.TemplateOverrides, &r.Priority, &r.Enabled, &r.CreatedBy, &r.CreatedAt, &r.UpdatedAt)
 	if err != nil {
@@ -164,6 +172,10 @@ func (s *Service) handleGetRoutingRule(c *gin.Context) {
 
 func (s *Service) handleUpdateRoutingRule(c *gin.Context) {
 	if !requireAdmin(c) {
+		return
+	}
+	org, ok := requireOrg(c)
+	if !ok {
 		return
 	}
 
@@ -222,11 +234,11 @@ func (s *Service) handleUpdateRoutingRule(c *gin.Context) {
 		argIdx++
 	}
 
-	args = append(args, id)
+	args = append(args, id, org.ID)
 	// SECURITY: Column names in 'sets' are hardcoded string literals from the if-blocks above,
 	// not user input. This is safe from SQL injection.
-	query := fmt.Sprintf("UPDATE notification_routing_rules SET %s WHERE id = $%d",
-		joinStrings(sets, ", "), argIdx)
+	query := fmt.Sprintf("UPDATE notification_routing_rules SET %s WHERE id = $%d AND org_id = $%d",
+		joinStrings(sets, ", "), argIdx, argIdx+1)
 
 	tag, err := s.db.Pool.Exec(c.Request.Context(), query, args...)
 	if err != nil {
@@ -244,10 +256,14 @@ func (s *Service) handleDeleteRoutingRule(c *gin.Context) {
 	if !requireAdmin(c) {
 		return
 	}
+	org, ok := requireOrg(c)
+	if !ok {
+		return
+	}
 
 	id := c.Param("id")
 	tag, err := s.db.Pool.Exec(c.Request.Context(),
-		"DELETE FROM notification_routing_rules WHERE id = $1", id)
+		"DELETE FROM notification_routing_rules WHERE id = $1 AND org_id = $2", id, org.ID)
 	if err != nil {
 		respondError(c, s.logger, apperrors.Internal("Failed to delete routing rule", err))
 		return
@@ -266,19 +282,29 @@ func (s *Service) handleListBroadcasts(c *gin.Context) {
 		return
 	}
 
+	org, ok := requireOrg(c)
+	if !ok {
+		return
+	}
+
 	ctx := c.Request.Context()
 	status := c.Query("status")
 
+	// b.org_id, not u.org_id: the join to users is a LEFT JOIN for the author's
+	// display name, and a left join keeps every row of the left table, so a
+	// tenant condition written into its ON clause would filter nothing. That is
+	// the v155 lesson, and it applies here because the shape is identical.
 	query := `SELECT b.id, b.title, b.body, b.channel, b.target_type, b.target_ids, b.priority,
 	                 b.scheduled_at, b.sent_at, b.status, b.total_recipients, b.delivered_count, b.read_count,
 	                 b.created_by, b.created_at, b.updated_at,
 	                 COALESCE(u.first_name || ' ' || u.last_name, '') AS created_by_name
 	          FROM broadcast_messages b
-	          LEFT JOIN users u ON b.created_by = u.id`
+	          LEFT JOIN users u ON b.created_by = u.id
+	          WHERE b.org_id = $1`
 
-	args := []interface{}{}
+	args := []interface{}{org.ID}
 	if status != "" {
-		query += " WHERE b.status = $1"
+		query += " AND b.status = $2"
 		args = append(args, status)
 	}
 	query += " ORDER BY b.created_at DESC"
@@ -314,6 +340,10 @@ func (s *Service) handleListBroadcasts(c *gin.Context) {
 
 func (s *Service) handleCreateBroadcast(c *gin.Context) {
 	if !requireAdmin(c) {
+		return
+	}
+	org, ok := requireOrg(c)
+	if !ok {
 		return
 	}
 
@@ -355,11 +385,11 @@ func (s *Service) handleCreateBroadcast(c *gin.Context) {
 
 	var b BroadcastMessage
 	err := s.db.Pool.QueryRow(c.Request.Context(),
-		`INSERT INTO broadcast_messages (title, body, channel, target_type, target_ids, priority, scheduled_at, status, created_by)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, 'draft', $8)
+		`INSERT INTO broadcast_messages (title, body, channel, target_type, target_ids, priority, scheduled_at, status, created_by, org_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, 'draft', $8, $9)
 		 RETURNING id, title, body, channel, target_type, target_ids, priority, scheduled_at, sent_at, status,
 		           total_recipients, delivered_count, read_count, created_by, created_at, updated_at`,
-		req.Title, req.Body, req.Channel, req.TargetType, targetIDs, req.Priority, req.ScheduledAt, nilIfEmpty(userIDStr),
+		req.Title, req.Body, req.Channel, req.TargetType, targetIDs, req.Priority, req.ScheduledAt, nilIfEmpty(userIDStr), org.ID,
 	).Scan(&b.ID, &b.Title, &b.Body, &b.Channel, &b.TargetType, &b.TargetIDs, &b.Priority,
 		&b.ScheduledAt, &b.SentAt, &b.Status, &b.TotalRecipients, &b.DeliveredCount, &b.ReadCount,
 		&b.CreatedBy, &b.CreatedAt, &b.UpdatedAt)
@@ -375,13 +405,17 @@ func (s *Service) handleGetBroadcast(c *gin.Context) {
 	if !requireAdmin(c) {
 		return
 	}
+	org, ok := requireOrg(c)
+	if !ok {
+		return
+	}
 
 	id := c.Param("id")
 	var b BroadcastMessage
 	err := s.db.Pool.QueryRow(c.Request.Context(),
 		`SELECT id, title, body, channel, target_type, target_ids, priority, scheduled_at, sent_at, status,
 		        total_recipients, delivered_count, read_count, created_by, created_at, updated_at
-		 FROM broadcast_messages WHERE id = $1`, id,
+		 FROM broadcast_messages WHERE id = $1 AND org_id = $2`, id, org.ID,
 	).Scan(&b.ID, &b.Title, &b.Body, &b.Channel, &b.TargetType, &b.TargetIDs, &b.Priority,
 		&b.ScheduledAt, &b.SentAt, &b.Status, &b.TotalRecipients, &b.DeliveredCount, &b.ReadCount,
 		&b.CreatedBy, &b.CreatedAt, &b.UpdatedAt)
@@ -406,11 +440,15 @@ func (s *Service) handleSendBroadcast(c *gin.Context) {
 		return
 	}
 
-	// Fetch the broadcast
+	// Fetch the broadcast. The org term was already resolved above, for the
+	// RECIPIENTS -- and the message itself was loaded by bare id, so one
+	// administrator could take another organization's unsent draft and deliver
+	// it, under their own tenancy, to their own users. The scoping was present
+	// for the audience and absent for the announcement.
 	var b BroadcastMessage
 	err = s.db.Pool.QueryRow(ctx,
 		`SELECT id, title, body, channel, target_type, target_ids, priority, status
-		 FROM broadcast_messages WHERE id = $1`, id,
+		 FROM broadcast_messages WHERE id = $1 AND org_id = $2`, id, org.ID,
 	).Scan(&b.ID, &b.Title, &b.Body, &b.Channel, &b.TargetType, &b.TargetIDs, &b.Priority, &b.Status)
 	if err != nil {
 		respondError(c, nil, apperrors.NotFound("Broadcast"))
@@ -498,12 +536,14 @@ func (s *Service) handleSendBroadcast(c *gin.Context) {
 		return
 	}
 
-	// Update broadcast status
+	// Update broadcast status. The org term matters on the write as well as the
+	// read: the delivery counts recorded here are what the console shows for
+	// this announcement.
 	_, err = s.db.Pool.Exec(ctx,
 		`UPDATE broadcast_messages
 		 SET status = 'sent', sent_at = NOW(), total_recipients = $1, delivered_count = $1, updated_at = NOW()
-		 WHERE id = $2`,
-		recipientCount, id)
+		 WHERE id = $2 AND org_id = $3`,
+		recipientCount, id, org.ID)
 	if err != nil {
 		respondError(c, s.logger, apperrors.Internal("Failed to update broadcast status", err))
 		return
@@ -519,6 +559,10 @@ func (s *Service) handleDeleteBroadcast(c *gin.Context) {
 	if !requireAdmin(c) {
 		return
 	}
+	org, ok := requireOrg(c)
+	if !ok {
+		return
+	}
 
 	id := c.Param("id")
 	ctx := c.Request.Context()
@@ -526,7 +570,7 @@ func (s *Service) handleDeleteBroadcast(c *gin.Context) {
 	// Only allow deleting drafts
 	var status string
 	err := s.db.Pool.QueryRow(ctx,
-		"SELECT status FROM broadcast_messages WHERE id = $1", id).Scan(&status)
+		"SELECT status FROM broadcast_messages WHERE id = $1 AND org_id = $2", id, org.ID).Scan(&status)
 	if err != nil {
 		respondError(c, nil, apperrors.NotFound("Broadcast"))
 		return
@@ -537,7 +581,7 @@ func (s *Service) handleDeleteBroadcast(c *gin.Context) {
 	}
 
 	tag, err := s.db.Pool.Exec(ctx,
-		"DELETE FROM broadcast_messages WHERE id = $1 AND status = 'draft'", id)
+		"DELETE FROM broadcast_messages WHERE id = $1 AND status = 'draft' AND org_id = $2", id, org.ID)
 	if err != nil {
 		respondError(c, s.logger, apperrors.Internal("Failed to delete broadcast", err))
 		return
@@ -605,7 +649,7 @@ func (s *Service) handleNotificationStats(c *gin.Context) {
 	broadcastRows, err := s.db.Pool.Query(ctx,
 		`SELECT id, title, body, channel, target_type, target_ids, priority, scheduled_at, sent_at, status,
 		        total_recipients, delivered_count, read_count, created_by, created_at, updated_at
-		 FROM broadcast_messages ORDER BY created_at DESC LIMIT 5`)
+		 FROM broadcast_messages WHERE org_id = $1 ORDER BY created_at DESC LIMIT 5`, org.ID)
 	if err != nil {
 		respondError(c, s.logger, apperrors.Internal("Failed to get notification stats", err))
 		return
@@ -629,7 +673,8 @@ func (s *Service) handleNotificationStats(c *gin.Context) {
 	// Routing rules count (enabled only)
 	var routingRulesCount int
 	err = s.db.Pool.QueryRow(ctx,
-		"SELECT COUNT(*) FROM notification_routing_rules WHERE enabled = true").Scan(&routingRulesCount)
+		"SELECT COUNT(*) FROM notification_routing_rules WHERE enabled = true AND org_id = $1",
+		org.ID).Scan(&routingRulesCount)
 	if err != nil {
 		respondError(c, s.logger, apperrors.Internal("Failed to get notification stats", err))
 		return

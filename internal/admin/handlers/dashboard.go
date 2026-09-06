@@ -48,11 +48,20 @@ type RecentEvent struct {
 }
 
 // SystemMetrics represents system-level metrics
+// processStart is when this process began serving. Package-level so the value
+// is the process's, not the request's.
+var processStart = time.Now()
+
+// SystemMetrics is what the dashboard reports about the running service.
+//
+// CPUUsage, MemoryUsage and DiskUsage were removed with the /dashboard/metrics
+// endpoint that claimed to fill them: it was swagger-documented as "real-time
+// system metrics including CPU, memory, and disk usage" and returned a zero
+// struct, always. Host metrics belong to the Prometheus scrape the chart's
+// ServiceMonitor already wires up, not to a JSON endpoint that reports zeros
+// as if it had measured them.
 type SystemMetrics struct {
-	CPUUsage    float64 `json:"cpu_usage,omitempty"`
-	MemoryUsage float64 `json:"memory_usage,omitempty"`
-	DiskUsage   float64 `json:"disk_usage,omitempty"`
-	Uptime      int64   `json:"uptime_seconds,omitempty"`
+	Uptime int64 `json:"uptime_seconds,omitempty"`
 }
 
 // SecurityAlerts represents security-related alerts
@@ -91,7 +100,11 @@ func (h *DashboardHandler) GetDashboardStats(c *gin.Context) {
 	stats := &DashboardStats{
 		RecentEvents: []RecentEvent{},
 		SystemMetrics: SystemMetrics{
-			Uptime: int64(time.Since(time.Now().Add(-time.Hour * 24 * 365)).Seconds()), // Approximate uptime
+			// Real process uptime. This used to be
+			// time.Since(time.Now().Add(-365*24h)) — a literal 31,536,000
+			// seconds dressed as a computation, so every install reported
+			// "365d" on its first request after a restart.
+			Uptime: int64(time.Since(processStart).Seconds()),
 		},
 		SecurityAlerts: SecurityAlerts{},
 	}
@@ -165,43 +178,4 @@ func (h *DashboardHandler) GetDashboardStats(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, stats)
-}
-
-// RefreshCache handles POST /api/v1/dashboard/refresh
-// @Summary Refresh dashboard cache
-// @Description Forces a refresh of the dashboard statistics cache
-// @Tags dashboard
-// @Produce json
-// @Success 200 {object} map[string]string
-// @Failure 401 {object} map[string]string
-// @Failure 403 {object} map[string]string
-// @Failure 500 {object} map[string]string
-// @Router /api/v1/dashboard/refresh [post]
-func (h *DashboardHandler) RefreshCache(c *gin.Context) {
-	h.logger.Debug("Refreshing dashboard cache")
-
-	// Invalidate cache and force refresh
-	c.JSON(http.StatusOK, gin.H{
-		"message": "Dashboard cache refreshed successfully",
-	})
-}
-
-// GetMetrics handles GET /api/v1/dashboard/metrics
-// @Summary Get system metrics
-// @Description Returns real-time system metrics including CPU, memory, and disk usage
-// @Tags dashboard
-// @Produce json
-// @Success 200 {object} SystemMetrics
-// @Failure 401 {object} map[string]string
-// @Failure 403 {object} map[string]string
-// @Failure 500 {object} map[string]string
-// @Router /api/v1/dashboard/metrics [get]
-func (h *DashboardHandler) GetMetrics(c *gin.Context) {
-	h.logger.Debug("Fetching system metrics")
-
-	metrics := SystemMetrics{
-		Uptime: 0, // Would be populated by actual system monitoring
-	}
-
-	c.JSON(http.StatusOK, metrics)
 }

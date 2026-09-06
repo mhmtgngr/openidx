@@ -1,24 +1,13 @@
 import { test, expect } from '@playwright/test';
 
 test.describe('Settings Page', () => {
-  test.beforeEach(async ({ page, context }) => {
-    // Create a mock JWT token for testing (expires in 1 hour)
-    const mockPayload = {
-      sub: 'test-user-id',
-      email: 'admin@openidx.local',
-      name: 'Test Admin',
-      roles: ['admin'],
-      exp: Math.floor(Date.now() / 1000) + 3600,
-    };
-    const header = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
-    const payload = btoa(JSON.stringify(mockPayload));
-    const mockToken = `${header}.${payload}.mock-signature`;
-
-    // Set auth token in context before navigating
-    await context.addInitScript((token) => {
-      localStorage.setItem('token', token);
-      localStorage.setItem('refresh_token', 'mock-refresh-token');
-    }, mockToken);
+  test.beforeEach(async ({ page }) => {
+    // The signed-in storageState from auth.setup.ts is the session. What
+    // stood here overwrote it with a hand-assembled JWT ending in
+    // `mock-signature`: btoa() emits standard base64, JWT requires base64url,
+    // so identity-service logged "token is malformed: could not base64 decode
+    // claim" on every request and the console bounced back to /login. The
+    // route mocks below still stand in for the API; the SESSION has to be real.
 
     // Mock settings API
     await page.route('**/api/v1/settings', async (route) => {

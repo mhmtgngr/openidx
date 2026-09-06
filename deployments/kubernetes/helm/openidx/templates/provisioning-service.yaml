@@ -37,7 +37,7 @@ spec:
       {{- end }}
       containers:
         - name: provisioning-service
-          image: "{{ .Values.global.imageRegistry }}/{{ .Values.provisioningService.image.repository }}:{{ .Values.provisioningService.image.tag }}"
+          image: "{{ include "openidx.imageRegistry" . }}/{{ .Values.provisioningService.image.repository }}:{{ .Values.provisioningService.image.tag }}"
           imagePullPolicy: {{ .Values.provisioningService.image.pullPolicy }}
           {{- include "openidx.preStopHook" . | nindent 10 }}
           ports:
@@ -49,11 +49,6 @@ spec:
               value: {{ .Values.global.environment | default "production" | quote }}
             - name: LOG_LEVEL
               value: {{ .Values.global.logLevel | default "info" | quote }}
-            - name: KEYCLOAK_URL
-              valueFrom:
-                configMapKeyRef:
-                  name: {{ include "openidx.fullname" . }}-config
-                  key: KEYCLOAK_URL
             {{- if .Values.serviceTLS.enabled }}
             - name: TLS_ENABLED
               value: "true"

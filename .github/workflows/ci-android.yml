@@ -133,9 +133,12 @@ jobs:
         with:
           gradle-version: ${{ env.GRADLE_VERSION }}
 
+      # `|| true` is gone. It was added during Phase 1 bootstrap because neither
+      # module had tests yet — but Gradle's `test` task on a module with no test
+      # sources succeeds on its own (NO-SOURCE), so the swallow was never
+      # protecting against that. What it DID swallow was every real failure: a
+      # test that starts failing the day one is written, a broken test
+      # configuration, an unresolvable dependency. A test job that cannot go red
+      # is not a test job.
       - name: Run unit tests
-        run: |
-          gradle :core:test :posture-android:test --no-daemon || true
-          # The "|| true" is intentional during Phase 1 bootstrap — neither
-          # module has tests yet. Remove once we add the first test class
-          # so missing tests fail the build.
+        run: gradle :core:test :posture-android:test --no-daemon

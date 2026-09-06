@@ -1,8 +1,16 @@
 openapi: 3.0.3
 info:
   title: OpenIDX Governance Service
-  description: Access reviews, certification campaigns, and policy management.
-  version: 0.1.0
+  description: |
+    Access reviews, certification campaigns, and policy management.
+
+    Every route cmd/governance-service mounts appears here, and nothing
+    that is not mounted does: test/openapi/service_spec_coverage_test.go compares
+    this file against the live route table in both directions. Operations carry an
+    `x-openidx-handler` extension naming the Go handler that serves them; where a
+    payload shape is not yet pinned the body is shown as a free-form JSON object
+    rather than invented.
+  version: 1.34.0
   license:
     name: Apache 2.0
     url: https://www.apache.org/licenses/LICENSE-2.0
@@ -15,10 +23,17 @@ security:
   - bearerAuth: []
 
 tags:
+  - name: ABAC Policies
   - name: Access Reviews
-  - name: Review Items
-  - name: Policies
+  - name: Approvals
+  - name: Campaigns
+  - name: Entitlements
   - name: JIT Access Requests
+  - name: Policies
+  - name: Privileged Accounts
+  - name: Requests
+  - name: Review Items
+  - name: Separation of Duties
 
 paths:
   # --- JIT Access Requests ---
@@ -52,7 +67,39 @@ paths:
       summary: Retrieve checked-out vault credential (one-shot)
       description: Returns the plaintext credential value for a fulfilled vault_credential request. Requester-only; single use; access is audited.
       operationId: getRequestCredential
-      parameters:
+      responses:
+    BadRequest:
+      description: The request was malformed or failed validation
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: No valid bearer token was presented
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: The caller is authenticated but not permitted
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: No such resource in the caller's organization
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    ServerError:
+      description: The request could not be completed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  parameters:
         - $ref: '#/components/parameters/IdPath'
       responses:
         '200':
@@ -378,6 +425,928 @@ paths:
                   reason:
                     type: string
 
+  /api/v1/governance/abac-policies:
+    get:
+      tags: [ABAC Policies]
+      summary: List abac policies
+      operationId: listABACPolicies
+      x-openidx-handler: internal/governance.(*Service).handleListABACPolicies
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [ABAC Policies]
+      summary: Create abac policy
+      operationId: createABACPolicy
+      x-openidx-handler: internal/governance.(*Service).handleCreateABACPolicy
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/governance/abac-policies/evaluate:
+    post:
+      tags: [ABAC Policies]
+      summary: Evaluate abac policies
+      operationId: evaluateABACPolicies
+      x-openidx-handler: internal/governance.(*Service).handleEvaluateABACPolicies
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/governance/abac-policies/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    delete:
+      tags: [ABAC Policies]
+      summary: Delete abac policy
+      operationId: deleteABACPolicy
+      x-openidx-handler: internal/governance.(*Service).handleDeleteABACPolicy
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    get:
+      tags: [ABAC Policies]
+      summary: Get abac policy
+      operationId: getABACPolicy
+      x-openidx-handler: internal/governance.(*Service).handleGetABACPolicy
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    put:
+      tags: [ABAC Policies]
+      summary: Update abac policy
+      operationId: updateABACPolicy
+      x-openidx-handler: internal/governance.(*Service).handleUpdateABACPolicy
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/governance/approval-policies:
+    get:
+      tags: [Approvals]
+      summary: List approval policies
+      operationId: listApprovalPolicies
+      x-openidx-handler: internal/governance.(*Service).handleListApprovalPolicies
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [Approvals]
+      summary: Create approval policy
+      operationId: createApprovalPolicy
+      x-openidx-handler: internal/governance.(*Service).handleCreateApprovalPolicy
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/governance/approval-policies/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    delete:
+      tags: [Approvals]
+      summary: Delete approval policy
+      operationId: deleteApprovalPolicy
+      x-openidx-handler: internal/governance.(*Service).handleDeleteApprovalPolicy
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    put:
+      tags: [Approvals]
+      summary: Update approval policy
+      operationId: updateApprovalPolicy
+      x-openidx-handler: internal/governance.(*Service).handleUpdateApprovalPolicy
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/governance/campaigns:
+    get:
+      tags: [Campaigns]
+      summary: List campaigns
+      operationId: listCampaigns
+      x-openidx-handler: internal/governance.(*Service).handleListCampaigns
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [Campaigns]
+      summary: Create campaign
+      operationId: createCampaign
+      x-openidx-handler: internal/governance.(*Service).handleCreateCampaign
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/governance/campaigns/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    delete:
+      tags: [Campaigns]
+      summary: Delete campaign
+      operationId: deleteCampaign
+      x-openidx-handler: internal/governance.(*Service).handleDeleteCampaign
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    get:
+      tags: [Campaigns]
+      summary: Get campaign
+      operationId: getCampaign
+      x-openidx-handler: internal/governance.(*Service).handleGetCampaign
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    put:
+      tags: [Campaigns]
+      summary: Update campaign
+      operationId: updateCampaign
+      x-openidx-handler: internal/governance.(*Service).handleUpdateCampaign
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/governance/campaigns/{id}/run:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    post:
+      tags: [Campaigns]
+      summary: Run campaign
+      operationId: runCampaign
+      x-openidx-handler: internal/governance.(*Service).handleRunCampaign
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/governance/campaigns/{id}/runs:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    get:
+      tags: [Campaigns]
+      summary: Get campaign runs
+      operationId: getCampaignRuns
+      x-openidx-handler: internal/governance.(*Service).handleGetCampaignRuns
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/governance/entitlements:
+    get:
+      tags: [Entitlements]
+      summary: List entitlements
+      operationId: listEntitlements
+      x-openidx-handler: internal/governance.(*Service).handleListEntitlements
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/governance/entitlements/orphans:
+    get:
+      tags: [Entitlements]
+      summary: List orphaned entitlements
+      operationId: listOrphanedEntitlements
+      x-openidx-handler: internal/governance.(*Service).handleListOrphanedEntitlements
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/governance/entitlements/rebuild:
+    post:
+      tags: [Entitlements]
+      summary: Rebuild entitlements
+      operationId: rebuildEntitlements
+      x-openidx-handler: internal/governance.(*Service).handleRebuildEntitlements
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/governance/entitlements/statistics:
+    get:
+      tags: [Entitlements]
+      summary: Entitlement statistics
+      operationId: entitlementStatistics
+      x-openidx-handler: internal/governance.(*Service).handleEntitlementStatistics
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/governance/my-approvals:
+    get:
+      tags: [Approvals]
+      summary: List pending approvals
+      operationId: listPendingApprovals
+      x-openidx-handler: internal/governance.(*Service).handleListPendingApprovals
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/governance/privileged-accounts:
+    get:
+      tags: [Privileged Accounts]
+      summary: List privileged accounts
+      operationId: listPrivilegedAccounts
+      x-openidx-handler: internal/governance.(*Service).handleListPrivilegedAccounts
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/governance/privileged-accounts/scan:
+    post:
+      tags: [Privileged Accounts]
+      summary: Run privileged discovery
+      operationId: runPrivilegedDiscovery
+      x-openidx-handler: internal/governance.(*Service).handleRunPrivilegedDiscovery
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/governance/privileged-accounts/statistics:
+    get:
+      tags: [Privileged Accounts]
+      summary: Privileged statistics
+      operationId: privilegedStatistics
+      x-openidx-handler: internal/governance.(*Service).handlePrivilegedStatistics
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/governance/privileged-accounts/{id}/status:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    post:
+      tags: [Privileged Accounts]
+      summary: Update privileged account status
+      operationId: updatePrivilegedAccountStatus
+      x-openidx-handler: internal/governance.(*Service).handleUpdatePrivilegedAccountStatus
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/governance/requests:
+    get:
+      tags: [Requests]
+      summary: List access requests
+      operationId: listAccessRequests
+      x-openidx-handler: internal/governance.(*Service).handleListAccessRequests
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/governance/requests/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    get:
+      tags: [Requests]
+      summary: Get access request
+      operationId: getAccessRequest
+      x-openidx-handler: internal/governance.(*Service).handleGetAccessRequest
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/governance/requests/{id}/approve:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    post:
+      tags: [Requests]
+      summary: Approve request
+      operationId: approveRequest
+      x-openidx-handler: internal/governance.(*Service).handleApproveRequest
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/governance/requests/{id}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    post:
+      tags: [Requests]
+      summary: Cancel request
+      operationId: cancelRequest
+      x-openidx-handler: internal/governance.(*Service).handleCancelRequest
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/governance/requests/{id}/deny:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    post:
+      tags: [Requests]
+      summary: Deny request
+      operationId: denyRequest
+      x-openidx-handler: internal/governance.(*Service).handleDenyRequest
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/governance/sod/statistics:
+    get:
+      tags: [Separation of Duties]
+      summary: So D statistics
+      operationId: soDStatistics
+      x-openidx-handler: internal/governance.(*Service).handleSoDStatistics
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/governance/sod/sweep:
+    post:
+      tags: [Separation of Duties]
+      summary: Run so D sweep
+      operationId: runSoDSweep
+      x-openidx-handler: internal/governance.(*Service).handleRunSoDSweep
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/governance/sod/violations:
+    get:
+      tags: [Separation of Duties]
+      summary: List so D violations
+      operationId: listSoDViolations
+      x-openidx-handler: internal/governance.(*Service).handleListSoDViolations
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/governance/sod/violations/{id}/status:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    post:
+      tags: [Separation of Duties]
+      summary: Update so D violation status
+      operationId: updateSoDViolationStatus
+      x-openidx-handler: internal/governance.(*Service).handleUpdateSoDViolationStatus
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
 components:
   securitySchemes:
     bearerAuth:
@@ -394,6 +1363,15 @@ components:
         type: string
 
   schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+          description: A short machine-readable reason
+        error_description:
+          type: string
+          description: Operator-facing detail, when the handler has one
     AccessReview:
       type: object
       properties:

@@ -10,14 +10,32 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // newOutboundTestRouter builds a gin engine with only the outbound-SCIM target
 // routes wired, backed by the given service. No auth middleware so tests hit the
-// handlers directly.
+// handlers directly -- but the tenant IS attached, because in production
+// TenantResolver runs in front of every one of these routes and the handlers
+// refuse a request without it. Before v164 they treated an absent organization
+// as a wildcard meaning every organization, and this router (which attached
+// none) was what made that convenient.
 func newOutboundTestRouter(svc *Service) *gin.Engine {
+	return newOutboundTestRouterAs(svc, testOrgID)
+}
+
+// newOutboundTestRouterAs builds the same router for a named tenant; pass "" to
+// build one with no tenant at all, which every handler must refuse.
+func newOutboundTestRouterAs(svc *Service, orgID string) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
+	if orgID != "" {
+		r.Use(func(c *gin.Context) {
+			c.Request = c.Request.WithContext(orgctx.With(c.Request.Context(), orgctx.Org{ID: orgID}))
+			c.Next()
+		})
+	}
 	grp := r.Group("/api/v1/provisioning")
 	svc.registerOutboundRoutes(grp)
 	return r
@@ -98,7 +116,7 @@ func TestOutboundHandlersCRUD(t *testing.T) {
 		t.Errorf("expected renamed target, got %q", updated.Name)
 	}
 	// Secret still decrypts (was preserved through the update).
-	tok, _ := svc.bearerTokenFor(ctx, created.ID)
+	tok, _ := svc.bearerTokenFor(ctx, testOrgID, created.ID)
 	if tok != "xoxb-secret" {
 		t.Errorf("secret not preserved on update, got %q", tok)
 	}
@@ -167,7 +185,12 @@ func TestOutboundHandlerSyncEnqueues(t *testing.T) {
 	db.Pool.Exec(ctx, `CREATE TABLE users (id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         username VARCHAR(255), email VARCHAR(255), first_name VARCHAR(255), last_name VARCHAR(255),
         enabled BOOLEAN DEFAULT true, org_id UUID)`)
-	db.Pool.Exec(ctx, `INSERT INTO users (username,email,enabled) VALUES ('a@a','a@a',true),('b@b','b@b',true)`)
+	// Seeded into the router's tenant. They used to be seeded with a NULL
+	// org_id and matched anyway, because the full sync's predicate was
+	// `WHERE (u.org_id::text = $3 OR $3 = '')` and the test router attached no
+	// organization — so this case was passing through the wildcard v164 removed.
+	db.Pool.Exec(ctx, `INSERT INTO users (username,email,enabled,org_id)
+        VALUES ('a@a','a@a',true,$1::uuid),('b@b','b@b',true,$1::uuid)`, testOrgID)
 
 	svc := &Service{db: db, logger: zap.NewNop()}
 	r := newOutboundTestRouter(svc)
