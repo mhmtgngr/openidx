@@ -859,6 +859,16 @@ func TestRLSBeltTables(t *testing.T) {
 			INSERT INTO discovered_paths (app_id, path, classification, org_id)
 			SELECT a.id, '/tbelt-` + suffix + `', 'public', $1 FROM a`},
 
+		// v170 — the DCR registration token (a bearer credential for RFC 7592
+		// client management) and the device authorization code.
+		{"oauth_registration_tokens", `INSERT INTO oauth_registration_tokens (client_id, token_hash, org_id)
+			VALUES ('tbelt-dcr-` + suffix + `', 'deadbeef', $1)`},
+
+		{"oauth_device_codes", `INSERT INTO oauth_device_codes
+			(device_code_hash, user_code, client_id, scope, state, org_id, expires_at)
+			VALUES ('tbelt-dch-` + suffix + `', 'TBELT` + suffix + `', 'tbelt-dev', 'openid',
+			        'pending', $1, NOW() + INTERVAL '10 minutes')`},
+
 		{"group_application_assignments", `WITH g AS (
 			INSERT INTO groups (name, org_id) VALUES ('tbelt-gaa-` + suffix + `', $1) RETURNING id),
 			a AS (

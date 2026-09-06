@@ -375,7 +375,12 @@ func TestRegistersOnlyShrink(t *testing.T) {
 		// for skipping the belt that had half expired -- the integrity doctor
 		// sweeps under WithBypassRLS, which is the belt's own opt-out, and the
 		// discovery goroutine needed one line to carry the org on its context.
-		{"needsBelt", len(needsBelt), 5},
+		// 5 -> 3 with v170, the DCR registration tokens and the device codes,
+		// where the register's instruction was the thing that needed reading:
+		// v97's org_id was never written by anything, so belting that table as
+		// it stood would have answered 401 to every RFC 7592 management call on
+		// every install. The column is filled first, then enforced.
+		{"needsBelt", len(needsBelt), 3},
 		{"predicateAuditPending", len(predicateAuditPending), 18},
 		{"installWideTables", len(installWideTables), 21},
 		{"beltExempt", len(beltExempt), 5},

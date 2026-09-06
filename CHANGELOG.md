@@ -58,6 +58,38 @@ to a spec that describes an eighth of a surface, a documented endpoint that
   **Operators of installations with more than one organization should note**
   that existing runs are assigned to the organization of whoever started them,
   and their per-account records follow the run.
+- **A record that names the organization had never had one written into it**
+  (migration v170). When an application registers itself with OpenIDX
+  automatically — the standard mechanism for a client to sign itself up — it is
+  handed a management credential so it can read, update or remove its own
+  registration afterwards. The record holding that credential has had a column
+  for the owning organization since it was created, and nothing had ever put a
+  value in it. Every one of those records, on every installation, named no
+  organization at all.
+
+  That mattered because the plan was to bring this record under the database's
+  own isolation rule. Doing that first would have made every one of them
+  invisible, and every management call — read, update, remove — would have
+  answered **"invalid registration credential"** for every application on every
+  installation, with a perfectly valid credential in hand. The column is now
+  filled from the application it belongs to, and only then enforced.
+
+  A record whose application no longer exists is removed rather than assigned to
+  someone: it could never be used again, and filing another organization's dead
+  credential under theirs would be worse than deleting it.
+
+  **This was not an exposure.** The lookups involved use the application's
+  identifier, which is unique across the whole installation, and both management
+  screens read the application itself — already confined to its organization —
+  immediately afterwards, so a caller from elsewhere was already refused there.
+  What changes is that these lookups no longer depend on a property of a
+  different record, and keep working for maintenance jobs that deliberately
+  range across organizations.
+
+  Also brought under the same rule: the codes used when signing in on a device
+  that has no keyboard (a TV, a console). Their organization was already
+  recorded and every lookup already used it; the four follow-up updates that
+  addressed a code by its row now name it too.
 - **The system-health repair tool required no administrator role** (migration
   v169). The Relations & Integrity Doctor on the System Health page finds
   inconsistencies across the whole installation — an application whose network
