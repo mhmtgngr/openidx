@@ -32,6 +32,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `super_admin` role -- v134 grants a permission to one and matches nothing --
   so the fixture creates and removes it.
 
+- **Nine tests that ran no code at all.** Seven in `internal/directory` over
+  the directory authentication router, one named after a function it never
+  called, one that read fields off a zero value it had built itself. Each was
+  the shape `_ = service.AuthenticateUser` -- a method VALUE assigned to the
+  blank identifier, which is not a call: the function under test never ran, and
+  the only thing established (that the method exists) the compiler already
+  guaranteed. The directory ones carried the comment "Without a real DB, we
+  test the method signature exists" in a package that has had a testcontainers
+  harness the whole time. `scripts/check-inert-tests.sh` could not see any of
+  them -- it looks for an unconditional `t.Skip`, and these do not skip; they
+  run and report a tick. New `tools/inerttests` (go/ast, so a method value and
+  a method call are told apart exactly) fails the build on the shape, with an
+  8-case self-test whose negative cases are the legitimate look-alikes it must
+  not touch: a call assigned to `_`, a compile-time interface assertion, a real
+  test that discards one result. All nine replaced with tests that run the
+  code: the directory router's refusals (an Entra directory must not hand a
+  password to the LDAP connector; an unknown type must not fall through to it;
+  a disabled or other-tenant directory authenticates nobody), the sync-log
+  reads' tenant scoping, `ListenAndServe` actually serving and releasing its
+  port, and the org-lookup adapter narrowing a twelve-field `Organization` to
+  the two-field value it puts on every request's context.
+
 - **A second tenant could not name a role, a service account or a SCIM group
   the way the first one had.** `roles.name`, `service_accounts.name` and
   `scim_groups.display_name` were UNIQUE across the whole install while the rows

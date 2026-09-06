@@ -977,6 +977,57 @@ jobs:
           # Propagate the tool's exit code — non-zero fails the build.
           exit $rc
 
+  # inerttests finds Go tests that execute nothing: every statement assigns to
+  # the blank identifier from an expression that calls nothing, so the function
+  # under test never runs. `_ = service.AuthenticateUser` is a method VALUE, not
+  # a call. Nine of these were in the tree -- seven over the directory
+  # authentication router, one named after a function it never called, one that
+  # read fields off a zero value it had built itself -- and all nine passed on
+  # every CI run of their lives.
+  #
+  # scripts/check-inert-tests.sh cannot see them: that guard looks for an
+  # unconditional t.Skip, and these do not skip. They run and report a tick.
+  inerttests:
+    name: Inert-test lint
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.go_changed == 'true'
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Self-test the tool first
+        # A guard whose own cases do not pass has no standing to fail a build.
+        run: go test ./tools/inerttests/
+
+      - name: Run inerttests (hard gate)
+        run: |
+          set +e
+          go run ./tools/inerttests -fail ./internal ./cmd ./pkg ./tools ./test ./deploy > inert.out 2> inert.err
+          rc=$?
+          set -e
+          {
+            echo "## inerttests — tests that execute nothing"
+            echo
+            if [ "$rc" -ne 0 ]; then
+              echo "❌ **Gate failed.** A test whose every statement is \`_ = <something that is not called>\` runs no code. Call the thing and assert on it, or delete the test."
+            else
+              echo "✅ $(tail -n1 inert.err 2>/dev/null || echo 'every test runs something')"
+            fi
+            echo
+            echo '```'
+            head -50 inert.err
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
+
   # Security vulnerability check
   vulnerability-check:
     name: Vulnerability Check
@@ -1517,6 +1568,7 @@ jobs:
       - field-fix-scoreboard
       - first-run
       - github-config
+      - inerttests
       - lint
       - no-internal-topology
       - orgscope

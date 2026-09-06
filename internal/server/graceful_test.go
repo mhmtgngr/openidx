@@ -3,6 +3,8 @@ package server
 
 import (
 	"context"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -496,19 +498,35 @@ func TestShutdownWithContext(t *testing.T) {
 	}
 }
 
+// TestListenAndServe serves a request and then shuts the server down.
+//
+// It used to build the server, assign it to the blank identifier and stop --
+// "This would normally block, but we'll just verify it doesn't panic
+// immediately / In a real test, we'd run this in a goroutine and send a
+// signal." So a test named after ListenAndServe never called it, and the two
+// things worth knowing about that method -- that it actually serves, and that
+// the shutdown path it wires up releases the port -- were unasserted. Both are
+// straightforward with a listener on a random port and gs.Shutdown().
 func TestListenAndServe(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 
-	// Create a test handler
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("Hello"))
-	})
-
-	server := &http.Server{
-		Addr:    ":0", // Random port
-		Handler: handler,
+	// Bind first so the test knows the port; :0 in http.Server would be chosen
+	// inside ListenAndServe where the test cannot see it.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	addr := ln.Addr().String()
+	if err := ln.Close(); err != nil {
+		t.Fatalf("close probe listener: %v", err)
 	}
 
+	server := &http.Server{
+		Addr: addr,
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Write([]byte("Hello"))
+		}),
+	}
 	gs := New(Config{
 		Server:          server,
 		Logger:          logger,
@@ -516,9 +534,46 @@ func TestListenAndServe(t *testing.T) {
 		ShutdownTimeout: 5 * time.Second,
 	})
 
-	// This would normally block, but we'll just verify it doesn't panic immediately
-	// In a real test, we'd run this in a goroutine and send a signal
-	_ = gs
+	// ListenAndServe starts the server in a goroutine and then blocks in
+	// Start() waiting for a signal, so it runs in one here and Shutdown()
+	// releases it.
+	done := make(chan error, 1)
+	go func() { done <- gs.ListenAndServe() }()
+
+	var body string
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		resp, err := http.Get("http://" + addr + "/")
+		if err != nil {
+			time.Sleep(20 * time.Millisecond)
+			continue
+		}
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		body = string(b)
+		break
+	}
+	if body != "Hello" {
+		t.Fatalf("served %q, want %q — ListenAndServe did not serve", body, "Hello")
+	}
+
+	gs.Shutdown()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("ListenAndServe returned %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("ListenAndServe did not return after Shutdown")
+	}
+
+	// The port is free again: a shutdown that leaves the listener open is how a
+	// restart fails with "address already in use".
+	ln2, err := net.Listen("tcp", addr)
+	if err != nil {
+		t.Fatalf("port still held after shutdown: %v", err)
+	}
+	ln2.Close()
 }
 
 // BenchmarkShutdown benchmarks the shutdown process

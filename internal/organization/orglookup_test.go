@@ -130,14 +130,76 @@ func TestOrgLookup_implementsMiddlewareInterface(t *testing.T) {
 	var _ middleware.OrgLookup = NewOrgLookup(&fakeFetcher{})
 }
 
-// Sanity: orgctx.Org is the right shape — the adapter must return
-// the two-field struct, not the full *Organization.
-func TestOrgLookup_returnsOrgctxOrg_notFullOrganization(t *testing.T) {
-	got := orgctx.Org{}
-	_ = got.ID
-	_ = got.Slug
-	// If the orgctx.Org struct grows a field, this test won't catch
-	// it — but the adapter signature does (orgctx.Org return type).
+// TestOrgLookup_narrowsToOrgctxOrg pins the narrowing itself: an Organization
+// carries a plan, limits, timestamps, a member count and an arbitrary settings
+// map, and the value the adapter puts on EVERY request's context must be the
+// two-field struct and nothing else.
+//
+// This replaces a test of the same name that built an empty orgctx.Org and read
+// two fields off it — `_ = got.ID` — never touching the adapter. Its own
+// comment conceded the gap: "If the orgctx.Org struct grows a field, this test
+// won't catch it". Comparing against a fully-specified expected value does
+// catch exactly that: a new field the adapter forgets to populate makes this
+// fail, because the comparison is on the whole struct rather than on the two
+// fields somebody remembered to check.
+func TestOrgLookup_narrowsToOrgctxOrg(t *testing.T) {
+	domain := "acme.example"
+	full := &Organization{
+		ID:              "id-1",
+		Name:            "Acme, Inc.",
+		Slug:            "acme",
+		Domain:          &domain,
+		Plan:            "enterprise",
+		Status:          "active",
+		Settings:        map[string]interface{}{"sso_required": true, "secret_knob": "value"},
+		MaxUsers:        5000,
+		MaxApplications: 250,
+		CreatedAt:       time.Unix(1, 0),
+		UpdatedAt:       time.Unix(2, 0),
+		MemberCount:     4321,
+	}
+	f := &fakeFetcher{
+		byID: func(_ context.Context, _ string) (*Organization, error) { return full, nil },
+	}
+
+	got, err := NewOrgLookup(f).ByID(context.Background(), "id-1")
+	if err != nil {
+		t.Fatalf("ByID: %v", err)
+	}
+	// Whole-struct comparison on purpose.
+	if want := (orgctx.Org{ID: "id-1", Slug: "acme"}); got != want {
+		t.Fatalf("ByID returned %+v, want exactly %+v — the context carries the org identity, not the org record", got, want)
+	}
+}
+
+// TestOrgLookup_cacheReturnsTheNarrowedValue: the cache stores what was already
+// narrowed, so a hit must be indistinguishable from a miss. A cache that held
+// the full record and re-narrowed on read would be a second place for the
+// narrowing to drift.
+func TestOrgLookup_cacheReturnsTheNarrowedValue(t *testing.T) {
+	calls := 0
+	f := &fakeFetcher{
+		byID: func(_ context.Context, _ string) (*Organization, error) {
+			calls++
+			return &Organization{ID: "id-1", Slug: "acme", Name: "Acme", Plan: "enterprise"}, nil
+		},
+	}
+	l := NewOrgLookup(f)
+
+	first, err := l.ByID(context.Background(), "id-1")
+	if err != nil {
+		t.Fatalf("first ByID: %v", err)
+	}
+	second, err := l.ByID(context.Background(), "id-1")
+	if err != nil {
+		t.Fatalf("second ByID: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("inner fetcher called %d times, want 1 — the second read should be a cache hit", calls)
+	}
+	if first != second {
+		t.Fatalf("cache hit returned %+v, miss returned %+v", second, first)
+	}
 }
 
 // The tenant resolver consults the lookup on every request (the
