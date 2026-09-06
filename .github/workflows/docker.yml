@@ -280,6 +280,14 @@ jobs:
 
       # The dispatch input wins when present; otherwise the pushed tag. On a
       # push `inputs` is empty, so the fallback is the only value there.
+      #
+      # Both spellings are derived, and the un-prefixed one is not decoration.
+      # On a pushed tag the build job's metadata-action has ALREADY published
+      # 1.34.0 / 1.34 / 1 via type=semver -- that is the form RELEASING.md tells
+      # consumers to pull and the form a chart values.yaml pins. type=semver
+      # fires on a tag ref and nothing else, so on the dispatch path those three
+      # names are never created by anyone. Reaching this job from a dispatch is
+      # therefore only half of parity: it has to stamp the same NAMES.
       - name: Resolve the version being stamped
         id: version
         env:
@@ -290,10 +298,20 @@ jobs:
             echo "::error::refusing to stamp images with '$VERSION' -- expected vX.Y.Z"
             exit 1
           fi
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "major_minor=$(echo "$VERSION" | cut -d. -f1,2)" >> "$GITHUB_OUTPUT"
-          echo "major=$(echo "$VERSION" | cut -d. -f1)" >> "$GITHUB_OUTPUT"
+          BARE="${VERSION#v}"
+          {
+            echo "version=${VERSION}"
+            echo "major_minor=$(echo "$VERSION" | cut -d. -f1,2)"
+            echo "major=$(echo "$VERSION" | cut -d. -f1)"
+            echo "bare=${BARE}"
+            echo "bare_major_minor=$(echo "$BARE" | cut -d. -f1,2)"
+            echo "bare_major=$(echo "$BARE" | cut -d. -f1)"
+          } >> "$GITHUB_OUTPUT"
 
+      # imagetools create points names at an existing manifest, so on the tagged
+      # path the three un-prefixed tags are re-pointed at the digest they already
+      # name -- idempotent, and it keeps one code path rather than a conditional
+      # that only the rarer trigger exercises.
       - name: Re-tag images with version
         run: |
           for service in identity-service governance-service provisioning-service \
@@ -304,6 +322,9 @@ jobs:
               --tag "${{ env.IMAGE_PREFIX }}/$service:${{ steps.version.outputs.version }}" \
               --tag "${{ env.IMAGE_PREFIX }}/$service:${{ steps.version.outputs.major_minor }}" \
               --tag "${{ env.IMAGE_PREFIX }}/$service:${{ steps.version.outputs.major }}" \
+              --tag "${{ env.IMAGE_PREFIX }}/$service:${{ steps.version.outputs.bare }}" \
+              --tag "${{ env.IMAGE_PREFIX }}/$service:${{ steps.version.outputs.bare_major_minor }}" \
+              --tag "${{ env.IMAGE_PREFIX }}/$service:${{ steps.version.outputs.bare_major }}" \
               --tag "${{ env.IMAGE_PREFIX }}/$service:stable" \
               "${{ env.IMAGE_PREFIX }}/$service:${{ github.sha }}"
           done

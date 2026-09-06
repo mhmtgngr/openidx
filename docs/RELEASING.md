@@ -51,6 +51,14 @@ chart over images that only ever carried a `:sha` tag — a release whose versio
 tags do not exist. `scripts/check-release-dispatch.sh` holds the two paths
 together in CI, and its `.test.sh` proves it goes red on that exact regression.
 
+The parity is *by name*, not just by job. On a pushed tag `docker/metadata-action`
+already publishes the un-prefixed `X.Y.Z` / `X.Y` / `X` through `type=semver`;
+that matches a tag ref and nothing else, so on the dispatch path nobody would
+create them and `docker pull …:1.34.0` would 404 after an apparently complete
+release. The retag job therefore stamps both spellings on both paths — on the
+tagged path the un-prefixed three are re-pointed at the digest they already
+name, which `imagetools create` does idempotently.
+
 Two consequences worth knowing: the images are stamped by the **docker.yml run
 this dispatch starts**, not by the release run itself, so check that run before
 announcing; and the dispatched version is validated (`vX.Y.Z`) rather than
@@ -67,7 +75,9 @@ trusted, because unlike a pushed tag it is free-text input.
   cosign-signed by digest.
 - **`docker.yml`** — builds multi-arch (amd64/arm64) images, stamps the version
   via the `VERSION` build-arg, and the `release-tag` job re-tags each image
-  `ghcr.io/mhmtgngr/openidx/<service>` with `X.Y.Z`, `X.Y`, `X`, and `stable`.
+  `ghcr.io/mhmtgngr/openidx/<service>` with `X.Y.Z`, `X.Y`, `X`, `vX.Y.Z`,
+  `vX.Y`, `vX` and `stable` — both spellings, pointing at one manifest. Pull
+  either; `X.Y.Z` is the one this document and the chart use.
 
 ## Verify
 

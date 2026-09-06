@@ -88,6 +88,18 @@ fi
 grep -q "github.event_name == 'workflow_dispatch' && inputs.version != ''" <<<"$dbody" ||
   finding "docker.yml's release-tag job is not reachable from a dispatch carrying a version"
 
+# 6. …and it has to stamp the same NAMES, which is a second asymmetry hiding
+#    behind the first. On a pushed tag the build job's metadata-action already
+#    publishes the un-prefixed 1.2.3 / 1.2 / 1 through type=semver -- the form
+#    RELEASING.md tells consumers to pull and a chart values.yaml pins. A
+#    dispatch has no tag ref, type=semver matches nothing, and the retag job is
+#    then the only thing that could create them. Stamping only vX.Y.Z there
+#    reaches the job and still ships a release the documented pull misses.
+for out in bare bare_major_minor bare_major; do
+  grep -q "steps.version.outputs.$out" <<<"$dbody" ||
+    finding "docker.yml's retag step does not stamp \$$out; a dispatched release would publish v1.2.3 but not the 1.2.3 the docs tell consumers to pull"
+done
+
 if [ "$fail" -eq 0 ]; then
   echo "check-release-dispatch: ok — the dispatched release stamps images like the tagged one"
 fi

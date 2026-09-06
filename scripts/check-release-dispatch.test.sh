@@ -83,5 +83,14 @@ stage
 sed -i 's/^      version:$/      unused:/' "$WD/docker.yml"
 expect red "docker.yml takes no version input"
 
+# 7. The job is reachable from a dispatch but stamps only the v-prefixed names.
+#    This is the second asymmetry, and the one that survives every case above:
+#    on a pushed tag metadata-action's type=semver publishes 1.2.3 / 1.2 / 1,
+#    on a dispatch nothing does, so `docker pull …:1.34.0` -- the pull
+#    RELEASING.md documents -- would 404 after a dispatched release.
+stage
+sed -i '/outputs\.bare/d' "$WD/docker.yml"
+expect red "retag stamps v1.2.3 but not the documented 1.2.3"
+
 echo "check-release-dispatch.test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
