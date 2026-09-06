@@ -53,7 +53,7 @@ func TestMCPToolApprovalFlow(t *testing.T) {
 	}
 
 	// No approval yet → cannot consume.
-	if ok, err := s.consumeApprovedToolCall(ctx, serverID, "deploy", "agent1", body); err != nil || ok {
+	if ok, err := s.consumeApprovedToolCall(ctx, org, serverID, "deploy", "agent1", body); err != nil || ok {
 		t.Fatalf("consume before approval: ok=%v err=%v", ok, err)
 	}
 
@@ -74,16 +74,16 @@ func TestMCPToolApprovalFlow(t *testing.T) {
 	}
 
 	// The wrong body must NOT consume the approval.
-	if ok, _ := s.consumeApprovedToolCall(ctx, serverID, "deploy", "agent1", []byte(`{"env":"staging"}`)); ok {
+	if ok, _ := s.consumeApprovedToolCall(ctx, org, serverID, "deploy", "agent1", []byte(`{"env":"staging"}`)); ok {
 		t.Fatal("a different body should not consume the approval")
 	}
 
 	// The exact body consumes it once.
-	if ok, err := s.consumeApprovedToolCall(ctx, serverID, "deploy", "agent1", body); err != nil || !ok {
+	if ok, err := s.consumeApprovedToolCall(ctx, org, serverID, "deploy", "agent1", body); err != nil || !ok {
 		t.Fatalf("consume approved: ok=%v err=%v", ok, err)
 	}
 	// Single-use: a second consume fails.
-	if ok, _ := s.consumeApprovedToolCall(ctx, serverID, "deploy", "agent1", body); ok {
+	if ok, _ := s.consumeApprovedToolCall(ctx, org, serverID, "deploy", "agent1", body); ok {
 		t.Fatal("approval should be single-use")
 	}
 }

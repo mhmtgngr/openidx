@@ -88,6 +88,17 @@ to a spec that describes an eighth of a surface, a documented endpoint that
   it, and a test exercises them **in that condition** rather than the ordinary
   one. No exposure is known to have followed from this; it removes the
   dependence.
+- **The approval that clears an AI agent's tool call to run now names the
+  tenant that granted it.** Sensitive tools reached through the MCP gateway wait
+  for a person to approve them. The check that asked *does this tool need
+  approval* said which organization it was asking about; the check on the very
+  next line — *has this call been approved* — did not, and that is the one that
+  lets the call through. The approve/deny endpoint had the same shape: it
+  resolved the administrator's organization, refused when there was none, and
+  then decided an approval by the id in the URL without using it. The database's
+  own tenant rule was scoping both, so no call was ever cleared by another
+  tenant's approval; the checks now say so themselves, and hold when a caller
+  steps outside that rule.
 - **An access-certification item could be delegated to a reviewer in another
   organization, and then never decided.** The Attestation surface lets an
   administrator hand a certification item to a different reviewer. The user id

@@ -3889,6 +3889,48 @@ class this whole program exists for.
    product rather than as a live defect — but a certification vanishing from its
    own list is not a failure mode to leave standing, and both reads now
    `COALESCE`.
+
+   **Batch 40 (`predicateAuditPending` 6 → 5): the question that decides, asked
+   without the tenant, one line below the question that did not.**
+
+   `mcp_tool_approvals` is the human-in-the-loop ledger for AI-agent tool calls
+   (PAM C5): a sensitive tool waits for a person, and the agent retries the
+   identical call once approved. `gateToolCall` asks two questions on
+   consecutive lines:
+
+   ```go
+   if !s.toolRequiresApproval(ctx, ac.OrgID, ac.ServerID, ...) {   // passes the org
+   ok, err := s.consumeApprovedToolCall(ctx, ac.ServerID, ...)     // did not
+   ```
+
+   The first asks *does this tool need approval in this tenant*; the second asks
+   *has this call been approved* — and it is the second that lets the agent's
+   call through. `mcpApprovalContext` was already carrying `OrgID`; the gate
+   simply never used it. Batch 38's shape, on an authorisation decision rather
+   than a count.
+
+   `handleDecideToolApproval` is the batch-35 shape again: it resolved the
+   caller's organization, refused when there was none, discarded it, and then
+   flipped an approval to approved/denied by the bare id from the URL — the
+   approve/deny of an AI agent's tool call.
+
+   **And an escape hatch that would have hidden the request.** v118 left
+   `org_id` nullable, and `createOrGetPendingToolApproval` passed the
+   organization through `NULLIF($1,'')`, so a tenantless caller would write an
+   approval with a NULL tenant — a row the pending list cannot see, since it
+   carries `AND a.org_id = $1`. The administrator would never be shown the
+   request and the agent would wait for a decision nobody could make: v171's
+   *request that was never filed*, in a second place. The invoke path has
+   refused a tenantless caller since batch 30's `requireMCPOrg`, so **no such
+   row can be written today** — this is recorded as closed-by-an-earlier-batch
+   rather than as a live defect — and the writer now refuses rather than resting
+   on its caller.
+
+   Nothing here was a live hole: v118 belts the table, and the approval routes
+   are `adminOnly`. The red proof runs under an explicit bypass and turns six
+   assertions red, one of them sharper than expected — org A's consume did not
+   merely succeed, it *spent* org B's single-use approval, so the owner could no
+   longer use it.
 4. ✅ **OPA `deny` enforced** — *shipped.* — `internal/common/middleware/opa.go`: abort
    unless `Allow && len(Deny)==0`; `authz.rego:15-19`'s "any authenticated
    user may GET anything" removed; `policies/access_control.rego`
