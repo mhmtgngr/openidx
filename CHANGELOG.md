@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The trusted-proxy hardening resolved every client to the proxy's own
+  address in the deployments this repo ships.** `ConfigureTrustedProxies` trusts
+  loopback only, on the stated premise that "every service sits behind the edge
+  and is reached over loopback". Neither reference deployment is: in
+  `deployments/docker` the TLS proxy forwards with
+  `proxy_pass http://oauth-service:8006` and the gateway proxies container to
+  container, and under Helm an ingress pod forwards to a service pod — and
+  `OIDX_TRUSTED_PROXIES` was set in no compose file, no chart value and no
+  `.env.example`. gin walks `X-Forwarded-For` right to left and stops at the
+  first untrusted address, so the edge's correctly written header was discarded
+  whole and `c.ClientIP()` returned the hop. Everything keyed on the client IP
+  therefore shared one value: the per-IP rate-limit bucket (including the
+  tighter auth-path budget that exists to slow a brute force, since pre-auth
+  requests have no user to key on), audit record IPs, known-IP device-trust
+  auto-approval and geo rules. The default stays loopback — widening it would
+  trust a forwarded header on installs whose services are directly reachable —
+  but the mismatch is no longer silent: a request arriving from an untrusted hop
+  with a forwarded header is logged once per hop, with the address to add, and
+  counted in `openidx_forwarded_for_from_untrusted_hop_total` (alert
+  `ForwardedClientIPDiscarded`). The detector is mounted from inside
+  `ConfigureTrustedProxies`, so there is one call site to get right rather than
+  eight. `OIDX_TRUSTED_PROXIES` is now passed through by the compose file,
+  exposed as the chart's `config.trustedProxies`, and documented in
+  `.env.example`. Existing installs behind a non-loopback edge should set it;
+  the warning names the address.
+
 - **Every CI job downloaded a Go toolchain it did not need, and one of those
   downloads failed the build.** `go.mod` pins `toolchain go1.26.8`; `ci.yml`
   asked `actions/setup-go` for `'1.26'`. The runner's tool cache holds 1.26.7,

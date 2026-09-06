@@ -1,5 +1,18 @@
 version: '3.9'
 
+# OIDX_TRUSTED_PROXIES is passed to every HTTP service below and is EMPTY by
+# default, which means each one trusts only loopback when it resolves the client
+# IP from X-Forwarded-For. Nothing in this file is on loopback: the TLS proxy
+# forwards with `proxy_pass http://oauth-service:8006` and the gateway proxies
+# container to container, so out of the box each service resolves every request
+# to the address of whatever forwarded it. Per-IP rate limits then share one
+# bucket, audit records carry the proxy's address, and known-IP device trust and
+# geo rules compare against it. The services say so — a WARN naming each hop,
+# and openidx_forwarded_for_from_untrusted_hop_total — and the fix is to put
+# those addresses (or the compose network's subnet) in OIDX_TRUSTED_PROXIES in
+# your .env. It is left unset here rather than widened to the whole network,
+# because published ports make the docker bridge gateway a hop too, and trusting
+# it would let anything on the host set its own client IP. See .env.example.
 services:
   #---------------------------------------------------------------------------
   # Infrastructure Services
@@ -216,6 +229,7 @@ services:
     restart: unless-stopped
     environment:
       - APP_ENV=development
+      - OIDX_TRUSTED_PROXIES=${OIDX_TRUSTED_PROXIES:-}
       # Single-tenant install: attach the seeded default org when no tenant
       # subdomain/JWT signal is present, so org-scoped reads aren't empty under RLS.
       - DEFAULT_ORG_FALLBACK=${DEFAULT_ORG_FALLBACK:-true}
@@ -262,6 +276,7 @@ services:
     restart: unless-stopped
     environment:
       - APP_ENV=development
+      - OIDX_TRUSTED_PROXIES=${OIDX_TRUSTED_PROXIES:-}
       # Single-tenant install: attach the seeded default org when no tenant
       # subdomain/JWT signal is present, so org-scoped reads aren't empty under RLS.
       - DEFAULT_ORG_FALLBACK=${DEFAULT_ORG_FALLBACK:-true}
@@ -303,6 +318,7 @@ services:
     restart: unless-stopped
     environment:
       - APP_ENV=development
+      - OIDX_TRUSTED_PROXIES=${OIDX_TRUSTED_PROXIES:-}
       # Single-tenant install: attach the seeded default org when no tenant
       # subdomain/JWT signal is present, so org-scoped reads aren't empty under RLS.
       - DEFAULT_ORG_FALLBACK=${DEFAULT_ORG_FALLBACK:-true}
@@ -343,6 +359,7 @@ services:
     restart: unless-stopped
     environment:
       - APP_ENV=development
+      - OIDX_TRUSTED_PROXIES=${OIDX_TRUSTED_PROXIES:-}
       # Single-tenant install: attach the seeded default org when no tenant
       # subdomain/JWT signal is present, so org-scoped reads aren't empty under RLS.
       - DEFAULT_ORG_FALLBACK=${DEFAULT_ORG_FALLBACK:-true}
@@ -382,6 +399,7 @@ services:
     restart: unless-stopped
     environment:
       - APP_ENV=development
+      - OIDX_TRUSTED_PROXIES=${OIDX_TRUSTED_PROXIES:-}
       # Single-tenant install: attach the seeded default org when no tenant
       # subdomain/JWT signal is present, so org-scoped reads aren't empty under RLS.
       - DEFAULT_ORG_FALLBACK=${DEFAULT_ORG_FALLBACK:-true}
@@ -428,6 +446,7 @@ services:
     restart: unless-stopped
     environment:
       - APP_ENV=development
+      - OIDX_TRUSTED_PROXIES=${OIDX_TRUSTED_PROXIES:-}
       # Single-tenant install: attach the seeded default org when no tenant
       # subdomain/JWT signal is present, so org-scoped reads aren't empty under RLS.
       - DEFAULT_ORG_FALLBACK=${DEFAULT_ORG_FALLBACK:-true}
@@ -472,6 +491,7 @@ services:
     restart: unless-stopped
     environment:
       - APP_ENV=development
+      - OIDX_TRUSTED_PROXIES=${OIDX_TRUSTED_PROXIES:-}
       # Single-tenant install: attach the seeded default org when no tenant
       # subdomain/JWT signal is present, so org-scoped reads aren't empty under RLS.
       - DEFAULT_ORG_FALLBACK=${DEFAULT_ORG_FALLBACK:-true}
@@ -1161,6 +1181,7 @@ services:
     restart: unless-stopped
     environment:
       - APP_ENV=development
+      - OIDX_TRUSTED_PROXIES=${OIDX_TRUSTED_PROXIES:-}
       # Single-tenant install: attach the seeded default org when no tenant
       # subdomain/JWT signal is present, so org-scoped reads aren't empty under RLS.
       - DEFAULT_ORG_FALLBACK=${DEFAULT_ORG_FALLBACK:-true}

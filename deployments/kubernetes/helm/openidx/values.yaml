@@ -72,6 +72,18 @@ config:
   tenantBaseDomain: ""
   defaultOrgFallback: true
   defaultOrgId: "00000000-0000-0000-0000-000000000010"
+  # Hops allowed to set the client's address in X-Forwarded-For (comma-separated
+  # CIDRs or IPs). Empty trusts loopback only, which in Kubernetes means NO hop:
+  # the ingress controller runs in its own pod, so every service resolves each
+  # request to that pod's address and the client's real IP never arrives. That
+  # collapses per-IP rate-limit buckets, audit IPs, known-IP device trust and geo
+  # rules onto one address. Set this to your cluster's pod network CIDR (the
+  # --pod-network-cidr the cluster was built with); `kubectl get pod -n
+  # ingress-nginx -o wide` prints the address that has to be covered. Services
+  # warn once per hop and export openidx_forwarded_for_from_untrusted_hop_total
+  # until it is right; "*" is not a fix, it restores gin's trust-everything
+  # default and lets any caller name its own client IP.
+  trustedProxies: ""
 
 # Identity Service
 identityService:

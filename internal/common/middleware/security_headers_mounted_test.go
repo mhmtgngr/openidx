@@ -1,9 +1,6 @@
 package middleware
 
 import (
-	"go/ast"
-	"go/parser"
-	"go/token"
 	"os"
 	"path/filepath"
 	"sort"
@@ -100,47 +97,19 @@ func TestEverySecurityHeaderExemptionHasAReason(t *testing.T) {
 // whether they mount the security-header middleware.
 //
 // Matching is on the CALL, not on the file text: a service that only mentions
-// SecurityHeadersForEnv in a comment does not mount it.
+// SecurityHeadersForEnv in a comment does not mount it. serviceMainCalls
+// (trustedproxies_test.go) does the walking, so the two set-level guards in this
+// package agree by construction about what a service main is.
 func inspectServiceMain(dir string) (buildsEngine, mountsHeaders bool, err error) {
-	entries, err := os.ReadDir(dir)
+	calls, err := serviceMainCalls(dir)
 	if err != nil {
 		return false, false, err
 	}
-	fset := token.NewFileSet()
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
-			continue
-		}
-		f, perr := parser.ParseFile(fset, filepath.Join(dir, e.Name()), nil, 0)
-		if perr != nil {
-			continue
-		}
-		ast.Inspect(f, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
-			if !ok {
-				return true
-			}
-			sel, ok := call.Fun.(*ast.SelectorExpr)
-			if !ok {
-				return true
-			}
-			pkg, ok := sel.X.(*ast.Ident)
-			if !ok {
-				return true
-			}
-			if pkg.Name == "gin" && (sel.Sel.Name == "New" || sel.Sel.Name == "Default") {
-				buildsEngine = true
-			}
-			// The import is aliased differently across the mains
-			// (commonmiddleware, middleware), so the package name is not fixed;
-			// the function name is.
-			if sel.Sel.Name == "SecurityHeadersForEnv" || sel.Sel.Name == "SecurityHeadersProduction" ||
-				sel.Sel.Name == "SecurityHeaders" {
-				mountsHeaders = true
-			}
-			return true
-		})
-	}
+	buildsEngine = calls["gin.New"] || calls["gin.Default"]
+	// The import is aliased differently across the mains (commonmiddleware,
+	// middleware), so the package name is not fixed; the function name is.
+	mountsHeaders = calls["SecurityHeadersForEnv"] || calls["SecurityHeadersProduction"] ||
+		calls["SecurityHeaders"]
 	return buildsEngine, mountsHeaders, nil
 }
 

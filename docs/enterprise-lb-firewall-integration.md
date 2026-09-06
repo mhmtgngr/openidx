@@ -211,6 +211,17 @@ bind serviceGroup <SG> <OPENIDX_IP> 443
 > LB'nin CIDR'ı ile ayarlanmalıdır. Bkz.
 > `internal/common/middleware/trustedproxies.go`.
 > `*` değeri tüm proxy'lere güvenir ve **önerilmez**.
+>
+> **Bu yalnızca kurumsal LB'ye özgü değildir.** Bu deponun kendi referans
+> kurulumları da loopback değildir: `deployments/docker` içinde TLS proxy
+> `proxy_pass http://oauth-service:8006` ile, gateway ise konteynerden
+> konteynere iletir; Helm'de ingress denetleyicisi ayrı bir pod'dur. Değişken
+> ayarlanmadığında X-Forwarded-For **tamamen yok sayılır** ve her istek, onu
+> ileten hop'un adresine çözümlenir: IP başına hız sınırı tüm istemciler için
+> tek kovaya düşer, denetim kayıtları proxy'yi gösterir, bilinen-IP cihaz güveni
+> ve ülke kuralları da onunla karşılaştırır. Servisler bunu sessizce geçmez —
+> her hop için bir kez uyarı yazar ve
+> `openidx_forwarded_for_from_untrusted_hop_total` sayacını artırır.
 
 ---
 
@@ -306,6 +317,8 @@ curl -sS -i --http1.1 https://<OPENIDX_FQDN>/<WS_YOLU> \
 | Belirti | Olası neden | Kontrol / çözüm |
 |---|---|---|
 | Denetim kaydında hep LB'nin IP'si görünüyor | `OIDX_TRUSTED_PROXIES` LB'yi kapsamıyor | Değişkeni LB CIDR'ı ile ayarlayın; `*` kullanmayın |
+| Loglarda "forwarded client IP discarded" uyarısı / `openidx_forwarded_for_from_untrusted_hop_total` artıyor | Aynı neden; uyarı, güvenilmesi gereken hop adresini `hop` alanında yazar | O adresi (ya da CIDR'ını) `OIDX_TRUSTED_PROXIES`'e ekleyin. Ara sıra tek bir kayıt, başlığı kendisi gönderen bir istemcidir; sürekli akış yanlış yapılandırmadır |
+| Hız sınırı beklenenden çok erken devreye giriyor | İstemci IP'si çözümlenemediği için tüm trafik tek kovada | Aynı ayar; düzeltildiğinde kova IP başına ayrışır |
 | Cihaz güveni beklenmedik şekilde otomatik onaylanıyor | İstemci `X-Forwarded-For` uyduruyor | Aynı ayar; LB kendi XFF'ini **eklemeli**, istemcininkini güvenmemeli |
 | WebSocket kuruluyor gibi ama tarayıcı `1006` ile kapatıyor | WS yükseltmesi HTTP/2 ile denenmiş veya LB WS'i geçirmiyor | HTTP/1.1 ile test edin; LB'de WebSocket'i açın, idle timeout'u artırın |
 | Sertifika uyarısı / el sıkışma hatası | Sunucu tarafında SNI iletilmiyor | LB'de SNI'yi koruyun / `upstream host` ayarını doğrulayın |

@@ -18,6 +18,15 @@ data:
   TENANT_BASE_DOMAIN: {{ .Values.config.tenantBaseDomain | default "" | quote }}
   DEFAULT_ORG_FALLBACK: {{ .Values.config.defaultOrgFallback | default false | quote }}
   DEFAULT_ORG_ID: {{ .Values.config.defaultOrgId | default "00000000-0000-0000-0000-000000000010" | quote }}
+  # Which hops may set the client's address in X-Forwarded-For. Empty trusts
+  # loopback only — and under Helm the ingress controller is a different pod, so
+  # an empty value means every service resolves each request to the ingress pod's
+  # address: one shared per-IP rate-limit bucket, audit records that all name the
+  # ingress, and known-IP device trust and geo rules comparing against it. Set
+  # config.trustedProxies to the ingress controller's pod CIDR. Services warn
+  # once per hop and export openidx_forwarded_for_from_untrusted_hop_total until
+  # it matches. Never "*".
+  OIDX_TRUSTED_PROXIES: {{ .Values.config.trustedProxies | default "" | quote }}
   # PostgreSQL TLS mode. Services with APP_ENV=production refuse to start when
   # this is 'disable' — production must set 'require' or stronger.
   DATABASE_SSL_MODE: {{ .Values.database.sslMode | default "disable" | quote }}

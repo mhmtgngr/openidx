@@ -79,6 +79,21 @@ spec:
             summary: "High authentication failure rate"
             description: "Auth method {{ "{{ $labels.method }}" }} is seeing {{ "{{ $value | humanize }}" }}/min failures."
 
+        # A steady rate here is a deployment whose trusted-proxy set does not
+        # describe it: the client's address is being discarded at the edge hop,
+        # so per-IP rate limits share one bucket, audit records name the proxy,
+        # and known-IP device trust and geo rules compare against it. Warning
+        # rather than critical because an occasional one is just a client that
+        # sent the header itself.
+        - alert: ForwardedClientIPDiscarded
+          expr: sum(rate(openidx_forwarded_for_from_untrusted_hop_total[10m])) * 60 > 1
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Client IPs are being discarded at an untrusted hop"
+            description: "{{ "{{ $value | humanize }}" }}/min requests arrive with X-Forwarded-For from a hop absent from OIDX_TRUSTED_PROXIES. Set config.trustedProxies to the ingress controller's pod CIDR; the services' logs name each hop."
+
         - alert: TokenRefreshFailures
           expr: sum(rate(openidx_token_operations_total{operation="refresh",outcome="failure"}[5m])) * 60 > 5
           for: 5m
