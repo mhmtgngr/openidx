@@ -2858,6 +2858,74 @@ class this whole program exists for.
    are gone. Whole `internal/access` suite green; `TestRLSBeltTables` **58/58**;
    v159 applied, rolled back to 158 — recreating both orphans and dropping
    `org_id` — and re-applied.
+
+   **Batch 22 shipped (migration v160, `needsScoping` 16 → 13; registers 33 →
+   30): the notification admin surface, and a seventh install-wide key.**
+   `email_templates.slug VARCHAR(100) UNIQUE NOT NULL` — one organization
+   naming a template `welcome` owns that slug for the entire installation, and
+   the next organization to try gets a duplicate key reported as a bare 500.
+   After v138's `ispm_rules.check_type` and `ai_agents.name`, v155's
+   `federation_rules.email_domain` and `identity_providers.issuer_url`, v156's
+   `developer_settings.setting_key` and v157's `admin_console_settings.key`,
+   this is the **seventh**. Re-scoped to `(org_id, slug)`.
+
+   All five template handlers — list, get, update, preview, reset — addressed
+   rows without naming an organization, so every administrator on the
+   installation saw and could rewrite one shared set of templates: the subject
+   line and body of the mail the product sends about passwords, invitations and
+   one-time codes. **And the same file already knew.** Two functions below the
+   last of them, `handleGetEmailBranding` and `handleUpdateEmailBranding` both
+   open with `orgctx.From` — the fix this programme made in v140, when
+   `email_branding` turned out to be the one table in that batch actually
+   leaking. The template handlers directly above were never revisited. Fourth
+   time in this programme that one surface in a file was scoped and its
+   neighbour was not.
+
+   **And nothing sends them.** A search of the tree finds `email_templates` in
+   its own admin handlers, in the migrations and in the orgscope register, and
+   nowhere else: `internal/email` and `internal/notifications` never read it, by
+   slug or otherwise. An administrator edits the welcome mail, saves it,
+   previews it, and no message the product sends uses any of it. Fifth surface
+   of this shape, and recorded rather than fixed for the same reason as the
+   other four.
+
+   **A draft another tenant could send.** `handleSendBroadcast` resolves the
+   caller's organization — it needs it to pick recipients — and then loaded the
+   message itself by bare id. So one administrator could take another
+   organization's unsent draft and deliver it, under their own tenancy, to their
+   own users: **the scoping was present for the audience and absent for the
+   announcement.** Every other broadcast handler was unscoped outright, and
+   delete permits only drafts, so an unsent announcement could be removed from
+   another tenant's console without trace. The routing rules are the same
+   story: one tenant could switch another's security-alert rule from
+   `["in_app","email"]` to `["in_app"]` and their alerts would stop arriving by
+   mail with nothing on screen to say so.
+
+   Two things the batch's own work turned up. **The lint caught a query the
+   author missed**: after the belt landed, `orgscope -fail` failed on the
+   `UPDATE broadcast_messages SET status = 'sent'` inside the send handler —
+   the self-closing ratchet doing exactly what it was built for. And the test
+   caught **the silent-drop pattern for the fourth time in this programme**:
+   `text_body`, `category`, `variables` and `enabled` are all nullable in v54
+   and were scanned into plain Go values, with `continue` on failure, so a
+   template saved with no plain-text body vanished from the only list an
+   administrator has. All four are COALESCEd and the skip is logged.
+
+   **The seed was handled before the push, not left to fail.** `seed.sql`
+   inserts three starter routing rules with no organization, and v153's own fix
+   commit named this table as one of two that would need the same treatment when
+   its batch arrived. They now name the default organization in the shape
+   `tenant_branding`, the risk policies and the lifecycle policies already use.
+   One consequence worth stating: v129 seeds five starter email templates with
+   no author, so the backfill puts them in the oldest organization and every
+   other organization starts with none — the test asserts exactly that.
+
+   Proven on Postgres 16: four cases in `internal/admin`, and the red-proof
+   turned **fourteen assertions red** against neutralised predicates, including
+   org B rewriting org A's template and *actually deleting* org A's draft
+   broadcast and routing rule. Whole `internal/admin` suite green;
+   `TestRLSBeltTables` **61/61**;
+   `TestComposeMigrateSeedProducesRLSInstall` green with the reshaped seed.
 4. ✅ **OPA `deny` enforced** — *shipped.* — `internal/common/middleware/opa.go`: abort
    unless `Allow && len(Deny)==0`; `authz.rego:15-19`'s "any authenticated
    user may GET anything" removed; `policies/access_control.rego`
@@ -4486,7 +4554,7 @@ that holds it rather than by the commit that wrote it.
 |---|---|---|
 | 1 · journeys verified | ☐ | J1 ✅ the `smoke` and `first-run` jobs (P6.2); J2 ✅ `test/integration/{auth_flows,mfa_flow,passwordless}_test.go`; J3 ✅ `test/integration/enforced_posture_test.go` (P6.1); ☐ **J6 has no automated proof** — `e2e/access-reviews-flow.spec.ts` is still on the `hold` side of `e2e/suite.txt`; ☐ **J7 needs a leaver integration case**; J4/J5/J8 stay scripted operator drills (`tools/darkprobe`, `make dr-game-day`) to be filed under `docs/evidence/` (P8.4) |
 | 2 · enforced posture, legacy login gone | ◐ | code ✅ — the server-rendered login is deleted and `internal/oauth/routes_legacy_login_test.go` fails if any of it returns (P6.1); ops ☐ — rollout Task 16 is the operator's, on a live deployment |
-| 3 · every control enforces | ◐ | P5.1–5.11 ✅ (tenant isolation, the inverted orgscope lint, OPA `deny`, ABAC at both PEPs, the honest Apply/Remediate, SMS, multi-IdP, the fail-closed gate, `ValidateProduction`, the faked measurements); ◐ the P5.3b register programme — batch 1 (v140) belted fifteen tables and fixed `email_branding`'s cross-tenant read *and* write; batch 2 (v141) scoped the compliance record and fixed an archive worker that was silently producing empty archives; batches 4–10 (v142–v148) took the unified audit stream, the sign-in tables, the SAML surface, the password-substitute credentials, the four second factors the belt had skipped, the breach response record — where a containment reported success while quarantining nobody — the temporary vendor access surface, where v71's written-down reason for skipping the belt had expired three batches earlier, the legal holds — the first batch whose defect destroys rather than discloses, since releasing a hold is what lets the retention sweep delete the recording — the remote support sessions, whose list ran with no `WHERE` clause at all over a nullable tenant column the belt would have hidden rather than scoped, and the PAM broker's connection registry — where the row that decides which vault credential is injected carried no tenant, so another tenant's route id bought a live session onto their machine with their password, and the four-eyes gates could not help because both are satisfiable inside the caller's own tenant — delegated administration, read by the enforcement point itself under a deliberate bypass with a tenant-scoping comment copied from the query above it and a cache that handed one person's delegation to everyone sharing their roles, and the login risk policies, where one tenant's row could replace every tenant's allowed second factors or deny every login outright, and the joiner/mover/leaver automation, where every action the rules take was already scoped but the rules themselves were not, so another tenant could rewrite a policy labelled "disable after 90 days" into "delete after 0" and leave its owner running it, and the identity federation configuration, where the admin list wrote its tenant condition into a LEFT JOIN's ON clause and so filtered nothing while the login path's inner join twelve functions away did — and where two install-wide UNIQUE keys meant one organization per email domain and one per issuer URL for the entire installation, and the developer portal, whose settings row was keyed on the literal 'global' and unique across the installation so the last administrator to press Save chose the API-key limits, CORS origins and rate limit for every organization — and whose OAuth playground handed out a live flow's PKCE verifier by id alone, with no role check at all, and the admin console's own settings, where `key` was the PRIMARY KEY so the installation held four settings rows in total and one administrator's password policy, MFA requirement and allowed sign-up domains were every tenant's — the sixth install-wide key and the first that a control actually enforces, since `validate-password` answers from it — alongside the continuous-auth engine, whose only input table nothing had ever written a row to, so its three routes had only ever returned 500 and are now pointed at the belted `sessions` and `session_risks` the product really writes, and the biometric policies, where the list feeding the applicable-policy decision had no tenant term and `ORDER BY name` therefore decided which organization's rule governed a login -- a control aimed by sort order -- while the per-user preferences that say whether an account is biometric-only were read and written by bare user_id, and the kiosk lockdown policies, whose admin list said in its own doc comment that it returned every policy on the installation and whose assignment handler took the policy id from the URL and the device from the body and checked neither -- alongside two tables v44 created for a route that was later deleted as dead, which are dropped rather than scoped; **33** still ride `needsScoping`/`needsBelt` waivers |
+| 3 · every control enforces | ◐ | P5.1–5.11 ✅ (tenant isolation, the inverted orgscope lint, OPA `deny`, ABAC at both PEPs, the honest Apply/Remediate, SMS, multi-IdP, the fail-closed gate, `ValidateProduction`, the faked measurements); ◐ the P5.3b register programme — batch 1 (v140) belted fifteen tables and fixed `email_branding`'s cross-tenant read *and* write; batch 2 (v141) scoped the compliance record and fixed an archive worker that was silently producing empty archives; batches 4–10 (v142–v148) took the unified audit stream, the sign-in tables, the SAML surface, the password-substitute credentials, the four second factors the belt had skipped, the breach response record — where a containment reported success while quarantining nobody — the temporary vendor access surface, where v71's written-down reason for skipping the belt had expired three batches earlier, the legal holds — the first batch whose defect destroys rather than discloses, since releasing a hold is what lets the retention sweep delete the recording — the remote support sessions, whose list ran with no `WHERE` clause at all over a nullable tenant column the belt would have hidden rather than scoped, and the PAM broker's connection registry — where the row that decides which vault credential is injected carried no tenant, so another tenant's route id bought a live session onto their machine with their password, and the four-eyes gates could not help because both are satisfiable inside the caller's own tenant — delegated administration, read by the enforcement point itself under a deliberate bypass with a tenant-scoping comment copied from the query above it and a cache that handed one person's delegation to everyone sharing their roles, and the login risk policies, where one tenant's row could replace every tenant's allowed second factors or deny every login outright, and the joiner/mover/leaver automation, where every action the rules take was already scoped but the rules themselves were not, so another tenant could rewrite a policy labelled "disable after 90 days" into "delete after 0" and leave its owner running it, and the identity federation configuration, where the admin list wrote its tenant condition into a LEFT JOIN's ON clause and so filtered nothing while the login path's inner join twelve functions away did — and where two install-wide UNIQUE keys meant one organization per email domain and one per issuer URL for the entire installation, and the developer portal, whose settings row was keyed on the literal 'global' and unique across the installation so the last administrator to press Save chose the API-key limits, CORS origins and rate limit for every organization — and whose OAuth playground handed out a live flow's PKCE verifier by id alone, with no role check at all, and the admin console's own settings, where `key` was the PRIMARY KEY so the installation held four settings rows in total and one administrator's password policy, MFA requirement and allowed sign-up domains were every tenant's — the sixth install-wide key and the first that a control actually enforces, since `validate-password` answers from it — alongside the continuous-auth engine, whose only input table nothing had ever written a row to, so its three routes had only ever returned 500 and are now pointed at the belted `sessions` and `session_risks` the product really writes, and the biometric policies, where the list feeding the applicable-policy decision had no tenant term and `ORDER BY name` therefore decided which organization's rule governed a login -- a control aimed by sort order -- while the per-user preferences that say whether an account is biometric-only were read and written by bare user_id, and the kiosk lockdown policies, whose admin list said in its own doc comment that it returned every policy on the installation and whose assignment handler took the policy id from the URL and the device from the body and checked neither -- alongside two tables v44 created for a route that was later deleted as dead, which are dropped rather than scoped, and the notification admin surface, where email_templates.slug was the seventh install-wide unique key this programme has found and the broadcast send path resolved the tenant for its recipients while loading the message itself by bare id; **30** still ride `needsScoping`/`needsBelt` waivers |
 | 4 · first run / first login / four pillars from the docs | ✅ | first run ✅ the `smoke` and `first-run` jobs (P6.2); first login ✅ one authoritative credential in `GETTING-STARTED.md`, with the `USER_GUIDE.md` and `CONTRIBUTING.md` copies pointing at it rather than repeating it (P8.1); four pillars ✅ `guide/governance.md` was the missing one (P8.1) |
 | 5 · one story + auditor artifacts | ✅ | threat model and control mapping exist; docs sweep 3 ✅ and the docs-drift guard ✅ (`check-docs-drift.sh`, enforced in CI, so a document cannot cite a path that is not there); `docs/evidence/` ✅ (P8.4) |
 | 6 · releases current, signed, Helm proven | ◐ | signing ✅ `release.yml` (cosign) and, since P7.5, an Android artifact whose name tracks the key that signed it; Helm ✅ the `kind` install job (P6.4); versions ✅ `VERSION` + `check-version-sync.sh` (P8.3); CHANGELOG ✅ every release attributed from the commit that wrote its entry, 61 compare links that resolve (P8.2); ☐ v1.34.0 is not cut — the maintainer's |

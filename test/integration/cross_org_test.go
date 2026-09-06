@@ -712,6 +712,18 @@ func TestRLSBeltTables(t *testing.T) {
 		{"kiosk_policies", `INSERT INTO kiosk_policies (name, mode, enabled, org_id)
 			VALUES ('tbelt-kiosk-` + suffix + `', 'single_app', true, $1)`},
 
+		// v160 — the notification admin surface. email_templates.slug was the
+		// seventh install-wide unique key; handleSendBroadcast resolved the
+		// organization for the recipients and loaded the message by bare id.
+		{"email_templates", `INSERT INTO email_templates (name, slug, subject, html_body, org_id)
+			VALUES ('tbelt-tpl-` + suffix + `', 'tbelt-` + suffix + `', 'subject', '<p>hi</p>', $1)`},
+
+		{"notification_routing_rules", `INSERT INTO notification_routing_rules (name, event_type, channels, org_id)
+			VALUES ('tbelt-rule-` + suffix + `', 'security_alert', '["in_app"]'::jsonb, $1)`},
+
+		{"broadcast_messages", `INSERT INTO broadcast_messages (title, body, channel, target_type, org_id)
+			VALUES ('tbelt-bc-` + suffix + `', 'body', 'in_app', 'all', $1)`},
+
 		{"kiosk_policy_assignments", `WITH p AS (
 			INSERT INTO kiosk_policies (name, mode, enabled, org_id)
 			VALUES ('tbelt-kiosk-a-` + suffix + `', 'single_app', true, $1)

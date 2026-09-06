@@ -50,9 +50,23 @@ func (s *Service) handleListEmailTemplates(c *gin.Context) {
 		return
 	}
 
+	org, ok := requireOrg(c)
+	if !ok {
+		return
+	}
+
+	// The org term. Two functions below, handleGetEmailBranding has resolved
+	// the caller's organization since v140 -- the batch where email_branding
+	// turned out to be the table actually leaking. The five template handlers
+	// above it were never revisited, so every administrator on the
+	// installation saw, and could rewrite, one shared set of templates: the
+	// subject line and body of the mail the product sends about passwords,
+	// invitations and one-time codes.
 	rows, err := s.db.Pool.Query(c.Request.Context(),
-		`SELECT id, name, slug, subject, html_body, text_body, category, variables, enabled, updated_by, created_at, updated_at
-		 FROM email_templates ORDER BY category, name`)
+		`SELECT id, name, slug, subject, html_body, COALESCE(text_body, ''),
+		        COALESCE(category, 'general'), COALESCE(variables, '[]'), COALESCE(enabled, false),
+		        updated_by, created_at, updated_at
+		 FROM email_templates WHERE org_id = $1 ORDER BY category, name`, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to list email templates", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list templates"})
@@ -65,6 +79,14 @@ func (s *Service) handleListEmailTemplates(c *gin.Context) {
 		var t EmailTemplate
 		if err := rows.Scan(&t.ID, &t.Name, &t.Slug, &t.Subject, &t.HTMLBody, &t.TextBody,
 			&t.Category, &t.Variables, &t.Enabled, &t.UpdatedBy, &t.CreatedAt, &t.UpdatedAt); err != nil {
+			// Every nullable column above is COALESCEd now. It was not: text_body,
+			// category, variables and enabled are all nullable in v54 and were
+			// scanned into plain Go values, and this loop dropped the row without
+			// a word -- so a template saved with no plain-text body disappeared
+			// from the only list an administrator has. Fourth time this programme
+			// has found that shape, and the third time a batch's own test found
+			// it. A skip is now a logged fault, not silence.
+			s.logger.Warn("skipping unreadable email template row", zap.Error(err))
 			continue
 		}
 		templates = append(templates, t)
@@ -80,11 +102,18 @@ func (s *Service) handleGetEmailTemplate(c *gin.Context) {
 		return
 	}
 
+	org, ok := requireOrg(c)
+	if !ok {
+		return
+	}
+
 	id := c.Param("id")
 	var t EmailTemplate
 	err := s.db.Pool.QueryRow(c.Request.Context(),
-		`SELECT id, name, slug, subject, html_body, text_body, category, variables, enabled, updated_by, created_at, updated_at
-		 FROM email_templates WHERE id = $1`, id,
+		`SELECT id, name, slug, subject, html_body, COALESCE(text_body, ''),
+		        COALESCE(category, 'general'), COALESCE(variables, '[]'), COALESCE(enabled, false),
+		        updated_by, created_at, updated_at
+		 FROM email_templates WHERE id = $1 AND org_id = $2`, id, org.ID,
 	).Scan(&t.ID, &t.Name, &t.Slug, &t.Subject, &t.HTMLBody, &t.TextBody,
 		&t.Category, &t.Variables, &t.Enabled, &t.UpdatedBy, &t.CreatedAt, &t.UpdatedAt)
 	if err != nil {
@@ -96,6 +125,10 @@ func (s *Service) handleGetEmailTemplate(c *gin.Context) {
 
 func (s *Service) handleUpdateEmailTemplate(c *gin.Context) {
 	if !requireAdmin(c) {
+		return
+	}
+	org, ok := requireOrg(c)
+	if !ok {
 		return
 	}
 
@@ -146,10 +179,11 @@ func (s *Service) handleUpdateEmailTemplate(c *gin.Context) {
 		argIdx++
 	}
 
-	args = append(args, id)
+	args = append(args, id, org.ID)
 	// SECURITY: Column names in 'sets' are hardcoded string literals from the if-blocks above,
 	// not user input. This is safe from SQL injection.
-	query := fmt.Sprintf("UPDATE email_templates SET %s WHERE id = $%d", strings.Join(sets, ", "), argIdx)
+	query := fmt.Sprintf("UPDATE email_templates SET %s WHERE id = $%d AND org_id = $%d",
+		strings.Join(sets, ", "), argIdx, argIdx+1)
 
 	tag, err := s.db.Pool.Exec(c.Request.Context(), query, args...)
 	if err != nil {
@@ -168,11 +202,15 @@ func (s *Service) handlePreviewEmailTemplate(c *gin.Context) {
 	if !requireAdmin(c) {
 		return
 	}
+	org, ok := requireOrg(c)
+	if !ok {
+		return
+	}
 
 	id := c.Param("id")
 	var htmlBody string
 	err := s.db.Pool.QueryRow(c.Request.Context(),
-		"SELECT html_body FROM email_templates WHERE id = $1", id).Scan(&htmlBody)
+		"SELECT html_body FROM email_templates WHERE id = $1 AND org_id = $2", id, org.ID).Scan(&htmlBody)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Template not found"})
 		return
@@ -213,11 +251,15 @@ func (s *Service) handleResetEmailTemplate(c *gin.Context) {
 	if !requireAdmin(c) {
 		return
 	}
+	org, ok := requireOrg(c)
+	if !ok {
+		return
+	}
 
 	id := c.Param("id")
 	var slug string
 	err := s.db.Pool.QueryRow(c.Request.Context(),
-		"SELECT slug FROM email_templates WHERE id = $1", id).Scan(&slug)
+		"SELECT slug FROM email_templates WHERE id = $1 AND org_id = $2", id, org.ID).Scan(&slug)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Template not found"})
 		return
@@ -258,8 +300,8 @@ func (s *Service) handleResetEmailTemplate(c *gin.Context) {
 	}
 
 	_, err = s.db.Pool.Exec(c.Request.Context(),
-		"UPDATE email_templates SET subject = $1, html_body = $2, text_body = $3, updated_at = NOW() WHERE id = $4",
-		def.Subject, def.HTML, def.Text, id)
+		"UPDATE email_templates SET subject = $1, html_body = $2, text_body = $3, updated_at = NOW() WHERE id = $4 AND org_id = $5",
+		def.Subject, def.HTML, def.Text, id, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to reset email template", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to reset template"})

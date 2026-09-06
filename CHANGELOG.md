@@ -21,6 +21,41 @@ to a spec that describes an eighth of a surface, a documented endpoint that
   the posture score was neither one tenant's nor the install's. All now carry
   `org_id` under FORCE RLS, with the install-wide unique keys re-scoped and an
   isolation test per handler file.
+- **One set of email templates for the whole installation, and an announcement
+  another organization could send** (migration v160). Three records had no
+  organization: the email templates, the notification routing rules, and the
+  broadcast messages.
+
+  Every administrator on the installation saw and could rewrite **one shared set
+  of email templates** — the subject line and body of the mail the product sends
+  about passwords, invitations, verification and one-time codes — and template
+  names were unique across the installation, so the first organization to create
+  a template called "welcome" owned that name for everyone and the next
+  organization's attempt failed with an unexplained error. Each organization now
+  has its own templates and its own names.
+
+  A **broadcast** is an announcement an administrator sends to their users. The
+  send endpoint worked out the recipients from the caller's organization but
+  loaded the announcement itself by identifier alone, so an administrator could
+  take another organization's unsent draft and deliver it, as their own, to
+  their own people. Reading, listing and deleting a draft were unscoped
+  outright. And a **notification routing rule** decides which channels an event
+  reaches, so one organization could switch another's security-alert rule from
+  in-app-and-email to in-app only, and those alerts would stop arriving by mail
+  with nothing on screen to say so. All three now carry the organization.
+
+  **Operators of installations with more than one organization should review
+  their email templates and routing rules after upgrading.** Records are
+  assigned to the organization of whoever last edited them; the five starter
+  templates the product ships carry no editor, so they go to the oldest
+  organization and other organizations start with none.
+
+  Also fixed: an email template saved without a plain-text body disappeared from
+  the template list entirely — the list dropped any record it could not read and
+  said nothing. Also recorded, and not yet fixed: nothing in the product sends
+  these templates. No mail the product delivers reads one, by name or otherwise,
+  so the template editor has always saved copy that nothing uses. Wiring the
+  mailer to them is outstanding work.
 - **Any administrator could read, disable or delete another organization's
   device lockdown policies, and aim one at a device** (migration v159). A kiosk
   policy puts a managed device into locked-down mode: which apps may run, which

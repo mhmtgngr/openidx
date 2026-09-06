@@ -339,7 +339,7 @@ func TestRegistersOnlyShrink(t *testing.T) {
 		// v156, the developer portal: a settings row keyed on the literal
 		// 'global' and unique across the installation, and the playground
 		// session that holds a live flow's PKCE verifier.
-		{"needsScoping", len(needsScoping), 16},
+		{"needsScoping", len(needsScoping), 13},
 		// 34 → 19: migration v140 belted the fifteen whose queries already
 		// carried their org predicate. Re-pinned rather than left at 34, or
 		// the register could grow back into the room the fix just made.

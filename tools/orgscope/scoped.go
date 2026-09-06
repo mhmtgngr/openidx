@@ -85,11 +85,8 @@ var needsScoping = map[string]string{
 	"agent_enrollment_tokens": "enrolment tokens that admit a device to the fleet (v43)",
 
 	// Notifications, messaging and templates.
-	"notification_digests":       "per-user digest schedules (v43)",
-	"notification_routing_rules": "per-tenant notification routing",
-	"broadcast_messages":         "admin broadcasts with recipient targeting",
-	"email_templates":            "per-tenant email templates",
-	"webhook_delivery_stats":     "delivery statistics per subscription",
+	"notification_digests":   "per-user digest schedules (v43)",
+	"webhook_delivery_stats": "delivery statistics per subscription",
 
 	// Admin console and developer surfaces.
 	"bulk_operations":      "bulk import/export runs (v54)",

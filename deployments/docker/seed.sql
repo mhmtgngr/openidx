@@ -167,8 +167,18 @@ INSERT INTO privacy_retention_policies (id, name, data_category, retention_days,
 ON CONFLICT (id) DO NOTHING;
 
 -- Notification routing rules
-INSERT INTO notification_routing_rules (id, name, event_type, channels, enabled) VALUES
-('f1700000-0000-0000-0003-000000000001', 'Security Alerts - All Channels', 'security_alert', '["in_app", "email"]'::jsonb, true),
-('f1700000-0000-0000-0003-000000000002', 'Access Reviews - In-App', 'review_assigned', '["in_app"]'::jsonb, true),
-('f1700000-0000-0000-0003-000000000003', 'Password Expiry - Email', 'password_expiry', '["email"]'::jsonb, true)
+-- v160 gave notification_routing_rules org_id NOT NULL. These are starter
+-- rules for the default organization, named explicitly in the shape
+-- tenant_branding and the risk policies above already use -- rather than the
+-- migration growing a column DEFAULT, which is how a row acquires a tenant it
+-- was never given. Another organization gets its own rules.
+INSERT INTO notification_routing_rules (id, org_id, name, event_type, channels, enabled)
+SELECT v.id::uuid, o.id, v.name, v.event_type, v.channels::jsonb, true
+FROM organizations o
+CROSS JOIN (VALUES
+    ('f1700000-0000-0000-0003-000000000001', 'Security Alerts - All Channels', 'security_alert', '["in_app", "email"]'),
+    ('f1700000-0000-0000-0003-000000000002', 'Access Reviews - In-App',        'review_assigned', '["in_app"]'),
+    ('f1700000-0000-0000-0003-000000000003', 'Password Expiry - Email',        'password_expiry', '["email"]')
+) AS v(id, name, event_type, channels)
+WHERE o.slug = 'default'
 ON CONFLICT (id) DO NOTHING;
