@@ -58,6 +58,37 @@ to a spec that describes an eighth of a surface, a documented endpoint that
   **Operators of installations with more than one organization should note**
   that existing runs are assigned to the organization of whoever started them,
   and their per-account records follow the run.
+- **One organization could add a permission to another organization's AI tool
+  gateway** (migration v168). The MCP gateway lets an administrator register an
+  upstream an AI agent may be proxied to, and then list which callers may use
+  which tools on it. That list is an allowlist: a line on it grants permission,
+  and nothing else decides the question.
+
+  Adding a line took the upstream's identifier from the address bar and **never
+  checked the upstream belonged to the administrator's organization**. So an
+  administrator of one organization could name another's upstream and add a line
+  to it. The line names a role — and role names are not unique across
+  organizations, so a line granting "analyst" was then applied to *that*
+  organization's analysts, on *their* upstream, and appeared on their own policy
+  page as though one of their administrators had written it.
+
+  Everything around it was already confined correctly: listing, opening and
+  deleting an upstream all checked the organization. The upstream was protected
+  and the permission attached to it was not.
+
+  Fixed in the same change: the tool-permission check, the approval-requirement
+  check and the pending-approvals list now each carry the organization; four
+  places where an empty organization was treated as *every* organization are
+  gone; registering an upstream or adding a permission without an organization
+  is refused rather than silently writing a record no one can see afterwards;
+  and the four screens behind this now answer "forbidden" instead of running
+  with no organization at all. Both record types are also brought under the
+  database's own isolation rule.
+
+  **Operators of installations with more than one organization should note**
+  that existing records are assigned to the organization that owns them, and any
+  record stored without one is attributed to the primary organization — worth a
+  look at the tool permission list on each gateway after upgrading.
 - **Group-to-application assignments were protected by a rule the database did
   not apply to every connection** (migration v167). When an application is
   assigned to a group, that record decides who may reach the application. It was

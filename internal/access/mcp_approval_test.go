@@ -44,11 +44,11 @@ func TestMCPToolApprovalFlow(t *testing.T) {
 	body := []byte(`{"env":"prod","service":"api"}`)
 
 	// require_approval is detected.
-	if !s.toolRequiresApproval(ctx, serverID, "agent1", roles, "deploy") {
+	if !s.toolRequiresApproval(ctx, org, serverID, "agent1", roles, "deploy") {
 		t.Fatal("expected deploy to require approval")
 	}
 	// A non-sensitive tool does not.
-	if s.toolRequiresApproval(ctx, serverID, "agent1", roles, "list") {
+	if s.toolRequiresApproval(ctx, org, serverID, "agent1", roles, "list") {
 		t.Fatal("list should not require approval")
 	}
 

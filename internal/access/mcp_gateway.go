@@ -51,12 +51,21 @@ type MCPToolPolicyInput struct {
 	Tool      string `json:"tool,omitempty"`
 }
 
-func mcpOrgID(c *gin.Context) string {
+// requireMCPOrg resolves the caller's org id, refusing the request when there
+// is none.
+//
+// It used to return the empty string, and the store paired that with an
+// OR-empty-string escape hatch on get, list and delete -- so an absent
+// organization meant EVERY organization. Nothing reaches it (TenantResolver
+// runs in front of these routes and either attaches an organization or aborts),
+// but the wildcard contradicts the FORCE RLS belt v168 applies.
+func requireMCPOrg(c *gin.Context) (string, bool) {
 	org, err := orgctx.From(c.Request.Context())
-	if err != nil {
-		return ""
+	if err != nil || org.ID == "" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return "", false
 	}
-	return org.ID
+	return org.ID, true
 }
 
 // --- server + policy store ---
@@ -68,11 +77,18 @@ func (s *Service) CreateMCPServer(ctx context.Context, orgID string, in *MCPServ
 	if in.ZitiService == "" && in.UpstreamURL == "" {
 		return nil, fmt.Errorf("one of ziti_service or upstream_url is required")
 	}
+	// A tenantless server is invisible to every scoped read once the belt lands
+	// (v168) while still forwarding: registered, live, and off the console.
+	// v103's UNIQUE (org_id, name) does not stop two of them sharing a name
+	// either, because NULL is distinct from NULL in a unique index.
+	if orgID == "" {
+		return nil, fmt.Errorf("organization context required")
+	}
 	id := uuid.NewString()
 	_, err := s.db.Pool.Exec(ctx, `
         INSERT INTO mcp_servers (id, org_id, name, description, ziti_service, upstream_url, enabled)
         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-		id, mcpNullIfEmpty(orgID), in.Name, mcpNullIfEmpty(in.Description),
+		id, orgID, in.Name, mcpNullIfEmpty(in.Description),
 		mcpNullIfEmpty(in.ZitiService), mcpNullIfEmpty(in.UpstreamURL), in.Enabled)
 	if err != nil {
 		return nil, fmt.Errorf("insert mcp server: %w", err)
@@ -84,7 +100,7 @@ func (s *Service) getMCPServerByID(ctx context.Context, orgID, id string) (*MCPS
 	row := s.db.Pool.QueryRow(ctx, `
         SELECT id, COALESCE(org_id::text,''), name, COALESCE(description,''),
                COALESCE(ziti_service,''), COALESCE(upstream_url,''), enabled, created_at, updated_at
-          FROM mcp_servers WHERE id=$1 AND (org_id::text=$2 OR $2='')`, id, orgID)
+          FROM mcp_servers WHERE id=$1 AND org_id::text=$2`, id, orgID)
 	return scanMCPServer(row)
 }
 
@@ -92,7 +108,7 @@ func (s *Service) getMCPServerByName(ctx context.Context, orgID, name string) (*
 	row := s.db.Pool.QueryRow(ctx, `
         SELECT id, COALESCE(org_id::text,''), name, COALESCE(description,''),
                COALESCE(ziti_service,''), COALESCE(upstream_url,''), enabled, created_at, updated_at
-          FROM mcp_servers WHERE name=$1 AND (org_id::text=$2 OR $2='') AND enabled`, name, orgID)
+          FROM mcp_servers WHERE name=$1 AND org_id::text=$2 AND enabled`, name, orgID)
 	return scanMCPServer(row)
 }
 
@@ -100,7 +116,7 @@ func (s *Service) ListMCPServers(ctx context.Context, orgID string) ([]MCPServer
 	rows, err := s.db.Pool.Query(ctx, `
         SELECT id, COALESCE(org_id::text,''), name, COALESCE(description,''),
                COALESCE(ziti_service,''), COALESCE(upstream_url,''), enabled, created_at, updated_at
-          FROM mcp_servers WHERE (org_id::text=$1 OR $1='') ORDER BY created_at DESC`, orgID)
+          FROM mcp_servers WHERE org_id::text=$1 ORDER BY created_at DESC`, orgID)
 	if err != nil {
 		return nil, err
 	}
@@ -118,7 +134,7 @@ func (s *Service) ListMCPServers(ctx context.Context, orgID string) ([]MCPServer
 
 func (s *Service) DeleteMCPServer(ctx context.Context, orgID, id string) error {
 	ct, err := s.db.Pool.Exec(ctx,
-		`DELETE FROM mcp_servers WHERE id=$1 AND (org_id::text=$2 OR $2='')`, id, orgID)
+		`DELETE FROM mcp_servers WHERE id=$1 AND org_id::text=$2`, id, orgID)
 	if err != nil {
 		return err
 	}
@@ -128,9 +144,24 @@ func (s *Service) DeleteMCPServer(ctx context.Context, orgID, id string) error {
 	return nil
 }
 
+// AddMCPToolPolicy grants a principal one tool (or all of them) on a server.
+//
+// The server-ownership check is the first thing it does, and it is the point of
+// this function: before v168 it took the server id straight from the URL and
+// inserted, so a POST naming ANOTHER organization's server wrote an allow rule
+// onto their server -- and toolAllowed, which reads the rule, named no
+// organization either. Since a principal may be 'role:<name>' and role names
+// are not globally unique, one such POST could grant that organization's own
+// administrators every tool on a server whose allowlist they had narrowed.
 func (s *Service) AddMCPToolPolicy(ctx context.Context, orgID, serverID string, in *MCPToolPolicyInput) error {
 	if in.Principal == "" {
 		return fmt.Errorf("principal is required")
+	}
+	if orgID == "" {
+		return fmt.Errorf("organization context required")
+	}
+	if _, err := s.getMCPServerByID(ctx, orgID, serverID); err != nil {
+		return fmt.Errorf("mcp server not found in this organization")
 	}
 	tool := in.Tool
 	if tool == "" {
@@ -139,14 +170,14 @@ func (s *Service) AddMCPToolPolicy(ctx context.Context, orgID, serverID string, 
 	_, err := s.db.Pool.Exec(ctx, `
         INSERT INTO mcp_tool_policies (org_id, server_id, principal, tool)
         VALUES ($1,$2,$3,$4) ON CONFLICT (server_id, principal, tool) DO NOTHING`,
-		mcpNullIfEmpty(orgID), serverID, in.Principal, tool)
+		orgID, serverID, in.Principal, tool)
 	return err
 }
 
 // toolAllowed reports whether a principal set (the agent client_id + its roles)
 // is permitted to invoke tool on serverID. A '*' tool policy is a server-wide
 // grant.
-func (s *Service) toolAllowed(ctx context.Context, serverID, clientID string, roles []string, tool string) bool {
+func (s *Service) toolAllowed(ctx context.Context, orgID, serverID, clientID string, roles []string, tool string) bool {
 	principals := []string{"client:" + clientID}
 	for _, r := range roles {
 		principals = append(principals, "role:"+r)
@@ -155,9 +186,9 @@ func (s *Service) toolAllowed(ctx context.Context, serverID, clientID string, ro
 	if err := s.db.Pool.QueryRow(ctx, `
         SELECT EXISTS (
             SELECT 1 FROM mcp_tool_policies
-             WHERE server_id = $1 AND principal = ANY($2)
+             WHERE server_id = $1 AND org_id::text = $4 AND principal = ANY($2)
                AND (tool = $3 OR tool = '*'))`,
-		serverID, principals, tool).Scan(&allowed); err != nil {
+		serverID, principals, tool, orgID).Scan(&allowed); err != nil {
 		return false
 	}
 	return allowed
@@ -190,7 +221,10 @@ func (s *Service) handleMCPInvoke(c *gin.Context) {
 	roles := claimStrings(claims["roles"])
 
 	// 2. Resolve the MCP server.
-	orgID := mcpOrgID(c)
+	orgID, ok := requireMCPOrg(c)
+	if !ok {
+		return
+	}
 	server, err := s.getMCPServerByName(c.Request.Context(), orgID, serverName)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "mcp server not found"})
@@ -198,7 +232,7 @@ func (s *Service) handleMCPInvoke(c *gin.Context) {
 	}
 
 	// 3. Per-tool allowlist.
-	if !s.toolAllowed(c.Request.Context(), server.ID, clientID, roles, tool) {
+	if !s.toolAllowed(c.Request.Context(), orgID, server.ID, clientID, roles, tool) {
 		s.auditMCP(c.Request.Context(), clientID, subject, server.Name, tool, "denied")
 		c.JSON(http.StatusForbidden, gin.H{"error": "tool not permitted for this agent"})
 		return

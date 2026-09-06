@@ -833,6 +833,19 @@ func TestRLSBeltTables(t *testing.T) {
 		// v167 — the group half of the app-assignment pair. v136 wrote ENABLE
 		// and a policy and no FORCE, so its belt held only while the migrating
 		// role and the runtime role differed.
+		// v168 — the MCP gateway. A tool policy is the allowlist that decides
+		// whether an AI agent may invoke a tool; the write checked nothing about
+		// the server it was writing onto.
+		{"mcp_servers", `INSERT INTO mcp_servers (name, upstream_url, org_id)
+			VALUES ('tbelt-mcp-` + suffix + `', 'http://mcp.example.test:9000', $1)`},
+
+		{"mcp_tool_policies", `WITH m AS (
+			INSERT INTO mcp_servers (name, upstream_url, org_id)
+			VALUES ('tbelt-mcp-p-` + suffix + `', 'http://mcp.example.test:9000', $1)
+			RETURNING id)
+			INSERT INTO mcp_tool_policies (server_id, principal, tool, org_id)
+			SELECT m.id, 'role:admin', '*', $1 FROM m`},
+
 		{"group_application_assignments", `WITH g AS (
 			INSERT INTO groups (name, org_id) VALUES ('tbelt-gaa-` + suffix + `', $1) RETURNING id),
 			a AS (

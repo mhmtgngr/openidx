@@ -34,7 +34,7 @@ const mcpApprovalWindow = 30 * time.Minute
 // toolRequiresApproval reports whether any matching allowlist entry for this
 // principal set + tool is marked require_approval. Uses the same principal
 // expansion as toolAllowed.
-func (s *Service) toolRequiresApproval(ctx context.Context, serverID, clientID string, roles []string, tool string) bool {
+func (s *Service) toolRequiresApproval(ctx context.Context, orgID, serverID, clientID string, roles []string, tool string) bool {
 	principals := []string{"client:" + clientID}
 	for _, r := range roles {
 		principals = append(principals, "role:"+r)
@@ -43,10 +43,10 @@ func (s *Service) toolRequiresApproval(ctx context.Context, serverID, clientID s
 	if err := s.db.Pool.QueryRow(ctx, `
         SELECT EXISTS (
             SELECT 1 FROM mcp_tool_policies
-             WHERE server_id = $1 AND principal = ANY($2)
+             WHERE server_id = $1 AND org_id::text = $4 AND principal = ANY($2)
                AND (tool = $3 OR tool = '*')
                AND require_approval = true)`,
-		serverID, principals, tool).Scan(&req); err != nil {
+		serverID, principals, tool, orgID).Scan(&req); err != nil {
 		return false
 	}
 	return req
@@ -117,17 +117,24 @@ func (s *Service) createOrGetPendingToolApproval(ctx context.Context, orgID, ser
 // handleListPendingToolApprovals — GET /mcp/approvals/pending (admin).
 func (s *Service) handleListPendingToolApprovals(c *gin.Context) {
 	ctx := c.Request.Context()
-	if _, err := orgctx.From(ctx); err != nil {
+	org, err := orgctx.From(ctx)
+	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
 		return
 	}
+	// mcp_tool_approvals has carried the belt since v118, so this list was
+	// already scoped by the database; the explicit terms are the defence in
+	// depth a background caller under orgctx.WithBypassRLS would otherwise lose.
+	// The join predicate goes in the WHERE, not the ON: a tenant term on a LEFT
+	// JOIN's ON filters nothing, which is the v155 lesson.
 	rows, err := s.db.Pool.Query(ctx, `
         SELECT a.id, a.server_id, COALESCE(m.name,''), a.tool, a.client_id, COALESCE(a.subject,''),
                a.created_at, a.expires_at
           FROM mcp_tool_approvals a
           LEFT JOIN mcp_servers m ON m.id = a.server_id
          WHERE a.status = 'pending' AND (a.expires_at IS NULL OR a.expires_at > NOW())
-         ORDER BY a.created_at ASC`)
+           AND a.org_id = $1 AND (m.id IS NULL OR m.org_id = $1)
+         ORDER BY a.created_at ASC`, org.ID)
 	if err != nil {
 		s.logger.Error("handleListPendingToolApprovals: query failed", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list pending approvals"})
@@ -214,7 +221,7 @@ type mcpApprovalContext struct {
 // approval exists). When approval is required and not yet granted it writes the
 // 202/403 response itself and returns (false, nil).
 func (s *Service) gateToolCall(ctx context.Context, c *gin.Context, ac mcpApprovalContext, roles []string, body []byte) (bool, error) {
-	if !s.toolRequiresApproval(ctx, ac.ServerID, ac.ClientID, roles, ac.Tool) {
+	if !s.toolRequiresApproval(ctx, ac.OrgID, ac.ServerID, ac.ClientID, roles, ac.Tool) {
 		return true, nil
 	}
 	// Already approved for this exact call? Consume and proceed.
