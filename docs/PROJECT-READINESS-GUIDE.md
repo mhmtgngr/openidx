@@ -3977,6 +3977,68 @@ class this whole program exists for.
    worker drains every tenant's outbox, claims by state alone, and each claimed
    row carries its own `org_id` onward. Its five worker statements now say so on
    the query, the way v166's network queues do.
+
+   ### The query register is empty — and the last entry was not latent
+
+   **Batch 42 (`predicateAuditPending` 3 → 0): a credential any tenant could
+   spend.**
+
+   The last three entries were the PAM vault, and the register had deferred them
+   with a note: *"read in 5 packages, and Use() runs under an explicit bypass —
+   retiring it needs the org threaded through Use's 9 callers"*. Reading that
+   reason the way v169 and v170 read theirs found two things wrong with it.
+
+   **First, half the work was already done.** The note said six of those callers
+   were "rotation workers with no request org". They are not:
+   `engine.go` already builds `orgctx.With(context.Background(), orgctx.Org{ID:
+   p.OrgID})` from the policy row and passes it into the rotation. The tenant was
+   on the context the whole time; nothing read it.
+
+   **Second, and this is the finding: one of those callers was a live
+   cross-tenant credential-use path.** `POST /pam/connect/cloud`
+   (`handleCloudConnect`) carries **no admin guard**. It binds `secret_id` from
+   the request body, resolves the caller's organization, refuses without one —
+   and then never uses it. It calls `vaultSvc.Use` with the caller's chosen id
+   under `orgctx.WithBypassRLS`, and `Use`'s query selected on the secret id
+   alone. So any authenticated user of any tenant could:
+
+   - name **another tenant's** vault broker credential by id,
+   - have it decrypted and used to `AssumeRole` on a `role_arn` of their own
+     choosing,
+   - receive the resulting **STS credentials in the response body**,
+   - and have the session recorded in `brokered_sessions` under **their own**
+     organization — so the tenant whose credential was spent has no record of it
+     at all.
+
+   This is the register's own caveat coming true. Its comment said the entries
+   were *"NOT live cross-tenant holes"* because every table on it carries the
+   belt — and then named the exception two sentences later, without following
+   it: a caller that opts into `WithBypassRLS` keeps only what the SQL says, and
+   `Use` **requires** such a context by construction. On that one table the
+   predicate was not defence in depth; it was the only defence there was.
+
+   `Use(ctx, orgID, secretID)` now takes the tenant **explicitly** rather than
+   reading it from a context the caller assembled — the bypass is precisely what
+   makes an inherited value untrustworthy — and refuses an empty one. All ten
+   call sites pass it: the four request paths from the org they already had, the
+   six rotators through one shared `useAdminSecret` helper that fails closed.
+   Nineteen further `vault_secrets` / `vault_secret_versions` /
+   `credential_rotation_policies` queries across four packages gained the term,
+   and four stale `//orgscope:ignore` directives went with them — including two
+   on **bypass** contexts whose stated reason was that RLS scoped them, and one
+   citing "the same pattern as `decryptCurrent`'s `WHERE id=$1`", a pattern that
+   no longer exists.
+
+   `SecretOrg` keeps its cross-org read with the reason on the query: it **is**
+   the resolver background callers use to learn a secret's tenant before they
+   have one to scope by.
+
+   **Both registers are now empty and pinned at zero.** `needsBelt` began at 34
+   and `predicateAuditPending` at 96 queries across 19 tables. A table carrying
+   `org_id` without `FORCE ROW LEVEL SECURITY` fails the build; a scoped table
+   whose queries do not name `org_id` fails the build. What remains is the five
+   deferred `needsScoping` tables, each waiting on a product decision rather than
+   a migration.
 4. ✅ **OPA `deny` enforced** — *shipped.* — `internal/common/middleware/opa.go`: abort
    unless `Allow && len(Deny)==0`; `authz.rego:15-19`'s "any authenticated
    user may GET anything" removed; `policies/access_control.rego`

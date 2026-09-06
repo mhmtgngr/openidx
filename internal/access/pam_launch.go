@@ -387,16 +387,17 @@ func (s *Service) launchPamSession(
 	var secretType string
 	if target.SecretID != "" && s.vaultSvc != nil {
 		bctx := orgctx.WithBypassRLS(ctx)
-		cred, err = s.vaultSvc.Use(bctx, target.SecretID)
+		cred, err = s.vaultSvc.Use(bctx, orgID, target.SecretID)
 		if err != nil {
 			s.logger.Warn("launchPamSession: vault credential unavailable",
 				zap.String("secret_id", target.SecretID), zap.Error(err))
 			c.JSON(http.StatusForbidden, gin.H{"error": "credential unavailable"})
 			return nil, false
 		}
-		//orgscope:ignore vault_secrets SELECT under bypass-RLS context to determine injection field
+		// bctx carries an explicit bypass, so the tenant term is the only scoping
+		// on this read; the directive it replaces named the bypass as the reason.
 		_ = s.db.Pool.QueryRow(bctx,
-			`SELECT type FROM vault_secrets WHERE id=$1`, target.SecretID).Scan(&secretType)
+			`SELECT type FROM vault_secrets WHERE id=$1 AND org_id=$2`, target.SecretID, orgID).Scan(&secretType)
 	}
 
 	recName := fmt.Sprintf("pam-%s-%d", entry.ID, time.Now().UnixMilli())

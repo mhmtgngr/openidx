@@ -11,8 +11,6 @@ import (
 	"strings"
 
 	"golang.org/x/crypto/ssh"
-
-	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // safeUsername constrains a POSIX username to a shell-safe charset. sshConfigFromMap
@@ -78,7 +76,7 @@ func (r *sshKeyRotator) Apply(ctx context.Context, cfg map[string]any, newValue 
 	if err != nil {
 		return err
 	}
-	admin, err := r.vault.Use(orgctx.WithBypassRLS(ctx), conf.adminSecretID)
+	admin, err := useAdminSecret(ctx, r.vault, conf.adminSecretID)
 	if err != nil {
 		return fmt.Errorf("ssh_key: resolve admin secret: %w", err)
 	}

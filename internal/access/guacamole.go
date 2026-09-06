@@ -670,7 +670,7 @@ func (s *Service) handleGuacamoleConnect(c *gin.Context) {
 	if secretID != "" && s.vaultSvc != nil {
 		bctx := orgctx.WithBypassRLS(ctx)
 		var err error
-		cred, err = s.vaultSvc.Use(bctx, secretID)
+		cred, err = s.vaultSvc.Use(bctx, org.ID, secretID)
 		if err != nil {
 			s.logger.Warn("handleGuacamoleConnect: vault credential unavailable",
 				zap.String("secret_id", secretID), zap.Error(err))
@@ -680,9 +680,11 @@ func (s *Service) handleGuacamoleConnect(c *gin.Context) {
 
 		// Determine which connection parameter to inject based on the secret type.
 		// ssh_key → private-key; anything else (password, api_key, …) → password.
-		//orgscope:ignore vault_secrets SELECT under bypass-RLS context to determine injection field
+		// bctx carries an explicit bypass, so RLS does not scope this: the tenant
+		// term is the only thing that does. The directive that used to stand here
+		// named the bypass as if it were the reason no predicate was needed.
 		_ = s.db.Pool.QueryRow(bctx,
-			`SELECT type FROM vault_secrets WHERE id=$1`, secretID).Scan(&secretType)
+			`SELECT type FROM vault_secrets WHERE id=$1 AND org_id=$2`, secretID, org.ID).Scan(&secretType)
 	}
 
 	recPath := s.config.GuacamoleRecordingPath
@@ -786,10 +788,9 @@ func (s *Service) handleSetGuacCredential(c *gin.Context) {
 	// Validate the vault secret exists in this org (RLS-scoped — request context already carries org_id).
 	if req.VaultSecretID != "" {
 		var secretExists bool
-		//orgscope:ignore RLS on vault_secrets is enforced via the request context's app.org_id setting
 		err = s.db.Pool.QueryRow(ctx,
-			`SELECT EXISTS(SELECT 1 FROM vault_secrets WHERE id = $1)`,
-			req.VaultSecretID).Scan(&secretExists)
+			`SELECT EXISTS(SELECT 1 FROM vault_secrets WHERE id = $1 AND org_id = $2)`,
+			req.VaultSecretID, org.ID).Scan(&secretExists)
 		if err != nil {
 			s.logger.Error("handleSetGuacCredential: vault secret lookup failed", zap.Error(err))
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to validate vault secret"})

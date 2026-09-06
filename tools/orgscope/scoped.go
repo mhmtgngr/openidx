@@ -118,27 +118,31 @@ var needsScoping = map[string]string{
 // is the state this register existed to reach. Leave it empty; fix the table.
 var needsBelt = map[string]string{}
 
-// predicateAuditPending: OPEN FINDINGS, query level. Deriving the scoped set
-// from the DDL brought these tables under the missing-predicate rule for the
-// first time, and 96 of their queries address rows by id without naming
-// org_id.
+// predicateAuditPending: EMPTY, AND PINNED AT ZERO.
 //
-// They are NOT live cross-tenant holes: every table here carries FORCE ROW
-// LEVEL SECURITY, so a query that omits org_id is scoped by the database
-// anyway, on the app.org_id the pool sets at checkout from orgctx. The
-// predicate still matters -- a background job that opts into
-// orgctx.WithBypassRLS loses the belt and keeps only what the SQL says -- so
-// this is defence in depth worth having, not something to wave through. It is
-// deferred rather than bulk-edited because adding 96 predicates blind is how
-// a query gets a subtly wrong join, and each one wants reading.
+// It began at 96 queries across 19 tables that deriving the scoped set from the
+// DDL had brought under the missing-predicate rule for the first time. They left
+// in feature-sized batches, each table's queries read rather than bulk-edited,
+// because adding a predicate blind is how a query gets a subtly wrong join.
 //
-// The register is pinned by ddl_test.go and can only shrink. A table leaves it
-// by having its queries audited, not by being added to it.
-var predicateAuditPending = map[string]string{
-	"vault_secrets":                "PAM vault; read in 5 packages, and Use() runs under an explicit bypass -- retiring it needs the org threaded through Use's 9 callers",
-	"vault_secret_versions":        "PAM vault; decryptCurrent joins vault_secrets, so it leaves with that table",
-	"credential_rotation_policies": "PAM vault rotation; read by internal/credentials and internal/governance, both on rotation-worker paths that need their own org read first",
-}
+// This register's own note used to say the entries were "NOT live cross-tenant
+// holes: every table here carries FORCE ROW LEVEL SECURITY, so a query that
+// omits org_id is scoped by the database anyway". That was true of eighteen of
+// them. It was NOT true of vault_secrets, and the note named the reason two
+// sentences later without following it: a caller that opts into
+// orgctx.WithBypassRLS loses the belt and keeps only what the SQL says -- and
+// vault.Use REQUIRES such a context, because it is the system
+// credential-injection path. POST /pam/connect/cloud passed a caller-supplied
+// secret_id straight to it, so any authenticated user of any tenant could name
+// any secret in the installation and have it used as their cloud broker
+// credential. The register said "defence in depth"; on that one table it was the
+// only defence there was.
+//
+// ddl_test.go pins len(predicateAuditPending) at 0. A table cannot be parked
+// here again: a scoped table whose queries do not name org_id fails the build,
+// and the way out is an //orgscope:ignore carrying the reason on the query
+// itself, where the next reader will see it.
+var predicateAuditPending = map[string]string{}
 
 // census and scopedTables are derived once from the migration registry.
 // scopedTables is what sqlcheck.go asks its missing-predicate question about,

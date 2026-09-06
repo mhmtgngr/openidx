@@ -18,7 +18,25 @@ import (
 // it fetches a secret's current value under a bypass-RLS context.
 // *vault.Service satisfies this interface via its Use method.
 type vaultUser interface {
-	Use(ctx context.Context, secretID string) ([]byte, error)
+	Use(ctx context.Context, orgID, secretID string) ([]byte, error)
+}
+
+// useAdminSecret resolves a rotator's bootstrap credential from the vault under
+// the organization that owns the rotation policy.
+//
+// Every rotator reaches the vault the same way and must name the same tenant,
+// so the resolution lives here once rather than six times. The organization is
+// the one the engine put on the context from the policy row
+// (engine.go: orgctx.With(..., orgctx.Org{ID: p.OrgID})), so a rotation always
+// decrypts a credential belonging to the tenant whose policy asked for it.
+// orgctx.WithBypassRLS preserves it; vault.Use requires both the bypass and a
+// non-empty organization, and this fails closed if the context has none.
+func useAdminSecret(ctx context.Context, v vaultUser, secretID string) ([]byte, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("resolve rotation organization: %w", err)
+	}
+	return v.Use(orgctx.WithBypassRLS(ctx), org.ID, secretID)
 }
 
 // sshConf holds the parsed, validated fields from a connector_config map.
@@ -126,7 +144,7 @@ func (r *sshRotator) Apply(ctx context.Context, cfg map[string]any, newValue []b
 	if err != nil {
 		return err
 	}
-	admin, err := r.vault.Use(orgctx.WithBypassRLS(ctx), conf.adminSecretID)
+	admin, err := useAdminSecret(ctx, r.vault, conf.adminSecretID)
 	if err != nil {
 		return fmt.Errorf("ssh: resolve admin secret: %w", err)
 	}

@@ -135,7 +135,7 @@ func (s *Service) handleCloudConnect(c *gin.Context) {
 
 	// Pull the broker credentials server-side. They never leave the service.
 	bctx := orgctx.WithBypassRLS(ctx)
-	rawSecret, err := s.vaultSvc.Use(bctx, req.SecretID)
+	rawSecret, err := s.vaultSvc.Use(bctx, org.ID, req.SecretID)
 	if err != nil {
 		s.logger.Warn("handleCloudConnect: broker credential unavailable",
 			zap.String("secret_id", req.SecretID), zap.Error(err))

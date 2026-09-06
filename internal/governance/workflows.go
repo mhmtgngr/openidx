@@ -139,7 +139,7 @@ func (s *Service) handleCreateAccessRequest(c *gin.Context) {
 	if body.ResourceType == "vault_credential" {
 		var exists bool
 		if err := s.db.Pool.QueryRow(c.Request.Context(),
-			`SELECT EXISTS(SELECT 1 FROM vault_secrets WHERE id=$1)`, body.ResourceID).Scan(&exists); err != nil {
+			`SELECT EXISTS(SELECT 1 FROM vault_secrets WHERE id=$1 AND org_id=$2)`, body.ResourceID, org.ID).Scan(&exists); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "validate secret"})
 			return
 		}
@@ -1347,9 +1347,15 @@ func (s *Service) handleRetrieveCredential(c *gin.Context) {
 // bumpRotationOnReturn wakes the M1b rotation scheduler for a secret whose policy is
 // rotate_on_checkout, so the credential rotates when the checkout concludes.
 func (s *Service) bumpRotationOnReturn(ctx context.Context, secretID string) {
+	org, oerr := orgctx.From(ctx)
+	if oerr != nil {
+		s.logger.Warn("bump rotation on return: no organization on the context",
+			zap.String("secret_id", secretID), zap.Error(oerr))
+		return
+	}
 	if _, err := s.db.Pool.Exec(ctx,
 		`UPDATE credential_rotation_policies SET next_run_at = NOW()
-		 WHERE secret_id = $1 AND rotate_on_checkout = true`, secretID); err != nil {
+		 WHERE secret_id = $1 AND org_id = $2 AND rotate_on_checkout = true`, secretID, org.ID); err != nil {
 		s.logger.Warn("bump rotation on return failed", zap.String("secret_id", secretID), zap.Error(err))
 	}
 }

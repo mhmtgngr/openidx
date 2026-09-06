@@ -88,6 +88,23 @@ to a spec that describes an eighth of a surface, a documented endpoint that
   it, and a test exercises them **in that condition** rather than the ordinary
   one. No exposure is known to have followed from this; it removes the
   dependence.
+- **A cloud broker credential belonging to one organization could be spent by
+  another.** The cloud just-in-time endpoint (`POST /pam/connect/cloud`) takes
+  the id of a vault secret to authenticate with. It carried no administrator
+  requirement, and the id was used exactly as sent: the endpoint established
+  which organization the caller belonged to, refused anyone without one, and
+  then never applied it to the credential it fetched. That fetch is the
+  product's internal credential-injection path, which by design steps outside
+  the database's tenant rule — so nothing else was scoping it either.
+  Any signed-in user could therefore name another organization's AWS broker
+  credential, have it used to assume a role of their own choosing, and receive
+  working temporary cloud credentials in the response. The session was recorded
+  against the caller's organization, so the organization whose credential was
+  spent had no record of it.
+  The credential fetch now requires the organization to be named explicitly and
+  refuses to decrypt anything belonging to another one. Every caller passes it,
+  and roughly twenty further vault and rotation queries across four packages now
+  name the organization as well.
 - **The log of security events received from a federated provider now records
   which organization each was applied to** (migration v172). When an upstream
   identity provider pushes a security event — a session revoked, an account

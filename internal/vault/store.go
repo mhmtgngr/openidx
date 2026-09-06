@@ -152,7 +152,7 @@ func (s *Service) NewVersion(ctx context.Context, secretID string, value []byte,
 	var next int
 	if err := tx.QueryRow(ctx,
 		`UPDATE vault_secrets SET current_version = current_version + 1, updated_at = NOW()
-		 WHERE id = $1 RETURNING current_version`, secretID).Scan(&next); err != nil {
+		 WHERE id = $1 AND org_id = $2 RETURNING current_version`, secretID, orgID).Scan(&next); err != nil {
 		return 0, err
 	}
 	keyID, blob, err := s.ring.Seal(secretID, next, value)
@@ -173,9 +173,13 @@ func (s *Service) NewVersion(ctx context.Context, secretID string, value []byte,
 }
 
 func (s *Service) List(ctx context.Context) ([]SecretMeta, error) {
+	orgID, err := s.orgID(ctx)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT id, name, type, COALESCE(description,''), current_version, created_at, updated_at
-		FROM vault_secrets ORDER BY name`)
+		FROM vault_secrets WHERE org_id = $1 ORDER BY name`, orgID)
 	if err != nil {
 		return nil, err
 	}
@@ -192,10 +196,14 @@ func (s *Service) List(ctx context.Context) ([]SecretMeta, error) {
 }
 
 func (s *Service) Get(ctx context.Context, secretID string) (*SecretDetail, error) {
+	orgID, err := s.orgID(ctx)
+	if err != nil {
+		return nil, err
+	}
 	var d SecretDetail
-	err := s.db.Pool.QueryRow(ctx, `
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT id, name, type, COALESCE(description,''), current_version, created_at, updated_at
-		FROM vault_secrets WHERE id = $1`, secretID).
+		FROM vault_secrets WHERE id = $1 AND org_id = $2`, secretID, orgID).
 		Scan(&d.ID, &d.Name, &d.Type, &d.Description, &d.CurrentVersion, &d.CreatedAt, &d.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -205,7 +213,7 @@ func (s *Service) Get(ctx context.Context, secretID string) (*SecretDetail, erro
 	}
 	rows, err := s.db.Pool.Query(ctx,
 		`SELECT version, key_id, COALESCE(created_by::text,''), created_at
-		 FROM vault_secret_versions WHERE secret_id = $1 ORDER BY version DESC`, secretID)
+		 FROM vault_secret_versions WHERE secret_id = $1 AND org_id = $2 ORDER BY version DESC`, secretID, orgID)
 	if err != nil {
 		return nil, err
 	}
@@ -223,7 +231,13 @@ func (s *Service) Get(ctx context.Context, secretID string) (*SecretDetail, erro
 // Delete removes the secret and (via cascade) all its versions — the only copy
 // of the ciphertext — so the secret is cryptographically unrecoverable.
 func (s *Service) Delete(ctx context.Context, secretID string) error {
-	ct, err := s.db.Pool.Exec(ctx, `DELETE FROM vault_secrets WHERE id = $1`, secretID)
+	orgID, err := s.orgID(ctx)
+	if err != nil {
+		return err
+	}
+	// A delete that matches nothing is silent, so without the tenant term the
+	// caller is told the secret is gone either way.
+	ct, err := s.db.Pool.Exec(ctx, `DELETE FROM vault_secrets WHERE id = $1 AND org_id = $2`, secretID, orgID)
 	if err != nil {
 		return err
 	}
@@ -406,14 +420,14 @@ func (s *Service) hasGrant(ctx context.Context, secretID, principalID string, us
 // ---- Use + Reveal + checkout ledger ----
 
 // decryptCurrent loads and decrypts the current version. Internal only.
-func (s *Service) decryptCurrent(ctx context.Context, secretID string) (int, []byte, error) {
+func (s *Service) decryptCurrent(ctx context.Context, orgID, secretID string) (int, []byte, error) {
 	var version, keyID int
 	var blob []byte
 	err := s.db.Pool.QueryRow(ctx, `
 		SELECT v.version, v.key_id, v.ciphertext
 		FROM vault_secret_versions v
 		JOIN vault_secrets s ON s.id = v.secret_id AND s.current_version = v.version
-		WHERE v.secret_id = $1`, secretID).Scan(&version, &keyID, &blob)
+		WHERE v.secret_id = $1 AND s.org_id = $2 AND v.org_id = $2`, secretID, orgID).Scan(&version, &keyID, &blob)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return 0, nil, ErrNotFound
@@ -436,11 +450,23 @@ func (s *Service) decryptCurrent(ctx context.Context, secretID string) (int, []b
 // this from a request-scoped context without bypass-RLS will return an error
 // immediately — the check is intentionally fail-closed to prevent accidental
 // exposure of plaintext over the HTTP path.
-func (s *Service) Use(ctx context.Context, secretID string) ([]byte, error) {
+//
+// orgID is EXPLICIT, and deliberately not read from ctx. The bypass this
+// function requires is precisely the thing that switches the database's own
+// tenant rule off, so the organization has to be stated by the caller rather
+// than inherited from a context it assembled — and a caller that cannot name
+// one has no business decrypting a credential. Before this the secret id alone
+// selected the row, and handleCloudConnect passed one straight from the request
+// body: any authenticated user could name any secret in the installation and
+// have it used as their cloud broker credential.
+func (s *Service) Use(ctx context.Context, orgID, secretID string) ([]byte, error) {
 	if !orgctx.IsBypassRLS(ctx) {
 		return nil, errors.New("vault: Use requires a system (bypass-RLS) context")
 	}
-	version, pt, err := s.decryptCurrent(ctx, secretID)
+	if orgID == "" {
+		return nil, errors.New("vault: Use requires an organization")
+	}
+	version, pt, err := s.decryptCurrent(ctx, orgID, secretID)
 	if err != nil {
 		return nil, err
 	}
@@ -482,7 +508,14 @@ func (s *Service) Reveal(ctx context.Context, secretID, principalID string, user
 			return nil, ErrStepUpRequired
 		}
 	}
-	version, pt, err := s.decryptCurrent(ctx, secretID)
+	// Reveal is request-scoped (no bypass), so the belt is already in front of
+	// this read; naming the tenant makes the query sufficient on its own, the
+	// way hasGrant above already does.
+	revealOrg, err := s.orgID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	version, pt, err := s.decryptCurrent(ctx, revealOrg, secretID)
 	if err != nil {
 		return nil, err
 	}
@@ -500,10 +533,17 @@ const stepUpRecentWindow = 5 * time.Minute
 
 // secretRequiresStepUp reports whether the secret is flagged require_step_up.
 func (s *Service) secretRequiresStepUp(ctx context.Context, secretID string) (bool, error) {
+	stepUpOrg, err := s.orgID(ctx)
+	if err != nil {
+		return false, err
+	}
+	// The directive that used to sit here said this was "org-scoped by FORCE RLS
+	// on the pooled connection (same pattern as decryptCurrent's WHERE id=$1)".
+	// decryptCurrent no longer has that pattern, so the comparison no longer
+	// names anything; the predicate replaces both.
 	var req bool
-	//orgscope:ignore vault_secrets is org-scoped by FORCE RLS on the pooled connection (same pattern as decryptCurrent's WHERE id=$1)
-	err := s.db.Pool.QueryRow(ctx,
-		`SELECT COALESCE(require_step_up, FALSE) FROM vault_secrets WHERE id = $1`, secretID).Scan(&req)
+	err = s.db.Pool.QueryRow(ctx,
+		`SELECT COALESCE(require_step_up, FALSE) FROM vault_secrets WHERE id = $1 AND org_id = $2`, secretID, stepUpOrg).Scan(&req)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, ErrNotFound
 	}
@@ -603,7 +643,7 @@ func (s *Service) AddCandidateVersion(ctx context.Context, secretID string, valu
 	}
 	var next int
 	if err := s.db.Pool.QueryRow(ctx,
-		`SELECT COALESCE(MAX(version),0)+1 FROM vault_secret_versions WHERE secret_id = $1`, secretID).Scan(&next); err != nil {
+		`SELECT COALESCE(MAX(version),0)+1 FROM vault_secret_versions WHERE secret_id = $1 AND org_id = $2`, secretID, orgID).Scan(&next); err != nil {
 		return 0, err
 	}
 	keyID, blob, err := s.ring.Seal(secretID, next, value)
@@ -621,8 +661,13 @@ func (s *Service) AddCandidateVersion(ctx context.Context, secretID string, valu
 // PromoteVersion sets a secret's current_version — the atomic "this value is now live on
 // the target" commit that makes it visible to Use/Reveal.
 func (s *Service) PromoteVersion(ctx context.Context, secretID string, version int) error {
+	orgID, err := s.orgID(ctx)
+	if err != nil {
+		return err
+	}
 	ct, err := s.db.Pool.Exec(ctx,
-		`UPDATE vault_secrets SET current_version = $2, updated_at = NOW() WHERE id = $1`, secretID, version)
+		`UPDATE vault_secrets SET current_version = $2, updated_at = NOW() WHERE id = $1 AND org_id = $3`,
+		secretID, version, orgID)
 	if err != nil {
 		return err
 	}
@@ -636,7 +681,9 @@ func (s *Service) PromoteVersion(ctx context.Context, secretID string, version i
 // use it to inject the org into their context for scoped vault writes.
 func (s *Service) SecretOrg(ctx context.Context, secretID string) (string, error) {
 	var org string
-	err := s.db.Pool.QueryRow(ctx, `SELECT org_id FROM vault_secrets WHERE id = $1`, secretID).Scan(&org)
+	err := s.db.Pool.QueryRow(ctx,
+		//orgscope:ignore this IS the org resolver: background/bypass callers use it to learn a secret's tenant before they have one to scope by, so it must read across orgs
+		`SELECT org_id FROM vault_secrets WHERE id = $1`, secretID).Scan(&org)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", ErrNotFound
 	}

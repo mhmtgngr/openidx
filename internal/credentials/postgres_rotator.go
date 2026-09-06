@@ -8,8 +8,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-
-	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // pgConf holds the parsed, validated fields from a postgres connector_config map.
@@ -144,7 +142,7 @@ func (r *postgresRotator) Apply(ctx context.Context, cfg map[string]any, newValu
 		return err
 	}
 
-	admin, err := r.vault.Use(orgctx.WithBypassRLS(ctx), conf.adminSecretID)
+	admin, err := useAdminSecret(ctx, r.vault, conf.adminSecretID)
 	if err != nil {
 		return fmt.Errorf("postgres: resolve admin secret: %w", err)
 	}

@@ -162,7 +162,7 @@ func (s *Service) handlePamWSConnect(c *gin.Context) {
 	var secretType string
 	if target.SecretID != "" && s.vaultSvc != nil {
 		bctx := orgctx.WithBypassRLS(ctx)
-		cred, err = s.vaultSvc.Use(bctx, target.SecretID)
+		cred, err = s.vaultSvc.Use(bctx, org.ID, target.SecretID)
 		if err != nil {
 			s.logger.Warn("ws-connect: vault credential unavailable", zap.String("secret_id", target.SecretID), zap.Error(err))
 			c.JSON(http.StatusForbidden, gin.H{"error": "credential unavailable"})

@@ -420,7 +420,7 @@ func TestRegistersOnlyShrink(t *testing.T) {
 		// they were about and some left it to the belt. The deadline sweep keeps
 		// its cross-org reach with the reason on the query: a run the sweep
 		// cannot see never expires.
-		{"predicateAuditPending", len(predicateAuditPending), 3},
+		{"predicateAuditPending", len(predicateAuditPending), 0},
 		{"installWideTables", len(installWideTables), 21},
 		{"beltExempt", len(beltExempt), 5},
 	} {

@@ -23,8 +23,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	iamtypes "github.com/aws/aws-sdk-go-v2/service/iam/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
-
-	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // awsCreds is the JSON shape for both the admin secret and the rotated value.
@@ -127,7 +125,7 @@ func (r *awsIAMRotator) ValidateConfig(cfg map[string]any) error {
 
 // admin fetches and decodes the admin credentials from the vault.
 func (r *awsIAMRotator) admin(ctx context.Context, conf awsIAMConf) (awsCreds, error) {
-	raw, err := r.vault.Use(orgctx.WithBypassRLS(ctx), conf.adminSecretID)
+	raw, err := useAdminSecret(ctx, r.vault, conf.adminSecretID)
 	if err != nil {
 		return awsCreds{}, fmt.Errorf("aws_iam: fetch admin secret: %w", err)
 	}

@@ -10,9 +10,15 @@ import (
 	iam "google.golang.org/api/iam/v1"
 )
 
-type staticVaultGCP struct{ val []byte }
+type staticVaultGCP struct {
+	val    []byte
+	gotOrg *string
+}
 
-func (s staticVaultGCP) Use(context.Context, string) ([]byte, error) {
+func (s staticVaultGCP) Use(_ context.Context, orgID, _ string) ([]byte, error) {
+	if s.gotOrg != nil {
+		*s.gotOrg = orgID
+	}
 	return append([]byte(nil), s.val...), nil
 }
 
@@ -74,7 +80,7 @@ func okCheck(context.Context, []byte) error { return nil }
 func TestGCPSA_MintReturnsDecodedKeyJSON(t *testing.T) {
 	f := &fakeGCPKeyAPI{}
 	r := newTestGCPRotator(f, okCheck)
-	val, err := r.Mint(context.Background(), gcpCfg())
+	val, err := r.Mint(rotTestCtx(), gcpCfg())
 	if err != nil {
 		t.Fatalf("Mint: %v", err)
 	}
@@ -98,7 +104,7 @@ func TestGCPSA_MintDeletesOldestAtLimit(t *testing.T) {
 	keys[0].ValidAfterTime = "2020-01-01T00:00:00Z"
 	f := &fakeGCPKeyAPI{keys: keys}
 	r := newTestGCPRotator(f, okCheck)
-	if _, err := r.Mint(context.Background(), gcpCfg()); err != nil {
+	if _, err := r.Mint(rotTestCtx(), gcpCfg()); err != nil {
 		t.Fatalf("Mint: %v", err)
 	}
 	if len(f.deleted) != 1 || f.deleted[0] != "projects/p/serviceAccounts/sa/keys/K0" {
@@ -139,7 +145,7 @@ func TestGCPSA_CleanupDeletesAllButNewestUserManaged(t *testing.T) {
 		{Name: "keys/SYS", KeyType: "SYSTEM_MANAGED", ValidAfterTime: "2026-07-09T00:00:00Z"},
 	}}
 	r := newTestGCPRotator(f, okCheck)
-	if err := r.Cleanup(context.Background(), gcpCfg()); err != nil {
+	if err := r.Cleanup(rotTestCtx(), gcpCfg()); err != nil {
 		t.Fatalf("Cleanup: %v", err)
 	}
 	if len(f.deleted) != 1 || f.deleted[0] != "keys/OLD" {
