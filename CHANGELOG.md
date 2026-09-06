@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The gateway's request-body logger truncated the request it was observing.**
+  `internal/gateway/middleware/logging.go` read the body through an
+  `io.LimitReader` and then handed the *truncated* bytes back to the handler, so
+  turning on `LogRequestBody` would have silently cut every request over
+  `MaxBodySize` before the code that had to act on it ever saw it — a logging
+  option corrupting its own subject. It now reads the body in full, restores it
+  in full, and applies the limit to what is *logged*. The body also went into
+  the log verbatim on a path that carries passwords and authorization codes; it
+  goes through `logsafe.JSONBody` now.
+
+- **`logsafe.JSONBody` parsed an unbounded body.** Moving redaction ahead of
+  truncation (see the entry below) meant the parser saw the whole body rather
+  than the first 10 KB, and decoding into an `interface{}` tree costs several
+  times the input. Input over 64 KiB is now reported by size and not parsed.
+  Depth needed no separate bound: `encoding/json` refuses beyond 10,000 levels
+  of nesting, which bounds the recursion before it starts. Raised by a Semgrep
+  finding whose named CWE (502, unsafe deserialization) does not apply to Go's
+  `encoding/json` — but the concern underneath it did.
+
 - **The OAuth authorization code was written to the log in clear, on every
   callback, by every service.** Three request loggers exist in this tree. The one
   in `internal/common/middleware` has redacted query parameters for its whole

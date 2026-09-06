@@ -155,7 +155,26 @@ func QueryField(key, rawQuery string) zap.Field {
 // Parsing is the fix. A body that is not JSON cannot have its field boundaries
 // found safely, so it is redacted whole rather than guessed at -- except a
 // form-encoded one, which QueryString already understands.
+// MaxParsedBodyBytes bounds what JSONBody will hand to the JSON parser.
+//
+// Decoding into an interface{} tree costs several times the input in small
+// allocations, and the caller reads the request body with a bare io.ReadAll,
+// so without a bound here a single large POST is amplified rather than merely
+// copied. 64 KiB is comfortably above the 10 KiB a request logger keeps, so an
+// ordinary body still parses and gets its secrets redacted; past it, the size
+// is reported and nothing is parsed.
+//
+// Depth needs no bound of its own: encoding/json refuses beyond 10,000 levels
+// of nesting ("exceeded max depth"), so redactValues' recursion is bounded by
+// the parser before it starts.
+const MaxParsedBodyBytes = 64 << 10
+
 func JSONBody(body string, extra map[string]bool) string {
+	if len(body) > MaxParsedBodyBytes {
+		return fmt.Sprintf("[body redacted: %d bytes, over the %d-byte parse limit]",
+			len(body), MaxParsedBodyBytes)
+	}
+
 	var parsed interface{}
 	if err := json.Unmarshal([]byte(body), &parsed); err != nil {
 		if strings.Contains(body, "=") && !strings.ContainsAny(body, "{}[]") {

@@ -173,3 +173,45 @@ func TestCleanIsNotReplaceAllOfCRLF(t *testing.T) {
 		}
 	}
 }
+
+// A Semgrep finding on JSONBody named CWE-502 and said "use a concrete struct
+// type instead". The named CWE does not apply: Go's encoding/json produces only
+// map[string]interface{}, []interface{}, string, float64, bool and nil, so there
+// is no gadget chain and no arbitrary type to instantiate. And a concrete struct
+// is not available anyway — the whole job is redacting bodies whose shape is
+// unknown.
+//
+// The concern underneath it does apply, and it was introduced by moving
+// redaction ahead of truncation: this function now sees the FULL body, and
+// decoding into an interface{} tree costs several times the input. So the input
+// is bounded, and this is where that is checked. The depth case is here for the
+// opposite reason: to record that encoding/json already refuses beyond 10,000
+// levels, so the recursion in redactValues needs no bound of its own.
+func TestJSONBodyBoundsWhatItParses(t *testing.T) {
+	big := `{"password":"hunter2","filler":"` + strings.Repeat("x", MaxParsedBodyBytes) + `"}`
+	got := JSONBody(big, nil)
+	if strings.Contains(got, "hunter2") || strings.Contains(got, "xxxx") {
+		t.Fatalf("an oversized body was parsed and echoed: %.120q", got)
+	}
+	if !strings.Contains(got, "parse limit") {
+		t.Fatalf("an oversized body should say why it was withheld, got %q", got)
+	}
+
+	// Just under the limit still parses and still redacts, or the bound has eaten
+	// the feature.
+	ok := `{"password":"hunter2","note":"` + strings.Repeat("y", 1024) + `"}`
+	got = JSONBody(ok, nil)
+	if strings.Contains(got, "hunter2") {
+		t.Fatalf("a body within the limit was not redacted: %.120q", got)
+	}
+	if !strings.Contains(got, "yyyy") {
+		t.Fatalf("a body within the limit lost its non-secret content: %.120q", got)
+	}
+
+	// Deep nesting is the parser's problem, not this function's, and it declines
+	// it rather than recursing.
+	deep := strings.Repeat("[", 20000) + strings.Repeat("]", 20000)
+	if got := JSONBody(deep, nil); !strings.Contains(got, "redacted") {
+		t.Fatalf("deeply nested input should be withheld, got %.80q", got)
+	}
+}

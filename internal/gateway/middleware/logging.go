@@ -61,16 +61,30 @@ func RequestLogger(logger gateway.Logger, config LoggingMiddlewareConfig) gin.Ha
 			return
 		}
 
-		// Log request body if configured
+		// Log request body if configured.
+		//
+		// The read is NOT limited, and the limit is applied to what is LOGGED
+		// instead. The other order is what this used to do, and it corrupts the
+		// request: the body handed back to the handler was the truncated one, so
+		// turning on a logging option would have silently cut every request over
+		// MaxBodySize before it reached its handler. A logger must not change what
+		// it observes.
+		//
+		// And the body goes through logsafe.JSONBody rather than out verbatim: on
+		// this path it carries passwords, tokens and authorization codes.
 		if config.LogRequestBody && c.Request.Body != nil && c.Request.Method != "GET" {
-			bodyBytes, _ := io.ReadAll(io.LimitReader(c.Request.Body, config.MaxBodySize))
+			bodyBytes, _ := io.ReadAll(c.Request.Body)
 			c.Request.Body.Close()
 			c.Request.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 
 			if len(bodyBytes) > 0 {
+				logged := logsafe.JSONBody(string(bodyBytes), nil)
+				if int64(len(logged)) > config.MaxBodySize {
+					logged = logged[:config.MaxBodySize] + "... (truncated)"
+				}
 				logger.Debug("Request body",
 					"path", path,
-					"body", string(bodyBytes))
+					"body", logged)
 			}
 		}
 

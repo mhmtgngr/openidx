@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"io"
 )
 
 func init() {
@@ -663,4 +664,40 @@ func (t *testGatewayLogger) Fatal(msg string, fields ...interface{}) {
 
 func (t *testGatewayLogger) Sync() error {
 	return t.mockLogger.Sync()
+}
+
+// TestRequestLogger_doesNotTruncateTheRequestItLogs pins the worse of the two
+// defects a Semgrep finding led to here.
+//
+// This middleware read the body through an io.LimitReader and then handed the
+// TRUNCATED bytes back to the handler. Turning on LogRequestBody would therefore
+// have silently cut every request over MaxBodySize before it reached the code
+// that had to act on it — a logging option corrupting the data it observes. And
+// the body went into the log verbatim, on the path that carries passwords and
+// authorization codes.
+func TestRequestLogger_doesNotTruncateTheRequestItLogs(t *testing.T) {
+	cfg := DefaultLoggingConfig()
+	cfg.LogRequestBody = true
+	cfg.MaxBodySize = 64
+
+	body := `{"password":"hunter2","payload":"` + strings.Repeat("z", 4096) + `"}`
+
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(RequestLogger(&mockLogger{}, cfg))
+
+	var seen string
+	r.POST("/x", func(c *gin.Context) {
+		b, _ := io.ReadAll(c.Request.Body)
+		seen = string(b)
+		c.JSON(http.StatusOK, gin.H{})
+	})
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(body)))
+
+	if seen != body {
+		t.Fatalf("the handler received %d bytes, the client sent %d — the logger truncated the request",
+			len(seen), len(body))
+	}
 }
