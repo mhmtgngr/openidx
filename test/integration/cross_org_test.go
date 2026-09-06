@@ -778,6 +778,27 @@ func TestRLSBeltTables(t *testing.T) {
 			RETURNING id)
 			INSERT INTO notification_digests (user_id, digest_type, channel, enabled, org_id)
 			SELECT u.id, 'daily', 'email', true, $1 FROM u`},
+
+		// v164 — outbound SCIM. v95's own description says "Org-scoped for RLS"
+		// and the belt was never applied; a target app holds the base URL and
+		// the encrypted admin credential for a downstream SaaS, and the outbox
+		// payload is a snapshot of a local user.
+		{"scim_target_apps", `INSERT INTO scim_target_apps (name, base_url, auth_type, org_id)
+			VALUES ('tbelt-scim-` + suffix + `', 'https://downstream.example.test/scim/v2', 'bearer', $1)`},
+
+		{"scim_provisioning_records", `WITH t AS (
+			INSERT INTO scim_target_apps (name, base_url, auth_type, org_id)
+			VALUES ('tbelt-scim-r-` + suffix + `', 'https://downstream.example.test/scim/v2', 'bearer', $1)
+			RETURNING id)
+			INSERT INTO scim_provisioning_records (target_id, resource_type, local_id, status, org_id)
+			SELECT t.id, 'user', gen_random_uuid(), 'active', $1 FROM t`},
+
+		{"scim_provisioning_queue", `WITH t AS (
+			INSERT INTO scim_target_apps (name, base_url, auth_type, org_id)
+			VALUES ('tbelt-scim-q-` + suffix + `', 'https://downstream.example.test/scim/v2', 'bearer', $1)
+			RETURNING id)
+			INSERT INTO scim_provisioning_queue (target_id, resource_type, local_id, operation, org_id)
+			SELECT t.id, 'user', gen_random_uuid(), 'create', $1 FROM t`},
 	}
 
 	// One list, not two: the role is granted exactly the tables the cases probe.

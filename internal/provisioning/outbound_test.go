@@ -14,6 +14,12 @@ import (
 	"go.uber.org/zap"
 )
 
+// testOrgID is the tenant these tests run as. They used to pass "" and rely on
+// the store's OR-empty-string wildcard, which v164 removed: an absent organization
+// meant every organization, and the only callers in the tree that relied on it
+// were these tests.
+const testOrgID = "00000000-0000-0000-0000-0000000000ab"
+
 // outboundSchema is the subset of migration v95 the worker/store tests need.
 // Kept inline so the DB tests are self-contained (the sibling suites do the
 // same for users/groups).
@@ -132,7 +138,7 @@ func TestOutboundWorkerCreateThenDeactivate(t *testing.T) {
 	svc := &Service{db: db, logger: zap.NewNop(), config: &config.Config{}}
 
 	// Configure an enabled user-provisioning target pointing at the fake SP.
-	target, err := svc.CreateTargetApp(ctx, "", &TargetAppInput{
+	target, err := svc.CreateTargetApp(ctx, testOrgID, &TargetAppInput{
 		Name: "fake-saas", BaseURL: srv.URL, AuthType: "bearer", BearerToken: "tok",
 		ProvisionUsers: true, DeprovisionAction: "deactivate", Enabled: true,
 	})
@@ -145,7 +151,7 @@ func TestOutboundWorkerCreateThenDeactivate(t *testing.T) {
 		FirstName: "Alice", LastName: "Smith", Active: true, Department: "Eng"}
 
 	// Enqueue a create; expect exactly one queue row (one enabled target).
-	n, err := svc.EnqueueUserOp(ctx, "", userID, OpCreate, snap)
+	n, err := svc.EnqueueUserOp(ctx, testOrgID, userID, OpCreate, snap)
 	if err != nil {
 		t.Fatalf("EnqueueUserOp: %v", err)
 	}
@@ -171,7 +177,7 @@ func TestOutboundWorkerCreateThenDeactivate(t *testing.T) {
 	}
 
 	// Now deprovision: enqueue deactivate, drain, expect a PATCH.
-	if _, err := svc.EnqueueUserOp(ctx, "", userID, OpDeactivate, snap); err != nil {
+	if _, err := svc.EnqueueUserOp(ctx, testOrgID, userID, OpDeactivate, snap); err != nil {
 		t.Fatalf("enqueue deactivate: %v", err)
 	}
 	if _, err := w.drainBatch(ctx); err != nil {
@@ -213,12 +219,12 @@ func TestOutboundWorkerTransientRetry(t *testing.T) {
 	defer srv.Close()
 
 	svc := &Service{db: db, logger: zap.NewNop(), config: &config.Config{}}
-	target, _ := svc.CreateTargetApp(ctx, "", &TargetAppInput{
+	target, _ := svc.CreateTargetApp(ctx, testOrgID, &TargetAppInput{
 		Name: "flaky", BaseURL: srv.URL, AuthType: "bearer", BearerToken: "tok",
 		ProvisionUsers: true, DeprovisionAction: "deactivate", Enabled: true,
 	})
 	userID := "22222222-2222-2222-2222-222222222222"
-	svc.EnqueueUserOp(ctx, "", userID, OpCreate, userSnapshot{ID: userID, UserName: "bob@corp.com", Active: true})
+	svc.EnqueueUserOp(ctx, testOrgID, userID, OpCreate, userSnapshot{ID: userID, UserName: "bob@corp.com", Active: true})
 
 	w := &outboundWorker{svc: svc, cfg: OutboundWorkerConfig{BatchSize: 10}, logger: zap.NewNop()}
 	w.drainBatch(ctx) // first attempt fails (500)
@@ -262,12 +268,12 @@ func TestOutboundWorkerDeadLetterTerminal(t *testing.T) {
 	defer srv.Close()
 
 	svc := &Service{db: db, logger: zap.NewNop(), config: &config.Config{}}
-	target, _ := svc.CreateTargetApp(ctx, "", &TargetAppInput{
+	target, _ := svc.CreateTargetApp(ctx, testOrgID, &TargetAppInput{
 		Name: "bad", BaseURL: srv.URL, AuthType: "bearer", BearerToken: "tok",
 		ProvisionUsers: true, Enabled: true,
 	})
 	userID := "33333333-3333-3333-3333-333333333333"
-	svc.EnqueueUserOp(ctx, "", userID, OpCreate, userSnapshot{ID: userID, UserName: "eve@corp.com", Active: true})
+	svc.EnqueueUserOp(ctx, testOrgID, userID, OpCreate, userSnapshot{ID: userID, UserName: "eve@corp.com", Active: true})
 
 	w := &outboundWorker{svc: svc, cfg: OutboundWorkerConfig{BatchSize: 10}, logger: zap.NewNop()}
 	w.drainBatch(ctx)
@@ -294,12 +300,12 @@ func TestEnqueueFanOutOnlyEnabledUserTargets(t *testing.T) {
 
 	svc := &Service{db: db, logger: zap.NewNop(), config: &config.Config{}}
 	// enabled+users -> should receive; disabled -> skip; groups-only -> skip for user op.
-	svc.CreateTargetApp(ctx, "", &TargetAppInput{Name: "a", BaseURL: "https://a/scim", ProvisionUsers: true, Enabled: true})
-	svc.CreateTargetApp(ctx, "", &TargetAppInput{Name: "b", BaseURL: "https://b/scim", ProvisionUsers: true, Enabled: false})
-	svc.CreateTargetApp(ctx, "", &TargetAppInput{Name: "c", BaseURL: "https://c/scim", ProvisionUsers: false, ProvisionGroups: true, Enabled: true})
+	svc.CreateTargetApp(ctx, testOrgID, &TargetAppInput{Name: "a", BaseURL: "https://a/scim", ProvisionUsers: true, Enabled: true})
+	svc.CreateTargetApp(ctx, testOrgID, &TargetAppInput{Name: "b", BaseURL: "https://b/scim", ProvisionUsers: true, Enabled: false})
+	svc.CreateTargetApp(ctx, testOrgID, &TargetAppInput{Name: "c", BaseURL: "https://c/scim", ProvisionUsers: false, ProvisionGroups: true, Enabled: true})
 
 	userID := "44444444-4444-4444-4444-444444444444"
-	n, err := svc.EnqueueUserOp(ctx, "", userID, OpCreate, userSnapshot{ID: userID, UserName: "x@x", Active: true})
+	n, err := svc.EnqueueUserOp(ctx, testOrgID, userID, OpCreate, userSnapshot{ID: userID, UserName: "x@x", Active: true})
 	if err != nil {
 		t.Fatalf("EnqueueUserOp: %v", err)
 	}
@@ -316,7 +322,7 @@ func TestTargetAppSecretRoundTrip(t *testing.T) {
 	db.Pool.Exec(ctx, outboundSchema)
 
 	svc := &Service{db: db, logger: zap.NewNop(), config: &config.Config{}}
-	target, err := svc.CreateTargetApp(ctx, "", &TargetAppInput{
+	target, err := svc.CreateTargetApp(ctx, testOrgID, &TargetAppInput{
 		Name: "sec", BaseURL: "https://s/scim", AuthType: "bearer", BearerToken: "super-secret",
 		ProvisionUsers: true, Enabled: true,
 	})
@@ -324,13 +330,13 @@ func TestTargetAppSecretRoundTrip(t *testing.T) {
 		t.Fatalf("CreateTargetApp: %v", err)
 	}
 	// GetTargetApp never returns the secret.
-	got, _ := svc.GetTargetApp(ctx, "", target.ID)
+	got, _ := svc.GetTargetApp(ctx, testOrgID, target.ID)
 	b, _ := json.Marshal(got)
 	if strings.Contains(string(b), "super-secret") {
 		t.Error("secret leaked through TargetApp JSON")
 	}
 	// bearerTokenFor decrypts it back.
-	tok, err := svc.bearerTokenFor(ctx, target.ID)
+	tok, err := svc.bearerTokenFor(ctx, testOrgID, target.ID)
 	if err != nil {
 		t.Fatalf("bearerTokenFor: %v", err)
 	}

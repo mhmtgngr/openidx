@@ -358,7 +358,12 @@ func TestRegistersOnlyShrink(t *testing.T) {
 		// 34 → 19: migration v140 belted the fifteen whose queries already
 		// carried their org predicate. Re-pinned rather than left at 34, or
 		// the register could grow back into the room the fix just made.
-		{"needsBelt", len(needsBelt), 17},
+		// 17 -> 14 with v164, the outbound SCIM trio: v95's own registry
+		// description says "Org-scoped for RLS" and the belt was never applied,
+		// its org_id was nullable with no foreign key, and every "org-scoped"
+		// query carried `OR $N = ''` -- an escape hatch whose only callers in
+		// the tree were the package's own tests.
+		{"needsBelt", len(needsBelt), 14},
 		{"predicateAuditPending", len(predicateAuditPending), 18},
 		{"installWideTables", len(installWideTables), 21},
 		{"beltExempt", len(beltExempt), 5},

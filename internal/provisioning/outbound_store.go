@@ -137,7 +137,7 @@ func (s *Service) CreateTargetApp(ctx context.Context, orgID string, in *TargetA
              provision_users, provision_groups, deprovision_action,
              attribute_mapping, enabled)
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
-		id, nullIfEmpty(orgID), in.Name, in.BaseURL, in.AuthType, tokenEnc,
+		id, orgID, in.Name, in.BaseURL, in.AuthType, tokenEnc,
 		nullIfEmpty(in.OAuthTokenURL), nullIfEmpty(in.OAuthClientID), secretEnc, nullIfEmpty(in.OAuthScope),
 		in.ProvisionUsers, in.ProvisionGroups, in.DeprovisionAction,
 		string(mapping), in.Enabled)
@@ -157,7 +157,7 @@ func (s *Service) GetTargetApp(ctx context.Context, orgID, id string) (*TargetAp
                last_sync_at, COALESCE(last_sync_status,''), COALESCE(last_sync_error,''),
                created_at, updated_at
           FROM scim_target_apps
-         WHERE id = $1 AND (org_id::text = $2 OR $2 = '')`, id, orgID)
+         WHERE id = $1 AND org_id::text = $2`, id, orgID)
 	return scanTargetApp(row)
 }
 
@@ -171,7 +171,7 @@ func (s *Service) ListTargetApps(ctx context.Context, orgID string) ([]TargetApp
                last_sync_at, COALESCE(last_sync_status,''), COALESCE(last_sync_error,''),
                created_at, updated_at
           FROM scim_target_apps
-         WHERE (org_id::text = $1 OR $1 = '')
+         WHERE org_id::text = $1
          ORDER BY created_at DESC`, orgID)
 	if err != nil {
 		return nil, err
@@ -248,7 +248,7 @@ func (s *Service) UpdateTargetApp(ctx context.Context, orgID, id string, in *Tar
             oauth_scope=$10, provision_users=$11, provision_groups=$12,
             deprovision_action=$13, attribute_mapping=$14, enabled=$15,
             updated_at=NOW()
-         WHERE id=$1 AND (org_id::text=$2 OR $2='')`,
+         WHERE id=$1 AND org_id::text=$2`,
 		id, orgID, in.Name, in.BaseURL, in.AuthType, setToken,
 		nullIfEmpty(in.OAuthTokenURL), nullIfEmpty(in.OAuthClientID), setSecret, nullIfEmpty(in.OAuthScope),
 		in.ProvisionUsers, in.ProvisionGroups, in.DeprovisionAction, string(mapping), in.Enabled)
@@ -262,7 +262,7 @@ func (s *Service) UpdateTargetApp(ctx context.Context, orgID, id string, in *Tar
 // queued items.
 func (s *Service) DeleteTargetApp(ctx context.Context, orgID, id string) error {
 	ct, err := s.db.Pool.Exec(ctx,
-		`DELETE FROM scim_target_apps WHERE id=$1 AND (org_id::text=$2 OR $2='')`, id, orgID)
+		`DELETE FROM scim_target_apps WHERE id=$1 AND org_id::text=$2`, id, orgID)
 	if err != nil {
 		return err
 	}
@@ -274,10 +274,15 @@ func (s *Service) DeleteTargetApp(ctx context.Context, orgID, id string) error {
 
 // bearerTokenFor decrypts and returns the static bearer token for a target.
 // For oauth2 targets it returns "" (the worker resolves a token separately).
-func (s *Service) bearerTokenFor(ctx context.Context, id string) (string, error) {
+// The tenant term is not decoration: this returns the DECRYPTED admin
+// credential for a downstream SaaS. Its request-path caller gates on
+// GetTargetApp first, and the worker reaches it under an explicit RLS bypass,
+// so an id alone must never be enough.
+func (s *Service) bearerTokenFor(ctx context.Context, orgID, id string) (string, error) {
 	var enc *string
 	if err := s.db.Pool.QueryRow(ctx,
-		`SELECT auth_token_enc FROM scim_target_apps WHERE id=$1`, id).Scan(&enc); err != nil {
+		`SELECT auth_token_enc FROM scim_target_apps WHERE id=$1 AND (org_id::text=$2 OR $2='')`,
+		id, orgID).Scan(&enc); err != nil {
 		return "", err
 	}
 	if enc == nil || *enc == "" {
@@ -320,8 +325,8 @@ func (s *Service) enqueueOp(ctx context.Context, orgID, resourceType, localID, o
         SELECT $1, t.id, $2, $3, $4, $5::jsonb
           FROM scim_target_apps t
          WHERE t.enabled AND t.%s
-           AND (t.org_id::text = $6 OR $6 = '')`, flagCol),
-		nullIfEmpty(orgID), resourceType, localID, operation, string(payloadJSON), orgID)
+           AND t.org_id::text = $6`, flagCol),
+		orgID, resourceType, localID, operation, string(payloadJSON), orgID)
 	if err != nil {
 		return 0, fmt.Errorf("enqueue %s op: %w", resourceType, err)
 	}
@@ -406,8 +411,8 @@ func (s *Service) EnqueueFullSync(ctx context.Context, orgID string, target *Tar
                        'active', COALESCE(u.enabled, true)
                    )
               FROM users u
-             WHERE (u.org_id::text = $3 OR $3 = '')`,
-			nullIfEmpty(orgID), target.ID, orgID)
+             WHERE u.org_id::text = $3`,
+			orgID, target.ID, orgID)
 		if err != nil {
 			return total, fmt.Errorf("enqueue user full sync: %w", err)
 		}
@@ -420,8 +425,8 @@ func (s *Service) EnqueueFullSync(ctx context.Context, orgID string, target *Tar
             SELECT $1, $2, 'group', g.id, 'update',
                    jsonb_build_object('id', g.id::text, 'display_name', g.name)
               FROM groups g
-             WHERE (g.org_id::text = $3 OR $3 = '')`,
-			nullIfEmpty(orgID), target.ID, orgID)
+             WHERE g.org_id::text = $3`,
+			orgID, target.ID, orgID)
 		if err != nil {
 			return total, fmt.Errorf("enqueue group full sync: %w", err)
 		}
@@ -429,8 +434,9 @@ func (s *Service) EnqueueFullSync(ctx context.Context, orgID string, target *Tar
 	}
 	// Record the reconcile trigger for the admin UI.
 	_, _ = s.db.Pool.Exec(ctx,
-		`UPDATE scim_target_apps SET last_sync_at=NOW(), last_sync_status='enqueued', last_sync_error=NULL WHERE id=$1`,
-		target.ID)
+		`UPDATE scim_target_apps SET last_sync_at=NOW(), last_sync_status='enqueued', last_sync_error=NULL
+		   WHERE id=$1 AND org_id::text=$2`,
+		target.ID, orgID)
 	return total, nil
 }
 
@@ -442,14 +448,15 @@ type TargetStatusReport struct {
 }
 
 // TargetStatus returns per-target record/queue counts for the admin UI.
-func (s *Service) TargetStatus(ctx context.Context, targetID string) (*TargetStatusReport, error) {
+func (s *Service) TargetStatus(ctx context.Context, orgID, targetID string) (*TargetStatusReport, error) {
 	rep := &TargetStatusReport{
 		TargetID:        targetID,
 		RecordsByStatus: map[string]int{},
 		QueueByState:    map[string]int{},
 	}
 	recRows, err := s.db.Pool.Query(ctx,
-		`SELECT status, COUNT(*) FROM scim_provisioning_records WHERE target_id=$1 GROUP BY status`, targetID)
+		`SELECT status, COUNT(*) FROM scim_provisioning_records WHERE target_id=$1 AND org_id::text=$2 GROUP BY status`,
+		targetID, orgID)
 	if err != nil {
 		return nil, err
 	}
@@ -465,7 +472,8 @@ func (s *Service) TargetStatus(ctx context.Context, targetID string) (*TargetSta
 	recRows.Close()
 
 	qRows, err := s.db.Pool.Query(ctx,
-		`SELECT state, COUNT(*) FROM scim_provisioning_queue WHERE target_id=$1 GROUP BY state`, targetID)
+		`SELECT state, COUNT(*) FROM scim_provisioning_queue WHERE target_id=$1 AND org_id::text=$2 GROUP BY state`,
+		targetID, orgID)
 	if err != nil {
 		return nil, err
 	}

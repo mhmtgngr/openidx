@@ -58,6 +58,42 @@ to a spec that describes an eighth of a surface, a documented endpoint that
   **Operators of installations with more than one organization should note**
   that existing runs are assigned to the organization of whoever started them,
   and their per-account records follow the run.
+- **Outbound provisioning connections were not protected by the database, and
+  their organization could be left empty** (migration v164). These are the
+  connections that push your users out to Slack, Okta, Entra and similar: a base
+  URL, an encrypted administrative credential, and a queue of pending changes.
+
+  Their records carried an organization, but the database was never told to
+  enforce it — the migration that created them says it made them
+  "org-scoped for RLS" and that protection was never applied. Every query
+  relied on the application remembering to filter. It now relies on the
+  database, which refuses to return another organization's rows regardless.
+
+  **The organization could be empty, and an empty organization meant all of
+  them.** The column allowed no value at all, and every "scoped" query treated
+  an empty organization as a wildcard. Reached that way, the list returned every
+  organization's provisioning connections, delete removed any of them along with
+  their history and pending queue, and a full sync would have pushed the entire
+  installation's directory — every username, email and name — into one
+  organization's downstream service.
+
+  **This was not reachable in a running deployment**, and we would rather say
+  so than imply otherwise: the provisioning service resolves the organization
+  for every request before any of these endpoints run, and rejects the request
+  when it cannot. The wildcard was one configuration change away from mattering,
+  and it contradicted the database protection being added — so it is gone, and
+  the endpoints now refuse a request that arrives without an organization
+  instead of treating it as every organization. A connection can no longer be
+  stored without one either.
+
+  The background worker that delivers queued changes is unaffected: it is
+  deliberately installation-wide, and already ran with an explicit exemption.
+
+  **Operators of installations with more than one organization should note**
+  that pending changes and delivery history follow their connection exactly, but
+  a connection that was stored with no organization is assigned to the oldest
+  one. If you have more than one organization, check which connection belongs to
+  whom before the next sync runs.
 - **One organization could reclassify another's roles, and the button that saves
   a classification had never worked** (migration v163).
 

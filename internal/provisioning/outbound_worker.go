@@ -146,6 +146,7 @@ func (w *outboundWorker) processItem(ctx context.Context, it claimedItem) {
 	err := w.apply(ctx, it)
 	if err == nil {
 		_, _ = w.svc.db.Pool.Exec(ctx,
+			//orgscope:ignore outbox drain (runs under bypass_rls) marking an item the worker already claimed by primary key; one worker serves every tenant, same shape as the SSF outbox, and the item's tenant travels on the claimed row
 			`UPDATE scim_provisioning_queue SET state='done', updated_at=NOW() WHERE id=$1`, it.id)
 		return
 	}
@@ -161,6 +162,7 @@ func (w *outboundWorker) processItem(ctx context.Context, it claimedItem) {
 			zap.String("resource", it.resourceType), zap.String("local_id", it.localID),
 			zap.Int("attempts", attempts), zap.Bool("terminal", terminal), zap.Error(err))
 		_, _ = w.svc.db.Pool.Exec(ctx,
+			//orgscope:ignore outbox drain (runs under bypass_rls) dead-lettering an item the worker already claimed by primary key
 			`UPDATE scim_provisioning_queue SET state=$2, attempts=$3, last_error=$4, updated_at=NOW() WHERE id=$1`,
 			it.id, state, attempts, err.Error())
 		w.markRecordError(ctx, it, err)
@@ -172,6 +174,7 @@ func (w *outboundWorker) processItem(ctx context.Context, it claimedItem) {
 	if backoff > time.Hour {
 		backoff = time.Hour
 	}
+	//orgscope:ignore outbox drain (runs under bypass_rls) rescheduling an item the worker already claimed by primary key
 	_, _ = w.svc.db.Pool.Exec(ctx, `
         UPDATE scim_provisioning_queue
            SET state='pending', attempts=$2, last_error=$3,
@@ -329,6 +332,7 @@ type provRecord struct {
 func (w *outboundWorker) loadRecord(ctx context.Context, targetID, resourceType, localID string) (*provRecord, error) {
 	var r provRecord
 	var remote, hash *string
+	//orgscope:ignore outbox drain (runs under bypass_rls) reading the mapping for a target it is already processing; target_id carries the tenant through an enforced foreign key and one worker serves every tenant
 	err := w.svc.db.Pool.QueryRow(ctx, `
         SELECT COALESCE(remote_id,''), status, last_payload_hash
           FROM scim_provisioning_records
@@ -380,11 +384,16 @@ func (w *outboundWorker) markRecordError(ctx context.Context, it claimedItem, ca
 func (w *outboundWorker) clientFor(ctx context.Context, targetID string) (*scimclient.Client, string, error) {
 	var baseURL, authType, deprovisionAction string
 	if err := w.svc.db.Pool.QueryRow(ctx,
+		//orgscope:ignore outbox drain (runs under bypass_rls) loading the target of an item it already claimed; the request path reaches these rows only through the org-scoped GetTargetApp
 		`SELECT base_url, auth_type, deprovision_action FROM scim_target_apps WHERE id=$1`, targetID).
 		Scan(&baseURL, &authType, &deprovisionAction); err != nil {
 		return nil, "", fmt.Errorf("load target %s: %w", targetID, err)
 	}
-	token, err := w.svc.bearerTokenFor(ctx, targetID)
+	// The worker's loop runs under orgctx.WithBypassRLS (StartOutboundWorker):
+	// one drain serves every tenant, the same shape as the SSF outbox. It
+	// therefore passes no organization here, and that is the one caller allowed
+	// to -- the request path gates on GetTargetApp first.
+	token, err := w.svc.bearerTokenFor(ctx, "", targetID)
 	if err != nil {
 		return nil, "", fmt.Errorf("resolve token for target %s: %w", targetID, err)
 	}
