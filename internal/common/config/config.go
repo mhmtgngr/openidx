@@ -233,6 +233,16 @@ type Config struct {
 	// session is auto-suspended in "enforce" mode. Default 80.
 	PAMSessionRiskThreshold int `mapstructure:"pam_session_risk_threshold"`
 
+	// PAMSSHRequireHostKey refuses a clientless SSH session to a PAM entry that
+	// pins no host key (settings.ssh_host_key). Default false, which keeps the
+	// existing behaviour: the hop is unpinned, and both the log and the
+	// pam.ws_connect audit event record that it was.
+	//
+	// A pinned key is ALWAYS enforced whether or not this is on — the flag
+	// decides what happens when there is nothing to enforce, never whether a
+	// stored pin is honoured.
+	PAMSSHRequireHostKey bool `mapstructure:"pam_ssh_require_host_key"`
+
 	// ABACEnforce drives whether the tenant's attribute-based access policies
 	// decide anything. Until this existed they decided nothing anywhere: the
 	// evaluator's only callers were the ABAC Policies page's own "Test" button
@@ -789,6 +799,7 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("pam_session_risk_gate", "off")
 	v.SetDefault("abac_enforce", "off")
 	v.SetDefault("pam_session_risk_threshold", 80)
+	v.SetDefault("pam_ssh_require_host_key", false)
 	v.SetDefault("dev_admin_bypass", false)
 	v.SetDefault("access_api_require_auth", false)
 	v.SetDefault("admin_api_require_auth", false)
@@ -1023,6 +1034,7 @@ func bindEnvVars(v *viper.Viper) {
 		"selfheal_state_dir":                  "SELFHEAL_STATE_DIR",
 		"selfheal_scripts_dir":                "SELFHEAL_SCRIPTS_DIR",
 		"pam_session_risk_gate":               "PAM_SESSION_RISK_GATE",
+		"pam_ssh_require_host_key":            "PAM_SSH_REQUIRE_HOST_KEY",
 		"abac_enforce":                        "ABAC_ENFORCE",
 		"pam_session_risk_threshold":          "PAM_SESSION_RISK_THRESHOLD",
 		"dev_admin_bypass":                    "DEV_ADMIN_BYPASS",

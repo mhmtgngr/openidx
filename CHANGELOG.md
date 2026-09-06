@@ -1117,6 +1117,17 @@ to a spec that describes an eighth of a surface, a documented endpoint that
 
 ### Fixed
 
+- **The clientless SSH relay never checked the host key.** `ws_connect.go`
+  passed `ssh.InsecureIgnoreHostKey()` unconditionally, under a comment calling
+  per-entry pinning "a follow-up" — so a PAM entry could carry a host key and
+  nothing would look at it. An entry's `settings.ssh_host_key` (one
+  `authorized_keys` line; no migration, the settings column is free-form) is now
+  **enforced** via `ssh.FixedHostKey`: a different key fails the connection, and
+  a stored key that will not parse fails it too rather than falling back to
+  accepting anything. An entry with no pin connects as before and says so — a
+  Warn log and `host_key_pinned: false` on the `pam.ws_connect` audit event —
+  and `PAM_SSH_REQUIRE_HOST_KEY=true` refuses unpinned entries outright.
+
 - **The 757 `go/log-injection` findings have a verdict, pinned by a test.** Log
   injection is forging a record with CR/LF in a user-supplied value. What
   prevents it here is the encoder, not a sanitiser at 757 call sites: production

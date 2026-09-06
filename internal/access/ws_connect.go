@@ -180,7 +180,20 @@ func (s *Service) handlePamWSConnect(c *gin.Context) {
 
 	// Build the SSH client config from the injected credential before the
 	// upgrade, so a credential failure is a clean HTTP error (not a socket).
-	sshConfig, cfgErr := buildSSHClientConfig(username, secretType, cred)
+	pinnedHostKey := pamEntrySSHHostKey(entry.Settings)
+	if pinnedHostKey == "" {
+		if s.config != nil && s.config.PAMSSHRequireHostKey {
+			s.logger.Warn("ws-connect: refused, entry pins no ssh host key and PAM_SSH_REQUIRE_HOST_KEY is on",
+				zap.String("entry_id", entryID))
+			c.JSON(http.StatusForbidden, gin.H{"error": "this entry has no pinned SSH host key"})
+			return
+		}
+		// Not an error, but not silent either: an operator asking "which of my
+		// entries accept any host key" has to be able to answer it.
+		s.logger.Warn("ws-connect: ssh host key not pinned for this entry",
+			zap.String("entry_id", entryID), zap.String("host", host))
+	}
+	sshConfig, cfgErr := buildSSHClientConfig(username, secretType, cred, pinnedHostKey)
 	// Zero the plaintext as soon as the signer/password is built.
 	for i := range cred {
 		cred[i] = 0
@@ -219,6 +232,7 @@ func (s *Service) handlePamWSConnect(c *gin.Context) {
 	s.logAuditEvent(c, "pam.ws_connect", entryID, "pam_entry", map[string]interface{}{
 		"entry_id": entryID, "renderer": "wasm-ssh", "protocol": "ssh",
 		"user_id": userID, "session_id": sessionID, "outcome": "started",
+		"host_key_pinned": pinnedHostKey != "",
 	})
 	defer s.logAuditEvent(c, "pam.ws_disconnect", entryID, "pam_entry", map[string]interface{}{
 		"entry_id": entryID, "user_id": userID, "session_id": sessionID, "outcome": "ended",
@@ -227,15 +241,51 @@ func (s *Service) handlePamWSConnect(c *gin.Context) {
 	bridgeSSHOverWebSocket(wsConn, sshClient, s.logger)
 }
 
+// pamEntrySSHHostKey reads the entry's pinned SSH host key from its settings
+// bag. The value is one authorized_keys line, exactly the shape the SSH
+// rotator's connector_config already uses (`host_key`), so an operator writes
+// the same thing in both places.
+//
+// The settings column is free-form JSONB, so this needs no migration: an entry
+// gains a pinned key the moment someone puts one there.
+func pamEntrySSHHostKey(settings map[string]interface{}) string {
+	if settings == nil {
+		return ""
+	}
+	v, _ := settings["ssh_host_key"].(string)
+	return strings.TrimSpace(v)
+}
+
 // buildSSHClientConfig builds an ssh.ClientConfig from an injected credential.
 // A 'ssh_key' secret is used as a private key; anything else is a password.
-// HostKeyCallback is InsecureIgnoreHostKey because the connection reaches the
-// target over the Ziti overlay (identity-scoped, no MITM surface) or a trusted
-// direct target; host-key pinning per entry is a follow-up.
-func buildSSHClientConfig(username, secretType string, cred []byte) (*ssh.ClientConfig, error) {
+//
+// hostKey is the entry's pinned host key (authorized_keys format), empty when
+// the entry has none.
+//
+//   - A key that is present is ENFORCED, via ssh.FixedHostKey. A stored key
+//     that failed to parse is an error, never a silent fall-back to accepting
+//     anything: a pin that is displayed and not enforced is the defect this
+//     whole programme is about, and it would be worse than no pin at all
+//     because someone would believe in it.
+//   - No key means the previous behaviour — the connection reaches the target
+//     over the Ziti overlay (identity-scoped) or a trusted direct target — and
+//     the caller records that the hop was unpinned, in the log and in the audit
+//     event, so "which of my entries are unpinned" is answerable.
+//
+// PAM_SSH_REQUIRE_HOST_KEY turns the second case into a refusal for operators
+// who want pinning to be mandatory.
+func buildSSHClientConfig(username, secretType string, cred []byte, hostKey string) (*ssh.ClientConfig, error) {
+	cb := ssh.InsecureIgnoreHostKey() //nolint:gosec // only when the entry pins no key; see the doc comment
+	if hostKey != "" {
+		pub, _, _, _, err := ssh.ParseAuthorizedKey([]byte(hostKey))
+		if err != nil {
+			return nil, fmt.Errorf("entry pins an unparsable ssh host key: %w", err)
+		}
+		cb = ssh.FixedHostKey(pub)
+	}
 	cfg := &ssh.ClientConfig{
 		User:            username,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(), //nolint:gosec // overlay-scoped; per-entry pinning is a follow-up
+		HostKeyCallback: cb,
 		Timeout:         15 * time.Second,
 	}
 	if len(cred) == 0 {

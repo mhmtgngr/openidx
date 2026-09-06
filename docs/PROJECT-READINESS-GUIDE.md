@@ -4166,6 +4166,48 @@ class this whole program exists for.
    or the agent's own source is excluded. Nine findings nobody can act on were
    nine findings between a reader and the ones they can.
 
+   ### The one finding that was work
+
+   **Batch 48: `go/insecure-hostkeycallback`, 8.2.**
+
+   Of the 41 findings the triage covers, exactly one carried work rather than a
+   verdict — and its own comment had been promising that work for a while:
+
+   ```go
+   HostKeyCallback: ssh.InsecureIgnoreHostKey(), //nolint:gosec // overlay-scoped; per-entry pinning is a follow-up
+   ```
+
+   The clientless SSH relay accepted whatever host key answered. The mitigating
+   argument is real — the hop runs inside the Ziti overlay, so the transport is
+   already authenticated end to end — but "a follow-up" is not a control, and a
+   compromised or misconfigured overlay endpoint is exactly what a host key is
+   for.
+
+   A PAM entry's `settings.ssh_host_key` now pins it. The settings column is
+   free-form JSONB, so this needed **no migration**, and the value is one
+   `authorized_keys` line — the same shape `ssh_rotator.go`'s connector config
+   already takes, so an operator writes the same thing in both places.
+
+   The three decisions in it are the programme's own rules applied again:
+
+   - **A stored pin is enforced, always.** `ssh.FixedHostKey`; a different host
+     key fails the connection.
+   - **A stored pin that will not parse fails the connection**, rather than
+     falling back to accepting anything. A pin that is displayed and not
+     enforced is worse than no pin, because someone believes in it.
+   - **No pin is not silent.** The hop connects as before — refusing would break
+     every existing entry, which is the operator's call — but a Warn log names
+     the entry and the `pam.ws_connect` audit event carries
+     `host_key_pinned: false`, so *which of my entries accept any host key* is a
+     question with an answer. `PAM_SSH_REQUIRE_HOST_KEY=true` makes pinning
+     mandatory for operators who want it.
+
+   Four tests pin the behaviour, the first of them behavioural rather than
+   structural: it invokes the callback with the pinned key and with a different
+   one and requires accept-then-reject. Red-proved by dropping the
+   `FixedHostKey` assignment — the "a DIFFERENT host key was accepted" case
+   fires.
+
    ### The second migration system
 
    **Batch 45: a documented procedure that produced nothing.**

@@ -34,6 +34,9 @@ verdict of its own at the end.
 | **vendored** | third-party code this project does not maintain |
 | **needs the maintainer** | a real decision, recorded, owner named |
 
+Nothing is left under "needs the maintainer": the one finding that carried real
+work is fixed.
+
 ---
 
 ## Go — 28 results ≥ 7.0
@@ -81,20 +84,38 @@ dismissal is keyed to the alert's fingerprint. That is the argument for this
 file: a verdict recorded in a review UI evaporates on a line move, and a
 verdict recorded in the repository does not.
 
-### `go/insecure-hostkeycallback` — 8.2 × 1 — **needs the maintainer**
+### `go/insecure-hostkeycallback` — 8.2 × 1 — **fixed**
 
-`internal/access/ws_connect.go:238`
+`internal/access/ws_connect.go`
 
 ```go
 HostKeyCallback: ssh.InsecureIgnoreHostKey(), //nolint:gosec // overlay-scoped; per-entry pinning is a follow-up
 ```
 
-The connection is dialled inside the Ziti overlay, so the transport is already
-authenticated and encrypted end to end and the host key adds little against a
-network attacker. It still adds something against a compromised or
-misconfigured overlay endpoint, and the comment already calls per-entry host-key
-pinning a follow-up. **Owner: maintainer.** Unchanged by this branch — this is
-the pre-existing posture, recorded here so it is not mistaken for an oversight.
+This was the one entry in this file with real work behind it, and the comment
+had been promising the work for a while. The connection is dialled inside the
+Ziti overlay, so the transport is already authenticated end to end and the host
+key adds little against a network attacker — but it adds something against a
+compromised or misconfigured overlay endpoint, and "a follow-up" is not a
+control.
+
+Now: a PAM entry's `settings.ssh_host_key` (one `authorized_keys` line, the
+shape the SSH rotator's connector config already uses — so no migration, the
+settings column is free-form JSONB) is **enforced** through `ssh.FixedHostKey`.
+A different host key fails the connection; a stored key that will not parse
+fails it too, rather than falling back to accepting anything — a pin that is
+displayed and not enforced is worse than no pin, because someone believes in
+it. An entry with no pin connects as before, and says so: a Warn log naming the
+entry, and `host_key_pinned: false` on the `pam.ws_connect` audit event, so
+"which of my entries accept any host key" is answerable.
+`PAM_SSH_REQUIRE_HOST_KEY=true` refuses unpinned entries outright, for
+operators who want pinning mandatory; making that the default would break every
+existing entry, which is the operator's call and not this function's.
+
+Four tests pin it (`ws_connect_test.go`), the first behavioural: the callback
+is invoked with the pinned key and with a different one, and has to accept the
+first and reject the second. Red-proved by dropping the `FixedHostKey`
+assignment.
 
 ### `go/incorrect-integer-conversion` — 8.1 × 9 — **vendored**
 
@@ -226,8 +247,11 @@ and closing them is a UI action this branch cannot take.
 2. Dismiss as **"false positive"**, citing this file: `go/sql-injection`,
    the four `go/path-injection`, the three `go/weak-sensitive-data-hashing`,
    the five `go/request-forgery`, and the five `go/disabled-certificate-check`.
-3. Leave open, as real work: `go/insecure-hostkeycallback`
-   (`ws_connect.go:238`) — per-entry host-key pinning.
+3. Dismiss as **"fixed in this PR"** once it stops appearing:
+   `go/insecure-hostkeycallback` (`ws_connect.go`) — per-entry host-key
+   pinning now exists and is enforced. The `InsecureIgnoreHostKey` call
+   remains for entries that pin nothing, so the alert may persist; the
+   verdict above says what it now means.
 
 The nine vendored results disappear on the next run with the `paths-ignore`
 config; nothing to dismiss.

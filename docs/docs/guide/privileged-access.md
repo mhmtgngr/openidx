@@ -44,11 +44,20 @@ admin kill switch) terminates the live session, not just future ones.
    loudly audited.
 4. **Put it on the overlay.** A PAM target reached over OpenZiti has no
    inbound port anywhere; the access service dials it through the fabric.
-5. **Recordings & retention.** Sessions are recorded encrypted at rest,
+5. **Pin the SSH host key.** An entry's `settings.ssh_host_key` takes one
+   `authorized_keys` line (the same shape the SSH rotator's connector config
+   uses). When it is set, the clientless SSH relay **enforces** it: a
+   different host key fails the connection, and a stored key that cannot be
+   parsed fails it too — never a quiet fall back to accepting anything.
+   When it is not set the hop is unpinned, and both the service log and the
+   `pam.ws_connect` audit event say so (`host_key_pinned: false`), so
+   "which of my entries accept any host key" is a question you can answer.
+   Set `PAM_SSH_REQUIRE_HOST_KEY=true` to refuse unpinned entries outright.
+6. **Recordings & retention.** Sessions are recorded encrypted at rest,
    with retention policies and **legal holds**. Recordings and transcripts
    are reviewable from the console; the audit trail links session,
    credential, and user.
-6. **Quick Links.** Curate a searchable launcher of external tools and
+7. **Quick Links.** Curate a searchable launcher of external tools and
    PAM connections for users (`type=external` opens a vetted URL,
    `type=pam` launches the brokered session clientlessly).
 
