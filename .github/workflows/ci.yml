@@ -13,6 +13,13 @@ permissions:
   checks: write
 
 env:
+  # A CACHE-KEY component only. setup-go is given go-version-file: go.mod so it
+  # installs the exact `toolchain` line, and the pin therefore lives in one
+  # place. Asking for '1.26' here is what made every job download a toolchain:
+  # the runner's cache holds 1.26.7, setup-go reported "Successfully set up Go
+  # version 1.26", and the next `go` command fetched go1.26.8 from
+  # proxy.golang.org -- ~70 MB per job, unretried. One of those TLS handshakes
+  # timed out and took Unit Tests (internal/notifications) down with it.
   GO_VERSION: '1.26'
   CACHE_VERSION: v1
 
@@ -126,6 +133,10 @@ jobs:
         run: bash scripts/check-macos-pod-priming.test.sh
       - name: A macOS Flutter build must create its spec source first
         run: bash scripts/check-macos-pod-priming.sh
+      - name: Verify the toolchain-pin guard can go red
+        run: bash scripts/check-go-toolchain-pin.test.sh
+      - name: Every setup-go step installs the toolchain go.mod pins
+        run: bash scripts/check-go-toolchain-pin.sh --enforce
       - name: Verify the race-timeout guard can go red
         # Same mutation discipline: it must flag a bare `-race`, including one
         # split across a line continuation where the first line looks complete,
@@ -396,6 +407,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Names the job ("Build (Go 1.26)") and keys its cache. It is NOT the
+        # toolchain: setup-go below reads go.mod, so the pin lives in one place.
+        # The value stays a minor version deliberately -- this string is part of
+        # a check name that branch protection may require, and a required check
+        # that changes its name stops reporting.
         go-version: ['1.26']
 
     steps:
@@ -404,7 +420,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ matrix.go-version }}
+          go-version-file: go.mod
           cache: true
 
       - name: Set up Go build cache
@@ -508,7 +524,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
           cache: true
 
       - name: Set up Go build cache
@@ -616,7 +632,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
           cache: true
 
       - name: Set up Go build cache
@@ -791,7 +807,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
           cache: true
 
       - name: Set up Go build cache
@@ -864,7 +880,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
           cache: true
 
       - name: Set up Go build cache
@@ -930,7 +946,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
           cache: true
 
       - name: Run orgscope (hard gate)
@@ -1000,7 +1016,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
           cache: true
 
       - name: Self-test the tool first
@@ -1042,7 +1058,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
           cache: true
 
       - name: Set up Go build cache
@@ -1087,7 +1103,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
 
       - name: Download all coverage artifacts
         uses: actions/download-artifact@v8
@@ -1193,7 +1209,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
           cache: true
 
       - name: Run race detector
@@ -1275,7 +1291,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
           cache: true
 
       - name: Set up Node.js
@@ -1455,7 +1471,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
           cache: true
 
       - name: Set up Node.js

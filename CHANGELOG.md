@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Every CI job downloaded a Go toolchain it did not need, and one of those
+  downloads failed the build.** `go.mod` pins `toolchain go1.26.8`; `ci.yml`
+  asked `actions/setup-go` for `'1.26'`. The runner's tool cache holds 1.26.7,
+  so setup-go reported "Successfully set up Go version 1.26" and the next `go`
+  command fetched go1.26.8 from `proxy.golang.org` — roughly 70 MB, per job,
+  unretried, on every run. Twelve jobs did this. On 2026-09-06 one of those TLS
+  handshakes timed out and failed `Unit Tests (internal/notifications)` before a
+  single test body ran, which reads as a test failure and was a CDN blip on a
+  download that should not have happened. Every setup-go step now passes
+  `go-version-file: go.mod`, so the pin lives in one place and the exact
+  toolchain is installed directly. `scripts/check-go-toolchain-pin.sh`
+  (self-tested, wired into the `ci-resilience-guards` job) fails on a version
+  spec, including an exact one — two pins drift. The build matrix keeps its
+  minor-version label because that string is part of a check name branch
+  protection may require.
+
 - **The gateway — the service that faces the internet — sent no security
   headers.** Seven of the eight HTTP service mains mount
   `middleware.SecurityHeadersForEnv`; `cmd/gateway-service` did not, and nothing
