@@ -233,82 +233,19 @@ func (s *Service) handleUsageAnalytics(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"usage": result})
 }
 
-// handleAPIUsageMetrics returns API usage statistics from the api_usage_metrics table.
-// GET /api/v1/analytics/api?period=24h|7d|30d|90d
-func (s *Service) handleAPIUsageMetrics(c *gin.Context) {
-	if !requireAdmin(c) {
-		return
-	}
-	ctx := c.Request.Context()
-
-	period := c.DefaultQuery("period", "30d")
-	interval := periodToInterval(period)
-
-	result := make(map[string]interface{})
-
-	// Total requests in period
-	var totalRequests int
-	s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(request_count), 0)
-		FROM api_usage_metrics
-		WHERE recorded_at > NOW() - $1::interval`, interval).Scan(&totalRequests)
-	result["total_requests"] = totalRequests
-
-	// Top endpoints
-	topEndpoints := []map[string]interface{}{}
-	rows, err := s.db.Pool.Query(ctx, `
-		SELECT endpoint, method, SUM(request_count) AS total,
-		       AVG(avg_latency_ms) AS avg_lat,
-		       SUM(error_count) AS errors
-		FROM api_usage_metrics
-		WHERE recorded_at > NOW() - $1::interval
-		GROUP BY endpoint, method
-		ORDER BY total DESC
-		LIMIT 10
-	`, interval)
-	if err == nil {
-		for rows.Next() {
-			var endpoint, method string
-			var total, errors int
-			var avgLat float64
-			if rows.Scan(&endpoint, &method, &total, &avgLat, &errors) == nil {
-				topEndpoints = append(topEndpoints, map[string]interface{}{
-					"endpoint":       endpoint,
-					"method":         method,
-					"total_requests": total,
-					"avg_latency_ms": avgLat,
-					"error_count":    errors,
-				})
-			}
-		}
-		rows.Close()
-	}
-	result["top_endpoints"] = topEndpoints
-
-	// Overall error rate
-	var totalErrors int
-	s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(error_count), 0)
-		FROM api_usage_metrics
-		WHERE recorded_at > NOW() - $1::interval`, interval).Scan(&totalErrors)
-	if totalRequests > 0 {
-		result["error_rate"] = float64(totalErrors) / float64(totalRequests) * 100
-	} else {
-		result["error_rate"] = 0.0
-	}
-
-	// Average latency across all endpoints
-	var avgLatency float64
-	s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(AVG(avg_latency_ms), 0)
-		FROM api_usage_metrics
-		WHERE recorded_at > NOW() - $1::interval`, interval).Scan(&avgLatency)
-	result["avg_latency_ms"] = avgLatency
-	result["period"] = period
-
-	// Frontend reads {api_usage: {...}}.
-	c.JSON(http.StatusOK, gin.H{"api_usage": result})
-}
+// handleAPIUsageMetrics is gone with the api_usage_metrics table (migration
+// v176). It read total requests, top endpoints, error rate and average latency
+// from a table nothing has ever written a row to, and it read them with column
+// names -- request_count, error_count, recorded_at -- the table never had, so
+// every one of its four statements failed to plan and every value it returned
+// was the Go zero beside it. The console card that displayed them is removed in
+// the same commit.
+//
+// Request volume, latency and status codes ARE measured, by the Prometheus
+// middleware every service mounts (internal/metrics.Middleware), and are
+// exported on /metrics for the Prometheus and Grafana that ship in
+// deployments/docker. That is where this measurement lives; a second copy
+// aggregated into Postgres was never written.
 
 // handleFeatureAdoption returns feature adoption metrics, computed live from
 // the tables that record each feature's use.

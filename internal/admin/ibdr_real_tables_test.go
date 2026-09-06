@@ -2,8 +2,8 @@ package admin
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
-	"time"
 
 	"go.uber.org/zap"
 
@@ -165,18 +165,74 @@ func TestIBDRContinuousAuth_RealTables(t *testing.T) {
 			t.Fatalf("previous-risk SELECT: want 42.5, got %v (err %v)", prev, err)
 		}
 
-		exec(`INSERT INTO risk_factors (session_id, type, severity, description, detected_at, org_id)
-		      VALUES ($1, 'geo_anomaly', 0.7, 'login from new location', $2, $3)`, session, time.Now(), orgA)
-		factors, err := ca.GetRiskFactors(ctxA, session)
+	})
+
+	// The factors that produced the score reach the caller and the history.
+	//
+	// This replaces a test that seeded rows into the v77 risk_factors table and
+	// then read them back through GetRiskFactors: it proved a reader worked
+	// against data the product never supplied. Nothing has ever written that
+	// table, GetRiskFactors had no caller, and the engine returned RiskFactors
+	// empty on every response while writing the literal "{}" for the detail.
+	// Migration v176 drops the table; what is asserted here is the whole path,
+	// from a measurable condition to the factor list on the score and in the
+	// stored row.
+	t.Run("a calculated score carries the factors that produced it", func(t *testing.T) {
+		// A session the engine can read: 25 audit events are already in the
+		// one-minute window from the velocity case above, so velocity scores 15
+		// at weight 1.
+		exec(`INSERT INTO sessions (id, user_id, client_id, org_id, started_at, last_seen_at, expires_at, ip_address)
+		      VALUES ($1, $2, 'ibdr-test-client', $3, NOW(), NOW(), NOW() + INTERVAL '1 hour', '10.0.0.1')`,
+			session, userX, orgA)
+
+		risk, err := ca.CalculateSessionRisk(ctxA, session)
 		if err != nil {
-			t.Fatalf("GetRiskFactors: %v", err)
+			t.Fatalf("CalculateSessionRisk: %v", err)
 		}
-		if len(factors) != 1 || factors[0].Type != "geo_anomaly" || factors[0].Severity != 0.7 {
-			t.Fatalf("want the seeded geo_anomaly factor, got %+v", factors)
+		var velocity *RiskFactor
+		for i := range risk.RiskFactors {
+			if risk.RiskFactors[i].Type == "velocity" {
+				velocity = &risk.RiskFactors[i]
+			}
 		}
-		// Cross-org read returns nothing.
-		if got, err := ca.GetRiskFactors(ctxB, session); err != nil || len(got) != 0 {
-			t.Fatalf("cross-org risk factors: want 0, got %d (err %v)", len(got), err)
+		if velocity == nil {
+			t.Fatalf("the score is %v and names no factor: %+v", risk.OverallRisk, risk.RiskFactors)
+		}
+		if velocity.Points != 15 || velocity.Weight != 1 || velocity.Severity != 0.15 {
+			t.Errorf("velocity factor = %+v, want points 15, weight 1, severity 0.15", *velocity)
+		}
+		if velocity.Description == "" {
+			t.Error("the factor does not say what was measured")
+		}
+		// Every reported factor must have contributed: a zero-severity entry is
+		// a list of what was checked, which Context["factors_measured"] answers.
+		for _, f := range risk.RiskFactors {
+			if f.Severity <= 0 {
+				t.Errorf("factor %q reported with severity %v", f.Type, f.Severity)
+			}
+		}
+
+		// And the same detail is in the history row, in the column v77 created
+		// for it.
+		var stored []byte
+		if err := db.Pool.QueryRow(seedCtx, `
+			SELECT risk_factors FROM session_risks
+			WHERE session_id = $1 AND org_id = $2 ORDER BY calculated_at DESC LIMIT 1
+		`, session, orgA).Scan(&stored); err != nil {
+			t.Fatalf("read back the history row: %v", err)
+		}
+		var history struct {
+			Source  string       `json:"source"`
+			Factors []RiskFactor `json:"factors"`
+		}
+		if err := json.Unmarshal(stored, &history); err != nil {
+			t.Fatalf("stored risk_factors is not the documented shape: %v (%s)", err, stored)
+		}
+		if history.Source != "calculated" {
+			t.Errorf("stored source = %q, want calculated", history.Source)
+		}
+		if len(history.Factors) != len(risk.RiskFactors) {
+			t.Errorf("stored %d factors, returned %d", len(history.Factors), len(risk.RiskFactors))
 		}
 	})
 }

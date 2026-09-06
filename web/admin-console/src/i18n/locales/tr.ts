@@ -7596,17 +7596,6 @@ const tr: typeof en = {
         mfa: 'MFA',
         sso: 'SSO',
       },
-      api: {
-        title: 'En Çok Kullanılan API Uç Noktaları',
-        desc: 'İstek hacmine göre en çok kullanılan uç noktalar',
-        colMethod: 'Yöntem',
-        colPath: 'Yol',
-        colRequests: 'İstek',
-        colLatency: 'Ort. Gecikme',
-        colErrorRate: 'Hata Oranı',
-        latencyMs: '{{n}} ms',
-        empty: 'API kullanım verisi yok',
-      },
       registrations: {
         title: 'Yeni Kullanıcı Kayıtları',
         desc: 'Son 30 günün günlük kayıt eğilimi',

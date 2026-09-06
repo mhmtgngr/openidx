@@ -19,18 +19,6 @@ var knownBroken = map[string]string{
 	// internal/access/unified_audit.go:179  [42P01] missing FROM-clause entry for table "e"
 	"internal/access/unified_audit.go#a2103cfa5d45": "the statement references alias \"e\" that its own FROM clause does not define; the unified audit export returns an error the caller discards.",
 
-	// internal/admin/analytics_enhanced.go:251  [42703] column "request_count" does not exist
-	"internal/admin/analytics_enhanced.go#797a227bd5d4": "api_usage_metrics has (endpoint, method, service, status_code, count, avg_latency_ms, hour) and no request_count/error_count/recorded_at; nothing writes the table either. Total requests reads 0 on every install.",
-
-	// internal/admin/analytics_enhanced.go:259  [42703] column "request_count" does not exist
-	"internal/admin/analytics_enhanced.go#2a09011b188f": "same table, same three absent columns; the top-endpoints list is always empty and the `if err == nil` guard hides it.",
-
-	// internal/admin/analytics_enhanced.go:290  [42703] column "error_count" does not exist
-	"internal/admin/analytics_enhanced.go#219186ad3cfe": "same; the error total is always 0, so the derived error rate is always 0%.",
-
-	// internal/admin/analytics_enhanced.go:302  [42703] column "recorded_at" does not exist
-	"internal/admin/analytics_enhanced.go#27830c1d9d4e": "same table and same absent columns; average latency is always 0 ms, which the dashboard presents as a measured figure.",
-
 	// internal/admin/analytics_enhanced.go:358  [42703] column "revoked_at" does not exist
 	"internal/admin/analytics_enhanced.go#589305fb4b37": "api_keys records revocation in `status`, not a revoked_at column; the api_keys feature-adoption figure is always 0. This one at least logs the failure.",
 

@@ -67,7 +67,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dashboard's four queries all name columns that were never created — so it
   reports 0 requests, 0 errors and 0 ms latency as measurements.
 
+### Removed
+
+- **The Usage Analytics API card, and the table behind it (migration v176).**
+  `api_usage_metrics` was created by v54 with exactly the columns an hourly
+  request aggregate needs, and no handler, worker or seed has ever inserted a
+  row. The card read it for total requests, top endpoints, error rate and
+  average latency, so all four have been 0 on every install that has ever run —
+  and the read could not have worked either, naming three columns the table does
+  not have. Request volume, latency and status codes *are* measured: the
+  Prometheus middleware every service mounts exports them on `/metrics`, for the
+  Prometheus and Grafana this repo ships. A second copy aggregated into Postgres
+  was never written, and writing that aggregator is a feature rather than a fix,
+  so the endpoint, the console card, its i18n keys and the OpenAPI path go with
+  the table.
+
 ### Fixed
+
+- **A risk score with nothing behind it.** The continuous-auth engine computes
+  five weighted factors — session age, source-address change, device
+  fingerprint, out-of-hours activity, action velocity — sums them into a 0-100
+  score, and returned `RiskFactors` exactly as empty as it was initialised, on
+  every response, while writing the literal `{}` into
+  `session_risks.risk_factors`, the column that exists for that detail. A score
+  of 45 that cannot say which factor produced it is not evidence for the step-up
+  it triggers. Each factor is now recorded as it is measured — type, raw points,
+  the deployment's weight, the weighted share of the scale, and a sentence
+  saying what was measured — and travels with the score, in the response and in
+  the history row under a `source` discriminator so the column's two writers can
+  be told apart. The v77 `risk_factors` table it should have been written to is
+  dropped by v176: nothing ever wrote it, its only reader had no caller, and the
+  one test that exercised that reader seeded the rows itself. The replacement
+  test drives the whole path, from a measurable condition to the factor list on
+  the score and in the stored row.
 
 - **The SQL gate added in this release could not fail the build.** ci.yml's
   integration step opens `set -uo pipefail` — no `-e` — so a bare failing

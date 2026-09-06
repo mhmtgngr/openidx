@@ -7703,17 +7703,6 @@ const en = {
         mfa: 'MFA',
         sso: 'SSO',
       },
-      api: {
-        title: 'Top API Endpoints',
-        desc: 'Most-used endpoints by request volume',
-        colMethod: 'Method',
-        colPath: 'Path',
-        colRequests: 'Requests',
-        colLatency: 'Avg Latency',
-        colErrorRate: 'Error Rate',
-        latencyMs: '{{n}}ms',
-        empty: 'No API usage data available',
-      },
       registrations: {
         title: 'New User Registrations',
         desc: 'Daily registration trend over the last 30 days',

@@ -1105,7 +1105,6 @@ func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 	// Enhanced analytics (Phase 12)
 	admin.GET("/analytics/auth-dashboard", svc.handleAuthAnalyticsDashboard)
 	admin.GET("/analytics/usage", svc.handleUsageAnalytics)
-	admin.GET("/analytics/api-usage", svc.handleAPIUsageMetrics)
 	admin.GET("/analytics/feature-adoption", svc.handleFeatureAdoption)
 	admin.GET("/analytics/risk-timeline", svc.handleRiskScoreTimeline)
 	admin.GET("/analytics/activity-heatmap", svc.handleUserActivityHeatmap)

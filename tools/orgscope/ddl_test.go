@@ -76,7 +76,6 @@ var formerHandList = []string{
 	"recommendation_history",
 	"recording_retention_policies",
 	"review_items",
-	"risk_factors",
 	"role_permissions",
 	"roles",
 	"scim_groups",

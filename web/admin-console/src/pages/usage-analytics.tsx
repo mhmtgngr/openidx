@@ -2,13 +2,10 @@ import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import {
   Users, UserCheck, UserPlus, Layers, Shield, Key, Fingerprint,
-  Smartphone, Link2, Globe, BarChart3, ArrowUpRight,
+  Smartphone, Link2, Globe, ArrowUpRight,
 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
-import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
-} from '../components/ui/table'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { QueryError } from '../components/query-error'
 import { api } from '../lib/api'
@@ -36,16 +33,6 @@ interface FeatureAdoption {
   }>
 }
 
-interface APIUsage {
-  endpoints: Array<{
-    method: string
-    path: string
-    request_count: number
-    avg_latency_ms: number
-    error_rate: number
-  }>
-}
-
 const featureIcons: Record<string, React.ReactNode> = {
   totp: <Key className="h-4 w-4" />,
   webauthn: <Fingerprint className="h-4 w-4" />,
@@ -61,17 +48,6 @@ function featureColor(percentage: number): string {
   if (percentage >= 50) return 'bg-blue-500'
   if (percentage >= 25) return 'bg-yellow-500'
   return 'bg-gray-400'
-}
-
-function methodBadge(method: string) {
-  const colors: Record<string, string> = {
-    GET: 'bg-blue-100 text-blue-800',
-    POST: 'bg-green-100 text-green-800',
-    PUT: 'bg-yellow-100 text-yellow-800',
-    DELETE: 'bg-red-100 text-red-800',
-    PATCH: 'bg-purple-100 text-purple-800',
-  }
-  return colors[method] || 'bg-muted text-foreground'
 }
 
 export function UsageAnalyticsPage() {
@@ -123,29 +99,10 @@ export function UsageAnalyticsPage() {
     },
   })
 
-  const { data: apiData, isLoading: apiLoading } = useQuery<{ api_usage: APIUsage }>({
-    queryKey: ['api-usage'],
-    queryFn: async () => {
-      const res = await api.get<{ api_usage: APIUsage }>('/api/v1/analytics/api-usage')
-      return {
-        api_usage: {
-          endpoints: (res.api_usage?.endpoints ?? []).map((e) => ({
-            method: e.method ?? '',
-            path: e.path ?? '',
-            request_count: e.request_count ?? 0,
-            avg_latency_ms: e.avg_latency_ms ?? 0,
-            error_rate: e.error_rate ?? 0,
-          })),
-        },
-      }
-    },
-  })
-
   const usage = usageData?.usage
   const adoption = adoptionData?.adoption
-  const apiUsage = apiData?.api_usage
 
-  const isLoading = usageLoading || adoptionLoading || apiLoading
+  const isLoading = usageLoading || adoptionLoading
 
   if (isLoading) {
     return (
@@ -324,141 +281,74 @@ export function UsageAnalyticsPage() {
         </CardContent>
       </Card>
 
-      {/* Bottom Row: API Usage + Registrations Trend */}
-      <div className="grid gap-6 md:grid-cols-2">
-        {/* API Usage */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <BarChart3 className="h-5 w-5" />
-              {t('pages.usageAnalytics.api.title')}
-            </CardTitle>
-            <CardDescription>{t('pages.usageAnalytics.api.desc')}</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {apiUsage?.endpoints && apiUsage.endpoints.length > 0 ? (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>{t('pages.usageAnalytics.api.colMethod')}</TableHead>
-                    <TableHead>{t('pages.usageAnalytics.api.colPath')}</TableHead>
-                    <TableHead className="text-right">
-                      {t('pages.usageAnalytics.api.colRequests')}
-                    </TableHead>
-                    <TableHead className="text-right">
-                      {t('pages.usageAnalytics.api.colLatency')}
-                    </TableHead>
-                    <TableHead className="text-right">
-                      {t('pages.usageAnalytics.api.colErrorRate')}
-                    </TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {apiUsage.endpoints.slice(0, 10).map((ep, i) => (
-                    <TableRow key={i}>
-                      {/* Method and path are the API's wire identifiers. */}
-                      <TableCell>
-                        <Badge className={`${methodBadge(ep.method)} hover:${methodBadge(ep.method)}`}>
-                          {ep.method}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <span className="font-mono text-xs" title={ep.path}>
-                          {ep.path.length > 40 ? ep.path.slice(0, 40) + '...' : ep.path}
-                        </span>
-                      </TableCell>
-                      <TableCell className="text-right font-medium">
-                        {ep.request_count.toLocaleString()}
-                      </TableCell>
-                      <TableCell className="text-right text-muted-foreground">
-                        {t('pages.usageAnalytics.api.latencyMs', {
-                          n: ep.avg_latency_ms.toFixed(0),
-                        })}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <span
-                          className={
-                            ep.error_rate > 5
-                              ? 'text-red-600 font-medium'
-                              : 'text-muted-foreground'
-                          }
-                        >
-                          {ep.error_rate.toFixed(1)}%
-                        </span>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            ) : (
-              <p className="text-center text-muted-foreground py-6">
-                {t('pages.usageAnalytics.api.empty')}
-              </p>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* New User Registrations Trend */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <UserPlus className="h-5 w-5" />
-              {t('pages.usageAnalytics.registrations.title')}
-            </CardTitle>
-            <CardDescription>{t('pages.usageAnalytics.registrations.desc')}</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {usage?.new_registrations && usage.new_registrations.length > 0 ? (
-              <>
-                <div className="flex items-end gap-1 h-40">
-                  {usage.new_registrations.map((day) => {
-                    const height =
-                      maxRegistration > 0
-                        ? (day.count / maxRegistration) * 100
-                        : 0
-                    return (
+      {/* New User Registrations Trend.
+        The API Usage card that shared this row read /analytics/api-usage,
+        which read api_usage_metrics -- a table nothing has ever written a row
+        to, with three of the column names it asked for absent from the schema
+        besides. It reported 0 requests, 0% errors and 0 ms latency on every
+        install. Endpoint volume, latency and status codes are measured by the
+        Prometheus middleware every service mounts and are on /metrics for the
+        Prometheus and Grafana this repo ships; migration v176 drops the table
+        and the endpoint goes with it. */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <UserPlus className="h-5 w-5" />
+            {t('pages.usageAnalytics.registrations.title')}
+          </CardTitle>
+          <CardDescription>{t('pages.usageAnalytics.registrations.desc')}</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {usage?.new_registrations && usage.new_registrations.length > 0 ? (
+            <>
+              <div className="flex items-end gap-1 h-40">
+                {usage.new_registrations.map((day) => {
+                  const height =
+                    maxRegistration > 0
+                      ? (day.count / maxRegistration) * 100
+                      : 0
+                  return (
+                    <div
+                      key={day.date}
+                      className="flex-1 flex flex-col items-center"
+                      title={t('pages.usageAnalytics.registrations.dayTooltip', {
+                        date: day.date,
+                        count: day.count,
+                      })}
+                    >
                       <div
-                        key={day.date}
-                        className="flex-1 flex flex-col items-center"
-                        title={t('pages.usageAnalytics.registrations.dayTooltip', {
-                          date: day.date,
-                          count: day.count,
-                        })}
-                      >
-                        <div
-                          className="w-full bg-emerald-500 rounded-t transition-all hover:bg-emerald-600"
-                          style={{
-                            height: `${height}%`,
-                            minHeight: day.count > 0 ? '4px' : '0',
-                          }}
-                        />
-                      </div>
-                    )
-                  })}
-                </div>
-                <div className="flex justify-between text-xs text-muted-foreground mt-2">
-                  <span>
-                    {usage.new_registrations[0]?.date.slice(5)}
-                  </span>
-                  <span>
-                    {usage.new_registrations[usage.new_registrations.length - 1]?.date.slice(5)}
-                  </span>
-                </div>
-                <p className="text-xs text-muted-foreground text-center mt-1">
-                  {t('pages.usageAnalytics.registrations.total', {
-                    count: registrationTotal,
-                    formatted: registrationTotal.toLocaleString(),
-                  })}
-                </p>
-              </>
-            ) : (
-              <p className="text-center text-muted-foreground py-6">
-                {t('pages.usageAnalytics.registrations.empty')}
+                        className="w-full bg-emerald-500 rounded-t transition-all hover:bg-emerald-600"
+                        style={{
+                          height: `${height}%`,
+                          minHeight: day.count > 0 ? '4px' : '0',
+                        }}
+                      />
+                    </div>
+                  )
+                })}
+              </div>
+              <div className="flex justify-between text-xs text-muted-foreground mt-2">
+                <span>
+                  {usage.new_registrations[0]?.date.slice(5)}
+                </span>
+                <span>
+                  {usage.new_registrations[usage.new_registrations.length - 1]?.date.slice(5)}
+                </span>
+              </div>
+              <p className="text-xs text-muted-foreground text-center mt-1">
+                {t('pages.usageAnalytics.registrations.total', {
+                  count: registrationTotal,
+                  formatted: registrationTotal.toLocaleString(),
+                })}
               </p>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+            </>
+          ) : (
+            <p className="text-center text-muted-foreground py-6">
+              {t('pages.usageAnalytics.registrations.empty')}
+            </p>
+          )}
+        </CardContent>
+      </Card>
     </div>
   )
 }

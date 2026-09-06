@@ -1156,27 +1156,6 @@ paths:
         '500':
           $ref: '#/components/responses/ServerError'
 
-  /api/v1/analytics/api-usage:
-    get:
-      tags: [Analytics]
-      summary: API usage metrics
-      operationId: apiUsageMetrics
-      x-openidx-handler: internal/admin.(*Service).handleAPIUsageMetrics
-      responses:
-        '200':
-          description: Success
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '500':
-          $ref: '#/components/responses/ServerError'
-
   /api/v1/analytics/auth-dashboard:
     get:
       tags: [Analytics]

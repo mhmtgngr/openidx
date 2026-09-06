@@ -37,7 +37,6 @@ var installWideTables = map[string]string{
 
 	// Operations telemetry about the install, not about anyone's data.
 	"health_check_history": "per-service dependency health for the operator; install-wide by design",
-	"api_usage_metrics":    "endpoint/method/hour aggregate with no tenant dimension",
 
 	// Ziti overlay infrastructure. The controller is a single install-wide
 	// component; these mirror its state, and per-org overlay scoping is a
