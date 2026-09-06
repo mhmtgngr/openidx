@@ -7,7 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Revoking a user's MFA break-glass codes has never revoked one.**
+  `DELETE /users/:id/bypass-codes` is how an administrator destroys every MFA
+  bypass code a user holds — what you do the minute a break-glass code leaks.
+  Its handler opened `requestedUserID := c.Param("user_id")`, and the route
+  declares `:id`. gin returns `""` for a name the matched route does not
+  declare, so the revoke ran against the empty user and PostgreSQL refused the
+  statement outright (`mfa_bypass_codes.user_id` is `UUID`): every call this
+  endpoint has ever received answered **400 `invalid input syntax for type
+  uuid: ""`**, worded as though the administrator had sent something wrong. The
+  handler now reads `c.Param("id")`, and a new DB-backed test drives the real
+  route: two active codes for the target are revoked, a third belonging to
+  somebody else is left alone, and the `revoked_all` entry lands in
+  `mfa_bypass_audit`. Proved red first with exactly the failure above.
+
 ### Added
+
+- **`tools/routereach` — parameters with no route, handlers with no router.**
+  The census that found the defect above, and a second class beside it. It
+  holds each service's route table next to the handlers its package defines and
+  reports two disagreements: a handler that reads `c.Param("x")` when no route
+  it is mounted on declares `x`, and a `func(*gin.Context)` that no route
+  registration names and no non-test line references. Reachability is
+  propagated to a fixpoint through same-package calls, so a helper handed the
+  request context is checked against the routes of every handler that can reach
+  it, and the parameter sets of a handler's routes are unioned rather than
+  checked one at a time. The parameter check is exact here because no `.Group()`
+  prefix in this tree declares a parameter — asserted against the real sources
+  by the tool's own test, not assumed. **`_test.go` files are deliberately not
+  scanned**: a handler whose only caller is a test that mounts it on a router
+  the test built is the sharpest form of the second finding, and that is how
+  `internal/oauth`'s second OpenID Connect discovery document came to light —
+  415 lines of passing test for a document no service serves, beside the
+  different one every relying party actually fetches. 1,060 routes, 1,021
+  handler-shaped functions, **17 mounted by nothing**, each registered in
+  `tools/routereach/known.go` with its verdict; a route that declares
+  parameters and resolves to no handler is itself a finding, because a census
+  that quietly stops covering something is the failure these registers exist to
+  prevent. Wired as a required check (`Route-reachability lint`).
 
 - **`tools/tablewriters` — the tables the product reads and nothing writes.**
   The API-usage card reads `api_usage_metrics` for total requests, average

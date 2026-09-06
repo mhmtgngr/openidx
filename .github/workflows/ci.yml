@@ -1082,6 +1082,63 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           exit $rc
 
+  # routereach holds the router's route table next to the handlers the packages
+  # define. Two findings, both invisible to everything else here:
+  #
+  #   - a handler reads c.Param("x") and no route it is mounted on declares x.
+  #     gin returns "" for a name the matched route does not have, so
+  #     `DELETE /users/:id/bypass-codes` asked the database to revoke the empty
+  #     user's MFA break-glass codes and got `invalid input syntax for type
+  #     uuid: ""` -- a 400, worded as if the administrator had sent something
+  #     wrong, on every call this endpoint has ever received.
+  #   - a func(*gin.Context) that no route mounts and no non-test line
+  #     references. _test.go is deliberately not scanned: a handler whose only
+  #     caller is a test that mounts it on a router the test built is the
+  #     sharpest form of this, and that is how internal/oauth's second OIDC
+  #     discovery document -- 415 lines of passing test, served to nobody --
+  #     came to light.
+  routereach:
+    name: Route-reachability lint
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.go_changed == 'true'
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Self-test the tool first
+        # A guard whose own cases do not pass has no standing to fail a build.
+        run: go test ./tools/routereach/
+
+      - name: Run routereach (hard gate)
+        run: |
+          set +e
+          go run ./tools/routereach -fail ./internal ./cmd ./pkg > rr.out 2> rr.err
+          rc=$?
+          set -e
+          {
+            echo "## routereach — parameters with no route, handlers with no router"
+            echo
+            if [ "$rc" -ne 0 ]; then
+              echo "❌ **Gate failed.** A PARAM finding is a handler reading a name its route does not declare: gin hands it \`\"\"\`, so the request acts on the empty id. A NEW unmounted handler is code no request can reach. A STALE entry is a handler a route reaches now, and its line in \`tools/routereach/known.go\` must go. A BLIND route declares parameters and resolves to no handler, which means the census stopped covering it."
+            else
+              echo "✅ $(tail -n1 rr.err 2>/dev/null || echo 'every route parameter is declared and every handler has a verdict')"
+            fi
+            echo
+            echo '```'
+            head -60 rr.out
+            tail -n1 rr.err
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
+
   # tablewriters holds the schema next to the code: every table the migration
   # registry creates, against every table a SQL literal in the product writes.
   # A table with no writer is a measurement that cannot measure -- the Usage
@@ -1699,6 +1756,7 @@ jobs:
       - lint
       - no-internal-topology
       - orgscope
+      - routereach
       - selfheal
       - shell-prose
       - smoke
