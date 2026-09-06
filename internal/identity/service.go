@@ -6373,8 +6373,13 @@ func (s *Service) executeLifecycleAction(ctx context.Context, userID string, act
 		if !ok {
 			return fmt.Errorf("assign_role action missing 'role_id'")
 		}
+		// user_roles records the grant time as assigned_at; there is no
+		// created_at, so this INSERT could never plan and no lifecycle rule has
+		// ever assigned a role. The error was returned and logged by the
+		// caller, which is why a joiner rule appeared to run and granted
+		// nothing.
 		_, err := s.db.Pool.Exec(ctx,
-			"INSERT INTO user_roles (user_id, role_id, created_at, org_id) VALUES ($1, $2, NOW(), $3) ON CONFLICT DO NOTHING",
+			"INSERT INTO user_roles (user_id, role_id, assigned_at, org_id) VALUES ($1, $2, NOW(), $3) ON CONFLICT DO NOTHING",
 			userID, roleID, org.ID)
 		return err
 

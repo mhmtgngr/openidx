@@ -47,7 +47,7 @@ func TestIsStatementSeparatesQueriesFromEverythingElse(t *testing.T) {
 func TestOnlyPrepareLimitationsAreSkipped(t *testing.T) {
 	skipped := []string{"42601", "42P18", "42P08"}
 	for _, code := range skipped {
-		reason, ok := skipReason(code)
+		reason, ok := skipReason(code, "", "SELECT 1")
 		if !ok {
 			t.Errorf("SQLSTATE %s should be skipped", code)
 			continue
@@ -55,6 +55,23 @@ func TestOnlyPrepareLimitationsAreSkipped(t *testing.T) {
 		if strings.TrimSpace(reason) == "" {
 			t.Errorf("SQLSTATE %s is skipped with no reason", code)
 		}
+	}
+
+	// 42P01 is skippable in exactly one shape and a finding in every other:
+	// "missing FROM-clause entry" on a literal that has no FROM clause is a
+	// SELECT list somebody uses as a search string, not a statement. A missing
+	// TABLE always comes from a statement that HAS the FROM clause naming it.
+	if _, ok := skipReason("42P01", `missing FROM-clause entry for table "e"`,
+		"SELECT e.id, e.source, r.name as route_name"); !ok {
+		t.Error("a SELECT list with no FROM clause is not a statement and must be skipped")
+	}
+	if reason, ok := skipReason("42P01", `missing FROM-clause entry for table "x"`,
+		"SELECT a FROM t WHERE x.id = 1"); ok {
+		t.Errorf("a statement WITH a FROM clause was skipped as %q", reason)
+	}
+	if reason, ok := skipReason("42P01", `relation "gone" does not exist`,
+		"SELECT a FROM gone"); ok {
+		t.Errorf("a missing table was skipped as %q -- that is the class this tool exists for", reason)
 	}
 
 	// The defect classes this tool exists to find must never be skippable.
@@ -66,7 +83,7 @@ func TestOnlyPrepareLimitationsAreSkipped(t *testing.T) {
 		"42803", // grouping error
 		"22P02", // invalid text representation (malformed array, bad uuid literal)
 	} {
-		if reason, ok := skipReason(code); ok {
+		if reason, ok := skipReason(code, `relation "t" does not exist`, "SELECT a FROM t"); ok {
 			t.Errorf("SQLSTATE %s must be a finding, not skipped as %q", code, reason)
 		}
 	}

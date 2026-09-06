@@ -559,11 +559,12 @@ func (s *Service) GetUserLoginPatterns(ctx context.Context, userID string) (*Log
 
 	// Average session duration in minutes
 	var avgDuration *float64
+	// sessions records its start as started_at.
 	s.db.Pool.QueryRow(ctx, `
-		SELECT AVG(EXTRACT(EPOCH FROM (expires_at - created_at)) / 60.0)
+		SELECT AVG(EXTRACT(EPOCH FROM (expires_at - started_at)) / 60.0)
 		FROM sessions
 		WHERE user_id = $1
-		  AND created_at > NOW() - INTERVAL '90 days'
+		  AND started_at > NOW() - INTERVAL '90 days'
 		  AND org_id = $2
 	`, userID, org.ID).Scan(&avgDuration)
 	if avgDuration != nil {

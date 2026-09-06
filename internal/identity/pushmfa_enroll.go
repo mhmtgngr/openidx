@@ -59,8 +59,11 @@ func (s *Service) StartPushEnrollment(ctx context.Context, userID string) (*Push
 
 	// Resolve a friendly account label (email/username) for the QR/confirmation.
 	var account string
+	// $1 was used both as a text fallback inside COALESCE and compared with
+	// the uuid id, so it resolved to text and `id = $1` had no operator. The
+	// Go below already supplies the fallback.
 	_ = s.db.Pool.QueryRow(ctx,
-		`SELECT COALESCE(NULLIF(email,''), username, $1) FROM users WHERE id = $1 AND org_id = $2`,
+		`SELECT COALESCE(NULLIF(email,''), username, '') FROM users WHERE id = $1 AND org_id = $2`,
 		userID, org.ID).Scan(&account)
 	if account == "" {
 		account = userID

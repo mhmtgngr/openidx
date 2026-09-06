@@ -365,7 +365,9 @@ func (s *Service) getTopFailedUsers(ctx context.Context, start, end time.Time) [
 		return nil
 	}
 	rows, err := s.db.Pool.Query(ctx,
-		`SELECT lh.user_id, COALESCE(u.email, lh.user_id) as email,
+		// lh.user_id is uuid and u.email varchar, which COALESCE cannot match
+		// at plan time; the top-failed-users list has always been empty.
+		`SELECT lh.user_id, COALESCE(u.email, lh.user_id::text) as email,
 		        COUNT(*) as failed_count, MAX(lh.created_at) as last_attempt
 		 FROM login_history lh
 		 LEFT JOIN users u ON lh.user_id = u.id

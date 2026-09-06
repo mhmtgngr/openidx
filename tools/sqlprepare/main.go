@@ -63,6 +63,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -140,7 +141,7 @@ func main() {
 			continue
 		}
 		code, detail := pgErr(perr)
-		if reason, skip := skipReason(code); skip {
+		if reason, skip := skipReason(code, detail, s.SQL); skip {
 			skipped[reason]++
 			if *verbose {
 				fmt.Printf("skip  %s:%d  %s (%s)\n", s.File, s.Line, reason, code)
@@ -202,15 +203,37 @@ func main() {
 
 // skipReason names the PREPARE outcomes that say something about this tool's
 // reach rather than about the query.
-func skipReason(code string) (string, bool) {
+func skipReason(code, detail, sql string) (string, bool) {
 	switch code {
 	case "42601":
 		return "fragment of a query assembled at runtime (syntax error alone)", true
 	case "42P18", "42P08":
 		return "parameter type not inferable by PREPARE (the driver supplies it)", true
+	case "42P01":
+		// 42P01 covers two different things and only one of them is a finding.
+		//
+		// "relation X does not exist" is the class this tool exists for. But
+		// "missing FROM-clause entry for table X" on a literal that contains no
+		// FROM clause AT ALL is not a statement -- it is a SELECT list. The
+		// unified audit reader keeps one as the search argument of a
+		// strings.Replace that swaps the column list for COUNT(*), and the
+		// first version of this tool prepared it, reported it, and I wrote it
+		// into the register with a verdict ("the export returns an error the
+		// caller discards") that was not true of anything. Measured since: the
+		// Replace fires and the count query it builds is valid.
+		//
+		// The two cannot be confused, because a statement that names a missing
+		// table always has the FROM clause it names it in.
+		if strings.Contains(detail, "missing FROM-clause entry") && !fromClauseRE.MatchString(sql) {
+			return "SELECT list used as a search string, not a statement (no FROM clause)", true
+		}
 	}
 	return "", false
 }
+
+// fromClauseRE finds a FROM keyword outside of a string literal. Crude on
+// purpose: the question is only whether the text has a FROM clause at all.
+var fromClauseRE = regexp.MustCompile(`(?is)\bFROM\b`)
 
 func pgErr(err error) (code, detail string) {
 	var pe *pgconn.PgError

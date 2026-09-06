@@ -252,7 +252,7 @@ func (s *Service) handlePredictionsSummary(c *gin.Context) {
 			AND org_id = $1
 			GROUP BY actor_id
 		)
-		SELECT p.actor_id, u.username, u.last_login,
+		SELECT p.actor_id, u.username, u.last_login_at,
 			COALESCE(r.cnt, 0) as recent_cnt, p.cnt as prev_cnt
 		FROM previous p
 		LEFT JOIN recent r ON p.actor_id = r.actor_id

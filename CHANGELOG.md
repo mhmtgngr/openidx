@@ -100,6 +100,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The console's tenant switcher has never worked, and nine other statements
+  the database refused.** `handleSwitchTenant` and `handleGetCurrentTenant`
+  selected `display_name` and `enabled` from `organizations`, which is
+  `(id, name, slug, domain, plan, status, …)` and has neither; both handlers map
+  any error from that row to 404, so switching tenant answered "Organization not
+  found" for every organization that exists — a feature that reads to whoever
+  hits it as a permissions problem. A **joiner rule that granted nothing**: the
+  lifecycle `assign_role` action inserted into `user_roles` with a `created_at`
+  column (the table records `assigned_at`), so no automated rule has ever
+  assigned a role, on any install. **Zero dormant accounts** on the security
+  posture card, because the count asked for `users.last_login` and the column is
+  `last_login_at` — zero is the answer that makes the card look best. A
+  **biometric policy targeted at a role matched nobody**, because the role
+  lookup selected a `roles` column from `users` (roles are rows in `user_roles`).
+  Plus the top-failed-users list (uuid into a varchar `COALESCE`), the push-MFA
+  enrolment label (one parameter used as both text and uuid), the API-key
+  adoption figure (`revoked_at` again), the churn-prediction input, and the risk
+  profile's average session duration (`sessions.created_at` → `started_at`).
+  Each was found by `tools/sqlprepare`; the tenant switch and the lifecycle
+  action are covered by new tests that run the real migration chain, both proved
+  red first. One register entry went the other way and is **withdrawn**: the
+  unified-audit reader's SELECT list, which the code uses as the search argument
+  of a `strings.Replace` that swaps it for `COUNT(*)`, was prepared as though it
+  were a statement and written up with a verdict that was true of nothing.
+  Measured since: the replacement fires and the count query it builds is valid.
+  `sqlprepare` now skips a "missing FROM-clause entry" on a literal that has no
+  FROM clause — a SELECT list is not a statement — while a missing *table*,
+  which always comes from a statement that has the FROM clause naming it, stays
+  a finding.
+
 - **Four compliance controls that reported compliant because their queries
   could not run.** Six statements across the SOC 2 / ISO 27001 / GDPR reporting
   named columns the schema does not have, and each failed silently into a zero.

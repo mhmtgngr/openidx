@@ -2955,10 +2955,13 @@ func (s *Service) GetCompliancePosture(ctx context.Context) (*CompliancePosture,
 		s.logger.Warn("Failed to query review counts", zap.Error(err))
 	}
 
-	// Dormant accounts: users who haven't logged in for 90+ days
+	// Dormant accounts: users who haven't logged in for 90+ days.
+	// users records the last sign-in as last_login_at; spelled last_login this
+	// count failed to plan and the security-posture card read 0 dormant
+	// accounts on every install -- the opposite of what it exists to surface.
 	err = s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM users
-		WHERE enabled = true AND org_id = $1 AND (last_login IS NULL OR last_login < NOW() - INTERVAL '90 days')
+		WHERE enabled = true AND org_id = $1 AND (last_login_at IS NULL OR last_login_at < NOW() - INTERVAL '90 days')
 	`, org.ID).Scan(&posture.DormantAccountsCount)
 	if err != nil {
 		s.logger.Warn("Failed to query dormant accounts", zap.Error(err))

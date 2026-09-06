@@ -410,10 +410,28 @@ func (s *Service) GetApplicableBiometricPolicy(ctx context.Context, userID strin
 		return nil, fmt.Errorf("resolve user groups: %w", err)
 	}
 
-	s.db.Pool.QueryRow(ctx,
-		"SELECT roles FROM users WHERE id = $1 AND org_id = $2",
-		userID, org.ID,
-	).Scan(&userRoles)
+	// users has no roles column; a user's roles are rows in user_roles. The
+	// old statement could not plan, so userRoles stayed empty and a biometric
+	// policy targeted at a role matched nobody -- the policy displayed as
+	// applying to a role it never applied to.
+	roleRows, rerr := s.db.Pool.Query(ctx,
+		`SELECT r.name FROM user_roles ur
+		 JOIN roles r ON r.id = ur.role_id
+		 WHERE ur.user_id = $1 AND ur.org_id = $2`,
+		userID, org.ID)
+	if rerr != nil {
+		return nil, fmt.Errorf("resolve user roles: %w", rerr)
+	}
+	for roleRows.Next() {
+		var roleName string
+		if roleRows.Scan(&roleName) == nil {
+			userRoles = append(userRoles, roleName)
+		}
+	}
+	roleRows.Close()
+	if err := roleRows.Err(); err != nil {
+		return nil, fmt.Errorf("resolve user roles: %w", err)
+	}
 
 	// Find applicable policy
 	policies, _ := s.ListBiometricPolicies(ctx)
