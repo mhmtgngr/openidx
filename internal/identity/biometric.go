@@ -3,10 +3,12 @@ package identity
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
@@ -38,25 +40,39 @@ type BiometricPolicy struct {
 	CreatedAt                    time.Time `json:"created_at"`
 }
 
-// GetBiometricPreferences returns user's biometric preferences
+// GetBiometricPreferences returns user's biometric preferences.
+//
+// A user with no stored row gets the built-in defaults; every other error is
+// returned. The original returned the defaults on ANY error, so a connection
+// failure, a permission error, or a read of a belted table without app.org_id
+// set was indistinguishable from "this user has not set preferences" and the
+// caller got RequireUserVerification true, ResidentKeyRequired false and a nil
+// error. With v158's belt in place that path stops being theoretical, and
+// answering it with defaults would silently loosen what a user had stored.
 func (s *Service) GetBiometricPreferences(ctx context.Context, userID string) (*BiometricPreferences, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("organization context required: %w", err)
+	}
+
 	query := `
 		SELECT id, user_id, platform_authenticator_preferred, allow_cross_platform,
 			require_user_verification, biometric_only_enabled, resident_key_required,
 			created_at, updated_at
 		FROM biometric_preferences
-		WHERE user_id = $1
+		WHERE user_id = $1 AND org_id = $2
 	`
 
 	var prefs BiometricPreferences
-	err := s.db.Pool.QueryRow(ctx, query, userID).Scan(
+	err = s.db.Pool.QueryRow(ctx, query, userID, org.ID).Scan(
 		&prefs.ID, &prefs.UserID, &prefs.PlatformAuthenticatorPreferred,
 		&prefs.AllowCrossPlatform, &prefs.RequireUserVerification,
 		&prefs.BiometricOnlyEnabled, &prefs.ResidentKeyRequired,
 		&prefs.CreatedAt, &prefs.UpdatedAt,
 	)
-	if err != nil {
-		// Return defaults
+	if errors.Is(err, pgx.ErrNoRows) {
+		// This user has not set preferences. The defaults are the product's,
+		// and they are the stricter reading in each case.
 		return &BiometricPreferences{
 			UserID:                         userID,
 			PlatformAuthenticatorPreferred: true,
@@ -66,17 +82,40 @@ func (s *Service) GetBiometricPreferences(ctx context.Context, userID string) (*
 			ResidentKeyRequired:            false,
 		}, nil
 	}
+	if err != nil {
+		return nil, err
+	}
 
 	return &prefs, nil
 }
 
-// UpdateBiometricPreferences updates user's biometric preferences
+// UpdateBiometricPreferences updates user's biometric preferences.
+//
+// The org term is what stops one tenant rewriting another user's authenticator
+// requirements — turning off "user verification required", or switching an
+// account to biometric-only. EnableBiometricOnly already resolved the tenant to
+// count the user's WebAuthn credentials before flipping that flag; the write it
+// guarded named no organization at all.
 func (s *Service) UpdateBiometricPreferences(ctx context.Context, userID string, prefs *BiometricPreferences) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return fmt.Errorf("organization context required: %w", err)
+	}
+
+	// Refuse a target outside the caller's tenant rather than writing for it.
+	// Without this the INSERT branch below would create a preferences row in
+	// the caller's organization keyed on somebody else's user id.
+	var one int
+	if err := s.db.Pool.QueryRow(ctx,
+		"SELECT 1 FROM users WHERE id = $1 AND org_id = $2", userID, org.ID).Scan(&one); err != nil {
+		return fmt.Errorf("user is not in this organization")
+	}
+
 	// Check if exists
 	var existing string
-	err := s.db.Pool.QueryRow(ctx,
-		"SELECT id FROM biometric_preferences WHERE user_id = $1",
-		userID,
+	err = s.db.Pool.QueryRow(ctx,
+		"SELECT id FROM biometric_preferences WHERE user_id = $1 AND org_id = $2",
+		userID, org.ID,
 	).Scan(&existing)
 
 	if err == nil {
@@ -86,24 +125,30 @@ func (s *Service) UpdateBiometricPreferences(ctx context.Context, userID string,
 			SET platform_authenticator_preferred = $1, allow_cross_platform = $2,
 				require_user_verification = $3, biometric_only_enabled = $4,
 				resident_key_required = $5, updated_at = NOW()
-			WHERE user_id = $6`,
+			WHERE user_id = $6 AND org_id = $7`,
 			prefs.PlatformAuthenticatorPreferred, prefs.AllowCrossPlatform,
 			prefs.RequireUserVerification, prefs.BiometricOnlyEnabled,
-			prefs.ResidentKeyRequired, userID,
+			prefs.ResidentKeyRequired, userID, org.ID,
 		)
-	} else {
-		// Insert
-		_, err = s.db.Pool.Exec(ctx,
-			`INSERT INTO biometric_preferences (
-				id, user_id, platform_authenticator_preferred, allow_cross_platform,
-				require_user_verification, biometric_only_enabled, resident_key_required,
-				created_at, updated_at
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())`,
-			uuid.New().String(), userID, prefs.PlatformAuthenticatorPreferred,
-			prefs.AllowCrossPlatform, prefs.RequireUserVerification,
-			prefs.BiometricOnlyEnabled, prefs.ResidentKeyRequired,
-		)
+		return err
 	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		// A real read failure is not "no row yet": answering it with an INSERT
+		// would fail on the unique key and report a save that did not happen.
+		return err
+	}
+
+	// Insert
+	_, err = s.db.Pool.Exec(ctx,
+		`INSERT INTO biometric_preferences (
+			id, user_id, platform_authenticator_preferred, allow_cross_platform,
+			require_user_verification, biometric_only_enabled, resident_key_required,
+			created_at, updated_at, org_id
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW(), $8)`,
+		uuid.New().String(), userID, prefs.PlatformAuthenticatorPreferred,
+		prefs.AllowCrossPlatform, prefs.RequireUserVerification,
+		prefs.BiometricOnlyEnabled, prefs.ResidentKeyRequired, org.ID,
+	)
 
 	return err
 }
@@ -130,21 +175,36 @@ func (s *Service) EnableBiometricOnly(ctx context.Context, userID string) error 
 		return &AuthError{Message: "user must have at least one WebAuthn credential registered"}
 	}
 
-	prefs, _ := s.GetBiometricPreferences(ctx, userID)
+	// The read can fail now that it distinguishes a missing row from a broken
+	// query; taking its error means a failed read no longer silently rewrites
+	// the user's other preferences to the defaults on the way past.
+	prefs, err := s.GetBiometricPreferences(ctx, userID)
+	if err != nil {
+		return err
+	}
 	prefs.BiometricOnlyEnabled = true
 	return s.UpdateBiometricPreferences(ctx, userID, prefs)
 }
 
 // DisableBiometricOnly disables biometric-only login
 func (s *Service) DisableBiometricOnly(ctx context.Context, userID string) error {
-	prefs, _ := s.GetBiometricPreferences(ctx, userID)
+	prefs, err := s.GetBiometricPreferences(ctx, userID)
+	if err != nil {
+		return err
+	}
 	prefs.BiometricOnlyEnabled = false
 	return s.UpdateBiometricPreferences(ctx, userID, prefs)
 }
 
 // GetWebAuthnOptions returns WebAuthn registration/authentication options based on biometric preferences
 func (s *Service) GetWebAuthnOptionsForUser(ctx context.Context, userID string) (map[string]interface{}, error) {
-	prefs, _ := s.GetBiometricPreferences(ctx, userID)
+	// These options tell the authenticator what to require. Building them from
+	// preferences that failed to load would relax user verification and the
+	// resident-key requirement for a reason the caller never sees.
+	prefs, err := s.GetBiometricPreferences(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
 
 	options := map[string]interface{}{
 		"authenticatorSelection": map[string]interface{}{
@@ -168,17 +228,34 @@ func (s *Service) GetWebAuthnOptionsForUser(ctx context.Context, userID string) 
 	return options, nil
 }
 
-// ListBiometricPolicies returns all biometric policies
+// ListBiometricPolicies returns this organization's biometric policies.
+//
+// This is not only the administrative list: GetApplicableBiometricPolicy calls
+// it and returns the FIRST policy that applies, and a policy naming no groups
+// and no roles applies to everyone. Without the org term any administrator on
+// the installation could author an untargeted rule that governed every user on
+// it, and `ORDER BY name` decided which one won — a control aimed by sort
+// order is aimed by whoever picks the earlier name. It can loosen as well as
+// tighten: allowed_authenticator_types defaults to both types, so a permissive
+// foreign policy sorting first replaced a restrictive local one.
 func (s *Service) ListBiometricPolicies(ctx context.Context) ([]BiometricPolicy, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("organization context required: %w", err)
+	}
+
 	query := `
-		SELECT id, name, description, enabled, applies_to_groups, applies_to_roles,
-			require_platform_authenticator, allowed_authenticator_types,
-			min_authenticator_level, created_at
+		SELECT id, name, COALESCE(description, ''), COALESCE(enabled, false),
+			COALESCE(applies_to_groups, '{}'), COALESCE(applies_to_roles, '{}'),
+			COALESCE(require_platform_authenticator, false),
+			COALESCE(allowed_authenticator_types, '{}'),
+			COALESCE(min_authenticator_level, 'any'), created_at
 		FROM biometric_policies
+		WHERE org_id = $1
 		ORDER BY name
 	`
 
-	rows, err := s.db.Pool.Query(ctx, query)
+	rows, err := s.db.Pool.Query(ctx, query, org.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -193,12 +270,15 @@ func (s *Service) ListBiometricPolicies(ctx context.Context) ([]BiometricPolicy,
 			&p.AllowedAuthenticatorTypes, &p.MinAuthenticatorLevel, &p.CreatedAt,
 		)
 		if err != nil {
-			continue
+			// Every nullable column above is now COALESCEd, so a scan error is
+			// a real fault rather than a NULL. Dropping the row silently would
+			// hide a rule from the list that decides which rule applies.
+			return nil, err
 		}
 		policies = append(policies, p)
 	}
 
-	return policies, nil
+	return policies, rows.Err()
 }
 
 // CreateBiometricPolicy creates a new biometric policy
@@ -212,20 +292,25 @@ func (s *Service) CreateBiometricPolicy(ctx context.Context, policy *BiometricPo
 		policy.MinAuthenticatorLevel = "any"
 	}
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("organization context required: %w", err)
+	}
+
 	query := `
 		INSERT INTO biometric_policies (
 			id, name, description, enabled, applies_to_groups, applies_to_roles,
 			require_platform_authenticator, allowed_authenticator_types,
-			min_authenticator_level, created_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+			min_authenticator_level, created_at, org_id
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), $10)
 		RETURNING created_at
 	`
 
-	err := s.db.Pool.QueryRow(ctx, query,
+	err = s.db.Pool.QueryRow(ctx, query,
 		policy.ID, policy.Name, policy.Description, policy.Enabled,
 		policy.AppliesToGroups, policy.AppliesToRoles,
 		policy.RequirePlatformAuthenticator, policy.AllowedAuthenticatorTypes,
-		policy.MinAuthenticatorLevel,
+		policy.MinAuthenticatorLevel, org.ID,
 	).Scan(&policy.CreatedAt)
 
 	if err != nil {
@@ -235,30 +320,62 @@ func (s *Service) CreateBiometricPolicy(ctx context.Context, policy *BiometricPo
 	return policy, nil
 }
 
-// UpdateBiometricPolicy updates a biometric policy
+// UpdateBiometricPolicy updates a biometric policy.
+//
+// The org term is what stops another tenant re-aiming the rule. Everything a
+// policy says is settable here — which authenticator types are allowed, whether
+// a platform authenticator is required, and which groups and roles it covers —
+// so without it a rule labelled "security keys only" could be rewritten to
+// allow anything and handed back to the administrator who owns it.
 func (s *Service) UpdateBiometricPolicy(ctx context.Context, policy *BiometricPolicy) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return fmt.Errorf("organization context required: %w", err)
+	}
+
 	query := `
 		UPDATE biometric_policies
 		SET name = $1, description = $2, enabled = $3, applies_to_groups = $4,
 			applies_to_roles = $5, require_platform_authenticator = $6,
 			allowed_authenticator_types = $7, min_authenticator_level = $8
-		WHERE id = $9
+		WHERE id = $9 AND org_id = $10
 	`
 
-	_, err := s.db.Pool.Exec(ctx, query,
+	tag, err := s.db.Pool.Exec(ctx, query,
 		policy.Name, policy.Description, policy.Enabled,
 		policy.AppliesToGroups, policy.AppliesToRoles,
 		policy.RequirePlatformAuthenticator, policy.AllowedAuthenticatorTypes,
-		policy.MinAuthenticatorLevel, policy.ID,
+		policy.MinAuthenticatorLevel, policy.ID, org.ID,
 	)
-
-	return err
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		// Saying "updated" when the predicate matched nothing is how a
+		// cross-tenant id looks like a successful edit from the console.
+		return fmt.Errorf("biometric policy not found in this organization")
+	}
+	return nil
 }
 
-// DeleteBiometricPolicy deletes a biometric policy
+// DeleteBiometricPolicy deletes a biometric policy.
+//
+// Deleting another organization's rule removes their control with nothing on
+// their console to say it has stopped existing.
 func (s *Service) DeleteBiometricPolicy(ctx context.Context, policyID string) error {
-	_, err := s.db.Pool.Exec(ctx, "DELETE FROM biometric_policies WHERE id = $1", policyID)
-	return err
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return fmt.Errorf("organization context required: %w", err)
+	}
+	tag, err := s.db.Pool.Exec(ctx,
+		"DELETE FROM biometric_policies WHERE id = $1 AND org_id = $2", policyID, org.ID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("biometric policy not found in this organization")
+	}
+	return nil
 }
 
 // GetApplicableBiometricPolicy returns the policy applicable to a user

@@ -21,6 +21,46 @@ to a spec that describes an eighth of a surface, a documented endpoint that
   the posture score was neither one tenant's nor the install's. All now carry
   `org_id` under FORCE RLS, with the install-wide unique keys re-scoped and an
   isolation test per handler file.
+- **One organization's biometric rule could decide another organization's
+  sign-in, and which rule won was decided alphabetically** (migration v158). A
+  biometric policy says which authenticator types are allowed, whether a
+  built-in authenticator (Face ID, Touch ID) is required, and which groups and
+  roles the rule covers. The record had no organization, and the code that finds
+  the rule for a user listed every rule on the installation, sorted them by
+  name, and took the first one that applied — where a rule naming no groups and
+  no roles applies to everyone. So any administrator anywhere could create an
+  untargeted rule that governed every user on the installation, and the winner
+  was whoever chose the earlier name. It could weaken as well as tighten: the
+  default rule allows both authenticator types, so a permissive rule sorting
+  first replaced a restrictive one and the check meant to refuse a roaming
+  security key accepted it. Rules are now per organization.
+
+  Administrators could also see, edit and delete each other's rules across
+  organizations — the list returned every organization's, including the group
+  identifiers and role names each rule targets — and a user's own biometric
+  preferences, including whether their account is sign-in-by-biometric-only and
+  whether the authenticator must verify the person, were readable and writable
+  by user identifier alone. All of those now carry the organization.
+
+  **Operators of installations with more than one organization should review
+  their biometric policies after upgrading.** Existing rules are assigned to the
+  oldest organization, because the records carry no information about who
+  created them; any other organization relying on a rule it did not author must
+  create its own.
+
+  Two more, found alongside. The passwordless settings page divided a count of
+  biometric-only accounts across the whole installation by a count of users in
+  one organization, so a small organization sharing an installation with a large
+  one saw a biometric adoption rate above 100%. And reading a user's biometric
+  preferences answered any failure — a database error, a permission problem —
+  with the built-in defaults and no error at all, which is indistinguishable
+  from "this person has not chosen any"; a failure is now reported as a failure.
+
+  Also recorded, and not yet fixed: nothing in the product consults a biometric
+  policy. No registration path and no sign-in path checks one, so the policy
+  page has always saved rules and constrained no enrolment. Giving those rules
+  an enforcement point is outstanding work rather than something this release
+  delivers.
 - **One password policy, one MFA requirement and one set of allowed sign-up
   domains for the whole installation; and a continuous-authentication engine
   that had never once run** (migration v157). The admin console's settings page

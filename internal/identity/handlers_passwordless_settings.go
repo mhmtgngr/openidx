@@ -169,10 +169,17 @@ func (s *Service) handleGetPasswordlessStats(c *gin.Context) {
 		qrLoginsToday = 0
 	}
 
-	// Count biometric-only users (handle table not existing gracefully)
+	// Count this organization's biometric-only users. Every other figure on
+	// this page carries AND org_id = $1 — magic links, QR logins, total users —
+	// and this one did not, so the numerator counted the whole installation
+	// while the denominator two blocks below counts one tenant. On a small
+	// tenant sharing an installation with a large one the adoption rate came
+	// out above 100%: not merely wrong but arithmetically impossible, printed
+	// beside figures that were correct.
 	var biometricOnlyUsers int
 	err = s.db.Pool.QueryRow(ctx,
-		"SELECT COUNT(*) FROM biometric_preferences WHERE biometric_only_enabled = true",
+		"SELECT COUNT(*) FROM biometric_preferences WHERE biometric_only_enabled = true AND org_id = $1",
+		org.ID,
 	).Scan(&biometricOnlyUsers)
 	if err != nil {
 		s.logger.Warn("failed to count biometric-only users", zap.Error(err))

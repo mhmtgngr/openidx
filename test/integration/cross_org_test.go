@@ -689,6 +689,21 @@ func TestRLSBeltTables(t *testing.T) {
 		// that POST /settings/validate-password answers from.
 		{"admin_console_settings", `INSERT INTO admin_console_settings (key, value, org_id)
 			VALUES ('tbelt-` + suffix + `', '{"password_policy":{"min_length":20}}'::jsonb, $1)`},
+
+		// v158 — the biometric preferences and the policies over them. The
+		// policy list had no tenant term and GetApplicableBiometricPolicy takes
+		// the FIRST row it returns, so ORDER BY name decided which
+		// organization's rule governed a login.
+		{"biometric_policies", `INSERT INTO biometric_policies
+			(name, enabled, allowed_authenticator_types, org_id)
+			VALUES ('tbelt-bio-` + suffix + `', true, ARRAY['platform'], $1)`},
+
+		{"biometric_preferences", `WITH u AS (
+			INSERT INTO users (username, email, enabled, org_id)
+			VALUES ('tbelt-bio-u-` + suffix + `','tbelt-bio-u-` + suffix + `@example.test',true,$1)
+			RETURNING id)
+			INSERT INTO biometric_preferences (user_id, biometric_only_enabled, org_id)
+			SELECT u.id, true, $1 FROM u`},
 	}
 
 	// One list, not two: the role is granted exactly the tables the cases probe.

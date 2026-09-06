@@ -77,10 +77,8 @@ var needsScoping = map[string]string{
 	"policy_recommendations": "recommendations naming affected users, roles and resources (v44)",
 
 	// MFA and credentials — the most sensitive per-user rows in the product.
-	"biometric_preferences": "per-user biometric settings",
-	"biometric_policies":    "org policy over authenticator types",
-	"user_identity_links":   "per-user external identity links",
-	"social_account_links":  "per-user social provider links",
+	"user_identity_links":  "per-user external identity links",
+	"social_account_links": "per-user social provider links",
 
 	// Lifecycle, governance and delegation.
 	"entitlement_metadata":     "risk level and owner per entitlement",

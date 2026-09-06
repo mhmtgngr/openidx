@@ -2689,6 +2689,91 @@ class this whole program exists for.
    and by `doctor.go` to check a path exists. Its `017` still creates
    `auth_contexts`. That is drift of the same family this programme names, and
    it belongs in its own change rather than a scoping batch.
+
+   **Batch 20 shipped (migration v158, `needsScoping` 22 → 20; registers 39 →
+   37): a control aimed by sort order.** A `biometric_policies` row says which
+   authenticator types are allowed, whether a platform authenticator (Face ID,
+   Touch ID) is required, and which groups and roles it covers. v54 created it
+   with no tenant column, and the list is the whole query:
+
+   ```sql
+   SELECT id, name, description, enabled, applies_to_groups, applies_to_roles,
+          require_platform_authenticator, allowed_authenticator_types,
+          min_authenticator_level, created_at
+   FROM biometric_policies
+   ORDER BY name
+   ```
+
+   `GetApplicableBiometricPolicy` calls that, walks the result, and returns the
+   **first** policy that applies — and a policy naming no groups and no roles
+   "applies to all" by the code's own comment. So on an installation with more
+   than one organization, any administrator creating an untargeted policy
+   governed every user on the installation, and **which one won was decided
+   alphabetically**. A control aimed by sort order is aimed by whoever picks the
+   earlier name.
+
+   The direction runs both ways. `allowed_authenticator_types` defaults to
+   `ARRAY['platform', 'cross-platform']`, so a permissive foreign policy sorting
+   before a restrictive local one *replaced* it, and the check meant to refuse a
+   roaming security key accepted one.
+
+   `GetApplicableBiometricPolicy` scopes everything else it reads. It resolves
+   `orgctx`, reads `group_memberships` with `AND org_id = $2` and the user's
+   roles with `AND org_id = $2` — both fixed in an earlier pass of this
+   programme, and both comments are still in place above them — and then matches
+   those tenant-scoped groups and roles against an install-wide list of rules.
+   That is v154's lifecycle shape exactly: the actions were scoped and the rule
+   that aims them was not.
+
+   **And nothing consults it.** `ValidateAuthenticatorForPolicy` is the only
+   caller of `GetApplicableBiometricPolicy` outside a test, and the tree
+   contains no caller of `ValidateAuthenticatorForPolicy` at all — no WebAuthn
+   registration path, no login path. So the four `/biometric/policies` routes
+   author rules, list them back, and constrain no enrolment. Fourth of its kind
+   after v155's `custom_claims_mappings`, v156's `developer_settings` and
+   v154's unscheduled lifecycle policies, and recorded here for the same
+   reason: giving a policy an enforcement point is a feature.
+
+   What is **not** hypothetical is the read and the writes. `GET
+   /biometric/policies` returned every organization's rules, including the group
+   UUIDs and role names each targets, which is a disclosure of another tenant's
+   directory structure; and `PUT` and `DELETE` addressed a policy by bare id, so
+   one administrator could rewrite or delete another organization's rule
+   outright.
+
+   **The preferences were read and written by bare `user_id`**, and the one
+   place that checked the tenant shows what was meant: `EnableBiometricOnly`
+   resolves `orgctx` and counts the user's WebAuthn credentials with
+   `AND org_id = $2` before flipping the flag, then calls
+   `GetBiometricPreferences` and `UpdateBiometricPreferences`, which named no
+   organization at all. The gate was scoped and the write it guards was not.
+
+   `GetBiometricPreferences` also returned the built-in defaults on **any**
+   error rather than only on "no row", so a connection failure, a permission
+   error, or a read of a belted table without `app.org_id` was indistinguishable
+   from "this user has not set preferences" and the caller got a nil error. With
+   the belt in place that stops being theoretical, so the two are now
+   distinguished — and its three callers, which all took the result with `_`,
+   now take the error too.
+
+   One arithmetic finding alongside: the passwordless settings page computed
+   `adoptionRate = biometricOnlyUsers / totalUsers`, where the denominator
+   carries `AND org_id = $1` and the numerator did not. Every other figure on
+   that page is scoped — magic links, QR logins, total users. **A small tenant
+   sharing an installation with a large one saw an adoption rate above 100%**:
+   not merely wrong but arithmetically impossible, printed beside figures that
+   were correct.
+
+   Proven on Postgres 16: five cases in `internal/identity`, and the red-proof
+   turned **ten assertions red** against neutralised predicates — org B's
+   alphabetically-earlier policy governing org A's user, a cross-platform
+   authenticator accepted for an organization that allows platform only, both
+   policy lists returning both tenants' rules, org B rewriting *and* deleting
+   org A's policy, org B reading org A's user's stored preferences, and org A
+   creating a preferences row for a user in org B. Whole `internal/identity`
+   suite green; `TestRLSBeltTables` **56/56**; v158 applied, rolled back to 157
+   and re-applied — the first rollback in this series that cannot fail on data,
+   because v54 gave these tables no install-wide key to restore.
 4. ✅ **OPA `deny` enforced** — *shipped.* — `internal/common/middleware/opa.go`: abort
    unless `Allow && len(Deny)==0`; `authz.rego:15-19`'s "any authenticated
    user may GET anything" removed; `policies/access_control.rego`
@@ -4317,7 +4402,7 @@ that holds it rather than by the commit that wrote it.
 |---|---|---|
 | 1 · journeys verified | ☐ | J1 ✅ the `smoke` and `first-run` jobs (P6.2); J2 ✅ `test/integration/{auth_flows,mfa_flow,passwordless}_test.go`; J3 ✅ `test/integration/enforced_posture_test.go` (P6.1); ☐ **J6 has no automated proof** — `e2e/access-reviews-flow.spec.ts` is still on the `hold` side of `e2e/suite.txt`; ☐ **J7 needs a leaver integration case**; J4/J5/J8 stay scripted operator drills (`tools/darkprobe`, `make dr-game-day`) to be filed under `docs/evidence/` (P8.4) |
 | 2 · enforced posture, legacy login gone | ◐ | code ✅ — the server-rendered login is deleted and `internal/oauth/routes_legacy_login_test.go` fails if any of it returns (P6.1); ops ☐ — rollout Task 16 is the operator's, on a live deployment |
-| 3 · every control enforces | ◐ | P5.1–5.11 ✅ (tenant isolation, the inverted orgscope lint, OPA `deny`, ABAC at both PEPs, the honest Apply/Remediate, SMS, multi-IdP, the fail-closed gate, `ValidateProduction`, the faked measurements); ◐ the P5.3b register programme — batch 1 (v140) belted fifteen tables and fixed `email_branding`'s cross-tenant read *and* write; batch 2 (v141) scoped the compliance record and fixed an archive worker that was silently producing empty archives; batches 4–10 (v142–v148) took the unified audit stream, the sign-in tables, the SAML surface, the password-substitute credentials, the four second factors the belt had skipped, the breach response record — where a containment reported success while quarantining nobody — the temporary vendor access surface, where v71's written-down reason for skipping the belt had expired three batches earlier, the legal holds — the first batch whose defect destroys rather than discloses, since releasing a hold is what lets the retention sweep delete the recording — the remote support sessions, whose list ran with no `WHERE` clause at all over a nullable tenant column the belt would have hidden rather than scoped, and the PAM broker's connection registry — where the row that decides which vault credential is injected carried no tenant, so another tenant's route id bought a live session onto their machine with their password, and the four-eyes gates could not help because both are satisfiable inside the caller's own tenant — delegated administration, read by the enforcement point itself under a deliberate bypass with a tenant-scoping comment copied from the query above it and a cache that handed one person's delegation to everyone sharing their roles, and the login risk policies, where one tenant's row could replace every tenant's allowed second factors or deny every login outright, and the joiner/mover/leaver automation, where every action the rules take was already scoped but the rules themselves were not, so another tenant could rewrite a policy labelled "disable after 90 days" into "delete after 0" and leave its owner running it, and the identity federation configuration, where the admin list wrote its tenant condition into a LEFT JOIN's ON clause and so filtered nothing while the login path's inner join twelve functions away did — and where two install-wide UNIQUE keys meant one organization per email domain and one per issuer URL for the entire installation, and the developer portal, whose settings row was keyed on the literal 'global' and unique across the installation so the last administrator to press Save chose the API-key limits, CORS origins and rate limit for every organization — and whose OAuth playground handed out a live flow's PKCE verifier by id alone, with no role check at all, and the admin console's own settings, where `key` was the PRIMARY KEY so the installation held four settings rows in total and one administrator's password policy, MFA requirement and allowed sign-up domains were every tenant's — the sixth install-wide key and the first that a control actually enforces, since `validate-password` answers from it — alongside the continuous-auth engine, whose only input table nothing had ever written a row to, so its three routes had only ever returned 500 and are now pointed at the belted `sessions` and `session_risks` the product really writes; **39** still ride `needsScoping`/`needsBelt` waivers |
+| 3 · every control enforces | ◐ | P5.1–5.11 ✅ (tenant isolation, the inverted orgscope lint, OPA `deny`, ABAC at both PEPs, the honest Apply/Remediate, SMS, multi-IdP, the fail-closed gate, `ValidateProduction`, the faked measurements); ◐ the P5.3b register programme — batch 1 (v140) belted fifteen tables and fixed `email_branding`'s cross-tenant read *and* write; batch 2 (v141) scoped the compliance record and fixed an archive worker that was silently producing empty archives; batches 4–10 (v142–v148) took the unified audit stream, the sign-in tables, the SAML surface, the password-substitute credentials, the four second factors the belt had skipped, the breach response record — where a containment reported success while quarantining nobody — the temporary vendor access surface, where v71's written-down reason for skipping the belt had expired three batches earlier, the legal holds — the first batch whose defect destroys rather than discloses, since releasing a hold is what lets the retention sweep delete the recording — the remote support sessions, whose list ran with no `WHERE` clause at all over a nullable tenant column the belt would have hidden rather than scoped, and the PAM broker's connection registry — where the row that decides which vault credential is injected carried no tenant, so another tenant's route id bought a live session onto their machine with their password, and the four-eyes gates could not help because both are satisfiable inside the caller's own tenant — delegated administration, read by the enforcement point itself under a deliberate bypass with a tenant-scoping comment copied from the query above it and a cache that handed one person's delegation to everyone sharing their roles, and the login risk policies, where one tenant's row could replace every tenant's allowed second factors or deny every login outright, and the joiner/mover/leaver automation, where every action the rules take was already scoped but the rules themselves were not, so another tenant could rewrite a policy labelled "disable after 90 days" into "delete after 0" and leave its owner running it, and the identity federation configuration, where the admin list wrote its tenant condition into a LEFT JOIN's ON clause and so filtered nothing while the login path's inner join twelve functions away did — and where two install-wide UNIQUE keys meant one organization per email domain and one per issuer URL for the entire installation, and the developer portal, whose settings row was keyed on the literal 'global' and unique across the installation so the last administrator to press Save chose the API-key limits, CORS origins and rate limit for every organization — and whose OAuth playground handed out a live flow's PKCE verifier by id alone, with no role check at all, and the admin console's own settings, where `key` was the PRIMARY KEY so the installation held four settings rows in total and one administrator's password policy, MFA requirement and allowed sign-up domains were every tenant's — the sixth install-wide key and the first that a control actually enforces, since `validate-password` answers from it — alongside the continuous-auth engine, whose only input table nothing had ever written a row to, so its three routes had only ever returned 500 and are now pointed at the belted `sessions` and `session_risks` the product really writes, and the biometric policies, where the list feeding the applicable-policy decision had no tenant term and `ORDER BY name` therefore decided which organization's rule governed a login -- a control aimed by sort order -- while the per-user preferences that say whether an account is biometric-only were read and written by bare user_id; **37** still ride `needsScoping`/`needsBelt` waivers |
 | 4 · first run / first login / four pillars from the docs | ✅ | first run ✅ the `smoke` and `first-run` jobs (P6.2); first login ✅ one authoritative credential in `GETTING-STARTED.md`, with the `USER_GUIDE.md` and `CONTRIBUTING.md` copies pointing at it rather than repeating it (P8.1); four pillars ✅ `guide/governance.md` was the missing one (P8.1) |
 | 5 · one story + auditor artifacts | ✅ | threat model and control mapping exist; docs sweep 3 ✅ and the docs-drift guard ✅ (`check-docs-drift.sh`, enforced in CI, so a document cannot cite a path that is not there); `docs/evidence/` ✅ (P8.4) |
 | 6 · releases current, signed, Helm proven | ◐ | signing ✅ `release.yml` (cosign) and, since P7.5, an Android artifact whose name tracks the key that signed it; Helm ✅ the `kind` install job (P6.4); versions ✅ `VERSION` + `check-version-sync.sh` (P8.3); CHANGELOG ✅ every release attributed from the commit that wrote its entry, 61 compare links that resolve (P8.2); ☐ v1.34.0 is not cut — the maintainer's |
