@@ -151,10 +151,23 @@ func main() {
 	router.Use(api.StandardVersionMiddleware())
 
 	// Resolve the tenant for every request and attach it to the request
-	// context (v1.7.0 #2). Resolution at this point in the chain runs
-	// before route-level auth, so it sees the gateway-set X-Org-Slug
-	// header or falls back to the default org; the JWT-claim path
-	// activates when resolution moves behind auth later in v1.7.0.
+	// context (v1.7.0 #2). Mounted globally, this runs BEFORE route-level
+	// auth, so it resolves from the gateway-set X-Org-Slug header or the
+	// default-org fallback and nothing else: the JWT-claim path and the
+	// platform-admin X-Org-ID path both read roles/claims out of the gin
+	// context, which auth has not filled in yet.
+	//
+	// The predicate and the audit hook are still wired, deliberately. They
+	// cost nothing while the ordering makes them unreachable, and if this
+	// mount ever moves behind auth they are what keeps a cross-org access
+	// from happening without the mandatory audit row. Logger reports the
+	// mismatch if a caller actually sends X-Org-ID here, so it stops being
+	// an invisible no-op — it was one for a full release.
+	//
+	// cmd/admin-api mounts the same middleware on its authenticated
+	// /api/v1 group; that is where the platform-admin path is live, and
+	// test/integration/cross_org_test.go asserts both sides.
+	//
 	// DefaultOrgFallback keeps single-tenant installs on the default
 	// org — the final v1.7.0 PR flips it off.
 	orgLookup := organization.NewOrgLookup(organization.NewService(db, redis, cfg, log))
@@ -163,6 +176,7 @@ func main() {
 		DefaultOrgID:           cfg.DefaultOrgID,
 		PlatformAdminPredicate: auth.SuperAdminPredicate,
 		OnPlatformCrossOrg:     audit.CrossOrgAuditor(db.Pool, log),
+		Logger:                 log,
 	}))
 
 	// Metrics endpoint

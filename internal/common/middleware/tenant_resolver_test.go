@@ -6,10 +6,15 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
+
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -18,6 +23,32 @@ const (
 	acmeOrgID    = "11111111-2222-3333-4444-555555555555"
 	bigcorpOrgID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 )
+
+// capturedLogs collects what the resolver logged, so a test can assert on the
+// warning as well as on the resolution.
+type capturedLogs struct{ entries []observer.LoggedEntry }
+
+func (c *capturedLogs) count(substr string) int {
+	n := 0
+	for _, e := range c.entries {
+		if strings.Contains(e.Message, substr) {
+			n++
+		}
+	}
+	return n
+}
+
+// recordingLogger returns a zap logger writing into an observer, plus a handle
+// that reads it back at assertion time.
+func recordingLogger() (*capturedLogs, *zap.Logger) {
+	core, recorded := observer.New(zapcore.WarnLevel)
+	logs := &capturedLogs{}
+	logger := zap.New(core, zap.Hooks(func(zapcore.Entry) error {
+		logs.entries = recorded.All()
+		return nil
+	}))
+	return logs, logger
+}
 
 // fakeLookup is a deterministic OrgLookup for tests. It panics if a
 // call to ByID or BySlug surprises us (unknown values) instead of
@@ -532,6 +563,124 @@ func TestTenantResolver_platformAdmin_crossOrg_firesAudit(t *testing.T) {
 	}
 	if hookCalls != 1 || hookTarget.ID != acmeOrgID {
 		t.Fatalf("audit hook calls=%d target=%+v, want 1 call with acme", hookCalls, hookTarget)
+	}
+}
+
+// TestTenantResolver_mountedBeforeAuth_cannotHonorXOrgID pins the ordering the
+// whole platform-admin path depends on, and the warning that makes a violation
+// visible.
+//
+// Six of the seven services that wire OnPlatformCrossOrg mount this middleware
+// globally with router.Use, ahead of route-level auth. The predicate reads roles
+// out of the gin context, auth has not put them there yet, so it answers false
+// for every caller and the X-Org-ID branch is unreachable. Nothing about that is
+// wrong — the fail-safe direction is exactly right — but for a full release it
+// was also invisible: a resolver that cannot answer and one that answers "not a
+// platform admin" both land on the default org.
+//
+// So: still no crossing, still no audit hook (the security property), and now a
+// log line naming the cause when a caller actually tries.
+func TestTenantResolver_mountedBeforeAuth_cannotHonorXOrgID(t *testing.T) {
+	logs, logger := recordingLogger()
+	var hookCalls int
+	cfg := TenantResolverConfig{
+		DefaultOrgFallback: true,
+		DefaultOrgID:       defaultOrgID,
+		// The real predicate, not a stub: this is the shape identity-service
+		// has, where nothing has populated "roles" on the context.
+		PlatformAdminPredicate: func(c *gin.Context) bool {
+			roles, ok := c.Get("roles")
+			if !ok {
+				return false
+			}
+			for _, r := range roles.([]string) {
+				if r == "super_admin" {
+					return true
+				}
+			}
+			return false
+		},
+		OnPlatformCrossOrg: func(_ *gin.Context, _ orgctx.Org) { hookCalls++ },
+		Logger:             logger,
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/identity/users/x", nil)
+	req.Header.Set("X-Org-ID", acmeOrgID)
+
+	var got capturedRequest
+	rec := runResolver(t, newFakeLookup(), cfg, &got, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (falls through to the default org)", rec.Code)
+	}
+	if got.org.ID != defaultOrgID {
+		t.Fatalf("resolved org = %+v, want the default org: X-Org-ID must not cross when auth has not run", got.org)
+	}
+	if got.isPlatformAdmin {
+		t.Fatal("platform-admin marker set with no roles in context")
+	}
+	if hookCalls != 0 {
+		t.Fatalf("audit hook fired %d times, want 0 — nothing crossed", hookCalls)
+	}
+	if n := logs.count("X-Org-ID ignored"); n != 1 {
+		t.Fatalf("warnings about the unanswerable header = %d, want 1; the dead branch is silent again", n)
+	}
+}
+
+// TestTenantResolver_refusedPlatformAdmin_doesNotWarn is the other half: a
+// caller who simply is not a platform admin is a decision, not an inability, and
+// must not produce a warning. A guard that fires on ordinary refusals is one an
+// operator filters out, and then it is not a guard.
+func TestTenantResolver_refusedPlatformAdmin_doesNotWarn(t *testing.T) {
+	logs, logger := recordingLogger()
+	cfg := TenantResolverConfig{
+		DefaultOrgFallback:     true,
+		DefaultOrgID:           defaultOrgID,
+		PlatformAdminPredicate: func(*gin.Context) bool { return false },
+		Logger:                 logger,
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/whatever", nil)
+	req.Header.Set("X-Org-ID", acmeOrgID)
+
+	var got capturedRequest
+	// Auth ran: roles are on the context, they just do not include super_admin.
+	rec := runResolver(t, newFakeLookup(), cfg, &got, req, func(c *gin.Context) {
+		c.Set("roles", []string{"admin"})
+	})
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if got.org.ID != defaultOrgID {
+		t.Fatalf("resolved org = %+v, want the default org", got.org)
+	}
+	if n := logs.count("X-Org-ID ignored"); n != 0 {
+		t.Fatalf("warnings = %d, want 0: an ordinary refusal is not a misconfiguration", n)
+	}
+}
+
+// TestTenantResolver_noXOrgIDHeader_doesNotWarn keeps the warning off the path
+// every ordinary request takes. Without this the six services above would log it
+// on every single call.
+func TestTenantResolver_noXOrgIDHeader_doesNotWarn(t *testing.T) {
+	logs, logger := recordingLogger()
+	cfg := TenantResolverConfig{
+		DefaultOrgFallback:     true,
+		DefaultOrgID:           defaultOrgID,
+		PlatformAdminPredicate: func(*gin.Context) bool { return false },
+		Logger:                 logger,
+	}
+
+	var got capturedRequest
+	rec := runResolver(t, newFakeLookup(), cfg, &got,
+		httptest.NewRequest(http.MethodGet, "/api/v1/whatever", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if n := logs.count("X-Org-ID ignored"); n != 0 {
+		t.Fatalf("warnings = %d on a request that never asked to cross, want 0", n)
 	}
 }
 

@@ -32,6 +32,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `super_admin` role -- v134 grants a permission to one and matches nothing --
   so the fixture creates and removes it.
 
+- **A resolver that could not answer looked exactly like one that answered
+  "no".** `TenantResolver`'s documented precedence promises four steps, but
+  steps 2 (JWT `org_id` claim) and 3 (platform-admin `X-Org-ID`) read the gin
+  context, so they exist only where the middleware is mounted after the auth
+  middleware that fills it. Six services mount it globally with `router.Use`,
+  ahead of route-level auth; only `cmd/admin-api` mounts it on an authenticated
+  group. On the six, every request silently lands on the default org whether the
+  caller is a platform admin or not, and that stayed unnoticed for a release
+  because both outcomes look identical from outside. The doc comment and all
+  seven wiring sites now say which they are, and a new `Logger` field reports the
+  mismatch -- once, at the moment a caller actually sends `X-Org-ID` to a
+  resolver that cannot act on it. Deliberately narrow: a caller who simply is not
+  a platform admin has roles in context and logs nothing, because a warning on
+  ordinary refusals is one an operator filters out. Nothing about the resolution
+  changes; the fail-safe direction was already right, it was just invisible.
+
 - **The gateway's route table had no test, behind a reason that was untrue.**
   `TestRegisterServiceRoutes` skipped with "route conflicts in the routes
   package"; `registerServiceRoutes` registers 63 routes on a fresh engine

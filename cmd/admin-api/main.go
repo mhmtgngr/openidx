@@ -304,13 +304,19 @@ func main() {
 	// Resolve the tenant for every request and attach it to the request
 	// context (v1.7.0 #2). Group-level and after Auth, so unlike the
 	// other services the JWT org_id claim path is live here, not just
-	// X-Org-Slug. DefaultOrgFallback keeps single-tenant installs on
-	// the default org — the final v1.7.0 PR flips it off.
+	// X-Org-Slug — and so is the platform-admin X-Org-ID path, which
+	// makes this the only service where a super_admin can cross a tenant
+	// boundary and where CrossOrgAuditor's mandatory row is written.
+	// test/integration/cross_org_test.go asserts that, and asserts a
+	// plain admin cannot. Keep this mount behind auth.
+	// DefaultOrgFallback keeps single-tenant installs on the default
+	// org — the final v1.7.0 PR flips it off.
 	v1.Use(middleware.TenantResolver(organization.NewOrgLookup(orgService), middleware.TenantResolverConfig{
 		DefaultOrgFallback:     cfg.DefaultOrgFallback,
 		DefaultOrgID:           cfg.DefaultOrgID,
 		PlatformAdminPredicate: auth.SuperAdminPredicate,
 		OnPlatformCrossOrg:     audit.CrossOrgAuditor(db.Pool, log),
+		Logger:                 log,
 	}))
 
 	// OPA authorization (opt-in via ENABLE_OPA_AUTHZ)
