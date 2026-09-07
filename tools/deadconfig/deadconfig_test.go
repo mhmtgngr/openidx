@@ -125,6 +125,45 @@ func TestTheRegisterMatchesTheTree(t *testing.T) {
 	}
 }
 
+// The mirror census, over the real tree: no settings table in the documentation
+// may name an environment variable nothing binds. This is the direction an
+// operator meets first — they read the page, set what it offers, and nothing
+// happens — and the page carried 63 such rows, including the four OAUTH_*_TTL,
+// the five PASSWORD_* and one misspelled MFA_WEBARUTHN_ENABLED, which is the
+// clearest evidence that nobody had ever tried it.
+func TestNoDocumentedSettingIsBoundByNothing(t *testing.T) {
+	if testing.Short() {
+		t.Skip("loads and type-checks the whole module")
+	}
+	declared, _, err := analyze([]string{"../../..."})
+	if err != nil {
+		t.Fatalf("analyze: %v", err)
+	}
+	root = "../.."
+	t.Cleanup(func() { root = "." })
+	phantom, err := documentedButUnbound(declared)
+	if err != nil {
+		t.Fatalf("documentedButUnbound: %v", err)
+	}
+	if documentedCount == 0 {
+		t.Fatal("no documented settings found; the scan read no settings tables and would pass vacuously")
+	}
+	for _, p := range phantom {
+		t.Errorf("%s:%d documents %s and nothing in the product binds it: %s",
+			p.File, p.Line, p.Name, strings.TrimSpace(p.Row))
+	}
+}
+
+// The register of variables that belong to something else must stay small and
+// must stay explained: an entry with no reason is a name someone waved through.
+func TestEveryExternalVariableSaysWhoseItIs(t *testing.T) {
+	for name, reason := range knownExternal {
+		if len(reason) < 40 {
+			t.Errorf("knownExternal[%q] = %q — too short to say whose variable it is", name, reason)
+		}
+	}
+}
+
 func keys(fs []field) []string {
 	out := make([]string, 0, len(fs))
 	for _, f := range fs {

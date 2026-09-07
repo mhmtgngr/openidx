@@ -5921,6 +5921,15 @@ not a waiver: the field, its default and its binding go, and the name stays
 there so an operator who still sets it is told at startup what to set instead.
 The register is empty and pinned at zero.
 
+**The same gate runs the mirror**, which is the direction an operator meets
+first: a settings table in the documentation naming a variable nothing binds.
+The published Configuration Reference had 63 of its 88 rows in that state —
+`PASSWORD_MIN_LENGTH`, the four `OAUTH_*_TTL`, `MAX_SESSIONS_PER_USER`,
+`RATE_LIMIT_RPS`, `CSRF_SECRET` — and one, `MFA_WEBARUTHN_ENABLED`, was
+misspelled, which is the clearest evidence available that nobody had ever tried
+it. The page is rewritten from the bindings, with a section naming where the
+settings that are real but not environment variables actually live.
+
 **The worst instance was a secret, and it inverted an incident-response
 procedure.** `JWT_SECRET` had a field, a binding, a line in the generator, a
 `${JWT_SECRET:?required}` in both compose files, a Kubernetes secret key, a

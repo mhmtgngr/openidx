@@ -62,9 +62,11 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -77,6 +79,14 @@ import (
 // report every field — a gate that fails everything is as useless as one that
 // fails nothing, and this one would have looked plausible while doing it.
 var defaultPatterns = []string{"./..."}
+
+// root is the directory the non-Go surfaces are read from: the shipped config
+// files, the documentation, the console. The command runs from the repository
+// root; the tests set it, because `go test` runs from the package directory and
+// a relative path that quietly reads nothing is how a census stops censusing.
+var root = "."
+
+func at(parts ...string) string { return filepath.Join(append([]string{root}, parts...)...) }
 
 // field is one operator-settable configuration field.
 type field struct {
@@ -94,7 +104,7 @@ type field struct {
 }
 
 func main() {
-	failOnFindings := flag.Bool("fail", false, "exit 1 on a field nothing reads")
+	failOnFindings := flag.Bool("fail", false, "exit 1 on a field nothing reads or a documented setting nothing binds")
 	census := flag.Bool("census", false, "print every settable field and whether anything reads it")
 	flag.Parse()
 
@@ -157,7 +167,20 @@ func main() {
 		fmt.Printf("\nSTALE %s — registered as unread, and something reads it now. Delete its line in tools/deadconfig/known.go.\n", key)
 	}
 
-	if *failOnFindings && (len(unregistered) > 0 || len(stale) > 0) {
+	phantom, err := documentedButUnbound(declared)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "deadconfig: %v\n", err)
+		os.Exit(2)
+	}
+	fmt.Printf("deadconfig: %d documented settings, %d of them bound by nothing\n",
+		documentedCount, len(phantom))
+	for _, p := range phantom {
+		fmt.Printf("\nDOC  %s\n", p.Name)
+		fmt.Printf("     %s:%d\n", p.File, p.Line)
+		fmt.Printf("     %s\n", strings.TrimSpace(p.Row))
+	}
+
+	if *failOnFindings && (len(unregistered) > 0 || len(stale) > 0 || len(phantom) > 0) {
 		os.Exit(1)
 	}
 }
@@ -362,11 +385,12 @@ func shortPkg(path string) string {
 // switched off.
 func settableSurfaces(f field) []string {
 	var out []string
-	for _, src := range []string{
+	for _, rel := range []string{
 		"internal/common/config/config.go",
 		"internal/gateway/config.go",
 		"internal/sms/service.go",
 	} {
+		src := at(rel)
 		body, err := os.ReadFile(src)
 		if err != nil {
 			continue
@@ -387,7 +411,7 @@ func settableSurfaces(f field) []string {
 	// A shipped config file nests, so the line carries the leaf under its
 	// parent's block. Tracking the enclosing top-level block is what separates
 	// push_mfa's `enabled:` from sms's, tls's and adaptive_mfa's.
-	files, _ := filepath.Glob("configs/*.yaml")
+	files, _ := filepath.Glob(at("configs", "*.yaml"))
 	for _, name := range files {
 		body, err := os.ReadFile(name)
 		if err != nil {
@@ -425,4 +449,184 @@ func printCensus(declared []field, read map[token.Pos]bool) {
 		}
 		fmt.Printf("%-6s %-70s %s\n", status, f.Key, f.Full)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// The mirror census: a setting the documentation offers that nothing binds.
+//
+// The half above finds a field an operator can set that the code never reads.
+// This half finds the other direction, and it is the one an operator meets
+// first: a row in a settings table naming an environment variable the product
+// has no binding for. They set it, nothing changes, and nothing tells them --
+// the same defect, arriving through the documentation rather than the struct.
+//
+// The docs are the surface, so they are scanned as a surface: any table row
+// whose first cell is a backticked ALL_CAPS name is a row that says "this is a
+// setting you can set". The bound set is derived -- the environment-variable
+// map, every os.Getenv/os.LookupEnv literal in the tree, and viper's own
+// OPENIDX_<KEY> spelling of every key a mapstructure field defines.
+//
+// knownExternal is the one written list, and it is written because the set it
+// holds genuinely is not ours: variables belonging to GitHub Actions, Docker,
+// HashiCorp Vault, the Android toolchain and so on. Each carries whose it is.
+// ---------------------------------------------------------------------------
+
+// docRow is one documented setting.
+type docRow struct {
+	Name string
+	File string
+	Line int
+	Row  string
+}
+
+// documentedCount is how many rows the last scan looked at, so the summary can
+// say what the finding count is out of.
+var documentedCount int
+
+var settingRow = regexp.MustCompile("^\\|\\s*`([A-Z][A-Z0-9_]{2,})`\\s*\\|")
+
+// settingsHeader is the header row of a table of settings: the column is named
+// Variable, Env, Setting or Knob somewhere in this repository's docs.
+var settingsHeader = regexp.MustCompile(`(?i)^\|[^|]*\b(variable|env|setting|knob)s?\b`)
+
+// documentedButUnbound returns the documented settings nothing binds.
+func documentedButUnbound(declared []field) ([]docRow, error) {
+	bound, err := boundEnvNames(declared)
+	if err != nil {
+		return nil, err
+	}
+	if len(bound) == 0 {
+		return nil, fmt.Errorf("no environment variables found in the tree; the scan found nothing to compare against")
+	}
+
+	var docs []string
+	err = filepath.WalkDir(at("docs"), func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() && strings.HasSuffix(path, ".md") {
+			docs = append(docs, path)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("walk docs: %w", err)
+	}
+	docs = append(docs, at("README.md"))
+
+	documentedCount = 0
+	var out []docRow
+	for _, path := range docs {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		inSettingsTable := false
+		for i, line := range strings.Split(string(body), "\n") {
+			// A settings table is one whose header says so. Without this the
+			// scan reads `| `GET` | /api/v1/... |` out of an endpoint table as a
+			// setting named GET -- an ALL_CAPS name in a backticked first cell is
+			// the shape of both.
+			if !strings.HasPrefix(strings.TrimSpace(line), "|") {
+				inSettingsTable = false
+				continue
+			}
+			if settingsHeader.MatchString(line) {
+				inSettingsTable = true
+				continue
+			}
+			if !inSettingsTable {
+				continue
+			}
+			m := settingRow.FindStringSubmatch(line)
+			if m == nil {
+				continue
+			}
+			name := m[1]
+			documentedCount++
+			if bound[name] || knownExternal[name] != "" {
+				continue
+			}
+			out = append(out, docRow{Name: name, File: path, Line: i + 1, Row: line})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Name != out[j].Name {
+			return out[i].Name < out[j].Name
+		}
+		return out[i].File < out[j].File
+	})
+	return out, nil
+}
+
+var envMapEntry = regexp.MustCompile(`"[a-z0-9_.]+":\s*"([A-Z][A-Z0-9_]*)"`)
+var getenvLiteral = regexp.MustCompile(`os\.(?:Getenv|LookupEnv)\("([A-Z][A-Z0-9_]*)"\)`)
+
+// boundEnvNames is every environment variable this product actually reads.
+func boundEnvNames(declared []field) (map[string]bool, error) {
+	bound := map[string]bool{}
+
+	// Viper's AutomaticEnv with the OPENIDX prefix makes OPENIDX_<KEY> a name
+	// for every key a mapstructure field defines, whether or not the map below
+	// gives it a second, unprefixed spelling.
+	replacer := strings.NewReplacer(".", "_", "-", "_")
+	for _, f := range declared {
+		bound["OPENIDX_"+strings.ToUpper(replacer.Replace(f.Full))] = true
+	}
+
+	// A retired setting is bound by nothing on purpose, and a settings table
+	// that still offers one is the defect retired.go exists to prevent -- so
+	// retired names are deliberately NOT added here.
+
+	// The admin console is a reader too: Vite substitutes import.meta.env.VITE_*
+	// at build time, so a VITE_ name the console consults is a setting an
+	// operator really can set, and derived here rather than listed.
+	consoleEnv := regexp.MustCompile(`import\.meta\.env\.(VITE_[A-Z0-9_]+)`)
+	if err := filepath.WalkDir(at("web", "admin-console", "src"), func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		body, rerr := os.ReadFile(path)
+		if rerr != nil {
+			return nil
+		}
+		for _, m := range consoleEnv.FindAllStringSubmatch(string(body), -1) {
+			bound[m[1]] = true
+		}
+		return nil
+	}); err != nil {
+		return nil, fmt.Errorf("walk the console: %w", err)
+	}
+
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			switch d.Name() {
+			case ".git", "node_modules", "vendor", "web", "client", "testdata":
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		body, rerr := os.ReadFile(path)
+		if rerr != nil {
+			return nil
+		}
+		text := string(body)
+		for _, m := range envMapEntry.FindAllStringSubmatch(text, -1) {
+			bound[m[1]] = true
+		}
+		for _, m := range getenvLiteral.FindAllStringSubmatch(text, -1) {
+			bound[m[1]] = true
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("walk the tree: %w", err)
+	}
+	return bound, nil
 }

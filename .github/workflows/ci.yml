@@ -1452,15 +1452,24 @@ jobs:
           exit $rc
 
   # deadconfig holds the settings an operator can set next to the settings the
-  # code reads. A field with a mapstructure tag, a default and a line in a
-  # shipped config file, that nothing consults, is a switch the operator flips
-  # and the product ignores -- ENABLE_MFA=false got you MFA, PUSH_MFA_ENABLED=false
-  # got you push MFA, and SMS_OTP_LENGTH=8 got you six-digit codes.
+  # code reads, in both directions.
   #
-  # Nothing else here can see it. The field parses, so the compiler is happy; the
-  # viper default makes it non-zero, so no empty-value check fires; the docs
-  # describe it, which is prose; and nothing fails at runtime, because the
-  # product does what it did before.
+  # A field with a mapstructure tag, a default and a line in a shipped config
+  # file, that nothing consults, is a switch the operator flips and the product
+  # ignores -- ENABLE_MFA=false got you MFA, PUSH_MFA_ENABLED=false got you push
+  # MFA, SMS_OTP_LENGTH=8 got you six-digit codes, and JWT_SECRET was a required
+  # production secret that signed nothing.
+  #
+  # The mirror is the one an operator meets first: a settings table in the
+  # documentation naming a variable nothing binds. The published configuration
+  # reference carried 63 of them -- PASSWORD_MIN_LENGTH, the four OAUTH_*_TTL,
+  # RATE_LIMIT_RPS, MAX_SESSIONS_PER_USER -- and one was misspelled, which is the
+  # clearest evidence that nobody had ever tried it.
+  #
+  # Nothing else here can see either. The field parses, so the compiler is happy;
+  # the viper default makes it non-zero, so no empty-value check fires; the docs
+  # are prose; and nothing fails at runtime, because the product does what it did
+  # before.
   deadconfig:
     name: Unread-config lint
     runs-on: ubuntu-latest
@@ -1492,7 +1501,7 @@ jobs:
             echo "## deadconfig — settings nothing reads"
             echo
             if [ "$rc" -ne 0 ]; then
-              echo "❌ **Gate failed.** A NEW finding is a field an operator can set that no production code reads: they set it, nothing changes, and nothing tells them. Give it a reader, or retire it in \`internal/common/config/retired.go\` so an operator who still sets it is told at startup what to set instead. A STALE entry is a field that has gained a reader, and its line in \`tools/deadconfig/known.go\` must go."
+              echo "❌ **Gate failed.** A NEW finding is a field an operator can set that no production code reads: they set it, nothing changes, and nothing tells them. Give it a reader, or retire it in \`internal/common/config/retired.go\` so an operator who still sets it is told at startup what to set instead. A DOC finding is a settings table naming an environment variable nothing binds: correct the name, point the row at where the setting really lives, or delete it. A STALE entry is a field that has gained a reader, and its line in \`tools/deadconfig/known.go\` must go."
             else
               echo "✅ $(head -n1 dc.out)"
             fi

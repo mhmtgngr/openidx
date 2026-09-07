@@ -18,3 +18,21 @@ package main
 // something outside this repository still depends on the name. There is nothing
 // in that position today.
 var knownUnread = map[string]string{}
+
+// knownExternal names environment variables the documentation mentions that
+// belong to something other than OpenIDX — GitHub Actions, Docker, the Android
+// toolchain, a cloud provider's SDK. They are not settings this product binds
+// and never will be, so a documented row naming one is correct.
+//
+// This is the one written list in the tool, and it is written because the set it
+// holds genuinely is not derivable from this tree: only a human knows that
+// GITHUB_TOKEN is Actions'. Each entry says whose it is, so an entry that is
+// really ours has nowhere to hide.
+var knownExternal = map[string]string{
+	"POSTGRES_PASSWORD": "PostgreSQL's own image variable: the compose stack passes it to the postgres container, " +
+		"which uses it to create the role. OpenIDX reads the credential from DATABASE_URL.",
+	"REDIS_PASSWORD": "Redis's own image variable: the compose stack passes it to the redis container as its " +
+		"requirepass. OpenIDX reads the credential from REDIS_URL.",
+	"GRAFANA_ADMIN_PASSWORD": "Grafana's own image variable (GF_SECURITY_ADMIN_PASSWORD in the container), set so " +
+		"the bundled dashboards do not ship with admin/admin. No OpenIDX service reads it.",
+}

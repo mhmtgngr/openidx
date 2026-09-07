@@ -33,6 +33,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   The first run found six across 295 settable fields; all six are fixed below.
 
+- **The mirror census: a documented setting nothing binds (`tools/deadconfig`,
+  same gate).** The half above finds a field an operator can set that the code
+  never reads. This finds the direction an operator meets first — a settings
+  table naming an environment variable the product has no binding for.
+
+  The published Configuration Reference, `docs/docs/deployment/configuration.md`,
+  had **63 of its 88 rows** in that state: `PASSWORD_MIN_LENGTH` and the four
+  `PASSWORD_REQUIRE_*`, `OAUTH_ACCESS_TOKEN_TTL` and its three siblings,
+  `MAX_SESSIONS_PER_USER`, `SESSION_TTL`, `RATE_LIMIT_ENABLED`/`RPS`/`BURST`,
+  `CSRF_SECRET`, `JWT_PRIVATE_KEY`, `SMTP_SKIP_VERIFY`, `AUDIT_RETENTION_DAYS`,
+  the four `MFA_TOTP_*`, the database and Redis pool knobs. One of them,
+  `MFA_WEBARUTHN_ENABLED`, was misspelled — which is the clearest possible
+  evidence that nobody had ever tried it. The YAML example and all three `.env`
+  samples were written against the same phantom names, and the page described a
+  `--config` flag that does not exist and a config file named after a service
+  when the loader looks only for `config.yaml`.
+
+  The page is rewritten from the bindings. Every row is now a variable the
+  product reads; settings that are real but live elsewhere — the password policy
+  and session limits in the console, token lifetimes per OAuth client, OTP
+  parameters in Settings → SMS, pool sizing in the DSN — have their own section
+  naming where, because "it isn't here" is what made the phantom rows grow in
+  the first place. `PUSH_MFA_ENABLED` and `PUSH_MFA_CHALLENGE_TIMEOUT` gained
+  the unprefixed bindings the shipped config file already assumed.
+
+  The bound set is derived: the environment map, every `os.Getenv` literal in
+  the tree, viper's `OPENIDX_<KEY>` spelling of every field, and the console's
+  own `import.meta.env.VITE_*`. The one written list holds three variables that
+  belong to the Postgres, Redis and Grafana images, each saying whose it is.
+
 - **J6, the governance loop, proved end to end
   (`test/integration/governance_loop_test.go`).** With J7 above, this closes the
   last two journeys the Definition of Done listed with no automated proof

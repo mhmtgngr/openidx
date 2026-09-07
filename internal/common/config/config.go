@@ -1183,13 +1183,20 @@ func bindEnvVars(v *viper.Viper) {
 		"sms.aws_secret_key":                              "AWS_SECRET_ACCESS_KEY",
 		"sms.webhook_url":                                 "SMS_WEBHOOK_URL",
 		"sms.webhook_api_key":                             "SMS_WEBHOOK_API_KEY",
-		"push_mfa.fcm_credentials_file":                   "PUSH_MFA_FCM_CREDENTIALS_FILE",
-		"push_mfa.fcm_project_id":                         "PUSH_MFA_FCM_PROJECT_ID",
-		"push_mfa.apns_key_id":                            "PUSH_MFA_APNS_KEY_ID",
-		"push_mfa.apns_team_id":                           "PUSH_MFA_APNS_TEAM_ID",
-		"push_mfa.apns_key_path":                          "PUSH_MFA_APNS_KEY_PATH",
-		"push_mfa.apns_bundle_id":                         "PUSH_MFA_APNS_BUNDLE_ID",
-		"push_mfa.apns_production":                        "PUSH_MFA_APNS_PRODUCTION",
+		// Push MFA's switch and its challenge window, unprefixed. Without these
+		// bindings PUSH_MFA_ENABLED is ignored -- viper's prefixed AutomaticEnv
+		// only matches OPENIDX_PUSH_MFA_* -- while configs/audit-service.yaml
+		// writes `enabled: ${PUSH_MFA_ENABLED:true}` and the deployment guide
+		// names it. Same shape as the WebAuthn bindings below.
+		"push_mfa.enabled":              "PUSH_MFA_ENABLED",
+		"push_mfa.challenge_timeout":    "PUSH_MFA_CHALLENGE_TIMEOUT",
+		"push_mfa.fcm_credentials_file": "PUSH_MFA_FCM_CREDENTIALS_FILE",
+		"push_mfa.fcm_project_id":       "PUSH_MFA_FCM_PROJECT_ID",
+		"push_mfa.apns_key_id":          "PUSH_MFA_APNS_KEY_ID",
+		"push_mfa.apns_team_id":         "PUSH_MFA_APNS_TEAM_ID",
+		"push_mfa.apns_key_path":        "PUSH_MFA_APNS_KEY_PATH",
+		"push_mfa.apns_bundle_id":       "PUSH_MFA_APNS_BUNDLE_ID",
+		"push_mfa.apns_production":      "PUSH_MFA_APNS_PRODUCTION",
 		// Turkish SMS providers
 		"sms.netgsm_usercode":        "NETGSM_USERCODE",
 		"sms.netgsm_password":        "NETGSM_PASSWORD",

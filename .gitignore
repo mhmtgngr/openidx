@@ -168,3 +168,10 @@ dump.rdb
 /deadservice
 /testmatrix
 /silentwrite
+
+# Binaries built from tools/ by a plain `go build ./tools/<name>` — the tools are
+# run with `go run`, so a stray binary at the root is always an accident.
+/deadconfig
+/orgscope
+/tablewriters
+/deadservice
