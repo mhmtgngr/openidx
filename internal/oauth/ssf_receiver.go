@@ -5,6 +5,7 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/openidx/openidx/internal/common/orgctx"
 	"go.uber.org/zap"
 )
@@ -75,9 +77,23 @@ func (s *Service) handleSSFReceive(c *gin.Context) {
 	// Dedup: if we already applied this jti FOR THIS TENANT, ack without
 	// re-applying. Before v172 jti was the table's install-wide primary key, so
 	// this read and the key it rests on now agree.
+	//
+	// The read half of the replay protection had the same defect the write half
+	// below is documented as having had: the error was discarded. No row is the
+	// NORMAL answer here and arrives as pgx.ErrNoRows, so the two had to be told
+	// apart -- and anything else means the dedup did not run. Applying a
+	// Security Event Token you cannot check for replay is the unsafe direction,
+	// so it is refused rather than applied a second time.
 	var exists bool
-	_ = s.db.Pool.QueryRow(c.Request.Context(),
-		`SELECT true FROM ssf_received_events WHERE jti=$1 AND org_id=$2`, jti, org.ID).Scan(&exists)
+	if err := s.db.Pool.QueryRow(c.Request.Context(),
+		`SELECT true FROM ssf_received_events WHERE jti=$1 AND org_id=$2`, jti, org.ID).Scan(&exists); err != nil &&
+		!errors.Is(err, pgx.ErrNoRows) {
+		s.logger.Error("SSF replay check failed; refusing the event rather than applying it twice",
+			zap.String("jti", jti), zap.Error(err))
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"err": "temporarily_unavailable", "description": "replay check unavailable"})
+		return
+	}
 	if exists {
 		c.JSON(http.StatusAccepted, gin.H{"status": "accepted"})
 		return

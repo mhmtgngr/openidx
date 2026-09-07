@@ -379,12 +379,20 @@ func (h *RemoteSupportHandler) HandleStartSession(c *gin.Context) {
 
 	// Reject if the agent has another active session already (broker would
 	// happily run two, but the UX of two admins sharing a screen is bad).
+	// No row is the normal answer and arrives as pgx.ErrNoRows. Anything else
+	// means the check did not run, and a discarded error left blockingID empty
+	// -- which reads as "no session in progress" and starts a second one, the
+	// exact thing this guard exists to prevent.
 	var blockingID string
-	_ = h.db.Pool.QueryRow(c.Request.Context(), `
+	if err := h.db.Pool.QueryRow(c.Request.Context(), `
         SELECT id FROM remote_support_sessions
          WHERE agent_id = $1 AND status IN ('pending','active') AND org_id = $2
          LIMIT 1
-    `, req.AgentID, sessionOrg).Scan(&blockingID)
+    `, req.AgentID, sessionOrg).Scan(&blockingID); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		h.logger.Error("could not check for an existing remote-support session", zap.Error(err))
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "could not check for an existing session"})
+		return
+	}
 	if blockingID != "" {
 		c.JSON(http.StatusConflict, gin.H{
 			"error":      "agent already has an active session",

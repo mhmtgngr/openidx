@@ -350,3 +350,47 @@ func TestSSFReceiveDedup(t *testing.T) {
 		t.Errorf("expected exactly 1 dedup row for a re-delivered SET, got %d", n)
 	}
 }
+
+// A replay check that cannot run refuses the event rather than applying it.
+//
+// The dedup read discarded its error. No row is the normal answer here --
+// pgx.ErrNoRows -- so "already seen" and "the check did not run" were the same
+// value, and the second one meant a re-delivered Security Event Token was
+// applied a SECOND time. The comment on the write half of this protection
+// already said the write had been fixed for the same reason; the read had not.
+//
+// Applying an event you cannot check for replay is the unsafe direction, so the
+// receiver answers 503 and the transmitter re-delivers.
+func TestSSFReplayCheckThatCannotRunRefusesTheEvent(t *testing.T) {
+	db, cleanup := ssfSetupTestDB(t)
+	defer cleanup()
+	dbctx := context.Background()
+	db.Pool.Exec(dbctx, `CREATE EXTENSION IF NOT EXISTS pgcrypto`)
+	db.Pool.Exec(dbctx, `
+        CREATE TABLE users (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), email VARCHAR(255), enabled BOOLEAN DEFAULT true, org_id UUID);
+        CREATE TABLE sessions (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID, org_id UUID, revoked BOOLEAN DEFAULT false, revoked_at TIMESTAMPTZ);
+        CREATE TABLE refresh_tokens (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID, org_id UUID);`)
+	// ssf_received_events is deliberately NOT created: the replay check cannot
+	// run, which is the condition this test is about.
+	orgID := "00000000-0000-0000-0000-0000000000bc"
+	var userID string
+	db.Pool.QueryRow(dbctx, `INSERT INTO users (email, org_id) VALUES ('noreplay@corp.com',$1) RETURNING id`, orgID).Scan(&userID)
+
+	tctx := NewTestOIDCContext(t)
+	defer tctx.Cleanup()
+	svc := tctx.Service
+	svc.db = db
+	setJWT, _, _ := svc.BuildSET(svc.issuer, EventSessionRevoked, "noreplay@corp.com", userID, nil)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	req := httptest.NewRequest(http.MethodPost, "/ssf/events", strings.NewReader(setJWT))
+	req.Header.Set("Content-Type", "application/secevent+jwt")
+	c.Request = req.WithContext(orgctx.With(context.Background(), orgctx.Org{ID: orgID}))
+	svc.handleSSFReceive(c)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("a SET whose replay check could not run was answered %d; want 503 -- "+
+			"accepting it means the next re-delivery applies it again: %s", w.Code, w.Body.String())
+	}
+}

@@ -24,6 +24,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A Security Event Token whose replay check could not run was applied
+  anyway.** `handleSSFReceive` asks whether it has already seen a SET's `jti`
+  for this tenant before applying it. No row is the *normal* answer there and
+  arrives as `pgx.ErrNoRows`, and the read discarded its error — so "already
+  seen", "never seen" and "the check did not run" were one value, and the third
+  meant a re-delivered CAEP event was applied a second time. The comment on the
+  *write* half of the same protection already recorded that its error had been
+  discarded and was fixed; the read was left. It now tells `ErrNoRows` from a
+  real failure and answers `503` when the check cannot run, because applying an
+  event you cannot check for replay is the unsafe direction and a transmitter
+  will re-deliver. Three more of the same shape: a **remote-support session**
+  could be started while another was already running on the same agent when the
+  concurrency check failed; the **posture checks a proxy route declares** were
+  skipped in silence when the Ziti identity lookup failed (the score stays 0, so
+  a policy requiring posture still refuses — the silence was the defect); and a
+  **vault checkout ledger entry** — the record that a stored credential was used
+  — went missing under a log line that named the insert rather than the reason.
+
 - **The rest of the class: 55 more aggregate queries whose failure was served
   as a number.** `tools/zeroanswer`'s register is now **empty** — it opened at
   83, after `internal/audit` had already gone from 73 to 0, and every entry left

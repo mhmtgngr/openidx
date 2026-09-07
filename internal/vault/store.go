@@ -583,7 +583,17 @@ func (s *Service) recordCheckout(ctx context.Context, secretID string, version i
 	orgID, err := s.orgID(ctx)
 	if err != nil {
 		// System Use runs under bypass with no org; derive from the secret row.
-		_ = s.db.Pool.QueryRow(ctx, `SELECT org_id FROM vault_secrets WHERE id = $1`, secretID).Scan(&orgID) //orgscope:ignore system Use has no request org; org_id derived from the secret row
+		//
+		// The error was discarded, so a failed derivation left orgID empty and
+		// the INSERT below failed on a UUID it could not parse -- logged, but
+		// under a message that named the insert rather than the reason. This is
+		// the ledger entry recording that a stored credential was used, so the
+		// reason it went missing is worth saying.
+		if derr := s.db.Pool.QueryRow(ctx, `SELECT org_id FROM vault_secrets WHERE id = $1`, secretID).Scan(&orgID); derr != nil { //orgscope:ignore system Use has no request org; org_id derived from the secret row
+			s.logger.Warn("could not derive the organization for a vault checkout record; the use will not be recorded",
+				zap.Error(derr))
+			return
+		}
 	}
 	if _, err := s.db.Pool.Exec(ctx, `
 		INSERT INTO vault_checkouts (org_id, secret_id, secret_version, principal_id, mode, reason, expires_at)
