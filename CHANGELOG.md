@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **J6, the governance loop, proved end to end
+  (`test/integration/governance_loop_test.go`).** With J7 above, this closes the
+  last two journeys the Definition of Done listed with no automated proof
+  behind them. The only browser spec aimed at J6,
+  `e2e/access-reviews-flow.spec.ts`, stays on the hold side of `e2e/suite.txt`
+  deliberately: it is 738 lines driven entirely by mocked responses, so
+  promoting it would prove the console renders fixtures, not that a reviewer's
+  decision does anything.
+
+  The integration case drives a certification decision through the API against
+  the running services and asserts its three effects separately, because they
+  fail independently: the item is recorded revoked, the underlying role is
+  actually removed, and the reviewed user's **live** access token stops working.
+  The third crosses a process boundary — governance writes the revocation
+  marker, oauth-service reads it on every `/oauth/userinfo` — and it is the half
+  that failed before: `internal/revocation` exists because the two once spelled
+  that Redis key differently, so a reviewer could revoke somebody, see it
+  recorded and audited, and the person kept working until their token expired.
+  The integration job now boots governance-service, so the two are really
+  separate processes rather than one test binary.
+
+  Red-proofed by restoring the old divergent key: the first three assertions
+  stay green and the fourth goes red, which is the exact shape of the original
+  defect.
+
 ### Fixed
 
 - **A disabled user's access token kept working for an hour

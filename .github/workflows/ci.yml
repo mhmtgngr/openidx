@@ -785,8 +785,8 @@ jobs:
           # is the one place the control is live -- so that is where it is now
           # tested, and both halves are asserted (a super_admin crosses and is
           # audited; a plain admin does not).
-          echo "::group::Build identity-service + oauth-service + gateway-service + admin-api"
-          for svc in identity-service oauth-service gateway-service admin-api; do
+          echo "::group::Build identity-service + oauth-service + gateway-service + admin-api + governance-service"
+          for svc in identity-service oauth-service gateway-service admin-api governance-service; do
             if ! go build -o "/tmp/$svc" "./cmd/$svc"; then
               echo "::error::$svc failed to build; without it the wait below would report" \
                    "'services did not become ready' sixty seconds from now and name the wrong cause"
@@ -843,36 +843,48 @@ jobs:
           # admin-api listens on 8005, which is what ADMIN_API_URL defaults to.
           /tmp/admin-api        > /tmp/admin-api.log 2>&1 &
           ADMIN_API_PID=$!
-          echo "identity-service pid=$IDENTITY_PID, oauth-service pid=$OAUTH_PID, gateway-service pid=$GATEWAY_PID, admin-api pid=$ADMIN_API_PID"
+          # governance-service listens on 8002. It is here for J6: the DoD's
+          # governance journey ends in "revoke propagates", and that step is a
+          # write in THIS process read by oauth-service in another one. The two
+          # once spelled the shared Redis key differently, so an access review
+          # could revoke somebody and they kept working until their token
+          # expired; internal/revocation exists because of it, and
+          # governance_loop_test.go is the only place the two are actually
+          # separate processes and the path can be driven end to end.
+          /tmp/governance-service > /tmp/governance.log 2>&1 &
+          GOVERNANCE_PID=$!
+          echo "identity-service pid=$IDENTITY_PID, oauth-service pid=$OAUTH_PID, gateway-service pid=$GATEWAY_PID, admin-api pid=$ADMIN_API_PID, governance-service pid=$GOVERNANCE_PID"
 
           cleanup() {
             echo "::group::identity-service log"; cat /tmp/identity.log  || true; echo "::endgroup::"
             echo "::group::oauth-service log";    cat /tmp/oauth.log     || true; echo "::endgroup::"
             echo "::group::gateway-service log";  cat /tmp/gateway.log   || true; echo "::endgroup::"
             echo "::group::admin-api log";        cat /tmp/admin-api.log || true; echo "::endgroup::"
-            kill "$IDENTITY_PID" "$OAUTH_PID" "$GATEWAY_PID" "$ADMIN_API_PID" 2>/dev/null || true
+            echo "::group::governance-service log"; cat /tmp/governance.log || true; echo "::endgroup::"
+            kill "$IDENTITY_PID" "$OAUTH_PID" "$GATEWAY_PID" "$ADMIN_API_PID" "$GOVERNANCE_PID" 2>/dev/null || true
           }
           trap cleanup EXIT
 
-          # ----- wait for all four to be healthy -----
+          # ----- wait for all five to be healthy -----
           # Each is waited for rather than probed opportunistically: a service
           # that fails to start must fail this job, not send the test that needs
           # it back to skipping quietly, which is the state both the gateway and
           # the admin-api tests spent their whole lives in.
           echo "::group::Wait for service health"
           for i in $(seq 1 60); do
-            id_ok=0; oa_ok=0; gw_ok=0; ad_ok=0
+            id_ok=0; oa_ok=0; gw_ok=0; ad_ok=0; go_ok=0
             curl -sf http://localhost:8001/health/ready >/dev/null 2>&1 && id_ok=1
             curl -sf http://localhost:8006/health/ready >/dev/null 2>&1 && oa_ok=1
             curl -sf http://localhost:8008/health       >/dev/null 2>&1 && gw_ok=1
             curl -sf http://localhost:8005/health       >/dev/null 2>&1 && ad_ok=1
-            if [ "$id_ok" = "1" ] && [ "$oa_ok" = "1" ] && [ "$gw_ok" = "1" ] && [ "$ad_ok" = "1" ]; then
-              echo "all four services ready after ${i}s"
+            curl -sf http://localhost:8002/health       >/dev/null 2>&1 && go_ok=1
+            if [ "$id_ok" = "1" ] && [ "$oa_ok" = "1" ] && [ "$gw_ok" = "1" ] && [ "$ad_ok" = "1" ] && [ "$go_ok" = "1" ]; then
+              echo "all five services ready after ${i}s"
               break
             fi
             sleep 1
             if [ "$i" = "60" ]; then
-              echo "::error::services did not become ready within 60s (identity_ok=$id_ok oauth_ok=$oa_ok gateway_ok=$gw_ok admin_api_ok=$ad_ok)"
+              echo "::error::services did not become ready within 60s (identity_ok=$id_ok oauth_ok=$oa_ok gateway_ok=$gw_ok admin_api_ok=$ad_ok governance_ok=$go_ok)"
               exit 1
             fi
           done
