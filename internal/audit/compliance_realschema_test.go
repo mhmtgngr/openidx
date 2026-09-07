@@ -2,6 +2,7 @@ package audit
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -201,7 +202,10 @@ func TestComplianceControlsAgainstTheRealSchema(t *testing.T) {
 	})
 
 	t.Run("an expired unrevoked API key is a finding", func(t *testing.T) {
-		a := svc.evaluateCC6LogicalAccess(ctx, from, to)
+		a, err := svc.evaluateCC6LogicalAccess(ctx, from, to)
+		if err != nil {
+			t.Fatalf("CC6 logical access: %v", err)
+		}
 		var found bool
 		for _, f := range a.Findings {
 			if contains(f, "expired API keys have not been revoked") {
@@ -268,6 +272,79 @@ func TestComplianceControlsAgainstTheRealSchema(t *testing.T) {
 		if gdpr.DataAccessLogs.TotalAccessEvents != 2 {
 			t.Errorf("GDPR data-access events = %d, want the two seeded reads",
 				gdpr.DataAccessLogs.TotalAccessEvents)
+		}
+	})
+
+	// The detailed SOC 2 and ISO 27001 assessments, which had nothing driving
+	// them at all.
+	//
+	// Eleven control assessors between them, thirty-five aggregate queries, and
+	// every error discarded -- so a control could be SCORED from figures nobody
+	// measured, and the score went into an overall percentage and a summary
+	// line. Each assessor now fails the report instead. This is what makes that
+	// visible: with a column renamed in any one of them, the report stops being
+	// produced and names the control.
+	t.Run("the detailed assessments are scored from measured data", func(t *testing.T) {
+		soc2, err := svc.GenerateSOC2DetailedReport(ctx, from, to)
+		if err != nil {
+			t.Fatalf("detailed SOC 2 report: %v", err)
+		}
+		if len(soc2.Controls) != 6 {
+			t.Errorf("SOC 2 assessed %d controls, want 6", len(soc2.Controls))
+		}
+		var cc1 *ControlAssessment
+		for i := range soc2.Controls {
+			if soc2.Controls[i].ControlID == "CC1" {
+				cc1 = &soc2.Controls[i]
+			}
+		}
+		if cc1 == nil {
+			t.Fatalf("SOC 2 report has no CC1 assessment: %+v", soc2.Controls)
+		}
+		// Cross-checked against the database rather than against the fixture:
+		// the migration chain seeds users of its own, so what this test put
+		// there is not the whole population -- which is exactly why the
+		// assessment must ask and not assume.
+		var enabled int
+		if err := db.Pool.QueryRow(seedCtx,
+			`SELECT COUNT(*) FROM users WHERE enabled = true AND org_id = $1`, org).Scan(&enabled); err != nil {
+			t.Fatalf("count enabled users: %v", err)
+		}
+		if enabled == 0 {
+			t.Fatal("no enabled users in the fixture; the assertion below would be vacuous")
+		}
+		want := fmt.Sprintf("Total active users: %d", enabled)
+		var counted bool
+		for _, e := range cc1.Evidence {
+			if contains(e, want) {
+				counted = true
+			}
+		}
+		if !counted {
+			t.Errorf("CC1 evidence does not carry the measured user count (%q); got %v",
+				want, cc1.Evidence)
+		}
+
+		iso, err := svc.GenerateISO27001DetailedReport(ctx, from, to)
+		if err != nil {
+			t.Fatalf("detailed ISO 27001 report: %v", err)
+		}
+		if len(iso.Controls) != 5 {
+			t.Errorf("ISO 27001 assessed %d controls, want 5", len(iso.Controls))
+		}
+		// A.12 used to require an event type this product has never written.
+		// user_management is a category; the event type on a user lifecycle row
+		// is "identity", so the old list deducted ten points and reported a
+		// finding against every install ever assessed.
+		for _, c := range iso.Controls {
+			if c.ControlID != "A.12" {
+				continue
+			}
+			for _, f := range c.Findings {
+				if contains(f, "user_management") {
+					t.Errorf("A.12 still requires an event type nothing writes: %q", f)
+				}
+			}
 		}
 	})
 }

@@ -40,6 +40,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   generates all three reports against a migrated database and checks the
   numbers against seeded rows.
 
+- **The detailed SOC 2 and ISO 27001 assessments scored controls from figures
+  nobody measured** — the same defect as above, in the eleven control
+  assessors behind `POST /audit/reports/soc2-detailed` and
+  `.../iso27001-detailed`. Thirty-five aggregate queries, every error
+  discarded, and the resulting numbers went into a control's **Evidence**
+  lines (`"Total active users: 0"`, `"Active API keys: 0, Expired but not
+  revoked: 0"`), its **score**, the report's overall percentage and its summary
+  sentence. A control assessed from a query that did not run is
+  indistinguishable, in the finished document, from one assessed from real
+  data. Each assessor now returns the measurement failure and the report is
+  refused. Nothing had been driving those two generators at all; a real-schema
+  test now produces both and cross-checks a control's evidence against a count
+  it takes from the database itself. Also fixed there: **ISO 27001 A.12
+  required an event type this product has never written.** Its list of
+  required audit event types was `authentication`, `authorization`,
+  `user_management` — and `user_management` is a *category*; the event type
+  stamped on a user lifecycle row is `identity`. So A.12 deducted ten points
+  and reported *"Required event type 'user_management' has no events in
+  period"* against every installation ever assessed. A control that
+  manufactures a finding against a correctly configured system is worth less
+  than no control. And in `internal/audit/service.go`, the four counts printed
+  into the SOC 2 findings' evidence (`"%d/%d users have MFA enabled; %d failed
+  auth attempts in period"`) and the security dashboard's failed-authentication
+  count — which reads as *"no attack in progress"* when it is really *"the
+  query broke"* — are checked as well.
+
 - **Every audit event the access service posted was filed under the default
   organisation, and a refusal was silent.** `internal/access.logAuditEvent` is
   how the most sensitive actions in the product reach the audit trail — every

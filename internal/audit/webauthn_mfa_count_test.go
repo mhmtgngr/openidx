@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // TestCountMFAEnabledUsers guards the "MFA adoption 0.0%" false-compliance fix:
@@ -49,21 +51,32 @@ func TestCountMFAEnabledUsers(t *testing.T) {
 
 	s := &Service{db: db, logger: zap.NewNop()}
 
+	// The count is scoped by the metricQuery the assessment binds, so the org
+	// travels with the query rather than as a bare argument -- and a failure is
+	// now visible instead of resolving to "nobody has MFA".
+	count := func(org string) (int, error) {
+		q := s.newMetricQuery(orgctx.With(context.Background(), orgctx.Org{ID: org}))
+		n := s.countMFAEnabledUsers(q)
+		return n, q.failed()
+	}
+
 	// Org A: distinct MFA users = {TOTP, WebAuthn, Both} = 3. The disabled TOTP
 	// user is excluded, org B's WebAuthn user is excluded, and userBoth is
 	// counted once. Critically, the WebAuthn-only user is counted at all — the
 	// whole point of the fix.
-	if n := s.countMFAEnabledUsers(ctx, orgA); n != 3 {
-		t.Fatalf("countMFAEnabledUsers(orgA): want 3 (TOTP + WebAuthn + both, deduped, org-scoped, WebAuthn included), got %d", n)
+	if n, err := count(orgA); err != nil || n != 3 {
+		t.Fatalf("countMFAEnabledUsers(orgA): want 3 (TOTP + WebAuthn + both, deduped, org-scoped, WebAuthn included), got %d (err %v)", n, err)
 	}
 
 	// Org B sees only its own WebAuthn user.
-	if n := s.countMFAEnabledUsers(ctx, orgB); n != 1 {
-		t.Fatalf("countMFAEnabledUsers(orgB): want 1, got %d", n)
+	if n, err := count(orgB); err != nil || n != 1 {
+		t.Fatalf("countMFAEnabledUsers(orgB): want 1, got %d (err %v)", n, err)
 	}
 
-	// An org with no MFA rows resolves to 0 (not an error).
-	if n := s.countMFAEnabledUsers(ctx, "00000000-0000-0000-0000-0000000000ff"); n != 0 {
-		t.Fatalf("countMFAEnabledUsers(empty org): want 0, got %d", n)
+	// An org with no MFA rows resolves to 0, and that zero is a real count:
+	// COUNT over no rows is a fact, and only the error tells it apart from a
+	// query that could not run.
+	if n, err := count("00000000-0000-0000-0000-0000000000ff"); err != nil || n != 0 {
+		t.Fatalf("countMFAEnabledUsers(empty org): want 0, got %d (err %v)", n, err)
 	}
 }

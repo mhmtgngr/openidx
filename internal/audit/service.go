@@ -472,7 +472,11 @@ func (s *Service) GenerateComplianceReport(ctx context.Context, reportType Repor
 	case ReportTypeSOC2:
 		report.Framework = "SOC 2 Type II"
 		report.Name = "SOC 2 Compliance Report"
-		report.Findings = s.evaluateSOC2Controls(ctx, startDate, endDate)
+		findings, err := s.evaluateSOC2Controls(ctx, startDate, endDate)
+		if err != nil {
+			return nil, fmt.Errorf("SOC 2 controls: %w", err)
+		}
+		report.Findings = findings
 	case ReportTypeISO27001:
 		report.Framework = "ISO 27001:2022"
 		report.Name = "ISO 27001 Compliance Report"
@@ -507,14 +511,25 @@ func (s *Service) GenerateComplianceReport(ctx context.Context, reportType Repor
 	return report, nil
 }
 
-func (s *Service) evaluateSOC2Controls(ctx context.Context, startDate, endDate time.Time) []ReportFinding {
-	org, _ := orgctx.From(ctx)
-	// Gather evidence counts from the database
+func (s *Service) evaluateSOC2Controls(ctx context.Context, startDate, endDate time.Time) ([]ReportFinding, error) {
+	// These four counts are printed verbatim into the Evidence line of three
+	// SOC 2 findings -- "%d/%d users have MFA enabled; %d failed auth attempts
+	// in period". Each Scan error was discarded, so a query that could not run
+	// wrote "0/0 users have MFA enabled" into a control's evidence, which reads
+	// as a measured finding rather than a missing one. See metricquery.go.
+	q := s.newMetricQuery(ctx)
 	var totalEvents, failedAuth, mfaUsers, totalUsers int
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM audit_events WHERE timestamp BETWEEN $1 AND $2 AND org_id = $3", startDate, endDate, org.ID).Scan(&totalEvents)
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM audit_events WHERE event_type='authentication' AND outcome='failure' AND timestamp BETWEEN $1 AND $2 AND org_id = $3", startDate, endDate, org.ID).Scan(&failedAuth)
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM mfa_totp WHERE enabled = true AND org_id = $1", org.ID).Scan(&mfaUsers)
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM users WHERE enabled = true AND org_id = $1", org.ID).Scan(&totalUsers)
+	q.scan("audit events in period", &totalEvents,
+		"SELECT COUNT(*) FROM audit_events WHERE timestamp BETWEEN $1 AND $2 AND org_id = $3", startDate, endDate, q.org())
+	q.scan("failed authentications", &failedAuth,
+		"SELECT COUNT(*) FROM audit_events WHERE event_type='authentication' AND outcome='failure' AND timestamp BETWEEN $1 AND $2 AND org_id = $3", startDate, endDate, q.org())
+	q.scan("users with TOTP", &mfaUsers,
+		"SELECT COUNT(*) FROM mfa_totp WHERE enabled = true AND org_id = $1", q.org())
+	q.scan("enabled users", &totalUsers,
+		"SELECT COUNT(*) FROM users WHERE enabled = true AND org_id = $1", q.org())
+	if err := q.failed(); err != nil {
+		return nil, err
+	}
 
 	cc61Status := s.evaluateAccessControlStatus(ctx, startDate, endDate)
 	cc62Status := s.evaluateAuthenticationStatus(ctx, startDate, endDate)
@@ -586,7 +601,7 @@ func (s *Service) evaluateSOC2Controls(ctx context.Context, startDate, endDate t
 		},
 	}
 
-	return findings
+	return findings, nil
 }
 
 func (s *Service) evaluateISO27001Controls(ctx context.Context, startDate, endDate time.Time) []ReportFinding {
@@ -1008,15 +1023,20 @@ func (s *Service) GetEventStatistics(ctx context.Context, startDate, endDate tim
 	rows.Close()
 	stats["events_per_day"] = eventsPerDay
 
-	// Get failed authentication count
+	// Get failed authentication count. GetEventStatistics already returns an
+	// error, and every other read in it is checked; this one was not, so a
+	// broken query reported "0 failed authentications" on the security
+	// dashboard -- the reading an operator takes as "no attack in progress".
 	var failedAuthCount int
-	s.db.Pool.QueryRow(ctx, `
+	if err := s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM audit_events
 		WHERE event_type = 'authentication'
 		AND outcome = 'failure'
 		AND timestamp BETWEEN $1 AND $2
 		AND org_id = $3
-	`, startDate, endDate, org.ID).Scan(&failedAuthCount)
+	`, startDate, endDate, org.ID).Scan(&failedAuthCount); err != nil {
+		return nil, fmt.Errorf("failed authentication count: %w", err)
+	}
 	stats["failed_auth_count"] = failedAuthCount
 
 	// Calculate success rate
