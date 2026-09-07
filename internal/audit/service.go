@@ -284,6 +284,23 @@ func (s *Service) LogEvent(ctx context.Context, event *ServiceAuditEvent) error 
 
 	event.Timestamp = time.Now()
 
+	// The id is the server's to assign, and until now nothing assigned it.
+	//
+	// audit_events.id is `uuid NOT NULL DEFAULT gen_random_uuid()`, and the
+	// INSERT below names the column explicitly — so an event that arrives
+	// without an id passed "" into a uuid column, Postgres refused it with
+	// `invalid input syntax for type uuid`, and the endpoint answered 500.
+	//
+	// The only caller of POST /api/v1/audit/events in this product is
+	// internal/access.logAuditEvent, and it has never sent an id. So every
+	// audit event access-service emitted — every PAM credential reveal, every
+	// entry created or deleted, every grant added, every proxy allow and deny —
+	// was refused and dropped, on every install. The loss showed up as one
+	// warning line in the emitting service's log and nowhere else.
+	if strings.TrimSpace(event.ID) == "" {
+		event.ID = uuid.New().String()
+	}
+
 	// Capture the org synchronously. Audit events must never be dropped, so an
 	// unresolved org falls back to the default org rather than failing closed.
 	orgID := defaultOrgID

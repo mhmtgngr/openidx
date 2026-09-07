@@ -785,8 +785,18 @@ jobs:
           # is the one place the control is live -- so that is where it is now
           # tested, and both halves are asserted (a super_admin crosses and is
           # audited; a plain admin does not).
-          echo "::group::Build identity-service + oauth-service + gateway-service + admin-api + governance-service"
-          for svc in identity-service oauth-service gateway-service admin-api governance-service; do
+          #
+          # access-service and audit-service are here for J5. The privileged-access
+          # journey's credential half ends at POST /pam/entries/:id/reveal, which
+          # access-service serves and whose audit row audit-service writes -- in a
+          # different process, over HTTP. Driving vault.Service directly (which
+          # jit_checkout_test.go does, and says so in its header) reaches the
+          # mechanics and none of the controls: the org predicate, the
+          # allow_reveal flag, the ACL for non-admins and the audit row all live
+          # in the handler. Standing both up is what turned up that the ingest
+          # endpoint had been refusing every event access-service ever sent it.
+          echo "::group::Build identity-service + oauth-service + gateway-service + admin-api + governance-service + access-service + audit-service"
+          for svc in identity-service oauth-service gateway-service admin-api governance-service access-service audit-service; do
             if ! go build -o "/tmp/$svc" "./cmd/$svc"; then
               echo "::error::$svc failed to build; without it the wait below would report" \
                    "'services did not become ready' sixty seconds from now and name the wrong cause"
@@ -830,6 +840,10 @@ jobs:
           # exported rather than left unset. Test-only value; the same shape the
           # other jobs in this file already use.
           export ENCRYPTION_KEY="0123456789abcdef0123456789abcdef"
+          # audit-service seals its hash chain with this; exported here so the
+          # sealer runs in the integration stack rather than only in unit tests,
+          # and so a J5 credential reveal is written into a chained trail.
+          export AUDIT_CHAIN_SECRET="integration-audit-chain-secret-00"
 
           /tmp/identity-service > /tmp/identity.log 2>&1 &
           IDENTITY_PID=$!
@@ -852,7 +866,16 @@ jobs:
           # separate processes and the path can be driven end to end.
           /tmp/governance-service > /tmp/governance.log 2>&1 &
           GOVERNANCE_PID=$!
-          echo "identity-service pid=$IDENTITY_PID, oauth-service pid=$OAUTH_PID, gateway-service pid=$GATEWAY_PID, admin-api pid=$ADMIN_API_PID, governance-service pid=$GOVERNANCE_PID"
+          # access-service listens on 8007 and audit-service on 8004. J5's reveal
+          # is served by the first and audited by the second: access-service posts
+          # every audit event over HTTP, so without audit-service running the
+          # event is warned about and dropped, and the assertion that a credential
+          # reveal is recorded would pass over an empty trail.
+          /tmp/access-service   > /tmp/access.log   2>&1 &
+          ACCESS_PID=$!
+          /tmp/audit-service    > /tmp/audit.log    2>&1 &
+          AUDIT_PID=$!
+          echo "identity-service pid=$IDENTITY_PID, oauth-service pid=$OAUTH_PID, gateway-service pid=$GATEWAY_PID, admin-api pid=$ADMIN_API_PID, governance-service pid=$GOVERNANCE_PID, access-service pid=$ACCESS_PID, audit-service pid=$AUDIT_PID"
 
           cleanup() {
             echo "::group::identity-service log"; cat /tmp/identity.log  || true; echo "::endgroup::"
@@ -860,30 +883,34 @@ jobs:
             echo "::group::gateway-service log";  cat /tmp/gateway.log   || true; echo "::endgroup::"
             echo "::group::admin-api log";        cat /tmp/admin-api.log || true; echo "::endgroup::"
             echo "::group::governance-service log"; cat /tmp/governance.log || true; echo "::endgroup::"
-            kill "$IDENTITY_PID" "$OAUTH_PID" "$GATEWAY_PID" "$ADMIN_API_PID" "$GOVERNANCE_PID" 2>/dev/null || true
+            echo "::group::access-service log";      cat /tmp/access.log    || true; echo "::endgroup::"
+            echo "::group::audit-service log";       cat /tmp/audit.log     || true; echo "::endgroup::"
+            kill "$IDENTITY_PID" "$OAUTH_PID" "$GATEWAY_PID" "$ADMIN_API_PID" "$GOVERNANCE_PID" "$ACCESS_PID" "$AUDIT_PID" 2>/dev/null || true
           }
           trap cleanup EXIT
 
-          # ----- wait for all five to be healthy -----
+          # ----- wait for all seven to be healthy -----
           # Each is waited for rather than probed opportunistically: a service
           # that fails to start must fail this job, not send the test that needs
           # it back to skipping quietly, which is the state both the gateway and
           # the admin-api tests spent their whole lives in.
           echo "::group::Wait for service health"
           for i in $(seq 1 60); do
-            id_ok=0; oa_ok=0; gw_ok=0; ad_ok=0; go_ok=0
+            id_ok=0; oa_ok=0; gw_ok=0; ad_ok=0; go_ok=0; ac_ok=0; au_ok=0
             curl -sf http://localhost:8001/health/ready >/dev/null 2>&1 && id_ok=1
             curl -sf http://localhost:8006/health/ready >/dev/null 2>&1 && oa_ok=1
             curl -sf http://localhost:8008/health       >/dev/null 2>&1 && gw_ok=1
             curl -sf http://localhost:8005/health       >/dev/null 2>&1 && ad_ok=1
             curl -sf http://localhost:8002/health       >/dev/null 2>&1 && go_ok=1
-            if [ "$id_ok" = "1" ] && [ "$oa_ok" = "1" ] && [ "$gw_ok" = "1" ] && [ "$ad_ok" = "1" ] && [ "$go_ok" = "1" ]; then
-              echo "all five services ready after ${i}s"
+            curl -sf http://localhost:8007/health       >/dev/null 2>&1 && ac_ok=1
+            curl -sf http://localhost:8004/health       >/dev/null 2>&1 && au_ok=1
+            if [ "$id_ok" = "1" ] && [ "$oa_ok" = "1" ] && [ "$gw_ok" = "1" ] && [ "$ad_ok" = "1" ] && [ "$go_ok" = "1" ] && [ "$ac_ok" = "1" ] && [ "$au_ok" = "1" ]; then
+              echo "all seven services ready after ${i}s"
               break
             fi
             sleep 1
             if [ "$i" = "60" ]; then
-              echo "::error::services did not become ready within 60s (identity_ok=$id_ok oauth_ok=$oa_ok gateway_ok=$gw_ok admin_api_ok=$ad_ok governance_ok=$go_ok)"
+              echo "::error::services did not become ready within 60s (identity_ok=$id_ok oauth_ok=$oa_ok gateway_ok=$gw_ok admin_api_ok=$ad_ok governance_ok=$go_ok access_ok=$ac_ok audit_ok=$au_ok)"
               exit 1
             fi
           done

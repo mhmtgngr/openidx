@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **J5, privileged access, proved through the running services
+  (`test/integration/privileged_access_test.go`).** The credential half of the
+  journey — the only path in the product that ever hands PAM secret material to
+  a person — driven against access-service and audited by audit-service, which
+  the integration job now boots alongside the other five.
+
+  `jit_checkout_test.go` says in its own header why it stopped short:
+  "governance HTTP handlers are not driven (gin+JWT wiring is heavy). This
+  validates the checkout mechanics that the HTTP layer delegates to." The
+  mechanics are not the control. The org predicate, the `allow_reveal` flag,
+  the ACL for non-admins and the audit row all live in the handler, and a test
+  of `vault.Service` reaches none of them.
+
+  Four assertions, separately: an ungranted user is refused; the same user,
+  granted, gets the credential; `allow_reveal=false` refuses **even an
+  administrator** (the handler's own claim about injection-only entries); and
+  the reveal is in the audit trail naming who and what. The last one is what
+  found the two defects below.
+
 - **A census of settings nothing reads (`tools/deadconfig`, wired into CI as a
   hard gate).** Every struct field carrying a `mapstructure` tag is a setting an
   operator can put in a config file or an environment variable; the type checker
@@ -89,6 +108,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   defect.
 
 ### Fixed
+
+- **Every audit event access-service ever emitted was refused and dropped
+  (`internal/audit.LogEvent`).** `audit_events.id` is
+  `uuid NOT NULL DEFAULT gen_random_uuid()`, and `LogEvent`'s INSERT names the
+  column — so the default never applied, an event that arrived without an id
+  put `""` into a uuid column, and Postgres refused the write. The ingest
+  endpoint answered 500.
+
+  Its only caller in the product is `internal/access.logAuditEvent`, and it has
+  never sent an id. So **every PAM credential reveal, every entry created or
+  deleted, every grant added or removed, every proxy allow and deny** was
+  refused and dropped, on every install, for as long as this code has existed.
+  The loss showed as one warning line in the emitting service's log — and that
+  line only exists because of an earlier fix on this branch; before it, the
+  response status was discarded and the loss was completely silent.
+
+  Proven in the endpoint's own responses before the fix: the body
+  access-service sends → `500 {"error":"INTERNAL_ERROR","message":"log event"}`
+  and no row; the same body with an id → `201` and the row lands. `LogEvent`
+  now assigns an id when the event has none, and keeps one the caller supplied.
+
+  Found by writing J5's integration test — the journey that ends "…and it is
+  audited".
+
+- **The audit trail did not say who** (`internal/access.logAuditEvent`). Even
+  once events land, the event this service builds carried no `actor_id`, so the
+  actor column — the one the console filters on and an auditor reads first —
+  was blank for every credential reveal, every recording download and every
+  proxy decision. Some handlers put the id into `details.user_id` on the way
+  past, which is a JSON blob, not a column: "who revealed this credential" was
+  not a question the trail could answer. Red-proofed: with the fix removed the
+  assertion reports `actual: ""`.
 
 - **The OAuth signing key was stored in plaintext on the reference stack, and
   the compose file refused to start without a secret that signs nothing.** Two

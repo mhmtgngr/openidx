@@ -3343,6 +3343,17 @@ func (s *Service) logAuditEvent(c *gin.Context, action, targetID, targetType str
 		"timestamp":   time.Now().Format(time.RFC3339),
 	}
 
+	// WHO. Every event this file posts left actor_id empty, so the audit
+	// trail's actor column — the one the console filters on and an auditor
+	// reads first — was blank for every credential reveal, every recording
+	// download and every proxy decision. Some handlers put the id into
+	// `details.user_id` on their way past, which is a JSON blob, not a column:
+	// "who revealed this credential" was not a question the trail could answer.
+	if userID := c.GetString("user_id"); userID != "" {
+		event["actor_id"] = userID
+		event["actor_type"] = "user"
+	}
+
 	if action == "proxy_access_denied" {
 		event["outcome"] = "failure"
 	}
