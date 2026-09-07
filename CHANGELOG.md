@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Every audit event the access service posted was filed under the default
+  organisation, and a refusal was silent.** `internal/access.logAuditEvent` is
+  how the most sensitive actions in the product reach the audit trail — every
+  revealed PAM credential, every injected credential, every downloaded session
+  recording and transcript, every proxy allow and deny. It sent no tenant
+  signal at all. The ingest endpoint (`POST /api/v1/audit/events`) is
+  server-to-server and carries no JWT, and `cmd/audit-service` mounts
+  `TenantResolver` globally with `router.Use`, which — as that middleware's own
+  comment states — means its JWT and `X-Org-ID` steps cannot fire and every
+  request lands on step 1 or the step-4 default-organisation fallback. With no
+  header, always step 4: on a multi-tenant install the product's most sensitive
+  reads were missing from the audit log of the tenant they belonged to and
+  present in another's. The POST now carries `X-Org-Slug` — step 1, which
+  *looks the slug up*, so an unknown one is a `400` rather than a free write
+  into an arbitrary tenant. The response status was also thrown away: only a
+  transport error produced a log line, so a `400` for a body the trail refused
+  or a `500` when the write failed dropped the row with nothing recorded
+  anywhere. A non-2xx is now a warning naming the status, the action and the
+  tenant, because a dropped audit row is the one loss that must never be
+  silent.
+
 - **Six of the audit log's eight filter choices returned an empty list.** The
   console's event-type filter offered eight names copied from the `EventType`
   constants in `internal/audit/service.go`, and only two of them —

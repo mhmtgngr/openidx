@@ -3253,14 +3253,56 @@ func (s *Service) logAuditEvent(c *gin.Context, action, targetID, targetType str
 		event["outcome"] = "failure"
 	}
 
+	// The tenant the action happened in, carried to the audit service.
+	//
+	// Without it every event this file posts -- every credential reveal, every
+	// recording download, every proxy allow and deny -- was filed under the
+	// DEFAULT organisation. The ingest endpoint is server-to-server and carries
+	// no JWT, and cmd/audit-service mounts TenantResolver globally, so steps 2
+	// and 3 of its resolution order cannot fire (the middleware's own comment
+	// says so) and the request lands on step 4, the default-org fallback. On a
+	// multi-tenant install that means the most sensitive reads in the product
+	// were invisible in the audit log of the tenant they belonged to and
+	// visible in somebody else's.
+	//
+	// X-Org-Slug is step 1 of that order and exists for exactly this: the
+	// resolver LOOKS THE SLUG UP, so an unknown one is a 400 rather than a free
+	// write into an arbitrary tenant. Nothing is trusted that was not already.
+	orgSlug := ""
+	if org, err := orgctx.From(c.Request.Context()); err == nil {
+		orgSlug = org.Slug
+	}
+
 	body, _ := json.Marshal(event)
 	go func() {
-		resp, err := http.Post(s.auditURL+"/api/v1/audit/events", "application/json", bytes.NewReader(body))
+		req, err := http.NewRequest(http.MethodPost, s.auditURL+"/api/v1/audit/events",
+			bytes.NewReader(body))
+		if err != nil {
+			s.logger.Warn("Failed to build audit event request", zap.Error(err))
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+		if orgSlug != "" {
+			req.Header.Set("X-Org-Slug", orgSlug)
+		}
+
+		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			s.logger.Warn("Failed to log audit event", zap.Error(err))
 			return
 		}
-		resp.Body.Close()
+		defer resp.Body.Close()
+		// The status was thrown away. handleLogEvent answers 400 for a body it
+		// refuses and 500 when the write fails, and both were discarded here --
+		// so an audit event the trail rejected disappeared with nothing logged
+		// anywhere. A dropped audit row is the one loss that must never be
+		// silent.
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			s.logger.Warn("Audit event was refused by the audit service",
+				zap.Int("status", resp.StatusCode),
+				logsafe.String("action", action),
+				logsafe.String("org_slug", orgSlug))
+		}
 	}()
 }
 
