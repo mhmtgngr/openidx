@@ -497,11 +497,6 @@ spec:
                 secretKeyRef:
                   name: openidx-secrets
                   key: REDIS_PASSWORD
-            - name: JWT_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: openidx-secrets
-                  key: JWT_SECRET
           livenessProbe:
             httpGet:
               path: /health

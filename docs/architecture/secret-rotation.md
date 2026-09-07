@@ -54,7 +54,7 @@ Generate a key: `openssl rand -base64 32`.
 - **`GUACAMOLE_ADMIN_PASSWORD`** — update the guac DB admin user + env, restart access-service.
 - **`APISIX_ADMIN_KEY`** — update the APISIX config + the reconciler env, restart edge + access.
 - **`ZITI_ADMIN_PASSWORD`** — update the controller admin + env, restart.
-- **`JWT_SECRET`** — vestigial (only referenced in `doctor.go`; OAuth uses RS256 JWKS). Rotating it is a no-op; consider removing it.
+- **`JWT_SECRET`** — **removed.** It was vestigial: nothing signed or verified with it, so rotating it was a no-op, while the compose file refused to start without it and this page told operators to rotate it. Tokens are RS256; rotate the real key with `POST /api/v1/admin/oauth/signing-keys/rotate`. An install that still sets the variable is told at startup that it does nothing.
 
 ### `cmd/rekey` — the re-encryption pass (step 3)
 

@@ -61,14 +61,13 @@ check_len() {
 }
 check_len ENCRYPTION_KEY 32          # AES-256 key material: exactly 32.
 check_len ACCESS_SESSION_SECRET 32
-check_len JWT_SECRET 64
 check_len POSTGRES_PASSWORD 32
 check_len OPENIDX_APP_PASSWORD 32
 
 # --- 3. the secrets are actually random -------------------------------------
 # Guards against a "fix" that swaps randomness for a constant fallback.
 bash "$GEN" "$TMP/b.env" >/dev/null 2>&1 || fail "3: second run failed"
-for v in POSTGRES_PASSWORD JWT_SECRET ENCRYPTION_KEY; do
+for v in POSTGRES_PASSWORD ACCESS_SESSION_SECRET ENCRYPTION_KEY; do
   a="$(sed -n "s/^$v=//p" "$TMP/a.env" | head -1)"
   b="$(sed -n "s/^$v=//p" "$TMP/b.env" | head -1)"
   [ -n "$a" ] || fail "3: $v is empty"

@@ -493,7 +493,6 @@ func TestProductionWarnings(t *testing.T) {
 	t.Run("No warnings in development", func(t *testing.T) {
 		cfg := &Config{
 			Environment:        "development",
-			JWTSecret:          "weak-secret",
 			CORSAllowedOrigins: "*",
 		}
 		warnings := cfg.ProductionWarnings()
@@ -503,7 +502,6 @@ func TestProductionWarnings(t *testing.T) {
 	t.Run("Warnings for insecure production config", func(t *testing.T) {
 		cfg := &Config{
 			Environment:         "production",
-			JWTSecret:           "change-me",
 			EncryptionKey:       "change-me",
 			AccessSessionSecret: "change-me-in-production-32bytes!",
 			CORSAllowedOrigins:  "*",
@@ -521,7 +519,6 @@ func TestProductionWarnings(t *testing.T) {
 
 		// Check for expected warnings
 		warningStr := strings.Join(warnings, " ")
-		assert.Contains(t, warningStr, "jwt_secret")
 		assert.Contains(t, warningStr, "encryption_key")
 		assert.Contains(t, warningStr, "cors_allowed_origins")
 		assert.Contains(t, warningStr, "csrf_enabled")
@@ -531,7 +528,6 @@ func TestProductionWarnings(t *testing.T) {
 	t.Run("No warnings for secure production config", func(t *testing.T) {
 		cfg := &Config{
 			Environment:         "production",
-			JWTSecret:           "secure-random-key-32-bytes-long!!",
 			EncryptionKey:       "another-secure-key-32-bytes-long!!",
 			AccessSessionSecret: "secure-session-key-32-bytes-long!",
 			CORSAllowedOrigins:  "https://example.com,https://api.example.com",
@@ -550,7 +546,6 @@ func TestValidateProduction(t *testing.T) {
 	t.Run("Always passes in development", func(t *testing.T) {
 		cfg := &Config{
 			Environment:        "development",
-			JWTSecret:          "",
 			CORSAllowedOrigins: "*",
 			CSRFEnabled:        false,
 			DatabaseSSLMode:    "disable",
@@ -566,7 +561,6 @@ func TestValidateProduction(t *testing.T) {
 		cfg := &Config{
 			Environment:               "production",
 			AccessSessionSecret:       "change-me",
-			JWTSecret:                 "secure-key-32-bytes-long!!!!!!!!",
 			EncryptionKey:             "secure-key-32-bytes-long!!!!!!!!",
 			CORSAllowedOrigins:        "https://example.com",
 			CSRFEnabled:               true,
@@ -582,31 +576,10 @@ func TestValidateProduction(t *testing.T) {
 		assert.Contains(t, err.Error(), "access_session_secret")
 	})
 
-	t.Run("Fails with insecure JWT secret", func(t *testing.T) {
-		cfg := &Config{
-			Environment:               "production",
-			AccessSessionSecret:       "secure-key-32-bytes-long!!!!",
-			JWTSecret:                 "change",
-			EncryptionKey:             "secure-key-32-bytes-long!!!!!!!!",
-			CORSAllowedOrigins:        "https://example.com",
-			CSRFEnabled:               true,
-			DatabaseSSLMode:           "require",
-			RedisTLSEnabled:           true,
-			TLS:                       TLSConfig{Enabled: true},
-			AuditStreamAllowedOrigins: "https://example.com",
-			DebugOTPInResponse:        false,
-		}
-
-		err := cfg.ValidateProduction()
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "jwt_secret")
-	})
-
 	t.Run("Fails with wildcard CORS", func(t *testing.T) {
 		cfg := &Config{
 			Environment:               "production",
 			AccessSessionSecret:       "secure-key-32-bytes-long!!!!",
-			JWTSecret:                 "secure-key-32-bytes-long!!!!!!!!",
 			EncryptionKey:             "secure-key-32-bytes-long!!!!!!!!",
 			CORSAllowedOrigins:        "*",
 			CSRFEnabled:               true,
@@ -626,7 +599,6 @@ func TestValidateProduction(t *testing.T) {
 		cfg := &Config{
 			Environment:               "production",
 			AccessSessionSecret:       "secure-key-32-bytes-long!!!!",
-			JWTSecret:                 "secure-key-32-bytes-long!!!!!!!!",
 			EncryptionKey:             "secure-key-32-bytes-long!!!!!!!!",
 			CORSAllowedOrigins:        "https://example.com",
 			CSRFEnabled:               false,
@@ -646,7 +618,6 @@ func TestValidateProduction(t *testing.T) {
 		cfg := &Config{
 			Environment:               "production",
 			AccessSessionSecret:       "secure-key-32-bytes-long!!!!",
-			JWTSecret:                 "secure-key-32-bytes-long!!!!!!!!",
 			EncryptionKey:             "secure-key-32-bytes-long!!!!!!!!",
 			CORSAllowedOrigins:        "https://example.com",
 			CSRFEnabled:               true,
@@ -666,7 +637,6 @@ func TestValidateProduction(t *testing.T) {
 		cfg := &Config{
 			Environment:               "production",
 			AccessSessionSecret:       "secure-key-32-bytes-long!!!!",
-			JWTSecret:                 "secure-key-32-bytes-long!!!!!!!!",
 			EncryptionKey:             "secure-key-32-bytes-long!!!!!!!!",
 			CORSAllowedOrigins:        "https://example.com",
 			CSRFEnabled:               true,
@@ -686,7 +656,6 @@ func TestValidateProduction(t *testing.T) {
 		cfg := &Config{
 			Environment:               "production",
 			AccessSessionSecret:       "secure-key-32-bytes-long!!!!",
-			JWTSecret:                 "secure-key-32-bytes-long!!!!!!!!",
 			EncryptionKey:             "secure-key-32-bytes-long!!!!!!!!",
 			CORSAllowedOrigins:        "https://example.com",
 			CSRFEnabled:               true,
@@ -706,7 +675,6 @@ func TestValidateProduction(t *testing.T) {
 		cfg := &Config{
 			Environment:               "production",
 			AccessSessionSecret:       "secure-key-32-bytes-long!!!!",
-			JWTSecret:                 "secure-key-32-bytes-long!!!!!!!!",
 			EncryptionKey:             "secure-key-32-bytes-long!!!!!!!!",
 			CORSAllowedOrigins:        "https://example.com",
 			CSRFEnabled:               true,
@@ -726,7 +694,6 @@ func TestValidateProduction(t *testing.T) {
 		cfg := &Config{
 			Environment:               "production",
 			AccessSessionSecret:       "secure-key-32-bytes-long!!!!",
-			JWTSecret:                 "secure-key-32-bytes-long!!!!!!!!",
 			EncryptionKey:             "secure-key-32-bytes-long!!!!!!!!",
 			CORSAllowedOrigins:        "https://example.com",
 			CSRFEnabled:               true,
@@ -746,7 +713,6 @@ func TestValidateProduction(t *testing.T) {
 		cfg := &Config{
 			Environment:               "production",
 			AccessSessionSecret:       "secure-key-32-bytes-long!!!!",
-			JWTSecret:                 "secure-key-32-bytes-long!!!!!!!!",
 			EncryptionKey:             "secure-key-32-bytes-long!!!!!!!!",
 			CORSAllowedOrigins:        "https://example.com",
 			CSRFEnabled:               true,
@@ -766,7 +732,6 @@ func TestValidateProduction(t *testing.T) {
 		cfg := &Config{
 			Environment:               "production",
 			AccessSessionSecret:       "secure-key-32-bytes-long!!!!",
-			JWTSecret:                 "secure-key-32-bytes-long!!!!!!!!",
 			EncryptionKey:             "secure-key-32-bytes-long!!!!!!!!",
 			CORSAllowedOrigins:        "https://example.com",
 			CSRFEnabled:               true,
@@ -787,7 +752,6 @@ func TestValidateProduction(t *testing.T) {
 		cfg := &Config{
 			Environment:               "production",
 			AccessSessionSecret:       "secure-key-32-bytes-long!!!!",
-			JWTSecret:                 "secure-key-32-bytes-long!!!!!!!!",
 			EncryptionKey:             "secure-key-32-bytes-long!!!!!!!!",
 			CORSAllowedOrigins:        "https://example.com",
 			CSRFEnabled:               true,
@@ -808,7 +772,6 @@ func TestValidateProduction(t *testing.T) {
 		cfg := &Config{
 			Environment:               "production",
 			AccessSessionSecret:       "secure-key-32-bytes-long!!!!",
-			JWTSecret:                 "secure-key-32-bytes-long!!!!!!!!",
 			EncryptionKey:             "secure-key-32-bytes-long!!!!!!!!",
 			CORSAllowedOrigins:        "https://example.com",
 			CSRFEnabled:               true,
@@ -830,7 +793,6 @@ func TestValidateProduction(t *testing.T) {
 		cfg := &Config{
 			Environment:               "production",
 			AccessSessionSecret:       "secure-key-32-bytes-long!!!!",
-			JWTSecret:                 "secure-key-32-bytes-long!!!!!!!!",
 			EncryptionKey:             "secure-key-32-bytes-long!!!!!!!!",
 			CORSAllowedOrigins:        "https://example.com",
 			CSRFEnabled:               true,
@@ -852,7 +814,6 @@ func TestValidateProduction(t *testing.T) {
 		cfg := &Config{
 			Environment:               "production",
 			AccessSessionSecret:       "secure-key-32-bytes-long!!!!",
-			JWTSecret:                 "secure-key-32-bytes-long!!!!!!!!",
 			EncryptionKey:             "secure-key-32-bytes-long!!!!!!!!",
 			CORSAllowedOrigins:        "https://example.com",
 			CSRFEnabled:               true,
@@ -875,7 +836,6 @@ func TestValidateProduction(t *testing.T) {
 		cfg := &Config{
 			Environment:               "production",
 			AccessSessionSecret:       "secure-key-32-bytes-long!!!!",
-			JWTSecret:                 "secure-key-32-bytes-long!!!!!!!!",
 			EncryptionKey:             "secure-key-32-bytes-long!!!!!!!!",
 			CORSAllowedOrigins:        "https://example.com",
 			CSRFEnabled:               true,
@@ -901,7 +861,6 @@ func TestValidateProduction(t *testing.T) {
 		cfg := &Config{
 			Environment:               "production",
 			AccessSessionSecret:       "secure-key-32-bytes-long!!!!",
-			JWTSecret:                 "secure-key-32-bytes-long!!!!!!!!",
 			EncryptionKey:             "secure-key-32-bytes-long!!!!!!!!",
 			CORSAllowedOrigins:        "https://example.com",
 			CSRFEnabled:               true,
@@ -930,7 +889,6 @@ func TestValidateProduction(t *testing.T) {
 		cfg := &Config{
 			Environment:               "production",
 			AccessSessionSecret:       "secure-key-32-bytes-long!!!!",
-			JWTSecret:                 "secure-key-32-bytes-long!!!!!!!!",
 			EncryptionKey:             "secure-key-32-bytes-long!!!!!!!!",
 			CORSAllowedOrigins:        "https://example.com",
 			CSRFEnabled:               true,
@@ -951,7 +909,6 @@ func TestValidateProduction(t *testing.T) {
 		cfg := &Config{
 			Environment:               "production",
 			AccessSessionSecret:       "secure-key-32-bytes-long!!!!",
-			JWTSecret:                 "secure-key-32-bytes-long!!!!!!!!",
 			EncryptionKey:             "secure-key-32-bytes-long!!!!!!!!",
 			CORSAllowedOrigins:        "https://example.com",
 			CSRFEnabled:               true,
@@ -973,7 +930,6 @@ func TestValidateProduction(t *testing.T) {
 		cfg := &Config{
 			Environment:               "production",
 			AccessSessionSecret:       "secure-key-32-bytes-long!!!!",
-			JWTSecret:                 "secure-key-32-bytes-long!!!!!!!!",
 			EncryptionKey:             "secure-key-32-bytes-long!!!!!!!!",
 			CORSAllowedOrigins:        "https://example.com",
 			CSRFEnabled:               true,
@@ -998,7 +954,6 @@ func TestValidateProduction_Elasticsearch(t *testing.T) {
 		return &Config{
 			Environment:               "production",
 			AccessSessionSecret:       "secure-key-32-bytes-long!!!!",
-			JWTSecret:                 "secure-key-32-bytes-long!!!!!!!!",
 			EncryptionKey:             "secure-key-32-bytes-long!!!!!!!!",
 			CORSAllowedOrigins:        "https://example.com",
 			CSRFEnabled:               true,
@@ -1267,7 +1222,6 @@ func TestValidateProductionRejectsDevBypassAndMockSMS(t *testing.T) {
 	base := func() *Config {
 		c := &Config{Environment: "production"}
 		c.AccessSessionSecret = "0123456789abcdef0123456789abcdef"
-		c.JWTSecret = "0123456789abcdef0123456789abcdef"
 		c.EncryptionKey = "0123456789abcdef0123456789abcdef"
 		c.VaultKEK = "0123456789abcdef0123456789abcdef"
 		c.CORSAllowedOrigins = "https://console.example.test"

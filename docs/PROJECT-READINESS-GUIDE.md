@@ -5921,6 +5921,21 @@ not a waiver: the field, its default and its binding go, and the name stays
 there so an operator who still sets it is told at startup what to set instead.
 The register is empty and pinned at zero.
 
+**The worst instance was a secret, and it inverted an incident-response
+procedure.** `JWT_SECRET` had a field, a binding, a line in the generator, a
+`${JWT_SECRET:?required}` in both compose files, a Kubernetes secret key, a
+Vault mapping, a production check that blocked startup without it, and a row in
+`SECURITY-HARDENING.md` saying it signed access and ID tokens and should be
+rotated with the JWKS cache. Nothing signed or verified with it — every token is
+RS256 from `oauth_signing_keys`, and the middleware rejects other algorithms by
+name — so rotating it after a suspected compromise rotated nothing and every
+outstanding token still verified. Meanwhile `ENCRYPTION_KEY`, which encrypts
+that signing key at rest, reached **no service in either compose file**, so the
+key that mints every token was stored in plaintext on the reference stack. The
+inert secret is retired, the real one is passed, and
+`deployments/docker/encryption_key_reaches_services_test.go` derives the set of
+services that need it from the tree rather than a list.
+
 ### 5.4 Zero-trust tenets (NIST SP 800-207) — where OpenIDX stands
 
 | Tenet | Mechanism | Status |

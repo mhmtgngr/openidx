@@ -66,7 +66,15 @@ type Config struct {
 	OAuthJWKSURL string `mapstructure:"oauth_jwks_url"`
 
 	// Security settings
-	JWTSecret          string `mapstructure:"jwt_secret"`
+	//
+	// JWT_SECRET is NOT here. Every token this product mints or accepts is
+	// RS256, signed with the rotatable key in oauth_signing_keys and verified
+	// through JWKS; the shared middleware refuses any other algorithm by name
+	// (internal/oauth/jwt_signature_verify_test.go pins that). A symmetric
+	// secret had a field, a default, an environment binding, a compose
+	// `:?required`, a line in the generator and a production check that blocked
+	// startup without it -- and nothing signed or verified anything with it.
+	// See retired.go.
 	EncryptionKey      string `mapstructure:"encryption_key"`
 	CORSAllowedOrigins string `mapstructure:"cors_allowed_origins"`
 
@@ -495,7 +503,7 @@ type Config struct {
 	// chain over nothing. Production requires it, because the documentation
 	// states the product keeps a tamper-evident log and a control that is
 	// documented but silently off is the defect this whole programme exists
-	// for. It is deliberately NOT derived from JWT_SECRET or
+	// for. It is deliberately NOT derived from ENCRYPTION_KEY or
 	// ACCESS_SESSION_SECRET: whoever can read the audit database must not also
 	// hold the key that would let them re-seal a doctored trail.
 	AuditChainSecret string `mapstructure:"audit_chain_secret"`
@@ -1146,7 +1154,6 @@ func bindEnvVars(v *viper.Viper) {
 		"apisix_admin_key":                                "APISIX_ADMIN_KEY",
 		"apisix_bootstrapper_node":                        "APISIX_BOOTSTRAPPER_NODE",
 		"enable_opa_authz":                                "ENABLE_OPA_AUTHZ",
-		"jwt_secret":                                      "JWT_SECRET",
 		"encryption_key":                                  "ENCRYPTION_KEY",
 		"vault_kek":                                       "VAULT_KEK",
 		"vault_keks":                                      "VAULT_KEKS",
@@ -1410,9 +1417,6 @@ func (c *Config) ProductionWarnings() []string {
 		return nil
 	}
 	var warnings []string
-	if c.JWTSecret == "" || strings.Contains(strings.ToLower(c.JWTSecret), "change") {
-		warnings = append(warnings, "jwt_secret uses a default or placeholder value")
-	}
 	if c.EncryptionKey == "" || strings.Contains(strings.ToLower(c.EncryptionKey), "change") {
 		warnings = append(warnings, "encryption_key uses a default or placeholder value")
 	}
@@ -1464,12 +1468,6 @@ func (c *Config) ValidateProduction() error {
 	if c.AccessSessionSecret == "" || strings.Contains(c.AccessSessionSecret, "change-me") {
 		criticalIssues = append(criticalIssues,
 			"access_session_secret must be set to a secure random value (at least 32 bytes)")
-	}
-
-	// Critical: JWT signing key must be secure
-	if c.JWTSecret == "" || strings.Contains(strings.ToLower(c.JWTSecret), "change") {
-		criticalIssues = append(criticalIssues,
-			"jwt_secret must be set to a secure random value (at least 32 bytes)")
 	}
 
 	// Critical: Encryption key for sensitive data

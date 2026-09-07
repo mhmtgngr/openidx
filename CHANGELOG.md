@@ -60,6 +60,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The OAuth signing key was stored in plaintext on the reference stack, and
+  the compose file refused to start without a secret that signs nothing.** Two
+  halves of one mistake, found by the same census.
+
+  `JWT_SECRET` had a config field, an environment binding, a line in the
+  generator, a `${JWT_SECRET:?required}` in both compose files, a Kubernetes
+  secret key, a Vault mapping, a production check that blocked startup without
+  it, and a row in `SECURITY-HARDENING.md` reading *"Used to sign access + ID
+  tokens. Rotate together with `OAUTH_JWKS_URL` cache invalidation."* Nothing
+  signed or verified anything with it. Every token OpenIDX mints or accepts is
+  RS256, signed with the rotatable key in `oauth_signing_keys` and verified
+  through JWKS; the shared middleware rejects any other algorithm **by name**.
+  So an operator who rotated `JWT_SECRET` after a suspected compromise rotated
+  nothing, and every outstanding token still verified. `docs/architecture/
+  secret-rotation.md` had already noticed and filed it as "vestigial … consider
+  removing it"; it is removed, retired in `internal/common/config/retired.go`,
+  and that page now names the real procedure —
+  `POST /api/v1/admin/oauth/signing-keys/rotate`.
+
+  `ENCRYPTION_KEY` is the secret that *does* protect the signing key — it
+  encrypts it at rest — and **no service in either compose file received it**.
+  `secretcrypt` falls back to a no-op cipher and warns, so the key that mints
+  every token in the system was written to the database in plaintext on the
+  reference stack, and on the production compose file, while the same files
+  refused to start over the inert one. The Kubernetes paths were unaffected:
+  Helm and `dev-kube` mount the whole secret with `envFrom`. Both compose files
+  now pass it to the six services that read it, and
+  `deployments/docker/encryption_key_reaches_services_test.go` derives that set
+  from the tree — a package that reads `Config.EncryptionKey`, and any binary
+  that imports one — so a service added later is covered without anyone
+  remembering the test exists. Red-proofed by removing the key from
+  `oauth-service`.
+
 - **The admin console's OTP settings reached nothing
   (`internal/identity.SetOTPSettings`, applied by the SMS config watcher).**
   Settings → SMS offers OTP code length, lifetime and attempt ceiling. The
@@ -128,13 +161,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
-- **Four settings that were read by nothing are retired**, joining `ENABLE_MFA`,
+- **Five settings that were read by nothing are retired**, joining `ENABLE_MFA`,
   `ENABLE_AUDIT_LOGGING` and `OAUTH_LOGIN_UI` in
   `internal/common/config/retired.go`. Each is gone from the struct, the viper
   defaults and `configs/audit-service.yaml`, and an install that still sets one
   is told so at startup — in every environment, because development is where an
   operator tries a switch and needs to hear that it does nothing.
 
+  - `JWT_SECRET` (`jwt_secret`) — see Fixed above: a required production secret
+    that signed and verified nothing.
   - `FCM_SERVER_KEY` (`push_mfa.fcm_server_key`) — the legacy FCM server key.
     Google decommissioned the legacy HTTP and XMPP APIs in 2024 and no build
     ever sent it; push goes out over FCM HTTP v1. Set

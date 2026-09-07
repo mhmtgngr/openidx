@@ -393,7 +393,6 @@ helm-template:
 		--values deployments/kubernetes/helm/openidx/values.yaml \
 		--set secrets.postgresPassword=render-only-not-a-credential \
 		--set secrets.redisPassword=render-only-not-a-credential \
-		--set secrets.jwtSecret=render-only-not-a-credential-000000 \
 		--set secrets.encryptionKey=render-only-not-a-credential32b
 
 helm-install:

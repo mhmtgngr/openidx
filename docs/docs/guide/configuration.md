@@ -25,7 +25,6 @@ OpenIDX services are configured via environment variables. All services share a 
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `JWT_SECRET` | Secret for JWT signing (min 32 chars) | — |
 | `ENCRYPTION_KEY` | AES-256 key (exactly 32 bytes) | — |
 
 ### OAuth / OIDC
@@ -87,7 +86,6 @@ Use the Helm chart's secrets configuration:
 secrets:
   postgresPassword: "..."
   redisPassword: "..."
-  jwtSecret: "..."
   encryptionKey: "..."
 ```
 

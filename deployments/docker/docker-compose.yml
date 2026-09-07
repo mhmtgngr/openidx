@@ -235,6 +235,7 @@ services:
       - DEFAULT_ORG_FALLBACK=${DEFAULT_ORG_FALLBACK:-true}
       - DEFAULT_ORG_ID=${DEFAULT_ORG_ID:-00000000-0000-0000-0000-000000000010}
       - DATABASE_URL=postgres://openidx_app:${OPENIDX_APP_PASSWORD:?OPENIDX_APP_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-disable}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY required - run scripts/generate-secrets.sh}
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis:6379
       - OPA_URL=http://opa:8281
       - OAUTH_ISSUER=https://oauth.localtest.me:8446
@@ -282,6 +283,7 @@ services:
       - DEFAULT_ORG_FALLBACK=${DEFAULT_ORG_FALLBACK:-true}
       - DEFAULT_ORG_ID=${DEFAULT_ORG_ID:-00000000-0000-0000-0000-000000000010}
       - DATABASE_URL=postgres://openidx_app:${OPENIDX_APP_PASSWORD:?OPENIDX_APP_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-disable}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY required - run scripts/generate-secrets.sh}
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis:6379
       - OPA_URL=http://opa:8281
       - OAUTH_ISSUER=https://oauth.localtest.me:8446
@@ -324,6 +326,7 @@ services:
       - DEFAULT_ORG_FALLBACK=${DEFAULT_ORG_FALLBACK:-true}
       - DEFAULT_ORG_ID=${DEFAULT_ORG_ID:-00000000-0000-0000-0000-000000000010}
       - DATABASE_URL=postgres://openidx_app:${OPENIDX_APP_PASSWORD:?OPENIDX_APP_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-disable}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY required - run scripts/generate-secrets.sh}
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis:6379
       - OAUTH_ISSUER=https://oauth.localtest.me:8446
       - OAUTH_JWKS_URL=http://oauth-service:8006/.well-known/jwks.json
@@ -411,6 +414,7 @@ services:
       - DEFAULT_ORG_FALLBACK=${DEFAULT_ORG_FALLBACK:-true}
       - DEFAULT_ORG_ID=${DEFAULT_ORG_ID:-00000000-0000-0000-0000-000000000010}
       - DATABASE_URL=postgres://openidx_app:${OPENIDX_APP_PASSWORD:?OPENIDX_APP_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-disable}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY required - run scripts/generate-secrets.sh}
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis:6379
       - OPA_URL=http://opa:8281
       - OAUTH_ISSUER=https://oauth.localtest.me:8446
@@ -503,13 +507,13 @@ services:
       - DEFAULT_ORG_FALLBACK=${DEFAULT_ORG_FALLBACK:-true}
       - DEFAULT_ORG_ID=${DEFAULT_ORG_ID:-00000000-0000-0000-0000-000000000010}
       - DATABASE_URL=postgres://openidx_app:${OPENIDX_APP_PASSWORD:?OPENIDX_APP_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-disable}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY required - run scripts/generate-secrets.sh}
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis:6379
       - LOG_LEVEL=debug
       - OPENIDX_ENABLE_RATE_LIMIT=false
       - TRACING_ENABLED=${TRACING_ENABLED:-false}
       - OTEL_EXPORTER_OTLP_ENDPOINT=jaeger:4317
       - OTEL_SERVICE_NAME=oauth-service
-      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET required - run scripts/generate-secrets.sh}
       - OAUTH_ISSUER=https://oauth.localtest.me:8446
       # Where /oauth/authorize sends a browser to sign in. It defaults to
       # <issuer>/login, which is right for the production nginx (SPA and issuer
@@ -1193,6 +1197,7 @@ services:
       - DEFAULT_ORG_FALLBACK=${DEFAULT_ORG_FALLBACK:-true}
       - DEFAULT_ORG_ID=${DEFAULT_ORG_ID:-00000000-0000-0000-0000-000000000010}
       - DATABASE_URL=postgres://openidx_app:${OPENIDX_APP_PASSWORD:?OPENIDX_APP_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-disable}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY required - run scripts/generate-secrets.sh}
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis:6379
       - OAUTH_ISSUER=https://oauth.localtest.me:8446
       - OAUTH_JWKS_URL=http://oauth-service:8006/.well-known/jwks.json

@@ -126,7 +126,6 @@ resources that pull the keys below from your secret store, under the prefix
 |------------------|-----------------|-------|
 | `openidx/prod/database-url` | `DATABASE_URL` | full DSN to RDS, e.g. `postgres://USER:PASS@HOST:5432/openidx?sslmode=verify-full` |
 | `openidx/prod/redis-url` | `REDIS_URL` | `rediss://:PASS@HOST:6379` (TLS scheme) |
-| `openidx/prod/jwt-secret` | `JWT_SECRET` | ≥ 32 random bytes |
 | `openidx/prod/encryption-key` | `ENCRYPTION_KEY` | ≥ 32 random bytes |
 | `openidx/prod/postgres-password` | `POSTGRES_PASSWORD` | RDS password |
 | `openidx/prod/redis-password` | `REDIS_PASSWORD` | ElastiCache auth token |
@@ -134,13 +133,13 @@ resources that pull the keys below from your secret store, under the prefix
 Generate strong values:
 
 ```bash
-openssl rand -base64 48   # for each of jwt-secret, encryption-key, access-session-secret
+openssl rand -base64 48   # for each of encryption-key, access-session-secret
 ```
 
 Put them in AWS Secrets Manager, e.g.:
 
 ```bash
-aws secretsmanager create-secret --name openidx/prod/jwt-secret \
+aws secretsmanager create-secret --name openidx/prod/encryption-key \
   --secret-string "$(openssl rand -base64 48)"
 # ...repeat for the other keys, and store database-url / redis-url with the
 # RDS / ElastiCache endpoints from Terraform (use sslmode=verify-full and rediss://).
@@ -289,7 +288,6 @@ are the development defaults that are unsafe for prod.
 |---------|-------------|------------------------|
 | `APP_ENV` | `development` | `production` (enables the gate) |
 | `ACCESS_SESSION_SECRET` | `change-me-in-production-32bytes!` | secure random, ≥ 32 bytes, no `change-me` |
-| `JWT_SECRET` | _(empty)_ | secure random, ≥ 32 bytes, no `change` |
 | `ENCRYPTION_KEY` | _(empty)_ | secure random, ≥ 32 bytes, no `change` |
 | `CORS_ALLOWED_ORIGINS` | `*` | explicit origin list (not `*`) |
 | `CSRF_ENABLED` | `false` | `true` |

@@ -9,7 +9,6 @@ fullnameOverride: ""
 secrets:
   postgresPassword: ""      # REQUIRED
   redisPassword: ""          # REQUIRED
-  jwtSecret: ""              # REQUIRED - min 32 chars
   encryptionKey: ""          # REQUIRED - exactly 32 bytes
   smtpPassword: ""
   # PAM dedicated brokers (pamBroker.enabled). REST admin credentials for the

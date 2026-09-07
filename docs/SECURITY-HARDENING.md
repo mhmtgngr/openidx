@@ -32,9 +32,8 @@ without satisfying it.
 
 | Knob | Required value | Notes |
 |---|---|---|
-| `JWT_SECRET` | random ≥ 32 bytes; must not contain "change" (case-insensitive) | Used to sign access + ID tokens. Rotate together with `OAUTH_JWKS_URL` cache invalidation. |
 | `ACCESS_SESSION_SECRET` | random ≥ 32 bytes; must not match `change-me` | Used by the access-service for session cookies. |
-| `ENCRYPTION_KEY` | random ≥ 32 bytes; must not contain "change" (case-insensitive) | Encrypts sensitive at-rest fields (SMTP creds, identity-provider client secrets, etc). |
+| `ENCRYPTION_KEY` | random ≥ 32 bytes; must not contain "change" (case-insensitive) | Encrypts sensitive at-rest fields — SMTP credentials, identity-provider client secrets, **and the OAuth signing key**. Losing it costs every outstanding token. |
 
 The validator does **not** check rotation cadence — that's an
 operational policy. We recommend 90-day rotation for JWT-signing keys.

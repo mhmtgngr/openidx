@@ -101,7 +101,6 @@ func TestAccessService_ProductionConfigValidation(t *testing.T) {
 				DatabaseURL:               "postgres://test@localhost:5432/test?sslmode=verify-full",
 				RedisURL:                  "redis://localhost:6379",
 				Port:                      8007,
-				JWTSecret:                 "secure-32-byte-secret-key-1234567890",
 				EncryptionKey:             "secure-32-byte-encryption-key-123456",
 				AccessSessionSecret:       "secure-32-byte-session-secret-12345",
 				CORSAllowedOrigins:        "https://example.com",
@@ -116,32 +115,12 @@ func TestAccessService_ProductionConfigValidation(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "Production with insecure JWT secret",
-			cfg: &config.Config{
-				Environment:         "production",
-				DatabaseURL:         "postgres://test@localhost:5432/test?sslmode=verify-full",
-				RedisURL:            "redis://localhost:6379",
-				Port:                8007,
-				JWTSecret:           "change-me",
-				EncryptionKey:       "secure-32-byte-encryption-key-123456",
-				AccessSessionSecret: "secure-32-byte-session-secret-12345",
-				CORSAllowedOrigins:  "https://example.com",
-				CSRFEnabled:         true,
-				DatabaseSSLMode:     "verify-full",
-				RedisTLSEnabled:     true,
-				TLS:                 config.TLSConfig{Enabled: true},
-			},
-			wantErr:     true,
-			errContains: "jwt_secret",
-		},
-		{
 			name: "Production with wildcard CORS",
 			cfg: &config.Config{
 				Environment:         "production",
 				DatabaseURL:         "postgres://test@localhost:5432/test?sslmode=verify-full",
 				RedisURL:            "redis://localhost:6379",
 				Port:                8007,
-				JWTSecret:           "secure-32-byte-secret-key-1234567890",
 				EncryptionKey:       "secure-32-byte-encryption-key-123456",
 				AccessSessionSecret: "secure-32-byte-session-secret-12345",
 				CORSAllowedOrigins:  "*",
@@ -160,7 +139,6 @@ func TestAccessService_ProductionConfigValidation(t *testing.T) {
 				DatabaseURL:         "postgres://test@localhost:5432/test?sslmode=verify-full",
 				RedisURL:            "redis://localhost:6379",
 				Port:                8007,
-				JWTSecret:           "secure-32-byte-secret-key-1234567890",
 				EncryptionKey:       "secure-32-byte-encryption-key-123456",
 				AccessSessionSecret: "secure-32-byte-session-secret-12345",
 				CORSAllowedOrigins:  "https://example.com",
@@ -179,7 +157,6 @@ func TestAccessService_ProductionConfigValidation(t *testing.T) {
 				DatabaseURL:         "postgres://test@localhost:5432/test?sslmode=disable",
 				RedisURL:            "redis://localhost:6379",
 				Port:                8007,
-				JWTSecret:           "secure-32-byte-secret-key-1234567890",
 				EncryptionKey:       "secure-32-byte-encryption-key-123456",
 				AccessSessionSecret: "secure-32-byte-session-secret-12345",
 				CORSAllowedOrigins:  "https://example.com",
@@ -503,7 +480,6 @@ func TestAccessService_ProductionWarnings(t *testing.T) {
 	t.Run("Production warnings detect insecure configs", func(t *testing.T) {
 		cfg := &config.Config{
 			Environment:        "production",
-			JWTSecret:          "change-me",
 			EncryptionKey:      "",
 			CORSAllowedOrigins: "*",
 			CSRFEnabled:        false,
@@ -514,7 +490,7 @@ func TestAccessService_ProductionWarnings(t *testing.T) {
 
 		warnings := cfg.ProductionWarnings()
 		assert.NotEmpty(t, warnings)
-		assert.Contains(t, warnings[0], "jwt_secret")
+		assert.Contains(t, warnings[0], "encryption_key")
 	})
 }
 

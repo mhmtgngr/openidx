@@ -423,6 +423,6 @@ func printCensus(declared []field, read map[token.Pos]bool) {
 		if !read[f.Decl] {
 			status = "UNREAD"
 		}
-		fmt.Printf("%-6s %-70s %s\n", status, f.Key, f.Tag)
+		fmt.Printf("%-6s %-70s %s\n", status, f.Key, f.Full)
 	}
 }

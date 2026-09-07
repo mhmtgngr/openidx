@@ -57,7 +57,6 @@ helm install openidx deployments/kubernetes/helm/openidx \
   --create-namespace \
   --set secrets.postgresPassword="$(openssl rand -base64 32)" \
   --set secrets.redisPassword="$(openssl rand -base64 32)" \
-  --set secrets.jwtSecret="$(openssl rand -hex 32)" \
   --set secrets.encryptionKey="$(openssl rand -base64 24)"
 ```
 
@@ -67,7 +66,6 @@ Or create a `values-production.yaml`:
 secrets:
   postgresPassword: "your-postgres-password"
   redisPassword: "your-redis-password"
-  jwtSecret: "your-64-char-hex-secret"
   encryptionKey: "your-32-byte-encryption-key!!!"
 
 config:

@@ -510,7 +510,7 @@ func NewConfigCommand() *cobra.Command {
 				"REDIS_URL",
 				"ELASTICSEARCH_URL",
 				"OPA_URL",
-				"JWT_SECRET",
+				"ENCRYPTION_KEY",
 				"OAUTH_ISSUER",
 			}
 

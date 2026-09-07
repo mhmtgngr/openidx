@@ -56,6 +56,13 @@ var retiredSettings = map[string]retiredSetting{
 			"no build ever sent it; push notifications go out over FCM HTTP v1. Set PUSH_MFA_FCM_CREDENTIALS_FILE " +
 			"to a Firebase service-account JSON and PUSH_MFA_FCM_PROJECT_ID to the project it belongs to",
 	},
+	"JWT_SECRET": {
+		ViperKey: "jwt_secret",
+		Reason: "no build ever signed or verified anything with it. Every token OpenIDX mints or accepts is " +
+			"RS256, signed with the rotatable key in oauth_signing_keys — encrypted at rest with ENCRYPTION_KEY — " +
+			"and verified through JWKS; the shared middleware refuses any other algorithm by name. Rotating this " +
+			"value rotated nothing: rotate the real key with POST /api/v1/admin/oauth/signing-keys/rotate",
+	},
 	"SMS_OTP_LENGTH": {
 		ViperKey: "sms.otp_length",
 		Reason: "OTP length is an installation setting, not a per-service one: it is stored in the database and " +

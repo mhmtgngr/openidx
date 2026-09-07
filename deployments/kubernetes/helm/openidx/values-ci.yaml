@@ -42,7 +42,6 @@
 secrets:
   postgresPassword: "ci-postgres-password"
   redisPassword: "ci-redis-password"
-  jwtSecret: "ci-jwt-secret-at-least-32-bytes-long!!"
   encryptionKey: "ci-encryption-key-exactly-32-byte"
 
 # ----- The claims under test -----

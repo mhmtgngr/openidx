@@ -140,7 +140,7 @@ kubectl create secret generic openidx-secrets \
   -n openidx-dev \
   --from-literal=POSTGRES_PASSWORD=your-password \
   --from-literal=REDIS_PASSWORD=your-password \
-  --from-literal=JWT_SECRET=your-jwt-secret
+  --from-literal=ENCRYPTION_KEY=your-32-byte-key
 ```
 
 ### Environment Variables

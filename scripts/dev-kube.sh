@@ -202,7 +202,6 @@ ensure_dev_secrets() {
     local pg_pw redis_pw jwt enc oauth_secret
     pg_pw="$(openssl rand -hex 16)"
     redis_pw="$(openssl rand -hex 16)"
-    jwt="$(openssl rand -hex 32)"
     enc="$(openssl rand -hex 16)"          # 32 chars, satisfies the >=32-byte gate
     oauth_secret="$(openssl rand -hex 24)"
 
@@ -212,7 +211,6 @@ ensure_dev_secrets() {
         --from-literal=DATABASE_URL="postgres://openidx:${pg_pw}@postgres:5432/openidx?sslmode=disable" \
         --from-literal=REDIS_PASSWORD="${redis_pw}" \
         --from-literal=REDIS_URL="redis://:${redis_pw}@redis:6379" \
-        --from-literal=JWT_SECRET="${jwt}" \
         --from-literal=ENCRYPTION_KEY="${enc}" \
         --from-literal=OAUTH_ISSUER="http://oauth-service.openidx-dev.svc.cluster.local:8006" \
         --from-literal=OAUTH_JWKS_URL="http://oauth-service.openidx-dev.svc.cluster.local:8006/.well-known/jwks.json" \
