@@ -5018,13 +5018,18 @@ worked.
      to find out what this deployment does.
    - Deleting the fields alone would have removed the evidence and left the
      operator's belief intact, so `internal/common/config/retired.go` carries
-     the three retired names (`OAUTH_LOGIN_UI` too) with what became of each,
-     and `ValidateProductionConfig` logs any that are still set — **in every
-     environment**, because development is where someone tries a switch and
-     needs to hear that it does nothing. Two tests keep a retired setting from
-     coming back by the routes these left by: a viper default or
-     `mapstructure` binding in `config.go`, and a line in any shipped
-     `configs/*.yaml`. Both shown red against a restored `enable_mfa`.
+     the retired names with what became of each, and `ValidateProductionConfig`
+     logs any that are still set — **in every environment**, because development
+     is where someone tries a switch and needs to hear that it does nothing. Two
+     tests keep a retired setting from coming back by the routes these left by:
+     a viper default or `mapstructure` binding in `config.go`, and a line in any
+     operator-facing configuration surface the repository ships (`.env.example`,
+     the compose and dev-kube samples, the apisix-edge examples). Both shown red
+     against a restored `enable_mfa`. The register has since taken `JWT_SECRET`,
+     `FCM_SERVER_KEY` and the three duplicated SMS OTP knobs, and
+     `configs/audit-service.yaml` — a config file named after a service, which
+     `Load` could never open because it looks only for `config.yaml` — is
+     deleted rather than corrected.
 6. ✅ **The interactive MFA path — two more controls that were not there.**
    Writing the tests for `handleMFAVerify` and `handleMFASendOTP` found both.
    - **SMS and email could not complete a login.** `verifyStepUpFactor`'s doc

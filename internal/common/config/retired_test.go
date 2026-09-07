@@ -84,15 +84,31 @@ func TestRetiredSettingsHaveNoBindingOrDefault(t *testing.T) {
 	}
 }
 
-// And the route that made them visible to an operator who never read the Go:
-// a line in a config file the services load from ./configs.
+// And the route that made them visible to an operator who never read the Go: a
+// line in something they copy and edit.
+//
+// The set is every operator-facing configuration surface this repository ships,
+// not just ./configs — which is now empty, because the one file in it was named
+// after a service while the loader looks only for config.yaml, so nothing could
+// ever read it. A file an operator edits and a process never opens is the same
+// defect one level up.
 func TestRetiredSettingsAreNotInShippedConfigs(t *testing.T) {
-	files, err := filepath.Glob("../../../configs/*.yaml")
-	if err != nil {
-		t.Fatalf("glob configs: %v", err)
+	var files []string
+	for _, pattern := range []string{
+		"../../../configs/*.yaml",
+		"../../../.env.example",
+		"../../../deployments/docker/.env.production",
+		"../../../deployments/apisix-edge/*.example",
+		"../../../dev-kube/*.yaml",
+	} {
+		matched, err := filepath.Glob(pattern)
+		if err != nil {
+			t.Fatalf("glob %s: %v", pattern, err)
+		}
+		files = append(files, matched...)
 	}
 	if len(files) == 0 {
-		t.Fatal("no configs/*.yaml found; this test would pass vacuously")
+		t.Fatal("no shipped configuration surfaces found; this test would pass vacuously")
 	}
 	for _, f := range files {
 		body, err := os.ReadFile(f)
@@ -100,14 +116,19 @@ func TestRetiredSettingsAreNotInShippedConfigs(t *testing.T) {
 			t.Fatalf("read %s: %v", f, err)
 		}
 		for i, line := range strings.Split(string(body), "\n") {
+			trimmed := strings.TrimSpace(line)
 			for _, name := range RetiredSettingNames() {
 				key := RetiredSettingKey(name)
 				leaf := key
 				if j := strings.LastIndex(key, "."); j >= 0 {
 					leaf = key[j+1:]
 				}
-				if strings.HasPrefix(strings.TrimSpace(line), leaf+":") {
-					t.Errorf("%s:%d offers the retired setting %s: %q", f, i+1, name, strings.TrimSpace(line))
+				// Two shapes, because the surfaces come in two shapes: a YAML
+				// key (`fcm_server_key:`) and an environment assignment
+				// (`JWT_SECRET=`). Checking only the first would pass over every
+				// .env file in the list without reading a thing.
+				if strings.HasPrefix(trimmed, leaf+":") || strings.HasPrefix(trimmed, name+"=") {
+					t.Errorf("%s:%d offers the retired setting %s: %q", f, i+1, name, trimmed)
 				}
 			}
 		}

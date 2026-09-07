@@ -198,6 +198,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is told so at startup — in every environment, because development is where an
   operator tries a switch and needs to hear that it does nothing.
 
+  `configs/audit-service.yaml` is deleted for the same reason one level up: it
+  was the only file in `configs/`, it was named after a service while `Load`
+  looks only for `config.yaml`, and its `${VAR:default}` lines implied an
+  interpolation step nothing performs — so an operator could edit it all day
+  and no process would ever open it. The reference for what can be set is the
+  Configuration Reference, which is gated. The test that kept a retired setting
+  out of shipped configuration now reads every surface an operator actually
+  copies (`.env.example`, the compose and dev-kube samples, the apisix-edge
+  examples) in both the YAML and the `KEY=value` shape, rather than one file
+  nothing read.
+
   - `JWT_SECRET` (`jwt_secret`) — see Fixed above: a required production secret
     that signed and verified nothing.
   - `FCM_SERVER_KEY` (`push_mfa.fcm_server_key`) — the legacy FCM server key.

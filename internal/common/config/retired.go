@@ -25,11 +25,17 @@ type retiredSetting struct {
 // A setting that is silently ignored is worse than one that was never offered:
 // the operator who set it believes something changed. ENABLE_MFA and
 // ENABLE_AUDIT_LOGGING are why this table exists. Both had struct fields,
-// defaults, and a line each in a shipped config file (configs/audit-service.yaml)
-// — and no line of this codebase ever read either. `ENABLE_MFA=false` got you
-// MFA; `ENABLE_AUDIT_LOGGING=false` got you audit logging. Deleting the fields
+// defaults, and a line each in the shipped config file — and no line of this
+// codebase ever read either. `ENABLE_MFA=false` got you MFA;
+// `ENABLE_AUDIT_LOGGING=false` got you audit logging. Deleting the fields
 // without saying so would have kept the operator's belief intact and only
 // removed the evidence.
+//
+// That shipped config file is gone too, for the same reason one level up: it was
+// named configs/audit-service.yaml while Load looks only for config.yaml, so no
+// process could ever open it, and its `${VAR:default}` lines implied an
+// interpolation step nothing performs. The reference for what can be set is
+// docs/docs/deployment/configuration.md, which tools/deadconfig gates.
 //
 // tools/deadconfig now finds this class by census rather than by somebody
 // noticing, and this table is where its findings come to rest: the field, the

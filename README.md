@@ -214,7 +214,6 @@ openidx/
 │   ├── docker/
 │   ├── kubernetes/
 │   └── terraform/
-├── configs/                # Configuration files
 ├── scripts/                # Build and utility scripts
 ├── docs/                   # Documentation
 └── test/                   # Integration tests
