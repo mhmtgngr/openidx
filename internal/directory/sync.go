@@ -27,6 +27,54 @@ func NewSyncEngine(db *database.PostgresDB, logger *zap.Logger) *SyncEngine {
 	}
 }
 
+// replaceDirectoryMemberships makes a group's directory-managed membership
+// match what the directory just said, atomically.
+//
+// It replaces two unchecked statements that both LDAP and Entra ID sync ran per
+// group: a DELETE of the directory-managed rows, then an INSERT per current
+// member. Neither error was looked at, and the pair was not a transaction, so
+// three things could go wrong and none of them was reported:
+//
+//   - The DELETE fails and the INSERTs succeed. A membership the directory
+//     REMOVED survives, and the sync goes on to report success. That is
+//     deprovisioning that did not happen, on the schedule an operator relies on
+//     to take access away when somebody leaves a team.
+//   - The DELETE succeeds and an INSERT fails. Access the directory still
+//     grants is dropped. Safe, but wrong, and equally silent.
+//   - Between the two, the group is empty. A membership check landing in that
+//     window is answered no for a user who has the access.
+//
+// One transaction closes all three: the old rows and the new ones move
+// together, and a failure leaves the previous membership exactly as it was for
+// the caller to report.
+func (e *SyncEngine) replaceDirectoryMemberships(ctx context.Context, groupID, directoryID, orgID string, memberUserIDs []string) error {
+	tx, err := e.db.Pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM group_memberships WHERE group_id = $1 AND org_id = $3 AND user_id IN (
+			SELECT id FROM users WHERE directory_id = $2 AND org_id = $3
+		)`, groupID, directoryID, orgID); err != nil {
+		return fmt.Errorf("clear the directory-managed members: %w", err)
+	}
+
+	for _, userID := range memberUserIDs {
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO group_memberships (user_id, group_id, org_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+			userID, groupID, orgID); err != nil {
+			return fmt.Errorf("add the current members: %w", err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
+}
+
 // RunSync executes a directory sync (full or incremental)
 func (e *SyncEngine) RunSync(ctx context.Context, directoryID string, dirType string, configBytes []byte, fullSync bool) (*SyncResult, error) {
 	start := time.Now()
@@ -479,6 +527,7 @@ func (e *SyncEngine) syncMemberships(ctx context.Context, connector *LDAPConnect
 		}
 	}
 
+	var failed []string
 	for _, entry := range entries {
 		record := MapGroupEntry(entry, cfg.AttributeMapping, memberAttr)
 		groupID, ok := groupDNMap[record.DN]
@@ -486,24 +535,23 @@ func (e *SyncEngine) syncMemberships(ctx context.Context, connector *LDAPConnect
 			continue
 		}
 
-		// Clear existing memberships for this group (LDAP-managed)
-		e.db.Pool.Exec(ctx,
-			`DELETE FROM group_memberships WHERE group_id = $1 AND org_id = $3 AND user_id IN (
-				SELECT id FROM users WHERE directory_id = $2 AND org_id = $3
-			)`, groupID, directoryID, orgID)
-
-		// Re-insert current members
+		members := make([]string, 0, len(record.MemberDNs))
 		for _, memberDN := range record.MemberDNs {
-			userID, found := userDNMap[memberDN]
-			if !found {
-				continue
+			if userID, found := userDNMap[memberDN]; found {
+				members = append(members, userID)
 			}
-			e.db.Pool.Exec(ctx,
-				`INSERT INTO group_memberships (user_id, group_id, org_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
-				userID, groupID, orgID)
+		}
+		if err := e.replaceDirectoryMemberships(ctx, groupID, directoryID, orgID, members); err != nil {
+			e.logger.Error("could not apply the directory's membership for a group; its previous membership stands",
+				zap.String("group_id", groupID), zap.Error(err))
+			failed = append(failed, groupID)
 		}
 	}
 
+	if len(failed) > 0 {
+		return fmt.Errorf("%d group(s) kept the membership they had because the directory's could not be applied: %v",
+			len(failed), failed)
+	}
 	return nil
 }
 
@@ -743,6 +791,7 @@ func (e *SyncEngine) syncAzureADMemberships(ctx context.Context, connector *Azur
 		}
 	}
 
+	var failed []string
 	// For each group, fetch members from Azure AD and sync
 	for azureGroupID, groupID := range groupExtMap {
 		memberIDs, err := connector.SearchGroupMembers(ctx, azureGroupID)
@@ -752,23 +801,22 @@ func (e *SyncEngine) syncAzureADMemberships(ctx context.Context, connector *Azur
 			continue
 		}
 
-		// Clear existing memberships for this group (Azure AD-managed)
-		e.db.Pool.Exec(ctx,
-			`DELETE FROM group_memberships WHERE group_id = $1 AND org_id = $3 AND user_id IN (
-				SELECT id FROM users WHERE directory_id = $2 AND org_id = $3
-			)`, groupID, directoryID, orgID)
-
-		// Re-insert current members
+		members := make([]string, 0, len(memberIDs))
 		for _, memberAzureID := range memberIDs {
-			userID, found := userExtMap[memberAzureID]
-			if !found {
-				continue
+			if userID, found := userExtMap[memberAzureID]; found {
+				members = append(members, userID)
 			}
-			e.db.Pool.Exec(ctx,
-				`INSERT INTO group_memberships (user_id, group_id, org_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
-				userID, groupID, orgID)
+		}
+		if err := e.replaceDirectoryMemberships(ctx, groupID, directoryID, orgID, members); err != nil {
+			e.logger.Error("could not apply the directory's membership for a group; its previous membership stands",
+				zap.String("group_id", groupID), zap.Error(err))
+			failed = append(failed, groupID)
 		}
 	}
 
+	if len(failed) > 0 {
+		return fmt.Errorf("%d group(s) kept the membership they had because the directory's could not be applied: %v",
+			len(failed), failed)
+	}
 	return nil
 }

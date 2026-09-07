@@ -247,10 +247,10 @@ func TestNoWriteIsSilentWithoutAReason(t *testing.T) {
 			"would pass vacuously", scanned)
 	}
 
-	// THE RATCHET. The tree had 137 of these when this gate was written. Two
-	// were fixed in the same commit -- the invitation acceptance and the
-	// approval-chain builder, both of which could answer success on a write the
-	// database refused -- leaving the backlog below. Every site still in it has
+	// THE RATCHET. The tree had 137 of these when this gate was written. The
+	// fixes so far -- the invitation acceptance, the approval-chain builder, and
+	// the directory sync that replaced a group's membership without checking
+	// either half -- have taken it to the number below. Every site still in it has
 	// to be read and then either fixed or given a reason; until that is done, a
 	// bare count is what keeps the number from going back up.
 	//
@@ -260,7 +260,7 @@ func TestNoWriteIsSilentWithoutAReason(t *testing.T) {
 	// the alternative -- landing the gate only once all 128 carry a verdict --
 	// leaves the tree unguarded in the meantime, and because the number can only
 	// go down, so the register it becomes is the empty one.
-	const backlog = 128
+	const backlog = 124
 
 	var lines []string
 	for _, f := range findings {

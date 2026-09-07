@@ -94,6 +94,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   account with no password and none of the access the invitation promised;
   those three now share a transaction and the response says plainly when it
   could not be finished.
+- **A directory sync could report success over a group it did not sync
+  (`internal/directory`).** Both the LDAP and the Entra ID membership passes
+  ran, per group, a `DELETE` of the directory-managed rows followed by an
+  `INSERT` per current member — both errors discarded, and no transaction round
+  the pair. The dangerous ordering is the `DELETE` failing while the `INSERT`s
+  succeed: a membership the directory **removed** survives, and `RunSync` goes
+  on to write `sync_status = 'synced'`. That is deprovisioning that did not
+  happen, on the schedule an operator relies on to take access away when
+  somebody leaves a team, with the console saying the sync worked. The reverse
+  order silently drops access the directory still grants, and between the two
+  statements the group is briefly empty, so a membership check landing there is
+  answered no for a user who has the access. One transaction now moves the old
+  rows and the new ones together, and the sync reports which groups kept the
+  membership they had.
 - **An approval chain could come out shorter than its policy
   (`createApprovalRows`).** Five `INSERT`s into `access_request_approvals`, one
   per approval-step type, every one discarding its error. Losing the whole
@@ -113,8 +127,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   revoked credential. The gate reports each one and is cleared either by
   handling the error or by a `//silentwrite:ok` reason above the call saying
   what is lost — the `//orgscope:ignore` convention this repository already
-  uses. The two fixes above take the count to 128, and the gate holds it there:
-  it can only go down.
+  uses. The three fixes above take the count to 124, and the gate holds it
+  there: it can only go down.
 - **115 log fields carried a request value nothing cleaned
   (`internal/common/logsafe`, new guard).** CodeQL filed two "Log entries
   created from user input" alerts against `internal/admin/attestation.go`.
