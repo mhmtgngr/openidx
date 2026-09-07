@@ -1126,6 +1126,10 @@ func RegisterRoutes(router *gin.Engine, svc *Service, extraMiddleware ...gin.Han
 		audit.GET("/events", svc.handleListEvents)
 		audit.GET("/events/:id", svc.handleGetEvent)
 		audit.GET("/events/search", svc.handleSearchEvents)
+		// The event types this tenant's trail actually contains, so the
+		// console's filter offers what is there instead of a list copied from
+		// constants that six of eight nothing writes. See event_types.go.
+		audit.GET("/event-types", svc.handleEventTypes)
 
 		// Statistics
 		audit.GET("/statistics", svc.handleGetStatistics)

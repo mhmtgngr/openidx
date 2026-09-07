@@ -4712,6 +4712,7 @@ const en = {
       dayEvents_other: '{{date}}: {{count}} events',
       searchPlaceholder: 'Search by action, actor, IP address...',
       allEventTypes: 'All Event Types',
+      eventTypesUnavailable: 'Event types could not be loaded',
       eventTypeFilterLabel: 'Filter by event type',
       allOutcomes: 'All Outcomes',
       outcomeFilterLabel: 'Filter by outcome',

@@ -73,16 +73,25 @@ const outcomeIcons: Record<string, React.ReactNode> = {
 
 const PAGE_SIZE = 50
 
-const EVENT_TYPES = [
-  'authentication',
-  'authorization',
-  'user_management',
-  'group_management',
-  'role_management',
-  'configuration',
-  'data_access',
-  'system',
-] as const
+/**
+ * The event types this filter offers come from the deployment, not from here.
+ *
+ * They used to be this list, copied from the EventType constants in
+ * internal/audit/service.go — and only two of the eight, authentication and
+ * authorization, are ever written. Choosing any of the other six returned an
+ * empty result, and an empty audit list reads as "nothing happened", which on
+ * this surface is the worst available wrong answer: an auditor asking for every
+ * configuration change was told there were none. Meanwhile the values the trail
+ * does hold (identity, provisioning, oauth, access, security, and the specific
+ * pam./certificate./session. events) could not be filtered for at all.
+ *
+ * GET /api/v1/audit/event-types answers it from the data, per tenant, ordered
+ * by frequency. What is offered is what is there.
+ */
+interface AuditEventTypeCount {
+  type: string
+  count: number
+}
 
 const OUTCOMES = ['success', 'failure', 'pending'] as const
 
@@ -137,6 +146,12 @@ export function AuditLogsPage() {
       }))
     },
   })
+
+  const { data: eventTypesData, isError: eventTypesError } = useQuery({
+    queryKey: ['audit-event-types'],
+    queryFn: () => api.get<{ event_types: AuditEventTypeCount[] }>('/api/v1/audit/event-types'),
+  })
+  const eventTypes = eventTypesData?.event_types ?? []
 
   const { data: statistics } = useQuery({
     queryKey: ['audit-statistics', startDate, endDate],
@@ -492,9 +507,20 @@ export function AuditLogsPage() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">{t('pages.auditLogs.allEventTypes')}</SelectItem>
-                  {EVENT_TYPES.map(type => (
-                    <SelectItem key={type} value={type}>{eventTypeLabel(type)}</SelectItem>
-                  ))}
+                  {eventTypesError ? (
+                    // Say so. An empty list of choices here is indistinguishable
+                    // from a trail with nothing in it, which is the confusion
+                    // this whole change is about.
+                    <SelectItem value="all" disabled>
+                      {t('pages.auditLogs.eventTypesUnavailable')}
+                    </SelectItem>
+                  ) : (
+                    eventTypes.map(({ type, count }) => (
+                      <SelectItem key={type} value={type}>
+                        {eventTypeLabel(type)} ({count})
+                      </SelectItem>
+                    ))
+                  )}
                 </SelectContent>
               </Select>
               <Select value={outcomeFilter || 'all'} onValueChange={(val) => { setOutcomeFilter(val === 'all' ? '' : val); setPage(0) }}>

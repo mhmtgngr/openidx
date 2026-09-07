@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Six of the audit log's eight filter choices returned an empty list.** The
+  console's event-type filter offered eight names copied from the `EventType`
+  constants in `internal/audit/service.go`, and only two of them —
+  `authentication` and `authorization` — are ever written. Choosing
+  `user_management`, `group_management`, `role_management`, `configuration`,
+  `data_access` or `system` returned nothing, and an empty audit list reads as
+  *"nothing happened"*, which on this surface is the worst available wrong
+  answer: an auditor asking for every configuration change was told there were
+  none. Meanwhile the values the trail does hold — `identity`, `provisioning`,
+  `oauth`, `access`, `security`, and the specific rows `internal/access` writes
+  one at a time (`pam.session.risk_suspend`, `pam.recording.sealed`,
+  `certificate.rotate`, `session.revoked.continuous_verify`,
+  `platform_admin_cross_org_access`) — could not be filtered for at all. The
+  filter now reads `GET /api/v1/audit/event-types`, which asks the tenant's own
+  trail and returns each type with its count, ordered by frequency: what is
+  offered is what is there. A catalogue would have to be kept in step with
+  twenty writers by hand, and the drift it replaced is exactly what that costs.
+  **Migration v180** adds the `(org_id, event_type)` index that scan and the
+  filtered read both want — every read of `audit_events` is tenant-scoped
+  first, so the console's own `WHERE org_id = $1 AND event_type = $2` had been
+  walking every row of that type across the whole install and discarding the
+  other tenants'.
+
 - **The GDPR report's data-access section counted an event nothing writes** —
   and an earlier commit on this branch said it was fixed when it was not. All
   four of its queries filtered `event_type = 'data_access'`, a value declared as

@@ -4708,6 +4708,7 @@ const tr: typeof en = {
       dayEvents_other: '{{date}}: {{count}} olay',
       searchPlaceholder: 'Eyleme, aktöre veya IP adresine göre arayın...',
       allEventTypes: 'Tüm Olay Türleri',
+      eventTypesUnavailable: 'Olay türleri yüklenemedi',
       eventTypeFilterLabel: 'Olay türüne göre filtrele',
       allOutcomes: 'Tüm Sonuçlar',
       outcomeFilterLabel: 'Sonuca göre filtrele',

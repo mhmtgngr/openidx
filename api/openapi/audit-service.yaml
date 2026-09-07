@@ -125,6 +125,43 @@ paths:
         '404':
           description: Event not found
 
+  /api/v1/audit/event-types:
+    get:
+      tags: [Audit Events]
+      summary: The event types this tenant's trail contains
+      description: >-
+        Derived from the data, not from a list. The console's filter offered
+        eight names taken from internal/audit's EventType constants and only two
+        of them are ever written, so six of its choices returned an empty result
+        -- which on an audit surface reads as "nothing happened" -- while the
+        values the trail does hold could not be filtered for at all. Migration
+        v180 adds the (org_id, event_type) index this scan and the filtered read
+        both want.
+      operationId: listAuditEventTypes
+      x-openidx-handler: internal/audit.(*Service).handleEventTypes
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  event_types:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        type:
+                          type: string
+                        count:
+                          type: integer
+                          format: int64
+        '403':
+          description: Organization context required
+        '500':
+          description: Internal error
+
   /api/v1/audit/statistics:
     get:
       tags: [Statistics]

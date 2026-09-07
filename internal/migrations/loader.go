@@ -1280,5 +1280,12 @@ func allMigrations() []*Migration {
 			UpSQL:       samlMetadataXMLUp,
 			DownSQL:     samlMetadataXMLDown,
 		},
+		{
+			Version:     180,
+			Name:        "audit_event_type_index",
+			Description: "Index audit_events on (org_id, event_type). Every read of this table is tenant-scoped first, so the console's own filter -- WHERE org_id = $1 AND event_type = $2 -- had to walk every row of that event type across the whole install and discard the other tenants'. It is also what lets the product answer WHICH event types a tenant actually has, cheaply, instead of offering a hard-coded list: the console offered eight names taken from the EventType constants in internal/audit/service.go and only two of them, authentication and authorization, are ever written. The other six return an empty result, and an empty audit list reads as 'nothing happened', which on this surface is the worst available wrong answer -- while the ten values the product does write (identity, provisioning, oauth, access, security and five specific pam./certificate./session. events) could not be filtered for at all. Down drops the index; the single-column idx_audit_events_type stays, so the filter keeps working the way it did before, slowly.",
+			UpSQL:       auditEventTypeIndexUp,
+			DownSQL:     auditEventTypeIndexDown,
+		},
 	}
 }
