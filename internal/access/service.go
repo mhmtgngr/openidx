@@ -1987,10 +1987,20 @@ func (s *Service) handleLogout(c *gin.Context) {
 			//orgscope:ignore proxy data-plane logout; session looked up by globally-unique session_token hash, pre-org-resolution
 			"SELECT id FROM proxy_sessions WHERE session_token=$1", hashToken(cookie)).Scan(&sessionID)
 		if err == nil {
-			s.db.Pool.Exec(orgctx.WithBypassRLS(c.Request.Context()),
+			// A logout that did not log anybody out. Both of these had their
+			// errors discarded: the Redis key is what the proxy checks on every
+			// request, so a failed Del leaves the session WORKING, and a failed
+			// UPDATE leaves the durable record saying it is live. The cookie is
+			// cleared either way, so the person is told they signed out.
+			if _, uerr := s.db.Pool.Exec(orgctx.WithBypassRLS(c.Request.Context()),
 				//orgscope:ignore proxy data-plane logout; revoke by primary key resolved from the unique session_token above
-				"UPDATE proxy_sessions SET revoked=true WHERE id=$1", sessionID)
-			s.redis.Client.Del(c.Request.Context(), "proxy_session:"+hashToken(cookie))
+				"UPDATE proxy_sessions SET revoked=true WHERE id=$1", sessionID); uerr != nil {
+				s.logger.Error("logout could not mark the session revoked", zap.Error(uerr))
+			}
+			if derr := s.redis.Client.Del(c.Request.Context(), "proxy_session:"+hashToken(cookie)).Err(); derr != nil {
+				s.logger.Error("logout could not drop the session marker the proxy reads; "+
+					"the session may still be usable", zap.Error(derr))
+			}
 		}
 	}
 
@@ -3107,9 +3117,12 @@ func (s *Service) revokeIdleProxySession(c *gin.Context, session *ProxySession) 
 		s.redis.Client.Del(c.Request.Context(), "proxy_session:"+hashToken(cookie))
 	}
 	if session != nil && session.ID != "" {
-		s.db.Pool.Exec(orgctx.WithBypassRLS(c.Request.Context()),
+		if _, err := s.db.Pool.Exec(orgctx.WithBypassRLS(c.Request.Context()),
 			//orgscope:ignore data-plane revoke of the idle session by its primary key
-			"UPDATE proxy_sessions SET revoked=true WHERE id=$1", session.ID)
+			"UPDATE proxy_sessions SET revoked=true WHERE id=$1", session.ID); err != nil {
+			s.logger.Error("idle-timeout revocation could not mark the session revoked",
+				logsafe.String("session_id", session.ID), zap.Error(err))
+		}
 	}
 }
 

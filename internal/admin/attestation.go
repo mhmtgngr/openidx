@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
 	"github.com/openidx/openidx/internal/webhooks"
 )
@@ -631,7 +632,31 @@ func (s *Service) handleDecideAttestationItem(c *gin.Context) {
 		return
 	}
 
-	tag, err := s.db.Pool.Exec(c.Request.Context(),
+	// THE DECISION AND THE REVOCATION MUST AGREE, so they go in one transaction.
+	//
+	// They used to be separate, and only the decision was checked: the item was
+	// marked decision='revoked' by a statement that returns 500 on failure, and
+	// then the access removal below ran with EVERY error discarded. So a
+	// reviewer clicked Revoke, the certification recorded that the access was
+	// revoked, the campaign counted the item as decided and could auto-complete
+	// on it -- and the role, the application assignment or the group membership
+	// was still there. In an identity governance product that is the worst
+	// available failure: the evidence says the access was removed and it was
+	// not.
+	//
+	// The read that decides WHICH access to tear down had the same defect. A
+	// failed read left resourceType empty and both ids nil, so the switch fell
+	// through and NOTHING was deleted, with the item still marked revoked.
+	ctx := c.Request.Context()
+	tx, err := s.db.Pool.Begin(ctx)
+	if err != nil {
+		s.logger.Error("Failed to begin the attestation decision", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update decision"})
+		return
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	tag, err := tx.Exec(ctx,
 		`UPDATE attestation_items SET decision = $1, comments = $2, decided_at = NOW()
 		 WHERE id = $3 AND campaign_id = $4 AND org_id = $5 AND decision = 'pending'`,
 		req.Decision, req.Comments, itemID, campaignID, org.ID)
@@ -652,24 +677,40 @@ func (s *Service) handleDecideAttestationItem(c *gin.Context) {
 		// The row this reads decides WHICH access is torn down by the four
 		// deletes below. Those deletes have always named the caller's org; the
 		// read that chose their subject did not.
-		_ = s.db.Pool.QueryRow(c.Request.Context(),
+		if err := tx.QueryRow(ctx,
 			"SELECT resource_type, user_id, resource_id FROM attestation_items WHERE id = $1 AND org_id = $2", itemID, org.ID,
-		).Scan(&resourceType, &userID, &resourceID)
+		).Scan(&resourceType, &userID, &resourceID); err != nil {
+			s.logger.Error("could not read the item a revocation applies to; the decision is not recorded",
+				zap.String("item_id", logsafe.Clean(itemID)), zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to revoke the access"})
+			return
+		}
+
+		revoke := func(sql string, args ...any) bool {
+			if _, err := tx.Exec(ctx, sql, args...); err != nil {
+				s.logger.Error("could not revoke the access a certification refused; the decision is not recorded",
+					zap.String("item_id", logsafe.Clean(itemID)),
+					zap.String("resource_type", logsafe.Clean(resourceType)), zap.Error(err))
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to revoke the access"})
+				return false
+			}
+			return true
+		}
 
 		if userID != nil && resourceID != nil {
+			ok := true
 			switch resourceType {
 			case "role":
-				_, _ = s.db.Pool.Exec(c.Request.Context(),
-					"DELETE FROM user_roles WHERE user_id = $1 AND role_id = $2 AND org_id = $3", *userID, *resourceID, org.ID)
+				ok = revoke("DELETE FROM user_roles WHERE user_id = $1 AND role_id = $2 AND org_id = $3", *userID, *resourceID, org.ID)
 			case "application":
-				_, _ = s.db.Pool.Exec(c.Request.Context(),
-					"DELETE FROM user_application_assignments WHERE user_id = $1 AND application_id = $2 AND org_id = $3", *userID, *resourceID, org.ID)
+				ok = revoke("DELETE FROM user_application_assignments WHERE user_id = $1 AND application_id = $2 AND org_id = $3", *userID, *resourceID, org.ID)
 			case "group":
-				_, _ = s.db.Pool.Exec(c.Request.Context(),
-					"DELETE FROM group_memberships WHERE user_id = $1 AND group_id = $2 AND org_id = $3", *userID, *resourceID, org.ID)
+				ok = revoke("DELETE FROM group_memberships WHERE user_id = $1 AND group_id = $2 AND org_id = $3", *userID, *resourceID, org.ID)
 			case "vault_access":
-				_, _ = s.db.Pool.Exec(c.Request.Context(),
-					"DELETE FROM vault_access_grants WHERE id = $1 AND org_id = $2", *resourceID, org.ID)
+				ok = revoke("DELETE FROM vault_access_grants WHERE id = $1 AND org_id = $2", *resourceID, org.ID)
+			}
+			if !ok {
+				return
 			}
 		}
 
@@ -677,10 +718,17 @@ func (s *Service) handleDecideAttestationItem(c *gin.Context) {
 		if resourceID != nil {
 			switch resourceType {
 			case "rotation_policy":
-				_, _ = s.db.Pool.Exec(c.Request.Context(),
-					"UPDATE credential_rotation_policies SET enabled = false, updated_at = NOW() WHERE id = $1 AND org_id = $2", *resourceID, org.ID)
+				if !revoke("UPDATE credential_rotation_policies SET enabled = false, updated_at = NOW() WHERE id = $1 AND org_id = $2", *resourceID, org.ID) {
+					return
+				}
 			}
 		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		s.logger.Error("could not commit the attestation decision", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update decision"})
+		return
 	}
 
 	// Check if all items are decided - auto-complete campaign.

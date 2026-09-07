@@ -214,7 +214,15 @@ func (h *AgentAPIHandler) HandleCancelEnrollSession(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "session not found or not cancelable"})
 		return
 	}
-	_, _ = h.db.Pool.Exec(ctx, `UPDATE agent_enrollment_tokens SET revoked = true WHERE token_hash = $1`, tokenHash)
+	// Cancelling the session is only half of it: the token is what an agent
+	// redeems. The error was discarded, so a cancel could mark the session
+	// canceled, report success, and leave the enrolment token live.
+	if _, err := h.db.Pool.Exec(ctx,
+		`UPDATE agent_enrollment_tokens SET revoked = true WHERE token_hash = $1`, tokenHash); err != nil {
+		h.logger.Error("enrollment session canceled but its token could not be revoked", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not revoke the enrollment token"})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"status": "canceled"})
 }
 

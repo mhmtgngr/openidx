@@ -138,7 +138,14 @@ func (s *Service) validateEnrollmentToken(ctx context.Context, token string) (st
 		return "", enrollError{"enrollment token already used"}
 	}
 	if !reusable {
-		_, _ = s.db.Pool.Exec(ctx, `UPDATE agent_enrollment_tokens SET used_at = NOW() WHERE id = $1`, tokenID)
+		// This IS the single-use property. The error was discarded, so a failed
+		// mark left used_at NULL and the same one-time enrolment token could be
+		// redeemed again -- while this function returned success. A token that
+		// cannot be spent is not a token that may be used.
+		if _, err := s.db.Pool.Exec(ctx,
+			`UPDATE agent_enrollment_tokens SET used_at = NOW() WHERE id = $1`, tokenID); err != nil {
+			return "", fmt.Errorf("mark enrollment token used: %w", err)
+		}
 	}
 	if createdBy != nil && *createdBy != "" {
 		return *createdBy, nil

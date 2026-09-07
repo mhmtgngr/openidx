@@ -24,6 +24,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A certification decision recorded access as revoked while the access was
+  still held.** `handleDecideAttestationItem` marked the item
+  `decision='revoked'` with a statement that answers 500 on failure, and *then*
+  ran the `DELETE FROM user_roles` / `user_application_assignments` /
+  `group_memberships` / `vault_access_grants` that actually removes the access —
+  each with its error discarded. So a reviewer clicked **Revoke**, the
+  certification recorded the access as removed, the campaign counted the item as
+  decided and could auto-complete on it, and the role was still assigned. In an
+  identity governance product this is the worst available failure: the evidence
+  says the access was removed and it was not. The read that decided *which*
+  access to tear down had the same defect — a failed read left the resource type
+  empty and every branch fell through, deleting nothing. The decision and the
+  revocation now share one transaction, so a revocation that cannot run leaves
+  the item pending and answers 500. Seven more writes that silently did not
+  happen: a **logout** left both the durable revocation and the Redis marker the
+  proxy actually reads (so the session kept working while the person was told
+  they had signed out); **continuous verification** could not revoke a session it
+  had just denied; the **PAM risk gate** tore down the live connection but could
+  not mark the session suspended, so it still read as active on the dashboard;
+  the **idle-timeout** revocation; an **AI-agent credential rotation** that
+  minted a new key without revoking the old one and reported success; a
+  **cancelled agent enrolment** whose token stayed live; and — the sharpest of
+  those — the `used_at` marker that *is* the single-use property of an enrolment
+  token, so a failed mark left a one-time token redeemable again.
+
 - **A CAEP `account-disabled` event that did not disable the account was
   acknowledged as applied.** `applyCAEPEvent` discarded the error on `UPDATE
   users SET enabled=false` and returned `"applied"` regardless — so a federated

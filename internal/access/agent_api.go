@@ -564,9 +564,15 @@ func (h *AgentAPIHandler) HandleEnroll(c *gin.Context) {
 		// Track the most recent enrolling agent (single-use tokens only; a
 		// reusable token enrolls many, so this field is left for the last one).
 		if !reusable {
-			_, _ = h.db.Pool.Exec(ctx,
+			// Bookkeeping, not a control -- the single-use property is enforced
+			// by used_at in validateEnrollmentToken. Still worth saying when it
+			// does not happen, so a token whose enrolling agent is unknown has
+			// a reason in the log rather than a blank column.
+			if _, err := h.db.Pool.Exec(ctx,
 				`UPDATE agent_enrollment_tokens SET used_by_agent = $1 WHERE id = $2`,
-				creds.AgentID, tokenID)
+				creds.AgentID, tokenID); err != nil {
+				h.logger.Warn("could not record which agent redeemed the enrollment token", zap.Error(err))
+			}
 		}
 
 		var enrollExtra gin.H

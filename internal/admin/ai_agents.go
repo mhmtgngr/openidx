@@ -504,8 +504,19 @@ func (s *Service) handleRotateAIAgentCredentials(c *gin.Context) {
 		return
 	}
 
-	// Revoke existing credentials
-	_, _ = s.db.Pool.Exec(ctx, "UPDATE ai_agent_credentials SET status = 'revoked' WHERE agent_id = $1 AND org_id = $2 AND status = 'active'", id, org.ID)
+	// Revoke existing credentials.
+	//
+	// The error was discarded and the new key was minted regardless, so a
+	// rotation that could not revoke the old credential left TWO live API keys
+	// for the agent and reported success. A rotation that adds without removing
+	// is not a rotation.
+	if _, err := s.db.Pool.Exec(ctx,
+		"UPDATE ai_agent_credentials SET status = 'revoked' WHERE agent_id = $1 AND org_id = $2 AND status = 'active'",
+		id, org.ID); err != nil {
+		s.logger.Error("failed to revoke the agent's existing credentials; not minting a new one", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to rotate credentials"})
+		return
+	}
 
 	// Generate new key
 	apiKey, keyPrefix, keyHash := generateAgentAPIKey()

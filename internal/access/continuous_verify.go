@@ -11,6 +11,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/leader"
+	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -185,10 +186,18 @@ func (cv *ContinuousVerifier) verifyActiveSessions(ctx context.Context) {
 		now := time.Now()
 
 		if !decision.Allowed {
-			// Revoke the session
-			cv.svc.db.Pool.Exec(ctx,
+			// Revoke the session.
+			//
+			// Continuous verification has just decided this session must not
+			// continue. The write's error was discarded, so a failed revocation
+			// left the session live and the next verification round would score
+			// it again, silently, for as long as the failure lasted.
+			if _, err := cv.svc.db.Pool.Exec(ctx,
 				"UPDATE proxy_sessions SET revoked=true, last_verified_at=$1 WHERE id=$2 AND org_id=$3",
-				now, sess.SessionID, sess.OrgID)
+				now, sess.SessionID, sess.OrgID); err != nil {
+				cv.svc.logger.Error("continuous verification could not revoke a session it denied",
+					logsafe.String("session_id", sess.SessionID), zap.Error(err))
+			}
 
 			// Remove from Redis
 			if tokenHash != "" {
