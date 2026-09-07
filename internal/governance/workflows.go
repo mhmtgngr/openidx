@@ -597,7 +597,8 @@ func (s *Service) handleApproveRequest(c *gin.Context) {
 	// createApprovalRows already excludes the requester when it expands a
 	// role- or group-based approver step, and that is the right place to
 	// PREVENT the row. It is not the only way one arrives: an
-	// escalate_to target is inserted without that check (request.go), a
+	// escalate_to target was inserted without that check by the unreachable
+	// request.go this branch deleted (its rows can still be in a database), a
 	// policy step may name the requester explicitly, the no-policy fallback
 	// inserts a fixed admin id, and rows written before that guard existed are
 	// still in the table. Every one of those routes ends here, so this is where

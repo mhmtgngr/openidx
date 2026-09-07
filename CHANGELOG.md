@@ -76,6 +76,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   83 with a verdict per site saying what the zero does, and shrinks; a new
   finding fails the build, and so does an entry that no longer reproduces.
 
+### Removed
+
+- **Two governance services no binary could reach, and the table one of them
+  wrote (migration v182).** `internal/governance/request.go` was a 676-line
+  second implementation of the access-request workflow — submit, approve, deny,
+  cancel, manager resolution, notification hooks and a `StartEscalationChecker`
+  that swept every org for requests past their approval SLA. It had tests, and
+  two migrations existed for `request_approval_chains`, the table only it wrote.
+  `NewRequestService` was called by nothing: the live workflow is
+  `workflows.go`, which writes `access_request_approvals` and has never touched
+  the chain table, so the escalation sweep's `INNER JOIN` matched zero rows on
+  every install and would keep matching zero even if the checker were started.
+  It also carried a defect that would have been a P0 the day anyone wired it: a
+  failed approval-record `INSERT` was logged and skipped, and completion was
+  "no approval row still pending" — so a missing row silently **reduced** the
+  approvals a request needed. `internal/governance/policy.go`'s
+  `PolicyEvaluator` went with it: the third OPA evaluator in the tree, after
+  `internal/common/opa` (which the fail-closed middleware uses) and
+  `internal/abac`. `ApprovalStep` and its constants, which the live workflow
+  reads out of a policy, survive in `approval_chain.go`.
+
 ### Fixed
 
 - **A single logout that did not log anyone out, and a returned credential the

@@ -1294,5 +1294,12 @@ func allMigrations() []*Migration {
 			UpSQL:       auditChainUp,
 			DownSQL:     auditChainDown,
 		},
+		{
+			Version:     182,
+			Name:        "drop_request_approval_chains",
+			Description: "Drop request_approval_chains, the table only unreachable code wrote. v58 created it because internal/governance/request.go INSERTed it in SubmitRequest and its escalation sweep read it, and v64 put it under the FORCE-RLS belt; neither was wrong about the code, and nobody checked whether that code runs. NewRequestService is called by nothing, so the INSERT has never executed on any install and the escalation sweep's INNER JOIN has always matched zero rows -- while the live approval workflow in workflows.go writes access_request_approvals and has never touched this table. tools/deadservice found the service; tools/tablewriters could not, because a census of SQL literals cannot tell a statement that runs from one that cannot, so it counted that INSERT as a writer. The table is empty on every install by construction, so this drops data nowhere. It lands in the same commit as the code deletion, because a belt and a policy on a table nothing references is a puzzle for the next reader. Down recreates it in the v58 shape with v64's org_id, index, policy and belt, so a rollback past this point lands on the schema the code at that point expects.",
+			UpSQL:       dropRequestApprovalChainsUp,
+			DownSQL:     dropRequestApprovalChainsDown,
+		},
 	}
 }

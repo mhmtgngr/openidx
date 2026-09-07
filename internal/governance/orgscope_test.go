@@ -17,8 +17,8 @@ import (
 // context and refuse to run without one. The guard fires before any DB access,
 // so these hold with a nil pool. Governance endpoints run behind the resolver,
 // so the request always carries an org; the deliberately cross-org paths are the
-// background sweeps (campaign scheduler/deadlines, JIT expiry, request
-// escalation), which derive each row's org from the data.
+// background sweeps (campaign scheduler/deadlines, JIT expiry), which derive
+// each row's org from the data.
 func TestGovernance_Service_requireOrgContext(t *testing.T) {
 	s := &Service{logger: zap.NewNop()}
 	ctx := context.Background()
@@ -73,32 +73,12 @@ func TestGovernance_Service_requireOrgContext(t *testing.T) {
 	})
 }
 
-func TestGovernance_RequestService_requireOrgContext(t *testing.T) {
-	s := &RequestService{logger: zap.NewNop()}
-	ctx := context.Background()
-
-	chain := ApprovalChainConfig{Steps: []ApprovalStep{{Order: 1, Type: ApprovalStepTypeAuto}}}
-
-	t.Run("SubmitRequest", func(t *testing.T) {
-		_, err := s.SubmitRequest(ctx, "u-1", "role-1", "justification", chain)
-		requireNoOrg(t, err)
-	})
-	t.Run("ApproveRequest", func(t *testing.T) {
-		_, err := s.ApproveRequest(ctx, "r-1", "a-1", "")
-		requireNoOrg(t, err)
-	})
-	t.Run("DenyRequest", func(t *testing.T) {
-		_, err := s.DenyRequest(ctx, "r-1", "a-1", "")
-		requireNoOrg(t, err)
-	})
-	t.Run("CancelRequest", func(t *testing.T) {
-		requireNoOrg(t, s.CancelRequest(ctx, "r-1", "u-1"))
-	})
-	t.Run("GetPendingApprovalsForUser", func(t *testing.T) {
-		_, err := s.GetPendingApprovalsForUser(ctx, "u-1")
-		requireNoOrg(t, err)
-	})
-}
+// TestGovernance_RequestService_requireOrgContext used to sit here, covering
+// SubmitRequest / ApproveRequest / DenyRequest / CancelRequest /
+// GetPendingApprovalsForUser on a RequestService no binary could reach. The
+// live workflow's org-scoping is covered by the handler tests in
+// approve_request_test.go and request_test.go, which drive the routed
+// handlers.
 
 func requireNoOrg(t *testing.T, err error) {
 	t.Helper()

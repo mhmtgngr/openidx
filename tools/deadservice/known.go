@@ -44,12 +44,15 @@ var knownDead = map[string]string{
 	"internal/auth.RBACMiddleware": "gin RBAC enforcement (RequireRole, RequireAnyRole, RequirePermission, RequireAnyPermission) over a TokenValidator, constructed only by its four test files. Each service wires its own auth middleware instead. A SECOND IMPLEMENTATION: delete, or make it the one the services use.",
 
 	// ---- governance --------------------------------------------------------
-
-	"internal/governance.RequestService": "the shape this whole check exists for. 676 lines of access-request workflow -- submit, approve, deny, cancel, manager resolution, notification hooks, and a StartEscalationChecker that sweeps every org for requests past their approval SLA and adds the escalation approvers. It is the only writer and the only reader of request_approval_chains, a table migration v58 created for it and v64 put under the RLS belt. The live workflow is a SECOND IMPLEMENTATION in workflows.go with different semantics, and it never writes that chain table, so the escalation sweep's INNER JOIN matches zero rows on every install and would keep matching zero even if the checker were started. It also carries a defect that would be a P0 the day anyone wired it: a failed approval-record INSERT is logged and skipped, and ApproveRequest completes a request when no approval row is still pending -- so a missing row silently REDUCES the approvals a request needs. Delete it and the table with it.",
+	//
+	// governance.RequestService and governance.PolicyEvaluator have left this
+	// register the way an entry is supposed to: deleted. The first was 676
+	// lines of second access-request workflow whose escalation sweep could
+	// never match a row, plus request_approval_chains, the table only it wrote
+	// (migration v182 drops it). The second was the third OPA evaluator in the
+	// tree. JITService below is NOT the same easy case and has its own task.
 
 	"internal/governance.JITService": "just-in-time privilege elevation: RequestElevation, GrantElevation, ExtendGrant, RevokeGrant, ValidateGrant and a StartExpiryChecker that revokes expired grants. The live JIT path is on governance.Service (handleCheckoutCredential, revokeExpiredJITAccess and the jit_grants table), tested in jit_expiry_revoke_test.go. A SECOND IMPLEMENTATION of a security-critical expiry sweep: delete, so there is one place where an elevation ends.",
-
-	"internal/governance.PolicyEvaluator": "an OPA evaluator with its own policy cache, rego compilation, hot reload and metrics. The product's OPA path is internal/common/opa plus the fail-closed middleware in internal/common/middleware/opa.go, and ABAC is internal/abac. A SECOND IMPLEMENTATION -- the third policy evaluator in the tree. Delete.",
 
 	// ---- risk --------------------------------------------------------------
 
