@@ -241,8 +241,13 @@ func (s *Service) handleIdPInitiatedSLO(c *gin.Context, sessionToken string, tar
 		return
 	}
 
-	// Clear the IdP session
-	s.clearIdPSession(c, sessionToken)
+	// Clear the IdP session. Everything after this point tells the user and the
+	// SPs that the session is over, so none of it may run when it is not.
+	if err := s.clearIdPSession(c, sessionToken); err != nil {
+		s.logger.Error("IdP-initiated logout could not end the session", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to end session"})
+		return
+	}
 
 	// If a specific SP is targeted, only logout from that SP
 	if targetSPEntityID != "" {
@@ -558,18 +563,32 @@ func (s *Service) extractUserIDFromSession(ctx context.Context, sessionToken str
 	return userID, err
 }
 
-// clearIdPSession clears the IdP session (cookie)
-func (s *Service) clearIdPSession(c *gin.Context, sessionToken string) {
-	// Delete from database
-	if org, err := orgctx.From(c.Request.Context()); err == nil {
-		s.db.Pool.Exec(c.Request.Context(),
-			"DELETE FROM user_sessions WHERE session_token = $1 AND org_id = $2", sessionToken, org.ID)
+// clearIdPSession ends the IdP session: the row goes first, the cookie second.
+//
+// The DELETE is the logout. Clearing the cookie only stops the browser from
+// presenting the token; anyone else holding it -- the shoulder-surfer, the
+// proxy log, the shared machine the user just walked away from -- still has a
+// live session. So a delete that did not run must not be followed by a cleared
+// cookie and a "You have been logged out" page: that combination is the worst
+// of both, a user who believes they are out and a session that is in. The
+// cookie is left alone on failure so the browser's state still matches the
+// server's, and the caller answers an error the user can act on by retrying.
+func (s *Service) clearIdPSession(c *gin.Context, sessionToken string) error {
+	ctx := c.Request.Context()
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return fmt.Errorf("organization context required to end the session: %w", err)
+	}
+	if _, err := s.db.Pool.Exec(ctx,
+		"DELETE FROM user_sessions WHERE session_token = $1 AND org_id = $2", sessionToken, org.ID); err != nil {
+		return fmt.Errorf("delete the IdP session: %w", err)
 	}
 
 	// Clear cookie. Secure is tied to production (matching the proxy session
 	// cookie convention) so the deletion is still honored over plain HTTP in
 	// dev while carrying the Secure attribute in production.
 	c.SetCookie("openidx_session", "", -1, "/", "", s.config.IsProduction(), true)
+	return nil
 }
 
 // showLogoutConfirmationPage shows a logout confirmation page

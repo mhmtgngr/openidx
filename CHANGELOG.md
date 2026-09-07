@@ -24,6 +24,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A single logout that did not log anyone out, and a returned credential the
+  record still shows as held.** Two more writes whose failure was invisible to
+  the caller, both on paths whose whole job is to take access away. The
+  IdP-initiated SAML SLO deleted the session row in a bare `Exec` inside an
+  `if org, err := ...; err == nil`, then cleared the cookie and rendered *"You
+  have been logged out"* regardless of what happened: a cleared cookie is not a
+  logout, it only stops **this** browser from presenting the token, so anyone
+  else holding it — the shared machine the user just walked away from, a proxy
+  log — kept a live session while the user was told the opposite. The delete is
+  checked now, the cookie is left alone when it fails (a browser that has
+  forgotten a token the server still honours is the same asymmetry, and it costs
+  the user the retry), and the confirmation page is not shown. Returning a
+  checked-out vault credential revoked the grant (checked) and then marked the
+  request expired (`_, _ = ...`), so a failed `UPDATE` left the request reading
+  `fulfilled` — still checked out to that user in the console, still counted as
+  held by the JIT expiry sweep — under a `200 {"status":"returned"}` and an
+  audit event saying `jit_credential.checkout_returned` / `success`. The grant
+  really is gone by then, so the answer is a 500 the caller can retry rather
+  than a return that did not finish, and the audit event is no longer written
+  for one.
+
 - **Offboarding a leaver could leave them everything, and report success.**
   `handleOffboardUser` is five statements — disable the account, revoke the API
   keys, remove the group memberships, remove the role assignments, terminate the

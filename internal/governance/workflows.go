@@ -1425,8 +1425,22 @@ func (s *Service) handleReturnCredential(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "revoke grant"})
 		return
 	}
-	_, _ = s.db.Pool.Exec(ctx,
+	// The grant is gone; the record has to say so. If this UPDATE does not
+	// happen the request stays 'fulfilled' -- the console still shows the
+	// credential checked out to this user, the JIT expiry sweep still counts it
+	// as held, and the audit event written below says it was returned. Access
+	// removed but recorded as held is the safe direction of a half-done return,
+	// so the answer is a 500 the caller can retry (the status gate above still
+	// reads 'fulfilled', so a retry goes through), never the "returned" this
+	// used to report unconditionally.
+	tag, err := s.db.Pool.Exec(ctx,
 		`UPDATE access_requests SET status='expired', updated_at=NOW() WHERE id=$1 AND org_id=$2`, reqID, org.ID)
+	if err != nil || tag.RowsAffected() == 0 {
+		s.logger.Error("credential grant revoked but the request could not be marked returned",
+			zap.String("request_id", logsafe.Clean(reqID)), zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "grant revoked but the request could not be marked returned; retry the return"})
+		return
+	}
 	s.bumpRotationOnReturn(ctx, resourceID)
 	// Best-effort audit.
 	retDetails, _ := json.Marshal(map[string]any{"request_id": reqID, "secret_id": resourceID})
