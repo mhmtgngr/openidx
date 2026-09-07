@@ -676,11 +676,25 @@ func (s *Service) handleDecideAttestationItem(c *gin.Context) {
 		}
 	}
 
-	// Check if all items are decided - auto-complete campaign
+	// Check if all items are decided - auto-complete campaign.
+	//
+	// The error used to be discarded, and this is the one place in the file
+	// where that is not merely a wrong number on a screen: pendingCount stays 0
+	// when the query fails, so a campaign whose items are STILL PENDING gets
+	// marked completed, stamped with completed_at, and announced as
+	// review.completed to whatever evidence pipeline is listening. An access
+	// certification closed without the access being certified, with an audit
+	// trail saying it was.
+	//
+	// A count that could not be taken is not zero. It is not a completion.
 	var pendingCount int
-	_ = s.db.Pool.QueryRow(c.Request.Context(),
+	if err := s.db.Pool.QueryRow(c.Request.Context(),
 		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND org_id = $2 AND decision = 'pending'", campaignID, org.ID,
-	).Scan(&pendingCount)
+	).Scan(&pendingCount); err != nil {
+		s.logger.Error("could not count pending attestation items; leaving the campaign open",
+			zap.String("campaign_id", campaignID), zap.Error(err))
+		pendingCount = -1
+	}
 	if pendingCount == 0 {
 		// review.completed, at the moment the last item is decided.
 		//

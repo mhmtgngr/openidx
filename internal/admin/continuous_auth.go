@@ -523,11 +523,18 @@ func (s *continuousAuthService) calculateDeviceRisk(ctx context.Context, authCtx
 	if err != nil {
 		return 25, true // org context is required upstream; unknown device is the safe read
 	}
+	// Fail-closed, and said out loud: an unreadable known-device check leaves
+	// isKnown false, which reads the device as unfamiliar and raises the score.
+	// That is the safe direction, but a control that silently degrades is a
+	// control nobody knows has degraded.
 	var isKnown bool
-	s.db.Pool.QueryRow(ctx, `
+	if err := s.db.Pool.QueryRow(ctx, `
 		SELECT EXISTS(SELECT 1 FROM known_devices
 			WHERE user_id = $1 AND fingerprint = $2 AND trusted = true AND org_id = $3)
-	`, authCtx.UserID, authCtx.DeviceFingerprint, org.ID).Scan(&isKnown)
+	`, authCtx.UserID, authCtx.DeviceFingerprint, org.ID).Scan(&isKnown); err != nil {
+		s.logger.Warn("known-device check failed; reading the device as unknown",
+			logsafe.String("user_id", authCtx.UserID), zap.Error(err))
+	}
 
 	if !isKnown {
 		return 25, true
@@ -557,11 +564,22 @@ func (s *continuousAuthService) calculateVelocityRisk(ctx context.Context, authC
 	if err != nil {
 		return 0
 	}
+	//
+	// The error is read now, and the comment above is the reason: this factor
+	// scored 0 for its entire life because the query named a table that does
+	// not exist, and nothing said so. The query was fixed; the discarded error
+	// that hid it was not. A factor that cannot be measured still scores 0 --
+	// inventing a number would be worse -- but it says so, so a risk engine
+	// running on fewer factors than it thinks is visible rather than quiet.
 	var actionCount int
-	s.db.Pool.QueryRow(ctx, `
+	if err := s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM audit_events
 		WHERE actor_id = $1 AND org_id = $2 AND created_at > NOW() - INTERVAL '1 minute'
-	`, authCtx.UserID, org.ID).Scan(&actionCount)
+	`, authCtx.UserID, org.ID).Scan(&actionCount); err != nil {
+		s.logger.Warn("velocity risk could not be measured; scoring it 0",
+			logsafe.String("user_id", authCtx.UserID), zap.Error(err))
+		return 0
+	}
 
 	if actionCount > 100 {
 		return 40 // Very high velocity

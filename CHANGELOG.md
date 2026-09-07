@@ -7,7 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`tools/zeroanswer` — a gate for the defect class behind the three entries
+  below.** A one-row aggregate (`COUNT`, `SUM`, `AVG`, `MIN`, `MAX`, `EXISTS`)
+  always returns exactly one row, so a discarded `Scan` error there can never
+  mean "there is no data" — it means the query did not run, and the destination
+  keeps its zero, which the caller then prints on a dashboard, writes into a
+  compliance report, or reads as a control that passed. Nothing else in the
+  repository can see this: the SQL is valid so `sqlprepare` plans it, the tenant
+  predicate is present so `orgscope` passes it, the handler answers 200 with a
+  well-formed body so the contract test passes it, and `COUNT` over no rows is
+  also 0. Only the error told the two apart. The register (`known.go`) opened at
+  83 with a verdict per site saying what the zero does, and shrinks; a new
+  finding fails the build, and so does an entry that no longer reproduces.
+
 ### Fixed
+
+- **A failed count auto-completed an access certification campaign.**
+  `handleDecideAttestationItem` counted the campaign's still-pending items to
+  decide whether the last decision had been made — and discarded the error, so a
+  query that could not run left the count at zero, marked the campaign
+  `completed`, stamped `completed_at` and published `review.completed` to
+  whatever evidence pipeline was listening. An access certification closed
+  without the access being certified, with an audit trail saying it was. Two
+  more in the same class: `continuous_auth`'s **velocity risk scored 0** when
+  its query failed (the comment directly above it already recorded that this
+  factor scored 0 for its *entire life* because it read a table that does not
+  exist — the query was fixed, the discarded error that hid it was not), and
+  `campaign_runs.reviewed_items`, the permanent record of how much of a
+  certification campaign was reviewed before it expired, took a failed count as
+  **zero reviewed** rather than leaving the column alone.
 
 - **A compliance report could be produced entirely out of measurements nobody
   took.** Every figure in the SOC 2, ISO 27001 and GDPR reports came from an

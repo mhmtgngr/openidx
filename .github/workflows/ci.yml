@@ -1139,6 +1139,60 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           exit $rc
 
+  # zeroanswer finds the aggregate queries whose failure is reported as a
+  # number. A one-row aggregate -- COUNT, SUM, AVG, MAX, EXISTS -- always
+  # returns exactly one row, so a discarded Scan error there never means "there
+  # is no data": it means the query did not run, and the destination keeps its
+  # zero. The caller then prints that zero on a dashboard, puts it in a
+  # compliance report, or decides a control passed.
+  #
+  # Nothing else in this repository can see it. The SQL is valid, so sqlprepare
+  # plans it; the tenant predicate is there, so orgscope passes it; the handler
+  # answers 200 with a well-formed body, so the contract test passes it; and
+  # COUNT over no rows is 0, indistinguishable in the destination from the zero
+  # a broken query leaves behind. Only the error told them apart.
+  zeroanswer:
+    name: Zero-answer lint
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.go_changed == 'true'
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Self-test the tool first
+        # A guard whose own cases do not pass has no standing to fail a build.
+        run: go test ./tools/zeroanswer/
+
+      - name: Run zeroanswer (hard gate)
+        run: |
+          set +e
+          go run ./tools/zeroanswer -fail ./internal ./cmd > za.out 2> za.err
+          rc=$?
+          set -e
+          {
+            echo "## zeroanswer — a failed measurement reported as zero"
+            echo
+            if [ "$rc" -ne 0 ]; then
+              echo "❌ **Gate failed.** A NEW finding is an aggregate whose error is discarded: read what the caller does with the zero, fix it, or add a line to \`tools/zeroanswer/known.go\` saying what the zero does. A STALE entry is one that no longer reproduces, and its line must go — the register only shrinks."
+            else
+              echo "✅ $(tail -n1 za.err 2>/dev/null || echo 'no new zero answers')"
+            fi
+            echo
+            echo '```'
+            head -60 za.out
+            tail -n1 za.err
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
+
   # tablewriters holds the schema next to the code: every table the migration
   # registry creates, against every table a SQL literal in the product writes.
   # A table with no writer is a measurement that cannot measure -- the Usage
@@ -1767,6 +1821,7 @@ jobs:
       - test-unit
       - ui-safety-guards
       - vulnerability-check
+      - zeroanswer
     runs-on: ubuntu-latest
     if: always()
     timeout-minutes: 5

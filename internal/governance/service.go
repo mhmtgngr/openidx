@@ -2599,20 +2599,36 @@ func (s *Service) checkCampaignDeadlines(ctx context.Context) {
 			`, *er.reviewID, now)
 		}
 
-		// Count reviewed items for the run
-		var reviewedItems int
+		// Count reviewed items for the run.
+		//
+		// This number is the permanent record of how much of a certification
+		// campaign was actually reviewed before it expired. The error was
+		// discarded, so a count that could not be taken was written as ZERO --
+		// a campaign that was fully reviewed, recorded for ever as one where
+		// nobody reviewed anything. A nil leaves the column as it stands
+		// instead, which is the only honest value for a measurement that did
+		// not happen.
+		var reviewedItems *int
 		if er.reviewID != nil {
-			_ = s.db.Pool.QueryRow(ctx,
+			var n int
+			if err := s.db.Pool.QueryRow(ctx,
 				//orgscope:ignore cross-org background deadline sweep; keyed by globally-unique review_id
 				"SELECT COUNT(*) FROM review_items WHERE review_id = $1 AND decision != 'pending'",
-				*er.reviewID).Scan(&reviewedItems)
+				*er.reviewID).Scan(&n); err != nil {
+				s.logger.Error("could not count reviewed items for an expiring campaign run; "+
+					"leaving reviewed_items as it stands rather than recording zero",
+					zap.String("run_id", er.runID), zap.Error(err))
+			} else {
+				reviewedItems = &n
+			}
 		}
 
 		// Mark the campaign run as expired
 		_, err := s.db.Pool.Exec(ctx,
 			//orgscope:ignore cross-org background deadline sweep; the run id comes from this sweep's own scan
 			`UPDATE campaign_runs
-			SET status = 'expired', completed_at = $2, reviewed_items = $3, auto_revoked_items = $4
+			SET status = 'expired', completed_at = $2,
+			    reviewed_items = COALESCE($3, reviewed_items), auto_revoked_items = $4
 			WHERE id = $1`,
 			er.runID, now, reviewedItems, autoRevokedCount)
 		if err != nil {
