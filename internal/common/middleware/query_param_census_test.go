@@ -62,7 +62,13 @@ var publicQueryParams = map[string]string{
 	// Identifiers of objects. A UUID in a log is what makes the log useful, and
 	// it is not a credential: holding one grants nothing without a token.
 	"user_id": "object id", "org": "org slug or id",
-	"actor_id": "object id", "agent_id": "object id", "assigned_to": "object id",
+	// `agent_id` was here until the agent surface started authenticating. It was
+	// declared public because GET /agent/config read it out of the query string
+	// — which was the whole problem: the id was not a credential, it was the
+	// entire identification, and anyone could name any device. agent_auth.go
+	// made the id come from the verified credential instead, so nothing reads
+	// the parameter any more and the entry went with it.
+	"actor_id": "object id", "assigned_to": "object id",
 	"requester_id": "object id", "target_id": "object id", "route_id": "object id",
 	"folder_id": "object id", "session_id": "object id", "workflow_id": "object id",
 	"service": "object name", "name": "object name", "domain": "domain name",
