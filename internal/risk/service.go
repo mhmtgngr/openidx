@@ -621,14 +621,27 @@ func (s *Service) CompleteStepUpChallenge(ctx context.Context, challengeID, user
 		return fmt.Errorf("challenge already %s", status)
 	}
 	if time.Now().After(expiresAt) {
+		//silentwrite:ok the refusal is the return below, decided from expires_at every time, and the
+		// claim underneath re-checks it too; this row only labels a challenge already unusable.
 		s.db.Pool.Exec(ctx, `UPDATE stepup_challenges SET status = 'expired' WHERE id = $1 AND org_id = $2`, challengeID, org.ID)
 		return fmt.Errorf("challenge expired")
 	}
 
-	_, err = s.db.Pool.Exec(ctx,
-		`UPDATE stepup_challenges SET status = 'completed', completed_at = NOW() WHERE id = $1 AND org_id = $2`, challengeID, org.ID)
+	// Claim the challenge rather than trusting the read above. The status and
+	// expiry were checked in three separate statements from the SELECT, so two
+	// completions arriving together both saw 'pending' and both wrote; and the
+	// row could expire between the check and the write. Repeating both
+	// conditions here evaluates them under the row lock, and no rows means
+	// somebody else got there first.
+	tag, err := s.db.Pool.Exec(ctx,
+		`UPDATE stepup_challenges SET status = 'completed', completed_at = NOW()
+		 WHERE id = $1 AND org_id = $2 AND status = 'pending' AND expires_at > NOW()`,
+		challengeID, org.ID)
 	if err != nil {
 		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("challenge is no longer pending")
 	}
 
 	s.redis.Client.Del(ctx, "stepup:"+challengeID)

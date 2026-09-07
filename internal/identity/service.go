@@ -4870,7 +4870,30 @@ func (s *Service) handleChangePassword(c *gin.Context) {
 			return
 		}
 		// Update password_changed_at in local DB (but NOT the hash — password stays in directory)
-		s.db.Pool.Exec(ctx, `UPDATE users SET password_changed_at = NOW(), password_must_change = false WHERE id = $1 AND org_id = $2`, userID, org.ID)
+		//
+		// The directory has already accepted the new password, and that cannot
+		// be undone from here, so this is the one place a failed write must not
+		// turn into a failed request: answering 500 would send the person back
+		// to a form that wants the OLD password, which no longer works. What it
+		// must not do either is answer a bare success, because
+		// password_must_change is still true and the next sign-in will ask them
+		// to change a password they just changed, again, with no way out.
+		//
+		// So: the truth, both halves of it, and an error in the log for whoever
+		// has to clear the flag.
+		if _, err := s.db.Pool.Exec(ctx,
+			`UPDATE users SET password_changed_at = NOW(), password_must_change = false WHERE id = $1 AND org_id = $2`,
+			userID, org.ID,
+		); err != nil {
+			s.logger.Error("directory password changed but the local record was not updated; "+
+				"password_must_change is still set and the user will be prompted again",
+				logsafe.String("user_id", userID), zap.Error(err))
+			c.JSON(200, gin.H{
+				"status":  "password changed",
+				"warning": "Your password was changed. Your account record could not be updated, so you may be asked to change it again at your next sign-in — contact your administrator if that happens.",
+			})
+			return
+		}
 		c.JSON(200, gin.H{"status": "password changed"})
 		return
 	}
@@ -5156,6 +5179,8 @@ func (s *Service) handleForgotPassword(c *gin.Context) {
 	}
 
 	// Opportunistic cleanup of this org's expired/used tokens
+	//silentwrite:ok redemption re-checks expires_at and used_at under a row lock, so a token this
+	// misses is refused on its own terms; all that is lost is a row nobody can spend.
 	s.db.Pool.Exec(ctx, "DELETE FROM password_reset_tokens WHERE (expires_at < NOW() OR used_at IS NOT NULL) AND org_id = $1", org.ID)
 
 	// Always return success to prevent email enumeration
@@ -5358,8 +5383,31 @@ func (s *Service) handleAdminResetPassword(c *gin.Context) {
 			return
 		}
 
-		// Mark password_must_change so user is prompted at next login
-		s.db.Pool.Exec(ctx, `UPDATE users SET password_must_change = true, password_changed_at = NOW() WHERE id = $1 AND org_id = $2`, userID, org.ID)
+		// Mark password_must_change so user is prompted at next login.
+		//
+		// This is the whole point of an admin-issued temporary password: it is
+		// meant to survive exactly one sign-in. The error was discarded and the
+		// response said "User must change password at next login" regardless,
+		// so a failed write left a password the admin typed -- or one generated
+		// above and read out over the phone -- valid indefinitely, with nothing
+		// to say the rotation was never armed.
+		//
+		// The directory password is already reset and cannot be put back, so
+		// the answer names the half that worked and the half that did not.
+		if _, err := s.db.Pool.Exec(ctx,
+			`UPDATE users SET password_must_change = true, password_changed_at = NOW() WHERE id = $1 AND org_id = $2`,
+			userID, org.ID,
+		); err != nil {
+			s.logger.Error("directory password reset but password_must_change was not set; "+
+				"the temporary password will not be forced to change",
+				zap.String("admin_id", fmt.Sprintf("%v", adminID)),
+				logsafe.String("target_user_id", userID), zap.Error(err))
+			c.JSON(500, gin.H{
+				"error":  "The directory password was reset, but this user could not be marked as needing to change it. The temporary password will NOT expire at first sign-in — reset it again, or set the requirement by hand.",
+				"source": *source,
+			})
+			return
+		}
 
 		s.logger.Info("Admin reset directory password",
 			zap.String("admin_id", fmt.Sprintf("%v", adminID)),

@@ -142,8 +142,60 @@ type ssfDeliveryItem struct {
 	attempts int
 }
 
+// ssfStallTimeout is how long a claimed row may sit in 'processing' before the
+// drain assumes nothing is working on it any more. Delivery itself is bounded
+// by a 15-second HTTP timeout, so anything still 'processing' minutes later is
+// a row whose outcome was never written down.
+const ssfStallTimeout = 15 * time.Minute
+
+// requeueStalledSSF returns rows abandoned in 'processing' to the queue.
+//
+// The drain claims a row by setting state='processing' and only ever selects
+// state='pending', so a row whose outcome could not be written -- the four
+// UPDATEs below all discarded their errors, and the process can also be killed
+// mid-push -- was never delivered, never retried, never dead-lettered, and
+// never looked at again. These are security event tokens: a session-revoked
+// notice stuck here is a relying party that goes on trusting a session the
+// product has already ended.
+//
+// The attempt is counted on the way back, so a row that keeps stalling reaches
+// ssfMaxAttempts and dead-letters rather than cycling for ever.
+func (s *Service) requeueStalledSSF(ctx context.Context) {
+	tag, err := s.db.Pool.Exec(ctx, `
+        --orgscope:ignore install-wide outbox drain: one worker serves every tenant and claims by state alone
+        UPDATE ssf_stream_delivery
+           SET state='pending', attempts=attempts+1, next_attempt_at=NOW(), updated_at=NOW(),
+               last_error='delivery outcome was never recorded; requeued by the drain'
+         WHERE state='processing' AND updated_at < NOW() - $1::interval`,
+		fmt.Sprintf("%d seconds", int(ssfStallTimeout.Seconds())))
+	if err != nil {
+		s.logger.Warn("could not requeue stalled SSF deliveries", zap.Error(err))
+		return
+	}
+	if n := tag.RowsAffected(); n > 0 {
+		s.logger.Warn("requeued SSF deliveries whose outcome was never recorded",
+			zap.Int64("rows", n))
+	}
+}
+
+// markSSFRow moves a claimed row to its terminal state. Every caller here owns
+// the row already, so the only thing that can go wrong is the write, and a
+// write that fails leaves the row claimed for ever -- which is what
+// requeueStalledSSF exists to undo, and what this logs so it is not a surprise.
+// (interface{} rather than any: this package declares a function called `any`,
+// which shadows the builtin alias.)
+func (s *Service) markSSFRow(ctx context.Context, id int64, state, sql string, args ...interface{}) {
+	if _, err := s.db.Pool.Exec(ctx, sql, args...); err != nil {
+		s.logger.Error("could not record an SSF delivery outcome; the row stays claimed until the "+
+			"drain requeues it",
+			zap.Int64("id", id), zap.String("state", state), zap.Error(err))
+	}
+}
+
 // drainSSFDelivery claims and pushes up to 50 due SETs.
 func (s *Service) drainSSFDelivery(ctx context.Context) (int, error) {
+	s.requeueStalledSSF(ctx)
+
 	rows, err := s.db.Pool.Query(ctx, `
         --orgscope:ignore install-wide outbox drain: one worker serves every tenant, claims by state alone and never by org, and each claimed row carries its own org_id onward
         UPDATE ssf_stream_delivery d SET state='processing', updated_at=NOW()
@@ -197,7 +249,7 @@ func (s *Service) pushSSFItem(ctx context.Context, it ssfDeliveryItem) {
 	defer resp.Body.Close()
 	// RFC 8935: 202 Accepted on success; 200 also tolerated.
 	if resp.StatusCode == http.StatusAccepted || resp.StatusCode == http.StatusOK {
-		_, _ = s.db.Pool.Exec(ctx,
+		s.markSSFRow(ctx, it.id, "delivered",
 			//orgscope:ignore background push worker marking an outbox row it already claimed in the cross-org drain above; addressed by that row's own id
 			`UPDATE ssf_stream_delivery SET state='delivered', updated_at=NOW() WHERE id=$1`, it.id)
 		return
@@ -222,7 +274,7 @@ func (s *Service) ssfDeliveryTarget(ctx context.Context, streamID string) (endpo
 func (s *Service) retryOrDeadSSF(ctx context.Context, it ssfDeliveryItem, cause error) {
 	attempts := it.attempts + 1
 	if attempts >= ssfMaxAttempts {
-		_, _ = s.db.Pool.Exec(ctx,
+		s.markSSFRow(ctx, it.id, "dead",
 			//orgscope:ignore background push worker dead-lettering an outbox row it already claimed in the cross-org drain; addressed by that row's own id
 			`UPDATE ssf_stream_delivery SET state='dead', attempts=$2, last_error=$3, updated_at=NOW() WHERE id=$1`,
 			it.id, attempts, cause.Error())
@@ -233,7 +285,7 @@ func (s *Service) retryOrDeadSSF(ctx context.Context, it ssfDeliveryItem, cause 
 	if backoff > time.Hour {
 		backoff = time.Hour
 	}
-	_, _ = s.db.Pool.Exec(ctx, `
+	s.markSSFRow(ctx, it.id, "pending", `
         --orgscope:ignore background push worker rescheduling an outbox row it already claimed in the cross-org drain; addressed by that row's own id
         UPDATE ssf_stream_delivery
            SET state='pending', attempts=$2, last_error=$3,
@@ -243,7 +295,7 @@ func (s *Service) retryOrDeadSSF(ctx context.Context, it ssfDeliveryItem, cause 
 }
 
 func (s *Service) failSSFItem(ctx context.Context, it ssfDeliveryItem, cause error) {
-	_, _ = s.db.Pool.Exec(ctx,
+	s.markSSFRow(ctx, it.id, "failed",
 		//orgscope:ignore background push worker failing an outbox row it already claimed in the cross-org drain; addressed by that row's own id
 		`UPDATE ssf_stream_delivery SET state='failed', last_error=$2, updated_at=NOW() WHERE id=$1`,
 		it.id, cause.Error())

@@ -662,6 +662,8 @@ func (s *Service) linkOrCreateSocialUser(ctx context.Context, providerID string,
 
 	if err == nil {
 		// Already linked - update last login info and return
+		//silentwrite:ok the account was chosen by provider_id + external_id above, the only columns
+		// ever read for a decision; what is lost is a stale last_login_at and display name.
 		_, _ = s.db.Pool.Exec(ctx, `
 			UPDATE social_account_links SET last_login_at = NOW(),
 				profile_data = jsonb_set(COALESCE(profile_data, '{}'::jsonb), '{display_name}', to_jsonb($3::text)),

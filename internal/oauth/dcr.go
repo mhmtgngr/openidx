@@ -181,6 +181,8 @@ func (s *Service) handleDeleteRegisteredClient(c *gin.Context) {
 		return
 	}
 	if org, err := orgctx.From(c.Request.Context()); err == nil {
+		//silentwrite:ok the client is already deleted, and every operation these tokens authenticate
+		// looks it up first, so an orphan row opens nothing; the deletion the caller asked for stands.
 		_, _ = s.db.Pool.Exec(c.Request.Context(),
 			`DELETE FROM oauth_registration_tokens WHERE client_id = $1 AND org_id = $2`,
 			clientID, org.ID)
