@@ -1287,5 +1287,12 @@ func allMigrations() []*Migration {
 			UpSQL:       auditEventTypeIndexUp,
 			DownSQL:     auditEventTypeIndexDown,
 		},
+		{
+			Version:     181,
+			Name:        "audit_hash_chain",
+			Description: "Give the audit hash chain somewhere to live: chain_seq, prev_hash and event_hash on audit_events, a unique (org_id, chain_seq) index and a partial index over the unsealed rows. The docs index, the architecture page, the audit reference page and the README's readiness checklist all state that OpenIDX keeps a tamper-evident HMAC hash-chain audit log; internal/audit/logger.go implements the primitives and, until this migration, there was no column to store a hash in, so nothing could have been chained even if something had tried -- and nothing did: tools/deadservice reports that no binary reaches audit.Logger or audit.AuditEvent, and the tests covering them declare their own ComputeHashForChain to make the chain assertions work. The chain is per org because audit_events is under FORCE RLS and every read of it is tenant-scoped, so an install-wide chain would be unverifiable by the tenant whose rows it covers; the unique (org_id, chain_seq) index is also what makes a deleted sealed row visible, since the gap cannot be closed without rewriting every later hash. The columns are nullable and filled by a background sealer rather than on insert, for the reason v88's indexed_at is: sixteen statements across the tree INSERT into this table, several inside request transactions, and taking a per-org lock at each would put a serialization point in the middle of login. The cost is stated rather than hidden -- an event is tamper-evident once sealed, and verification reports the unsealed count so the sealer's lag is visible. Additive and idempotent. Down drops the three columns, discarding the chain; re-running the sealer rebuilds it from the rows.",
+			UpSQL:       auditChainUp,
+			DownSQL:     auditChainDown,
+		},
 	}
 }

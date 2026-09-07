@@ -67,7 +67,7 @@ graph TB
 | **Identity** | 8001 | Users, groups, roles, sessions, MFA (TOTP, WebAuthn/passkeys, push, hardware tokens), federation (OIDC/SAML), passwordless, account lifecycle & deprovisioning |
 | **Governance** | 8002 | Access reviews & certification campaigns, ABAC policies via OPA, SoD (fail-closed), risk/time-bound assignments, approval workflows |
 | **Provisioning** | 8003 | SCIM 2.0 users & groups, provisioning rules, directory sync (LDAP / AD / Azure AD) |
-| **Audit** | 8004 | Unified tamper-evident audit events (HMAC hash-chain), real-time streaming, Elasticsearch indexing, SOC 2 / ISO 27001 / GDPR reports, SIEM forwarding |
+| **Audit** | 8004 | Unified audit events, sealed into a per-tenant HMAC hash chain and checkable at `GET /api/v1/audit/chain/verify` (needs `AUDIT_CHAIN_SECRET`); real-time streaming, Elasticsearch indexing, SOC 2 / ISO 27001 / GDPR reports, SIEM forwarding |
 | **Admin API** | 8005 | Aggregated admin surface behind the console: dashboards, settings, applications, API keys, webhooks, notifications |
 | **OAuth/OIDC** | 8006 | The IdP: authorization code + PKCE, client credentials, refresh rotation with replay detection, token exchange, revocation, JWKS rotation, step-up, SAML 2.0 IdP with Single Logout |
 | **Gateway** | 8088 | APISIX integration, proxy routes, app publishing |

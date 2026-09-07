@@ -1554,6 +1554,9 @@ jobs:
       # 32 bytes: governance-service, admin-api and access-service refuse to
       # start without a vault keyring, by design (fail-closed).
       ENCRYPTION_KEY: "0123456789abcdef0123456789abcdef"
+      # Runs the audit hash-chain sealer in the smoke stack, so the startup
+      # path that seals events is exercised rather than only unit-tested.
+      AUDIT_CHAIN_SECRET: smoke-test-audit-chain-secret-000
       OAUTH_ISSUER: http://localhost:8006
       OAUTH_JWKS_URL: http://localhost:8006/.well-known/jwks.json
       OAUTH_LOGIN_URL: http://localhost:3000/login

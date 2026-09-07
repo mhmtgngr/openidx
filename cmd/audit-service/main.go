@@ -191,6 +191,13 @@ func main() {
 		auditService.StartESReconciler(context.Background())
 	}
 
+	// The audit hash chain: seal each org's events into a tamper-evident
+	// sequence so GET /api/v1/audit/chain/verify can answer whether the trail
+	// has been altered. Warns and does nothing without AUDIT_CHAIN_SECRET;
+	// ValidateProduction refuses a production start without it, because the
+	// product's documentation states this control exists.
+	auditService.StartChainSealer(context.Background())
+
 	// SIEM forwarder: stream the unified audit trail to an external SIEM
 	// (syslog/CEF/Splunk HEC). No-op unless AUDIT_SIEM_ENABLED=true.
 	auditService.StartSIEMForwarder(context.Background())

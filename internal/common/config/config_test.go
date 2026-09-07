@@ -862,6 +862,7 @@ func TestValidateProduction(t *testing.T) {
 			AuditStreamAllowedOrigins: "https://example.com",
 			DebugOTPInResponse:        false,
 			VaultKEK:                  "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+			AuditChainSecret:          "audit-chain-key-32-bytes-long!!!",
 			ZitiEnabled:               false,
 			ZitiAdminPassword:         defaultZitiAdminPassword,
 		}
@@ -884,10 +885,42 @@ func TestValidateProduction(t *testing.T) {
 			AuditStreamAllowedOrigins: "https://example.com",
 			DebugOTPInResponse:        false,
 			VaultKEK:                  "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+			AuditChainSecret:          "audit-chain-key-32-bytes-long!!!",
 		}
 
 		err := cfg.ValidateProduction()
 		assert.NoError(t, err)
+	})
+
+	// The product publishes, in four places, that it keeps a tamper-evident
+	// HMAC hash-chain audit log. Without this secret the sealer does not run
+	// and every audit row is unchained -- editable in the database with nothing
+	// to show for it -- while the evidence package still makes the claim. A
+	// documented control that is silently off is worse than an absent one.
+	t.Run("Fails when the audit chain has no secret", func(t *testing.T) {
+		cfg := &Config{
+			Environment:               "production",
+			AccessSessionSecret:       "secure-key-32-bytes-long!!!!",
+			JWTSecret:                 "secure-key-32-bytes-long!!!!!!!!",
+			EncryptionKey:             "secure-key-32-bytes-long!!!!!!!!",
+			CORSAllowedOrigins:        "https://example.com",
+			CSRFEnabled:               true,
+			DatabaseSSLMode:           "verify-full",
+			RedisTLSEnabled:           true,
+			TLS:                       TLSConfig{Enabled: true},
+			AuditStreamAllowedOrigins: "https://example.com",
+			VaultKEK:                  "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+		}
+
+		err := cfg.ValidateProduction()
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "audit_chain_secret")
+
+		// And a placeholder is not a secret.
+		cfg.AuditChainSecret = "CHANGE_ME_audit_chain_secret"
+		err = cfg.ValidateProduction()
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "audit_chain_secret")
 	})
 
 	// The effective sslmode is what pgx connects with — DATABASE_URL wins over
@@ -929,6 +962,7 @@ func TestValidateProduction(t *testing.T) {
 			AuditStreamAllowedOrigins: "https://example.com",
 			DebugOTPInResponse:        false,
 			VaultKEK:                  "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+			AuditChainSecret:          "audit-chain-key-32-bytes-long!!!",
 		}
 
 		err := cfg.ValidateProduction()
@@ -974,6 +1008,7 @@ func TestValidateProduction_Elasticsearch(t *testing.T) {
 			AuditStreamAllowedOrigins: "https://example.com",
 			DebugOTPInResponse:        false,
 			VaultKEK:                  "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+			AuditChainSecret:          "audit-chain-key-32-bytes-long!!!",
 		}
 	}
 

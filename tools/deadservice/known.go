@@ -23,10 +23,15 @@ package main
 //     until someone reads it as the house pattern. Delete.
 var knownDead = map[string]string{
 	// ---- audit -------------------------------------------------------------
-
-	"internal/audit.AuditEvent": "the tamper-evident audit record: ComputeHash (HMAC-SHA256 over canonical bytes), VerifyHash, and the With* builders. A FEATURE THAT LOOKS SHIPPED, and the claim is published four times -- docs/docs/index.md, docs/docs/guide/architecture.md, docs/docs/reference/audit.md and README.md's readiness checklist all state a tamper-evident HMAC hash-chain audit log. No migration creates a hash, prev_hash or sequence column on audit_events or unified_audit_events, so there is nowhere to put the chain; no reachable code computes one; and the tests that cover it declare their OWN ComputeHashForChain method on *AuditEvent inside service_extended_test.go to make the chain assertions work. Tracked as its own task: wire it (column, live write path, verification) or withdraw four published claims.",
-
-	"internal/audit.Logger": "the chain half of the same feature: PrepareForStorage links each event to its predecessor's hash, verifyEventChain and VerifyEventList walk a run and report the first break. Same verdict as internal/audit.AuditEvent, and the same task.",
+	//
+	// audit.AuditEvent and audit.Logger used to head this list: the
+	// tamper-evident HMAC hash chain the docs index, the architecture page, the
+	// audit reference page and the README's readiness checklist all advertise,
+	// implemented in full and reachable from nothing, with no column in any
+	// migration to store a hash in. Migration v181 and internal/audit/chain.go
+	// closed it -- the sealer chains each org's rows and
+	// GET /api/v1/audit/chain/verify answers whether the trail is intact -- so
+	// both entries left this register the way an entry is supposed to.
 
 	"internal/audit.AnomalyDetector": "brute-force and suspicious-pattern detection over audit events, with per-principal failed-login trackers and a DetectorConfig of thresholds. Nothing constructs it and no route exposes it. The live risk signals are elsewhere and unrelated: internal/admin/continuous_auth.go scores IP change, device and behaviour, and internal/risk scores logins. A SECOND IMPLEMENTATION of a job the product already does, minus the audit-event corpus this one would have read. Delete, or fold its thresholds into internal/risk.",
 

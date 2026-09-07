@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -154,6 +155,11 @@ type Service struct {
 	es     *database.ElasticsearchClient
 	config *config.Config
 	logger *zap.Logger
+
+	// sealer chains audit rows into a per-org tamper-evident sequence. It is
+	// nil when no AUDIT_CHAIN_SECRET is configured, and the verification
+	// endpoint says so rather than reporting an intact chain over nothing.
+	sealer *ChainSealer
 }
 
 // NewService creates a new audit service
@@ -161,12 +167,76 @@ func NewService(db *database.PostgresDB, es *database.ElasticsearchClient, cfg *
 	if logger == nil {
 		panic("audit service logger cannot be nil")
 	}
-	return &Service{
+	svc := &Service{
 		db:     db,
 		es:     es,
 		config: cfg,
 		logger: logger.With(zap.String("service", "audit")),
 	}
+	// The hash chain runs only with a secret. A construction failure here is
+	// not fatal -- an audit service that refuses to start would lose the trail
+	// entirely, which is worse than a trail without tamper evidence -- but it
+	// is loud, and ValidateProduction refuses a production start without the
+	// secret, so the quiet case cannot happen where it matters.
+	if cfg != nil && cfg.AuditChainSecret != "" && db != nil {
+		sealer, err := NewChainSealer(db.Pool, cfg.AuditChainSecret, svc.logger)
+		if err != nil {
+			svc.logger.Error("audit hash chain disabled: sealer could not be built", zap.Error(err))
+		} else {
+			svc.sealer = sealer
+		}
+	}
+	return svc
+}
+
+// StartChainSealer runs the audit hash-chain sealer until ctx is cancelled.
+// It is a no-op when no AUDIT_CHAIN_SECRET is configured, and says so once
+// rather than looking like a running control.
+func (s *Service) StartChainSealer(ctx context.Context) {
+	if s.sealer == nil {
+		s.logger.Warn("audit hash chain is not running: AUDIT_CHAIN_SECRET is unset, so audit events carry no tamper evidence")
+		return
+	}
+	interval := time.Minute
+	if s.config != nil && s.config.AuditChainInterval > 0 {
+		interval = s.config.AuditChainInterval
+	}
+	go s.sealer.Start(ctx, interval)
+}
+
+// handleVerifyChain answers whether this tenant's audit trail is intact.
+func (s *Service) handleVerifyChain(c *gin.Context) {
+	if s.sealer == nil {
+		// Not an error: the honest answer to "is the chain intact" when there
+		// is no chain is that there is no chain. Reporting intact:true over
+		// zero sealed rows is the failure this endpoint exists to prevent.
+		c.JSON(http.StatusOK, gin.H{
+			"enabled": false,
+			"detail":  "the audit hash chain is not configured; set AUDIT_CHAIN_SECRET to make this trail tamper-evident",
+		})
+		return
+	}
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+	result, err := s.sealer.VerifyChain(c.Request.Context(), org.ID)
+	if err != nil {
+		s.logger.Error("audit chain verification could not run", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not verify the audit chain"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"enabled":         true,
+		"org_id":          result.OrgID,
+		"sealed_events":   result.Sealed,
+		"unsealed_events": result.Unsealed,
+		"last_sequence":   result.LastSeq,
+		"intact":          result.Intact,
+		"break":           result.Break,
+		"break_event_id":  result.BreakEventID,
+	})
 }
 
 // auditIndexMapping defines the Elasticsearch index mapping for audit events
@@ -1150,6 +1220,11 @@ func RegisterRoutes(router *gin.Engine, svc *Service, extraMiddleware ...gin.Han
 		// console's filter offers what is there instead of a list copied from
 		// constants that six of eight nothing writes. See event_types.go.
 		audit.GET("/event-types", svc.handleEventTypes)
+
+		// Tamper evidence. The product publishes a claim that this trail is
+		// hash-chained; this is where an auditor -- or the tenant -- checks it
+		// rather than taking the claim on faith. See chain.go.
+		audit.GET("/chain/verify", svc.handleVerifyChain)
 
 		// Statistics
 		audit.GET("/statistics", svc.handleGetStatistics)

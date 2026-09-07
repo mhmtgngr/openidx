@@ -476,6 +476,24 @@ type Config struct {
 	// Audit Stream WebSocket configuration
 	AuditStreamAllowedOrigins string `mapstructure:"audit_stream_allowed_origins"`
 
+	// AuditChainSecret is the HMAC key the audit sealer chains events with.
+	// Empty means the chain does not run: audit rows are still written and
+	// still readable, they simply carry no tamper evidence, and
+	// GET /api/v1/audit/chain/verify says so rather than reporting an intact
+	// chain over nothing. Production requires it, because the documentation
+	// states the product keeps a tamper-evident log and a control that is
+	// documented but silently off is the defect this whole programme exists
+	// for. It is deliberately NOT derived from JWT_SECRET or
+	// ACCESS_SESSION_SECRET: whoever can read the audit database must not also
+	// hold the key that would let them re-seal a doctored trail.
+	AuditChainSecret string `mapstructure:"audit_chain_secret"`
+
+	// AuditChainInterval is how often the sealer sweeps for unsealed rows.
+	// Shorter closes the window in which a row can be altered before it is
+	// covered; longer costs less. The verification response reports the
+	// unsealed count so the window is visible either way.
+	AuditChainInterval time.Duration `mapstructure:"audit_chain_interval"`
+
 	// Redis Sentinel configuration
 	RedisSentinelEnabled    bool   `mapstructure:"redis_sentinel_enabled"`
 	RedisSentinelMasterName string `mapstructure:"redis_sentinel_master_name"`
@@ -993,6 +1011,8 @@ func setDefaults(v *viper.Viper, serviceName string) {
 
 	// Audit Stream WebSocket defaults (development-friendly)
 	v.SetDefault("audit_stream_allowed_origins", "")
+	v.SetDefault("audit_chain_secret", "")
+	v.SetDefault("audit_chain_interval", 60*time.Second)
 
 	// Vault (PAM credential vault) defaults
 	v.SetDefault("vault_reveal_lease_ttl_seconds", 300)
@@ -1227,6 +1247,8 @@ func bindEnvVars(v *viper.Viper) {
 		"recordings_s3_access_key":          "RECORDINGS_S3_ACCESS_KEY",
 		"recordings_s3_secret_key":          "RECORDINGS_S3_SECRET_KEY",
 		"recordings_s3_use_ssl":             "RECORDINGS_S3_USE_SSL",
+		"audit_chain_secret":                "AUDIT_CHAIN_SECRET",
+		"audit_chain_interval":              "AUDIT_CHAIN_INTERVAL",
 	}
 
 	for key, env := range envMappings {
@@ -1451,6 +1473,20 @@ func (c *Config) ValidateProduction() error {
 	if c.VaultKEK == "" && c.VaultKEKs == "" {
 		criticalIssues = append(criticalIssues,
 			"vault_kek or vault_keks must be set in production; do not rely on the ENCRYPTION_KEY fallback for the vault key-encryption key")
+	}
+
+	// Critical: the audit trail's tamper evidence must actually run. The docs
+	// index, the architecture page, the audit reference page and the README's
+	// readiness checklist all state that OpenIDX keeps a tamper-evident
+	// HMAC hash-chain audit log. Without a chain secret the sealer does not
+	// start and every audit row is unchained -- editable in the database with
+	// nothing to show for it. A documented control that is silently off is
+	// worse than an absent one, because the evidence package still claims it.
+	// Deliberately not defaulted to another secret: whoever can read the audit
+	// store must not also hold the key to re-seal a doctored trail.
+	if c.AuditChainSecret == "" || strings.Contains(strings.ToLower(c.AuditChainSecret), "change") {
+		criticalIssues = append(criticalIssues,
+			"audit_chain_secret must be set to a secure random value; without it the audit hash chain does not run and the trail carries no tamper evidence")
 	}
 
 	// Critical: Wildcard CORS in production allows any origin

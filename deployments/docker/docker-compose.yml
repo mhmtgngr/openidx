@@ -369,6 +369,12 @@ services:
       - LOG_LEVEL=debug
       - OPENIDX_ENABLE_RATE_LIMIT=false
       - OPENIDX_AUDIT_STREAM_ALLOWED_ORIGINS=${AUDIT_STREAM_ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:5173,http://127.0.0.1:3000,http://127.0.0.1:5173}
+      # The HMAC key the audit hash chain seals events with. Written by
+      # scripts/generate-secrets.sh; without it the sealer does not run and
+      # GET /api/v1/audit/chain/verify answers enabled=false rather than
+      # claiming an intact chain over nothing.
+      - AUDIT_CHAIN_SECRET=${AUDIT_CHAIN_SECRET:-}
+      - AUDIT_CHAIN_INTERVAL=${AUDIT_CHAIN_INTERVAL:-60s}
       - TRACING_ENABLED=${TRACING_ENABLED:-false}
       - OTEL_EXPORTER_OTLP_ENDPOINT=jaeger:4317
       - OTEL_SERVICE_NAME=audit-service
