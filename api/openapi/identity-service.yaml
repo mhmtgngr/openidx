@@ -3344,6 +3344,44 @@ paths:
         '500':
           $ref: '#/components/responses/ServerError'
 
+  /api/v1/identity/notifications/preference-types:
+    get:
+      tags: [Notifications]
+      summary: The notification types a user can switch off
+      description: >-
+        Serves internal/notifications.TypeCatalogue: the types this deployment
+        actually sends. The preferences page reads this instead of a list of its
+        own, which had drifted to seven types nothing has ever sent.
+      operationId: getIdentityNotificationPreferenceTypes
+      x-openidx-handler: internal/notifications.(*Service).handlePreferenceTypes
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  types:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        type:
+                          type: string
+                        title:
+                          type: string
+                        description:
+                          type: string
+                        channels:
+                          type: array
+                          items:
+                            type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
   /api/v1/identity/notifications/push-config:
     get:
       tags: [Notifications]
