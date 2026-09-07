@@ -111,6 +111,7 @@ func TestOAuthService_ProductionConfigValidation(t *testing.T) {
 				TLS:                       config.TLSConfig{Enabled: true},
 				AuditStreamAllowedOrigins: "https://example.com",
 				VaultKEK:                  "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+				AuditChainSecret:          "secure-32-byte-audit-chain-key-12345",
 			},
 			wantErr: false,
 		},

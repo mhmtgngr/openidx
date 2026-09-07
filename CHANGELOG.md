@@ -78,6 +78,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The dead-service gate brought a vulnerable dependency in with it
+  (`golang.org/x/mod`).** Promoting `golang.org/x/tools` to a direct dependency
+  so `tools/deadservice` could do reachability analysis also recorded
+  `golang.org/x/mod v0.38.0` in `go.mod`, and that version carries
+  CVE-2026-56864 and CVE-2026-56865 — a malicious `GOSUMDB` serving arbitrary
+  module content, and a transparency-log tile verification bypass. `govulncheck`
+  stayed green (nothing reaches `sumdb/tlog` from any binary here) while the
+  filesystem scan went red, which is the difference between the two tools rather
+  than a disagreement. Bumped to v0.40.0, pulling `x/tools` to v0.49.0 and
+  `x/net` to v0.58.0 with it. `go mod tidy` then dropped
+  `github.com/open-policy-agent/opa` and eight of its transitive dependencies:
+  the embedded OPA engine's only importer in the tree was
+  `internal/governance/policy.go`, the third policy evaluator deleted earlier on
+  this branch, so the requirement had been holding a compiled-in Rego runtime
+  the product never called. Policy decisions go to the OPA **server** over HTTP,
+  as they always did.
+- **Seven production-config gate tests went stale when the audit chain became
+  required (`cmd/*/main_test.go`).** `AUDIT_CHAIN_SECRET` joined the
+  `ValidateProduction` critical list in the audit hash-chain change above. The
+  config package's own tests were updated; the seven `cmd/*` copies of "a valid
+  production config" were not, so each service's only automated proof that a
+  production start is accepted began failing. They run in CI — but only inside
+  `go test -race ./...`, since the per-package unit matrix does not list `cmd/`
+  at all, so a self-inflicted red would have arrived twenty minutes late under a
+  job named "Race Detector".
+
 - **An access review's revocation wrote a key nothing read
   (`internal/revocation`).** When a reviewer revokes somebody's access in a
   certification campaign, governance calls `killUserSessions` to set *"the

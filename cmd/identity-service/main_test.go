@@ -111,6 +111,7 @@ func TestIdentityService_ProductionConfigValidation(t *testing.T) {
 				AccessSessionSecret:       "secure-32-byte-session-secret-12345",
 				AuditStreamAllowedOrigins: "https://example.com",
 				VaultKEK:                  "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+				AuditChainSecret:          "secure-32-byte-audit-chain-key-12345",
 			},
 			wantErr: false,
 		},
