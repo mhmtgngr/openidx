@@ -181,13 +181,18 @@ func TestSSFReceiveAppliesSessionRevoked(t *testing.T) {
 	db.Pool.Exec(dbctx, `
         CREATE TABLE users (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), email VARCHAR(255), enabled BOOLEAN DEFAULT true, org_id UUID);
         CREATE TABLE sessions (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID, org_id UUID, revoked BOOLEAN DEFAULT false, revoked_at TIMESTAMPTZ);
-        CREATE TABLE refresh_tokens (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID, org_id UUID);
+        -- oauth_refresh_tokens, not refresh_tokens. The fixture used to name a
+        -- table this product does not have anywhere: the DELETE behind a CAEP
+        -- event failed on a missing relation, its error was discarded, and both
+        -- of these tests passed while proving nothing about refresh tokens.
+        CREATE TABLE oauth_refresh_tokens (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), token TEXT, user_id UUID, org_id UUID);
         CREATE TABLE ssf_received_events (jti VARCHAR(255), org_id UUID NOT NULL, issuer TEXT, event_type TEXT, subject TEXT, outcome VARCHAR(16) NOT NULL DEFAULT 'applied', detail TEXT, received_at TIMESTAMPTZ DEFAULT NOW(), PRIMARY KEY (org_id, jti));`)
 
 	orgID := "00000000-0000-0000-0000-0000000000aa"
 	var userID string
 	db.Pool.QueryRow(dbctx, `INSERT INTO users (email, org_id) VALUES ('victim@corp.com',$1) RETURNING id`, orgID).Scan(&userID)
 	db.Pool.Exec(dbctx, `INSERT INTO sessions (user_id, org_id) VALUES ($1,$2),($1,$2)`, userID, orgID)
+	db.Pool.Exec(dbctx, `INSERT INTO oauth_refresh_tokens (token, user_id, org_id) VALUES ('rt-1',$1,$2)`, userID, orgID)
 
 	// Build the receiver service on the real DB (own key = trusted issuer).
 	tctx := NewTestOIDCContext(t)
@@ -219,6 +224,15 @@ func TestSSFReceiveAppliesSessionRevoked(t *testing.T) {
 	db.Pool.QueryRow(dbctx, `SELECT COUNT(*) FROM sessions WHERE user_id=$1 AND revoked=true`, userID).Scan(&revoked)
 	if revoked != 2 {
 		t.Errorf("expected 2 sessions revoked, got %d", revoked)
+	}
+	// And the refresh tokens are gone. A refresh token that survives a session
+	// revocation is a live credential for the account a partner just told us
+	// about, and this assertion did not exist: the DELETE named a table the
+	// fixture had not created, and its error was discarded.
+	var tokensLeft int
+	db.Pool.QueryRow(dbctx, `SELECT COUNT(*) FROM oauth_refresh_tokens WHERE user_id=$1`, userID).Scan(&tokensLeft)
+	if tokensLeft != 0 {
+		t.Errorf("%d refresh token(s) survived a session-revoked event", tokensLeft)
 	}
 	// Recorded for dedup with outcome applied.
 	var outcome string
@@ -317,7 +331,11 @@ func TestSSFReceiveDedup(t *testing.T) {
 	db.Pool.Exec(dbctx, `
         CREATE TABLE users (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), email VARCHAR(255), enabled BOOLEAN DEFAULT true, org_id UUID);
         CREATE TABLE sessions (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID, org_id UUID, revoked BOOLEAN DEFAULT false, revoked_at TIMESTAMPTZ);
-        CREATE TABLE refresh_tokens (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID, org_id UUID);
+        -- oauth_refresh_tokens, not refresh_tokens. The fixture used to name a
+        -- table this product does not have anywhere: the DELETE behind a CAEP
+        -- event failed on a missing relation, its error was discarded, and both
+        -- of these tests passed while proving nothing about refresh tokens.
+        CREATE TABLE oauth_refresh_tokens (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), token TEXT, user_id UUID, org_id UUID);
         CREATE TABLE ssf_received_events (jti VARCHAR(255), org_id UUID NOT NULL, issuer TEXT, event_type TEXT, subject TEXT, outcome VARCHAR(16) NOT NULL DEFAULT 'applied', detail TEXT, received_at TIMESTAMPTZ DEFAULT NOW(), PRIMARY KEY (org_id, jti));`)
 	orgID := "00000000-0000-0000-0000-0000000000bb"
 	var userID string
@@ -369,7 +387,11 @@ func TestSSFReplayCheckThatCannotRunRefusesTheEvent(t *testing.T) {
 	db.Pool.Exec(dbctx, `
         CREATE TABLE users (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), email VARCHAR(255), enabled BOOLEAN DEFAULT true, org_id UUID);
         CREATE TABLE sessions (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID, org_id UUID, revoked BOOLEAN DEFAULT false, revoked_at TIMESTAMPTZ);
-        CREATE TABLE refresh_tokens (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID, org_id UUID);`)
+        -- oauth_refresh_tokens, not refresh_tokens. The fixture used to name a
+        -- table this product does not have anywhere: the DELETE behind a CAEP
+        -- event failed on a missing relation, its error was discarded, and both
+        -- of these tests passed while proving nothing about refresh tokens.
+        CREATE TABLE oauth_refresh_tokens (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), token TEXT, user_id UUID, org_id UUID);`)
 	// ssf_received_events is deliberately NOT created: the replay check cannot
 	// run, which is the condition this test is about.
 	orgID := "00000000-0000-0000-0000-0000000000bc"
@@ -393,4 +415,93 @@ func TestSSFReplayCheckThatCannotRunRefusesTheEvent(t *testing.T) {
 		t.Fatalf("a SET whose replay check could not run was answered %d; want 503 -- "+
 			"accepting it means the next re-delivery applies it again: %s", w.Code, w.Body.String())
 	}
+}
+
+// An account-disabled event that did not disable the account is not acked.
+//
+// applyCAEPEvent discarded the error on `UPDATE users SET enabled=false` and
+// returned "applied" regardless. A federated partner sends account-disabled for
+// a compromised account; the UPDATE fails; the receiver records
+// outcome='applied', answers 202, and the account stays enabled. RFC 8935's 202
+// acknowledges receipt, so the transmitter never re-delivers -- and the dedup
+// row would have deduped the re-delivery away in any case.
+func TestSSFAccountDisabled(t *testing.T) {
+	seed := func(t *testing.T, usersDDL string) (*database.PostgresDB, *Service, string, string, func()) {
+		t.Helper()
+		db, cleanup := ssfSetupTestDB(t)
+		dbctx := context.Background()
+		db.Pool.Exec(dbctx, `CREATE EXTENSION IF NOT EXISTS pgcrypto`)
+		if _, err := db.Pool.Exec(dbctx, usersDDL+`
+			CREATE TABLE sessions (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID, org_id UUID, revoked BOOLEAN DEFAULT false, revoked_at TIMESTAMPTZ);
+			CREATE TABLE oauth_refresh_tokens (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), token TEXT, user_id UUID, org_id UUID);
+			CREATE TABLE ssf_received_events (jti VARCHAR(255), org_id UUID NOT NULL, issuer TEXT, event_type TEXT, subject TEXT, outcome VARCHAR(16) NOT NULL DEFAULT 'applied', detail TEXT, received_at TIMESTAMPTZ DEFAULT NOW(), PRIMARY KEY (org_id, jti));`); err != nil {
+			cleanup()
+			t.Fatalf("schema: %v", err)
+		}
+		orgID := "00000000-0000-0000-0000-0000000000cd"
+		var userID string
+		if err := db.Pool.QueryRow(dbctx,
+			`INSERT INTO users (email, org_id) VALUES ('compromised@corp.com',$1) RETURNING id`, orgID).Scan(&userID); err != nil {
+			cleanup()
+			t.Fatalf("seed user: %v", err)
+		}
+		tctx := NewTestOIDCContext(t)
+		svc := tctx.Service
+		svc.db = db
+		return db, svc, orgID, userID, func() { tctx.Cleanup(); cleanup() }
+	}
+
+	send := func(svc *Service, orgID, userID string) *httptest.ResponseRecorder {
+		setJWT, _, err := svc.BuildSET(svc.issuer, EventAccountDisabled, "compromised@corp.com", userID, nil)
+		if err != nil {
+			t.Fatalf("BuildSET: %v", err)
+		}
+		gin.SetMode(gin.TestMode)
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		req := httptest.NewRequest(http.MethodPost, "/ssf/events", strings.NewReader(setJWT))
+		req.Header.Set("Content-Type", "application/secevent+jwt")
+		c.Request = req.WithContext(orgctx.With(context.Background(), orgctx.Org{ID: orgID}))
+		svc.handleSSFReceive(c)
+		return w
+	}
+
+	t.Run("the account is disabled", func(t *testing.T) {
+		db, svc, orgID, userID, done := seed(t,
+			`CREATE TABLE users (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), email VARCHAR(255), enabled BOOLEAN DEFAULT true, org_id UUID, updated_at TIMESTAMPTZ);`)
+		defer done()
+		if w := send(svc, orgID, userID); w.Code != http.StatusAccepted {
+			t.Fatalf("account-disabled answered %d: %s", w.Code, w.Body.String())
+		}
+		var enabled bool
+		if err := db.Pool.QueryRow(context.Background(),
+			`SELECT enabled FROM users WHERE id=$1`, userID).Scan(&enabled); err != nil {
+			t.Fatalf("read the account back: %v", err)
+		}
+		if enabled {
+			t.Error("a partner sent account-disabled and the account is still enabled")
+		}
+	})
+
+	t.Run("a disable that could not run is refused, not recorded", func(t *testing.T) {
+		// No `enabled` column, so the UPDATE cannot run. Everything before it
+		// -- subject resolution, session revocation, refresh-token deletion --
+		// succeeds, which is the case the discarded error hid: partial
+		// application reported as complete.
+		db, svc, orgID, userID, done := seed(t,
+			`CREATE TABLE users (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), email VARCHAR(255), org_id UUID, updated_at TIMESTAMPTZ);`)
+		defer done()
+		w := send(svc, orgID, userID)
+		if w.Code != http.StatusServiceUnavailable {
+			t.Fatalf("an account-disabled event that could not disable the account was answered %d; "+
+				"want 503 so the transmitter re-delivers: %s", w.Code, w.Body.String())
+		}
+		var recorded int
+		db.Pool.QueryRow(context.Background(),
+			`SELECT COUNT(*) FROM ssf_received_events WHERE subject='compromised@corp.com'`).Scan(&recorded)
+		if recorded != 0 {
+			t.Errorf("the unapplied event was recorded as seen (%d row(s)); its re-delivery "+
+				"would be deduped away and lost", recorded)
+		}
+	})
 }

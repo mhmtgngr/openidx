@@ -24,6 +24,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A CAEP `account-disabled` event that did not disable the account was
+  acknowledged as applied.** `applyCAEPEvent` discarded the error on `UPDATE
+  users SET enabled=false` and returned `"applied"` regardless — so a federated
+  partner reporting a compromised account got a `202`, the receiver wrote
+  `outcome='applied'` to its own record, and the account stayed enabled. RFC
+  8935's `202` acknowledges receipt, so the transmitter never re-delivers; the
+  dedup row would have discarded the re-delivery in any case. Three more in the
+  same eight lines: the **refresh-token revocation**'s error was discarded (a
+  refresh token surviving a session revocation is a live credential for the
+  account you were just told to shut down), a **missing organization** silently
+  skipped the disable and still reported success, and **`resolveUserBySubject`**
+  could not tell "this subject is not a user here" from "the lookup did not
+  run", reporting both as `ignored`. An event that cannot be applied now answers
+  `503` and is *not* recorded as seen, so the transmitter re-delivers. **The
+  tests that covered this named a table the product does not have:** the
+  fixtures created `refresh_tokens`, the code deletes from
+  `oauth_refresh_tokens`, and the discarded error meant both tests passed while
+  proving nothing about refresh-token revocation. The fixture is corrected and
+  the assertion that was never there — that the tokens are gone — is.
+
 - **A Security Event Token whose replay check could not run was applied
   anyway.** `handleSSFReceive` asks whether it has already seen a SET's `jti`
   for this tenant before applying it. No row is the *normal* answer there and
