@@ -262,7 +262,7 @@ func TestNoWriteIsSilentWithoutAReason(t *testing.T) {
 	// the alternative -- landing the gate only once all 128 carry a verdict --
 	// leaves the tree unguarded in the meantime, and because the number can only
 	// go down, so the register it becomes is the empty one.
-	const backlog = 113
+	const backlog = 99
 
 	var lines []string
 	for _, f := range findings {

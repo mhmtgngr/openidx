@@ -16,6 +16,12 @@ import (
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
+// maxPhoneCallAttempts is how many guesses one spoken code is worth. The
+// counter it is compared against is incremented and read in a single statement,
+// so this is a ceiling on guesses actually made, not on guesses the process
+// happened to observe.
+const maxPhoneCallAttempts = 3
+
 // PhoneCallEnrollment represents a phone call MFA enrollment
 type PhoneCallEnrollment struct {
 	ID            string     `json:"id"`
@@ -134,6 +140,8 @@ func (s *Service) CreatePhoneCallChallenge(ctx context.Context, userID, phoneNum
 	callSID, err := s.phoneCallProvider.InitiateCall(phoneNumber, code, "en-US")
 	if err != nil {
 		// Update status to failed
+		//silentwrite:ok the caller is given the error below either way; a challenge left 'pending'
+		// here holds a code that was never spoken to anybody and expires on its own in five minutes.
 		s.db.Pool.Exec(ctx,
 			`UPDATE phone_call_challenges SET status = 'failed'
 			  WHERE id = $1 AND org_id = (SELECT org_id FROM users WHERE id = $2)`,
@@ -143,6 +151,8 @@ func (s *Service) CreatePhoneCallChallenge(ctx context.Context, userID, phoneNum
 	}
 
 	// Update with call SID
+	//silentwrite:ok call_sid is written and read nowhere in the product -- it is a provider-side
+	// correlation id for support -- and 'pending' verifies exactly as 'calling' does below.
 	s.db.Pool.Exec(ctx,
 		`UPDATE phone_call_challenges SET call_sid = $1, status = 'calling'
 		  WHERE id = $2 AND org_id = (SELECT org_id FROM users WHERE id = $3)`,
@@ -166,68 +176,109 @@ func (s *Service) CreatePhoneCallChallenge(ctx context.Context, userID, phoneNum
 func (s *Service) VerifyPhoneCallChallenge(ctx context.Context, userID, code string) error {
 	// Get active challenge
 	var challengeID, codeHash string
-	var attempts int
 	var expiresAt time.Time
 
 	err := s.db.Pool.QueryRow(ctx,
-		`SELECT id, code_hash, attempts, expires_at FROM phone_call_challenges
+		`SELECT id, code_hash, expires_at FROM phone_call_challenges
 		WHERE user_id = $1 AND org_id = (SELECT org_id FROM users WHERE id = $1)
 		  AND status IN ('pending', 'calling', 'answered')
 		ORDER BY created_at DESC LIMIT 1`,
 		userID,
-	).Scan(&challengeID, &codeHash, &attempts, &expiresAt)
+	).Scan(&challengeID, &codeHash, &expiresAt)
 	if err != nil {
 		return errors.New("no active phone call challenge found")
 	}
 
 	// Check expiration
 	if time.Now().After(expiresAt) {
+		//silentwrite:ok the refusal is the return below, decided from expires_at on every attempt;
+		// the row only records what the timestamp already says and never widens what is accepted.
 		s.db.Pool.Exec(ctx, `UPDATE phone_call_challenges SET status = 'expired'
 			WHERE id = $1 AND org_id = (SELECT org_id FROM users WHERE id = $2)`, challengeID, userID)
 		return errors.New("challenge expired")
 	}
 
+	// Count the attempt, and read the count back from the same statement.
+	//
+	// THIS IS the brute-force limit on a six-digit code. It was a read of
+	// `attempts`, a comparison, and a separate increment whose error was
+	// discarded -- so an increment that failed left the counter where it was
+	// and the cap never arrived, and two verifications racing each other both
+	// read the same count before either wrote. One conditional UPDATE closes
+	// both: the row is locked for the increment, and the value returned is the
+	// number of attempts including this one. A guess that cannot be counted is
+	// not allowed to be a free one.
+	var attempts int
+	if err := s.db.Pool.QueryRow(ctx,
+		`UPDATE phone_call_challenges SET attempts = attempts + 1
+		  WHERE id = $1 AND org_id = (SELECT org_id FROM users WHERE id = $2)
+		  RETURNING attempts`,
+		challengeID, userID,
+	).Scan(&attempts); err != nil {
+		s.logger.Error("could not count a phone-call verification attempt; refusing it",
+			zap.Error(err))
+		return errors.New("could not record the verification attempt")
+	}
+
 	// Check max attempts
-	if attempts >= 3 {
+	if attempts > maxPhoneCallAttempts {
+		//silentwrite:ok the cap is enforced from the attempts column above, which keeps climbing on
+		// every further guess, so this status is a label on a challenge already refused for good.
 		s.db.Pool.Exec(ctx, `UPDATE phone_call_challenges SET status = 'failed'
 			WHERE id = $1 AND org_id = (SELECT org_id FROM users WHERE id = $2)`, challengeID, userID)
 		return errors.New("maximum attempts exceeded")
 	}
-
-	// Increment attempts
-	s.db.Pool.Exec(ctx,
-		`UPDATE phone_call_challenges SET attempts = attempts + 1
-		  WHERE id = $1 AND org_id = (SELECT org_id FROM users WHERE id = $2)`,
-		challengeID, userID,
-	)
 
 	// Verify code
 	if err := bcrypt.CompareHashAndPassword([]byte(codeHash), []byte(code)); err != nil {
 		return errors.New("invalid verification code")
 	}
 
-	// Mark challenge as completed.
+	// Spend the challenge and verify the enrolment together.
 	//
-	// This is what stops the same challenge being presented twice with the same
-	// code. The error was discarded and the function returned success, so a
-	// failed mark left the challenge 'pending' and the code live for the rest
-	// of its window. A challenge that cannot be spent must not pass.
-	if _, err := s.db.Pool.Exec(ctx,
+	// The first write is what stops the same challenge being presented twice
+	// with the same code. The second is what makes the factor usable at all --
+	// InitiatePhoneCall reads `verified = true` to find a number to ring. Both
+	// discarded their errors, so a failure on the first left the code live for
+	// the rest of its window, and a failure on the second told the person their
+	// phone was verified and left them a factor that would never work again.
+	//
+	// One transaction: either the challenge is spent and the enrolment is
+	// usable, or neither happened and the same challenge can be tried again.
+	tx, err := s.db.Pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("verify phone-call challenge: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // no-op once committed
+
+	tag, err := tx.Exec(ctx,
 		`UPDATE phone_call_challenges SET status = 'completed', verified_at = NOW()
-		  WHERE id = $1 AND org_id = (SELECT org_id FROM users WHERE id = $2)`,
+		  WHERE id = $1 AND org_id = (SELECT org_id FROM users WHERE id = $2)
+		    AND status IN ('pending', 'calling', 'answered')`,
 		challengeID, userID,
-	); err != nil {
-		s.logger.Error("could not spend a phone-call challenge; refusing the verification",
-			zap.Error(err))
+	)
+	if err != nil {
+		s.logger.Error("could not spend a phone-call challenge; refusing the verification", zap.Error(err))
 		return fmt.Errorf("mark phone-call challenge completed: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		// Another verification spent it between the increment and here.
+		return errors.New("no active phone call challenge found")
 	}
 
 	// Mark enrollment as verified
-	s.db.Pool.Exec(orgctx.WithBypassRLS(ctx),
+	if _, err := tx.Exec(orgctx.WithBypassRLS(ctx),
 		"UPDATE mfa_phone_call SET verified = true, last_used_at = NOW() WHERE user_id = $1 AND org_id = (SELECT org_id FROM users WHERE id = $1)",
 		userID,
-	)
+	); err != nil {
+		s.logger.Error("could not mark the phone-call enrolment verified; refusing the verification",
+			zap.Error(err))
+		return fmt.Errorf("mark phone-call enrolment verified: %w", err)
+	}
 
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("verify phone-call challenge: %w", err)
+	}
 	return nil
 }
 

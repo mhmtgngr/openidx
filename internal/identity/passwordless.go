@@ -8,9 +8,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
 
@@ -102,11 +104,20 @@ func (s *Service) CreateMagicLink(ctx context.Context, email, purpose, redirectU
 	linkID := uuid.New().String()
 	expiresAt := time.Now().Add(15 * time.Minute) // 15 min expiry
 
-	// Invalidate any existing pending magic links for this user
-	s.db.Pool.Exec(ctx,
+	// Invalidate any existing pending magic links for this user.
+	//
+	// Requesting a new link is how a person retires one they think went astray
+	// -- forwarded, left in a shared inbox, sent to a stale address. The error
+	// was discarded, so a failure here handed out a second live credential
+	// while the first stayed redeemable for the rest of its fifteen minutes,
+	// and the person was told the old one had been replaced. Refuse to mint
+	// rather than widen what is outstanding.
+	if _, err := s.db.Pool.Exec(ctx,
 		"UPDATE magic_links SET status = 'expired' WHERE user_id = $1 AND status = 'pending' AND org_id = $2",
 		userID, org.ID,
-	)
+	); err != nil {
+		return nil, fmt.Errorf("retire the outstanding magic links before minting another: %w", err)
+	}
 
 	// Create magic link
 	query := `
@@ -202,6 +213,8 @@ func (s *Service) VerifyMagicLink(ctx context.Context, token, ipAddress, userAge
 
 		// Check expiration
 		if time.Now().After(expiresAt) {
+			//silentwrite:ok the refusal is the `continue` below, decided from expires_at on every
+			// pass; this row only spares the next scan a bcrypt compare it would lose anyway.
 			s.db.Pool.Exec(ctx,
 				//orgscope:ignore link id from the bypassed pre-resolution scan above; the token is the credential
 				"UPDATE magic_links SET status = 'expired' WHERE id = $1", linkID)
@@ -313,6 +326,8 @@ func (s *Service) ScanQRLoginSession(ctx context.Context, sessionToken, userID s
 	}
 
 	if time.Now().After(expiresAt) {
+		//silentwrite:ok the scan is refused by the return below, decided from expires_at every time;
+		// the row only saves the next caller the same comparison, and never grants what it denies.
 		s.db.Pool.Exec(ctx, "UPDATE qr_login_sessions SET status = 'expired' WHERE id = $1 AND org_id = $2", sessionID, org.ID)
 		return nil, errors.New("session expired")
 	}
@@ -344,31 +359,57 @@ func (s *Service) ApproveQRLoginSession(ctx context.Context, sessionToken, userI
 		return err
 	}
 
-	var sessionID, status string
-	var sessionUserID *string
+	// Read and approve in one statement.
+	//
+	// Two things were wrong with reading first and then updating. The check and
+	// the act were separate, so two approvals racing on one session both passed
+	// the status test; and the five-minute expiry was never checked here at
+	// all. ScanQRLoginSession refuses an expired session and GetQRLoginSession
+	// marks one expired only while it is still 'pending' -- so once a phone had
+	// scanned, the window never closed again, and a session scanned and left
+	// alone could be approved a week later, until the cleanup sweep removed the
+	// row. The clause below is the expiry the flow always claimed to have.
+	var sessionID string
+	err = s.db.Pool.QueryRow(ctx, `
+		UPDATE qr_login_sessions SET status = 'approved', approved_at = NOW()
+		WHERE session_token = $1 AND org_id = $2 AND status = 'scanned'
+		  AND user_id = $3 AND expires_at > NOW()
+		RETURNING id`,
+		sessionToken, org.ID, userID,
+	).Scan(&sessionID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// Say which of the four it was, without leaking a session's state to
+		// someone who guessed a token: this is only reached by the user the
+		// session already names, or by a caller holding the token.
+		return s.explainUnapprovableQRSession(ctx, sessionToken, userID, org.ID)
+	}
+	return err
+}
 
-	err = s.db.Pool.QueryRow(ctx,
-		"SELECT id, status, user_id FROM qr_login_sessions WHERE session_token = $1 AND org_id = $2",
-		sessionToken, org.ID,
-	).Scan(&sessionID, &status, &sessionUserID)
-	if err != nil {
+// explainUnapprovableQRSession turns a refused approval into the reason for it.
+// The approve above is a single conditional UPDATE, so it cannot report which
+// condition failed; this re-reads the row to say so.
+func (s *Service) explainUnapprovableQRSession(ctx context.Context, sessionToken, userID, orgID string) error {
+	var status string
+	var sessionUserID *string
+	var expiresAt time.Time
+	if err := s.db.Pool.QueryRow(ctx,
+		"SELECT status, user_id, expires_at FROM qr_login_sessions WHERE session_token = $1 AND org_id = $2",
+		sessionToken, orgID,
+	).Scan(&status, &sessionUserID, &expiresAt); err != nil {
 		return errors.New("session not found")
 	}
-
-	if status != "scanned" {
+	switch {
+	case status != "scanned":
 		return errors.New("session must be scanned first")
-	}
-
-	if sessionUserID == nil || *sessionUserID != userID {
+	case sessionUserID == nil || *sessionUserID != userID:
 		return errors.New("user mismatch")
+	case time.Now().After(expiresAt):
+		return errors.New("session expired")
 	}
-
-	_, err = s.db.Pool.Exec(ctx,
-		"UPDATE qr_login_sessions SET status = 'approved', approved_at = NOW() WHERE id = $1 AND org_id = $2",
-		sessionID, org.ID,
-	)
-
-	return err
+	// Scanned, this user's, unexpired -- and the UPDATE still matched nothing,
+	// so another approval took it between the two statements.
+	return errors.New("session was already approved")
 }
 
 // RejectQRLoginSession rejects a QR login
@@ -411,6 +452,8 @@ func (s *Service) GetQRLoginSession(ctx context.Context, sessionToken string) (*
 
 	// Check expiration
 	if time.Now().After(session.ExpiresAt) && session.Status == "pending" {
+		//silentwrite:ok the caller is told "expired" on the next line whether or not this lands,
+		// and the same comparison runs on every read, so a failure costs a row, never a decision.
 		s.db.Pool.Exec(ctx, "UPDATE qr_login_sessions SET status = 'expired' WHERE id = $1 AND org_id = $2", session.ID, org.ID)
 		session.Status = "expired"
 	}
@@ -556,27 +599,41 @@ func (s *Service) CleanupExpiredPasswordlessSessions(ctx context.Context) error 
 	// job; the WHERE clauses are what keep it harmless.
 	ctx = orgctx.WithBypassRLS(ctx)
 
+	// Every statement below discarded its error and the function returned nil
+	// regardless, so a sweep that cleaned nothing -- a revoked grant, a
+	// permission the belt no longer allows, a table renamed under it -- looked
+	// exactly like a sweep that worked, on every run, forever. The rows this
+	// job deletes are spent sign-in credentials; a scheduler that is never told
+	// it has stopped collecting them is how they accumulate for months.
+	//
+	// One failing statement does not stop the others: each is independent
+	// cleanup, and the caller wants as much of it done as possible. It does
+	// mean the run is reported as failed.
+	var failed []string
+	sweep := func(what, sql string) {
+		if _, err := s.db.Pool.Exec(ctx, sql); err != nil {
+			s.logger.Error("passwordless cleanup statement failed",
+				zap.String("sweep", what), zap.Error(err))
+			failed = append(failed, what)
+		}
+	}
+
 	// Expire old magic links
-	s.db.Pool.Exec(ctx,
-		//orgscope:ignore cross-org maintenance sweep of expired links; no request/tenant context
-		"UPDATE magic_links SET status = 'expired' WHERE status = 'pending' AND expires_at < NOW()",
-	)
+	//orgscope:ignore cross-org maintenance sweep of expired links; no request/tenant context
+	sweep("expire magic links", "UPDATE magic_links SET status = 'expired' WHERE status = 'pending' AND expires_at < NOW()")
 
 	// Expire old QR sessions
-	s.db.Pool.Exec(ctx,
-		//orgscope:ignore cross-org maintenance sweep of expired sessions; no request/tenant context
-		"UPDATE qr_login_sessions SET status = 'expired' WHERE status = 'pending' AND expires_at < NOW()",
-	)
+	//orgscope:ignore cross-org maintenance sweep of expired sessions; no request/tenant context
+	sweep("expire QR sessions", "UPDATE qr_login_sessions SET status = 'expired' WHERE status = 'pending' AND expires_at < NOW()")
 
 	// Delete very old records (> 7 days)
-	s.db.Pool.Exec(ctx,
-		//orgscope:ignore cross-org maintenance sweep of week-old links; no request/tenant context
-		"DELETE FROM magic_links WHERE created_at < NOW() - INTERVAL '7 days'",
-	)
-	s.db.Pool.Exec(ctx,
-		//orgscope:ignore cross-org maintenance sweep of week-old sessions; no request/tenant context
-		"DELETE FROM qr_login_sessions WHERE created_at < NOW() - INTERVAL '7 days'",
-	)
+	//orgscope:ignore cross-org maintenance sweep of week-old links; no request/tenant context
+	sweep("delete week-old magic links", "DELETE FROM magic_links WHERE created_at < NOW() - INTERVAL '7 days'")
+	//orgscope:ignore cross-org maintenance sweep of week-old sessions; no request/tenant context
+	sweep("delete week-old QR sessions", "DELETE FROM qr_login_sessions WHERE created_at < NOW() - INTERVAL '7 days'")
 
+	if len(failed) > 0 {
+		return fmt.Errorf("passwordless cleanup did not run: %s", strings.Join(failed, ", "))
+	}
 	return nil
 }
