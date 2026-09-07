@@ -625,8 +625,12 @@ func (s *Service) handleRecommendationStats(c *gin.Context) {
 
 	// Acceptance rate
 	var totalResolved, accepted int
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM ai_recommendations WHERE org_id = $1 AND status IN ('accepted', 'applied', 'dismissed')", org.ID).Scan(&totalResolved)
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM ai_recommendations WHERE org_id = $1 AND status IN ('accepted', 'applied')", org.ID).Scan(&accepted)
+	q := s.newTileQuery(ctx)
+	q.scan("resolved recommendations", &totalResolved, "SELECT COUNT(*) FROM ai_recommendations WHERE org_id = $1 AND status IN ('accepted', 'applied', 'dismissed')", org.ID)
+	if q.failed(c) {
+		return
+	}
+	q.scan("accepted recommendations", &accepted, "SELECT COUNT(*) FROM ai_recommendations WHERE org_id = $1 AND status IN ('accepted', 'applied')", org.ID)
 	if totalResolved > 0 {
 		result["acceptance_rate"] = float64(accepted) / float64(totalResolved) * 100
 	} else {

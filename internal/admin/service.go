@@ -1781,9 +1781,19 @@ func (s *Service) handleSyncDirectory(c *gin.Context) {
 	}
 	id := c.Param("id")
 
-	// Verify directory exists
+	// Verify directory exists.
+	//
+	// The error was discarded, so a failed check left exists false and the
+	// handler answered "Directory integration not found" -- the same answer it
+	// gives for an id belonging to another tenant. An operator chasing the
+	// second had no way to see the first.
 	var exists bool
-	s.db.Pool.QueryRow(c.Request.Context(), `SELECT EXISTS(SELECT 1 FROM directory_integrations WHERE id = $1 AND org_id = $2)`, id, org.ID).Scan(&exists)
+	q := s.newTileQuery(c.Request.Context())
+	q.scan("the directory integration", &exists,
+		`SELECT EXISTS(SELECT 1 FROM directory_integrations WHERE id = $1 AND org_id = $2)`, id, org.ID)
+	if q.failed(c) {
+		return
+	}
 	if !exists {
 		c.JSON(404, gin.H{"error": "Directory integration not found"})
 		return
@@ -2727,22 +2737,30 @@ func (s *Service) handleRiskAnalytics(c *gin.Context) {
 	// a bare [{level,count}] array, so risk was undefined and the whole page
 	// rendered empty. Build the full overview the UI expects.
 
-	// Average risk score + high-risk logins in the last 24h.
+	// Average risk score + high-risk logins in the last 24h, and the unresolved
+	// alert count. All three discarded their errors, so the risk dashboard's
+	// headline read "average risk 0, no high-risk sign-ins, no open alerts" --
+	// which is what a safe day looks like, on the page where somebody decides
+	// whether today was one.
+	q := s.newTileQuery(ctx)
 	var avgRiskScore float64
-	_ = s.db.Pool.QueryRow(ctx,
+	q.scan("average risk score", &avgRiskScore,
 		`SELECT COALESCE(AVG(risk_score),0) FROM login_history
-		 WHERE org_id = $2 AND created_at > NOW() - $1::interval`, interval, org.ID).Scan(&avgRiskScore)
+		 WHERE org_id = $2 AND created_at > NOW() - $1::interval`, interval, org.ID)
 
 	var highRiskLogins24h int
-	_ = s.db.Pool.QueryRow(ctx,
+	q.scan("high-risk sign-ins", &highRiskLogins24h,
 		`SELECT COUNT(*) FROM login_history
-		 WHERE org_id = $1 AND created_at > NOW() - INTERVAL '24 hours' AND risk_score >= 51`, org.ID).Scan(&highRiskLogins24h)
+		 WHERE org_id = $1 AND created_at > NOW() - INTERVAL '24 hours' AND risk_score >= 51`, org.ID)
 
 	// Active (unresolved) security alerts.
 	var activeAlerts int
-	_ = s.db.Pool.QueryRow(ctx,
+	q.scan("open security alerts", &activeAlerts,
 		`SELECT COUNT(*) FROM security_alerts
-		 WHERE org_id = $1 AND status <> 'resolved'`, org.ID).Scan(&activeAlerts)
+		 WHERE org_id = $1 AND status <> 'resolved'`, org.ID)
+	if q.failed(c) {
+		return
+	}
 
 	// Risk score distribution into fixed buckets (0-20, 21-40, ...).
 	type bucket struct {
@@ -2852,8 +2870,12 @@ func (s *Service) handleUserAnalytics(c *gin.Context) {
 
 	// Total and active users
 	var total, active int
-	s.db.Pool.QueryRow(c.Request.Context(), "SELECT COUNT(*) FROM users WHERE org_id = $1", org.ID).Scan(&total)
-	s.db.Pool.QueryRow(c.Request.Context(), "SELECT COUNT(*) FROM users WHERE enabled = true AND org_id = $1", org.ID).Scan(&active)
+	q := s.newTileQuery(c.Request.Context())
+	q.scan("total agents", &total, "SELECT COUNT(*) FROM users WHERE org_id = $1", org.ID)
+	if q.failed(c) {
+		return
+	}
+	q.scan("active agents", &active, "SELECT COUNT(*) FROM users WHERE enabled = true AND org_id = $1", org.ID)
 
 	c.JSON(200, gin.H{
 		"growth": growth,
@@ -3213,10 +3235,14 @@ func (s *Service) GetEntitlementStats(ctx context.Context) (*EntitlementStats, e
 		return nil, err
 	}
 
+	// GetEntitlementStats already returns an error and every one of these
+	// counts discarded its own, so an entitlement catalogue that could not be
+	// read reported a catalogue with nothing in it.
 	var roleCount, groupCount, appCount int
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM roles WHERE org_id = $1", org.ID).Scan(&roleCount)
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM groups WHERE org_id = $1", org.ID).Scan(&groupCount)
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM applications WHERE org_id = $1", org.ID).Scan(&appCount)
+	q := s.newTileQuery(ctx)
+	q.scan("roles", &roleCount, "SELECT COUNT(*) FROM roles WHERE org_id = $1", org.ID)
+	q.scan("groups", &groupCount, "SELECT COUNT(*) FROM groups WHERE org_id = $1", org.ID)
+	q.scan("applications", &appCount, "SELECT COUNT(*) FROM applications WHERE org_id = $1", org.ID)
 
 	stats.ByType["role"] = roleCount
 	stats.ByType["group"] = groupCount
@@ -3254,11 +3280,14 @@ func (s *Service) GetEntitlementStats(ctx context.Context) (*EntitlementStats, e
 	}
 
 	var orphanCount int
-	s.db.Pool.QueryRow(ctx, `
+	q.scan("orphaned entitlements", &orphanCount, `
 		SELECT
 			(SELECT COUNT(*) FROM roles r WHERE r.org_id = $1 AND NOT EXISTS (SELECT 1 FROM user_roles WHERE role_id = r.id AND org_id = $1)) +
 			(SELECT COUNT(*) FROM groups g WHERE g.org_id = $1 AND NOT EXISTS (SELECT 1 FROM group_memberships WHERE group_id = g.id AND org_id = $1))
-	`, org.ID).Scan(&orphanCount)
+	`, org.ID)
+	if err := q.failure(); err != nil {
+		return nil, err
+	}
 	stats.OrphanCount = orphanCount
 
 	return stats, nil

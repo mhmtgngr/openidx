@@ -665,9 +665,10 @@ func (s *Service) handleAIAgentAnalytics(c *gin.Context) {
 
 	// Total and active agents
 	var total, active, suspended int
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM ai_agents WHERE org_id = $1", org.ID).Scan(&total)
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM ai_agents WHERE org_id = $1 AND status = 'active'", org.ID).Scan(&active)
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM ai_agents WHERE org_id = $1 AND status = 'suspended'", org.ID).Scan(&suspended)
+	q := s.newTileQuery(ctx)
+	q.scan("total agents", &total, "SELECT COUNT(*) FROM ai_agents WHERE org_id = $1", org.ID)
+	q.scan("active agents", &active, "SELECT COUNT(*) FROM ai_agents WHERE org_id = $1 AND status = 'active'", org.ID)
+	q.scan("suspended agents", &suspended, "SELECT COUNT(*) FROM ai_agents WHERE org_id = $1 AND status = 'suspended'", org.ID)
 	result["total_agents"] = total
 	result["active_agents"] = active
 	result["suspended_agents"] = suspended
@@ -706,16 +707,19 @@ func (s *Service) handleAIAgentAnalytics(c *gin.Context) {
 
 	// Agents with expiring credentials (next 30 days)
 	var expiringCreds int
-	s.db.Pool.QueryRow(ctx, `
+	q.scan("expiring agent credentials", &expiringCreds, `
 		SELECT COUNT(DISTINCT agent_id) FROM ai_agent_credentials
-		WHERE org_id = $1 AND status = 'active' AND expires_at IS NOT NULL AND expires_at < NOW() + INTERVAL '30 days'`, org.ID).Scan(&expiringCreds)
+		WHERE org_id = $1 AND status = 'active' AND expires_at IS NOT NULL AND expires_at < NOW() + INTERVAL '30 days'`, org.ID)
 	result["expiring_credentials_30d"] = expiringCreds
 
 	// Recent failures
 	var recentFailures int
-	s.db.Pool.QueryRow(ctx, `
+	q.scan("recent agent failures", &recentFailures, `
 		SELECT COUNT(*) FROM ai_agent_activity
-		WHERE org_id = $1 AND outcome = 'failure' AND created_at > NOW() - INTERVAL '24 hours'`, org.ID).Scan(&recentFailures)
+		WHERE org_id = $1 AND outcome = 'failure' AND created_at > NOW() - INTERVAL '24 hours'`, org.ID)
+	if q.failed(c) {
+		return
+	}
 	result["recent_failures_24h"] = recentFailures
 
 	c.JSON(http.StatusOK, result)

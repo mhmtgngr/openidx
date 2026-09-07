@@ -143,25 +143,31 @@ func (s *Service) handlePredictionsSummary(c *gin.Context) {
 
 	// Capacity forecast
 	var peakSessions, avgSessions int
-	s.db.Pool.QueryRow(ctx, `
+	if err := s.db.Pool.QueryRow(ctx, `
 		SELECT COALESCE(MAX(cnt), 0), COALESCE(AVG(cnt)::int, 0) FROM (
 			SELECT DATE_TRUNC('hour', created_at) as h, COUNT(*) as cnt FROM user_sessions
 			WHERE created_at > NOW() - INTERVAL '7 days' AND org_id = $1 GROUP BY h
-		) sub`, org.ID).Scan(&peakSessions, &avgSessions)
+		) sub`, org.ID).Scan(&peakSessions, &avgSessions); err != nil {
+		s.logger.Error("a dashboard measurement could not be taken",
+			zap.String("metric", "peak sessions"), zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not measure peak sessions"})
+		return
+	}
 
 	var peakHour int
-	s.db.Pool.QueryRow(ctx, `
+	q := s.newTileQuery(ctx)
+	q.scan("peak hour", &peakHour, `
 		SELECT EXTRACT(HOUR FROM created_at)::int as h FROM user_sessions
 		WHERE created_at > NOW() - INTERVAL '7 days'
 		  AND org_id = $1
-		GROUP BY h ORDER BY COUNT(*) DESC LIMIT 1`, org.ID).Scan(&peakHour)
+		GROUP BY h ORDER BY COUNT(*) DESC LIMIT 1`, org.ID)
 
 	var peakDow int
-	s.db.Pool.QueryRow(ctx, `
+	q.scan("peak day of week", &peakDow, `
 		SELECT EXTRACT(DOW FROM created_at)::int as dow FROM user_sessions
 		WHERE created_at > NOW() - INTERVAL '30 days'
 		  AND org_id = $1
-		GROUP BY dow ORDER BY COUNT(*) DESC LIMIT 1`, org.ID).Scan(&peakDow)
+		GROUP BY dow ORDER BY COUNT(*) DESC LIMIT 1`, org.ID)
 	dowNames := []string{"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"}
 	peakDayName := "Monday"
 	if peakDow >= 0 && peakDow < 7 {
@@ -169,8 +175,11 @@ func (s *Service) handlePredictionsSummary(c *gin.Context) {
 	}
 
 	var totalUsers, activeUsers int
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM users WHERE org_id = $1", org.ID).Scan(&totalUsers)
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM users WHERE enabled = true AND org_id = $1", org.ID).Scan(&activeUsers)
+	q.scan("total users", &totalUsers, "SELECT COUNT(*) FROM users WHERE org_id = $1", org.ID)
+	if q.failed(c) {
+		return
+	}
+	q.scan("active users", &activeUsers, "SELECT COUNT(*) FROM users WHERE enabled = true AND org_id = $1", org.ID)
 
 	licenseUtil := 0.0
 	if totalUsers > 0 {
@@ -417,8 +426,12 @@ func (s *Service) handleCapacityForecast(c *gin.Context) {
 	}
 
 	var totalUsers, activeSessions int
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM users WHERE enabled = true AND org_id = $1", org.ID).Scan(&totalUsers)
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM user_sessions WHERE expires_at > NOW() AND org_id = $1", org.ID).Scan(&activeSessions)
+	q := s.newTileQuery(ctx)
+	q.scan("total users", &totalUsers, "SELECT COUNT(*) FROM users WHERE enabled = true AND org_id = $1", org.ID)
+	if q.failed(c) {
+		return
+	}
+	q.scan("active sessions", &activeSessions, "SELECT COUNT(*) FROM user_sessions WHERE expires_at > NOW() AND org_id = $1", org.ID)
 
 	c.JSON(http.StatusOK, gin.H{
 		"hourly_distribution": hourly,

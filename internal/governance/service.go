@@ -2289,9 +2289,18 @@ func (s *Service) RunCampaign(ctx context.Context, campaignID string) (*Campaign
 			zap.String("review_id", review.ID), zap.Error(err))
 	}
 
-	// Count total items generated
+	// Count total items generated.
+	//
+	// This is written into campaign_runs.total_items and is what the campaign
+	// page reports as the size of the review. A discarded error recorded a
+	// campaign of zero items -- a certification with nothing to certify,
+	// according to its own record.
 	var totalItems int
-	_ = s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM review_items WHERE review_id = $1 AND org_id = $2", review.ID, org.ID).Scan(&totalItems)
+	if err := s.db.Pool.QueryRow(ctx,
+		"SELECT COUNT(*) FROM review_items WHERE review_id = $1 AND org_id = $2",
+		review.ID, org.ID).Scan(&totalItems); err != nil {
+		return nil, fmt.Errorf("count review items for campaign run: %w", err)
+	}
 
 	// Create campaign run
 	run := &CampaignRun{

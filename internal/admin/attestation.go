@@ -210,15 +210,22 @@ func (s *Service) handleGetAttestationCampaign(c *gin.Context) {
 		return
 	}
 
-	// Get item counts
-	_ = s.db.Pool.QueryRow(c.Request.Context(),
-		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND org_id = $2", id, org.ID).Scan(&ac.TotalItems)
-	_ = s.db.Pool.QueryRow(c.Request.Context(),
-		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND org_id = $2 AND decision = 'certified'", id, org.ID).Scan(&ac.CertifiedCount)
-	_ = s.db.Pool.QueryRow(c.Request.Context(),
-		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND org_id = $2 AND decision = 'revoked'", id, org.ID).Scan(&ac.RevokedCount)
-	_ = s.db.Pool.QueryRow(c.Request.Context(),
-		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND org_id = $2 AND decision = 'pending'", id, org.ID).Scan(&ac.PendingCount)
+	// Get item counts. These four are what the campaign page shows an approver
+	// -- how much is done and how much is left -- and every error was
+	// discarded, so a campaign that could not be counted rendered as a campaign
+	// with nothing in it.
+	q := s.newTileQuery(c.Request.Context())
+	q.scan("campaign items", &ac.TotalItems,
+		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND org_id = $2", id, org.ID)
+	q.scan("certified items", &ac.CertifiedCount,
+		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND org_id = $2 AND decision = 'certified'", id, org.ID)
+	q.scan("revoked items", &ac.RevokedCount,
+		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND org_id = $2 AND decision = 'revoked'", id, org.ID)
+	q.scan("pending items", &ac.PendingCount,
+		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND org_id = $2 AND decision = 'pending'", id, org.ID)
+	if q.failed(c) {
+		return
+	}
 
 	c.JSON(http.StatusOK, ac)
 }
@@ -796,17 +803,24 @@ func (s *Service) handleAttestationProgress(c *gin.Context) {
 
 	campaignID := c.Param("id")
 
+	// The progress bar. A discarded error here drew 0% complete on a campaign
+	// that may be finished, or 100% on one that is not: completionPct is
+	// (certified+revoked)/total, and any of the three could be the zero.
 	var total, certified, revoked, pending, delegated int
-	_ = s.db.Pool.QueryRow(c.Request.Context(),
-		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND org_id = $2", campaignID, org.ID).Scan(&total)
-	_ = s.db.Pool.QueryRow(c.Request.Context(),
-		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND org_id = $2 AND decision = 'certified'", campaignID, org.ID).Scan(&certified)
-	_ = s.db.Pool.QueryRow(c.Request.Context(),
-		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND org_id = $2 AND decision = 'revoked'", campaignID, org.ID).Scan(&revoked)
-	_ = s.db.Pool.QueryRow(c.Request.Context(),
-		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND org_id = $2 AND decision = 'pending'", campaignID, org.ID).Scan(&pending)
-	_ = s.db.Pool.QueryRow(c.Request.Context(),
-		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND org_id = $2 AND delegated_to IS NOT NULL", campaignID, org.ID).Scan(&delegated)
+	q := s.newTileQuery(c.Request.Context())
+	q.scan("campaign items", &total,
+		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND org_id = $2", campaignID, org.ID)
+	q.scan("certified items", &certified,
+		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND org_id = $2 AND decision = 'certified'", campaignID, org.ID)
+	q.scan("revoked items", &revoked,
+		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND org_id = $2 AND decision = 'revoked'", campaignID, org.ID)
+	q.scan("pending items", &pending,
+		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND org_id = $2 AND decision = 'pending'", campaignID, org.ID)
+	q.scan("delegated items", &delegated,
+		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND org_id = $2 AND delegated_to IS NOT NULL", campaignID, org.ID)
+	if q.failed(c) {
+		return
+	}
 
 	completionPct := 0.0
 	if total > 0 {

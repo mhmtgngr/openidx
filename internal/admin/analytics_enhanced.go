@@ -33,28 +33,29 @@ func (s *Service) handleAuthAnalyticsDashboard(c *gin.Context) {
 
 	// Total logins
 	var totalLogins int
-	s.db.Pool.QueryRow(ctx, `
+	q := s.newTileQuery(ctx)
+	q.scan("total sign-ins", &totalLogins, `
 		SELECT COUNT(*) FROM audit_events
 		WHERE event_type = 'authentication'
 		  AND timestamp > NOW() - $1::interval
-		  AND org_id = $2`, interval, org.ID).Scan(&totalLogins)
+		  AND org_id = $2`, interval, org.ID)
 	result["total_logins"] = totalLogins
 
 	// Successful logins
 	var successLogins int
-	s.db.Pool.QueryRow(ctx, `
+	q.scan("successful sign-ins", &successLogins, `
 		SELECT COUNT(*) FROM audit_events
 		WHERE event_type = 'authentication' AND outcome = 'success'
 		  AND timestamp > NOW() - $1::interval
-		  AND org_id = $2`, interval, org.ID).Scan(&successLogins)
+		  AND org_id = $2`, interval, org.ID)
 
 	// Failed logins
 	var failedLogins int
-	s.db.Pool.QueryRow(ctx, `
+	q.scan("failed sign-ins", &failedLogins, `
 		SELECT COUNT(*) FROM audit_events
 		WHERE event_type = 'authentication' AND outcome = 'failure'
 		  AND timestamp > NOW() - $1::interval
-		  AND org_id = $2`, interval, org.ID).Scan(&failedLogins)
+		  AND org_id = $2`, interval, org.ID)
 
 	// Rates
 	if totalLogins > 0 {
@@ -67,11 +68,14 @@ func (s *Service) handleAuthAnalyticsDashboard(c *gin.Context) {
 
 	// MFA usage rate
 	var mfaLogins int
-	s.db.Pool.QueryRow(ctx, `
+	q.scan("MFA sign-ins", &mfaLogins, `
 		SELECT COUNT(*) FROM audit_events
 		WHERE event_type = 'mfa_verification' AND outcome = 'success'
 		  AND timestamp > NOW() - $1::interval
-		  AND org_id = $2`, interval, org.ID).Scan(&mfaLogins)
+		  AND org_id = $2`, interval, org.ID)
+	if q.failed(c) {
+		return
+	}
 
 	if successLogins > 0 {
 		result["mfa_usage_rate"] = float64(mfaLogins) / float64(successLogins) * 100
@@ -169,63 +173,67 @@ func (s *Service) handleUsageAnalytics(c *gin.Context) {
 
 	// DAU: distinct actors who authenticated today
 	var dau int
-	s.db.Pool.QueryRow(ctx, `
+	q := s.newTileQuery(ctx)
+	q.scan("daily active users", &dau, `
 		SELECT COUNT(DISTINCT actor_id) FROM audit_events
 		WHERE event_type = 'authentication' AND outcome = 'success'
 		  AND timestamp > CURRENT_DATE
 		  AND org_id = $1
-	`, org.ID).Scan(&dau)
+	`, org.ID)
 	result["dau"] = dau
 
 	// WAU: distinct actors who authenticated in last 7 days
 	var wau int
-	s.db.Pool.QueryRow(ctx, `
+	q.scan("weekly active users", &wau, `
 		SELECT COUNT(DISTINCT actor_id) FROM audit_events
 		WHERE event_type = 'authentication' AND outcome = 'success'
 		  AND timestamp > NOW() - INTERVAL '7 days'
 		  AND org_id = $1
-	`, org.ID).Scan(&wau)
+	`, org.ID)
 	result["wau"] = wau
 
 	// MAU: distinct actors who authenticated in last 30 days
 	var mau int
-	s.db.Pool.QueryRow(ctx, `
+	q.scan("monthly active users", &mau, `
 		SELECT COUNT(DISTINCT actor_id) FROM audit_events
 		WHERE event_type = 'authentication' AND outcome = 'success'
 		  AND timestamp > NOW() - INTERVAL '30 days'
 		  AND org_id = $1
-	`, org.ID).Scan(&mau)
+	`, org.ID)
 	result["mau"] = mau
 
 	// New users today
 	var newUsersToday int
-	s.db.Pool.QueryRow(ctx, `
+	q.scan("users created today", &newUsersToday, `
 		SELECT COUNT(*) FROM users
 		WHERE created_at > CURRENT_DATE
 		  AND org_id = $1
-	`, org.ID).Scan(&newUsersToday)
+	`, org.ID)
 	result["new_users_today"] = newUsersToday
 
 	// Total counts
 	var totalUsers int
-	s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM users WHERE org_id = $1`, org.ID).Scan(&totalUsers)
+	q.scan("total users", &totalUsers, `SELECT COUNT(*) FROM users WHERE org_id = $1`, org.ID)
 	result["total_users"] = totalUsers
 
 	var totalGroups int
-	s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM groups WHERE org_id = $1`, org.ID).Scan(&totalGroups)
+	q.scan("total groups", &totalGroups, `SELECT COUNT(*) FROM groups WHERE org_id = $1`, org.ID)
 	result["total_groups"] = totalGroups
 
 	var totalApplications int
-	s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM applications WHERE org_id = $1`, org.ID).Scan(&totalApplications)
+	q.scan("total applications", &totalApplications, `SELECT COUNT(*) FROM applications WHERE org_id = $1`, org.ID)
 	result["total_applications"] = totalApplications
 
 	// Active sessions
 	var activeSessions int
-	s.db.Pool.QueryRow(ctx, `
+	q.scan("active sessions", &activeSessions, `
 		SELECT COUNT(*) FROM sessions
 		WHERE expires_at > NOW()
 		  AND org_id = $1
-	`, org.ID).Scan(&activeSessions)
+	`, org.ID)
+	if q.failed(c) {
+		return
+	}
 	result["active_sessions_count"] = activeSessions
 
 	// Frontend (usage-analytics page) and its unit test read {usage: {...}};
@@ -278,7 +286,11 @@ func (s *Service) handleFeatureAdoption(c *gin.Context) {
 
 	// Total enabled users for computing adoption rates
 	var totalUsers int
-	s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM users WHERE enabled = true AND org_id = $1`, org.ID).Scan(&totalUsers)
+	q := s.newTileQuery(ctx)
+	q.scan("total users", &totalUsers, `SELECT COUNT(*) FROM users WHERE enabled = true AND org_id = $1`, org.ID)
+	if q.failed(c) {
+		return
+	}
 
 	features := []map[string]interface{}{}
 

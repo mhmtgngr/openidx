@@ -2,10 +2,12 @@ package identity
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
@@ -111,7 +113,13 @@ func (s *Service) handleGetLoginAnalytics(c *gin.Context) {
 	}
 
 	// Summary stats
-	analytics.Summary = s.getLoginSummary(ctx, startDate, endDate)
+	summary, err := s.getLoginSummary(ctx, startDate, endDate)
+	if err != nil {
+		s.logger.Error("login analytics summary could not be measured", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not measure sign-in analytics"})
+		return
+	}
+	analytics.Summary = summary
 
 	// Daily trends
 	analytics.DailyTrends = s.getDailyLoginTrends(ctx, startDate, endDate)
@@ -137,49 +145,63 @@ func (s *Service) handleGetLoginAnalytics(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"analytics": analytics})
 }
 
-func (s *Service) getLoginSummary(ctx context.Context, start, end time.Time) LoginSummary {
+// getLoginSummary counts the period's sign-ins, and says when it cannot.
+//
+// Every read here is a one-row aggregate, and every error was discarded, so a
+// query that could not run left its field at zero and the console rendered it:
+// "0 sign-ins, 0 failures, 0 high-risk, average risk 0". That is what a quiet
+// week looks like. It is also what a broken query looks like, and the error was
+// the only thing that told them apart.
+func (s *Service) getLoginSummary(ctx context.Context, start, end time.Time) (LoginSummary, error) {
 	var summary LoginSummary
 
 	org, err := orgctx.From(ctx)
 	if err != nil {
-		return summary
+		return summary, err
 	}
 
-	// Total and successful logins
-	s.db.Pool.QueryRow(ctx,
-		`SELECT COUNT(*), COALESCE(SUM(CASE WHEN success THEN 1 ELSE 0 END), 0)
-		 FROM login_history WHERE created_at BETWEEN $1 AND $2 AND org_id = $3`,
-		start, end, org.ID).Scan(&summary.TotalLogins, &summary.SuccessfulLogins)
+	scan := func(name string, sql string, dest ...any) error {
+		if err := s.db.Pool.QueryRow(ctx, sql, start, end, org.ID).Scan(dest...); err != nil {
+			return fmt.Errorf("%s: %w", name, err)
+		}
+		return nil
+	}
+
+	for _, step := range []struct {
+		name string
+		sql  string
+		dest []any
+	}{
+		{"total and successful sign-ins",
+			`SELECT COUNT(*), COALESCE(SUM(CASE WHEN success THEN 1 ELSE 0 END), 0)
+			 FROM login_history WHERE created_at BETWEEN $1 AND $2 AND org_id = $3`,
+			[]any{&summary.TotalLogins, &summary.SuccessfulLogins}},
+		{"unique users",
+			`SELECT COUNT(DISTINCT user_id) FROM login_history WHERE created_at BETWEEN $1 AND $2 AND org_id = $3`,
+			[]any{&summary.UniqueUsers}},
+		{"new devices",
+			`SELECT COUNT(*) FROM known_devices WHERE created_at BETWEEN $1 AND $2 AND org_id = $3`,
+			[]any{&summary.NewDevices}},
+		{"high-risk sign-ins",
+			`SELECT COUNT(*) FROM login_history WHERE risk_score >= 70 AND created_at BETWEEN $1 AND $2 AND org_id = $3`,
+			[]any{&summary.HighRiskLogins}},
+		{"average risk score",
+			`SELECT COALESCE(AVG(risk_score), 0) FROM login_history WHERE created_at BETWEEN $1 AND $2 AND org_id = $3`,
+			[]any{&summary.AverageRiskScore}},
+		// MFA challenges (approximation from audit events)
+		{"MFA challenges",
+			`SELECT COUNT(*) FROM audit_events
+			 WHERE event_type = 'mfa_verified' AND timestamp BETWEEN $1 AND $2 AND org_id = $3`,
+			[]any{&summary.MFAChallenges}},
+	} {
+		if err := scan(step.name, step.sql, step.dest...); err != nil {
+			return LoginSummary{}, err
+		}
+	}
 
 	summary.FailedLogins = summary.TotalLogins - summary.SuccessfulLogins
 
-	// Unique users
-	s.db.Pool.QueryRow(ctx,
-		`SELECT COUNT(DISTINCT user_id) FROM login_history WHERE created_at BETWEEN $1 AND $2 AND org_id = $3`,
-		start, end, org.ID).Scan(&summary.UniqueUsers)
-
-	// New devices
-	s.db.Pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM known_devices WHERE created_at BETWEEN $1 AND $2 AND org_id = $3`,
-		start, end, org.ID).Scan(&summary.NewDevices)
-
-	// High risk logins
-	s.db.Pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM login_history WHERE risk_score >= 70 AND created_at BETWEEN $1 AND $2 AND org_id = $3`,
-		start, end, org.ID).Scan(&summary.HighRiskLogins)
-
-	// Average risk score
-	s.db.Pool.QueryRow(ctx,
-		`SELECT COALESCE(AVG(risk_score), 0) FROM login_history WHERE created_at BETWEEN $1 AND $2 AND org_id = $3`,
-		start, end, org.ID).Scan(&summary.AverageRiskScore)
-
-	// MFA challenges (approximation from audit events)
-	s.db.Pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM audit_events
-		 WHERE event_type = 'mfa_verified' AND timestamp BETWEEN $1 AND $2 AND org_id = $3`,
-		start, end, org.ID).Scan(&summary.MFAChallenges)
-
-	return summary
+	return summary, nil
 }
 
 func (s *Service) getDailyLoginTrends(ctx context.Context, start, end time.Time) []DailyLoginStats {
@@ -311,10 +333,16 @@ func (s *Service) getRiskDistribution(ctx context.Context, start, end time.Time)
 	var stats []RiskBucketStats
 	for _, b := range buckets {
 		var count int
-		s.db.Pool.QueryRow(ctx,
+		// A discarded error put every bucket at zero, which draws a risk
+		// distribution chart with nothing in it -- read as "no risky sign-ins".
+		if err := s.db.Pool.QueryRow(ctx,
 			`SELECT COUNT(*) FROM login_history
 			 WHERE risk_score >= $1 AND risk_score <= $2 AND created_at BETWEEN $3 AND $4 AND org_id = $5`,
-			b.min, b.max, start, end, org.ID).Scan(&count)
+			b.min, b.max, start, end, org.ID).Scan(&count); err != nil {
+			s.logger.Error("risk distribution bucket could not be measured",
+				zap.String("bucket", b.name), zap.Error(err))
+			return nil
+		}
 
 		stats = append(stats, RiskBucketStats{
 			Bucket: b.name,

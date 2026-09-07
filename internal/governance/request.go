@@ -484,17 +484,31 @@ func (s *RequestService) checkEscalations(ctx context.Context) {
 				continue
 			}
 
-			// Check if approver already exists
+			// Check if approver already exists.
+			//
+			// A discarded error left exists false and the INSERT below ran
+			// anyway, so a failed check added a SECOND pending approval for the
+			// same escalation target -- and that INSERT's own error was
+			// discarded too, so nothing said either had happened. Both are read
+			// now: an escalation that cannot be checked is skipped and logged
+			// rather than duplicated.
 			var exists bool
-			s.db.Pool.QueryRow(ctx,
+			if err := s.db.Pool.QueryRow(ctx,
 				`SELECT EXISTS(SELECT 1 FROM access_request_approvals WHERE request_id = $1 AND approver_id = $2 AND org_id = $3)`,
-				info.RequestID, escalatorID, info.OrgID).Scan(&exists)
+				info.RequestID, escalatorID, info.OrgID).Scan(&exists); err != nil {
+				s.logger.Error("could not check for an existing escalation approver; skipping",
+					zap.String("request_id", info.RequestID), zap.Error(err))
+				continue
+			}
 
 			if !exists {
-				s.db.Pool.Exec(ctx,
+				if _, err := s.db.Pool.Exec(ctx,
 					`INSERT INTO access_request_approvals (request_id, approver_id, step_order, decision, created_at, org_id)
 					 VALUES ($1, $2, 999, 'pending', $3, $4)`,
-					info.RequestID, escalatorID, now, info.OrgID)
+					info.RequestID, escalatorID, now, info.OrgID); err != nil {
+					s.logger.Error("could not add an escalation approver",
+						zap.String("request_id", info.RequestID), zap.Error(err))
+				}
 			}
 		}
 

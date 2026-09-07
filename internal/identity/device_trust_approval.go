@@ -448,12 +448,19 @@ func (s *Service) isKnownIP(ctx context.Context, userID, ipAddress string) bool 
 	if err != nil {
 		return false
 	}
+	// Fail-closed, and said out loud: a failed count reads as "not a known IP",
+	// which makes the sign-in look less familiar and the decision stricter.
+	// That is the safe direction, but a check that silently stops working is
+	// one nobody knows has stopped.
 	var count int
-	s.db.Pool.QueryRow(ctx,
+	if err := s.db.Pool.QueryRow(ctx,
 		`SELECT COUNT(*) FROM known_devices
 		WHERE user_id = $1 AND ip_address = $2 AND trusted = true AND org_id = $3`,
 		userID, ipAddress, org.ID,
-	).Scan(&count)
+	).Scan(&count); err != nil {
+		s.logger.Warn("known-IP check failed; reading the address as unfamiliar", zap.Error(err))
+		return false
+	}
 	return count > 0
 }
 

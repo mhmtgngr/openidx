@@ -24,8 +24,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The rest of the class: 55 more aggregate queries whose failure was served
+  as a number.** `tools/zeroanswer`'s register is now **empty** — it opened at
+  83, after `internal/audit` had already gone from 73 to 0, and every entry left
+  it by the query being fixed rather than by being waived. The certification
+  campaign page reported a campaign with nothing in it when its item counts
+  failed, and drew a progress bar from `(certified+revoked)/total` where any of
+  the three could be the false zero; `campaign_runs.total_items`, the permanent
+  record of how big a review was, took a failed count as **zero items** — a
+  certification with nothing to certify, according to its own record. An
+  escalation whose "does this approver already exist" check failed added a
+  **duplicate pending approval**, and that INSERT's error was discarded too, so
+  neither was recorded anywhere. The authentication, usage, feature-adoption,
+  capacity, AI-agent, recommendation, entitlement and sign-in analytics all
+  answer 500 now instead of rendering zeros the console cannot distinguish from
+  a quiet week. The remaining fail-closed checks — known device, known IP, the
+  PAM quick-link existence gate — keep failing closed and now say so, because a
+  control that silently degrades is a control nobody knows has degraded.
+
 - **A failed query rendered as a calm number on every surface that counts
-  something.** Twenty-four more sites of the class above, found by
+  something.** Twenty-four sites of the class above, found by
   `tools/zeroanswer`. The pagination totals — published apps, proxy routes,
   known devices — served `0` in the same response that carried the rows, so a
   list did not know its own length and paging past the first page looked
