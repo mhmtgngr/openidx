@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **J8's audit half, proved against the running trail
+  (`test/integration/audit_chain_test.go`).** The product claims a
+  tamper-evident audit log. `internal/audit/chain_test.go` proves the sealer's
+  arithmetic; this proves the property — that the events the product *writes*
+  are sealed by the sealer that is *running*, and that the verification endpoint
+  an auditor calls notices when one changes.
+
+  The test does the thing the control exists to catch: it edits a sealed row
+  directly, with the privileges an operator or an intruder with database access
+  would have. Tamper-evidence is not a claim about who can reach the database —
+  it is the claim that reaching it is not enough, because the change shows. The
+  endpoint reports `intact: false`, names the event, and prints the stored and
+  computed hashes; restoring the row exactly makes it whole again, which is what
+  keeps `intact: false` from being an answer the chain gives to everything.
+
+  Asking the question was worth it independently of the answer: the same
+  question one step earlier — *are the events even there* — is what turned up
+  the ingest defect below.
+
 - **J5, privileged access, proved through the running services
   (`test/integration/privileged_access_test.go`).** The credential half of the
   journey — the only path in the product that ever hands PAM secret material to
