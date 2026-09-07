@@ -213,12 +213,22 @@ func (s *Service) VerifyMagicLink(ctx context.Context, token, ipAddress, userAge
 			continue // Try next link
 		}
 
-		// Token is valid - mark as used
-		s.db.Pool.Exec(ctx,
+		// Token is valid - mark as used.
+		//
+		// THIS IS the single-use property of a magic link. The error was
+		// discarded and the function returned success regardless, so a failed
+		// mark left the link 'pending' and the same emailed sign-in link could
+		// be redeemed again -- by anyone who has the email, for as long as the
+		// link had left to live. A credential that cannot be spent must not be
+		// accepted.
+		if _, err := s.db.Pool.Exec(ctx,
 			//orgscope:ignore link id from the bypassed pre-resolution scan above; the token is the credential
 			"UPDATE magic_links SET status = 'used', used_at = NOW() WHERE id = $1",
 			linkID,
-		)
+		); err != nil {
+			s.logger.Error("could not spend a magic link; refusing the sign-in", zap.Error(err))
+			return "", "", fmt.Errorf("mark magic link used: %w", err)
+		}
 
 		return userID, purpose, nil
 	}

@@ -5989,29 +5989,50 @@ func (s *Service) handleOffboardUser(c *gin.Context) {
 		return
 	}
 
-	// Disable user
-	_, err = s.db.Pool.Exec(ctx,
-		"UPDATE users SET enabled = false, updated_at = NOW() WHERE id = $1 AND org_id = $2", userID, org.ID)
+	// OFFBOARDING IS ONE OPERATION, so it runs as one.
+	//
+	// Only the first of these five statements had its error checked. The other
+	// four -- revoke the API keys, remove the group memberships, remove the role
+	// assignments, terminate the sessions -- ran as bare Exec calls with the
+	// error discarded, and the handler then answered "User offboarded
+	// successfully". So a leaver could be disabled while keeping every API key,
+	// every group, every role and every live session, and the operator who
+	// pressed the button was told the offboarding was complete.
+	//
+	// This is the leaver half of joiner-mover-leaver, and a partial one
+	// reported as whole is worse than a failure: nobody goes back to check.
+	tx, err := s.db.Pool.Begin(ctx)
 	if err != nil {
-		c.JSON(500, gin.H{"error": "failed to disable user"})
+		s.logger.Error("failed to begin the offboarding", zap.Error(err))
+		c.JSON(500, gin.H{"error": "failed to offboard user"})
 		return
 	}
+	defer func() { _ = tx.Rollback(ctx) }()
 
-	// Revoke all API keys
-	s.db.Pool.Exec(ctx,
-		"UPDATE api_keys SET status = 'revoked' WHERE user_id = $1 AND org_id = $2", userID, org.ID)
+	for _, step := range []struct {
+		what string
+		sql  string
+	}{
+		{"disable the account", "UPDATE users SET enabled = false, updated_at = NOW() WHERE id = $1 AND org_id = $2"},
+		{"revoke the API keys", "UPDATE api_keys SET status = 'revoked' WHERE user_id = $1 AND org_id = $2"},
+		{"remove the group memberships", "DELETE FROM group_memberships WHERE user_id = $1 AND org_id = $2"},
+		{"remove the role assignments", "DELETE FROM user_roles WHERE user_id = $1 AND org_id = $2"},
+		{"terminate the sessions", "DELETE FROM sessions WHERE user_id = $1 AND org_id = $2"},
+	} {
+		if _, err := tx.Exec(ctx, step.sql, userID, org.ID); err != nil {
+			s.logger.Error("offboarding step failed; nothing was changed",
+				zap.String("step", step.what),
+				logsafe.String("user_id", userID), zap.Error(err))
+			c.JSON(500, gin.H{"error": "failed to offboard user: could not " + step.what})
+			return
+		}
+	}
 
-	// Remove from all groups
-	s.db.Pool.Exec(ctx,
-		"DELETE FROM group_memberships WHERE user_id = $1 AND org_id = $2", userID, org.ID)
-
-	// Remove all role assignments
-	s.db.Pool.Exec(ctx,
-		"DELETE FROM user_roles WHERE user_id = $1 AND org_id = $2", userID, org.ID)
-
-	// Terminate all sessions
-	s.db.Pool.Exec(ctx,
-		"DELETE FROM sessions WHERE user_id = $1 AND org_id = $2", userID, org.ID)
+	if err := tx.Commit(ctx); err != nil {
+		s.logger.Error("failed to commit the offboarding", zap.Error(err))
+		c.JSON(500, gin.H{"error": "failed to offboard user"})
+		return
+	}
 
 	// Publish webhook
 	if s.webhookService != nil {

@@ -10,8 +10,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/openidx/openidx/internal/common/orgctx"
+	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // PhoneCallEnrollment represents a phone call MFA enrollment
@@ -204,12 +206,21 @@ func (s *Service) VerifyPhoneCallChallenge(ctx context.Context, userID, code str
 		return errors.New("invalid verification code")
 	}
 
-	// Mark challenge as completed
-	s.db.Pool.Exec(ctx,
+	// Mark challenge as completed.
+	//
+	// This is what stops the same challenge being presented twice with the same
+	// code. The error was discarded and the function returned success, so a
+	// failed mark left the challenge 'pending' and the code live for the rest
+	// of its window. A challenge that cannot be spent must not pass.
+	if _, err := s.db.Pool.Exec(ctx,
 		`UPDATE phone_call_challenges SET status = 'completed', verified_at = NOW()
 		  WHERE id = $1 AND org_id = (SELECT org_id FROM users WHERE id = $2)`,
 		challengeID, userID,
-	)
+	); err != nil {
+		s.logger.Error("could not spend a phone-call challenge; refusing the verification",
+			zap.Error(err))
+		return fmt.Errorf("mark phone-call challenge completed: %w", err)
+	}
 
 	// Mark enrollment as verified
 	s.db.Pool.Exec(orgctx.WithBypassRLS(ctx),

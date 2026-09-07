@@ -24,6 +24,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Offboarding a leaver could leave them everything, and report success.**
+  `handleOffboardUser` is five statements — disable the account, revoke the API
+  keys, remove the group memberships, remove the role assignments, terminate the
+  sessions — and only the first had its error checked. The other four ran as
+  bare `Exec` calls with the error discarded, and the handler then answered
+  *"User offboarded successfully"*. So a leaver could be disabled while keeping
+  every API key, every group, every role and every live session, and the person
+  who pressed the button was told the offboarding was complete — which is the
+  reason nobody would go back and look. It is one transaction now: a step that
+  cannot run changes nothing and answers 500. Three more credentials that could
+  not be spent but were accepted anyway: a **magic link**'s `status='used'`
+  marker (a failed mark left the emailed sign-in link redeemable again, for as
+  long as it had left to live), a **phone-call MFA challenge**'s completion
+  marker (same shape, same code re-presentable), and the **access tokens** a
+  user's *"revoke this application's access"* was supposed to delete — the
+  refresh-token delete beside it was checked, this one was not, so the
+  application kept calling the API while the user was told the authorization was
+  revoked.
+
 - **A certification decision recorded access as revoked while the access was
   still held.** `handleDecideAttestationItem` marked the item
   `decision='revoked'` with a statement that answers 500 on failure, and *then*
