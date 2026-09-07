@@ -173,6 +173,36 @@ func TestDiscoveryOnAnotherTenantsAppIsNotFound(t *testing.T) {
 	}
 }
 
+// pinDiscovering refuses any write that would move an app out of 'discovering'.
+//
+// handleStartDiscovery takes the claim synchronously and then hands the app to
+// a goroutine. This fixture's target_url refuses connections instantly, so that
+// goroutine reaches its terminal write -- status='error' -- in milliseconds,
+// and a test reading the status afterwards reads whichever of the two got there
+// first. The test below was passing on scheduling luck, and on CI it lost.
+//
+// The claim is what that test is about, and the claim is the half that is
+// synchronous. Pinning the status makes the assertion about the handler rather
+// than about the scheduler: the claim passes the trigger, because the claim is
+// what writes 'discovering'; the worker's terminal write is refused, which is
+// the abandoned-run state the first test in this file already covers.
+func pinDiscovering(t *testing.T, s *Service, ctx context.Context) {
+	t.Helper()
+	if _, err := s.db.Pool.Exec(ctx, `
+		CREATE OR REPLACE FUNCTION pin_discovering() RETURNS trigger AS $$
+		BEGIN
+			IF NEW.status IS DISTINCT FROM 'discovering' THEN
+				RAISE EXCEPTION 'refused by test: only the claim may write this app''s status';
+			END IF;
+			RETURN NEW;
+		END;
+		$$ LANGUAGE plpgsql;
+		CREATE TRIGGER pin_discovering_trg BEFORE UPDATE ON published_apps
+		FOR EACH ROW EXECUTE FUNCTION pin_discovering();`); err != nil {
+		t.Fatalf("install the status pin: %v", err)
+	}
+}
+
 // A fresh app claims cleanly, and the claim is what the console reads.
 func TestStartingDiscoveryClaimsTheApp(t *testing.T) {
 	s, ctx, cleanup := appClaimFixture(t)
@@ -182,6 +212,7 @@ func TestStartingDiscoveryClaimsTheApp(t *testing.T) {
 	defer cleanup()
 
 	appID := seedApp(t, s, ctx, "pending", "")
+	pinDiscovering(t, s, ctx)
 
 	if w := startDiscovery(t, s, ctx, appID); w.Code != http.StatusOK && w.Code != http.StatusAccepted {
 		t.Fatalf("starting discovery on a pending app was answered %d: %s", w.Code, w.Body.String())
