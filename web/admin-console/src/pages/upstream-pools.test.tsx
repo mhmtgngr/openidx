@@ -37,8 +37,8 @@ const servingPool = {
   health_check_timeout: 3,
   retries: null,
   members: [
-    { id: 'm-1', host: '10.0.0.1', port: 8080, weight: 1, enabled: true },
-    { id: 'm-2', host: '10.0.0.2', port: 8080, weight: 3, enabled: true },
+    { id: 'm-1', host: '203.0.113.1', port: 8080, weight: 1, enabled: true },
+    { id: 'm-2', host: '203.0.113.2', port: 8080, weight: 3, enabled: true },
   ],
   routes_using: 1,
   in_effect: true,
@@ -52,7 +52,7 @@ const drainedPool = {
   id: 'pool-2',
   name: 'billing-backends',
   description: 'Billing app instances',
-  members: [{ id: 'm-3', host: '10.0.1.1', port: 9090, weight: 1, enabled: false }],
+  members: [{ id: 'm-3', host: '203.0.113.21', port: 9090, weight: 1, enabled: false }],
   routes_using: 2,
   in_effect: false,
   not_in_effect_reason:
@@ -87,8 +87,8 @@ describe('UpstreamPoolsPage', () => {
     render(<UpstreamPoolsPage />, { wrapper: createWrapper() })
 
     expect(await screen.findByText('payroll-backends')).toBeInTheDocument()
-    expect(screen.getByText('10.0.0.1:8080')).toBeInTheDocument()
-    expect(screen.getByText('10.0.0.2:8080')).toBeInTheDocument()
+    expect(screen.getByText('203.0.113.1:8080')).toBeInTheDocument()
+    expect(screen.getByText('203.0.113.2:8080')).toBeInTheDocument()
     expect(screen.getByText('weight 3')).toBeInTheDocument()
   })
 
@@ -111,7 +111,7 @@ describe('UpstreamPoolsPage', () => {
   it('shows a disabled backend as disabled rather than listing it like a live one', async () => {
     render(<UpstreamPoolsPage />, { wrapper: createWrapper() })
 
-    expect(await screen.findByText('10.0.1.1:9090')).toBeInTheDocument()
+    expect(await screen.findByText('203.0.113.21:9090')).toBeInTheDocument()
     expect(screen.getByText('Disabled')).toBeInTheDocument()
   })
 
@@ -153,7 +153,7 @@ describe('UpstreamPoolsPage', () => {
 
     await screen.findByText('payroll-backends')
     await userEvent.click(screen.getAllByRole('button', { name: /backends/i })[0])
-    await userEvent.click(await screen.findByRole('switch', { name: /enabled for 10\.0\.0\.1:8080/i }))
+    await userEvent.click(await screen.findByRole('switch', { name: /enabled for 203\.0\.113\.1:8080/i }))
 
     await waitFor(() => {
       expect(toast).toHaveBeenCalledWith(

@@ -73,9 +73,9 @@ type ProxyRoute struct {
 	// address in ToURL. Empty means "use to_url", which is what every route did
 	// before pools existed and what one still does when the pool it names has no
 	// usable member.
-	UpstreamPoolID string `json:"upstream_pool_id,omitempty"`
-	CreatedAt             time.Time         `json:"created_at"`
-	UpdatedAt             time.Time         `json:"updated_at"`
+	UpstreamPoolID string    `json:"upstream_pool_id,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 	// ApplicationID/ApplicationName identify the application (if any) whose
 	// applications.route_id points at this route — the same link appForRoute
 	// (proxy_assignment_cache.go) resolves to decide real access under

@@ -150,8 +150,8 @@ func TestACreatedPoolSaysItIsNotInEffectUntilARoutePointsAtIt(t *testing.T) {
 	id := createPool(t, s, ctx, map[string]any{
 		"name": "payroll-backends",
 		"members": []map[string]any{
-			{"host": "10.0.0.1", "port": 8080},
-			{"host": "10.0.0.2", "port": 8080, "weight": 3},
+			{"host": "203.0.113.1", "port": 8080},
+			{"host": "203.0.113.2", "port": 8080, "weight": 3},
 		},
 	})
 
@@ -175,7 +175,7 @@ func TestACreatedPoolSaysItIsNotInEffectUntilARoutePointsAtIt(t *testing.T) {
 	// Point a route at it and the same pool now reports itself in effect.
 	if _, err := db.Pool.Exec(ctx,
 		`INSERT INTO proxy_routes (org_id, name, from_url, to_url, upstream_pool_id)
-		 VALUES ($1::uuid, 'payroll', 'https://payroll.example', 'http://10.0.0.1:8080', $2::uuid)`,
+		 VALUES ($1::uuid, 'payroll', 'https://payroll.example', 'http://203.0.113.1:8080', $2::uuid)`,
 		poolOrg, id); err != nil {
 		t.Fatalf("link a route: %v", err)
 	}
@@ -206,11 +206,11 @@ func TestDrainingTheLastMemberSaysTheRoutesHaveFallenBack(t *testing.T) {
 
 	id := createPool(t, s, ctx, map[string]any{
 		"name":    "single-backend",
-		"members": []map[string]any{{"host": "10.0.0.9", "port": 8080}},
+		"members": []map[string]any{{"host": "203.0.113.9", "port": 8080}},
 	})
 	if _, err := db.Pool.Exec(ctx,
 		`INSERT INTO proxy_routes (org_id, name, from_url, to_url, upstream_pool_id)
-		 VALUES ($1::uuid, 'app', 'https://app.example', 'http://10.0.0.9:8080', $2::uuid)`,
+		 VALUES ($1::uuid, 'app', 'https://app.example', 'http://203.0.113.9:8080', $2::uuid)`,
 		poolOrg, id); err != nil {
 		t.Fatalf("link a route: %v", err)
 	}
@@ -259,11 +259,11 @@ func TestDeletingAPoolRoutesUseIsRefusedAndNamesThem(t *testing.T) {
 
 	id := createPool(t, s, ctx, map[string]any{
 		"name":    "in-use",
-		"members": []map[string]any{{"host": "10.0.0.1", "port": 80}},
+		"members": []map[string]any{{"host": "203.0.113.1", "port": 80}},
 	})
 	if _, err := db.Pool.Exec(ctx,
 		`INSERT INTO proxy_routes (org_id, name, from_url, to_url, upstream_pool_id)
-		 VALUES ($1::uuid, 'billing', 'https://billing.example', 'http://10.0.0.1:80', $2::uuid)`,
+		 VALUES ($1::uuid, 'billing', 'https://billing.example', 'http://203.0.113.1:80', $2::uuid)`,
 		poolOrg, id); err != nil {
 		t.Fatalf("link a route: %v", err)
 	}
@@ -315,7 +315,7 @@ func TestAPoolIsNotReachableFromAnotherTenant(t *testing.T) {
 
 	id := createPool(t, s, ctx, map[string]any{
 		"name":    "tenant-a-backends",
-		"members": []map[string]any{{"host": "10.0.0.1", "port": 8080}},
+		"members": []map[string]any{{"host": "203.0.113.1", "port": 8080}},
 	})
 
 	other := orgctx.With(context.Background(), orgctx.Org{ID: poolOtherOrg})
@@ -347,7 +347,7 @@ func TestAPoolIsNotReachableFromAnotherTenant(t *testing.T) {
 	}
 
 	w, _ = poolCall(t, other, http.MethodPost, one,
-		map[string]any{"host": "10.9.9.9", "port": 8080}, s.handleAddUpstreamPoolMember)
+		map[string]any{"host": "203.0.113.99", "port": 8080}, s.handleAddUpstreamPoolMember)
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("adding a member to another tenant's pool must be 404, got %d %s", w.Code, w.Body.String())
 	}
@@ -386,7 +386,7 @@ func TestARouteCannotBePointedAtAnotherTenantsPool(t *testing.T) {
 
 	id := createPool(t, s, ctx, map[string]any{
 		"name":    "tenant-a-backends",
-		"members": []map[string]any{{"host": "10.0.0.1", "port": 8080}},
+		"members": []map[string]any{{"host": "203.0.113.1", "port": 8080}},
 	})
 
 	other := orgctx.With(context.Background(), orgctx.Org{ID: poolOtherOrg})
@@ -426,12 +426,12 @@ func TestPoolValidationRefusesValuesTheSchemaWouldRejectWithAUsableMessage(t *te
 		{"retries", map[string]any{"name": "p", "retries": 99}, "retries"},
 		{"health path", map[string]any{"name": "p", "health_check_path": "healthz"}, "health_check_path"},
 		{"member port", map[string]any{"name": "p",
-			"members": []map[string]any{{"host": "10.0.0.1", "port": 70000}}}, "port"},
+			"members": []map[string]any{{"host": "203.0.113.1", "port": 70000}}}, "port"},
 		{"member weight", map[string]any{"name": "p",
-			"members": []map[string]any{{"host": "10.0.0.1", "port": 80, "weight": 5000}}}, "weight"},
+			"members": []map[string]any{{"host": "203.0.113.1", "port": 80, "weight": 5000}}}, "weight"},
 		// The commonest real mistake: pasting a URL into the host field.
 		{"member host with scheme", map[string]any{"name": "p",
-			"members": []map[string]any{{"host": "http://10.0.0.1", "port": 80}}}, "host"},
+			"members": []map[string]any{{"host": "http://203.0.113.1", "port": 80}}}, "host"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w, resp := poolCall(t, ctx, http.MethodPost, nil, tc.body, s.handleCreateUpstreamPool)
@@ -456,10 +456,10 @@ func TestTheSameBackendCannotBeAddedTwice(t *testing.T) {
 
 	id := createPool(t, s, ctx, map[string]any{
 		"name":    "dupes",
-		"members": []map[string]any{{"host": "10.0.0.1", "port": 8080}},
+		"members": []map[string]any{{"host": "203.0.113.1", "port": 8080}},
 	})
 	w, _ := poolCall(t, ctx, http.MethodPost, gin.Params{{Key: "id", Value: id}},
-		map[string]any{"host": "10.0.0.1", "port": 8080}, s.handleAddUpstreamPoolMember)
+		map[string]any{"host": "203.0.113.1", "port": 8080}, s.handleAddUpstreamPoolMember)
 	if w.Code != http.StatusConflict {
 		t.Fatalf("a duplicate member must be 409, got %d %s", w.Code, w.Body.String())
 	}
@@ -481,9 +481,9 @@ func TestAFailedCreateLeavesNoHalfBuiltPool(t *testing.T) {
 	w, _ := poolCall(t, ctx, http.MethodPost, nil, map[string]any{
 		"name": "half-built",
 		"members": []map[string]any{
-			{"host": "10.0.0.1", "port": 8080},
-			{"host": "10.0.0.2", "port": 8080},
-			{"host": "10.0.0.1", "port": 8080}, // the same backend again
+			{"host": "203.0.113.1", "port": 8080},
+			{"host": "203.0.113.2", "port": 8080},
+			{"host": "203.0.113.1", "port": 8080}, // the same backend again
 		},
 	}, s.handleCreateUpstreamPool)
 	if w.Code != http.StatusConflict {
@@ -521,13 +521,13 @@ func TestWhatTheHandlersWriteIsWhatTheEdgeRendererReads(t *testing.T) {
 		"name":      "rendered",
 		"algorithm": "roundrobin",
 		"members": []map[string]any{
-			{"host": "10.0.0.1", "port": 8080, "weight": 1},
-			{"host": "10.0.0.2", "port": 8080, "weight": 4},
+			{"host": "203.0.113.1", "port": 8080, "weight": 1},
+			{"host": "203.0.113.2", "port": 8080, "weight": 4},
 		},
 	})
 	if _, err := db.Pool.Exec(ctx,
 		`INSERT INTO proxy_routes (org_id, name, from_url, to_url, upstream_pool_id)
-		 VALUES ($1::uuid, 'shop', 'https://shop.example', 'http://10.0.0.1:8080', $2::uuid)`,
+		 VALUES ($1::uuid, 'shop', 'https://shop.example', 'http://203.0.113.1:8080', $2::uuid)`,
 		poolOrg, id); err != nil {
 		t.Fatalf("link a route: %v", err)
 	}
@@ -550,7 +550,7 @@ func TestWhatTheHandlersWriteIsWhatTheEdgeRendererReads(t *testing.T) {
 	// The weights the operator declared are the weights the data plane gets.
 	// This is the assertion a round-trip test would have skipped, and it is the
 	// whole product of the feature.
-	if obj.Upstream.Nodes["10.0.0.1:8080"] != 1 || obj.Upstream.Nodes["10.0.0.2:8080"] != 4 {
+	if obj.Upstream.Nodes["203.0.113.1:8080"] != 1 || obj.Upstream.Nodes["203.0.113.2:8080"] != 4 {
 		t.Fatalf("declared weights 1 and 4 did not reach the upstream: %v", obj.Upstream.Nodes)
 	}
 	if obj.Upstream.Checks == nil {
@@ -570,7 +570,7 @@ func TestWhatTheHandlersWriteIsWhatTheEdgeRendererReads(t *testing.T) {
 		t.Fatalf("the route is still served, from to_url; got %d objects", len(objs))
 	}
 	drained := decodeRenderedRoute(t, objs[0].body)
-	if len(drained.Nodes()) != 1 || drained.Upstream.Nodes["10.0.0.1:8080"] != 1 {
+	if len(drained.Nodes()) != 1 || drained.Upstream.Nodes["203.0.113.1:8080"] != 1 {
 		t.Fatalf("a fully drained pool must fall back to to_url's single node, got %v", drained.Upstream.Nodes)
 	}
 	if drained.Upstream.Checks != nil {
@@ -627,11 +627,11 @@ func TestReconcileSendsPoolBackedRoutesToTheDataPlane(t *testing.T) {
 
 	id := createPool(t, s, ctx, map[string]any{
 		"name":    "reconciled",
-		"members": []map[string]any{{"host": "10.1.0.1", "port": 9000}, {"host": "10.1.0.2", "port": 9000}},
+		"members": []map[string]any{{"host": "203.0.113.11", "port": 9000}, {"host": "203.0.113.12", "port": 9000}},
 	})
 	if _, err := db.Pool.Exec(ctx,
 		`INSERT INTO proxy_routes (org_id, name, from_url, to_url, upstream_pool_id)
-		 VALUES ($1::uuid, 'orders', 'https://orders.example', 'http://10.1.0.1:9000', $2::uuid)`,
+		 VALUES ($1::uuid, 'orders', 'https://orders.example', 'http://203.0.113.11:9000', $2::uuid)`,
 		poolOrg, id); err != nil {
 		t.Fatalf("link a route: %v", err)
 	}
