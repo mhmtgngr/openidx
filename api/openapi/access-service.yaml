@@ -7031,6 +7031,50 @@ paths:
         '500':
           $ref: '#/components/responses/ServerError'
 
+  /api/v1/access/ziti/posture/edr/{id}/devices:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    get:
+      tags: [OpenZiti Overlay]
+      summary: List the devices an EDR source last reported
+      description: >-
+        Returns the source's device mappings: which external device matched
+        which local Ziti identity, the compliance verdict that came with it, and
+        when it was last seen. This is the record an operator consults after an
+        EDR-driven revocation, to see which device caused it and whether the
+        right identity was matched — matching is by email, hostname or serial.
+      operationId: listEDRDevices
+      x-openidx-handler: internal/access.(*Service).handleListEDRDevices
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  devices:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        external_device_id: { type: string }
+                        match_value: { type: string }
+                        identity_id: { type: string, format: uuid }
+                        identity_name: { type: string }
+                        last_compliant: { type: boolean }
+                        last_risk: { type: string }
+                        last_seen_at: { type: string, format: date-time }
+                        updated_at: { type: string, format: date-time }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
   /api/v1/access/ziti/posture/edr/{id}/sync:
     parameters:
       - $ref: '#/components/parameters/IdPath'

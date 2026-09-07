@@ -117,6 +117,12 @@ type ProxySession struct {
 	AuthMethods       []string  `json:"auth_methods,omitempty"`
 	Location          string    `json:"location,omitempty"`
 	DeviceTrusted     bool      `json:"device_trusted,omitempty"`
+	// IDPName is the external identity provider that authenticated this
+	// session, empty for a session created by OpenIDX's own login. An operator
+	// answering "an IdP is compromised, whose sessions came through it?" has
+	// nothing else to go on: proxy_sessions.idp_id was written by the multi-IdP
+	// callback and read by nothing until this field existed.
+	IDPName string `json:"idp_name,omitempty"`
 }
 
 // Service provides access proxy operations
@@ -529,6 +535,7 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.GET("/ziti/posture/edr", adminOnly, svc.handleListEDRSources)
 		api.POST("/ziti/posture/edr", adminOnly, svc.handleCreateEDRSource)
 		api.GET("/ziti/posture/edr/:id", adminOnly, svc.handleGetEDRSource)
+		api.GET("/ziti/posture/edr/:id/devices", adminOnly, svc.handleListEDRDevices)
 		api.DELETE("/ziti/posture/edr/:id", adminOnly, svc.handleDeleteEDRSource)
 		api.POST("/ziti/posture/edr/:id/test", adminOnly, svc.handleTestEDRSource)
 		api.POST("/ziti/posture/edr/:id/sync", adminOnly, svc.handleSyncEDRSource)
@@ -1637,10 +1644,18 @@ func (s *Service) handleListSessions(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
 		return
 	}
+	// The IdP join is a LEFT JOIN because most sessions have no external
+	// provider: proxy_sessions.idp_id is set only by the multi-IdP callback.
+	// It is org-scoped on both sides so a session cannot name another tenant's
+	// provider, which would put the shape of their federation setup on this
+	// tenant's page.
 	rows, err := s.db.Pool.Query(c.Request.Context(),
-		`SELECT id, user_id, route_id, ip_address, user_agent, started_at, last_active_at, expires_at, revoked
-		 FROM proxy_sessions WHERE revoked=false AND expires_at > NOW() AND org_id = $1
-		 ORDER BY last_active_at DESC LIMIT 100`, org.ID)
+		`SELECT s.id, s.user_id, s.route_id, s.ip_address, s.user_agent, s.started_at,
+		        s.last_active_at, s.expires_at, s.revoked, COALESCE(i.name,'')
+		 FROM proxy_sessions s
+		 LEFT JOIN identity_providers i ON i.id = s.idp_id AND i.org_id = s.org_id
+		 WHERE s.revoked=false AND s.expires_at > NOW() AND s.org_id = $1
+		 ORDER BY s.last_active_at DESC LIMIT 100`, org.ID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list sessions"})
 		return
@@ -1648,12 +1663,20 @@ func (s *Service) handleListSessions(c *gin.Context) {
 	defer rows.Close()
 
 	sessions := []ProxySession{}
+	// A row that will not scan used to be skipped in silence. This is the list
+	// an operator revokes sessions from, so a session that quietly falls out of
+	// it is a session nobody revokes -- and the page cannot tell that apart
+	// from a session that has ended. The count travels with the answer.
+	unreadable := 0
 	for rows.Next() {
 		var sess ProxySession
 		var routeID *string
 		err := rows.Scan(&sess.ID, &sess.UserID, &routeID, &sess.IPAddress, &sess.UserAgent,
-			&sess.StartedAt, &sess.LastActiveAt, &sess.ExpiresAt, &sess.Revoked)
+			&sess.StartedAt, &sess.LastActiveAt, &sess.ExpiresAt, &sess.Revoked, &sess.IDPName)
 		if err != nil {
+			unreadable++
+			s.logger.Error("an active proxy session could not be read into the session list; "+
+				"it will not appear on the sessions page and cannot be revoked from it", zap.Error(err))
 			continue
 		}
 		if routeID != nil {
@@ -1662,7 +1685,11 @@ func (s *Service) handleListSessions(c *gin.Context) {
 		sessions = append(sessions, sess)
 	}
 
-	c.JSON(http.StatusOK, gin.H{"sessions": sessions})
+	body := gin.H{"sessions": sessions}
+	if unreadable > 0 {
+		body["unreadable"] = unreadable
+	}
+	c.JSON(http.StatusOK, body)
 }
 
 func (s *Service) handleRevokeSession(c *gin.Context) {

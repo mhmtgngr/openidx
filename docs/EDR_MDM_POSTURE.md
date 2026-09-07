@@ -88,9 +88,19 @@ POST /api/v1/access/ziti/posture/edr
 | DELETE | `/api/v1/access/ziti/posture/edr/:id` | Delete a source (+ mappings) |
 | POST   | `/api/v1/access/ziti/posture/edr/:id/test` | Test connectivity + credentials |
 | POST   | `/api/v1/access/ziti/posture/edr/:id/sync` | Run an ingestion pass now |
+| GET    | `/api/v1/access/ziti/posture/edr/:id/devices` | What the source last reported, device by device |
 
 ## Persistence
 
 Migration **v98** adds `edr_posture_sources` (connection + encrypted creds +
 poll/TTL config) and `edr_device_mappings` (external device id ↔ Ziti identity).
 Posture results reuse the existing `device_posture_results`.
+
+`edr_device_mappings` is the record of which external device matched which
+local identity, and what it last reported. It is what `GET .../:id/devices`
+serves, and it exists for one question: an EDR source revoked somebody's access,
+so which device caused it and was the right identity matched? Matching is by
+email, hostname or serial — all three collide across people and tenants — so
+that is a question an operator will ask. Until v1.34.0 nothing in the product
+read this table at all, which is why a mapping that failed to write had never
+been noticed; the sync now counts those as `devices_unrecorded` in its result.

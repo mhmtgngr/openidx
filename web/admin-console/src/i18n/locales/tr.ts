@@ -5221,6 +5221,8 @@ const tr: typeof en = {
         resource: 'Kaynak',
         ip: 'IP',
         lastActive: 'Son etkinlik',
+        signedInWith: 'Giriş yöntemi',
+        localLogin: 'OpenIDX oturum açma',
         recentEvents: 'Son erişim olayları',
         noEvents: 'Son olay yok.',
         when: 'Ne zaman',

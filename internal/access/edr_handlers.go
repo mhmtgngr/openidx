@@ -79,6 +79,37 @@ func (s *Service) handleGetEDRSource(c *gin.Context) {
 	c.JSON(http.StatusOK, src)
 }
 
+// handleListEDRDevices returns what a source last reported, device by device.
+//
+// The mapping rows were written "for the admin UI" and, until this handler
+// existed, no query in the product selected from edr_device_mappings at all —
+// so the one record of WHICH external device matched WHICH local identity, and
+// what it last reported, was write-only. That record is the answer to the
+// question an EDR source makes urgent: this user's access was cut on a posture
+// failure, which device caused it, and is it even the right person's laptop?
+// Matching is by email, hostname or serial, so that is a real question.
+//
+// The source is loaded first, org-scoped, so a caller cannot read another
+// tenant's devices by naming their source id.
+func (s *Service) handleListEDRDevices(c *gin.Context) {
+	orgID, ok := requireEDROrg(c)
+	if !ok {
+		return
+	}
+	src, err := s.GetEDRSource(c.Request.Context(), orgID, c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "source not found"})
+		return
+	}
+	devices, err := s.ListEDRDevices(c.Request.Context(), orgID, src.ID)
+	if err != nil {
+		s.logger.Error("list edr devices failed", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"devices": devices})
+}
+
 func (s *Service) handleDeleteEDRSource(c *gin.Context) {
 	orgID, ok := requireEDROrg(c)
 	if !ok {

@@ -14,6 +14,7 @@ import (
 	apperrors "github.com/openidx/openidx/internal/common/errors"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -300,10 +301,24 @@ func (s *Service) handleCallbackWithIDP(c *gin.Context, idpID, idpIssuer, verifi
 		return
 	}
 
-	// Store IDP ID on the session.
-	//silentwrite:ok nothing reads proxy_sessions.idp_id -- it is written here and by nothing else, and no query in the product selects it (the idp_id reads elsewhere are on proxy_routes, which is route configuration). The session itself is already created and valid; losing this costs a column that no surface, gate or report consults today
-	s.db.Pool.Exec(c.Request.Context(),
-		"UPDATE proxy_sessions SET idp_id=$1 WHERE id=$2 AND org_id=$3", idpID, session.ID, org.ID)
+	// Store the IdP on the session.
+	//
+	// This used to carry a waiver saying nothing read the column, which was
+	// true and is not any more: handleListSessions joins it so the console can
+	// show which provider authenticated each live session. That is the answer
+	// to "this IdP is compromised, whose sessions came through it?", and a
+	// session missing from that answer is one nobody revokes.
+	//
+	// The session itself is created and valid either way, so this does not fail
+	// the login; it is reported instead, because the gap is otherwise invisible
+	// -- the session simply looks like a local one.
+	if _, err := s.db.Pool.Exec(c.Request.Context(),
+		"UPDATE proxy_sessions SET idp_id=$1 WHERE id=$2 AND org_id=$3",
+		idpID, session.ID, org.ID); err != nil {
+		s.logger.Error("a session authenticated by an external identity provider could not be marked "+
+			"with it; it will read as a local session, so revoking that provider's sessions will miss it",
+			logsafe.String("idp_id", idpID), logsafe.String("session_id", session.ID), zap.Error(err))
+	}
 
 	// Set session cookie with SameSite=Lax for CSRF protection
 	// The Secure flag is computed, not a literal, so the scanner cannot see it;

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import React from 'react'
@@ -93,6 +94,16 @@ function routeGet(url: string) {
           ip_address: '10.0.0.9',
           user_agent: 'Mozilla',
           last_active_at: '2026-01-10T00:00:00Z',
+          idp_name: 'Contoso Entra',
+        },
+        {
+          id: 'sess-2',
+          user_id: 'u-2',
+          route_id: 'route-1',
+          ip_address: '10.0.0.10',
+          user_agent: 'Mozilla',
+          last_active_at: '2026-01-10T00:00:00Z',
+          idp_name: '',
         },
       ],
     })
@@ -161,6 +172,20 @@ describe('ZeroTrustPage', () => {
     expect(screen.getByText('Live Access')).toBeInTheDocument()
     // route-2 is a gap (no auth) -> the tab shows a (1)
     expect(screen.getByText(/Coverage Gaps/)).toBeInTheDocument()
+  })
+
+  // proxy_sessions.idp_id was written by the multi-IdP callback and read by
+  // nothing. This column is its reader: when a provider is compromised, this is
+  // the list an operator scans to find the sessions it issued.
+  it('names the identity provider that authenticated each live session', async () => {
+    const user = userEvent.setup()
+    render(<ZeroTrustPage />, { wrapper: createWrapper() })
+    await user.click(await screen.findByText('Live Access'))
+
+    expect(await screen.findByText('Signed in with')).toBeInTheDocument()
+    expect(screen.getByText('Contoso Entra')).toBeInTheDocument()
+    // A session with no external provider says so rather than borrowing one.
+    expect(screen.getByText('OpenIDX login')).toBeInTheDocument()
   })
 
   it('renders without crashing when the backend omits summary/route fields', async () => {

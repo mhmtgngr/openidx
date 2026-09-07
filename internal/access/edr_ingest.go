@@ -133,6 +133,53 @@ func (s *Service) CreateEDRSource(ctx context.Context, orgID string, in *EDRSour
 	return s.GetEDRSource(ctx, orgID, id)
 }
 
+// EDRDevice is one row of what a source last reported: the external device, the
+// local identity it matched, and the compliance verdict that came with it.
+type EDRDevice struct {
+	ExternalDeviceID string     `json:"external_device_id"`
+	MatchValue       string     `json:"match_value,omitempty"`
+	IdentityID       string     `json:"identity_id,omitempty"`
+	IdentityName     string     `json:"identity_name,omitempty"`
+	LastCompliant    bool       `json:"last_compliant"`
+	LastRisk         string     `json:"last_risk,omitempty"`
+	LastSeenAt       *time.Time `json:"last_seen_at,omitempty"`
+	UpdatedAt        time.Time  `json:"updated_at"`
+}
+
+// ListEDRDevices returns a source's device mappings, most recently reported
+// first. Both sides carry the tenant: the mapping row's own org_id, and the
+// identity join, so a device cannot be shown as matching another tenant's
+// identity even if the underlying match were wrong.
+func (s *Service) ListEDRDevices(ctx context.Context, orgID, sourceID string) ([]EDRDevice, error) {
+	rows, err := s.db.Pool.Query(ctx, `
+        SELECT m.external_device_id, COALESCE(m.match_value,''),
+               COALESCE(m.identity_id::text,''), COALESCE(zi.name,''),
+               m.last_compliant, COALESCE(m.last_risk,''), m.last_seen_at, m.updated_at
+          FROM edr_device_mappings m
+          LEFT JOIN ziti_identities zi ON zi.id = m.identity_id AND zi.org_id = m.org_id
+         WHERE m.source_id = $1 AND m.org_id::text = $2
+         ORDER BY m.last_seen_at DESC NULLS LAST, m.updated_at DESC
+         LIMIT 500`, sourceID, orgID)
+	if err != nil {
+		return nil, fmt.Errorf("list edr device mappings: %w", err)
+	}
+	defer rows.Close()
+
+	devices := []EDRDevice{}
+	for rows.Next() {
+		var d EDRDevice
+		if err := rows.Scan(&d.ExternalDeviceID, &d.MatchValue, &d.IdentityID, &d.IdentityName,
+			&d.LastCompliant, &d.LastRisk, &d.LastSeenAt, &d.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan edr device mapping: %w", err)
+		}
+		devices = append(devices, d)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read edr device mappings: %w", err)
+	}
+	return devices, nil
+}
+
 // GetEDRSource loads a source (secrets never returned).
 func (s *Service) GetEDRSource(ctx context.Context, orgID, id string) (*EDRSource, error) {
 	row := s.db.Pool.QueryRow(ctx, `
@@ -286,6 +333,13 @@ type edrSourceStatus struct {
 	DevicesMatched int    `json:"devices_matched"`
 	PostureFailed  int    `json:"posture_failed"`
 	PosturePassed  int    `json:"posture_passed"`
+	// DevicesUnrecorded counts devices the source reported that could not be
+	// written to edr_device_mappings. They are absent from the device list the
+	// sync's own endpoint serves, so the count travels with the sync result
+	// rather than living only in a log line: a sync reporting 40 devices seen
+	// and a list showing 38 is otherwise indistinguishable from a sync that saw
+	// 38.
+	DevicesUnrecorded int `json:"devices_unrecorded,omitempty"`
 }
 
 // syncEDRSource runs one ingestion pass for a source: pull devices, map each to
@@ -312,8 +366,11 @@ func (s *Service) syncEDRSource(ctx context.Context, sourceID string) (*edrSourc
 	for _, d := range devices {
 		status.DevicesSeen++
 		identityID := s.resolveIdentityForDevice(ctx, src, d)
-		// Persist/refresh the mapping regardless of match, for the admin UI.
-		s.upsertEDRMapping(ctx, src, d, identityID)
+		// Persist/refresh the mapping regardless of match: it is what the
+		// source's device list serves.
+		if !s.upsertEDRMapping(ctx, src, d, identityID) {
+			status.DevicesUnrecorded++
+		}
 		if identityID == "" {
 			continue // no local identity yet; can't enforce
 		}
@@ -406,7 +463,7 @@ func (s *Service) resolveIdentityForDevice(ctx context.Context, src *EDRSource, 
 	return identityID
 }
 
-func (s *Service) upsertEDRMapping(ctx context.Context, src *EDRSource, d edr.Device, identityID string) {
+func (s *Service) upsertEDRMapping(ctx context.Context, src *EDRSource, d edr.Device, identityID string) bool {
 	var matchVal string
 	switch src.MatchStrategy {
 	case "email":
@@ -416,14 +473,16 @@ func (s *Service) upsertEDRMapping(ctx context.Context, src *EDRSource, d edr.De
 	default:
 		matchVal = d.Serial
 	}
-	// This row is the EDR-device-to-identity mapping the caller keeps "for the
-	// admin UI". Enforcement does not depend on it -- the posture result the
-	// gate reads is written separately from the same pass -- so a failure here
-	// does not change anybody's access.
+	// This row is the EDR-device-to-identity mapping. Enforcement does not
+	// depend on it -- the posture result the gate reads is written separately
+	// from the same pass -- so a failure here does not change anybody's access.
 	//
-	// Worth recording while looking at it: no query in the product selects
-	// from edr_device_mappings. The rows are written for a surface that does
-	// not exist yet, which is why nothing has ever noticed them going missing.
+	// It used to be written for a surface that did not exist: no query in the
+	// product selected from edr_device_mappings at all, which is why nothing
+	// had ever noticed a row going missing. GET .../edr/:id/devices reads them
+	// now, so a lost row is a device absent from the list an operator consults
+	// after an EDR-driven revocation -- which is why the miss is counted and
+	// reported on the sync rather than only logged here.
 	if _, err := s.db.Pool.Exec(ctx, `
         INSERT INTO edr_device_mappings
             (org_id, source_id, external_device_id, match_value, identity_id,
@@ -435,10 +494,13 @@ func (s *Service) upsertEDRMapping(ctx context.Context, src *EDRSource, d edr.De
                       last_seen_at=EXCLUDED.last_seen_at, updated_at=NOW()`,
 		src.OrgID, src.ID, d.ExternalID, edrNullIfEmpty(matchVal),
 		edrNullUUID(identityID), d.Compliant, edrNullIfEmpty(d.Risk), d.LastSeen); err != nil {
-		s.logger.Warn("could not record an EDR device mapping",
+		s.logger.Warn("could not record an EDR device mapping; this device will be missing from the "+
+			"source's device list",
 			logsafe.String("source_id", src.ID), logsafe.String("external_device_id", d.ExternalID),
 			zap.Error(err))
+		return false
 	}
+	return true
 }
 
 // The two marks below are an EDR source's health as the console reports it.

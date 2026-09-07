@@ -5236,6 +5236,8 @@ const en = {
         resource: 'Resource',
         ip: 'IP',
         lastActive: 'Last active',
+        signedInWith: 'Signed in with',
+        localLogin: 'OpenIDX login',
         recentEvents: 'Recent access events',
         noEvents: 'No recent events.',
         when: 'When',
