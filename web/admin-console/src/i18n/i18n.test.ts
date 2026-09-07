@@ -714,19 +714,24 @@ describe('i18n', () => {
         (k) => `pages.quickLinks.categories.${k}`,
       ),
       // notification-preferences: one row per event, one column per channel.
+      // These four are internal/notifications.TypeCatalogue -- the types this
+      // product actually sends. The seven that used to be listed here
+      // (access_request, security_alert, session_revoked, review_assigned,
+      // group_request, password_expiry, mfa_change) were never sent by
+      // anything, so the page offered seven switches that controlled nothing
+      // and this test kept their translations warm. The page reads the
+      // catalogue from the server and falls back to the server's own wording,
+      // so a type added there without a key here still renders -- in English.
       ...[
-        'access_request',
-        'security_alert',
-        'session_revoked',
-        'review_assigned',
-        'group_request',
-        'password_expiry',
-        'mfa_change',
+        'access_granted',
+        'device_trust',
+        'security',
+        'broadcast',
       ].flatMap((k) => [
         `pages.notificationPreferences.events.${k}`,
         `pages.notificationPreferences.eventHints.${k}`,
       ]),
-      ...['in_app', 'email'].map((k) => `pages.notificationPreferences.channels.${k}`),
+      ...['in_app', 'push'].map((k) => `pages.notificationPreferences.channels.${k}`),
       // pam-session-window: the phase the frame monitor reports.
       ...['active', 'loading', 'ended', 'failed'].map(
         (k) => `pages.pamSessionWindow.phases.${k}`,

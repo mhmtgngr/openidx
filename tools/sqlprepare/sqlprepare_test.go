@@ -47,7 +47,7 @@ func TestIsStatementSeparatesQueriesFromEverythingElse(t *testing.T) {
 // The skip list is the tool's honesty about its own reach. Each entry must name
 // a limit of PREPARE, never a class of defect somebody found inconvenient.
 func TestOnlyPrepareLimitationsAreSkipped(t *testing.T) {
-	skipped := []string{"42601", "42P18", "42P08"}
+	skipped := []string{"42601", "42P18"}
 	for _, code := range skipped {
 		reason, ok := skipReason(code, "", "SELECT 1", false)
 		if !ok {
@@ -57,6 +57,18 @@ func TestOnlyPrepareLimitationsAreSkipped(t *testing.T) {
 		if strings.TrimSpace(reason) == "" {
 			t.Errorf("SQLSTATE %s is skipped with no reason", code)
 		}
+	}
+
+	// 42P08 used to sit in that list and does not belong there. "inconsistent
+	// types deduced for parameter" is not a limit of PREPARE: pgx sends
+	// parameters UNTYPED, so the deduction this tool sees is the one the
+	// runtime performs, and a statement that cannot deduce one type for a
+	// parameter fails when it is executed. Skipping it hid a live failure --
+	// an INSERT ... SELECT reusing one parameter for notifications.type and
+	// notification_preferences.event_type passed this sweep and raised 42P08 on
+	// its first execution against a real database.
+	if reason, ok := skipReason("42P08", "inconsistent types deduced for parameter $5", "INSERT INTO t SELECT $1", false); ok {
+		t.Errorf("42P08 is skipped as %q; it is a statement that fails at runtime", reason)
 	}
 
 	// 42P01 is skippable in exactly one shape and a finding in every other:

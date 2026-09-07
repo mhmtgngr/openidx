@@ -34,7 +34,7 @@ func (s *Service) notifyPamGrant(ctx context.Context, orgID, entryID, principalT
 	notif := notifications.NewService(s.db, s.logger)
 	body := fmt.Sprintf("You've been granted access to %s.", entryName)
 	for _, uid := range recipients {
-		if err := notif.CreateMultiChannelNotification(ctx, uid, orgID, "access_granted",
+		if err := notif.CreateMultiChannelNotification(ctx, uid, orgID, notifications.TypeAccessGranted,
 			"New access granted", body, "/my-network",
 			map[string]interface{}{"resource": entryName, "kind": "pam_entry"}); err != nil {
 			s.logger.Warn("notify pam grant failed", zap.String("user_id", uid), zap.Error(err))

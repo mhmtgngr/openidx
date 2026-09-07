@@ -9,6 +9,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/notifications"
 )
 
 // Identity Security Posture Management.
@@ -568,14 +570,19 @@ func (s *Service) remediateFinding(ctx context.Context, orgID, checkType, entity
 		// A real notification row, on the same table and shape the broadcast
 		// and device-trust paths use (internal/admin/notification_management.go,
 		// internal/identity/device_trust_approval.go).
+		// NOT EXISTS is the user's own preference, in the same statement. This
+		// path never went through CreateNotification, so before it the switch
+		// on the preferences page was read by nothing.
 		_, err := s.db.Pool.Exec(ctx, `
 			INSERT INTO notifications (user_id, channel, type, title, body, metadata, org_id)
-			SELECT id, 'in_app', 'security', $2, $3, jsonb_build_object('source', 'ispm', 'check_type', 'mfa_adoption'), org_id
-			FROM users WHERE id = $1 AND org_id = $4`,
+			SELECT id, 'in_app', $5::varchar, $2, $3, jsonb_build_object('source', 'ispm', 'check_type', 'mfa_adoption'), org_id
+			FROM users WHERE id = $1 AND org_id = $4
+			  AND NOT EXISTS (SELECT 1 FROM notification_preferences p
+			      WHERE p.user_id = users.id AND p.channel = 'in_app' AND p.event_type = $5::varchar AND p.enabled = false)`,
 			entityID,
 			"Set up multi-factor authentication",
 			"Your account has no second factor. Add one from Security settings to keep access to your applications.",
-			orgID)
+			orgID, notifications.TypeSecurity)
 		if err != nil {
 			s.logger.Error("ISPM remediation: MFA reminder failed", zap.Error(err))
 			return remediationOutcome{Action: "failed", Message: "could not queue the MFA reminder", Resolved: false}

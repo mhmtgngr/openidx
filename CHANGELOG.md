@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Every switch on the notification preferences page controlled nothing.**
+  The page offered seven types — `access_request`, `security_alert`,
+  `session_revoked`, `review_assigned`, `group_request`, `password_expiry`,
+  `mfa_change` — and this product has never sent a notification of **any** of
+  them; the four it does send (`access_granted`, `device_trust`, `security`,
+  `broadcast`) appeared on no switch, and one column offered a channel,
+  `email`, that nothing has ever delivered on. It was worse than a naming
+  mismatch: `isNotificationEnabled` is consulted by `CreateNotification`, and
+  four of the six senders never went through it — the broadcast fan-out, the
+  ISPM MFA reminder, the AI-recommendation reminder and the device-trust
+  request all ran `INSERT INTO notifications` directly as set-based writes. A
+  preference no writer reads is not a preference, however it is spelled. Each
+  of those statements now carries the preference predicate itself, measured
+  against a real database: the user who switched security reminders off
+  receives none, the user who never opened the page receives them, because an
+  absent row means enabled — the same default `isNotificationEnabled` applies.
+  `internal/notifications.TypeCatalogue` is now the one place a type is named,
+  `GET /notifications/preference-types` serves it, the console's picker reads
+  it instead of its own stale list, and `PUT /notifications/preferences`
+  refuses a preference for a type this deployment does not send.
+
 - **The migration chain could not be rolled back past v29.** Every migration
   carries a `Down` half and `RollbackTo` exists to run them — it is what an
   operator reaches for when an upgrade goes wrong — and nothing had ever
@@ -92,6 +113,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `mfa_bypass_audit`. Proved red first with exactly the failure above.
 
 ### Added
+
+- **`tools/sqlprepare` no longer skips `42P08`.** "Inconsistent types deduced
+  for parameter" was on the skip list beside `42P18`, described as a limit of
+  `PREPARE`. It is not one: pgx sends parameters **untyped**, so the deduction
+  the sweep performs is the deduction the runtime performs, and a statement
+  that cannot settle on one type for a parameter fails when it is executed. The
+  skip hid a live failure — an `INSERT ... SELECT` written in this same change,
+  reusing one parameter for `notifications.type` and
+  `notification_preferences.event_type`, passed the sweep and raised
+  `inconsistent types deduced for parameter $5` on its first execution against
+  a real database. Five statements were caught and cast the moment the skip was
+  removed; `42P18`, where the server genuinely has nothing to deduce from,
+  stays a skip.
 
 - **A webhook event catalogue that cannot drift from the code.**
   `internal/webhooks.EventCatalogue` is now the single place an event type is

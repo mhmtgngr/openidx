@@ -9,6 +9,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/notifications"
 )
 
 // Every handler here is tenant-scoped. ai_recommendations and
@@ -281,14 +283,18 @@ func (s *Service) applyRecommendation(ctx context.Context, orgID string, r Recom
 		if len(ids) == 0 {
 			return applyOutcome{Action: "no_targets", Message: "the recommendation names no users to remind"}
 		}
+		// NOT EXISTS is the user's own preference, in the same statement -- this
+		// path never went through CreateNotification either.
 		tag, err := s.db.Pool.Exec(ctx, `
 			INSERT INTO notifications (user_id, channel, type, title, body, metadata, org_id)
-			SELECT id, 'in_app', 'security', $2, $3, jsonb_build_object('source', 'ai_recommendation'), org_id
-			FROM users WHERE id = ANY($1::uuid[]) AND org_id = $4 AND enabled = true`,
+			SELECT id, 'in_app', $5::varchar, $2, $3, jsonb_build_object('source', 'ai_recommendation'), org_id
+			FROM users WHERE id = ANY($1::uuid[]) AND org_id = $4 AND enabled = true
+			  AND NOT EXISTS (SELECT 1 FROM notification_preferences p
+			      WHERE p.user_id = users.id AND p.channel = 'in_app' AND p.event_type = $5::varchar AND p.enabled = false)`,
 			ids,
 			"Set up multi-factor authentication",
 			"Your account has no second factor. Add one from Security settings to keep access to your applications.",
-			orgID)
+			orgID, notifications.TypeSecurity)
 		if err != nil {
 			s.logger.Error("apply recommendation: MFA reminders failed", zap.Error(err))
 			return applyOutcome{Action: "failed", Message: "could not queue the MFA reminders"}

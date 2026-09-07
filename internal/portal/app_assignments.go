@@ -240,7 +240,7 @@ func (s *Service) notifyAppGranted(ctx context.Context, orgID, principalType, pr
 	notif := notifications.NewService(s.db, s.logger)
 	body := fmt.Sprintf("You've been granted access to %s.", appName)
 	for _, uid := range recipients {
-		if err := notif.CreateMultiChannelNotification(ctx, uid, orgID, "access_granted",
+		if err := notif.CreateMultiChannelNotification(ctx, uid, orgID, notifications.TypeAccessGranted,
 			"New app available", body, "/portal/applications",
 			map[string]interface{}{"application": appName}); err != nil {
 			s.logger.Warn("notify app grant failed", zap.String("user_id", uid), zap.Error(err))

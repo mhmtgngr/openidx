@@ -207,7 +207,24 @@ func skipReason(code, detail, sql string, continued bool) (string, bool) {
 	switch code {
 	case "42601":
 		return "fragment of a query assembled at runtime (syntax error alone)", true
-	case "42P18", "42P08":
+	case "42P18":
+		// "could not determine data type of parameter": the server has nothing
+		// to deduce from, and pgx supplies the type from the Go value at
+		// execute time. That is a limit of preparing a statement in isolation.
+		//
+		// 42P08 used to be skipped alongside it and is NOT the same thing.
+		// "inconsistent types deduced for parameter" means the server deduced
+		// two different types for one parameter from two different uses of it,
+		// and pgx sends parameters UNTYPED -- so the deduction this tool sees
+		// is exactly the one the runtime performs, and the statement fails
+		// there too. The skip hid a live failure: an INSERT ... SELECT that
+		// used one parameter for both notifications.type and
+		// notification_preferences.event_type raised
+		//
+		//	ERROR: inconsistent types deduced for parameter $5 (SQLSTATE 42P08)
+		//
+		// on its first execution against a real database, having passed this
+		// sweep. It is a finding now.
 		return "parameter type not inferable by PREPARE (the driver supplies it)", true
 	case "42803":
 		// A grouping error on a literal the code appends to is the missing

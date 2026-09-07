@@ -9129,6 +9129,7 @@ const en = {
       saved: 'Preferences saved',
       saveFailed: 'Failed to save preferences',
       resource: 'notification preferences',
+      typesResource: 'notification types',
       channelsTitle: 'Notification Channels',
       colEvent: 'Event Type',
       // The accessible name of one toggle in the event x channel grid. A
@@ -9139,25 +9140,25 @@ const en = {
       toggleLabel: '{{channel}} notifications for: {{event}}',
       channels: {
         in_app: 'In-App',
-        email: 'Email',
+        push: 'Push',
       },
+      // The four types this deployment actually sends. The seven that used to
+      // be listed here -- access_request, security_alert, session_revoked,
+      // review_assigned, group_request, password_expiry, mfa_change -- named
+      // notifications nothing in this product has ever sent, so every switch
+      // on this page controlled nothing. The set now comes from
+      // GET /notifications/preference-types; these strings are the wording.
       events: {
-        access_request: 'Access Requests',
-        security_alert: 'Security Alerts',
-        session_revoked: 'Session Revoked',
-        review_assigned: 'Review Assigned',
-        group_request: 'Group Requests',
-        password_expiry: 'Password Expiry',
-        mfa_change: 'MFA Changes',
+        access_granted: 'Access Granted',
+        device_trust: 'Device Trust',
+        security: 'Security Reminders',
+        broadcast: 'Announcements',
       },
       eventHints: {
-        access_request: 'When your access requests are approved or denied',
-        security_alert: 'Suspicious login attempts or security events',
-        session_revoked: 'When an admin revokes your session',
-        review_assigned: 'When you are assigned an access review',
-        group_request: 'Updates on your group join requests',
-        password_expiry: 'Reminders before your password expires',
-        mfa_change: 'Changes to your multi-factor authentication',
+        access_granted: 'When you are granted an application or a privileged credential',
+        device_trust: 'When a device awaits approval, or your request is decided',
+        security: 'When something about your account needs attention',
+        broadcast: 'Announcements an administrator sends to you',
       },
     },
     // The chrome-less window one PAM session runs in. The connection's own

@@ -266,6 +266,13 @@ func (s *Service) UpdatePreferences(ctx context.Context, userID string, prefs []
 
 	now := time.Now().UTC()
 	for _, p := range prefs {
+		// A preference for a type nothing sends is a switch that can never
+		// fire. Seven such switches were offered by the console for the life of
+		// this product; refusing them here is what stops the next one being
+		// stored and believed.
+		if !KnownType(p.EventType) {
+			return fmt.Errorf("unknown notification type %q: this deployment sends none of that kind", p.EventType)
+		}
 		id := p.ID
 		if id == "" {
 			id = uuid.New().String()
@@ -627,6 +634,14 @@ func (s *Service) handleUpdateDigestSettings(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "digest settings updated"})
 }
 
+// handlePreferenceTypes serves the catalogue a user switches from.
+//
+// It is the same list catalogue_test.go holds against every sender in the tree,
+// so the page can only offer notifications something actually sends.
+func (s *Service) handlePreferenceTypes(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"types": TypeCatalogue})
+}
+
 // RegisterRoutes registers the notification HTTP routes on the given router group.
 func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 	router.GET("/notifications", svc.handleGetNotifications)
@@ -635,6 +650,9 @@ func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 	router.POST("/notifications/mark-all-read", svc.handleMarkAllAsRead)
 	router.GET("/notifications/preferences", svc.handleGetPreferences)
 	router.PUT("/notifications/preferences", svc.handleUpdatePreferences)
+	// The switchable types, served rather than hard-coded in the console: the
+	// list there had drifted to seven names this product has never sent.
+	router.GET("/notifications/preference-types", svc.handlePreferenceTypes)
 	// Push (ntfy) subscription details for the calling user.
 	router.GET("/notifications/push-config", svc.handleGetPushConfig)
 

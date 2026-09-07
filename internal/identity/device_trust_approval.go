@@ -487,15 +487,20 @@ func (s *Service) notifyAdminsOfTrustRequest(ctx context.Context, userID, device
 		s.logger.Warn("device-trust admin notify: no org in context", zap.Error(err))
 		return
 	}
+	// NOT EXISTS is the administrator's own preference, applied in the same
+	// statement: this fan-out never went through CreateNotification, so the
+	// switch on the preferences page was read by nothing on this path.
 	if _, err := s.db.Pool.Exec(ctx, `
 		INSERT INTO notifications (user_id, channel, type, title, body, metadata, org_id)
-		SELECT DISTINCT ur.user_id, 'in_app', 'device_trust',
+		SELECT DISTINCT ur.user_id, 'in_app', $4::varchar,
 			'New device trust request',
 			'A device ("' || $1 || '") is awaiting trust approval.',
 			jsonb_build_object('requesting_user', $2::text), r.org_id
 		FROM user_roles ur JOIN roles r ON r.id = ur.role_id
-		WHERE r.name = 'admin' AND r.org_id = $3`,
-		deviceName, userID, org.ID); err != nil {
+		WHERE r.name = 'admin' AND r.org_id = $3
+		  AND NOT EXISTS (SELECT 1 FROM notification_preferences p
+		      WHERE p.user_id = ur.user_id AND p.channel = 'in_app' AND p.event_type = $4::varchar AND p.enabled = false)`,
+		deviceName, userID, org.ID, notifications.TypeDeviceTrust); err != nil {
 		s.logger.Warn("failed to notify admins of device-trust request", zap.Error(err))
 	}
 }
@@ -513,7 +518,7 @@ func (s *Service) notifyUserOfTrustDecision(ctx context.Context, userID, decisio
 		body += " Note: " + notes
 	}
 	notif := notifications.NewService(s.db, s.logger)
-	if err := notif.CreateMultiChannelNotification(ctx, userID, org.ID, "device_trust",
+	if err := notif.CreateMultiChannelNotification(ctx, userID, org.ID, notifications.TypeDeviceTrust,
 		"Device trust "+decision, body, "/devices", nil); err != nil {
 		s.logger.Warn("failed to notify user of device-trust decision", zap.String("user_id", userID), zap.Error(err))
 	}
