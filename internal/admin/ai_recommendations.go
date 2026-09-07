@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/notifications"
 )
 
@@ -169,8 +170,7 @@ func (s *Service) handleAcceptRecommendation(c *gin.Context) {
 		return
 	}
 
-	s.db.Pool.Exec(ctx, `INSERT INTO recommendation_history (org_id, recommendation_id, previous_status, new_status, changed_by)
-		VALUES ($1, $2, 'pending', 'accepted', $3)`, org.ID, id, uid)
+	s.recordRecommendationChange(ctx, org.ID, id, "pending", "accepted", uid, "")
 
 	c.JSON(http.StatusOK, gin.H{"message": "recommendation accepted"})
 }
@@ -201,8 +201,7 @@ func (s *Service) handleDismissRecommendation(c *gin.Context) {
 		return
 	}
 
-	s.db.Pool.Exec(ctx, `INSERT INTO recommendation_history (org_id, recommendation_id, previous_status, new_status, changed_by, reason)
-		VALUES ($1, $2, 'pending', 'dismissed', $3, $4)`, org.ID, id, uid, req.Reason)
+	s.recordRecommendationChange(ctx, org.ID, id, "pending", "dismissed", uid, req.Reason)
 
 	c.JSON(http.StatusOK, gin.H{"message": "recommendation dismissed"})
 }
@@ -262,8 +261,7 @@ func (s *Service) handleApplyRecommendation(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "the action was performed but could not be recorded"})
 		return
 	}
-	s.db.Pool.Exec(ctx, `INSERT INTO recommendation_history (org_id, recommendation_id, previous_status, new_status, changed_by, reason)
-		VALUES ($1, $2, 'accepted', 'applied', $3, $4)`, org.ID, id, uid, out.Message)
+	s.recordRecommendationChange(ctx, org.ID, id, "accepted", "applied", uid, out.Message)
 
 	c.JSON(http.StatusOK, gin.H{"message": out.Message, "applied": true, "result": out})
 }
@@ -691,4 +689,24 @@ func (s *Service) createRecommendationWithSupport(ctx context.Context, orgID, re
 		return false
 	}
 	return tag.RowsAffected() > 0
+}
+
+// recordRecommendationChange writes the accountability row for a status change
+// on a recommendation: who moved it, from what to what, and why.
+//
+// All three call sites discarded its error, so a recommendation could show
+// 'accepted' or 'dismissed' or 'applied' with nothing anywhere saying which
+// administrator did it -- the history panel on the recommendation would simply
+// be empty, and empty looks like "nobody has touched this" rather than "the
+// record was lost". The state change is already committed by the time this
+// runs, so it cannot be undone here; what it can do is say so.
+func (s *Service) recordRecommendationChange(ctx context.Context, orgID, id, from, to, by, reason string) {
+	if _, err := s.db.Pool.Exec(ctx, `
+		INSERT INTO recommendation_history (org_id, recommendation_id, previous_status, new_status, changed_by, reason)
+		VALUES ($1, $2, $3, $4, $5, $6)`, orgID, id, from, to, by, reason); err != nil {
+		s.logger.Error("recommendation status changed but the change was not recorded; "+
+			"its history will not show who did this",
+			logsafe.String("recommendation_id", id),
+			zap.String("from", from), zap.String("to", to), zap.Error(err))
+	}
 }

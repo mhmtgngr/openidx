@@ -83,25 +83,33 @@ BEGIN
   END IF;
 END $$;`, roleName, roleName, rolePass, roleName, rolePass))
 	require.NoError(t, err, "create RLS test role")
-	for _, stmt := range []string{
+	// This list is hand-written, and a hand-written list of tables drifts the
+	// moment a migration drops one. It did: jit_grants and
+	// request_approval_chains were dropped (drop_jit_grants,
+	// drop_request_approval_chains) after the second implementations that were
+	// their only writers were deleted, and this list went on naming them --
+	// so every test that takes this pool failed on a bare
+	// `relation "jit_grants" does not exist` from a GRANT, four functions deep,
+	// naming nothing about why.
+	//
+	// Checking existence first turns the next drop into the finding it is
+	// rather than a cryptic 42P01 in a fixture.
+	readOnly := []string{
+		"organizations", "applications", "oauth_clients", "audit_events",
+		"api_keys", "proxy_routes", "attestation_campaigns", "attestation_items",
+		// v138 — ISPM + AI tenant isolation
+		"ispm_findings", "ispm_rules", "ai_agents", "ai_recommendations",
+	}
+	requireTablesExist(t, admin, append(append([]string{"users"}, readOnly...), extraTables...))
+
+	stmts := []string{
 		`GRANT USAGE ON SCHEMA public TO ` + roleName,
 		`GRANT SELECT, INSERT, UPDATE, DELETE ON users TO ` + roleName,
-		`GRANT SELECT ON organizations TO ` + roleName,
-		`GRANT SELECT ON applications TO ` + roleName,
-		`GRANT SELECT ON oauth_clients TO ` + roleName,
-		`GRANT SELECT ON audit_events TO ` + roleName,
-		`GRANT SELECT ON api_keys TO ` + roleName,
-		`GRANT SELECT ON proxy_routes TO ` + roleName,
-		`GRANT SELECT ON attestation_campaigns TO ` + roleName,
-		`GRANT SELECT ON attestation_items TO ` + roleName,
-		`GRANT SELECT ON jit_grants TO ` + roleName,
-		`GRANT SELECT ON request_approval_chains TO ` + roleName,
-		// v138 — ISPM + AI tenant isolation
-		`GRANT SELECT ON ispm_findings TO ` + roleName,
-		`GRANT SELECT ON ispm_rules TO ` + roleName,
-		`GRANT SELECT ON ai_agents TO ` + roleName,
-		`GRANT SELECT ON ai_recommendations TO ` + roleName,
-	} {
+	}
+	for _, tbl := range readOnly {
+		stmts = append(stmts, `GRANT SELECT ON `+tbl+` TO `+roleName)
+	}
+	for _, stmt := range stmts {
 		_, err := admin.Exec(ctx, stmt)
 		require.NoError(t, err, "grant to RLS test role: %s", stmt)
 	}
@@ -1334,61 +1342,38 @@ func TestCrossOrgSpoofing(t *testing.T) {
 		"forged X-Org-Slug through the gateway must be stripped — org B's user must not read 200")
 }
 
-// TestRLSBeltJITAndApprovalChains is the W2.10 belt gate: jit_grants and
-// request_approval_chains (given org_id + the FORCE-RLS belt by migration v64)
-// are invisible cross-org. Both need FK parents, so they can't ride the generic
-// TestRLSBeltTables loop; this seeds the parents under bypass and asserts an
-// A-scoped NOSUPERUSER session sees zero of org B's rows while bypass sees them.
-func TestRLSBeltJITAndApprovalChains(t *testing.T) {
-	admin := integrationDB(t)
-	defer admin.Close()
-	requireForceRLS(t, admin, "jit_grants")
-	requireForceRLS(t, admin, "request_approval_chains")
-
-	ctx := context.Background()
-	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
-	orgA := seedOrg(t, admin, "jitbelt-a-"+suffix)
-	orgB := seedOrg(t, admin, "jitbelt-b-"+suffix)
-	userB := seedUserInOrg(t, admin, orgB, "jitbelt-u-"+suffix, "jitbelt-"+suffix+"@example.test")
-
-	// Seed org B's FK parents + rows under bypass (FORCE RLS would reject an
-	// unset-org WITH CHECK on the org-B inserts).
-	var roleB, reqB string
-	bypassQueryRow(t, admin, &roleB,
-		`INSERT INTO roles (name, org_id) VALUES ($1,$2) RETURNING id`, "jitbelt-role-"+suffix, orgB)
-	bypassExec(t, admin,
-		`INSERT INTO jit_grants (org_id, user_id, role_id, role_name, justification, duration, expires_at)
-		 VALUES ($1,$2,$3,'jitbelt-role','t',' 1h', NOW() + interval '1 hour')`, orgB, userB, roleB)
-	bypassQueryRow(t, admin, &reqB,
-		`INSERT INTO access_requests (requester_id, resource_type, resource_id, resource_name, status, org_id)
-		 VALUES ($1,'role',gen_random_uuid(),'jitbelt','pending',$2) RETURNING id`, userB, orgB)
-	bypassExec(t, admin,
-		`INSERT INTO request_approval_chains (org_id, request_id, escalation_due_at)
-		 VALUES ($1,$2, NOW() + interval '1 day')`, orgB, reqB)
-	t.Cleanup(func() {
-		bypassExec(t, admin, "DELETE FROM request_approval_chains WHERE org_id=$1", orgB)
-		bypassExec(t, admin, "DELETE FROM jit_grants WHERE org_id=$1", orgB)
-		bypassExec(t, admin, "DELETE FROM access_requests WHERE org_id=$1", orgB)
-		bypassExec(t, admin, "DELETE FROM roles WHERE id=$1", roleB)
-		bypassExec(t, admin, "DELETE FROM users WHERE id=$1", userB)
-		bypassExec(t, admin, "DELETE FROM organizations WHERE id IN ($1,$2)", orgA, orgB)
-	})
-
-	pool := rlsRolePool(t, admin)
-	defer pool.Close()
-	conn, err := pool.Acquire(ctx)
-	require.NoError(t, err)
-	defer conn.Release()
-
-	countB := func(table, bypass string) int {
-		_, e := conn.Exec(ctx, `select set_config('app.org_id',$1,false), set_config('app.bypass_rls',$2,false)`, orgA, bypass)
-		require.NoError(t, e)
-		var n int
-		require.NoError(t, conn.QueryRow(ctx, "SELECT count(*) FROM "+table+" WHERE org_id = $1", orgB).Scan(&n))
-		return n
+// requireTablesExist fails with the actual finding when a fixture names a table
+// no migration creates.
+//
+// Without it a dropped table surfaces as `relation "x" does not exist` raised
+// by a GRANT inside a helper, repeated across every test that takes the pool,
+// with nothing saying that a hand-written list has drifted from the schema.
+// That is what happened to jit_grants and request_approval_chains, and it is
+// what will happen to the next table someone drops.
+func requireTablesExist(t *testing.T, admin *pgxpool.Pool, tables []string) {
+	t.Helper()
+	var missing []string
+	for _, tbl := range tables {
+		var ok bool
+		require.NoError(t, admin.QueryRow(context.Background(),
+			`SELECT to_regclass('public.' || $1) IS NOT NULL`, tbl).Scan(&ok),
+			"look up table %s", tbl)
+		if !ok {
+			missing = append(missing, tbl)
+		}
 	}
-	for _, table := range []string{"jit_grants", "request_approval_chains"} {
-		assert.Equal(t, 0, countB(table, ""), "A-scoped session must not see org B rows in %s", table)
-		assert.Greater(t, countB(table, "on"), 0, "bypass must see org B rows in %s", table)
-	}
+	require.Empty(t, missing,
+		"the RLS fixture grants on %v, which no migration creates. This list is hand-written: "+
+			"a migration dropped these and the list was not updated. Remove them here (and any test "+
+			"that reads them) rather than re-creating the tables.", missing)
 }
+
+// The W2.10 belt gate for jit_grants and request_approval_chains lived here.
+// Both tables are gone: each was created by migration v58 for a second
+// implementation of a workflow no binary could reach, those implementations
+// were deleted, and drop_jit_grants / drop_request_approval_chains removed the
+// tables behind them. A belt test over a table that does not exist is not a
+// weaker test, it is a failing fixture -- which is exactly what it became.
+//
+// request_approval_chains has no successor to test: the live workflow expands
+// approvals into access_request_approvals, which TestRLSBeltTables covers.

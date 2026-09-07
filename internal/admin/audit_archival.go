@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -321,7 +322,7 @@ func (s *Service) createAuditArchive(orgID, archiveID string, start, end time.Ti
 	rows, err := s.db.Pool.Query(ctx, query, args...)
 	if err != nil {
 		s.logger.Error("Failed to query audit events for archive", zap.Error(err))
-		_, _ = s.db.Pool.Exec(ctx,
+		s.recordArchiveState(ctx, archiveID, orgID, "failed",
 			"UPDATE audit_archives SET status = 'failed' WHERE id = $1 AND org_id = $2", archiveID, orgID)
 		return
 	}
@@ -335,7 +336,7 @@ func (s *Service) createAuditArchive(orgID, archiveID string, start, end time.Ti
 	file, err := os.Create(filePath)
 	if err != nil {
 		s.logger.Error("Failed to create archive file", zap.Error(err))
-		_, _ = s.db.Pool.Exec(ctx,
+		s.recordArchiveState(ctx, archiveID, orgID, "failed",
 			"UPDATE audit_archives SET status = 'failed' WHERE id = $1 AND org_id = $2", archiveID, orgID)
 		return
 	}
@@ -385,10 +386,32 @@ func (s *Service) createAuditArchive(orgID, archiveID string, start, end time.Ti
 		fileSize = stat.Size()
 	}
 
-	_, _ = s.db.Pool.Exec(ctx,
+	// file_path is the only pointer to the archive on disk. Without it the
+	// export exists, holds this tenant's audit events, and nothing in the
+	// product knows where -- an unreferenced copy of audit data that no
+	// retention job will ever collect. And 'completed' is what takes the
+	// archive out of the state the console renders as still running.
+	s.recordArchiveState(ctx, archiveID, orgID, "completed",
 		`UPDATE audit_archives SET status = 'completed', event_count = $1, file_size = $2, file_path = $3
 		 WHERE id = $4 AND org_id = $5`,
 		eventCount, fileSize, filePath, archiveID, orgID)
+}
+
+// recordArchiveState moves an archive job to a terminal state and says so when
+// it cannot.
+//
+// This runs on a detached goroutine, so there is no caller to answer: the only
+// thing an unrecorded outcome can do is be visible. All three writes discarded
+// their error, and every one of them is the statement that ends the job --
+// lose it and the archive sits in the console as "in progress" for ever, over
+// work that finished or failed long ago.
+func (s *Service) recordArchiveState(ctx context.Context, archiveID, orgID, state, sql string, args ...interface{}) {
+	if _, err := s.db.Pool.Exec(ctx, sql, args...); err != nil {
+		s.logger.Error("audit archive reached a terminal state that could not be recorded; "+
+			"the console will show it as still running",
+			logsafe.String("archive_id", archiveID), logsafe.String("org_id", orgID),
+			zap.String("state", state), zap.Error(err))
+	}
 }
 
 func (s *Service) handleListAuditArchives(c *gin.Context) {

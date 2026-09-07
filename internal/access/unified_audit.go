@@ -16,6 +16,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -305,6 +306,7 @@ func (uas *UnifiedAuditService) syncZitiAuditEvents(ctx context.Context) error {
 	// random UUID, so ON CONFLICT alone can't dedup controller events.
 	var newestTS time.Time
 	var newLastEventID string
+	ingestFailed := false
 	for _, event := range events {
 		// Map Ziti event to unified format
 		details := map[string]interface{}{
@@ -344,15 +346,31 @@ func (uas *UnifiedAuditService) syncZitiAuditEvents(ctx context.Context) error {
 
 		detailsJSON, _ := json.Marshal(details)
 		// Insert only if no row with this ziti_event_id already exists.
+		//
+		// THIS IS the audit record. Its error was discarded and the cursor
+		// below advanced regardless, so an event the database refused was
+		// stepped over: the next poll asked for events after it, and that
+		// controller event -- a service dial, an api-session login -- was
+		// never ingested and never missed by anything.
+		//
+		// Stop advancing the cursor at the first failure instead. The next
+		// poll re-fetches from the last event that did land, and the
+		// NOT EXISTS predicate makes re-ingesting the ones in between free.
 		//orgscope:ignore install-wide fabric ingest running under WithBypassRLS; org_id is derived per event from the route above, and the dedup predicate must see every org's rows or a re-poll duplicates them
-		uas.db.Pool.Exec(ctx, `
+		if _, err := uas.db.Pool.Exec(ctx, `
 			INSERT INTO unified_audit_events (id, org_id, source, event_type, route_id, actor_ip, details, created_at)
 			SELECT $1, $2, 'ziti', $3, $4, $5, $6, $7
 			 WHERE NOT EXISTS (
 			     SELECT 1 FROM unified_audit_events
 			      WHERE source = 'ziti' AND details->>'ziti_event_id' = $8
 			 )
-		`, uuid.New().String(), orgID, event.Type, routeID, event.SourceIP, detailsJSON, event.Timestamp, event.ID)
+		`, uuid.New().String(), orgID, event.Type, routeID, event.SourceIP, detailsJSON, event.Timestamp, event.ID); err != nil {
+			uas.logger.Error("could not record a Ziti audit event; holding the sync cursor so the next "+
+				"poll retries from here",
+				logsafe.String("ziti_event_id", event.ID), zap.Error(err))
+			ingestFailed = true
+			break
+		}
 
 		if event.Timestamp.After(newestTS) {
 			newestTS = event.Timestamp
@@ -364,16 +382,25 @@ func (uas *UnifiedAuditService) syncZitiAuditEvents(ctx context.Context) error {
 	// sync). Advance last_sync_at to the newest event timestamp, not NOW(), so
 	// the timestamp cursor passed to GetAuditEvents is exact.
 	if newLastEventID != "" {
-		uas.db.Pool.Exec(ctx, `
+		// A cursor that cannot be advanced is the safe failure: the next poll
+		// re-reads the same window and the dedup predicate drops what is
+		// already there. A cursor advanced past an event nobody stored is the
+		// unsafe one, which is what this used to risk silently.
+		if _, err := uas.db.Pool.Exec(ctx, `
 			INSERT INTO external_audit_sync_state (source, last_sync_at, last_event_id, updated_at)
 			VALUES ('ziti', $1, $2, NOW())
 			ON CONFLICT (source) DO UPDATE
 			   SET last_sync_at = EXCLUDED.last_sync_at,
 			       last_event_id = EXCLUDED.last_event_id,
 			       updated_at = NOW()
-		`, newestTS, newLastEventID)
+		`, newestTS, newLastEventID); err != nil {
+			return fmt.Errorf("advance the ziti audit sync cursor: %w", err)
+		}
 	}
 
+	if ingestFailed {
+		return fmt.Errorf("ziti audit ingest stopped early; the cursor is held at %s", newLastEventID)
+	}
 	return nil
 }
 
@@ -391,6 +418,7 @@ func (uas *UnifiedAuditService) syncGuacamoleAuditEvents(ctx context.Context) er
 		return err
 	}
 
+	ingestFailed := false
 	for _, session := range sessions {
 		details := map[string]interface{}{
 			"guacamole_connection_id": session.ConnectionID,
@@ -431,20 +459,35 @@ func (uas *UnifiedAuditService) syncGuacamoleAuditEvents(ctx context.Context) er
 		}
 
 		detailsJSON, _ := json.Marshal(details)
+		// The cursor for this source is a bare last_sync_at = NOW(), so a
+		// session whose row was not written is behind the cursor on the next
+		// poll and gone: a recorded remote session -- who connected to what,
+		// from where, for how long -- with no audit row anywhere.
 		//orgscope:ignore install-wide session-history ingest running under WithBypassRLS; org_id is derived per session from the route above
-		uas.db.Pool.Exec(ctx, `
+		if _, err := uas.db.Pool.Exec(ctx, `
 			INSERT INTO unified_audit_events (id, org_id, source, event_type, route_id, actor_ip, details, created_at)
 			VALUES ($1, $2, 'guacamole', $3, $4, $5, $6, $7)
 			ON CONFLICT DO NOTHING
-		`, uuid.New().String(), orgID, eventType, routeID, session.RemoteIP, detailsJSON, session.StartTime)
+		`, uuid.New().String(), orgID, eventType, routeID, session.RemoteIP, detailsJSON, session.StartTime); err != nil {
+			uas.logger.Error("could not record a Guacamole session audit event; leaving the sync cursor "+
+				"where it is so the next poll retries this window",
+				logsafe.String("connection_id", session.ConnectionID), zap.Error(err))
+			ingestFailed = true
+			break
+		}
 	}
 
-	// Update sync state
-	uas.db.Pool.Exec(ctx, `
+	// Update sync state -- but only over a window that was fully ingested.
+	if ingestFailed {
+		return fmt.Errorf("guacamole audit ingest stopped early; the sync cursor is unchanged")
+	}
+	if _, err := uas.db.Pool.Exec(ctx, `
 		UPDATE external_audit_sync_state
 		SET last_sync_at = NOW(), updated_at = NOW()
 		WHERE source = 'guacamole'
-	`)
+	`); err != nil {
+		return fmt.Errorf("advance the guacamole audit sync cursor: %w", err)
+	}
 
 	return nil
 }
