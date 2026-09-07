@@ -5911,17 +5911,52 @@ func (s *Service) handleAcceptInvitation(c *gin.Context) {
 		return
 	}
 
-	// Look up invitation within the caller's org (the invite link is
-	// org-specific via the subdomain it was sent for)
+	// Hash before anything is claimed. A hashing failure used to be swallowed
+	// by `if err == nil` around the password UPDATE, so the account was created,
+	// answered 201 "Account created successfully", and had no password.
+	hashedPassword, err := pwhash.Hash(req.Password)
+	if err != nil {
+		s.logger.Error("could not hash the password for an invitation acceptance", zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
+		return
+	}
+
+	// CLAIM the invitation, do not merely read it. This one statement replaces
+	// a SELECT ... WHERE status = 'pending' followed, forty lines later, by an
+	// UPDATE ... SET status = 'accepted' whose error was discarded.
+	//
+	// Two things were wrong with that. The UPDATE could fail and nothing looked,
+	// so the invitation stayed pending and the token stayed usable -- a
+	// single-use credential that was never spent, and a second POST with the
+	// same token made a second account. And even had the error been checked,
+	// SELECT-then-UPDATE is a check-then-act: two requests arriving together
+	// both pass the SELECT before either writes.
+	//
+	// An UPDATE ... RETURNING with the predicate on it does both at once and
+	// locks the row until commit, so exactly one caller can claim a token. No
+	// rows back means already used, expired, or not this org's.
 	var invID, email string
 	var roles, groups []string
 	err = s.db.Pool.QueryRow(ctx,
-		`SELECT id, email, roles, groups FROM user_invitations
-		 WHERE token = $1 AND org_id = $2 AND status = 'pending' AND expires_at > NOW()`,
+		`UPDATE user_invitations SET status = 'accepted', accepted_at = NOW()
+		 WHERE token = $1 AND org_id = $2 AND status = 'pending' AND expires_at > NOW()
+		 RETURNING id, email, roles, groups`,
 		token, org.ID).Scan(&invID, &email, &roles, &groups)
 	if err != nil {
 		c.JSON(400, gin.H{"error": "invalid or expired invitation"})
 		return
+	}
+
+	// From here the token is spent. Any failure below must put it back, or an
+	// ordinary retryable problem -- the username is taken -- would cost the
+	// invitee their invitation and need an administrator to issue another.
+	releaseInvitation := func() {
+		if _, rerr := s.db.Pool.Exec(ctx,
+			`UPDATE user_invitations SET status = 'pending', accepted_at = NULL WHERE id = $1 AND org_id = $2`,
+			invID, org.ID); rerr != nil {
+			s.logger.Error("could not release a claimed invitation after a failed acceptance; it must be reissued",
+				logsafe.String("invitation_id", invID), zap.Error(rerr))
+		}
 	}
 
 	// Create user (CreateUser scopes to the org carried on ctx)
@@ -5933,36 +5968,32 @@ func (s *Service) handleAcceptInvitation(c *gin.Context) {
 	}
 
 	if err := s.CreateUser(ctx, user); err != nil {
+		releaseInvitation()
 		s.logger.Error("failed to create user from invitation", zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 
-	// Set password
-	hashedPassword, err := pwhash.Hash(req.Password)
-	if err == nil {
-		s.db.Pool.Exec(ctx,
-			"UPDATE users SET password_hash = $1, password_changed_at = NOW() WHERE id = $2 AND org_id = $3",
-			hashedPassword, user.ID, org.ID)
+	// The password and the grants together, or neither. Each of these was
+	// discarded: an account could be created and answered 201 with no password
+	// set, or with none of the roles and groups the invitation promised -- an
+	// account that exists, cannot log in, and holds no access, while the API
+	// said "Account created successfully".
+	//
+	// The user row itself is outside this transaction (CreateUser goes through
+	// the repository on the pool), so a failure here leaves an account with no
+	// password. That fails closed -- no password means no login -- and the
+	// response says so rather than claiming success.
+	if err := s.grantInvitedAccess(ctx, user.ID, org.ID, hashedPassword, roles, groups); err != nil {
+		s.logger.Error("an invitation was accepted but the account could not be finished",
+			logsafe.String("invitation_id", invID), zap.String("user_id", user.ID), zap.Error(err))
+		c.JSON(500, gin.H{
+			"error": "the account was created but its password and access could not be set; " +
+				"ask an administrator to reset the password and check the assigned roles",
+			"user_id": user.ID,
+		})
+		return
 	}
-
-	// Assign roles (only roles within the caller's org)
-	for _, role := range roles {
-		s.db.Pool.Exec(ctx,
-			"INSERT INTO user_roles (user_id, role_id, org_id) SELECT $1, id, $3 FROM roles WHERE name = $2 AND org_id = $3 ON CONFLICT DO NOTHING",
-			user.ID, role, org.ID)
-	}
-
-	// Add to groups (only groups within the caller's org)
-	for _, group := range groups {
-		s.db.Pool.Exec(ctx,
-			"INSERT INTO group_memberships (user_id, group_id, org_id) SELECT $1, id, $3 FROM groups WHERE name = $2 AND org_id = $3 ON CONFLICT DO NOTHING",
-			user.ID, group, org.ID)
-	}
-
-	// Mark invitation as accepted
-	s.db.Pool.Exec(ctx,
-		"UPDATE user_invitations SET status = 'accepted', accepted_at = NOW() WHERE id = $1 AND org_id = $2", invID, org.ID)
 
 	// Send welcome email
 	if s.emailService != nil {
@@ -5977,6 +6008,62 @@ func (s *Service) handleAcceptInvitation(c *gin.Context) {
 	}
 
 	c.JSON(201, gin.H{"message": "Account created successfully", "user_id": user.ID})
+}
+
+// grantInvitedAccess sets the new account's password and gives it the roles and
+// groups the invitation named, in one transaction.
+//
+// One transaction because these three are one promise. An invitation that says
+// "you will be an auditor in the Finance group" and produces an account with the
+// password but neither grant is not a partial success; it is an account whose
+// holder will be told to raise a ticket. Rolling the lot back leaves a passwordless
+// account -- which cannot be used -- and a caller that knows to say so.
+//
+// A role or group named by the invitation that does not exist in the org is not
+// an error: the INSERT ... SELECT simply matches nothing. That is the existing
+// behaviour and it is the right one, because an administrator can delete a role
+// between issuing an invitation and its acceptance, and refusing the whole
+// acceptance for that would be worse than granting what remains.
+func (s *Service) grantInvitedAccess(ctx context.Context, userID, orgID, hashedPassword string, roles, groups []string) error {
+	tx, err := s.db.Pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	tag, err := tx.Exec(ctx,
+		"UPDATE users SET password_hash = $1, password_changed_at = NOW() WHERE id = $2 AND org_id = $3",
+		hashedPassword, userID, orgID)
+	if err != nil {
+		return fmt.Errorf("set the password: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		// The row was created moments ago in this org. Nought here means a
+		// policy refused the write, and an account with no password that
+		// reports success is the failure this whole change is about.
+		return fmt.Errorf("set the password: the new account row was not updated")
+	}
+
+	for _, role := range roles {
+		if _, err := tx.Exec(ctx,
+			"INSERT INTO user_roles (user_id, role_id, org_id) SELECT $1, id, $3 FROM roles WHERE name = $2 AND org_id = $3 ON CONFLICT DO NOTHING",
+			userID, role, orgID); err != nil {
+			return fmt.Errorf("assign the role the invitation named: %w", err)
+		}
+	}
+
+	for _, group := range groups {
+		if _, err := tx.Exec(ctx,
+			"INSERT INTO group_memberships (user_id, group_id, org_id) SELECT $1, id, $3 FROM groups WHERE name = $2 AND org_id = $3 ON CONFLICT DO NOTHING",
+			userID, group, orgID); err != nil {
+			return fmt.Errorf("add to the group the invitation named: %w", err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
 }
 
 // handleOffboardUser deactivates a user and cleans up their access

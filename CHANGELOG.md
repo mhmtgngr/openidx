@@ -78,6 +78,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **An invitation token was never spent (`handleAcceptInvitation`).** Accepting
+  an invitation read the row `WHERE status = 'pending'`, created the account,
+  and forty lines later ran `UPDATE user_invitations SET status = 'accepted'`
+  with the error discarded. If that write failed the invitation stayed pending
+  and the token stayed usable — a single-use credential that could create a
+  second account, and a third. Even checked, `SELECT`-then-`UPDATE` is a
+  check-then-act: two requests arriving together both pass the read before
+  either writes. One `UPDATE … RETURNING` now reads and burns at once, so
+  exactly one caller can claim a token, and a failure anywhere after it puts
+  the invitation back rather than costing the invitee their invitation over a
+  taken username. The same handler also skipped the password write entirely
+  when hashing failed (`if err == nil`) and discarded the role and group
+  inserts, so it could answer **201 "Account created successfully"** for an
+  account with no password and none of the access the invitation promised;
+  those three now share a transaction and the response says plainly when it
+  could not be finished.
+- **An approval chain could come out shorter than its policy
+  (`createApprovalRows`).** Five `INSERT`s into `access_request_approvals`, one
+  per approval-step type, every one discarding its error. Losing the whole
+  chain is visible — nobody can approve the request. Losing *part* of it is
+  silent and worse: `handleApproveRequest` fulfils a request when the count of
+  pending approvals reaches zero, so a two-step policy that produced only its
+  first row is granted by one approver with the second step skipped, and the
+  audit trail says it was approved. The builder reports failure now, and the
+  handler withdraws the request rather than leaving a half-routed one standing.
+- **The writes whose failure nobody learns about (`tools/silentwrite`, new
+  gate).** 137 statements across the tree change the database through
+  `_, _ = …Exec(…)` or a bare call, and cannot tell whether they did. Many are
+  best-effort by design — a last-seen timestamp, a queue counter, a telemetry
+  row — and wrapping those in error paths nobody reads would be worse code. But
+  "best-effort" is a judgement the tree records nowhere: `_, _ =` is Go's
+  spelling for "I meant to drop this", equally true of the timestamp and of the
+  revoked credential. The gate reports each one and is cleared either by
+  handling the error or by a `//silentwrite:ok` reason above the call saying
+  what is lost — the `//orgscope:ignore` convention this repository already
+  uses. The two fixes above take the count to 128, and the gate holds it there:
+  it can only go down.
 - **115 log fields carried a request value nothing cleaned
   (`internal/common/logsafe`, new guard).** CodeQL filed two "Log entries
   created from user input" alerts against `internal/admin/attestation.go`.

@@ -181,8 +181,27 @@ func (s *Service) handleCreateAccessRequest(c *gin.Context) {
 		return
 	}
 
-	// Find matching approval policy and create approval rows
-	s.createApprovalRows(c.Request.Context(), id, body.ResourceType, body.ResourceID)
+	// Find matching approval policy and create approval rows.
+	//
+	// A request whose chain came out short is worse than no request at all: the
+	// approvers who did get a row approve it, the pending count reaches zero,
+	// and the request is fulfilled having skipped a step its policy required.
+	// So a half-built chain does not get to stand. The request row is removed
+	// and the caller is told to try again -- nothing is granted, and the
+	// requester keeps the ability to ask.
+	if err := s.createApprovalRows(c.Request.Context(), id, body.ResourceType, body.ResourceID); err != nil {
+		s.logger.Error("could not build the approval chain for a new access request; withdrawing the request",
+			logsafe.String("request_id", id), zap.Error(err))
+		if _, derr := s.db.Pool.Exec(c.Request.Context(),
+			`DELETE FROM access_requests WHERE id = $1 AND org_id = $2`, id, org.ID); derr != nil {
+			s.logger.Error("the access request whose approval chain failed could not be withdrawn either; "+
+				"it will sit with an incomplete chain and must be cancelled by hand",
+				logsafe.String("request_id", id), zap.Error(derr))
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "the request could not be routed for approval and was not created; please try again"})
+		return
+	}
 
 	c.JSON(http.StatusCreated, AccessRequest{
 		ID:            id,
@@ -199,12 +218,35 @@ func (s *Service) handleCreateAccessRequest(c *gin.Context) {
 	})
 }
 
-// createApprovalRows looks up approval policies and creates approval rows for a request
-func (s *Service) createApprovalRows(ctx context.Context, requestID, resourceType, resourceID string) {
+// insertApproval records one pending approver for a request.
+//
+// It is a function because the five places that used to write this row each
+// discarded the error, and five discards are five chances for an approval chain
+// to come out shorter than the policy says. Missing the whole chain is a request
+// nobody can approve -- handleApproveRequest answers "No pending approval found
+// for this approver" and the request sits. Missing PART of it is worse and
+// quieter: the approvers who did get a row approve, the pending count reaches
+// zero, and the request is fulfilled having skipped a step the policy required.
+func (s *Service) insertApproval(ctx context.Context, requestID, approverID string, order int, orgID string) error {
+	_, err := s.db.Pool.Exec(ctx,
+		`INSERT INTO access_request_approvals (id, request_id, approver_id, step_order, decision, created_at, org_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		uuid.New().String(), requestID, approverID, order, "pending", time.Now(), orgID,
+	)
+	if err != nil {
+		return fmt.Errorf("record the approver for step %d: %w", order, err)
+	}
+	return nil
+}
+
+// createApprovalRows looks up approval policies and creates approval rows for a
+// request. It returns an error when the chain could not be built in full; the
+// caller must then not leave a request standing whose approval chain is shorter
+// than its policy.
+func (s *Service) createApprovalRows(ctx context.Context, requestID, resourceType, resourceID string) error {
 	org, err := orgctx.From(ctx)
 	if err != nil {
-		s.logger.Error("createApprovalRows: no org context", zap.Error(err))
-		return
+		return fmt.Errorf("organization context required to build an approval chain: %w", err)
 	}
 
 	// Resolve the requester up front so approver steps can EXCLUDE them:
@@ -230,12 +272,7 @@ func (s *Service) createApprovalRows(ctx context.Context, requestID, resourceTyp
 	if err != nil {
 		// No matching policy — create a default admin approval
 		adminID := "00000000-0000-0000-0000-000000000001"
-		_, _ = s.db.Pool.Exec(ctx,
-			`INSERT INTO access_request_approvals (id, request_id, approver_id, step_order, decision, created_at, org_id)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-			uuid.New().String(), requestID, adminID, 1, "pending", time.Now(), org.ID,
-		)
-		return
+		return s.insertApproval(ctx, requestID, adminID, 1, org.ID)
 	}
 
 	// V-007: evaluate the policy's typed auto_approve_conditions before
@@ -247,13 +284,13 @@ func (s *Service) createApprovalRows(ctx context.Context, requestID, resourceTyp
 			s.logger.Warn("createApprovalRows: malformed auto_approve_conditions; ignoring",
 				zap.String("request_id", requestID), zap.Error(uerr))
 		} else if s.tryAutoApprove(ctx, requestID, &cond) {
-			return
+			return nil
 		}
 	}
 
 	var steps []ApprovalStep
 	if err := json.Unmarshal(stepsJSON, &steps); err != nil || len(steps) == 0 {
-		return
+		return nil
 	}
 
 	for i, step := range steps {
@@ -261,11 +298,9 @@ func (s *Service) createApprovalRows(ctx context.Context, requestID, resourceTyp
 		switch step.Type {
 		case ApprovalStepTypeSpecificUser:
 			if step.ApproverID != "" {
-				_, _ = s.db.Pool.Exec(ctx,
-					`INSERT INTO access_request_approvals (id, request_id, approver_id, step_order, decision, created_at, org_id)
-					 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-					uuid.New().String(), requestID, step.ApproverID, step.Order, "pending", time.Now(), org.ID,
-				)
+				if err := s.insertApproval(ctx, requestID, step.ApproverID, step.Order, org.ID); err != nil {
+					return err
+				}
 			}
 		case ApprovalStepTypeRole:
 			if step.RoleID != "" {
@@ -291,11 +326,9 @@ func (s *Service) createApprovalRows(ctx context.Context, requestID, resourceTyp
 						if userID == requesterID {
 							continue // four-eyes: never make the requester their own approver
 						}
-						_, _ = s.db.Pool.Exec(ctx,
-							`INSERT INTO access_request_approvals (id, request_id, approver_id, step_order, decision, created_at, org_id)
-							 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-							uuid.New().String(), requestID, userID, step.Order, "pending", time.Now(), org.ID,
-						)
+						if err := s.insertApproval(ctx, requestID, userID, step.Order, org.ID); err != nil {
+							return err
+						}
 					}
 				}
 			}
@@ -317,11 +350,9 @@ func (s *Service) createApprovalRows(ctx context.Context, requestID, resourceTyp
 						if userID == requesterID {
 							continue // four-eyes: never make the requester their own approver
 						}
-						_, _ = s.db.Pool.Exec(ctx,
-							`INSERT INTO access_request_approvals (id, request_id, approver_id, step_order, decision, created_at, org_id)
-							 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-							uuid.New().String(), requestID, userID, step.Order, "pending", time.Now(), org.ID,
-						)
+						if err := s.insertApproval(ctx, requestID, userID, step.Order, org.ID); err != nil {
+							return err
+						}
 					}
 				}
 			}
@@ -341,11 +372,9 @@ func (s *Service) createApprovalRows(ctx context.Context, requestID, resourceTyp
 				if err != nil {
 					s.logger.Error("Failed to get manager for requester", zap.Error(err), zap.String("requester_id", requesterID))
 				} else if managerID != nil {
-					_, _ = s.db.Pool.Exec(ctx,
-						`INSERT INTO access_request_approvals (id, request_id, approver_id, step_order, decision, created_at, org_id)
-						 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-						uuid.New().String(), requestID, *managerID, step.Order, "pending", time.Now(), org.ID,
-					)
+					if err := s.insertApproval(ctx, requestID, *managerID, step.Order, org.ID); err != nil {
+						return err
+					}
 				}
 			}
 		case ApprovalStepTypeAuto:
@@ -355,6 +384,7 @@ func (s *Service) createApprovalRows(ctx context.Context, requestID, resourceTyp
 			s.logger.Warn("Unknown approval step type", zap.String("type", string(step.Type)))
 		}
 	}
+	return nil
 }
 
 // handleListAccessRequests lists access requests with optional filtering
