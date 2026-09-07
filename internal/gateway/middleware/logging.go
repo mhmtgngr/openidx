@@ -190,67 +190,11 @@ func GetLogger(c *gin.Context) (gateway.Logger, bool) {
 	return l, ok
 }
 
-// WithLogger returns a logger with additional context fields
-// Since gateway.Logger doesn't support With(), we return a wrapper
-func WithLogger(logger gateway.Logger, c *gin.Context) gateway.Logger {
-	// Create a context-aware logger wrapper
-	return &contextLogger{
-		logger:        logger,
-		correlationID: GetCorrelationID(c),
-		path:          c.Request.URL.Path,
-	}
-}
-
-// contextLogger wraps gateway.Logger with context fields
-type contextLogger struct {
-	logger        gateway.Logger
-	correlationID string
-	path          string
-}
-
-func (l *contextLogger) Debug(msg string, fields ...interface{}) {
-	allFields := append([]interface{}{
-		"correlation_id", l.correlationID,
-		"path", l.path,
-	}, fields...)
-	l.logger.Debug(msg, allFields...)
-}
-
-func (l *contextLogger) Info(msg string, fields ...interface{}) {
-	allFields := append([]interface{}{
-		"correlation_id", l.correlationID,
-		"path", l.path,
-	}, fields...)
-	l.logger.Info(msg, allFields...)
-}
-
-func (l *contextLogger) Warn(msg string, fields ...interface{}) {
-	allFields := append([]interface{}{
-		"correlation_id", l.correlationID,
-		"path", l.path,
-	}, fields...)
-	l.logger.Warn(msg, allFields...)
-}
-
-func (l *contextLogger) Error(msg string, fields ...interface{}) {
-	allFields := append([]interface{}{
-		"correlation_id", l.correlationID,
-		"path", l.path,
-	}, fields...)
-	l.logger.Error(msg, allFields...)
-}
-
-func (l *contextLogger) Fatal(msg string, fields ...interface{}) {
-	allFields := append([]interface{}{
-		"correlation_id", l.correlationID,
-		"path", l.path,
-	}, fields...)
-	l.logger.Fatal(msg, allFields...)
-}
-
-func (l *contextLogger) Sync() error {
-	return l.logger.Sync()
-}
+// WithLogger and the contextLogger it returned stood here: a wrapper that
+// stamped the correlation id and path onto every line. Nothing ever called
+// WithLogger. The correlation id still reaches the logs -- CorrelationID
+// puts it on the context and LogRequestEntry/LogRequestExit below read it --
+// so what is gone is a second way to say the same thing, not the field.
 
 // LogRequestEntry logs when a request enters the gateway
 func LogRequestEntry(logger gateway.Logger, c *gin.Context) {

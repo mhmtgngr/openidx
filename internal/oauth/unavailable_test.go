@@ -13,7 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgconn"
 
-	"github.com/openidx/openidx/internal/common/cache"
+	"github.com/redis/go-redis/v9"
 )
 
 func TestIsDependencyUnavailable(t *testing.T) {
@@ -23,8 +23,9 @@ func TestIsDependencyUnavailable(t *testing.T) {
 		want bool
 	}{
 		{"nil is not unavailable", nil, false},
-		{"redis unavailable", cache.ErrRedisUnavailable, true},
-		{"wrapped redis unavailable", fmt.Errorf("get session: %w", cache.ErrRedisUnavailable), true},
+		{"redis closed", redis.ErrClosed, true},
+		{"redis pool timeout", redis.ErrPoolTimeout, true},
+		{"wrapped redis closed", fmt.Errorf("get session: %w", redis.ErrClosed), true},
 		{"context deadline (dial timed out)", context.DeadlineExceeded, true},
 		{"context canceled", context.Canceled, true},
 		{"net dial error", &net.OpError{Op: "dial", Err: errors.New("connection refused")}, true},
@@ -58,7 +59,7 @@ func TestWriteServerOrUnavailable(t *testing.T) {
 	t.Run("transient outage -> 503 temporarily_unavailable with Retry-After", func(t *testing.T) {
 		w := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(w)
-		wrote503 := writeServerOrUnavailable(c, cache.ErrRedisUnavailable)
+		wrote503 := writeServerOrUnavailable(c, redis.ErrClosed)
 		if !wrote503 {
 			t.Fatal("expected writeServerOrUnavailable to report a 503")
 		}

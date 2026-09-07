@@ -75,43 +75,95 @@ var knownDead = map[string]string{
 
 	// ---- metrics -----------------------------------------------------------
 
-	// The live metrics path is the package-level Prometheus collectors in
-	// prometheus.go plus metrics.Handler(), which every service mounts at
-	// /metrics. These five Collector types are a second layer that would query
-	// the database for business metrics -- and none is registered, so none of
-	// those metrics has ever been exported.
-	"internal/metrics.OAuthMetricsCollector":      "business metrics for OAuth (token issuance by grant, active clients, consent rates) read from the database. Never registered with the Prometheus registry metrics.Handler() serves, so none of it is exported. Register it or delete it; a dashboard built against these names would be empty.",
-	"internal/metrics.AdminMetricsCollector":      "the same, for admin activity: actions per administrator, delegation use, bulk-operation volume. Never registered either, so nothing is exported. Register it or delete it.",
-	"internal/metrics.AuditMetricsCollector":      "the same, for audit volume and outcomes by category. Never registered either, so nothing is exported. Register it or delete it.",
-	"internal/metrics.GovernanceMetricsCollector": "the same, for access requests, approvals and review campaigns. Never registered either, so nothing is exported. Register it or delete it.",
-	"internal/metrics.IdentityMetricsCollector":   "the same, for users, groups and MFA enrolment rates. Never registered either, so nothing is exported. Register it or delete it.",
-	"internal/metrics.TracedRedisClient":          "an OpenTelemetry-instrumented wrapper over *redis.Client, mirroring the whole command surface so a caller can swap it in. Nobody did: every service holds the bare client. AN ABSTRACTION NOBODY ADOPTED. Adopt it in one service or delete it -- 21 wrapper methods are 21 chances to drift from the client they wrap.",
+	// Six entries left here at once, all deleted.
+	//
+	// Five business-metric Collectors -- OAuth, admin, audit, governance,
+	// identity -- would have queried the database for token issuance by grant,
+	// actions per administrator, audit volume by category, access-request
+	// counts and MFA enrolment rates, and not one was ever registered with the
+	// Prometheus registry metrics.Handler() serves. None of it was exported.
+	//
+	// Registering them was the other option and it is the wrong one. Each
+	// collector runs aggregate queries on every scrape, so adopting them makes
+	// scrape-time database load a decision nobody took -- and a Prometheus
+	// collector whose query fails exports a zero, which is precisely the defect
+	// this branch spent a commit removing from 157 aggregates. A dashboard
+	// built on a silently-zeroed count is worse than no dashboard. The live
+	// path stays what it is: package-level counters incremented where the thing
+	// actually happens.
+	//
+	// TracedRedisClient went with them: an OpenTelemetry wrapper mirroring the
+	// whole redis command surface so a caller could swap it in. Nobody did --
+	// every service holds the bare client -- and 21 wrapper methods are 21
+	// chances to drift from what they wrap.
 
 	// ---- health ------------------------------------------------------------
 
-	"internal/health.EnhancedHealthService": "a richer health service -- dependency checks plus certificate expiry, build info and uptime. internal/health.HealthService (7 of 7 methods reachable) is the one the services mount. A SECOND IMPLEMENTATION in the same package as the first, which is how it stayed invisible. Fold the certificate-expiry check into the live one and delete the rest.",
-	"internal/health.StaticChecker":         "a fixed-answer HealthChecker for tests and placeholders, unreachable. Delete with EnhancedHealthService.",
-	"internal/health.FuncChecker":           "a HealthChecker built from a closure, for a caller that wants an ad-hoc check. Unreachable with internal/health.EnhancedHealthService, the only thing that would have taken one. Delete with it.",
-	"internal/common/health.HealthService":  "a THIRD health service, in a different package from the other two, with its own HealthChecker interface. Nothing imports it. Delete.",
+	// internal/health.EnhancedHealthService is gone, and its entry was carried
+	// out the way the register intends: the verdict said "fold the
+	// certificate-expiry check into the live one and delete the rest", so
+	// health.CertChecker exists, every service that serves TLS from a file
+	// mounts it through RegisterCertCheck, and the second service -- its own
+	// Check, its own three handlers, its own RegisterStandardRoutes, all
+	// constructed by nothing -- is deleted.
+	//
+	// StaticChecker and FuncChecker went with it: a checker returning a
+	// constant and a checker built from a closure, for the ad-hoc caller that
+	// never arrived. A health endpoint reporting what it was told rather than
+	// what it measured is the shape this branch keeps removing.
 
 	// ---- common infrastructure ---------------------------------------------
 
-	"internal/common/cache.Cache":          "a Redis cache layer with TTL policy, key prefixing, retries and optional metrics. No service constructs it. AN ABSTRACTION NOBODY ADOPTED: the services that cache do it against the bare Redis client. Delete, or adopt it somewhere before it is read as the house pattern.",
-	"internal/common/cache.ResponseCache":  "HTTP response caching middleware over the above, with an in-memory tier. Unreachable with it.",
-	"internal/common/cache.CacheWriter":    "the gin ResponseWriter wrapper internal/common/cache.ResponseCache installs to capture a response body for caching. Unreachable with the cache nobody adopted; delete with it.",
-	"internal/common/cache.responseWriter": "the second, unexported ResponseWriter wrapper in internal/common/cache/response.go, doing the same capture as CacheWriter. Unreachable with the cache nobody adopted; delete both with it.",
+	// internal/common/cache is gone, all four types with it: a Redis cache
+	// layer, the response-caching middleware over it and two ResponseWriter
+	// wrappers doing the same capture. No service ever constructed any of it.
+	//
+	// It was load-bearing in one place, in the way an abstraction nobody
+	// adopted usually is. cache.ErrRedisUnavailable was the sentinel
+	// internal/oauth's isDependencyUnavailable tested first, to turn a Redis
+	// brownout on the issue path into a retryable 503 instead of a 500 -- and
+	// the only code that could produce it was the cache nobody constructed, so
+	// the branch had never fired and its test built the error by hand. The
+	// classifier now tests redis.ErrClosed and redis.ErrPoolTimeout, which the
+	// client the services actually hold does return.
 
-	"internal/common/middleware.Registry": "a registry that would let middleware be declared with conditions and route-group scoping and composed in a declared order. Every service builds its chain by hand in cmd/*/main.go. AN ABSTRACTION NOBODY ADOPTED. Delete.",
-	"internal/common/middleware.Builder":  "the fluent builder that would assemble a chain out of internal/common/middleware.Registry. Unreachable with the registry nobody adopted; delete with it.",
-
-	"internal/common/logger.AuditLogger":       "a structured audit-log helper over zap, unrelated to internal/audit. Nothing constructs it; the services write audit rows through internal/audit. Delete.",
-	"internal/common/logger.PerformanceLogger": "request-timing helpers over zap; the services use middleware and Prometheus instead. Delete.",
+	// internal/common/middleware.Registry and its fluent Builder are gone: a
+	// middleware registry with conditions and route-group scoping, composed in
+	// a declared order, that every service ignored in favour of building its
+	// chain by hand in cmd/*/main.go.
+	//
+	// internal/common/logger.AuditLogger and PerformanceLogger went with them.
+	// The first was a structured audit-log helper unrelated to internal/audit,
+	// which is where audit rows are actually written; the second was
+	// request-timing helpers the services do with middleware and Prometheus.
 
 	// ---- gateway -----------------------------------------------------------
 
-	"internal/gateway/middleware.JWTAuthMiddleware":   "JWKS-backed JWT validation with a key cache, for the gateway. cmd/gateway-service wires its auth elsewhere. Unreachable, so the gateway's own auth middleware has never run: check which path actually guards the gateway before deleting this one.",
-	"internal/gateway/middleware.RateLimitMiddleware": "sliding-window rate limiting in Redis, for the gateway. Same shape as above: the live limiter is internal/common/middleware/ratelimit.go. A SECOND IMPLEMENTATION; delete.",
-	"internal/gateway/middleware.contextLogger":       "the per-request logger the gateway's logging middleware would attach. Dead alongside internal/gateway/service.go's empty logInfo/logError bodies, which the readiness guide already lists for deletion.",
+	// The three gateway entries are gone, and the middle one was not dead code.
+	//
+	// JWTAuthMiddleware: JWKS-backed JWT validation with a key cache. Its entry
+	// asked for the check before deleting -- which path actually guards the
+	// gateway -- and the answer is in internal/gateway/routes/admin.go: every
+	// group is `router.Any("/*path", proxyRequest(proxy))` and the comment says
+	// "the backend owns auth and routing; the gateway stays a thin
+	// pass-through". Each backend authenticates its own requests. So this was
+	// redundant rather than missing, and deleting it removes the second place a
+	// reader could think the gateway authenticates.
+	//
+	// RateLimitMiddleware: THIS ONE WAS A GAP. gateway.Config has carried
+	// EnableRateLimit (default true) and a RateLimitConfig of 100/min with
+	// 20/min for auth paths since it was written, read from ENABLE_RATE_LIMIT
+	// and rate_limit.*, passed into the config in cmd/gateway-service -- and
+	// consumed by nothing, because this middleware was its only reader and no
+	// binary constructed it. The service facing the internet answered an
+	// unlimited number of requests while its configuration said 100 a minute.
+	// cmd/gateway-service now mounts middleware.DistributedRateLimit, the
+	// limiter the other five services use, on the same config values.
+	//
+	// contextLogger: the wrapper WithLogger returned, stamping correlation id
+	// and path on each line. Nothing called WithLogger. Its entry blamed
+	// service.go's empty logInfo/logError bodies, which this branch has since
+	// filled, so what was left was one unused wrapper.
 
 	// ---- backup ------------------------------------------------------------
 

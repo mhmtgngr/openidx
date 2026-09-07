@@ -114,9 +114,9 @@ The prize: **existing sessions survive a full Postgres outage.** Small, cheap,
 high impact.
 
 1. ✅ **Done — Serve-stale JWKS on refresh failure.** The shared verify path
-   (`internal/common/middleware/middleware.go`, used by all 8 services, plus the
-   retired gateway's `internal/gateway/middleware/auth.go`) now keeps serving the
-   last-good key set when a JWKS refresh fails, bounded by `JWKS_MAX_STALE`
+   (`internal/common/middleware/middleware.go`, used by all 8 services) now keeps
+   serving the last-good key set when a JWKS refresh fails, bounded by
+   `JWKS_MAX_STALE`
    (default 12h). So even if `oauth-service`/DB is down, in-flight verification
    never breaks. Metrics: `openidx_jwks_refresh_failures_total`,
    `openidx_jwks_serve_stale_total`, `openidx_jwks_stale_seconds`

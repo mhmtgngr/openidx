@@ -250,6 +250,9 @@ func main() {
 	// Add Elasticsearch check if configured (optional dependency)
 	if es != nil {
 		healthService.RegisterCheck(&elasticsearchChecker{client: es})
+		// An expiring TLS certificate is a scheduled outage; the health endpoint
+		// says so weeks ahead when the service serves TLS from a file.
+		newhealth.RegisterCertCheck(healthService, cfg.TLS.Enabled, cfg.TLS.CertFile)
 	}
 
 	// Register standard health check endpoints (/health/live, /health/ready, /health)

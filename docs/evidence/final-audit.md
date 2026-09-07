@@ -98,11 +98,12 @@ duration to 31 minutes, which fails it: the assertion still bites.
 The test predates this branch and is not one of its files. It is fixed here
 anyway, because it was failing this pull request's required checks, and a test
 that fails at a rate nobody can predict teaches every later reader to ignore a
-red run. Two sibling `WithinDuration` assertions were checked and left alone:
-`internal/gateway/middleware/auth_test.go:583` compares against a value fixed
-*before* the call, so it carries no elapsed-time term at all, and
-`internal/auth`'s `session_test.go:794` (also deleted with `SessionService`)
-measured elapsed time with no truncation against it — a full second of budget for one local Redis round trip.
+red run. Two sibling `WithinDuration` assertions were checked and left alone; both have
+since been deleted with the code they covered. The gateway's own JWT middleware
+compared against a value fixed *before* the call, so it carried no elapsed-time
+term at all, and `internal/auth`'s `session_test.go:794` (deleted with
+`SessionService`) measured elapsed time with no truncation against it — a full
+second of budget for one local Redis round trip.
 
 ## What is open
 

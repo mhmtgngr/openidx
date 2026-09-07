@@ -423,52 +423,10 @@ func TestGetLogger(t *testing.T) {
 	})
 }
 
-func TestContextLogger(t *testing.T) {
-	t.Run("Adds correlation ID to logs", func(t *testing.T) {
-		baseLogger := &mockLogger{}
-		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
-		c.Set("correlation_id", "test-123")
-		c.Request = httptest.NewRequest("GET", "/test", nil)
-
-		contextLogger := WithLogger(baseLogger, c)
-		contextLogger.Info("test message")
-
-		assert.Greater(t, baseLogger.infoCount, 0)
-
-		// Check that correlation_id is in fields
-		found := false
-		for i := 0; i < len(baseLogger.lastFields); i += 2 {
-			if i+1 < len(baseLogger.lastFields) && baseLogger.lastFields[i] == "correlation_id" {
-				found = true
-				assert.Equal(t, "test-123", baseLogger.lastFields[i+1])
-				break
-			}
-		}
-		assert.True(t, found)
-	})
-
-	t.Run("Adds path to logs", func(t *testing.T) {
-		baseLogger := &mockLogger{}
-		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
-		c.Request = httptest.NewRequest("GET", "/api/test", nil)
-
-		contextLogger := WithLogger(baseLogger, c)
-		contextLogger.Info("test message")
-
-		// Check that path is in fields
-		found := false
-		for i := 0; i < len(baseLogger.lastFields); i += 2 {
-			if i+1 < len(baseLogger.lastFields) && baseLogger.lastFields[i] == "path" {
-				found = true
-				assert.Equal(t, "/api/test", baseLogger.lastFields[i+1])
-				break
-			}
-		}
-		assert.True(t, found)
-	})
-}
+// TestContextLogger stood here, covering WithLogger and the contextLogger it
+// returned. Both are deleted: nothing in the gateway ever called WithLogger,
+// and the correlation id it stamped reaches the logs through CorrelationID
+// and the request entry/exit lines below, which these tests cover.
 
 func TestLogRequestEntry(t *testing.T) {
 	t.Run("Logs request entry details", func(t *testing.T) {

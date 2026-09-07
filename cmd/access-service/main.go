@@ -219,6 +219,9 @@ func main() {
 	healthService.RegisterCheck(newhealth.NewPostgresChecker(db))
 	healthService.RegisterCheck(newhealth.NewReadReplicaChecker(db))
 	healthService.RegisterCheck(newhealth.NewRedisChecker(redis))
+	// An expiring TLS certificate is a scheduled outage; the health endpoint
+	// says so weeks ahead when the service serves TLS from a file.
+	newhealth.RegisterCertCheck(healthService, cfg.TLS.Enabled, cfg.TLS.CertFile)
 
 	// Register standard health check endpoints
 	healthService.RegisterStandardRoutes(router, "")

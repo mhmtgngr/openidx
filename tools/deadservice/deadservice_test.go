@@ -91,7 +91,7 @@ func TestTheRegisterKeyIsThePackageTail(t *testing.T) {
 	for _, tc := range []struct{ pkg, name, want string }{
 		{"github.com/openidx/openidx/internal/governance", "RequestService", "internal/governance.RequestService"},
 		{"github.com/openidx/openidx/internal/gateway/middleware", "JWTAuthMiddleware", "internal/gateway/middleware.JWTAuthMiddleware"},
-		{"github.com/openidx/openidx/internal/common/cache", "Cache", "internal/common/cache.Cache"},
+		{"github.com/openidx/openidx/internal/common/logger", "AuditLogger", "internal/common/logger.AuditLogger"},
 	} {
 		s := &service{Pkg: tc.pkg, Name: tc.name}
 		if got := s.key(); got != tc.want {

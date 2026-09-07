@@ -118,6 +118,29 @@ func main() {
 	router.Use(metrics.Middleware("gateway-service"))
 	router.Use(api.StandardVersionMiddleware())
 
+	// Rate limiting, on the service that faces the internet.
+	//
+	// gateway.Config has carried EnableRateLimit (defaulting true) and a
+	// RateLimitConfig of 100/min with 20/min for auth paths since it was
+	// written, read from ENABLE_RATE_LIMIT and rate_limit.* and passed in
+	// below — and consumed by nothing. The only thing that would have read it
+	// was internal/gateway/middleware.RateLimitMiddleware, a second limiter no
+	// binary ever constructed. So the front door answered an unlimited number
+	// of requests while its own configuration said otherwise.
+	//
+	// This is the limiter the other five services mount, and it fails CLOSED on
+	// auth paths when Redis is unavailable, which is the property that matters
+	// on the host taking the traffic.
+	if cfg.EnableRateLimit {
+		router.Use(commonmiddleware.DistributedRateLimit(redisClient.Client, commonmiddleware.RateLimitConfig{
+			Requests:     cfg.RateLimitRequests,
+			Window:       time.Duration(cfg.RateLimitWindow) * time.Second,
+			AuthRequests: cfg.RateLimitAuthRequests,
+			AuthWindow:   time.Duration(cfg.RateLimitAuthWindow) * time.Second,
+			PerUser:      cfg.RateLimitPerUser,
+		}, log))
+	}
+
 	// Tenant header production (v1.7.0 #3): strip any client-supplied
 	// X-Org-Slug and, when TENANT_BASE_DOMAIN is set, derive it from
 	// the request's subdomain. Backends' TenantResolver consumes it as
