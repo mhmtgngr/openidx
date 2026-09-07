@@ -39,6 +39,7 @@ import (
 	"github.com/openidx/openidx/internal/common/orgctx"
 	"github.com/openidx/openidx/internal/common/pwhash"
 	"github.com/openidx/openidx/internal/common/secretcrypt"
+	"github.com/openidx/openidx/internal/revocation"
 	"github.com/openidx/openidx/internal/risk"
 	"github.com/openidx/openidx/internal/webhooks"
 
@@ -837,6 +838,17 @@ func (s *Service) deprovisionUser(ctx context.Context, userID, orgID string, har
 					log.Warn("deprovision: publish revoked-session marker failed", zap.Error(err))
 				}
 			}
+		}
+	}
+
+	// The session markers above are honoured by the REFRESH grant. They are not
+	// read by /oauth/userinfo or /oauth/introspect, which consult the per-user
+	// cutoff and the per-token blacklist and nothing else -- so without this
+	// line the access token already in a leaver's browser keeps answering for
+	// the rest of its hour after the account is disabled.
+	if s.redis != nil {
+		if err := revocation.RevokeUserTokens(ctx, s.redis.Client, userID); err != nil {
+			log.Warn("deprovision: revoke outstanding access tokens failed", zap.Error(err))
 		}
 	}
 

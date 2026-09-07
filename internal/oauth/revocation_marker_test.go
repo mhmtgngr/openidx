@@ -121,3 +121,75 @@ func TestATokenIssuedInTheSameSecondAsTheRevocationIsRefused(t *testing.T) {
 		t.Error("an absent marker revoked a token")
 	}
 }
+
+// THE SEVER PATHS, pinned to the same check.
+//
+// The two tests above pinned the ACCESS REVIEW to it. The paths that matter
+// most were never wired at all: identity's and provisioning's deprovisionUser
+// (an administrator disabling a leaver, a SCIM deprovision) and the
+// access-service kill switch each published `revoked_session:<id>` markers,
+// which the refresh grant honours -- and nothing else. /oauth/userinfo and
+// /oauth/introspect read this marker and the per-token blacklist, so the access
+// token already in the leaver's browser kept answering for the rest of its hour
+// while the console showed the account disabled.
+//
+// That put the controls in the wrong order: a periodic certification cut
+// outstanding tokens, and the kill switch you reach for on a compromised
+// account did not. This drives revocation.RevokeUserTokens, which all three
+// sever paths now call, through the check that decides.
+func TestASeverPathsRevocationReachesTheTokenCheck(t *testing.T) {
+	svc, mini := revocationMarkerService(t)
+	ctx := context.Background()
+	const user = "22222222-0000-0000-0000-000000000003"
+
+	// The token in the leaver's browser, minted before anyone disabled them.
+	issuedAt := time.Now().Add(-30 * time.Minute).Unix()
+
+	revoked, err := svc.IsAccessTokenRevoked(ctx, "leaver-token", user, issuedAt)
+	if err != nil {
+		t.Fatalf("IsAccessTokenRevoked: %v", err)
+	}
+	if revoked {
+		t.Fatal("a token was revoked before anything revoked it")
+	}
+
+	// Exactly what deprovisionUser and the kill switch now do.
+	if err := revocation.RevokeUserTokens(ctx, svc.redis.Client, user); err != nil {
+		t.Fatalf("RevokeUserTokens: %v", err)
+	}
+
+	revoked, err = svc.IsAccessTokenRevoked(ctx, "leaver-token", user, issuedAt)
+	if err != nil {
+		t.Fatalf("IsAccessTokenRevoked: %v", err)
+	}
+	if !revoked {
+		t.Error("the account was disabled and its outstanding access token still works; " +
+			"the sever path is writing where /oauth/userinfo does not look")
+	}
+
+	// Same storage as the other two writers, so one marker cannot become three.
+	key := revocation.UserTokensRevokedAtKey(user)
+	v, err := mini.Get(key)
+	if err != nil {
+		t.Fatalf("the sever path did not write %s: %v", key, err)
+	}
+	if _, err := revocation.ParseMarker(v); err != nil {
+		t.Errorf("the sever path wrote a value the shared parser cannot read: %v", err)
+	}
+	if ttl := mini.TTL(key); ttl <= 0 || ttl > revocation.MarkerTTL {
+		t.Errorf("marker TTL is %v, want a positive value no greater than %v", ttl, revocation.MarkerTTL)
+	}
+}
+
+// A nil client is an error, not a silent success.
+//
+// Every caller of RevokeUserTokens is best-effort by contract -- the account is
+// already disabled when it runs -- so the temptation is to return nil and move
+// on. That would make "Redis was not configured" indistinguishable from "the
+// tokens were cut", in the one report an operator reads after firing a kill
+// switch.
+func TestRevokeUserTokensWithoutRedisReportsRatherThanPretending(t *testing.T) {
+	if err := revocation.RevokeUserTokens(context.Background(), nil, "some-user"); err == nil {
+		t.Error("RevokeUserTokens with no client returned nil: the caller would record a severance that did not happen")
+	}
+}

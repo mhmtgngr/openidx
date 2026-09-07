@@ -29,6 +29,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/revocation"
 
 	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/jitgrant"
@@ -40,10 +41,15 @@ const killSwitchRedisMarkerTTL = 30 * 24 * time.Hour
 
 // KillSwitchResult reports what the kill switch severed, per pillar.
 type KillSwitchResult struct {
-	UserID               string    `json:"user_id"`
-	Username             string    `json:"username"`
-	UserDisabled         bool      `json:"user_disabled"`
-	SessionsRevoked      int64     `json:"iam_sessions_revoked"`
+	UserID          string `json:"user_id"`
+	Username        string `json:"username"`
+	UserDisabled    bool   `json:"user_disabled"`
+	SessionsRevoked int64  `json:"iam_sessions_revoked"`
+	// AccessTokensRevoked is the per-user token cutoff. Distinct from
+	// SessionsRevoked: revoking the session rows stops the refresh grant,
+	// while this is what makes /oauth/userinfo and /oauth/introspect refuse
+	// the access token the user is already holding.
+	AccessTokensRevoked  bool      `json:"iam_access_tokens_revoked"`
 	APIKeysRevoked       int64     `json:"iam_api_keys_revoked"`
 	CheckoutsRevoked     int64     `json:"pam_checkouts_revoked"`
 	VaultGrantsExpired   int64     `json:"pam_vault_grants_expired"`
@@ -101,6 +107,7 @@ func (s *Service) handleUserKillSwitch(c *gin.Context) {
 			"reason":                         req.Reason,
 			"user_disabled":                  result.UserDisabled,
 			"iam_sessions_revoked":           result.SessionsRevoked,
+			"iam_access_tokens_revoked":      result.AccessTokensRevoked,
 			"iam_api_keys_revoked":           result.APIKeysRevoked,
 			"pam_checkouts_revoked":          result.CheckoutsRevoked,
 			"pam_vault_grants_expired":       result.VaultGrantsExpired,
@@ -171,6 +178,21 @@ func (s *Service) executeKillSwitch(ctx context.Context, orgID, userID, username
 					break
 				}
 			}
+		}
+	}
+
+	// Those markers stop the REFRESH grant. They are not what /oauth/userinfo
+	// or /oauth/introspect read, so until this line the access token in a
+	// compromised account's browser survived the kill switch for the rest of
+	// its hour -- while an access-review revocation, the least urgent control
+	// in the product, cut the same tokens immediately. Reported like every
+	// other step here rather than swallowed: a kill switch that could not cut
+	// the tokens must say so in its result.
+	if s.redis != nil {
+		if err := revocation.RevokeUserTokens(ctx, s.redis.Client, userID); err != nil {
+			warn("revoke_access_tokens", err)
+		} else {
+			res.AccessTokensRevoked = true
 		}
 	}
 	if tag, err := s.db.Pool.Exec(ctx,

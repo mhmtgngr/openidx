@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A disabled user's access token kept working for an hour
+  (`internal/revocation.RevokeUserTokens`, wired into every sever path).**
+  Writing J7's missing integration case — "disable or kill-switch a user and
+  everything is severed" — found the journey's third half broken. Identity's and
+  provisioning's `deprovisionUser` and the access-service kill switch each
+  collected the user's live session ids and published `revoked_session:<id>`,
+  which the **refresh grant** honours. Nothing they wrote is read by
+  `/oauth/userinfo` or `/oauth/introspect`: those consult the per-user revocation
+  cutoff and the per-token blacklist and nothing else, and no sever path wrote
+  the cutoff. So an administrator disabling a leaver, or firing the kill switch
+  on a compromised account, cut new logins and cut the refresh — and the access
+  token already in that browser answered for the rest of its hour and
+  introspected `active: true`, while the console showed the account disabled.
+
+  That put the controls in the wrong order. An access-review revocation, the
+  slowest and least urgent control in the product, already wrote the cutoff
+  (that half was fixed when `internal/revocation` was created); the kill switch,
+  the one you reach for when an account is compromised, did not. All three sever
+  paths now call `revocation.RevokeUserTokens`, which lives in the package that
+  owns the key so a fourth spelling cannot appear. The kill switch reports it as
+  `iam_access_tokens_revoked` rather than swallowing a failure, because "the
+  tokens were not actually cut" is something an operator needs in the record.
+
+  `test/integration/leaver_test.go` drives all three halves against the running
+  services and asserts them separately: a test that checked only the login and
+  the refresh would have passed for the whole time this was broken, which is how
+  it stayed broken.
+
 ### Added
 
 - **Upstream pools reach the operator, and the data plane

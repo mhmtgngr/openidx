@@ -32,9 +32,12 @@
 package revocation
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
 // MarkerTTL bounds how long a marker lives. Seven days is comfortably longer
@@ -70,6 +73,37 @@ func ParseMarker(v string) (int64, error) {
 		return 0, fmt.Errorf("revocation marker %q is not a unix timestamp: %w", v, err)
 	}
 	return n, nil
+}
+
+// RevokeUserTokens writes the cutoff that stops every access token this user
+// already holds.
+//
+// THE HALF THIS PACKAGE HAD NOT REACHED YET. When it was written, the divergence
+// it fixed was between two spellings of the key. The other half of the same
+// defect is a path that severs a user's access and never writes the marker at
+// all -- and the sever paths were exactly that. deprovisionUser (identity and
+// provisioning) and the access-service kill switch each collected the user's
+// live session ids and published `revoked_session:<id>`, which the REFRESH grant
+// honours. Nothing they wrote was read by /oauth/userinfo or /oauth/introspect,
+// because those two consult this marker and the per-token blacklist and nothing
+// else. So an administrator disabling a leaver, or firing the kill switch on a
+// compromised account, cut the refresh -- and the access token already in that
+// browser kept answering for the rest of its hour.
+//
+// Which put the controls in the wrong order: an access-review revocation, the
+// slowest and least urgent of them, killed outstanding tokens; the kill switch,
+// the one you reach for when an account is compromised, did not.
+//
+// Best-effort by contract, like the callers: the account is already disabled and
+// the sessions already revoked when this runs, so a Redis hiccup must not fail
+// the request that did the severing. It returns the error for the caller to log
+// rather than swallowing it, because "the tokens were not actually cut" is
+// something an operator needs in the record.
+func RevokeUserTokens(ctx context.Context, client redis.UniversalClient, userID string) error {
+	if client == nil {
+		return fmt.Errorf("no redis client: cannot revoke tokens for user %s", userID)
+	}
+	return client.Set(ctx, UserTokensRevokedAtKey(userID), MarkerValue(time.Now()), MarkerTTL).Err()
 }
 
 // IsRevoked reports whether a token issued at issuedAt (seconds since the
