@@ -40,6 +40,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -572,22 +573,51 @@ func (h *RemoteSupportHandler) HandleAgentConsent(c *gin.Context) {
 		// as a DEVICE, with no organization on the request, so this runs
 		// bypassed on the session id. Belting it without the bypass would make
 		// a denial silently fail to end the session.
+		// This write is the denial. Its error used to be discarded, which made
+		// the comment above it false: on a failure the session was NOT ended,
+		// the audit still recorded consent_denied/success, and the agent was
+		// answered {"consent_status":"denied","status":"ended"}. Somebody
+		// refused to have their screen watched and the session stayed live,
+		// with every record saying they had been listened to.
+		//
+		// Nought rows matters as much as an error here: it means the id matched
+		// nothing, so nothing was ended either.
 		//orgscope:ignore device consent callback — agent authenticates as a device, no tenant on the request
-		_, _ = h.db.Pool.Exec(orgctx.WithBypassRLS(c.Request.Context()), `
+		tag, err := h.db.Pool.Exec(orgctx.WithBypassRLS(c.Request.Context()), `
             UPDATE remote_support_sessions
                SET consent_status='denied', consent_decided_at=NOW(),
                    status='ended', ended_at=NOW(), end_reason='consent denied by device'
              WHERE id=$1`, id)
+		if err != nil || tag.RowsAffected() == 0 {
+			h.logger.Error("a remote support session was refused and could not be ended",
+				logsafe.String("session_id", id), zap.Error(err))
+			h.audit(c.Request.Context(), "remote_support.consent_denied", id, "failure", "agent="+agentID)
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": "the refusal could not be recorded and the session may still be active; " +
+					"end it from the console"})
+			return
+		}
 		h.audit(c.Request.Context(), "remote_support.consent_denied", id, "success", "agent="+agentID)
 		c.JSON(http.StatusOK, gin.H{"consent_status": "denied", "status": "ended"})
 		return
 	}
 
+	// The grant fails closed on its own -- an unrecorded grant leaves consent
+	// pending, and the session cannot proceed -- but the agent must still be
+	// told, or it shows the person a confirmation for a decision the server
+	// does not hold.
 	//orgscope:ignore device consent callback — agent authenticates as a device, no tenant on the request
-	_, _ = h.db.Pool.Exec(orgctx.WithBypassRLS(c.Request.Context()), `
+	tag, err := h.db.Pool.Exec(orgctx.WithBypassRLS(c.Request.Context()), `
         UPDATE remote_support_sessions
            SET consent_status='granted', consent_decided_at=NOW()
          WHERE id=$1`, id)
+	if err != nil || tag.RowsAffected() == 0 {
+		h.logger.Error("a remote support consent was granted and could not be recorded",
+			logsafe.String("session_id", id), zap.Error(err))
+		h.audit(c.Request.Context(), "remote_support.consent_granted", id, "failure", "agent="+agentID)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "the consent could not be recorded; try again"})
+		return
+	}
 	h.audit(c.Request.Context(), "remote_support.consent_granted", id, "success", "agent="+agentID)
 	c.JSON(http.StatusOK, gin.H{"consent_status": "granted"})
 }

@@ -110,6 +110,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reports the one whose argument CI computes as **not run** rather than as a
   pass. Six cases of its own keep it honest, chief among them that finding no
   guards is an error and not an empty success.
+- **A refused remote-support session was not ended
+  (`HandleAgentConsent`).** The denial branch carries the comment *"A denial
+  ends the session immediately (fail-closed)"*, and the statement under it
+  discarded its error. On a failure the session was **not** ended, the audit
+  still recorded `remote_support.consent_denied` with outcome `success`, and
+  the agent was answered `{"consent_status":"denied","status":"ended"}` — so
+  the person at the device refused to have their screen watched, was shown a
+  confirmation, and the session stayed live, with every record saying they had
+  been listened to. Both consent branches now check the write and the row count,
+  audit the failure as a failure, and tell the agent the refusal could not be
+  recorded and the session may still be active.
+- **A device the console called trusted could be untrusted (`trustDevice`).**
+  The function ran two statements: a nudge marking the user's Ziti identity
+  attributes stale, whose error was checked and logged, and the `UPDATE` that
+  actually sets `known_devices.trusted`, whose error was discarded. The
+  belt-and-braces statement was the checked one. An administrator could approve
+  a trust request, the request row would say approved, the user would be
+  notified — and the posture gate would go on refusing the device for a reason
+  visible nowhere. It now reports both a failed write and a row count of zero,
+  and both callers pass that up instead of announcing an approval the device
+  never received.
 - **A directory sync could report success over a group it did not sync
   (`internal/directory`).** Both the LDAP and the Entra ID membership passes
   ran, per group, a `DELETE` of the directory-managed rows followed by an
@@ -143,8 +164,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   revoked credential. The gate reports each one and is cleared either by
   handling the error or by a `//silentwrite:ok` reason above the call saying
   what is lost — the `//orgscope:ignore` convention this repository already
-  uses. The three fixes above take the count to 124, and the gate holds it
-  there: it can only go down.
+  uses. The fixes above take the count to 121, and the gate holds it there: it
+  can only go down.
 - **115 log fields carried a request value nothing cleaned
   (`internal/common/logsafe`, new guard).** CodeQL filed two "Log entries
   created from user input" alerts against `internal/admin/attestation.go`.
