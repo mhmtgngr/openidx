@@ -185,5 +185,29 @@ var knownDead = map[string]string{
 
 	// ---- identity / access -------------------------------------------------
 
-	"internal/access.UpstreamPool": "the operator's declaration of a route's backend set -- weights, hash key, active health checks -- and the pure functions that render it for the data plane. tools/tablewriters already carries the other half of this finding: upstream_pools and upstream_pool_members are read by the reconciler and written by nothing, because no handler, route or console page can create a pool. Same verdict, same fix: build the CRUD surface or delete both halves.",
+	// internal/access.UpstreamPool was the last entry, and the register is now
+	// empty.
+	//
+	// Its verdict was "build the CRUD surface or delete both halves", and the
+	// surface is built: /api/v1/upstream-pools with its members, the route link
+	// on proxy_routes, and a console page. Two things came out of doing it that
+	// the entry had not seen.
+	//
+	// THE RENDERER WAS NEVER CALLED. The entry described two halves -- a schema
+	// and renderer that worked, and no way to create a pool. There was a third.
+	// APISIXReconciler.Reconcile loaded the BrowZer routes and nothing else, so
+	// BuildEdgeRoutesForPools -- correct, tested, exported -- had no caller. A
+	// pool created by hand and linked by hand would still never have reached
+	// APISIX. Reconcile converges both sets now, and prunes only the generated
+	// prefixes it was able to read this pass, so a failed pool read leaves the
+	// edge alone instead of emptying it.
+	//
+	// A POOL CAN BE CONFIGURED AND NOT IN EFFECT, which is the shape this branch
+	// keeps finding. BuildUpstream refuses to render a pool with no usable
+	// member, because an upstream with no node black-holes the route; the route
+	// falls back to its single to_url. Right at runtime, and silent: an operator
+	// draining the last member for maintenance would be told "member removed"
+	// while traffic kept flowing. Every response describing a pool now carries
+	// in_effect and the reason, and deleting a pool routes still name is refused
+	// rather than quietly reverting them.
 }

@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/database"
 )
 
 // Rendering ordinary (non-BrowZer) routes into the edge, with pool support.
@@ -135,8 +137,8 @@ func edgeRouteName(routeName string) string {
 //
 // BrowZer-enabled routes are excluded: they are rendered by the BrowZer
 // reconciler, which points them at the bootstrapper instead of the backend.
-func (s *Service) queryEdgeRoutes(ctx context.Context) ([]edgeRoute, error) {
-	rows, err := s.db.Pool.Query(ctx,
+func queryEdgeRoutes(ctx context.Context, db *database.PostgresDB) ([]edgeRoute, error) {
+	rows, err := db.Pool.Query(ctx,
 		//orgscope:ignore install-wide reconciler pass: renders desired edge state for every org into the shared data plane, mirroring queryBrowZerRoutes
 		`SELECT name, from_url, to_url, COALESCE(upstream_pool_id::text, ''), COALESCE(priority, 0)
 		 FROM proxy_routes
@@ -168,9 +170,11 @@ func (s *Service) queryEdgeRoutes(ctx context.Context) ([]edgeRoute, error) {
 //
 // Only routes that actually name a pool are rendered here. Routes still on
 // to_url are left to whatever already serves them, so enabling this path cannot
-// disturb the existing edge configuration.
-func (s *Service) BuildEdgeRoutesForPools(ctx context.Context) ([]apisixRoute, error) {
-	pools, err := s.loadUpstreamPools(ctx)
+// disturb the existing edge configuration -- and since a route can only name a
+// pool once an operator has created one and linked it, an install that has
+// never used pools renders nothing here and sees no change at all.
+func BuildEdgeRoutesForPools(ctx context.Context, db *database.PostgresDB, logger *zap.Logger) ([]apisixRoute, error) {
+	pools, err := loadUpstreamPools(ctx, db)
 	if err != nil {
 		return nil, err
 	}
@@ -178,7 +182,7 @@ func (s *Service) BuildEdgeRoutesForPools(ctx context.Context) ([]apisixRoute, e
 		return nil, nil
 	}
 
-	routes, err := s.queryEdgeRoutes(ctx)
+	routes, err := queryEdgeRoutes(ctx, db)
 	if err != nil {
 		return nil, err
 	}
@@ -188,10 +192,12 @@ func (s *Service) BuildEdgeRoutesForPools(ctx context.Context) ([]apisixRoute, e
 		if r.poolID == "" {
 			continue
 		}
-		name, body, err := buildEdgeRoute(r, pools, s.logger)
+		name, body, err := buildEdgeRoute(r, pools, logger)
 		if err != nil {
-			s.logger.Warn("skipping route that cannot be rendered",
-				zap.String("route", r.name), zap.Error(err))
+			if logger != nil {
+				logger.Warn("skipping route that cannot be rendered",
+					zap.String("route", r.name), zap.Error(err))
+			}
 			continue
 		}
 		out = append(out, apisixRoute{name: name, body: body})

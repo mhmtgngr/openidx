@@ -19,7 +19,15 @@ package main
 var knownUnwritten = map[string]string{
 	"ai_agent_activity": "the AI-agent registry has no runtime. Nothing outside internal/admin so much as reads ai_agent_credentials, so no agent ever acts through this product and there is no moment at which activity could be recorded. Three reads present the absence as measurement -- the per-agent activity list (LIMIT 100, always empty), the 24-hour top-agents ranking (every agent 0) and the recent-failures count (always 0). Recorded rather than fixed: what is missing is the agent runtime, and writing it is a feature.",
 
-	"upstream_pools": "v130 built the place to express a load-balanced backend set -- algorithm, hash key, active health checks, per-node weights -- and the reconciler that renders it into the data plane. Nothing builds the other half: no handler, no route, no console page can create a pool, so proxy_routes.upstream_pool_id is NULL on every route on every install and loadUpstreamPools returns an empty map every time. Recorded rather than fixed: the missing half is a CRUD surface with its own console page, which is a feature.",
-
-	"upstream_pool_members": "the members of the pools above. Same verdict: the reconciler reads them, nothing can create them.",
+	// upstream_pools and upstream_pool_members have left this register: both are
+	// written now, by the CRUD surface in internal/access/upstream_pools_handlers.go.
+	//
+	// Their entry said the missing half was "a CRUD surface with its own console
+	// page, which is a feature", and that was right as far as it went. Building
+	// it turned up a third layer neither register had named:
+	// BuildEdgeRoutesForPools, the function that renders a pool into an APISIX
+	// route, was called by nothing. So even a pool inserted by hand, linked to a
+	// route by hand, would never have reached the data plane. The reconciler
+	// converges both sets now, and TestReconcileSendsPoolBackedRoutesToTheDataPlane
+	// fails if that call is removed again.
 }

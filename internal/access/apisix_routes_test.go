@@ -76,7 +76,7 @@ func TestBuildBrowZerAPISIXRoutesSkipsEmptyHost(t *testing.T) {
 func TestStaleBrowZerRouteNames(t *testing.T) {
 	existing := []string{"browzer-a", "browzer-b", "browzer-b-oidc", "identity-service", "other"}
 	desired := []string{"browzer-a"}
-	stale := staleBrowZerRouteNames(existing, desired)
+	stale := staleGeneratedRouteNames(existing, desired, prunePrefixes(browzerRoutePrefix, edgeRoutePrefix))
 	// Only browzer-* routes not in desired are stale; non-browzer routes are left alone.
 	want := map[string]bool{"browzer-b": true, "browzer-b-oidc": true}
 	if len(stale) != 2 {
@@ -92,13 +92,42 @@ func TestStaleBrowZerRouteNames(t *testing.T) {
 // TestStaleBrowZerRouteNames_DesiredOnlyNoPanic verifies that a desired name that
 // does not appear in existing causes no panic and is simply ignored.
 func TestStaleBrowZerRouteNames_DesiredOnlyNoPanic(t *testing.T) {
-	stale := staleBrowZerRouteNames(
+	stale := staleGeneratedRouteNames(
 		[]string{"browzer-a", "identity-service"},
 		[]string{"browzer-a", "browzer-ghost"}, // browzer-ghost not in existing
+		prunePrefixes(browzerRoutePrefix, edgeRoutePrefix),
 	)
 	// browzer-a is desired+present → not stale; identity-service non-browzer → not stale
 	if len(stale) != 0 {
 		t.Fatalf("expected no stale routes, got %v", stale)
+	}
+}
+
+// A prefix the pass is not entitled to prune is left alone even when the route
+// is absent from the desired set.
+//
+// This is the property that keeps a failed pool read from emptying the edge.
+// BuildEdgeRoutesForPools returning an error means "I do not know what the
+// pool-backed routes should be", not "there are none" -- and every oidx-route-*
+// object at the edge would look undesired to a prune computed from the BrowZer
+// set alone. Reconcile passes only browzerRoutePrefix on that path; this is what
+// that does.
+func TestStaleGeneratedRouteNamesPrunesOnlyEntitledPrefixes(t *testing.T) {
+	existing := []string{"browzer-gone", "oidx-route-payroll", "identity-service"}
+
+	onlyBrowZer := staleGeneratedRouteNames(existing, nil, prunePrefixes(browzerRoutePrefix))
+	if len(onlyBrowZer) != 1 || onlyBrowZer[0] != "browzer-gone" {
+		t.Fatalf("a pass that could not read the pools must leave oidx-route-* alone; pruned %v", onlyBrowZer)
+	}
+
+	both := staleGeneratedRouteNames(existing, nil, prunePrefixes(browzerRoutePrefix, edgeRoutePrefix))
+	if len(both) != 2 {
+		t.Fatalf("a pass that read both sets prunes both prefixes; pruned %v", both)
+	}
+	for _, s := range both {
+		if s == "identity-service" {
+			t.Fatal("pruned a route this product did not generate")
+		}
 	}
 }
 

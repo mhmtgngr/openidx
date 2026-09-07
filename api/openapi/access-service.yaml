@@ -149,6 +149,236 @@ paths:
                   $ref: '#/components/schemas/IdpSummary'
 
   # --- Routes ---
+  /api/v1/access/upstream-pools:
+    get:
+      tags: [Upstream Pools]
+      summary: List upstream pools
+      description: >-
+        Every pool in the caller's organization, with its backends, how many
+        routes point at it, and whether it is actually serving. A pool with no
+        usable backend is not rendered into the data plane — an upstream with no
+        node would black-hole the route — so routes on it fall back to the single
+        address in their target URL. `in_effect` reports that, and
+        `not_in_effect_reason` says which case it is.
+      operationId: listUpstreamPools
+      responses:
+        '200':
+          description: Upstream pools
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pools:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/UpstreamPool'
+                  total: { type: integer }
+        '403': { description: Organization context required }
+    post:
+      tags: [Upstream Pools]
+      summary: Create an upstream pool
+      description: >-
+        Admin only. Backends may be supplied inline; the pool and its members are
+        written in one transaction, so a refused create leaves nothing behind. A
+        new pool serves nothing until a route sets `upstream_pool_id` to it.
+      operationId: createUpstreamPool
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                description: { type: string }
+                algorithm: { type: string, enum: [roundrobin, chash], default: roundrobin }
+                hash_on: { type: string, enum: [vars, header, cookie], default: vars }
+                hash_key: { type: string, default: remote_addr }
+                health_check_enabled: { type: boolean, default: true }
+                health_check_path: { type: string, default: / }
+                healthy_threshold: { type: integer, minimum: 1, maximum: 10, default: 2 }
+                unhealthy_threshold: { type: integer, minimum: 1, maximum: 10, default: 3 }
+                health_check_interval: { type: integer, minimum: 1, maximum: 300, default: 5 }
+                health_check_timeout: { type: integer, minimum: 1, maximum: 60, default: 3 }
+                retries:
+                  type: integer
+                  minimum: 0
+                  maximum: 10
+                  nullable: true
+                  description: Omit to let the data plane decide (member count - 1).
+                members:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/UpstreamPoolMemberInput'
+      responses:
+        '201': { description: Created }
+        '400': { description: A value the pool cannot carry; the message names the field }
+        '409': { description: The name is taken, or a backend is listed twice }
+  /api/v1/access/upstream-pools/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Upstream Pools]
+      summary: Get an upstream pool
+      operationId: getUpstreamPool
+      responses:
+        '200':
+          description: The pool
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpstreamPool'
+        '404': { description: Not found in this organization }
+    put:
+      tags: [Upstream Pools]
+      summary: Update an upstream pool
+      description: >-
+        Admin only. Fields left out are unchanged. `retries` is tri-state: absent
+        keeps it, `retries_set: false` clears it back to the data plane default,
+        a number sets it.
+      operationId: updateUpstreamPool
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                description: { type: string }
+                algorithm: { type: string, enum: [roundrobin, chash] }
+                hash_on: { type: string, enum: [vars, header, cookie] }
+                hash_key: { type: string }
+                health_check_enabled: { type: boolean }
+                health_check_path: { type: string }
+                healthy_threshold: { type: integer, minimum: 1, maximum: 10 }
+                unhealthy_threshold: { type: integer, minimum: 1, maximum: 10 }
+                health_check_interval: { type: integer, minimum: 1, maximum: 300 }
+                health_check_timeout: { type: integer, minimum: 1, maximum: 60 }
+                retries: { type: integer, minimum: 0, maximum: 10 }
+                retries_set: { type: boolean }
+      responses:
+        '200':
+          description: The updated pool
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpstreamPool'
+        '400': { description: A value the pool cannot carry }
+        '404': { description: Not found in this organization }
+        '409': { description: The name is taken }
+    delete:
+      tags: [Upstream Pools]
+      summary: Delete an upstream pool
+      description: >-
+        Admin only, and refused while any route still names the pool. The foreign
+        key is ON DELETE SET NULL, so deleting one would move every route on it
+        back to a single backend with no health checking — a traffic change the
+        caller did not ask for. The 409 names the routes to detach first.
+      operationId: deleteUpstreamPool
+      responses:
+        '200': { description: Deleted }
+        '404': { description: Not found in this organization }
+        '409':
+          description: Routes still use this pool
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error: { type: string }
+                  detail: { type: string }
+                  routes:
+                    type: array
+                    items: { type: string }
+  /api/v1/access/upstream-pools/{id}/members:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [Upstream Pools]
+      summary: Add a backend to a pool
+      operationId: addUpstreamPoolMember
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpstreamPoolMemberInput'
+      responses:
+        '201': { description: Added }
+        '400': { description: A value the backend cannot carry; the message names the field }
+        '404': { description: Pool not found in this organization }
+        '409': { description: That backend is already a member — listing it twice would double its share }
+  /api/v1/access/upstream-pools/{id}/members/{memberId}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      - name: memberId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    put:
+      tags: [Upstream Pools]
+      summary: Drain, restore or reweight a backend
+      description: >-
+        Admin only. The response carries the pool's resulting state, because
+        disabling or draining the last usable backend does not stop the routes on
+        the pool — it sends them back to their single target.
+      operationId: updateUpstreamPoolMember
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                weight:
+                  type: integer
+                  minimum: 0
+                  maximum: 1000
+                  description: 0 drains the backend without removing it.
+                enabled:
+                  type: boolean
+                  description: false removes it from the rendered upstream entirely, so it is not even health-checked.
+      responses:
+        '200':
+          description: Updated, with the pool's resulting state
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  pool:
+                    $ref: '#/components/schemas/UpstreamPool'
+        '400': { description: Nothing to change, or a weight out of range }
+        '404': { description: Member not found in this organization }
+    delete:
+      tags: [Upstream Pools]
+      summary: Remove a backend from a pool
+      operationId: deleteUpstreamPoolMember
+      responses:
+        '200':
+          description: Removed, with the pool's resulting state
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  pool:
+                    $ref: '#/components/schemas/UpstreamPool'
+        '404': { description: Member not found in this organization }
   /api/v1/access/routes:
     get:
       tags: [Routes]
@@ -7957,6 +8187,63 @@ components:
           type: boolean
 
     # --- Routes ---
+    UpstreamPoolMemberInput:
+      type: object
+      required: [host, port]
+      properties:
+        host:
+          type: string
+          description: A bare hostname or IP. No scheme and no path — the port is its own field.
+        port: { type: integer, minimum: 1, maximum: 65535 }
+        weight:
+          type: integer
+          minimum: 0
+          maximum: 1000
+          default: 1
+          description: Relative share of traffic. 0 drains the backend without removing it.
+        enabled: { type: boolean, default: true }
+    UpstreamPoolMember:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        host: { type: string }
+        port: { type: integer }
+        weight: { type: integer }
+        enabled: { type: boolean }
+    UpstreamPool:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        description: { type: string }
+        algorithm: { type: string, enum: [roundrobin, chash] }
+        hash_on: { type: string, enum: [vars, header, cookie] }
+        hash_key: { type: string }
+        health_check_enabled: { type: boolean }
+        health_check_path: { type: string }
+        healthy_threshold: { type: integer }
+        unhealthy_threshold: { type: integer }
+        health_check_interval: { type: integer }
+        health_check_timeout: { type: integer }
+        retries: { type: integer, nullable: true }
+        members:
+          type: array
+          items:
+            $ref: '#/components/schemas/UpstreamPoolMember'
+        routes_using:
+          type: integer
+          description: >-
+            How many proxy_routes name this pool. Zero means the pool exists and
+            carries no traffic whatever its backends say.
+        in_effect:
+          type: boolean
+          description: >-
+            Whether a route on this pool would actually be served by it. Computed,
+            not stored: false when the pool has no usable backend (its routes fall
+            back to their single target) or when no route points at it.
+        not_in_effect_reason:
+          type: string
+          description: Present when in_effect is false; says which case it is.
     ProxyRoute:
       type: object
       properties:

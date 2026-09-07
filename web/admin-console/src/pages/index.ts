@@ -29,6 +29,7 @@ export const SocialProviders = lazy(() => import('./social-providers').then((m) 
 
 // Network & Access
 export const ProxyRoutes = lazy(() => import('./proxy-routes').then((m) => ({ default: m.ProxyRoutesPage })))
+export const UpstreamPools = lazy(() => import('./upstream-pools').then((m) => ({ default: m.UpstreamPoolsPage })))
 export const ZitiSetup = lazy(() => import('./ziti-setup').then((m) => ({ default: m.ZitiSetupPage })))
 export const ZitiNetwork = lazy(() => import('./ziti-network').then((m) => ({ default: m.ZitiNetworkPage })))
 export const NetworkTopology = lazy(() => import('./network-topology').then((m) => ({ default: m.NetworkTopologyPage })))

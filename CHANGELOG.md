@@ -9,6 +9,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Upstream pools reach the operator, and the data plane
+  (`/api/v1/access/upstream-pools`, `internal/access/upstream_pools_handlers.go`,
+  Upstream Pools console page).** Migration v130 built the place to declare a
+  route's backend set — algorithm, hash key, per-node weights, active health
+  checking — and `internal/access/upstream_pools.go` renders it into the APISIX
+  upstream object. Neither half could be used: no handler, route or console page
+  could create a pool, so `upstream_pools` was empty on every install. Building
+  the missing half turned up a third gap neither register had recorded:
+  `BuildEdgeRoutesForPools`, the only function that renders a pool-backed route
+  for the data plane, was **called by nothing**. `APISIXReconciler.Reconcile`
+  loaded the BrowZer routes and stopped there, so a pool inserted by hand and
+  linked by hand would still never have reached APISIX. The reconciler now
+  converges both sets in one pass and prunes only the generated prefixes it was
+  able to read, so a failed pool read leaves the edge alone instead of emptying
+  it. `proxy_routes.upstream_pool_id` is settable from the route API and the
+  pool it names is resolved inside the caller's organization first — the foreign
+  key alone would have accepted another tenant's pool and sent this route's
+  traffic to their backends.
+
+  Two behaviours here are not CRUD, and they are why this was built rather than
+  deleted. **A pool can be configured and not be in effect:** `BuildUpstream`
+  refuses to render a pool with no usable member, because an upstream with no
+  node black-holes the route, so the route falls back to the single address in
+  `to_url`. Right at runtime and, until now, silent — an operator draining the
+  last backend for maintenance would be told "member removed" while traffic kept
+  flowing. Every response describing a pool carries `in_effect` and the reason,
+  and the page leads with it. **Deleting a pool moves traffic:** the foreign key
+  is `ON DELETE SET NULL`, so a delete would quietly revert every route on the
+  pool to one backend with no health checking. It is refused while any route
+  still names the pool, and the refusal lists them.
+
+  This empties the dead-service register (`tools/deadservice`) — `UpstreamPool`
+  was its last entry — and takes both `upstream_pools` and
+  `upstream_pool_members` off the unwritten-table register.
+
 - **The tamper-evident audit log, made real (migration v181,
   `internal/audit/chain.go`).** The docs index, the architecture page, the audit
   reference page and the README's readiness checklist all state that OpenIDX

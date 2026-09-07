@@ -69,6 +69,11 @@ type ProxyRoute struct {
 	GuacamoleConnectionID string            `json:"guacamole_connection_id,omitempty"`
 	LandingPath           string            `json:"landing_path,omitempty"`
 	HostingMode           string            `json:"hosting_mode,omitempty"`
+	// UpstreamPoolID points the route at an upstream pool instead of the single
+	// address in ToURL. Empty means "use to_url", which is what every route did
+	// before pools existed and what one still does when the pool it names has no
+	// usable member.
+	UpstreamPoolID string `json:"upstream_pool_id,omitempty"`
 	CreatedAt             time.Time         `json:"created_at"`
 	UpdatedAt             time.Time         `json:"updated_at"`
 	// ApplicationID/ApplicationName identify the application (if any) whose
@@ -431,6 +436,19 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// data-plane POSTs (device posture self-report, posture evaluate) stay open
 		// because a device submits its own posture. `adminOnly` is the shared gate.
 		adminOnly := svc.requireAdminRole()
+
+		// Upstream pools: the operator's declaration of a route's backend set.
+		// Reads are open to any authenticated tenant user like the route list;
+		// every mutation is admin-only, because adding a member or draining one
+		// moves production traffic between backends.
+		api.GET("/upstream-pools", svc.handleListUpstreamPools)
+		api.POST("/upstream-pools", adminOnly, svc.handleCreateUpstreamPool)
+		api.GET("/upstream-pools/:id", svc.handleGetUpstreamPool)
+		api.PUT("/upstream-pools/:id", adminOnly, svc.handleUpdateUpstreamPool)
+		api.DELETE("/upstream-pools/:id", adminOnly, svc.handleDeleteUpstreamPool)
+		api.POST("/upstream-pools/:id/members", adminOnly, svc.handleAddUpstreamPoolMember)
+		api.PUT("/upstream-pools/:id/members/:memberId", adminOnly, svc.handleUpdateUpstreamPoolMember)
+		api.DELETE("/upstream-pools/:id/members/:memberId", adminOnly, svc.handleDeleteUpstreamPoolMember)
 
 		// Runtime connection control (admin-only): configure + connect/disconnect
 		// the OpenZiti controller from the admin panel with no restart.
@@ -1117,6 +1135,7 @@ func (s *Service) handleListRoutes(c *gin.Context) {
 		        COALESCE(max_risk_score, 100), guacamole_connection_id,
 		        COALESCE(landing_path, '/'),
 		        COALESCE(hosting_mode, 'identity'),
+		        COALESCE(upstream_pool_id::text, ''),
 		        created_at, updated_at,
 		        -- ORDER BY id LIMIT 1 mirrors appForRoute + ziti_reconciler's pick when
 		        -- more than one application links to the same route (Ruling 13: the
@@ -1145,7 +1164,7 @@ func (s *Service) handleListRoutes(c *gin.Context) {
 			&r.ReverifyInterval, &postureCheckIDs, &inlinePolicy,
 			&r.RequireDeviceTrust, &allowedCountries,
 			&r.MaxRiskScore, &guacConnID,
-			&r.LandingPath, &r.HostingMode,
+			&r.LandingPath, &r.HostingMode, &r.UpstreamPoolID,
 			&r.CreatedAt, &r.UpdatedAt,
 			&r.ApplicationID, &r.ApplicationName)
 		if err != nil {
@@ -1266,6 +1285,7 @@ func (s *Service) handleCreateRoute(c *gin.Context) {
 		MaxRiskScore       int               `json:"max_risk_score"`
 		LandingPath        string            `json:"landing_path"`
 		HostingMode        string            `json:"hosting_mode"`
+		UpstreamPoolID     string            `json:"upstream_pool_id"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -1333,21 +1353,32 @@ func (s *Service) handleCreateRoute(c *gin.Context) {
 		return
 	}
 
+	// A pool id is resolved inside the caller's org before it is stored: the FK
+	// alone would accept another tenant's pool and send this route's traffic to
+	// their backends.
+	poolID, err := s.resolvePoolForRoute(c.Request.Context(), org.ID, req.UpstreamPoolID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
 	_, err = s.db.Pool.Exec(c.Request.Context(),
 		`INSERT INTO proxy_routes (id, name, description, from_url, to_url, preserve_host,
 		  require_auth, allowed_roles, allowed_groups, policy_ids, idle_timeout, absolute_timeout,
 		  cors_allowed_origins, custom_headers, enabled, priority,
 		  idp_id, route_type, remote_host, remote_port,
 		  reverify_interval, posture_check_ids, inline_policy,
-		  require_device_trust, allowed_countries, max_risk_score, landing_path, hosting_mode, org_id)
+		  require_device_trust, allowed_countries, max_risk_score, landing_path, hosting_mode, org_id,
+		  upstream_pool_id)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
-		         $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29)`,
+		         $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30)`,
 		id, req.Name, req.Description, req.FromURL, req.ToURL, req.PreserveHost,
 		requireAuth, rolesJSON, groupsJSON, policyJSON, req.IdleTimeout, req.AbsoluteTimeout,
 		corsJSON, headersJSON, enabled, req.Priority,
 		idpID, req.RouteType, req.RemoteHost, req.RemotePort,
 		req.ReverifyInterval, postureJSON, req.InlinePolicy,
-		req.RequireDeviceTrust, countriesJSON, req.MaxRiskScore, landingPath, hostingMode, org.ID)
+		req.RequireDeviceTrust, countriesJSON, req.MaxRiskScore, landingPath, hostingMode, org.ID,
+		poolID)
 	if err != nil {
 		s.logger.Error("Failed to create route", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create route"})
@@ -1422,6 +1453,9 @@ func (s *Service) handleUpdateRoute(c *gin.Context) {
 		MaxRiskScore       *int              `json:"max_risk_score"`
 		LandingPath        *string           `json:"landing_path"`
 		HostingMode        *string           `json:"hosting_mode"`
+		// Tri-state on the wire, like every other pointer here: absent leaves
+		// the link alone, "" clears it (back to to_url), an id sets it.
+		UpstreamPoolID *string `json:"upstream_pool_id"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -1535,6 +1569,9 @@ func (s *Service) handleUpdateRoute(c *gin.Context) {
 		}
 		existing.HostingMode = mode
 	}
+	if req.UpstreamPoolID != nil {
+		existing.UpstreamPoolID = strings.TrimSpace(*req.UpstreamPoolID)
+	}
 
 	rolesJSON, _ := json.Marshal(existing.AllowedRoles)
 	groupsJSON, _ := json.Marshal(existing.AllowedGroups)
@@ -1555,6 +1592,14 @@ func (s *Service) handleUpdateRoute(c *gin.Context) {
 		return
 	}
 
+	// Same rule as create: the pool must be this org's, or the route would be
+	// pointed at another tenant's backends by id alone.
+	poolID, err := s.resolvePoolForRoute(c.Request.Context(), org.ID, existing.UpstreamPoolID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
 	_, err = s.db.Pool.Exec(c.Request.Context(),
 		`UPDATE proxy_routes SET name=$1, description=$2, from_url=$3, to_url=$4,
 		  preserve_host=$5, require_auth=$6, allowed_roles=$7, allowed_groups=$8,
@@ -1563,8 +1608,8 @@ func (s *Service) handleUpdateRoute(c *gin.Context) {
 		  idp_id=$16, route_type=$17, remote_host=$18, remote_port=$19,
 		  reverify_interval=$20, posture_check_ids=$21, inline_policy=$22,
 		  require_device_trust=$23, allowed_countries=$24, max_risk_score=$25,
-		  landing_path=$26, hosting_mode=$27, updated_at=NOW()
-		 WHERE id=$28 AND org_id=$29`,
+		  landing_path=$26, hosting_mode=$27, upstream_pool_id=$28, updated_at=NOW()
+		 WHERE id=$29 AND org_id=$30`,
 		existing.Name, existing.Description, existing.FromURL, existing.ToURL,
 		existing.PreserveHost, existing.RequireAuth, rolesJSON, groupsJSON,
 		policyJSON, existing.IdleTimeout, existing.AbsoluteTimeout, corsJSON,
@@ -1572,7 +1617,7 @@ func (s *Service) handleUpdateRoute(c *gin.Context) {
 		idpID, existing.RouteType, existing.RemoteHost, existing.RemotePort,
 		existing.ReverifyInterval, postureJSON, existing.InlinePolicy,
 		existing.RequireDeviceTrust, countriesJSON, existing.MaxRiskScore,
-		existing.LandingPath, existing.HostingMode, id, org.ID)
+		existing.LandingPath, existing.HostingMode, poolID, id, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to update route", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update route"})
@@ -2402,6 +2447,7 @@ func (s *Service) getRouteByID(ctx context.Context, id string) (*ProxyRoute, err
 		        COALESCE(max_risk_score, 100), guacamole_connection_id,
 		        COALESCE(landing_path, '/'),
 		        COALESCE(hosting_mode, 'identity'),
+		        COALESCE(upstream_pool_id::text, ''),
 		        created_at, updated_at
 		 FROM proxy_routes WHERE id=$1`+orgFilter, args...).Scan(
 		&r.ID, &r.Name, &desc, &r.FromURL, &r.ToURL, &r.PreserveHost,
@@ -2412,7 +2458,7 @@ func (s *Service) getRouteByID(ctx context.Context, id string) (*ProxyRoute, err
 		&r.ReverifyInterval, &postureCheckIDs, &inlinePolicy,
 		&r.RequireDeviceTrust, &allowedCountries,
 		&r.MaxRiskScore, &guacConnID,
-		&r.LandingPath, &r.HostingMode,
+		&r.LandingPath, &r.HostingMode, &r.UpstreamPoolID,
 		&r.CreatedAt, &r.UpdatedAt)
 	if err != nil {
 		return nil, err

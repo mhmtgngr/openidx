@@ -235,6 +235,7 @@ export const navigation: NavDomainGroup[] = [
         items: [
           { name: 'Zero Trust Access', nameKey: 'nav.items.zeroTrustAccess', href: '/zero-trust', icon: Shield, minRole: 'admin', keywords: ['ztna', 'ziti', 'services'] },
           { name: 'Proxy Routes', nameKey: 'nav.items.proxyRoutes', href: '/proxy-routes', icon: Network, minRole: 'admin', keywords: ['reverse proxy', 'gateway', 'vhost'] },
+          { name: 'Upstream Pools', nameKey: 'nav.items.upstreamPools', href: '/upstream-pools', icon: Server, minRole: 'admin', keywords: ['load balancer', 'backends', 'health check', 'weights', 'upstream'] },
           { name: 'Network Setup', nameKey: 'nav.items.networkSetup', href: '/ziti-setup', icon: Server, minRole: 'admin', keywords: ['ziti setup', 'controller', 'router'] },
           { name: 'Ziti Network', nameKey: 'nav.items.zitiNetwork', href: '/ziti-network', icon: Globe, minRole: 'admin', keywords: ['openziti', 'identities', 'edge routers'] },
           { name: 'Network Topology', nameKey: 'nav.items.networkTopology', href: '/network-topology', icon: Share2, minRole: 'operator', keywords: ['map', 'overlay', 'graph', 'topology'] },
