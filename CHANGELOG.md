@@ -110,6 +110,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reports the one whose argument CI computes as **not run** rather than as a
   pass. Six cases of its own keep it honest, chief among them that finding no
   guards is an error and not an empty success.
+- **Six Ziti handlers answered success over a record they had not changed, and
+  a SCIM mirror the provider reads back.** Each of these makes the controller
+  call first, checks it, and returns on failure — then wrote the database mirror
+  with the error discarded. So `DELETE /ziti/services/:id` answered *"ziti
+  service deleted"* while the row and its BrowZer route survived; the identity
+  delete did the same; `PUT` on a service policy answered 200 with the new
+  service and identity roles while the console kept showing the old ones for a
+  policy the network was already enforcing differently; and the identity
+  attribute patch — the attributes overlay policies match on — did likewise.
+  All six now report the divergence and say which way round it is: the network
+  changed, the record did not, and here is what will look wrong until it does.
+  In the same file, `handleGetEnrollmentJWT`'s write is genuinely best-effort —
+  a cache of a token the controller had just returned — and now carries a
+  `//silentwrite:ok` saying so, which is the distinction the gate exists to make
+  visible.
+  `UpdateSCIMUser` had the same split: the `users` row was checked, its
+  `scim_users` representation was not. That representation is what a SCIM `GET`
+  answers with, so a failure left the identity provider reading back the values
+  it had just replaced — and a provider that reconciles against what it reads
+  either sends the change for ever or concludes it never applied. The two are
+  one transaction now.
 - **A refused remote-support session was not ended
   (`HandleAgentConsent`).** The denial branch carries the comment *"A denial
   ends the session immediately (fail-closed)"*, and the statement under it
@@ -164,8 +185,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   revoked credential. The gate reports each one and is cleared either by
   handling the error or by a `//silentwrite:ok` reason above the call saying
   what is lost — the `//orgscope:ignore` convention this repository already
-  uses. The fixes above take the count to 121, and the gate holds it there: it
-  can only go down.
+  uses. The fixes above take the count to 113, one site carries a reason, and
+  the gate holds it there: it can only go down.
 - **115 log fields carried a request value nothing cleaned
   (`internal/common/logsafe`, new guard).** CodeQL filed two "Log entries
   created from user input" alerts against `internal/admin/attestation.go`.

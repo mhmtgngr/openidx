@@ -13,6 +13,7 @@ import (
 	apperrors "github.com/openidx/openidx/internal/common/errors"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -302,14 +303,34 @@ func (s *Service) handleDeleteZitiService(c *gin.Context) {
 		s.logger.Error("Failed to delete ziti service from controller", zap.Error(err))
 	}
 
-	// Clean up any BrowZer proxy_routes linked to this service
+	// Both of these used to discard their error while the handler answered
+	// "ziti service deleted". The overlay object is gone by this point -- the
+	// controller call above already ran -- so a failed row delete leaves the
+	// console listing a service that no longer exists, and a BrowZer route
+	// pointing at it. The response has to say that rather than report a
+	// deletion it only half made.
 	if serviceName != "" {
-		s.db.Pool.Exec(c.Request.Context(),
-			`DELETE FROM proxy_routes WHERE ziti_service_name = $1 AND browzer_enabled = true AND org_id = $2`, serviceName, org.ID)
+		if _, err := s.db.Pool.Exec(c.Request.Context(),
+			`DELETE FROM proxy_routes WHERE ziti_service_name = $1 AND browzer_enabled = true AND org_id = $2`,
+			serviceName, org.ID); err != nil {
+			s.logger.Error("ziti service removed from the controller; its BrowZer route could not be deleted",
+				logsafe.String("service", serviceName), zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": "the service was removed from the network but its BrowZer route could not be deleted; " +
+					"remove the route from Proxy Routes"})
+			return
+		}
 	}
 
-	// Delete from DB
-	s.db.Pool.Exec(c.Request.Context(), "DELETE FROM ziti_services WHERE id=$1 AND org_id=$2", id, org.ID)
+	if _, err := s.db.Pool.Exec(c.Request.Context(),
+		"DELETE FROM ziti_services WHERE id=$1 AND org_id=$2", id, org.ID); err != nil {
+		s.logger.Error("ziti service removed from the controller; its record could not be deleted",
+			logsafe.String("id", id), zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "the service was removed from the network but its record could not be deleted; " +
+				"it will keep appearing in the console until it is"})
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "ziti service deleted"})
 }
@@ -460,7 +481,15 @@ func (s *Service) handleDeleteZitiIdentity(c *gin.Context) {
 		s.logger.Error("Failed to delete ziti identity from controller", zap.Error(err))
 	}
 
-	s.db.Pool.Exec(c.Request.Context(), "DELETE FROM ziti_identities WHERE id=$1 AND org_id=$2", id, org.ID)
+	if _, err := s.db.Pool.Exec(c.Request.Context(),
+		"DELETE FROM ziti_identities WHERE id=$1 AND org_id=$2", id, org.ID); err != nil {
+		s.logger.Error("ziti identity removed from the controller; its record could not be deleted",
+			logsafe.String("id", id), zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "the identity was removed from the network but its record could not be deleted; " +
+				"it will keep appearing in the console until it is"})
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "ziti identity deleted"})
 }
@@ -495,8 +524,12 @@ func (s *Service) handleGetEnrollmentJWT(c *gin.Context) {
 	if s.ziti() != nil {
 		jwt, err := s.ziti().GetIdentityEnrollmentJWT(c.Request.Context(), zitiID)
 		if err == nil && jwt != "" {
-			// Update DB
-			s.db.Pool.Exec(c.Request.Context(),
+			// Cache it. This one really is best-effort, unlike its neighbours:
+			//silentwrite:ok a lost cache write costs one extra call to the Ziti
+			//silentwrite:ok controller the next time this JWT is asked for. The
+			//silentwrite:ok token being returned below is the controller's own
+			//silentwrite:ok answer, so the caller is served correctly either way.
+			_, _ = s.db.Pool.Exec(c.Request.Context(),
 				"UPDATE ziti_identities SET enrollment_jwt=$1 WHERE id=$2 AND org_id=$3", jwt, id, org.ID)
 			c.JSON(http.StatusOK, gin.H{
 				"enrollment_jwt": jwt,

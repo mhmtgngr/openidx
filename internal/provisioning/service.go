@@ -639,23 +639,39 @@ func (s *Service) UpdateSCIMUser(ctx context.Context, userID string, user *SCIMU
 	// through here can't silently wipe an already-set manager.
 	managerID := s.resolveManagerID(ctx, org.ID, user)
 
-	// Update user in users table
-	_, err = s.db.Pool.Exec(ctx, `
+	// The users row and its SCIM representation move together.
+	//
+	// They used not to: the users UPDATE was checked and the scim_users one
+	// discarded its error. scim_users is what a GET on this resource answers
+	// with, so a failure there left the IdP reading back the values it had just
+	// replaced -- and an IdP that reconciles against what it reads either sends
+	// the change again for ever or concludes it never applied. One transaction
+	// makes the two agree or leaves both alone.
+	tx, err := s.db.Pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err = tx.Exec(ctx, `
 		UPDATE users
 		SET username = $2, email = $3, first_name = $4, last_name = $5, enabled = $6, updated_at = $7,
 		    manager_id = COALESCE($9::uuid, manager_id)
 		WHERE id = $1 AND org_id = $8
-	`, userID, user.UserName, email, user.Name.GivenName, user.Name.FamilyName, user.Active, now, org.ID, managerID)
-
-	if err != nil {
+	`, userID, user.UserName, email, user.Name.GivenName, user.Name.FamilyName, user.Active, now, org.ID, managerID); err != nil {
 		return nil, err
 	}
 
-	// Update SCIM representation
 	data, _ := json.Marshal(user)
-	s.db.Pool.Exec(ctx, `
+	if _, err = tx.Exec(ctx, `
 		UPDATE scim_users SET data = $2, updated_at = $3 WHERE id = $1 AND org_id = $4
-	`, userID, data, now, org.ID)
+	`, userID, data, now, org.ID); err != nil {
+		return nil, fmt.Errorf("update the SCIM representation the provider reads back: %w", err)
+	}
+
+	if err = tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit: %w", err)
+	}
 
 	// SCIM `active:false` is the standard IdP deprovisioning signal. Flipping the
 	// flag alone left live sessions and tokens valid; revoke them so an upstream
