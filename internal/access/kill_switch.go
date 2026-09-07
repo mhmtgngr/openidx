@@ -31,6 +31,7 @@ import (
 	"github.com/openidx/openidx/internal/common/orgctx"
 
 	"github.com/openidx/openidx/internal/common/logsafe"
+	"github.com/openidx/openidx/internal/jitgrant"
 )
 
 // killSwitchRedisMarkerTTL mirrors identity's revokedSessionTTL: markers must
@@ -211,14 +212,17 @@ func (s *Service) executeKillSwitch(ctx context.Context, orgID, userID, username
 	} else {
 		res.VaultGrantsExpired = tag.RowsAffected()
 	}
-	if tag, err := s.db.Pool.Exec(ctx,
-		`UPDATE jit_grants SET status = 'revoked', revoked_at = NOW(), updated_at = NOW(),
-		        revoked_by = CASE WHEN $3 <> '' THEN $3::uuid ELSE revoked_by END
-		  WHERE user_id = $1 AND org_id = $2 AND status = 'active'`,
-		userID, orgID, actorID); err != nil {
-		warn("revoke_jit_grants", err)
+	// Time-bound elevations. This used to revoke jit_grants, a table nothing in
+	// the product has ever written -- so the emergency control left the user
+	// holding every elevated role the approval workflow had actually granted
+	// them, and reported 0, which on this response reads as "they held none".
+	// internal/jitgrant ends them against the rows that exist and returns how
+	// many, which is what this number now is.
+	if n, err := jitgrant.EndAllForUser(ctx, s.db.Pool, userID, orgID); err != nil {
+		warn("revoke_jit_elevations", err)
+		res.JITGrantsRevoked = n
 	} else {
-		res.JITGrantsRevoked = tag.RowsAffected()
+		res.JITGrantsRevoked = n
 	}
 
 	res.GuacSessionsKilled = s.terminateUserGuacSessions(ctx, orgID, userID, warn)

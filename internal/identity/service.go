@@ -43,6 +43,7 @@ import (
 	"github.com/openidx/openidx/internal/webhooks"
 
 	"github.com/openidx/openidx/internal/common/logsafe"
+	"github.com/openidx/openidx/internal/jitgrant"
 )
 
 // Use the min function from pushmfa.go
@@ -860,11 +861,11 @@ func (s *Service) deprovisionUser(ctx context.Context, userID, orgID string, har
 		userID, orgID); err != nil {
 		log.Warn("deprovision: expire vault grants failed", zap.Error(err))
 	}
-	if _, err := s.db.Pool.Exec(ctx,
-		`UPDATE jit_grants SET status = 'revoked', revoked_at = NOW(), updated_at = NOW()
-		 WHERE user_id = $1 AND org_id = $2 AND status = 'active'`,
-		userID, orgID); err != nil {
-		log.Warn("deprovision: revoke jit grants failed", zap.Error(err))
+	// Time-bound elevations. This used to update jit_grants, which nothing in
+	// the product writes, so a leaver kept every elevated role the approval
+	// workflow had granted them until it expired on its own.
+	if _, err := jitgrant.EndAllForUser(ctx, s.db.Pool, userID, orgID); err != nil {
+		log.Warn("deprovision: ending time-bound elevations failed", zap.Error(err))
 	}
 
 	if hardDelete {

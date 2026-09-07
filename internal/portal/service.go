@@ -21,6 +21,7 @@ import (
 	"github.com/openidx/openidx/internal/appaccess"
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/jitgrant"
 )
 
 // ErrInvalidDecision is returned when a group-request review decision is not one
@@ -451,8 +452,8 @@ func (s *Service) GetAccessOverview(ctx context.Context, userID string) (*Access
 		              (SELECT role_id FROM user_roles WHERE user_id = $1 AND org_id = $2)))),
 		   (SELECT COUNT(*) FROM vault_checkouts
 		     WHERE principal_id = $1 AND org_id = $2 AND status = 'active'),
-		   (SELECT COUNT(*) FROM jit_grants
-		     WHERE user_id = $1 AND org_id = $2 AND status = 'active' AND expires_at > NOW()),
+		   (SELECT COUNT(*) FROM access_requests
+		     WHERE requester_id = $1 AND org_id = $2 AND `+jitgrant.ActiveForUserPredicate+`),
 		   (SELECT COUNT(*) FROM guacamole_sessions
 		     WHERE user_id = $1 AND org_id = $2 AND status = 'active'),
 		   (SELECT COUNT(*) FROM guacamole_session_requests

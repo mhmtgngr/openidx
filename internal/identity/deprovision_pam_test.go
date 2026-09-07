@@ -16,6 +16,9 @@ import (
 // checked-out credential lease and reveal grants stayed live until their
 // natural expiry. DB-backed because the revocations are plain SQL against the
 // real column names.
+// deprovRole is the role the leaver's time-bound elevation granted.
+const deprovRole = "66666666-0000-0000-0000-000000000001"
+
 func TestDeprovisionUser_RevokesPAMState(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	if db == nil {
@@ -48,10 +51,16 @@ func TestDeprovisionUser_RevokesPAMState(t *testing.T) {
 		`CREATE TABLE vault_access_grants (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(), org_id UUID, secret_id UUID,
 			principal_type VARCHAR(32), principal_id UUID, actions TEXT[], expires_at TIMESTAMPTZ)`,
-		`CREATE TABLE jit_grants (
-			id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID, org_id UUID,
-			role_name VARCHAR(255), expires_at TIMESTAMPTZ, revoked_at TIMESTAMPTZ,
-			updated_at TIMESTAMPTZ DEFAULT NOW(), status VARCHAR(16))`,
+		// A time-bound elevation is an access_requests row plus the assignment
+		// it granted. This fixture used to seed jit_grants -- a table nothing
+		// in the product writes -- so it proved deprovisioning could revoke a
+		// row invented for it while the leaver's real elevation survived.
+		`CREATE TABLE access_requests (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(), requester_id UUID, org_id UUID,
+			resource_type VARCHAR(50), resource_id VARCHAR(255), resource_name VARCHAR(255),
+			status VARCHAR(50), expires_at TIMESTAMPTZ,
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
+		`CREATE TABLE user_roles (user_id UUID, role_id UUID, org_id UUID)`,
 	}
 	for _, stmt := range schema {
 		if _, err := db.Pool.Exec(ctx, stmt); err != nil {
@@ -64,7 +73,9 @@ func TestDeprovisionUser_RevokesPAMState(t *testing.T) {
 		`INSERT INTO api_keys (user_id, org_id, status) VALUES ('` + userID + `','` + orgID + `','active')`,
 		`INSERT INTO vault_checkouts (org_id, secret_id, principal_id, mode, status) VALUES ('` + orgID + `','` + secretID + `','` + userID + `','reveal','active')`,
 		`INSERT INTO vault_access_grants (org_id, secret_id, principal_type, principal_id, actions) VALUES ('` + orgID + `','` + secretID + `','user','` + userID + `','{use,reveal}')`,
-		`INSERT INTO jit_grants (user_id, org_id, role_name, expires_at, status) VALUES ('` + userID + `','` + orgID + `','break-glass',NOW()+'1h','active')`,
+		`INSERT INTO access_requests (requester_id, org_id, resource_type, resource_id, resource_name, status, expires_at)
+		   VALUES ('` + userID + `','` + orgID + `','role','` + deprovRole + `','break-glass','fulfilled',NOW()+'1h')`,
+		`INSERT INTO user_roles (user_id, role_id, org_id) VALUES ('` + userID + `','` + deprovRole + `','` + orgID + `')`,
 		// Another user's live PAM state — must be untouched.
 		`INSERT INTO vault_checkouts (org_id, secret_id, principal_id, mode, status) VALUES ('` + orgID + `','` + secretID + `','` + otherID + `','reveal','active')`,
 		`INSERT INTO vault_access_grants (org_id, secret_id, principal_type, principal_id, actions) VALUES ('` + orgID + `','` + secretID + `','role','` + otherID + `','{use}')`,
@@ -90,8 +101,8 @@ func TestDeprovisionUser_RevokesPAMState(t *testing.T) {
 		t.Errorf("disabled user's vault grant still live: %d (err %v)", n, err)
 	}
 	if err := db.Pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM jit_grants WHERE user_id=$1 AND status='active'`, userID).Scan(&n); err != nil || n != 0 {
-		t.Errorf("disabled user's JIT grant still active: %d (err %v)", n, err)
+		`SELECT COUNT(*) FROM user_roles WHERE user_id=$1`, userID).Scan(&n); err != nil || n != 0 {
+		t.Errorf("disabled user's time-bound elevation still held: %d (err %v)", n, err)
 	}
 	if err := db.Pool.QueryRow(ctx,
 		`SELECT COUNT(*) FROM sessions WHERE user_id=$1 AND (revoked IS NULL OR revoked=false)`, userID).Scan(&n); err != nil || n != 0 {

@@ -1301,5 +1301,12 @@ func allMigrations() []*Migration {
 			UpSQL:       dropRequestApprovalChainsUp,
 			DownSQL:     dropRequestApprovalChainsDown,
 		},
+		{
+			Version:     183,
+			Name:        "drop_jit_grants",
+			Description: "Drop jit_grants, the second representation of a time-bound elevation. The live one is an access_requests row (resource_type role/group/application, status fulfilled, expires_at set) that governance's approval workflow creates and its expiry sweep ends. jit_grants was written only by internal/governance/jit.go, a service no binary could reach, so it has been empty on every install ever run -- while five live paths aimed at it: the kill switch revoked it on account compromise and published pam_jit_grants_revoked, the lifecycle sweep revoked the elevations of disabled users, deprovisioning revoked a leaver's, User Access 360 listed them and the portal dashboard counted them. The first three did nothing and reported nothing; the kill switch's zero told an incident responder the user held no elevations while they kept every elevated role the approval workflow had granted. All five now go through internal/jitgrant against access_requests, so this table has no reader and no writer left and jit.go is deleted in the same commit. A row could only exist if an operator inserted one by hand or a fork wired NewJITService. Down recreates the table in the v58 shape with v64's org_id, index, policy and belt.",
+			UpSQL:       dropJITGrantsUp,
+			DownSQL:     dropJITGrantsDown,
+		},
 	}
 }

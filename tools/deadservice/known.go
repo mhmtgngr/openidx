@@ -50,9 +50,10 @@ var knownDead = map[string]string{
 	// lines of second access-request workflow whose escalation sweep could
 	// never match a row, plus request_approval_chains, the table only it wrote
 	// (migration v182 drops it). The second was the third OPA evaluator in the
-	// tree. JITService below is NOT the same easy case and has its own task.
-
-	"internal/governance.JITService": "just-in-time privilege elevation: RequestElevation, GrantElevation, ExtendGrant, RevokeGrant, ValidateGrant and a StartExpiryChecker that revokes expired grants. The live JIT path is on governance.Service (handleCheckoutCredential, revokeExpiredJITAccess and the jit_grants table), tested in jit_expiry_revoke_test.go. A SECOND IMPLEMENTATION of a security-critical expiry sweep: delete, so there is one place where an elevation ends.",
+	// tree. JITService followed once the five live paths that read or revoked
+	// jit_grants -- the kill switch, the lifecycle sweep, deprovisioning, User
+	// Access 360 and the portal dashboard -- were pointed at the elevations the
+	// product actually grants (internal/jitgrant, migration v183).
 
 	// ---- risk --------------------------------------------------------------
 

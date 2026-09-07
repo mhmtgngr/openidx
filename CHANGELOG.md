@@ -76,6 +76,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   83 with a verdict per site saying what the zero does, and shrinks; a new
   finding fails the build, and so does an entry that no longer reproduces.
 
+### Fixed
+
+- **The kill switch did not revoke the elevation the product actually grants,
+  and reported zero (migration v183, `internal/jitgrant`).** OpenIDX had two
+  representations of a just-in-time elevation. The live one is an
+  `access_requests` row — `resource_type` role/group/application, status
+  `fulfilled`, `expires_at` set — that governance's approval workflow creates
+  along with the assignment, and that its expiry sweep ends. The other was the
+  `jit_grants` table, written only by `internal/governance/jit.go`, a service no
+  binary could reach, so it has been **empty on every install ever run**. Five
+  live paths aimed at it. The kill switch — the control an operator presses when
+  an account is compromised — revoked `jit_grants` and published
+  `pam_jit_grants_revoked`, so it left the user holding every elevated role the
+  approval workflow had granted them and answered `0`, which on that response
+  reads as *"this user held none"*. The lifecycle sweep's revocation of disabled
+  users' elevations and deprovisioning's revocation of a leaver's did nothing at
+  all. User Access 360 listed a user's active elevations (always empty) and the
+  portal dashboard counted them (always 0), on two pages whose entire job is to
+  say what access somebody has. All five now go through the new
+  `internal/jitgrant`, which holds one definition of an active elevation and one
+  way to end one — the shared revocation used to be unexported inside
+  `internal/governance`, which is precisely why the other three packages each
+  wrote their own SQL against the wrong table. The tests that "covered" these
+  paths seeded `jit_grants` rows by hand, so they proved only that a query could
+  find a row invented for it; they now seed a real elevation, and reverting the
+  kill-switch fix makes `TestKillSwitch_SeversAllPillars` report
+  `JITGrantsRevoked:0` with *"active jit grants remain: 1"*. One gap is recorded
+  rather than closed: `handleCreateAccessRequest` accepts any duration
+  `parseDuration` takes, so a "time-bound" elevation still has no ceiling.
+
 ### Removed
 
 - **Two governance services no binary could reach, and the table one of them

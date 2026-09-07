@@ -19,6 +19,7 @@ decoration. Running only the positive half is how this class survives.
 | MFA policy | MFA Management | `IsMFARequired` in the OAuth login path | a policy user is challenged; an exempt user is not |
 | Device trust | My Devices, Access 360 | Ziti posture + the `#device-trusted` attribute | an untrusted device is denied the dial |
 | **ABAC policy** | ABAC Policies (with its mode badge) | `internal/abac` at both PEPs — the token endpoint and the access proxy | in `observe`, a deny policy records `abac.would_deny` and still issues; in `enforce`, the same policy returns 403 and audits `abac.denied` |
+| **JIT elevation** | User Access 360, portal dashboard ("active JIT grants") | `internal/jitgrant` over `access_requests` — the expiry sweep, the kill switch, the lifecycle sweep, deprovisioning | grant a time-boxed role, confirm it is listed and counted, then press the kill switch: the role must be gone, the request `expired`, and `pam_jit_grants_revoked` must be **1** rather than 0 |
 
 **Anything that appears in an admin UI without a row in this table is a
 defect: either wire it or remove it.** That rule is what retired the ABAC page

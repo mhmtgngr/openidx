@@ -696,142 +696,20 @@ func TestPolicyEvaluation_Timebound(t *testing.T) {
 // JIT Grant Model Tests (no database required)
 // ---------------------------------------------------------------------------
 
-func TestJITGrantValidation(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name        string
-		grant       *JITGrant
-		shouldError bool
-		errorMsg    string
-	}{
-		{
-			name: "valid active grant",
-			grant: &JITGrant{
-				ID:            "grant-001",
-				UserID:        "user-001",
-				RoleID:        "role-admin",
-				RoleName:      "Administrator",
-				GrantedBy:     "admin-001",
-				Justification: "Emergency access",
-				Duration:      2 * time.Hour,
-				ExpiresAt:     time.Now().Add(2 * time.Hour),
-				CreatedAt:     time.Now(),
-				Status:        "active",
-			},
-			shouldError: false,
-		},
-		{
-			name: "expired grant",
-			grant: &JITGrant{
-				ID:            "grant-002",
-				UserID:        "user-002",
-				RoleID:        "role-viewer",
-				RoleName:      "Viewer",
-				GrantedBy:     "manager-001",
-				Justification: "Temporary elevation",
-				Duration:      30 * time.Minute,
-				ExpiresAt:     time.Now().Add(-1 * time.Hour),
-				CreatedAt:     time.Now().Add(-2 * time.Hour),
-				Status:        "expired",
-			},
-			shouldError: false,
-		},
-		{
-			name: "revoked grant",
-			grant: &JITGrant{
-				ID:            "grant-003",
-				UserID:        "user-003",
-				RoleID:        "role-poweruser",
-				RoleName:      "Power User",
-				GrantedBy:     "admin-001",
-				Justification: "Abuse detected",
-				Duration:      15 * time.Minute,
-				ExpiresAt:     time.Now().Add(15 * time.Minute),
-				CreatedAt:     time.Now().Add(-30 * time.Minute),
-				RevokedAt:     timePtr(time.Now().Add(-15 * time.Minute)),
-				RevokedBy:     strPtr("admin-001"),
-				Status:        "revoked",
-			},
-			shouldError: false,
-		},
-		{
-			name: "grant with minimum duration",
-			grant: &JITGrant{
-				ID:            "grant-004",
-				UserID:        "user-004",
-				RoleID:        "role-developer",
-				RoleName:      "Developer",
-				GrantedBy:     "user-004",
-				Justification: "Code deployment",
-				Duration:      15 * time.Minute,
-				ExpiresAt:     time.Now().Add(15 * time.Minute),
-				CreatedAt:     time.Now(),
-				Status:        "active",
-			},
-			shouldError: false,
-		},
-		{
-			name: "grant with maximum duration",
-			grant: &JITGrant{
-				ID:            "grant-005",
-				UserID:        "user-005",
-				RoleID:        "role-ops",
-				RoleName:      "Ops Engineer",
-				GrantedBy:     "manager-001",
-				Justification: "Maintenance window",
-				Duration:      8 * time.Hour,
-				ExpiresAt:     time.Now().Add(8 * time.Hour),
-				CreatedAt:     time.Now(),
-				Status:        "active",
-			},
-			shouldError: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Validate grant structure
-			assert.NotEmpty(t, tt.grant.ID)
-			assert.NotEmpty(t, tt.grant.UserID)
-			assert.NotEmpty(t, tt.grant.RoleID)
-			assert.NotEmpty(t, tt.grant.RoleName)
-			assert.NotEmpty(t, tt.grant.GrantedBy)
-			assert.NotEmpty(t, tt.grant.Justification)
-			assert.NotZero(t, tt.grant.Duration)
-
-			// Validate duration is within bounds
-			if tt.grant.Duration < MinimumJITDuration || tt.grant.Duration > MaximumJITDuration {
-				t.Error("JIT grant duration outside valid range")
-			}
-
-			// Validate expiry is after creation
-			if tt.grant.Status == "active" {
-				assert.True(t, tt.grant.ExpiresAt.After(tt.grant.CreatedAt),
-					"expiry must be after creation time")
-			}
-
-			// Validate status consistency
-			validStatuses := map[string]bool{
-				"active": true, "expired": true, "revoked": true,
-			}
-			assert.True(t, validStatuses[tt.grant.Status], "invalid grant status")
-
-			// If revoked, must have revocation info
-			if tt.grant.Status == "revoked" {
-				assert.NotNil(t, tt.grant.RevokedAt, "revoked grant must have revocation timestamp")
-				assert.NotNil(t, tt.grant.RevokedBy, "revoked grant must have revoker")
-			}
-		})
-	}
-}
-
-// TestJITRequestValidation used to stand here. It did not call
-// RequestElevation: it re-implemented the field and duration checks inside the
-// test body and then asserted that its own copy agreed with its own table. A
-// tautology -- RequestElevation could drop every check tomorrow and it would
-// stay green. The real cases now live in jit_test.go, where they drive
-// RequestElevation itself.
+// TestJITGrantValidation and the note about TestJITRequestValidation stood
+// here. Both were about internal/governance/jit.go's JITGrant/JITRequest and
+// the MinimumJITDuration / MaximumJITDuration constants -- a JIT service no
+// binary could reach, deleted along with jit_grants (migration v183). The live
+// time-bound elevation is an access_requests row with expires_at, ended
+// through internal/jitgrant; its tests live with the controls that use it.
+//
+// One thing those tests implied that the product does NOT do: bound the
+// duration. handleCreateAccessRequest accepts any value parseDuration takes
+// ("4h", "1d", "30d", and anything larger), so a "time-bound" elevation has no
+// ceiling. The constants enforced nothing -- no reachable code read them --
+// and inventing a cap here would reject the 30d checkouts the handler's own
+// comment offers as an example. Recorded as a product decision, not deleted
+// quietly.
 
 func TestReviewProgressCalculation_Extended(t *testing.T) {
 	t.Parallel()
@@ -982,43 +860,10 @@ func TestPolicyTypeConstants(t *testing.T) {
 // Duration Constant Tests
 // ---------------------------------------------------------------------------
 
-func TestJITDurationConstants(t *testing.T) {
-	t.Parallel()
+// TestJITDurationConstants and TestJITDurationBounds stood here, asserting
+// that MinimumJITDuration == 15m and MaximumJITDuration == 8h. Nothing
+// reachable read either constant; see the note above.
 
-	assert.Equal(t, 15*time.Minute, MinimumJITDuration)
-	assert.Equal(t, 8*time.Hour, MaximumJITDuration)
-	assert.Equal(t, 30*time.Second, JITExpiryCheckInterval)
-}
-
-func TestJITDurationBounds(t *testing.T) {
-	t.Parallel()
-
-	// Test minimum boundary
-	minRequest := JITRequest{Duration: MinimumJITDuration - 1}
-	assert.True(t, minRequest.Duration < MinimumJITDuration)
-
-	// Test maximum boundary
-	maxRequest := JITRequest{Duration: MaximumJITDuration + 1}
-	assert.True(t, maxRequest.Duration > MaximumJITDuration)
-
-	// Test valid durations
-	validDurations := []time.Duration{
-		MinimumJITDuration,
-		30 * time.Minute,
-		1 * time.Hour,
-		4 * time.Hour,
-		MaximumJITDuration,
-	}
-
-	for _, d := range validDurations {
-		assert.True(t, d >= MinimumJITDuration)
-		assert.True(t, d <= MaximumJITDuration)
-	}
-}
-
-// TestPolicyEvaluation_ConditionalAccess exercises the conditional_access
-// evaluator directly against loaded Rules — the path the G1 GetPolicy fix
-// unblocks (GetPolicy now populates policy.Rules from policy_rules).
 func TestPolicyEvaluation_ConditionalAccess(t *testing.T) {
 	t.Parallel()
 

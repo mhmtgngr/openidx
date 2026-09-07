@@ -100,7 +100,9 @@ var crossPillarSchema = []string{
 		id UUID PRIMARY KEY, user_id UUID, org_id UUID, status VARCHAR(32))`,
 	`CREATE TABLE IF NOT EXISTS access_requests (
 		id UUID PRIMARY KEY, requester_id UUID, org_id UUID,
-		resource_type VARCHAR(50), status VARCHAR(50))`,
+		resource_type VARCHAR(50), resource_id VARCHAR(255), resource_name VARCHAR(255),
+		status VARCHAR(50), expires_at TIMESTAMPTZ,
+		updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
 	`CREATE TABLE IF NOT EXISTS vault_secrets (
 		id UUID PRIMARY KEY, org_id UUID, name VARCHAR(255), type VARCHAR(32))`,
 	`CREATE TABLE IF NOT EXISTS vault_access_grants (
@@ -110,10 +112,6 @@ var crossPillarSchema = []string{
 		id UUID PRIMARY KEY, org_id UUID, secret_id UUID, principal_id UUID,
 		mode VARCHAR(16), leased_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 		expires_at TIMESTAMPTZ, returned_at TIMESTAMPTZ, status VARCHAR(16))`,
-	`CREATE TABLE IF NOT EXISTS jit_grants (
-		id UUID PRIMARY KEY, user_id UUID, org_id UUID, role_name VARCHAR(255),
-		expires_at TIMESTAMPTZ, revoked_at TIMESTAMPTZ, revoked_by UUID,
-		updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), status VARCHAR(16))`,
 	`CREATE TABLE IF NOT EXISTS proxy_routes (
 		id UUID PRIMARY KEY, name VARCHAR(255), ziti_enabled BOOLEAN DEFAULT false)`,
 	`CREATE TABLE IF NOT EXISTS guacamole_connections (
@@ -196,8 +194,13 @@ func TestUserAccessMap_CrossPillar(t *testing.T) {
 		  VALUES (gen_random_uuid(),$1,$2,'role',$3,'{use,reveal}')`, []any{testOrg, secretID, roleID}},
 		{`INSERT INTO vault_checkouts (id, org_id, secret_id, principal_id, mode, status, expires_at)
 		  VALUES (gen_random_uuid(),$1,$2,$3,'reveal','active',NOW()+'1h')`, []any{testOrg, secretID, testUser}},
-		{`INSERT INTO jit_grants (id, user_id, org_id, role_name, expires_at, status)
-		  VALUES (gen_random_uuid(),$1,$2,'break-glass',NOW()+'2h','active')`, []any{testUser, testOrg}},
+		// A live time-bound elevation: a fulfilled access request with an
+		// expiry, and the user_roles row it granted. This used to be a
+		// jit_grants row -- a table nothing in the product writes, so the test
+		// proved only that the query could find a row invented for it.
+		{`INSERT INTO access_requests (id, requester_id, org_id, resource_type, resource_id, resource_name, status, expires_at)
+		  VALUES (gen_random_uuid(),$1,$2,'role',$3,'break-glass','fulfilled',NOW()+'2h')`,
+			[]any{testUser, testOrg, roleID}},
 		// PAM session riding a Ziti-enabled route.
 		{`INSERT INTO proxy_routes (id, name, ziti_enabled) VALUES ($1,'prod-jumphost',true)`, []any{routeID}},
 		{`INSERT INTO guacamole_connections (id, route_id, org_id, protocol) VALUES ($1,$2,$3,'ssh')`, []any{connID, routeID, testOrg}},
