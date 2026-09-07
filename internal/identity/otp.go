@@ -540,6 +540,12 @@ func (s *Service) createOTPChallenge(ctx context.Context, userID, method, recipi
 	code := generateOTPCode(cfg.CodeLength)
 	codeHash := hashOTPCode(code)
 
+	// One clock reading for both, so the stored lifetime is exactly the one the
+	// administrator configured. Two calls to time.Now() put whatever elapsed
+	// between them into the code's life — invisible at microseconds, and the
+	// difference between a record that says what was asked for and one that
+	// nearly does.
+	now := time.Now()
 	challenge := &OTPChallenge{
 		ID:          uuid.New().String(),
 		UserID:      userID,
@@ -549,8 +555,8 @@ func (s *Service) createOTPChallenge(ctx context.Context, userID, method, recipi
 		Attempts:    0,
 		MaxAttempts: cfg.MaxAttempts,
 		Status:      "pending",
-		CreatedAt:   time.Now(),
-		ExpiresAt:   time.Now().Add(cfg.ExpirationTime),
+		CreatedAt:   now,
+		ExpiresAt:   now.Add(cfg.ExpirationTime),
 	}
 
 	if err := s.storeOTPChallenge(ctx, challenge); err != nil {

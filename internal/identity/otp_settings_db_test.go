@@ -112,6 +112,12 @@ func TestAnAdministratorsOTPSettingsReachTheCodeThatIsSent(t *testing.T) {
 	if maxAttempts != 5 {
 		t.Errorf("the challenge allows %d attempts; the administrator set 5", maxAttempts)
 	}
+	// Exactly 60s, not approximately: createOTPChallenge takes one clock reading
+	// for both columns. It used to take two, so the stored lifetime carried
+	// whatever elapsed between them — a microsecond on an idle machine, enough
+	// to fail this assertion under the race detector, and never what was asked
+	// for. The assertion is exact so that regression cannot come back as
+	// "close enough".
 	if lifetime := expiresAt.Sub(createdAt); lifetime != 60*time.Second {
 		t.Errorf("the code lives %v; the administrator set 60s", lifetime)
 	}
