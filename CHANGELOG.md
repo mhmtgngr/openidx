@@ -93,7 +93,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `internal/notifications.TypeCatalogue` is now the one place a type is named,
   `GET /notifications/preference-types` serves it, the console's picker reads
   it instead of its own stale list, and `PUT /notifications/preferences`
-  refuses a preference for a type this deployment does not send.
+  refuses a preference for a type this deployment does not send. The lookup
+  behind that default is no longer silent either: `isNotificationEnabled`
+  answered *every* failure — a missing table, a permission error, a dead
+  connection — with "enabled", so a preferences store that had stopped working
+  was indistinguishable from a population that had simply never opened the
+  page. A failed read still sends, because nobody should stop being told their
+  device was approved by a broken query, but only `pgx.ErrNoRows` is the quiet
+  default now; anything else is logged.
 
 - **The migration chain could not be rolled back past v29.** Every migration
   carries a `Down` half and `RollbackTo` exists to run them — it is what an
