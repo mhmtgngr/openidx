@@ -153,6 +153,33 @@ redis://[:password@]host:port[/db]
 | `TRACING_ENDPOINT` | string | - | Jaeger endpoint |
 | `HEALTH_CHECK_ENABLED` | bool | `true` | Enable health checks |
 
+### Access Requests
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `ACCESS_REQUEST_MAX_DURATION_HOURS` | int | `2160` (90 days) | Longest window a time-bound access request may elevate somebody for |
+
+A request over the ceiling is **refused**, with the maximum named in the error,
+and never silently shortened — an approver reading "30 days" must not be
+approving something else.
+
+The default is the longest window the product documents (`90d`), so it rejects
+nothing the console can produce: the request form offers 4h, 8h, 1d, 3d, 7d,
+30d and 90d, and nothing longer. It exists for the API, which previously
+accepted any value at all — including one large enough to overflow and land in
+the past.
+
+Set it lower where standing access should be shorter:
+
+```bash
+# Nothing longer than a working day.
+export ACCESS_REQUEST_MAX_DURATION_HOURS=8
+```
+
+Whether a vault credential, a role and an application assignment should have
+*different* ceilings is an open product decision; today one bound applies to
+all three.
+
 ### Endpoint Agent Downloads
 
 | Variable | Type | Default | Description |

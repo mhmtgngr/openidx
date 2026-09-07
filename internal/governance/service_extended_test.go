@@ -703,13 +703,23 @@ func TestPolicyEvaluation_Timebound(t *testing.T) {
 // time-bound elevation is an access_requests row with expires_at, ended
 // through internal/jitgrant; its tests live with the controls that use it.
 //
-// One thing those tests implied that the product does NOT do: bound the
-// duration. handleCreateAccessRequest accepts any value parseDuration takes
-// ("4h", "1d", "30d", and anything larger), so a "time-bound" elevation has no
-// ceiling. The constants enforced nothing -- no reachable code read them --
-// and inventing a cap here would reject the 30d checkouts the handler's own
-// comment offers as an example. Recorded as a product decision, not deleted
-// quietly.
+// One thing those tests implied that the product did NOT do: bound the
+// duration. That is now done, in request_duration_test.go -- and the reason
+// this note was wrong to stop where it did is worth keeping.
+//
+// It read the whole thing as one product decision ("inventing a cap here would
+// reject the 30d checkouts the handler's own comment offers as an example") and
+// so left everything alone. Only the ceiling's VALUE was a product decision.
+// The rest was a parser that did not parse: "3zd" was read as 3 days, "-5d"
+// created a request already expired, and "9999999999999d" overflowed int64
+// nanoseconds and wrapped to an expires_at in 1939. None of that needed anyone
+// to decide anything.
+//
+// The ceiling itself defaults to 90d -- the longest window the handler's own
+// documentation offers -- so it rejects nothing the product ever promised, and
+// ACCESS_REQUEST_MAX_DURATION_HOURS moves it. What remains a genuine product
+// decision, and is left as one: whether a vault credential, a role and an
+// application assignment should have DIFFERENT ceilings.
 
 func TestReviewProgressCalculation_Extended(t *testing.T) {
 	t.Parallel()

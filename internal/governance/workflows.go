@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -72,26 +74,93 @@ type ApprovalPolicy struct {
 	UpdatedAt             time.Time              `json:"updated_at"`
 }
 
+// defaultAccessRequestMaxHours bounds how long an access request may elevate
+// somebody for when the deployment has not set a maximum of its own.
+//
+// 90 days = 2160 hours. The number is not invented here: "90d" is the longest
+// window parseDuration's own documentation has ever offered as an example, so a
+// default at that value rejects nothing the product has ever said it supports
+// and turns "no ceiling at all" into "the documented ceiling". An operator who
+// wants a tighter one sets ACCESS_REQUEST_MAX_DURATION_HOURS.
+//
+// STILL A PRODUCT DECISION, and left as one rather than settled quietly:
+// whether a vault credential, a role and an application assignment should have
+// DIFFERENT ceilings. They plainly should -- a credential checkout is not a
+// project-length group membership -- but picking three numbers is a product
+// call, and one bound applied honestly is better than three invented in
+// passing. What is fixed below is the part that was never a decision: a
+// "time-bound" elevation that was not bounded, by a parser that did not parse.
+const defaultAccessRequestMaxHours = 90 * 24
+
 // parseDuration converts a human-friendly duration string to time.Duration.
-// Supports: "4h", "8h", "1d", "3d", "7d", "30d", "90d"
+// Supports: "4h", "8h", "1d", "3d", "7d", "30d", "90d".
+//
+// The previous implementation used fmt.Sscanf("%d"), which stops at the first
+// byte it cannot read and reports success for what it got, while the unit came
+// from the LAST byte of the string. Nothing checked that the two met in the
+// middle, so several inputs parsed as a value nobody asked for:
+//
+//	"3zd"            -> 3 days   (the z was simply skipped)
+//	"12 d"           -> 12 days
+//	"-5d"            -> MINUS 5 days: a request created already expired
+//	"0h"             -> expires at the moment it is created
+//	"9999999999999d" -> int64 nanoseconds overflow, wrapping NEGATIVE: an
+//	                    expires_at in 1939
+//	"100000000d"     -> overflow again, landing on 2246 rather than the year
+//	                    asked for -- the value stored is not the value chosen
+//
+// It now parses the whole string or refuses it, requires a positive value, and
+// refuses anything that would overflow rather than wrapping into a date that
+// looks deliberate.
 func parseDuration(s string) (time.Duration, error) {
 	if len(s) < 2 {
-		return 0, fmt.Errorf("invalid duration: %s", s)
+		return 0, fmt.Errorf("invalid duration %q: expected a number and a unit, like 4h or 7d", s)
 	}
 	unit := s[len(s)-1]
-	value := s[:len(s)-1]
-	var n int
-	if _, err := fmt.Sscanf(value, "%d", &n); err != nil {
-		return 0, fmt.Errorf("invalid duration value: %s", s)
-	}
+	var perUnit time.Duration
 	switch unit {
 	case 'h':
-		return time.Duration(n) * time.Hour, nil
+		perUnit = time.Hour
 	case 'd':
-		return time.Duration(n) * 24 * time.Hour, nil
+		perUnit = 24 * time.Hour
 	default:
-		return 0, fmt.Errorf("unsupported duration unit: %c", unit)
+		return 0, fmt.Errorf("unsupported duration unit %q in %q: use h (hours) or d (days)", string(unit), s)
 	}
+
+	// ParseInt, not Sscanf: it consumes the whole string or fails, so "3zd"
+	// and "12 d" are refused rather than silently read as 3d and 12d.
+	n, err := strconv.ParseInt(s[:len(s)-1], 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid duration %q: %q is not a whole number", s, s[:len(s)-1])
+	}
+	if n <= 0 {
+		return 0, fmt.Errorf("invalid duration %q: an access window must be longer than zero", s)
+	}
+	// A window this long is a mistake or an attack, and letting it through is
+	// how an int64 of nanoseconds wraps to a date in the past.
+	if n > int64(math.MaxInt64/int64(perUnit)) {
+		return 0, fmt.Errorf("invalid duration %q: that is longer than any access window can be", s)
+	}
+	return time.Duration(n) * perUnit, nil
+}
+
+// maxAccessRequestDuration is the ceiling this deployment applies to a
+// time-bound access request.
+func (s *Service) maxAccessRequestDuration() time.Duration {
+	hours := defaultAccessRequestMaxHours
+	if s.config != nil && s.config.AccessRequestMaxDurationHours > 0 {
+		hours = s.config.AccessRequestMaxDurationHours
+	}
+	return time.Duration(hours) * time.Hour
+}
+
+// humanDuration renders a ceiling the way the request that hit it was written,
+// so the error names a value the caller could have typed.
+func humanDuration(d time.Duration) string {
+	if h := int64(d / time.Hour); h%24 == 0 {
+		return fmt.Sprintf("%dd", h/24)
+	}
+	return fmt.Sprintf("%dh", int64(d/time.Hour))
 }
 
 // handleCreateAccessRequest creates a new access request
@@ -154,12 +223,23 @@ func (s *Service) handleCreateAccessRequest(c *gin.Context) {
 		}
 	}
 
-	// Parse duration to calculate expires_at
+	// Parse duration to calculate expires_at.
+	//
+	// Over the ceiling is refused, not silently shortened: an elevation granted
+	// for less than the window an approver read and approved is the same class
+	// of defect as one granted for longer, and the requester cannot see either.
 	var expiresAt *time.Time
 	if body.Duration != "" {
 		d, err := parseDuration(body.Duration)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid duration: " + err.Error()})
+			return
+		}
+		if max := s.maxAccessRequestDuration(); d > max {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":        fmt.Sprintf("Requested access window %s is longer than this deployment allows (%s)", body.Duration, humanDuration(max)),
+				"max_duration": humanDuration(max),
+			})
 			return
 		}
 		t := time.Now().Add(d)
