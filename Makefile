@@ -1,7 +1,7 @@
 # OpenIDX Makefile
 # Build, test, and deploy automation
 
-.PHONY: all build test test-db lint clean dev dev-infra docker helm docs smoke-test ha-drill k8s-chaos dr-game-day dark-drill dark-drill-live build-agent build-agent-all test-agent docker-build-agent ziti-quickstart ziti-down
+.PHONY: all build test test-db guards lint clean dev dev-infra docker helm docs smoke-test ha-drill k8s-chaos dr-game-day dark-drill dark-drill-live build-agent build-agent-all test-agent docker-build-agent ziti-quickstart ziti-down
 
 # Variables
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -116,6 +116,12 @@ test-integration:
 # Needs OPENIDX_DB_SUITE_ADMIN_URL; see scripts/db-suite.sh.
 test-db:
 	@./scripts/db-suite.sh
+
+# Every shell guard the workflows run, in one command. The list is read out
+# of .github/workflows, not written down here, so it cannot drift from what
+# CI runs -- which is how a guard came to be missed before a push.
+guards:
+	@./scripts/run-ci-guards.sh
 
 test-e2e:
 	@echo "🎭 Running end-to-end tests..."

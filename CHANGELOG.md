@@ -94,6 +94,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   account with no password and none of the access the invitation promised;
   those three now share a transaction and the response says plainly when it
   could not be finished.
+- **No way to run the guards CI runs (`make guards`).** There are 29 shell
+  guards under `scripts/` with 27 self-tests, invoked from several different CI
+  jobs with different flags, and nothing ran them as a set — so "I ran the
+  guards" meant "I ran the ones I remembered", and the rest were found by CI
+  twenty minutes later. That happened on this branch: a database-gated test
+  helper that read only a private environment variable, and so would have
+  skipped on every CI run, went in because `check-test-reachability.sh` was not
+  among the five run by hand beforehand. `scripts/run-ci-guards.sh` reads the
+  invocation list out of `.github/workflows` rather than keeping a copy of it,
+  because a hand-kept list drifts from CI exactly the way the unit-test matrix
+  drifted from the tree — and a runner that omits a guard CI runs is worse than
+  none, since it reports that the guards passed. It runs all 54 in about 40
+  seconds, treats an invocation CI writes with `|| true` as informational, and
+  reports the one whose argument CI computes as **not run** rather than as a
+  pass. Six cases of its own keep it honest, chief among them that finding no
+  guards is an error and not an empty success.
 - **A directory sync could report success over a group it did not sync
   (`internal/directory`).** Both the LDAP and the Entra ID membership passes
   ran, per group, a `DELETE` of the directory-managed rows followed by an

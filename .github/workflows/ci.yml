@@ -176,6 +176,14 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
+      # The runner that lets a contributor run this job's guards -- and the
+      # other jobs' -- before pushing rather than after. Its own cases run here
+      # because a runner that reports "all guards pass" having found none is a
+      # green light nobody earned, and that is not a failure CI would otherwise
+      # notice: it would simply stop catching things.
+      - name: The guard runner can still tell a pass from a pass it did not make
+        run: bash scripts/run-ci-guards.test.sh
+
       - name: Verify the workflow guard can go red
         run: bash scripts/check-workflows-parse.test.sh
       - name: Every workflow must be one GitHub can run
