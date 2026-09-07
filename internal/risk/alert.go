@@ -811,12 +811,16 @@ func (a *AlertManager) GetAlertStatistics(ctx context.Context, tenantID string, 
 		stats["by_status"] = statusCounts
 	}
 
-	// Get total count
+	// Get total count. This is the headline on the alerts card; a discarded
+	// error rendered "0 alerts", which is what a healthy install also looks
+	// like.
 	var totalCount int
-	a.db.Pool.QueryRow(ctx,
+	if err := a.db.Pool.QueryRow(ctx,
 		`SELECT COUNT(*) FROM security_alerts
 		 WHERE org_id = $1 AND created_at > NOW() - ($2::int || ' days')::interval`,
-		tenantID, days).Scan(&totalCount)
+		tenantID, days).Scan(&totalCount); err != nil {
+		return nil, fmt.Errorf("count security alerts: %w", err)
+	}
 	stats["total_count"] = totalCount
 
 	return stats, nil

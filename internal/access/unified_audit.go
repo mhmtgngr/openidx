@@ -614,12 +614,17 @@ func (s *Service) handleGetAuditEventsSummary(c *gin.Context) {
 		}
 	}
 
-	// Get total count
+	// Get total count. total_last_24h is the headline number on the audit
+	// summary card, and a quiet day and a broken query looked identical in it.
 	var total int
-	s.db.Pool.QueryRow(c.Request.Context(),
+	if err := s.db.Pool.QueryRow(c.Request.Context(),
 		`SELECT COUNT(*) FROM unified_audit_events
 		  WHERE org_id = $1 AND created_at > NOW() - INTERVAL '24 hours'`, org.ID).
-		Scan(&total)
+		Scan(&total); err != nil {
+		s.logger.Error("failed to count audit events in the last 24 hours", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to summarise audit events"})
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"total_last_24h": total,

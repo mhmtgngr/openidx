@@ -14,9 +14,9 @@ package main
 // fails the run, and an entry that no longer reproduces fails it too, so the
 // only way an entry leaves is the query being fixed.
 //
-// It opened at 83, after internal/audit went from 73 to 0, and four left in the
-// same commit that seeded it -- the four where the zero was not a wrong number
-// on a screen:
+// It opened at 83, after internal/audit went from 73 to 0. Twenty-eight have
+// left it since. Four went in the commit that seeded it -- the four where the
+// zero was not a wrong number on a screen:
 //
 //	attestation.go   a failed pending-count AUTO-COMPLETED the certification
 //	                 campaign, stamped completed_at and published
@@ -33,36 +33,25 @@ package main
 //	                 how much of a campaign was reviewed, and a failed count
 //	                 was written into it as zero.
 //
-// A compliance report is where this defect is worst -- the zero is printed as
-// evidence and read as one -- but the entries below are not only reports. Among
-// them: an integrity doctor that reports 'ok' for a check it could not run, and
-// an end-user security page that tells somebody who has enrolled MFA that they
-// have none.
+// Twenty-four more went in the commit after it: the pagination totals that read
+// 0 beside the rows they count, the Relations & Integrity Doctor that reported
+// 'ok' for a check it could not run, the end-user security page that told
+// somebody with MFA enrolled that they had none, and the whole risk engine --
+// where one factor biases the score DOWN when its query fails, so a failed
+// count of recent failed logins removed the brute-force signal entirely.
+//
+// What is left is the analytics and reporting surfaces of internal/admin and
+// internal/identity, plus three EXISTS gates. A compliance report is where this
+// defect is worst, because the zero is printed as evidence and read as one; a
+// dashboard is where it is most common.
 //
 // Some entries are fail-closed and say so: an unreadable known-device or
 // known-IP check makes a login look LESS familiar, which is the safe direction.
 // They are still on the list, because a control that silently degrades is a
 // control nobody knows has degraded.
 var knownZeroAnswers = map[string]string{
-	// internal/access/app_publish.go
-	"internal/access/app_publish.go#aa786ac9c665": "handleListApps &total -- the published-apps list still renders its rows; the total beside them reads 0",
-
-	// internal/access/health_checks.go
-	"internal/access/health_checks.go#73c51f9d7166": "registerChecks &devices -- the Relations & Integrity Doctor reports 'ok' for a check it could not run",
-	"internal/access/health_checks.go#68fc8e91e53d": "registerChecks &policies -- the Relations & Integrity Doctor reports 'ok' for a check it could not run",
-	"internal/access/health_checks.go#e52cc5b77d15": "registerChecks &unlinked -- the Relations & Integrity Doctor reports 'ok' for a check it could not run",
-
 	// internal/access/quick_links.go
 	"internal/access/quick_links.go#cd14fc8d0c70": "validateQuickLink &exists -- fail-closed: a failed EXISTS rejects the quick link rather than publishing one",
-
-	// internal/access/service.go
-	"internal/access/service.go#d004a65c1129": "handleListRoutes &total -- the proxy-routes list still renders its rows; the total beside them reads 0",
-
-	// internal/access/unified_audit.go
-	"internal/access/unified_audit.go#49cb9f058782": "handleGetAuditEventsSummary &total -- the 24-hour audit summary reads 0 events, which is how a quiet day and a broken query look the same",
-
-	// internal/access/ziti_sync_handlers.go
-	"internal/access/ziti_sync_handlers.go#fc53522a5547": "handleGetEnrichedDevices &total -- the device list still renders its rows; the total beside them reads 0",
 
 	// internal/admin/ai_agents.go
 	"internal/admin/ai_agents.go#358a405453cf": "handleAIAgentAnalytics &active -- the AI-agent analytics tiles read 0",
@@ -139,29 +128,4 @@ var knownZeroAnswers = map[string]string{
 	"internal/identity/handlers_analytics.go#4545a57e9e38": "getLoginSummary &summary.TotalLogins -- the login analytics dashboard renders the zero as a measurement",
 	"internal/identity/handlers_analytics.go#479982d91ad4": "getLoginSummary &summary.UniqueUsers -- the login analytics dashboard renders the zero as a measurement",
 	"internal/identity/handlers_analytics.go#ee198ac75337": "getRiskDistribution &count -- the login analytics dashboard renders the zero as a measurement",
-
-	// internal/portal/security_insights.go
-	"internal/portal/security_insights.go#2634a272bc40": "computeSecurityInsights &avgRisk -- the page tells a user who has enrolled MFA that they have none",
-	"internal/portal/security_insights.go#361c87794501": "computeSecurityInsights &mfaEnrolled -- the page tells a user who has enrolled MFA that they have none",
-
-	// internal/risk/alert.go
-	"internal/risk/alert.go#8d787e8e5228": "GetAlertStatistics &totalCount -- the alert statistics tile reads 0",
-
-	// internal/risk/scoring_engine.go
-	"internal/risk/scoring_engine.go#05c8df82abcc": "CalculateEnhancedRiskScore &deviceCount -- a risk factor scores 0",
-	"internal/risk/scoring_engine.go#f9b25aa74455": "CalculateEnhancedRiskScore &mfaCount -- a risk factor scores 0",
-	"internal/risk/scoring_engine.go#09a08b1705c6": "CalculateEnhancedRiskScore &webauthnCount -- a risk factor scores 0",
-	"internal/risk/scoring_engine.go#003a9eaa3408": "GetUserLoginPatterns &avgDuration -- a risk factor scores 0",
-
-	// internal/risk/service.go
-	"internal/risk/service.go#a083eac4306d": "CalculateRiskScore &countryCount -- a risk factor or a risk-dashboard tile scores 0",
-	"internal/risk/service.go#05c8df82abcc": "CalculateRiskScore &deviceCount -- a risk factor or a risk-dashboard tile scores 0",
-	"internal/risk/service.go#72d49febd04a": "CalculateRiskScore &failedCount -- a risk factor or a risk-dashboard tile scores 0",
-	"internal/risk/service.go#fc53522a5547": "GetAllDevices &total -- a risk factor or a risk-dashboard tile scores 0",
-	"internal/risk/service.go#7449b1449875": "GetRiskStats &avgRisk -- a risk factor or a risk-dashboard tile scores 0",
-	"internal/risk/service.go#067a6d542e76": "GetRiskStats &failedToday -- a risk factor or a risk-dashboard tile scores 0",
-	"internal/risk/service.go#794623f4bcb2": "GetRiskStats &highRiskToday -- a risk factor or a risk-dashboard tile scores 0",
-	"internal/risk/service.go#47145efd6c4d": "GetRiskStats &newDevicesToday -- a risk factor or a risk-dashboard tile scores 0",
-	"internal/risk/service.go#ca7a956747f3": "GetRiskStats &totalDevices -- a risk factor or a risk-dashboard tile scores 0",
-	"internal/risk/service.go#0033c5cc1b2f": "GetRiskStats &trustedDevices -- a risk factor or a risk-dashboard tile scores 0",
 }

@@ -225,8 +225,12 @@ func (s *Service) GetAllDevices(ctx context.Context, limit, offset int) ([]Devic
 	if err != nil {
 		return nil, 0, err
 	}
+	// GetAllDevices already returns an error; the count that goes with the page
+	// was the one read in it that could not.
 	var total int
-	s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM known_devices WHERE org_id = $1`, org.ID).Scan(&total)
+	if err := s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM known_devices WHERE org_id = $1`, org.ID).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count devices: %w", err)
+	}
 
 	rows, err := s.db.Pool.Query(ctx,
 		`SELECT d.id, d.user_id, d.fingerprint, COALESCE(d.name,''), COALESCE(d.ip_address,''),
@@ -354,9 +358,9 @@ func (s *Service) CalculateRiskScore(ctx context.Context, userID, ip, userAgent,
 
 	// Factor 1: New device (+30)
 	var deviceCount int
-	s.db.Pool.QueryRow(ctx,
+	s.factorCount(ctx, "new_device", &deviceCount,
 		`SELECT COUNT(*) FROM known_devices WHERE user_id = $1 AND fingerprint = $2 AND org_id = $3`,
-		userID, fingerprint, org.ID).Scan(&deviceCount)
+		userID, fingerprint, org.ID)
 	if deviceCount == 0 {
 		score += 30
 		factors = append(factors, "new_device")
@@ -386,11 +390,13 @@ func (s *Service) CalculateRiskScore(ctx context.Context, userID, ip, userAgent,
 	}
 
 	// Factor 3: Failed login attempts in last hour (+10 each, max +50)
+	// This one biases the OTHER way when it fails: no count, no brute-force
+	// factor, and the score comes out quieter than the data warrants.
 	var failedCount int
-	s.db.Pool.QueryRow(ctx,
+	s.factorCount(ctx, "brute_force", &failedCount,
 		`SELECT COUNT(*) FROM login_history
 		 WHERE user_id = $1 AND success = false AND created_at > NOW() - INTERVAL '1 hour' AND org_id = $2`,
-		userID, org.ID).Scan(&failedCount)
+		userID, org.ID)
 	if failedCount > 0 {
 		addition := failedCount * 10
 		if addition > 50 {
@@ -419,9 +425,9 @@ func (s *Service) CalculateRiskScore(ctx context.Context, userID, ip, userAgent,
 	if location != "" {
 		country := extractCountry(location)
 		var countryCount int
-		s.db.Pool.QueryRow(ctx,
+		s.factorCount(ctx, "new_country", &countryCount,
 			`SELECT COUNT(*) FROM login_history WHERE user_id = $1 AND location LIKE $2 AND success = true AND org_id = $3`,
-			userID, "%"+country, org.ID).Scan(&countryCount)
+			userID, "%"+country, org.ID)
 		if countryCount == 0 {
 			score += 15
 			factors = append(factors, "first_country_login")
@@ -528,41 +534,41 @@ func (s *Service) GetRiskStats(ctx context.Context) (map[string]interface{}, err
 
 	stats := make(map[string]interface{})
 
-	// High-risk logins today
-	var highRiskToday int
-	s.db.Pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM login_history WHERE risk_score >= 50 AND created_at > CURRENT_DATE AND org_id = $1`, org.ID).Scan(&highRiskToday)
-	stats["high_risk_logins_today"] = highRiskToday
+	// The risk dashboard's six tiles. GetRiskStats already returns an error and
+	// every one of these reads discarded its own, so a broken query rendered as
+	// a calm dashboard: 0 high-risk logins, 0 failed logins, average risk 0.
+	// "Nothing happened today" and "I could not look" are the same picture, and
+	// this surface is where an operator decides whether to look further.
+	scan := func(dest any, sql string) bool {
+		if err := s.db.Pool.QueryRow(ctx, sql, org.ID).Scan(dest); err != nil {
+			s.logger.Error("risk statistics query failed", zap.Error(err))
+			return false
+		}
+		return true
+	}
 
-	// New devices today
-	var newDevicesToday int
-	s.db.Pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM known_devices WHERE created_at > CURRENT_DATE AND org_id = $1`, org.ID).Scan(&newDevicesToday)
-	stats["new_devices_today"] = newDevicesToday
-
-	// Total known devices
-	var totalDevices int
-	s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM known_devices WHERE org_id = $1`, org.ID).Scan(&totalDevices)
-	stats["total_devices"] = totalDevices
-
-	// Trusted devices
-	var trustedDevices int
-	s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM known_devices WHERE trusted = true AND org_id = $1`, org.ID).Scan(&trustedDevices)
-	stats["trusted_devices"] = trustedDevices
-
-	// Failed logins today
-	var failedToday int
-	s.db.Pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM login_history WHERE success = false AND created_at > CURRENT_DATE AND org_id = $1`, org.ID).Scan(&failedToday)
-	stats["failed_logins_today"] = failedToday
-
-	// Average risk score today
+	var highRiskToday, newDevicesToday, totalDevices, trustedDevices, failedToday int
 	var avgRisk *float64
-	s.db.Pool.QueryRow(ctx,
-		`SELECT AVG(risk_score) FROM login_history WHERE created_at > CURRENT_DATE AND success = true AND org_id = $1`, org.ID).Scan(&avgRisk)
+	ok := scan(&highRiskToday, `SELECT COUNT(*) FROM login_history WHERE risk_score >= 50 AND created_at > CURRENT_DATE AND org_id = $1`) &&
+		scan(&newDevicesToday, `SELECT COUNT(*) FROM known_devices WHERE created_at > CURRENT_DATE AND org_id = $1`) &&
+		scan(&totalDevices, `SELECT COUNT(*) FROM known_devices WHERE org_id = $1`) &&
+		scan(&trustedDevices, `SELECT COUNT(*) FROM known_devices WHERE trusted = true AND org_id = $1`) &&
+		scan(&failedToday, `SELECT COUNT(*) FROM login_history WHERE success = false AND created_at > CURRENT_DATE AND org_id = $1`) &&
+		scan(&avgRisk, `SELECT AVG(risk_score) FROM login_history WHERE created_at > CURRENT_DATE AND success = true AND org_id = $1`)
+	if !ok {
+		return nil, fmt.Errorf("risk statistics could not be measured")
+	}
+
+	stats["high_risk_logins_today"] = highRiskToday
+	stats["new_devices_today"] = newDevicesToday
+	stats["total_devices"] = totalDevices
+	stats["trusted_devices"] = trustedDevices
+	stats["failed_logins_today"] = failedToday
 	if avgRisk != nil {
 		stats["avg_risk_score_today"] = int(*avgRisk)
 	} else {
+		// AVG over no rows is NULL, and that is a real reading: nobody signed
+		// in successfully today.
 		stats["avg_risk_score_today"] = 0
 	}
 

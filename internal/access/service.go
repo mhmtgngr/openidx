@@ -1211,9 +1211,16 @@ func (s *Service) handleListRoutes(c *gin.Context) {
 		routes = append(routes, r)
 	}
 
-	// Get total count
+	// Get total count. A discarded error reported "total": 0 in the same
+	// response that carried the routes, which reads as a list that does not
+	// know its own length.
 	var total int
-	s.db.Pool.QueryRow(c.Request.Context(), "SELECT COUNT(*) FROM proxy_routes WHERE org_id = $1", org.ID).Scan(&total)
+	if err := s.db.Pool.QueryRow(c.Request.Context(),
+		"SELECT COUNT(*) FROM proxy_routes WHERE org_id = $1", org.ID).Scan(&total); err != nil {
+		s.logger.Error("failed to count proxy routes", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list routes"})
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"routes": routes,

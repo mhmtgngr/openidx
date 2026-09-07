@@ -323,9 +323,9 @@ func (s *Service) CalculateEnhancedRiskScore(ctx context.Context, userID, ip, co
 	if userAgent != "" {
 		fingerprint := s.ComputeDeviceFingerprint(ip, userAgent)
 		var deviceCount int
-		s.db.Pool.QueryRow(ctx,
+		s.factorCount(ctx, "new_device", &deviceCount,
 			`SELECT COUNT(*) FROM known_devices WHERE user_id = $1 AND fingerprint = $2 AND org_id = $3`,
-			userID, fingerprint, org.ID).Scan(&deviceCount)
+			userID, fingerprint, org.ID)
 		if deviceCount == 0 {
 			breakdown.Factors["new_device"] = 10
 			breakdown.Anomalies = append(breakdown.Anomalies, "Login from unrecognized device")
@@ -334,15 +334,15 @@ func (s *Service) CalculateEnhancedRiskScore(ctx context.Context, userID, ip, co
 
 	// Factor 5: No MFA configured (+20)
 	var mfaCount int
-	s.db.Pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM mfa_totp WHERE user_id = $1 AND enabled = true AND org_id = $2`, userID, org.ID).Scan(&mfaCount)
+	s.factorCount(ctx, "no_mfa/totp", &mfaCount,
+		`SELECT COUNT(*) FROM mfa_totp WHERE user_id = $1 AND enabled = true AND org_id = $2`, userID, org.ID)
 	var webauthnCount int
 	// WebAuthn credentials live in mfa_webauthn (the phantom webauthn_credentials
 	// table is never created), so this used to always read 0 — the risk engine
 	// treated every user as having no WebAuthn. Org-scoped like the mfa_totp
 	// count above.
-	s.db.Pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM mfa_webauthn WHERE user_id = $1 AND org_id = $2`, userID, org.ID).Scan(&webauthnCount)
+	s.factorCount(ctx, "no_mfa/webauthn", &webauthnCount,
+		`SELECT COUNT(*) FROM mfa_webauthn WHERE user_id = $1 AND org_id = $2`, userID, org.ID)
 	if mfaCount == 0 && webauthnCount == 0 {
 		breakdown.Factors["no_mfa"] = 20
 		breakdown.Anomalies = append(breakdown.Anomalies, "No MFA method configured for this user")
@@ -560,13 +560,13 @@ func (s *Service) GetUserLoginPatterns(ctx context.Context, userID string) (*Log
 	// Average session duration in minutes
 	var avgDuration *float64
 	// sessions records its start as started_at.
-	s.db.Pool.QueryRow(ctx, `
+	s.factorCount(ctx, "average_session_duration", &avgDuration, `
 		SELECT AVG(EXTRACT(EPOCH FROM (expires_at - started_at)) / 60.0)
 		FROM sessions
 		WHERE user_id = $1
 		  AND started_at > NOW() - INTERVAL '90 days'
 		  AND org_id = $2
-	`, userID, org.ID).Scan(&avgDuration)
+	`, userID, org.ID)
 	if avgDuration != nil {
 		patterns.AvgSessionDuration = *avgDuration
 	}

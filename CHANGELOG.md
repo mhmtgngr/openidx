@@ -24,6 +24,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A failed query rendered as a calm number on every surface that counts
+  something.** Twenty-four more sites of the class above, found by
+  `tools/zeroanswer`. The pagination totals — published apps, proxy routes,
+  known devices — served `0` in the same response that carried the rows, so a
+  list did not know its own length and paging past the first page looked
+  impossible. The Relations & Integrity Doctor reported **`ok`** for a check it
+  could not run, which is the one answer an integrity check must never give
+  from no evidence. The end-user's own security page told somebody who has
+  enrolled MFA that they have none, and reported no risky sign-ins because it
+  could not read them. The risk dashboard's six tiles rendered *"0 high-risk
+  logins, 0 failed logins, average risk 0"* — indistinguishable from a quiet
+  day, on the surface where an operator decides whether to look further. And in
+  the **risk engine itself**, four of the five scored factors bias *harsher*
+  when their query fails (an unreadable device count reads as a new device) but
+  one biases *quieter*: a failed count of recent failed logins removed the
+  brute-force signal from the score entirely. Factors that cannot be measured
+  are still scored from zero — inventing a number would be worse — but they are
+  now logged by name, so an engine running on fewer factors than it thinks is
+  visible instead of silent. This engine has already been caught running with a
+  factor permanently at zero: the WebAuthn count read a table no migration
+  creates, for the life of the query.
+
 - **A failed count auto-completed an access certification campaign.**
   `handleDecideAttestationItem` counted the campaign's still-pending items to
   decide whether the last decision had been made — and discarded the error, so a

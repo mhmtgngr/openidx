@@ -131,8 +131,16 @@ func (s *Service) handleListApps(c *gin.Context) {
 		return
 	}
 
+	// The total is served as x-total-count and drives the console's paging. A
+	// discarded error left it at 0, so the header said "no published apps"
+	// beside a page of published apps -- and paging past the first page then
+	// looked impossible. The list query below already answers 500 on failure;
+	// the count that describes it does the same.
 	var total int
-	s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM published_apps WHERE org_id=$1`, org.ID).Scan(&total)
+	if err := s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM published_apps WHERE org_id=$1`, org.ID).Scan(&total); err != nil {
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("count apps", err), s.logger)
+		return
+	}
 	c.Header("x-total-count", strconv.Itoa(total))
 
 	rows, err := s.db.Pool.Query(ctx, `
