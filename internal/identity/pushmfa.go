@@ -22,6 +22,24 @@ import (
 	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
+// ErrPushMFADisabled is returned when the push factor is exercised on an
+// installation that has turned it off. Mirrors ErrSMSMFANotConfigured: refuse
+// instead of pretend.
+//
+// PUSH_MFA_ENABLED (default true) had a struct field, a default and a line in a
+// shipped config file, and no line of this codebase read it — so an operator who
+// turned push MFA off could still enrol a phone and still be sent a challenge.
+// Turning a factor off is a security decision (a compromised push transport, a
+// vendor being retired), and it was one the product accepted and discarded.
+var ErrPushMFADisabled = errors.New("push MFA is disabled on this installation")
+
+// pushMFAEnabled reports whether the push factor is turned on. A service built
+// without a config — the shape most unit tests use — is treated as enabled, so
+// this gate refuses only where an operator has actually said to.
+func (s *Service) pushMFAEnabled() bool {
+	return s.cfg == nil || s.cfg.PushMFA.Enabled
+}
+
 // ntfyDeviceTokenPrefix marks a device token minted by the native client for
 // the self-hosted ntfy transport rather than by a push provider. The client
 // ships no Firebase/APNs SDK (see client/lib/mobile/push_token_service.dart),
@@ -125,6 +143,10 @@ func (s *Service) RegisterPushMFADevice(ctx context.Context, userID string, enro
 // the enrolled phone becomes an approver in one step). Re-registering the same
 // token updates in place, and trust only ever upgrades (never downgrades).
 func (s *Service) registerPushMFADevice(ctx context.Context, userID string, enrollment *PushMFAEnrollment, ipAddress string, link PushDeviceLink) (*PushMFADevice, error) {
+	if !s.pushMFAEnabled() {
+		return nil, ErrPushMFADisabled
+	}
+
 	// Validate platform
 	if enrollment.Platform != "ios" && enrollment.Platform != "android" && enrollment.Platform != "web" {
 		return nil, fmt.Errorf("invalid platform: must be ios, android, or web")
@@ -201,6 +223,13 @@ func (s *Service) registerPushMFADevice(ctx context.Context, userID string, enro
 
 // CreatePushMFAChallenge creates a new push notification challenge
 func (s *Service) CreatePushMFAChallenge(ctx context.Context, request *PushMFAChallengeRequest) (*PushMFAChallenge, error) {
+	// Refused before the devices are read, so a user with a phone already
+	// enrolled from before the factor was turned off cannot be challenged
+	// through it either.
+	if !s.pushMFAEnabled() {
+		return nil, ErrPushMFADisabled
+	}
+
 	// Get user's active devices
 	devices, err := s.GetPushMFADevices(ctx, request.UserID)
 	if err != nil {

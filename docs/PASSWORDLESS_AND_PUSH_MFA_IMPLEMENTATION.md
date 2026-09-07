@@ -120,9 +120,10 @@ type WebAuthnConfig struct {
 }
 
 type PushMFAConfig struct {
-    Enabled          bool
-    FCMServerKey     string // Firebase Cloud Messaging
-    APNSKeyID        string // Apple Push Notifications
+    Enabled            bool
+    FCMCredentialsFile string // Firebase service-account JSON (FCM HTTP v1)
+    FCMProjectID       string // Firebase project the credentials belong to
+    APNSKeyID          string // Apple Push Notifications
     APNSTeamID       string
     APNSKeyPath      string
     ChallengeTimeout int
@@ -265,9 +266,9 @@ Set `auto_approve: true` in config to bypass actual push notifications.
 
 ### Push MFA
 
-- [ ] Create Firebase project and get server key
+- [ ] Create a Firebase project and download a service-account JSON
 - [ ] (iOS) Create APNS key and download .p8 file
-- [ ] Update `push_mfa.fcm_server_key` in config
+- [ ] Update `push_mfa.fcm_credentials_file` and `push_mfa.fcm_project_id` in config
 - [ ] Update `push_mfa.apns_key_id`, `apns_team_id`, `apns_key_path`
 - [ ] Run database migrations for `mfa_push_devices` and `mfa_push_challenges`
 - [ ] Build mobile app with push notification support
@@ -477,7 +478,8 @@ Users can adopt new methods gradually:
    ```yaml
    push_mfa:
      enabled: true
-     fcm_server_key: "AIzaSy..."
+     fcm_credentials_file: "/etc/openidx/firebase-service-account.json"
+     fcm_project_id: "my-firebase-project"
      apns_key_id: "ABCD123456"
      apns_team_id: "TEAM123456"
      apns_key_path: "/etc/openidx/AuthKey_ABCD123456.p8"

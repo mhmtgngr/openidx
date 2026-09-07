@@ -670,11 +670,9 @@ func (w WebAuthnConfig) HasAndroidAssetLinks() bool {
 
 // PushMFAConfig holds Push MFA configuration
 type PushMFAConfig struct {
+	// Enabled turns the push MFA factor on. Off refuses enrolment and refuses to
+	// raise a challenge, rather than raising one nothing can answer.
 	Enabled bool `mapstructure:"enabled"`
-	// FCMServerKey is the legacy FCM server key. DEPRECATED: Google decommissioned
-	// the legacy HTTP and XMPP APIs in 2024; it is unused. Configure the HTTP v1
-	// credentials below instead.
-	FCMServerKey string `mapstructure:"fcm_server_key"`
 	// FCMCredentialsFile is the path to a Firebase service-account JSON used for
 	// FCM HTTP v1 (OAuth2 bearer token). Required for Android/web push.
 	FCMCredentialsFile string `mapstructure:"fcm_credentials_file"`
@@ -703,9 +701,13 @@ type SMSConfig struct {
 	WebhookURL    string `mapstructure:"webhook_url"`     // Custom webhook URL for SMS delivery
 	WebhookAPIKey string `mapstructure:"webhook_api_key"` // API key for webhook authentication
 	MessagePrefix string `mapstructure:"message_prefix"`  // Prefix for OTP messages (default: "OpenIDX")
-	OTPLength     int    `mapstructure:"otp_length"`      // Length of OTP code (default: 6)
-	OTPExpiry     int    `mapstructure:"otp_expiry"`      // OTP expiry in seconds (default: 300)
-	MaxAttempts   int    `mapstructure:"max_attempts"`    // Max verification attempts (default: 3)
+
+	// The OTP code's length, lifetime and attempt ceiling are NOT here. They are
+	// installation settings stored in system_settings and edited in the admin
+	// console under Settings → SMS, which the identity service picks up without
+	// a restart. They were duplicated here as sms.otp_length / sms.otp_expiry /
+	// sms.max_attempts, read by nothing, so an install that set them got the
+	// defaults and no indication otherwise; see retired.go.
 
 	// Turkish SMS gateway providers
 	NetGSMUserCode     string `mapstructure:"netgsm_usercode"`     // NetGSM user code
@@ -965,9 +967,6 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("sms.enabled", false)
 	v.SetDefault("sms.provider", "mock")
 	v.SetDefault("sms.message_prefix", "OpenIDX")
-	v.SetDefault("sms.otp_length", 6)
-	v.SetDefault("sms.otp_expiry", 300)
-	v.SetDefault("sms.max_attempts", 3)
 
 	// Redis Sentinel defaults
 	v.SetDefault("redis_sentinel_enabled", false)

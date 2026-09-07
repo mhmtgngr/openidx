@@ -432,7 +432,10 @@ Add to `configs/config.yaml`:
 ```yaml
 push_mfa:
   enabled: true
-  fcm_server_key: "your-firebase-server-key"
+  # FCM HTTP v1. The legacy fcm_server_key is retired: Google decommissioned the
+  # legacy HTTP and XMPP APIs in 2024, and OpenIDX never sent it.
+  fcm_credentials_file: "/etc/openidx/firebase-service-account.json"
+  fcm_project_id: "your-firebase-project"
   apns_key_id: "your-apns-key-id"
   apns_team_id: "your-apple-team-id"
   apns_key_path: "/path/to/AuthKey_XXXXX.p8"
@@ -443,7 +446,8 @@ push_mfa:
 Environment variables:
 ```bash
 OPENIDX_PUSH_MFA_ENABLED=true
-OPENIDX_PUSH_MFA_FCM_SERVER_KEY=AIzaSy...
+PUSH_MFA_FCM_CREDENTIALS_FILE=/etc/openidx/firebase-service-account.json
+PUSH_MFA_FCM_PROJECT_ID=your-firebase-project
 OPENIDX_PUSH_MFA_CHALLENGE_TIMEOUT=60
 OPENIDX_PUSH_MFA_AUTO_APPROVE=false
 ```

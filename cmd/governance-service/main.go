@@ -54,6 +54,13 @@ func main() {
 		log.Fatal("Failed to load configuration", zap.Error(err))
 	}
 
+	// The configured level reaches the logger built above, which had to be
+	// constructed before the config existed. Without this, `log_level:` in a
+	// configuration file is read into a field nothing consults.
+	if err := logger.SetLevel(cfg.LogLevel); err != nil {
+		log.Fatal("Invalid log level", zap.Error(err))
+	}
+
 	// Validate production security settings (blocking)
 	if err := config.ValidateProductionConfig(cfg, log); err != nil {
 		log.Fatal("Production security validation failed", zap.Error(err))

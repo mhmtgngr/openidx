@@ -1452,6 +1452,59 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           exit $rc
 
+  # deadconfig holds the settings an operator can set next to the settings the
+  # code reads. A field with a mapstructure tag, a default and a line in a
+  # shipped config file, that nothing consults, is a switch the operator flips
+  # and the product ignores -- ENABLE_MFA=false got you MFA, PUSH_MFA_ENABLED=false
+  # got you push MFA, and SMS_OTP_LENGTH=8 got you six-digit codes.
+  #
+  # Nothing else here can see it. The field parses, so the compiler is happy; the
+  # viper default makes it non-zero, so no empty-value check fires; the docs
+  # describe it, which is prose; and nothing fails at runtime, because the
+  # product does what it did before.
+  deadconfig:
+    name: Unread-config lint
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.go_changed == 'true'
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Self-test the tool first
+        # A guard whose own cases do not pass has no standing to fail a build.
+        # -short skips the whole-module half, which the gate step runs anyway.
+        run: go test -short ./tools/deadconfig/
+
+      - name: Run deadconfig (hard gate)
+        run: |
+          set +e
+          go run ./tools/deadconfig -fail > dc.out 2> dc.err
+          rc=$?
+          set -e
+          {
+            echo "## deadconfig — settings nothing reads"
+            echo
+            if [ "$rc" -ne 0 ]; then
+              echo "❌ **Gate failed.** A NEW finding is a field an operator can set that no production code reads: they set it, nothing changes, and nothing tells them. Give it a reader, or retire it in \`internal/common/config/retired.go\` so an operator who still sets it is told at startup what to set instead. A STALE entry is a field that has gained a reader, and its line in \`tools/deadconfig/known.go\` must go."
+            else
+              echo "✅ $(head -n1 dc.out)"
+            fi
+            echo
+            echo '```'
+            head -60 dc.out
+            tail -n3 dc.err 2>/dev/null || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
+
   # Security vulnerability check
   vulnerability-check:
     name: Vulnerability Check
@@ -2010,6 +2063,7 @@ jobs:
     needs:
       - build-matrix
       - ci-resilience-guards
+      - deadconfig
       - deadservice
       - detect-changes
       - e2e

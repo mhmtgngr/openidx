@@ -100,7 +100,10 @@ webauthn:
 # Push MFA configuration
 push_mfa:
   enabled: ${PUSH_MFA_ENABLED:true}
-  fcm_server_key: ${FCM_SERVER_KEY:""}
+  # Android and web push go out over FCM HTTP v1: point fcm_credentials_file at a
+  # Firebase service-account JSON. The legacy fcm_server_key is retired.
+  fcm_credentials_file: ${PUSH_MFA_FCM_CREDENTIALS_FILE:""}
+  fcm_project_id: ${PUSH_MFA_FCM_PROJECT_ID:""}
   apns_key_id: ${APNS_KEY_ID:""}
   apns_team_id: ${APNS_TEAM_ID:""}
   apns_key_path: ${APNS_KEY_PATH:""}
@@ -121,9 +124,9 @@ sms:
   webhook_url: ${SMS_WEBHOOK_URL:""}
   webhook_api_key: ${SMS_WEBHOOK_API_KEY:""}
   message_prefix: ${SMS_MESSAGE_PREFIX:OpenIDX}
-  otp_length: ${SMS_OTP_LENGTH:6}
-  otp_expiry: ${SMS_OTP_EXPIRY:300}
-  max_attempts: ${SMS_MAX_ATTEMPTS:3}
+  # The OTP code's length, lifetime and attempt ceiling are installation
+  # settings, edited in the admin console under Settings → SMS and applied
+  # without a restart. They are deliberately not here.
 
 # Adaptive MFA configuration
 adaptive_mfa:

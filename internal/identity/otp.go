@@ -84,7 +84,9 @@ type OTPConfig struct {
 	MaxCodesPerHour int           // Max codes per window (default: 5)
 }
 
-// DefaultOTPConfig returns the default OTP configuration
+// DefaultOTPConfig returns the default OTP configuration. It is the shape an
+// installation gets before an administrator has said otherwise, and the floor
+// SetOTPSettings applies each of its values against.
 func DefaultOTPConfig() OTPConfig {
 	return OTPConfig{
 		CodeLength:      6,
@@ -93,6 +95,49 @@ func DefaultOTPConfig() OTPConfig {
 		RateLimitWindow: 1 * time.Hour,
 		MaxCodesPerHour: 5,
 	}
+}
+
+// SetOTPSettings applies the installation's OTP settings — the ones an
+// administrator edits under Settings → SMS — to every challenge minted from here
+// on. Safe for the config watcher to call while requests are in flight.
+//
+// THE SHAPE THIS FIXES. createOTPChallenge called DefaultOTPConfig() and nothing
+// else ever supplied an OTPConfig, so three settings the console stores,
+// validates and clamps (sms.ValidateOTPSettings) reached nothing: an
+// administrator could set eight-digit codes valid for a minute, see the value
+// saved and read back, and every code the product sent was still six digits
+// valid for five minutes. The same three were also duplicated as environment
+// variables read by nothing; those are retired.
+//
+// Only the three the console offers move. The rate-limit window and the
+// codes-per-hour ceiling are not administrator-settable and stay at their
+// defaults, so a settings row cannot widen them.
+func (s *Service) SetOTPSettings(codeLength, expirySeconds, maxAttempts int) {
+	cfg := DefaultOTPConfig()
+	if codeLength > 0 {
+		cfg.CodeLength = codeLength
+	}
+	if expirySeconds > 0 {
+		cfg.ExpirationTime = time.Duration(expirySeconds) * time.Second
+	}
+	if maxAttempts > 0 {
+		cfg.MaxAttempts = maxAttempts
+	}
+
+	s.otpConfigMu.Lock()
+	defer s.otpConfigMu.Unlock()
+	s.otpSettings = &cfg
+}
+
+// otpConfig returns the settings in force, which are the defaults until an
+// administrator has stored something else.
+func (s *Service) otpConfig() OTPConfig {
+	s.otpConfigMu.RLock()
+	defer s.otpConfigMu.RUnlock()
+	if s.otpSettings == nil {
+		return DefaultOTPConfig()
+	}
+	return *s.otpSettings
 }
 
 // --- SMS MFA Methods ---
@@ -480,7 +525,7 @@ func (s *Service) GetUserMFAMethods(ctx context.Context, userID string) (map[str
 // --- Helper Functions ---
 
 func (s *Service) createOTPChallenge(ctx context.Context, userID, method, recipient string) (string, error) {
-	cfg := DefaultOTPConfig()
+	cfg := s.otpConfig()
 
 	// Rate limit check
 	count, err := s.countRecentOTPChallenges(ctx, userID, method, cfg.RateLimitWindow)

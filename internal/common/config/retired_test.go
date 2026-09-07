@@ -50,6 +50,12 @@ func TestRetiredSettingsAreSilentWhenUnset(t *testing.T) {
 // The route ENABLE_MFA and ENABLE_AUDIT_LOGGING actually took: a viper default
 // plus a mapstructure field, which made `enable_mfa: true` look like a setting
 // that did something.
+//
+// The key is the register's, not the name lowercased. A nested setting is
+// bound under a dotted key ("sms.otp_length") whose struct tag is only the leaf
+// ("otp_length"), so deriving the key from the variable name would have looked
+// for `mapstructure:"sms_otp_length"`, found nothing, and passed while the field
+// was still there.
 func TestRetiredSettingsHaveNoBindingOrDefault(t *testing.T) {
 	source, err := os.ReadFile("config.go")
 	if err != nil {
@@ -57,11 +63,19 @@ func TestRetiredSettingsHaveNoBindingOrDefault(t *testing.T) {
 	}
 	text := string(source)
 	for _, name := range RetiredSettingNames() {
-		key := strings.ToLower(name) // the viper key these were bound under
+		key := RetiredSettingKey(name)
+		if key == "" {
+			t.Errorf("%s is retired with no viper key; the binding and default checks below cannot run", name)
+			continue
+		}
+		leaf := key
+		if i := strings.LastIndex(key, "."); i >= 0 {
+			leaf = key[i+1:]
+		}
 		for _, forbidden := range []string{
 			`v.SetDefault("` + key + `"`,
-			`"` + key + `":` + ` "` + name + `"`,
-			`mapstructure:"` + key + `"`,
+			`"` + key + `":`,
+			`mapstructure:"` + leaf + `"`,
 		} {
 			if strings.Contains(text, forbidden) {
 				t.Errorf("%s is retired but config.go still contains %s", name, forbidden)
@@ -87,7 +101,12 @@ func TestRetiredSettingsAreNotInShippedConfigs(t *testing.T) {
 		}
 		for i, line := range strings.Split(string(body), "\n") {
 			for _, name := range RetiredSettingNames() {
-				if strings.HasPrefix(strings.TrimSpace(line), strings.ToLower(name)+":") {
+				key := RetiredSettingKey(name)
+				leaf := key
+				if j := strings.LastIndex(key, "."); j >= 0 {
+					leaf = key[j+1:]
+				}
+				if strings.HasPrefix(strings.TrimSpace(line), leaf+":") {
 					t.Errorf("%s:%d offers the retired setting %s: %q", f, i+1, name, strings.TrimSpace(line))
 				}
 			}

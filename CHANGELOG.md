@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A census of settings nothing reads (`tools/deadconfig`, wired into CI as a
+  hard gate).** Every struct field carrying a `mapstructure` tag is a setting an
+  operator can put in a config file or an environment variable; the type checker
+  says which of them the code ever reads. Subtracting the second from the first
+  is the only thing that can see this defect — the field parses, the viper
+  default makes it non-zero, the docs describe it, and nothing fails at runtime,
+  because the product does what it did before.
+
+  Both halves are derived from the tree rather than listed, for the reason
+  `tools/orgscope` was inverted: a field nobody remembered to add to a list is
+  not unchecked in a way anyone can see, it is invisible. Reads are resolved
+  through `go/types`, not matched by name — prose about a field is not a read of
+  it, and `Enabled` is a field on six config structs here, so a name match let
+  one struct's live field clear another's dead one. Test files are not loaded: a
+  field only a test touches is one the product does not consult, which is
+  exactly the shape `ENABLE_MFA` had.
+
+  The register (`tools/deadconfig/known.go`) is empty and is meant to stay that
+  way, because the destination for a finding is not a register entry — it is
+  `internal/common/config/retired.go`, where the field, its default and its
+  binding go and the name stays behind saying so at startup.
+
+  The first run found six across 295 settable fields; all six are fixed below.
+
 - **J6, the governance loop, proved end to end
   (`test/integration/governance_loop_test.go`).** With J7 above, this closes the
   last two journeys the Definition of Done listed with no automated proof
@@ -35,6 +59,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   defect.
 
 ### Fixed
+
+- **The admin console's OTP settings reached nothing
+  (`internal/identity.SetOTPSettings`, applied by the SMS config watcher).**
+  Settings → SMS offers OTP code length, lifetime and attempt ceiling. The
+  values were stored, validated, clamped to sensible ranges by
+  `sms.ValidateOTPSettings`, round-tripped back to the page — and
+  `createOTPChallenge` called `DefaultOTPConfig()` unconditionally, with no
+  other `OTPConfig` constructed anywhere in the tree. An administrator who set
+  eight-digit codes valid for a minute got six digits valid for five minutes,
+  with the page showing what they asked for.
+
+  The settings now travel with the provider the watcher hot-swaps, so a change
+  in the console takes effect without a restart, and they are re-clamped on read
+  because a row stored before `ValidateOTPSettings` existed can still be in the
+  table. The rate-limit window and the codes-per-hour ceiling deliberately do
+  not move: they are not on the page, and a settings row must not widen them.
+
+  Red-proofed against a real database by restoring `DefaultOTPConfig()` at the
+  call site: "the code is 6 digits; the administrator asked for 8".
+
+- **`PUSH_MFA_ENABLED=false` did not turn push MFA off
+  (`internal/identity.ErrPushMFADisabled`).** The field had a default and a line
+  in a shipped config file and no reader, so an operator who turned the factor
+  off could still enrol a phone and still be sent a challenge. Turning a factor
+  off is a security decision — a compromised push transport, a vendor being
+  retired — and it was one the product accepted and discarded. Enrolment and
+  challenge creation now refuse with a named error, the challenge refused before
+  the device list is read so a phone enrolled earlier cannot be used either.
+
+- **`log_level` in a configuration file did nothing (`logger.SetLevel`).** A
+  service builds its logger before it loads its config — it has to, or a config
+  error has nowhere to go — so the level came from `os.Getenv("LOG_LEVEL")` and
+  the config field had no reader at all. `LOG_LEVEL` worked; `log_level:` in a
+  file was parsed into a field nothing consulted. Loggers now share one atomic
+  level that every binary sets from its config immediately after loading it, and
+  an unrecognised name is refused rather than silently ignored. A test derives
+  the set of binaries that must do this from the tree, so a tenth service is
+  covered without anyone remembering the test exists.
 
 - **A disabled user's access token kept working for an hour
   (`internal/revocation.RevokeUserTokens`, wired into every sever path).**
@@ -63,6 +125,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   services and asserts them separately: a test that checked only the login and
   the refresh would have passed for the whole time this was broken, which is how
   it stayed broken.
+
+### Removed
+
+- **Four settings that were read by nothing are retired**, joining `ENABLE_MFA`,
+  `ENABLE_AUDIT_LOGGING` and `OAUTH_LOGIN_UI` in
+  `internal/common/config/retired.go`. Each is gone from the struct, the viper
+  defaults and `configs/audit-service.yaml`, and an install that still sets one
+  is told so at startup — in every environment, because development is where an
+  operator tries a switch and needs to hear that it does nothing.
+
+  - `FCM_SERVER_KEY` (`push_mfa.fcm_server_key`) — the legacy FCM server key.
+    Google decommissioned the legacy HTTP and XMPP APIs in 2024 and no build
+    ever sent it; push goes out over FCM HTTP v1. Set
+    `PUSH_MFA_FCM_CREDENTIALS_FILE` and `PUSH_MFA_FCM_PROJECT_ID` instead. Two
+    documents told operators to configure it; both now describe HTTP v1.
+  - `SMS_OTP_LENGTH`, `SMS_OTP_EXPIRY`, `SMS_MAX_ATTEMPTS` — duplicates of the
+    installation settings the admin console owns, read by nothing. The console's
+    copies now work (see Fixed); these did not and could not, since the identity
+    service hot-swaps SMS configuration from the database.
+
+  Both spellings of a retired setting are reported: the one the shipped config
+  and the docs named, and viper's own `OPENIDX_<KEY>` form, derived from the key
+  rather than listed so the two cannot fall out of step.
 
 ### Added
 

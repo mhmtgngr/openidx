@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -15,11 +16,46 @@ import (
 	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
+// level is the level every logger built by New shares, so SetLevel can move it
+// after the configuration has been read.
+//
+// A service builds its logger before it loads its config — it has to, or a
+// config error has nowhere to go — so New takes the level from the environment.
+// That left `log_level:` in a configuration file reaching nothing: the field
+// existed, had a default and an environment binding, and the only reader of a
+// log level in the tree was the os.Getenv below. An operator who set it in a
+// file got info, silently. SetLevel closes that: the config's value is applied
+// as soon as there is one.
+var level = zap.NewAtomicLevelAt(zap.InfoLevel)
+
+// ParseLevel maps a configured level name onto a zap level. An unrecognised name
+// is an error rather than a silent fallback: "warning" instead of "warn" is a
+// typo the operator wants to hear about, not a reason to log at info forever.
+func ParseLevel(name string) (zapcore.Level, error) {
+	return zapcore.ParseLevel(strings.ToLower(strings.TrimSpace(name)))
+}
+
+// SetLevel applies a configured log level to every logger New has returned.
+// Services call it immediately after loading their configuration. An empty name
+// leaves the environment's choice in place, which is what an install that never
+// set log_level wants.
+func SetLevel(name string) error {
+	if strings.TrimSpace(name) == "" {
+		return nil
+	}
+	parsed, err := ParseLevel(name)
+	if err != nil {
+		return fmt.Errorf("log_level %q is not a level (debug, info, warn, error, dpanic, panic, fatal): %w", name, err)
+	}
+	level.SetLevel(parsed)
+	return nil
+}
+
 // New creates a new zap logger with sensible defaults.
 // Falls back to a production-safe default logger if initialization fails.
 func New() *zap.Logger {
 	env := os.Getenv("APP_ENV")
-	level := os.Getenv("LOG_LEVEL")
+	lvl := os.Getenv("LOG_LEVEL")
 
 	var config zap.Config
 
@@ -32,23 +68,25 @@ func New() *zap.Logger {
 		config.EncoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
 	}
 
-	// Set log level
-	switch level {
+	// Set log level. The shared atomic level is what the logger reads, so a
+	// later SetLevel from the configuration reaches loggers already handed out.
+	switch lvl {
 	case "debug":
-		config.Level = zap.NewAtomicLevelAt(zap.DebugLevel)
+		level.SetLevel(zap.DebugLevel)
 	case "info":
-		config.Level = zap.NewAtomicLevelAt(zap.InfoLevel)
+		level.SetLevel(zap.InfoLevel)
 	case "warn":
-		config.Level = zap.NewAtomicLevelAt(zap.WarnLevel)
+		level.SetLevel(zap.WarnLevel)
 	case "error":
-		config.Level = zap.NewAtomicLevelAt(zap.ErrorLevel)
+		level.SetLevel(zap.ErrorLevel)
 	default:
 		if env == "production" || env == "prod" {
-			config.Level = zap.NewAtomicLevelAt(zap.InfoLevel)
+			level.SetLevel(zap.InfoLevel)
 		} else {
-			config.Level = zap.NewAtomicLevelAt(zap.DebugLevel)
+			level.SetLevel(zap.DebugLevel)
 		}
 	}
+	config.Level = level
 
 	logger, err := config.Build(
 		zap.AddCaller(),

@@ -218,6 +218,13 @@ type Service struct {
 	phoneCallProvider PhoneCallProvider // Phone call MFA provider
 	risk              RiskService       // Risk evaluation service
 
+	// otpSettings is the installation's OTP code length, lifetime and attempt
+	// ceiling, as stored in system_settings and edited in the admin console.
+	// Nil until an administrator has stored something, which is the majority
+	// case; otpConfig() then answers with the defaults.
+	otpSettings *OTPConfig
+	otpConfigMu sync.RWMutex
+
 	// JWKS public key cache
 	jwksCacheMu     sync.RWMutex
 	jwksCachedKey   *rsa.PublicKey
