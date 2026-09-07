@@ -1802,17 +1802,24 @@ func (s *Service) handleSyncDirectory(c *gin.Context) {
 
 	fullSync := c.Query("full") == "true"
 
-	if s.directoryService != nil {
-		if err := s.directoryService.TriggerSync(c.Request.Context(), id, fullSync); err != nil {
-			s.logger.Error("failed to trigger directory sync", logsafe.String("id", id), zap.Error(err))
-			c.JSON(500, gin.H{"error": "internal server error"})
-			return
-		}
-	} else {
-		// Fallback: just mark as syncing if no directory service
-		s.db.Pool.Exec(c.Request.Context(), `
-			UPDATE directory_integrations SET sync_status = 'syncing', last_sync_at = NOW(), updated_at = NOW()
-			WHERE id = $1 AND org_id = $2`, id, org.ID)
+	// Without a directory service there is no sync engine in this process, so
+	// nothing can run. The old fallback wrote sync_status = 'syncing' and
+	// answered "Directory sync initiated" -- a sync that was not initiated and
+	// could not be, parking the integration in a status that only a completed
+	// run ever clears. The integration would show a sync in progress for ever,
+	// and every check of the console would confirm it.
+	if s.directoryService == nil {
+		s.logger.Error("directory sync requested but this deployment has no directory service wired",
+			logsafe.String("id", id))
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "Directory synchronisation is not available in this deployment",
+		})
+		return
+	}
+	if err := s.directoryService.TriggerSync(c.Request.Context(), id, fullSync); err != nil {
+		s.logger.Error("failed to trigger directory sync", logsafe.String("id", id), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
+		return
 	}
 
 	syncType := "incremental"
@@ -1840,11 +1847,20 @@ func (s *Service) handleTestConnection(c *gin.Context) {
 		return
 	}
 
-	if s.directoryService != nil {
-		if err := s.directoryService.TestConnection(c.Request.Context(), dirType, configBytes); err != nil {
-			c.JSON(400, gin.H{"error": err.Error(), "success": false})
-			return
-		}
+	// Same shape, same lie: with no directory service there is nothing to test
+	// against, and answering "Connection test successful" told an operator
+	// their LDAP bind credentials worked when nothing had connected to
+	// anything.
+	if s.directoryService == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"success": false,
+			"error":   "Directory connection testing is not available in this deployment",
+		})
+		return
+	}
+	if err := s.directoryService.TestConnection(c.Request.Context(), dirType, configBytes); err != nil {
+		c.JSON(400, gin.H{"error": err.Error(), "success": false})
+		return
 	}
 
 	c.JSON(200, gin.H{"success": true, "message": "Connection test successful"})

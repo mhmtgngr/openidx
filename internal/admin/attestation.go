@@ -3,10 +3,12 @@ package admin
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/logsafe"
@@ -339,27 +341,47 @@ func (s *Service) handleLaunchAttestationCampaign(c *gin.Context) {
 		return
 	}
 
+	// Launch is a claim, and it used to be a check-then-act with the act
+	// unchecked: read the status, refuse if it was not 'draft', generate the
+	// items, then move the campaign to 'active' with an Exec whose error was
+	// discarded. Two things went wrong with that.
+	//
+	// A failed status write left the campaign in 'draft' with a full set of
+	// items already generated -- and the handler answered "Campaign launched".
+	// The next launch passed the draft check and generated every item a second
+	// time, so each reviewer saw the same entitlement twice and a completed
+	// certification could never reconcile.
+	//
+	// Two launches arriving together did the same thing without any failure at
+	// all: both read 'draft' before either wrote. One conditional UPDATE
+	// settles it under the row lock, before any item exists.
 	id := c.Param("id")
 	var ac AttestationCampaign
 	err := s.db.Pool.QueryRow(c.Request.Context(),
-		`SELECT id, campaign_type, scope, reviewer_strategy, status
-		 FROM attestation_campaigns WHERE id = $1 AND org_id = $2`, id, org.ID,
+		`UPDATE attestation_campaigns SET status = 'active'
+		  WHERE id = $1 AND org_id = $2 AND status = 'draft'
+		  RETURNING id, campaign_type, scope, reviewer_strategy, status`, id, org.ID,
 	).Scan(&ac.ID, &ac.CampaignType, &ac.Scope, &ac.ReviewerStrategy, &ac.Status)
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Campaign not found"})
+	if errors.Is(err, pgx.ErrNoRows) {
+		// Either it does not exist here, or it is not a draft. Say which.
+		var status string
+		if lookupErr := s.db.Pool.QueryRow(c.Request.Context(),
+			`SELECT status FROM attestation_campaigns WHERE id = $1 AND org_id = $2`, id, org.ID,
+		).Scan(&status); lookupErr != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Campaign not found"})
+			return
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Campaign is already launched", "status": status})
 		return
 	}
-	if ac.Status != "draft" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Campaign is already launched"})
+	if err != nil {
+		s.logger.Error("could not launch an attestation campaign", logsafe.String("campaign_id", id), zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to launch campaign"})
 		return
 	}
 
 	// Generate attestation items based on campaign type
 	itemsCreated := s.generateAttestationItems(c.Request.Context(), ac)
-
-	// Update campaign status
-	_, _ = s.db.Pool.Exec(c.Request.Context(),
-		"UPDATE attestation_campaigns SET status = 'active' WHERE id = $1 AND org_id = $2", id, org.ID)
 
 	c.JSON(http.StatusOK, gin.H{"message": "Campaign launched", "items_created": itemsCreated})
 }

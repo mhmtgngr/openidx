@@ -75,6 +75,24 @@ func (e *SyncEngine) replaceDirectoryMemberships(ctx context.Context, groupID, d
 	return nil
 }
 
+// record runs one of the sync's bookkeeping writes and says what is lost when
+// it does not land.
+//
+// None of these statements changes anybody's access, which is why they were
+// written unchecked. But each of them is the only thing that tells somebody --
+// an operator reading the console, or the scheduler deciding when to run again
+// -- what this run did. A sync whose bookkeeping is lost is a sync that
+// happened and left no trace, and the four Execs here used to lose it in
+// silence.
+func (e *SyncEngine) record(ctx context.Context, what, sql string, args ...any) error {
+	if _, err := e.db.Pool.Exec(ctx, sql, args...); err != nil {
+		e.logger.Error("a directory sync could not write down part of what it did",
+			zap.String("not_recorded", what), zap.Error(err))
+		return fmt.Errorf("%s: %w", what, err)
+	}
+	return nil
+}
+
 // RunSync executes a directory sync (full or incremental)
 func (e *SyncEngine) RunSync(ctx context.Context, directoryID string, dirType string, configBytes []byte, fullSync bool) (*SyncResult, error) {
 	start := time.Now()
@@ -104,9 +122,18 @@ func (e *SyncEngine) RunSync(ctx context.Context, directoryID string, dirType st
 		return nil, fmt.Errorf("failed to create sync log: %w", err)
 	}
 
-	e.db.Pool.Exec(ctx,
+	// unrecorded collects the bookkeeping this run could not write down. The
+	// sync's own outcome takes precedence over it -- a failure to record a
+	// success must never be reported as a failed sync -- but it is not
+	// swallowed either: with every one of these lost, a run that moved a
+	// thousand accounts is indistinguishable from one that never started.
+	var unrecorded []string
+	if err := e.record(ctx,
+		"that the sync had started",
 		`UPDATE directory_integrations SET sync_status = 'syncing', updated_at = NOW() WHERE id = $1 AND org_id = $2`,
-		directoryID, orgID)
+		directoryID, orgID); err != nil {
+		unrecorded = append(unrecorded, err.Error())
+	}
 
 	syncErr := e.doSync(ctx, directoryID, orgID, dirType, configBytes, fullSync, result)
 
@@ -124,16 +151,32 @@ func (e *SyncEngine) RunSync(ctx context.Context, directoryID string, dirType st
 	}
 
 	now := time.Now()
-	e.db.Pool.Exec(ctx,
+
+	// The log row was created 'running' and this is the only statement that
+	// ever takes it out of that state, so losing it leaves a finished run
+	// showing as in progress for ever -- and error_message is the only place a
+	// failed sync's reason is kept, so the sync history shows a run that is
+	// still going and never says what went wrong with it.
+	if err := e.record(ctx,
+		"the outcome of the run",
 		`UPDATE directory_sync_logs
 		 SET status = $2, completed_at = $3, users_added = $4, users_updated = $5, users_disabled = $6,
 		     groups_added = $7, groups_updated = $8, groups_deleted = $9, error_message = $10
 		 WHERE id = $1 AND org_id = $11`,
 		logID, status, now, result.UsersAdded, result.UsersUpdated, result.UsersDisabled,
-		result.GroupsAdded, result.GroupsUpdated, result.GroupsDeleted, errMsg, orgID)
+		result.GroupsAdded, result.GroupsUpdated, result.GroupsDeleted, errMsg, orgID); err != nil {
+		unrecorded = append(unrecorded, err.Error())
+	}
 
+	// last_sync_at is not a display value: Scheduler.checkAndRunSyncs reads it
+	// to decide whether a sync is due, and a NULL there means "never synced"
+	// -- which schedules a FULL sync. So losing this write does not merely
+	// leave the console stale; it makes the scheduler run a full directory
+	// sync on every 60-second tick, for ever, against the customer's LDAP or
+	// Graph tenant, with nothing anywhere saying why.
 	durationMs := int(result.Duration.Milliseconds())
-	e.db.Pool.Exec(ctx,
+	if err := e.record(ctx,
+		"when the directory was last synced",
 		`INSERT INTO directory_sync_state (directory_id, last_sync_at, users_synced, groups_synced, errors_count, sync_duration_ms, updated_at, org_id)
 		 VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7)
 		 ON CONFLICT (directory_id) DO UPDATE SET
@@ -141,18 +184,36 @@ func (e *SyncEngine) RunSync(ctx context.Context, directoryID string, dirType st
 		directoryID, now,
 		result.UsersAdded+result.UsersUpdated,
 		result.GroupsAdded+result.GroupsUpdated,
-		len(result.Errors), durationMs, orgID)
+		len(result.Errors), durationMs, orgID); err != nil {
+		unrecorded = append(unrecorded, err.Error())
+	}
 
+	// The integration's own status. Nothing else moves it out of 'syncing',
+	// so a lost write here is the directories page showing a sync in progress
+	// that finished hours ago -- and, when the sync failed, hiding that it
+	// failed at all.
 	dirStatus := "synced"
 	if syncErr != nil {
 		dirStatus = "failed"
 	}
-	e.db.Pool.Exec(ctx,
+	if err := e.record(ctx,
+		"the directory's sync status",
 		`UPDATE directory_integrations SET sync_status = $2, last_sync_at = $3, updated_at = NOW() WHERE id = $1 AND org_id = $4`,
-		directoryID, dirStatus, now, orgID)
+		directoryID, dirStatus, now, orgID); err != nil {
+		unrecorded = append(unrecorded, err.Error())
+	}
 
+	// The sync's own failure comes first: it is the more serious of the two,
+	// and reporting a bookkeeping failure in its place would hide it.
 	if syncErr != nil {
 		return result, syncErr
+	}
+
+	if len(unrecorded) > 0 {
+		return result, fmt.Errorf(
+			"the directory sync itself completed, but its outcome was not recorded (%s); "+
+				"the console and the sync schedule are now wrong about this directory",
+			strings.Join(unrecorded, "; "))
 	}
 
 	e.logger.Info("Directory sync completed",
@@ -569,6 +630,7 @@ type dbAzureUser struct {
 
 func (e *SyncEngine) syncAzureADUsers(ctx context.Context, connector *AzureADConnector, directoryID, orgID string, cfg AzureADConfig, fullSync bool, result *SyncResult) error {
 	var records []UserRecord
+	var newDeltaLink string
 
 	if fullSync {
 		users, err := connector.SearchUsers(ctx)
@@ -587,19 +649,17 @@ func (e *SyncEngine) syncAzureADUsers(ctx context.Context, connector *AzureADCon
 		if deltaLink != nil {
 			dl = *deltaLink
 		}
-		users, newDeltaLink, err := connector.SearchUsersIncremental(ctx, dl)
+		users, dlNext, err := connector.SearchUsersIncremental(ctx, dl)
 		if err != nil {
 			return err
 		}
 		records = users
-
-		// Save new delta link
-		if newDeltaLink != "" {
-			e.db.Pool.Exec(ctx,
-				`UPDATE directory_sync_state SET last_delta_link = $2, updated_at = NOW() WHERE directory_id = $1 AND org_id = $3`,
-				directoryID, newDeltaLink, orgID)
-		}
+		newDeltaLink = dlNext
 	}
+
+	// Everything below appends to result.Errors rather than returning, so this
+	// is where the delta link's fate is decided: see the end of the function.
+	errorsBefore := len(result.Errors)
 
 	// Build map of existing DB users for this directory (keyed by external_id)
 	dbUsers := make(map[string]dbAzureUser)
@@ -686,7 +746,52 @@ func (e *SyncEngine) syncAzureADUsers(ctx context.Context, connector *AzureADCon
 		}
 	}
 
+	// The delta link is a cursor, and it used to be stored the moment Graph
+	// handed it over -- before a single one of the records it covers had been
+	// applied. A delta query returns only what has changed since the token was
+	// issued, so storing it means never being offered those records again: a
+	// user whose UPDATE the database refused was stepped over permanently, and
+	// the sync went on to report itself partial without ever saying that the
+	// change had been lost rather than deferred.
+	//
+	// It is now stored last, and only when every record landed. Holding it
+	// costs one repeated page on the next run -- the writes are upserts keyed
+	// on external_id, so re-applying them is free -- and that is the cheaper
+	// side of the trade by a wide margin.
+	e.storeDeltaLink(ctx, directoryID, orgID, newDeltaLink, len(result.Errors)-errorsBefore, result)
+
 	return nil
+}
+
+// storeDeltaLink advances the Azure AD delta cursor, or deliberately does not.
+//
+// unapplied is how many of the records this page carried could not be written.
+// While it is non-zero the cursor is held where it is: Graph will offer those
+// records again on the next run, which is the only way they are ever seen
+// again. Advancing past them is permanent.
+func (e *SyncEngine) storeDeltaLink(ctx context.Context, directoryID, orgID, deltaLink string, unapplied int, result *SyncResult) {
+	if deltaLink == "" {
+		return
+	}
+	if unapplied > 0 {
+		e.logger.Warn("holding the Azure AD delta cursor: records in this page were not applied, "+
+			"so advancing it would skip them for good; the next sync re-fetches from the previous cursor",
+			zap.String("directory_id", directoryID),
+			zap.Int("records_not_applied", unapplied))
+		return
+	}
+	// An upsert, not an UPDATE. On a directory's first incremental sync there
+	// is no state row yet -- RunSync creates it after doSync returns -- so the
+	// old UPDATE matched nothing and stored no cursor at all, without saying
+	// so, and that run's delta token was thrown away.
+	if err := e.record(ctx,
+		"the Azure AD delta cursor",
+		`INSERT INTO directory_sync_state (directory_id, last_delta_link, updated_at, org_id)
+		 VALUES ($1, $2, NOW(), $3)
+		 ON CONFLICT (directory_id) DO UPDATE SET last_delta_link = $2, updated_at = NOW()`,
+		directoryID, deltaLink, orgID); err != nil {
+		result.Errors = append(result.Errors, err.Error())
+	}
 }
 
 func (e *SyncEngine) syncAzureADGroups(ctx context.Context, connector *AzureADConnector, directoryID, orgID string, result *SyncResult) error {

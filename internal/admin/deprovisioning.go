@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -384,11 +385,22 @@ func (s *Service) handleExecuteLifecyclePolicy(c *gin.Context) {
 	// Execute actions (org captured above, threaded into the detached goroutine)
 	go s.executeLifecyclePolicy(org.ID, execID, p, affected)
 
-	// Update last_run_at
-	_, _ = s.db.Pool.Exec(c.Request.Context(),
-		"UPDATE lifecycle_policies SET last_run_at = NOW() WHERE id = $1 AND org_id = $2", id, org.ID)
+	// last_run_at is the only thing on the lifecycle policies page that says
+	// this policy has ever run. Losing it shows a policy that has just
+	// disabled or deleted accounts as one that has never been executed -- so
+	// the run is answered with a warning rather than a bare success, because
+	// the execution genuinely did start and reporting failure would send an
+	// operator to run it a second time.
+	resp := gin.H{"execution_id": execID, "affected_count": len(affected), "status": "running"}
+	if _, err := s.db.Pool.Exec(c.Request.Context(),
+		"UPDATE lifecycle_policies SET last_run_at = NOW() WHERE id = $1 AND org_id = $2", id, org.ID); err != nil {
+		s.logger.Error("lifecycle policy ran but its last run was not recorded",
+			logsafe.String("policy_id", id), zap.Error(err))
+		resp["warning"] = "The execution started, but this policy's last-run time could not be recorded: " +
+			"the policies page will go on showing it as never executed."
+	}
 
-	c.JSON(http.StatusOK, gin.H{"execution_id": execID, "affected_count": len(affected), "status": "running"})
+	c.JSON(http.StatusOK, resp)
 }
 
 func (s *Service) findAffectedUsers(ctx context.Context, p LifecyclePolicy) []AffectedUser {
@@ -533,11 +545,30 @@ func (s *Service) executeLifecyclePolicy(orgID, execID string, p LifecyclePolicy
 
 	// actions_taken carries a username and a reason per affected account, so
 	// this row is personal data about the tenant's directory, not just a status.
-	actionsJSON, _ := json.Marshal(actionsTaken)
-	_, _ = s.db.Pool.Exec(ctx,
+	//
+	// It is also the only statement that takes the execution out of 'running',
+	// and the only record of WHICH accounts a lifecycle policy disabled or
+	// deleted. Losing it strands the run as in-progress for ever and leaves a
+	// deprovisioning with no account-level trail at all -- which is precisely
+	// the evidence an access-certification audit asks for. This runs on a
+	// detached goroutine, so there is nobody to return the error to; saying it
+	// loudly is the whole of what can be done, and it used to say nothing.
+	actionsJSON, err := json.Marshal(actionsTaken)
+	if err != nil {
+		s.logger.Error("could not serialise a lifecycle run's actions",
+			logsafe.String("execution_id", execID), zap.Error(err))
+		actionsJSON = []byte("[]")
+	}
+	if _, err := s.db.Pool.Exec(ctx,
 		`UPDATE lifecycle_policy_executions SET status = 'completed', users_affected = $1,
 		 actions_taken = $2, completed_at = NOW() WHERE id = $3 AND org_id = $4`,
-		usersAffected, actionsJSON, execID, orgID)
+		usersAffected, actionsJSON, execID, orgID); err != nil {
+		s.logger.Error("a lifecycle policy run finished but its outcome was not recorded; "+
+			"the execution stays 'running' and the list of accounts it acted on is lost",
+			logsafe.String("execution_id", execID),
+			zap.Int("users_affected", usersAffected),
+			zap.Error(err))
+	}
 }
 
 func (s *Service) handleListLifecycleExecutions(c *gin.Context) {

@@ -121,9 +121,18 @@ func (e *SyncEngine) doSyncHRIS(ctx context.Context, directoryID, orgID string, 
 		if !ok {
 			continue // manager not in this directory / not yet provisioned
 		}
-		e.db.Pool.Exec(ctx,
+		// manager_id is not decoration. It is who reviews this person's access
+		// in an attestation campaign (admin/attestation.go) and who approves
+		// their access requests (governance/workflows.go). A lost write here
+		// leaves an employee with no manager on record, so their requests fall
+		// through to whatever fallback the workflow has and their entitlements
+		// land in nobody's review queue -- while the HR sync reports success.
+		if _, err := e.db.Pool.Exec(ctx,
 			`UPDATE users SET manager_id = $2, updated_at = NOW() WHERE id = $1 AND org_id = $3`,
-			childID, managerID, orgID)
+			childID, managerID, orgID); err != nil {
+			result.Errors = append(result.Errors,
+				fmt.Sprintf("failed to record the manager of %s: %v", rec.Username, err))
+		}
 	}
 
 	// Leaver: HR-sourced users absent from the directory (only on full sync, so a

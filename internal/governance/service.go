@@ -2614,11 +2614,21 @@ func (s *Service) checkCampaignDeadlines(ctx context.Context) {
 				}
 			}
 
-			// Also mark the access review itself as expired
+			// Also mark the access review itself as expired.
+			//
+			// The items above have just been auto-revoked, which is the
+			// irreversible half. Losing this write leaves the review sitting
+			// in the reviewers' queue as still open, over items that already
+			// have a decision -- so a reviewer opens a certification that has
+			// been settled without them and cannot change any of it.
 			//orgscope:ignore cross-org background deadline sweep; keyed by globally-unique review_id
-			_, _ = s.db.Pool.Exec(ctx, `
+			if _, err := s.db.Pool.Exec(ctx, `
 				UPDATE access_reviews SET status = 'expired', completed_at = $2 WHERE id = $1
-			`, *er.reviewID, now)
+			`, *er.reviewID, now); err != nil {
+				s.logger.Error("a campaign's items were auto-revoked but the review was not closed; "+
+					"it stays open over decisions its reviewers did not make",
+					zap.String("review_id", *er.reviewID), zap.Error(err))
+			}
 		}
 
 		// Count reviewed items for the run.
