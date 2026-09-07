@@ -69,6 +69,33 @@ const (
 	ClassPublic    = "public"
 )
 
+// discoveryStallTimeout is how long an app may sit in 'discovering' before a
+// new request may take the claim. The worker's own context (discoveryContext)
+// gives up after five minutes, so anything still claimed well past that is a
+// run whose outcome was never written -- a process killed mid-discovery, or a
+// terminal write the database refused.
+//
+// Without this, 'discovering' is a one-way door: handleStartDiscovery refuses
+// to start while it is set, and only the worker clears it.
+const discoveryStallTimeout = 15 * time.Minute
+
+// appWrite performs one of this file's bookkeeping writes and says so when it
+// fails. These statements are what the console reads to describe an app --
+// which paths are published, whether discovery finished, what the app's status
+// is -- and every one of them used to discard its error, so the page could
+// disagree with the routing table with nothing anywhere to say why.
+//
+// Callers that can still answer the request honestly log and continue; callers
+// whose answer depends on the write check the returned error.
+func (s *Service) appWrite(ctx context.Context, what, sql string, args ...interface{}) error {
+	if _, err := s.db.Pool.Exec(ctx, sql, args...); err != nil {
+		s.logger.Error("app-publish bookkeeping write failed; the console will not reflect this change",
+			zap.String("write", what), zap.Error(err))
+		return err
+	}
+	return nil
+}
+
 // ---- Request / Response types ----
 
 type RegisterAppRequest struct {
@@ -299,18 +326,45 @@ func (s *Service) handleStartDiscovery(c *gin.Context) {
 		return
 	}
 
-	var status string
-	err = s.db.Pool.QueryRow(ctx, `SELECT status FROM published_apps WHERE id=$1 AND org_id=$2`, appID, org.ID).Scan(&status)
+	// Claim the app for discovery in one statement.
+	//
+	// This was a SELECT of status, a comparison, and an UPDATE whose error was
+	// discarded -- and 'discovering' is a state only the background worker's
+	// terminal write clears. So a claim that failed to be written launched a
+	// discovery the app never showed as running, two requests arriving together
+	// both passed the check, and, worst, an app left in 'discovering' by a
+	// worker that died or could not write its result was refused here for ever:
+	// the console showed "discovery in progress" and no further discovery could
+	// ever be started.
+	//
+	// The claim now checks and acts at once. A stale claim -- older than
+	// discoveryStallTimeout, which is well past the worker's own deadline -- is
+	// taken over rather than honoured, which is what makes the stuck case
+	// recoverable without an operator touching the database.
+	tag, err := s.db.Pool.Exec(ctx, `
+		UPDATE published_apps
+		   SET status='discovering', discovery_started_at=NOW(), discovery_error=NULL, updated_at=NOW()
+		 WHERE id=$1 AND org_id=$2
+		   AND (status <> 'discovering'
+		        OR discovery_started_at IS NULL
+		        OR discovery_started_at < NOW() - $3::interval)`,
+		appID, org.ID, fmt.Sprintf("%d seconds", int(discoveryStallTimeout.Seconds())))
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "app not found"})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("claim the app for discovery", err), s.logger)
 		return
 	}
-	if status == "discovering" {
+	if tag.RowsAffected() == 0 {
+		// Either the app is not this tenant's, or a discovery started recently
+		// and is still inside its window.
+		var exists bool
+		if e := s.db.Pool.QueryRow(ctx,
+			`SELECT true FROM published_apps WHERE id=$1 AND org_id=$2`, appID, org.ID).Scan(&exists); e != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "app not found"})
+			return
+		}
 		c.JSON(http.StatusConflict, gin.H{"error": "discovery already in progress"})
 		return
 	}
-
-	s.db.Pool.Exec(ctx, `UPDATE published_apps SET status='discovering', discovery_started_at=NOW(), discovery_error=NULL, updated_at=NOW() WHERE id=$1 AND org_id=$2`, appID, org.ID)
 
 	// Run app discovery in the background, on a context that outlives the
 	// response and still carries the tenant — see discoveryContext.
@@ -473,8 +527,14 @@ func (s *Service) resolveAppPublicHost(explicit, appName string) (string, error)
 // idempotent). from_url is always a bare host (no path) — Ziti/BrowZer and the
 // data-plane route match are per-host. Returns the route id.
 func (s *Service) ensureHostRoute(ctx context.Context, orgID, appName, fromURL, targetURL string, preserveHost bool) (string, error) {
+	// from_url carries only a non-unique index, so a delete that silently failed
+	// left the old route in place and the insert below added a second one for
+	// the same host -- two routes matching the same request, and which one the
+	// data plane picks is not defined. Refuse to publish rather than leave that.
 	//orgscope:ignore publish host route upsert; scoped by org_id in the statements
-	s.db.Pool.Exec(ctx, `DELETE FROM proxy_routes WHERE from_url=$1 AND org_id=$2`, fromURL, orgID)
+	if _, err := s.db.Pool.Exec(ctx, `DELETE FROM proxy_routes WHERE from_url=$1 AND org_id=$2`, fromURL, orgID); err != nil {
+		return "", fmt.Errorf("clear the existing route for %s: %w", fromURL, err)
+	}
 	routeID := uuid.New().String()
 	_, err := s.db.Pool.Exec(ctx, `
 		INSERT INTO proxy_routes (id, name, description, from_url, to_url,
@@ -596,8 +656,16 @@ func (s *Service) handlePublishPaths(c *gin.Context) {
 			result.TotalFailed++
 			continue
 		}
-		s.db.Pool.Exec(ctx,
-			`UPDATE discovered_paths SET published=true, route_id=$1, updated_at=NOW() WHERE id=$2 AND org_id=$3`, appRouteID, pathID, org.ID)
+		// A path the database did not record as published is not published: the
+		// response used to list it under Published and count it regardless, so
+		// the operator was told about paths the app would never serve.
+		if err := s.appWrite(ctx, "mark path published",
+			`UPDATE discovered_paths SET published=true, route_id=$1, updated_at=NOW() WHERE id=$2 AND org_id=$3`,
+			appRouteID, pathID, org.ID); err != nil {
+			result.Errors = append(result.Errors, fmt.Sprintf("path %s: could not be recorded as published", pathID))
+			result.TotalFailed++
+			continue
+		}
 		result.Published = append(result.Published, PublishedPathRoute{
 			PathID: pathID, RouteID: appRouteID, Path: pth, Name: appName,
 		})
@@ -624,10 +692,20 @@ func (s *Service) handlePublishPaths(c *gin.Context) {
 	// Launcher tile + access-proxy callback + app record.
 	s.upsertAppLauncherTile(ctx, org.ID, appID, appName, appDesc, fromURL+landingPath)
 	s.registerAccessProxyCallback(ctx, publicHost)
-	s.db.Pool.Exec(ctx, `
+	// This row is what the applications list reads. Without it the routes are
+	// live and serving while the console still shows the app as unpublished --
+	// a route nobody can see, which is worse than a failure the operator can
+	// retry.
+	if err := s.appWrite(ctx, "mark app published", `
 		UPDATE published_apps SET public_host=$1, landing_path=$2, status='published',
 			total_paths_published = (SELECT COUNT(*) FROM discovered_paths WHERE app_id=$3 AND published=true AND org_id=$4),
-			updated_at=NOW() WHERE id=$3 AND org_id=$4`, publicHost, landingPath, appID, org.ID)
+			updated_at=NOW() WHERE id=$3 AND org_id=$4`, publicHost, landingPath, appID, org.ID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":  "The routes for this app were created and are serving traffic, but the app record could not be updated, so the applications list will not show it as published. Publish it again to reconcile.",
+			"result": result,
+		})
+		return
+	}
 
 	s.logAuditEvent(c, "app_paths_published", appID, "published_app", map[string]interface{}{
 		"route_id":        appRouteID,
@@ -724,9 +802,17 @@ func (s *Service) handlePublishApp(c *gin.Context) {
 	s.registerAccessProxyCallback(ctx, publicHost)
 
 	// Record the public host / landing path on the app for display + idempotency.
-	s.db.Pool.Exec(ctx,
+	// The route is already live; if this does not land, the console will not
+	// show the app as published and re-publishing will not be recognised as a
+	// repeat. Say so rather than answering success.
+	if err := s.appWrite(ctx, "record app public host",
 		`UPDATE published_apps SET public_host=$1, landing_path=$2, status='published', updated_at=NOW() WHERE id=$3 AND org_id=$4`,
-		publicHost, landingPath, appID, org.ID)
+		publicHost, landingPath, appID, org.ID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "The route for this app was created and is serving traffic, but the app record could not be updated, so the applications list will not show it as published. Publish it again to reconcile.",
+		})
+		return
+	}
 
 	s.logAuditEvent(c, "app_published_oneclick", appID, "published_app", map[string]interface{}{
 		"public_host": publicHost, "route_id": routeID,
@@ -771,7 +857,12 @@ func (s *Service) runAppDiscovery(ctx context.Context, appID, orgID string) {
 	err := s.db.Pool.QueryRow(ctx, `SELECT target_url, COALESCE(spec_url,'') FROM published_apps WHERE id=$1 AND org_id=$2`, appID, orgID).
 		Scan(&targetURL, &specURL)
 	if err != nil {
-		s.db.Pool.Exec(ctx, `UPDATE published_apps SET status='error', discovery_error=$1, updated_at=NOW() WHERE id=$2 AND org_id=$3`,
+		// Every exit from this worker must take the app out of 'discovering',
+		// because handleStartDiscovery refuses to start a new run while that
+		// status stands. A failure here is recovered by discoveryStallTimeout
+		// rather than left silent.
+		_ = s.appWrite(ctx, "record discovery lookup failure",
+			`UPDATE published_apps SET status='error', discovery_error=$1, updated_at=NOW() WHERE id=$2 AND org_id=$3`,
 			err.Error(), appID, orgID)
 		return
 	}
@@ -811,16 +902,24 @@ func (s *Service) runAppDiscovery(ctx context.Context, appID, orgID string) {
 		classifyPath(&unique[i])
 	}
 
-	// Clear old auto-classified unpublished paths (allow re-discovery)
-	s.db.Pool.Exec(ctx, `DELETE FROM discovered_paths WHERE app_id=$1 AND published=false AND org_id=$2`, appID, orgID)
+	// Clear old auto-classified unpublished paths (allow re-discovery).
+	// If this fails the inserts below still upsert by (app_id, path), so what is
+	// lost is the pruning of paths the target no longer serves -- stale rows the
+	// operator sees offered for publishing.
+	_ = s.appWrite(ctx, "clear stale discovered paths",
+		`DELETE FROM discovered_paths WHERE app_id=$1 AND published=false AND org_id=$2`, appID, orgID)
 
 	// Insert discovered paths
+	var unrecorded int
 	for _, p := range unique {
 		methodsJSON, _ := json.Marshal(p.HTTPMethods)
 		rolesJSON, _ := json.Marshal(p.AllowedRoles)
 		metadataJSON, _ := json.Marshal(p.Metadata)
 
-		s.db.Pool.Exec(ctx, `
+		// total_paths_discovered below is computed from len(unique), not from
+		// the table, so a path that failed to insert used to be counted in the
+		// headline and absent from the list underneath it. Count them instead.
+		if e := s.appWrite(ctx, "record discovered path", `
 			INSERT INTO discovered_paths (id, app_id, path, http_methods, classification,
 				classification_source, discovery_strategy, suggested_policy,
 				require_auth, allowed_roles, require_device_trust, metadata, org_id)
@@ -832,7 +931,9 @@ func (s *Service) runAppDiscovery(ctx context.Context, appID, orgID string) {
 				updated_at = NOW()`,
 			uuid.New().String(), appID, p.Path, methodsJSON, p.Classification,
 			p.DiscoveryStrategy, p.SuggestedPolicy, p.RequireAuth, rolesJSON,
-			p.RequireDeviceTrust, metadataJSON, orgID)
+			p.RequireDeviceTrust, metadataJSON, orgID); e != nil {
+			unrecorded++
+		}
 	}
 
 	// Update app
@@ -840,14 +941,21 @@ func (s *Service) runAppDiscovery(ctx context.Context, appID, orgID string) {
 	finalStatus := "discovered"
 	if len(unique) == 0 {
 		finalStatus = "error"
-		s.db.Pool.Exec(ctx, `UPDATE published_apps SET status=$1, discovery_completed_at=NOW(),
+		_ = s.appWrite(ctx, "record empty discovery", `UPDATE published_apps SET status=$1, discovery_completed_at=NOW(),
 			discovery_strategies=$2, total_paths_discovered=0, discovery_error='no paths discovered',
 			updated_at=NOW() WHERE id=$3 AND org_id=$4`, finalStatus, strategiesJSON, appID, orgID)
 		return
 	}
-	s.db.Pool.Exec(ctx, `UPDATE published_apps SET status=$1, discovery_completed_at=NOW(),
-		discovery_strategies=$2, total_paths_discovered=$3, updated_at=NOW() WHERE id=$4 AND org_id=$5`,
-		finalStatus, strategiesJSON, len(unique), appID, orgID)
+	// The count is what was recorded, not what was found, and paths that could
+	// not be written are named rather than quietly dropped from the total.
+	recorded := len(unique) - unrecorded
+	var discoveryErr interface{}
+	if unrecorded > 0 {
+		discoveryErr = fmt.Sprintf("%d of %d discovered paths could not be recorded", unrecorded, len(unique))
+	}
+	_ = s.appWrite(ctx, "record discovery result", `UPDATE published_apps SET status=$1, discovery_completed_at=NOW(),
+		discovery_strategies=$2, total_paths_discovered=$3, discovery_error=$6, updated_at=NOW() WHERE id=$4 AND org_id=$5`,
+		finalStatus, strategiesJSON, recorded, appID, orgID, discoveryErr)
 
 	s.logger.Info("App discovery completed",
 		zap.String("app_id", appID),
@@ -1378,10 +1486,20 @@ func (s *Service) consolidateApp(ctx context.Context, orgID, appID, userID strin
 			}
 		}
 	}
-	// Unlink discovered_paths first (FK is ON DELETE SET NULL; unlink keeps it explicit).
-	s.db.Pool.Exec(ctx, `UPDATE discovered_paths SET route_id=NULL WHERE app_id=$1 AND org_id=$2`, appID, orgID)
+	// Unlink discovered_paths first (FK is ON DELETE SET NULL; unlink keeps it
+	// explicit). Consolidation replaces many per-path routes with one host
+	// route, so a delete that fails leaves an old route still serving beside
+	// the new one -- the operator is told the app was consolidated and the
+	// stale route keeps answering. Refuse rather than half-consolidate.
+	if err := s.appWrite(ctx, "unlink paths from old routes",
+		`UPDATE discovered_paths SET route_id=NULL WHERE app_id=$1 AND org_id=$2`, appID, orgID); err != nil {
+		return "", 0, fmt.Errorf("unlink paths from their old routes: %w", err)
+	}
 	for id := range routeIDs {
-		s.db.Pool.Exec(ctx, `DELETE FROM proxy_routes WHERE id=$1 AND org_id=$2`, id, orgID)
+		if err := s.appWrite(ctx, "delete superseded route",
+			`DELETE FROM proxy_routes WHERE id=$1 AND org_id=$2`, id, orgID); err != nil {
+			return "", 0, fmt.Errorf("remove the superseded route %s: %w", id, err)
+		}
 		s.deleteAppTile(ctx, id)
 	}
 
@@ -1390,8 +1508,13 @@ func (s *Service) consolidateApp(ctx context.Context, orgID, appID, userID strin
 	if err != nil {
 		return "", 0, err
 	}
-	res, _ := s.db.Pool.Exec(ctx,
+	res, err := s.db.Pool.Exec(ctx,
 		`UPDATE discovered_paths SET route_id=$1, published=true, updated_at=NOW() WHERE app_id=$2 AND org_id=$3`, canonicalID, appID, orgID)
+	if err != nil {
+		// The canonical route exists but nothing points at it: the app would
+		// report zero published paths over a route that is serving all of them.
+		return "", 0, fmt.Errorf("point the app's paths at the canonical route: %w", err)
+	}
 	pathCount := int(res.RowsAffected())
 
 	// Re-enable Ziti/BrowZer once on the canonical route (clean service name).
@@ -1413,10 +1536,12 @@ func (s *Service) consolidateApp(ctx context.Context, orgID, appID, userID strin
 
 	s.upsertAppLauncherTile(ctx, orgID, appID, appName, appDesc, fromURL+"/")
 	s.registerAccessProxyCallback(ctx, publicHost)
-	s.db.Pool.Exec(ctx, `
+	if err := s.appWrite(ctx, "record consolidated app", `
 		UPDATE published_apps SET public_host=$1, status='published',
 			total_paths_published=(SELECT COUNT(*) FROM discovered_paths WHERE app_id=$2 AND published=true AND org_id=$3),
-			updated_at=NOW() WHERE id=$2 AND org_id=$3`, publicHost, appID, orgID)
+			updated_at=NOW() WHERE id=$2 AND org_id=$3`, publicHost, appID, orgID); err != nil {
+		return "", 0, fmt.Errorf("record the consolidated app: %w", err)
+	}
 
 	// Regenerate the edge (prunes stale browzer-* APISIX routes) + reconcile Ziti.
 	if s.browzerTargetManager != nil {
