@@ -66,7 +66,11 @@ func TestAgentEnroll_MissingToken(t *testing.T) {
 }
 
 // TestAgentReport_Accepted verifies that a POST to /agent/report with a JSON
-// body is acknowledged with 202.
+// body and the agent's own credentials is acknowledged with 202.
+//
+// The credential headers are not decoration. Until agent_auth.go this request
+// was accepted without them, and this test passed without sending them — which
+// is what a test of a control that is not there looks like from the inside.
 func TestAgentReport_Accepted(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -83,6 +87,7 @@ func TestAgentReport_Accepted(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/agent/report", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Agent-ID", "test-agent-id")
+	req.Header.Set("X-Auth-Token", "test-agent-token")
 
 	router.ServeHTTP(w, req)
 
@@ -101,6 +106,8 @@ func TestAgentConfig_ReturnsDefaults(t *testing.T) {
 	router.GET("/agent/config", handler.HandleConfig)
 
 	req := httptest.NewRequest(http.MethodGet, "/agent/config", nil)
+	req.Header.Set("X-Agent-ID", "test-agent-id")
+	req.Header.Set("X-Auth-Token", "test-agent-token")
 	router.ServeHTTP(w, req)
 
 	require.Equal(t, http.StatusOK, w.Code)
@@ -114,21 +121,48 @@ func TestAgentConfig_ReturnsDefaults(t *testing.T) {
 	assert.Equal(t, "30s", resp.ReportInterval) // baselinePollInterval
 }
 
-// TestAgentConfig_DefaultsWhenNoAgentID verifies that a GET to /agent/config
-// without an X-Agent-ID header or agent_id query param returns the same
-// default configuration as when the database is unavailable.
-func TestAgentConfig_DefaultsWhenNoAgentID(t *testing.T) {
+// TestAgentConfig_RefusesWhenNoAgentID: a GET to /agent/config with no
+// X-Agent-ID header is refused.
+//
+// This test used to be TestAgentConfig_DefaultsWhenNoAgentID, and it asserted
+// the opposite: that an anonymous caller got the default configuration back.
+// That was the endpoint's real behaviour and it was wrong — /agent/config is
+// mounted outside the JWT middleware, so "no agent id" meant "no credentials of
+// any kind", and the agent id it did accept came from a header or an `agent_id`
+// query parameter that nothing verified. The name recorded the defect as an
+// intention. Now the request is answered 401 and this asserts that.
+func TestAgentConfig_RefusesWhenNoAgentID(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	w := httptest.NewRecorder()
 	_, router := gin.CreateTestContext(w)
 
-	// Handler has no DB (nil), so fallback must apply regardless.
 	handler := newTestAgentHandler()
 	router.GET("/agent/config", handler.HandleConfig)
 
-	// Request without X-Agent-ID header and without agent_id query param.
 	req := httptest.NewRequest(http.MethodGet, "/agent/config", nil)
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusUnauthorized, w.Code,
+		"an anonymous caller was handed an agent configuration")
+}
+
+// TestAgentConfig_DefaultsForAnEnrolledAgent verifies that an authenticated
+// agent gets the three built-in checks when there is no database to read a
+// per-agent configuration from.
+func TestAgentConfig_DefaultsForAnEnrolledAgent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	w := httptest.NewRecorder()
+	_, router := gin.CreateTestContext(w)
+
+	// Handler has no DB (nil), so the built-in defaults must apply.
+	handler := newTestAgentHandler()
+	router.GET("/agent/config", handler.HandleConfig)
+
+	req := httptest.NewRequest(http.MethodGet, "/agent/config", nil)
+	req.Header.Set("X-Agent-ID", "test-agent-id")
+	req.Header.Set("X-Auth-Token", "test-agent-token")
 	router.ServeHTTP(w, req)
 
 	require.Equal(t, http.StatusOK, w.Code)
@@ -227,6 +261,7 @@ func TestAgentReport_ParsesResults(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/agent/report", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Agent-ID", "agent-abc123")
+	req.Header.Set("X-Auth-Token", "agent-abc123-token")
 
 	router.ServeHTTP(w, req)
 
@@ -340,15 +375,32 @@ func TestRegisterAgentRoutes(t *testing.T) {
 	router.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	// /agent/report
+	// /agent/report and /agent/config carry the agent's own credentials. Both
+	// assertions below used to send none and expect 202/200 — the routes are
+	// registered outside the JWT middleware, so that was this test certifying
+	// that two public endpoints answered anonymous callers.
 	w = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodPost, "/agent/report", nil)
 	router.ServeHTTP(w, req)
-	assert.Equal(t, http.StatusAccepted, w.Code)
+	assert.Equal(t, http.StatusUnauthorized, w.Code, "/agent/report answered an anonymous caller")
 
-	// /agent/config
 	w = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodGet, "/agent/config", nil)
+	router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusUnauthorized, w.Code, "/agent/config answered an anonymous caller")
+
+	// ...and answer the agent that presents them.
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/agent/report", nil)
+	req.Header.Set("X-Agent-ID", "agent-abc123")
+	req.Header.Set("X-Auth-Token", "agent-abc123-token")
+	router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusAccepted, w.Code)
+
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/agent/config", nil)
+	req.Header.Set("X-Agent-ID", "agent-abc123")
+	req.Header.Set("X-Auth-Token", "agent-abc123-token")
 	router.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
 }

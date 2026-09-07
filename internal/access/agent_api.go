@@ -879,16 +879,30 @@ func (h *AgentAPIHandler) bridgeDevicePostureResult(ctx context.Context, agentID
 // HandleReport accepts a status report from an enrolled agent, persists posture
 // results, updates the agent's compliance score, and returns 202 Accepted.
 func (h *AgentAPIHandler) HandleReport(c *gin.Context) {
+	// Authenticate FIRST, before the body is read: this route is public, and
+	// everything below writes posture rows, moves the agent's compliance verdict
+	// and drives its Ziti tier.
+	agentID, ok := h.requireEnrolledAgent(c)
+	if !ok {
+		return
+	}
+
 	var report agentReport
 	if err := json.NewDecoder(c.Request.Body).Decode(&report); err != nil && err != io.EOF {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to parse body"})
 		return
 	}
 
-	// Prefer agent_id from the JSON body; fall back to the header.
-	agentID := report.AgentID
-	if agentID == "" {
-		agentID = c.GetHeader("X-Agent-ID")
+	// The authenticated id is the subject, always. It used to be read from the
+	// JSON body with the header only as a fallback, so a body field decided
+	// whose posture this was — which, once the credential is checked, would let
+	// any enrolled agent file a report against any other agent's id. Both
+	// shipped agents put the same value in both places, so a disagreement is
+	// not a client the product has; it is refused rather than silently ignored.
+	if report.AgentID != "" && report.AgentID != agentID {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "agent_id in the body does not match the authenticated agent"})
+		return
 	}
 
 	h.logger.Info("agent report received",
@@ -1469,14 +1483,19 @@ func (h *AgentAPIHandler) defaultConfigWithSupport(ctx context.Context, agentID 
 
 // Falls back to defaultAgentConfig when no agent ID is given or the DB is nil.
 func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
-	// 1. Resolve agent ID from header or query param.
-	agentID := c.GetHeader("X-Agent-ID")
-	if agentID == "" {
-		agentID = c.Query("agent_id")
+	// 1. Authenticate. The agent id used to come from a header OR an `agent_id`
+	//    query parameter, unverified, so anyone who could reach the service
+	//    could read any enrolled device's check list, report cadence, kiosk
+	//    policy and Windows-app discovery job by guessing an id.
+	agentID, ok := h.requireEnrolledAgent(c)
+	if !ok {
+		return
 	}
 
-	// 2. Fall back to defaults when no agent ID or DB unavailable.
-	if agentID == "" || h.db == nil || h.db.Pool == nil {
+	// 2. Fall back to defaults when the DB is unavailable. (An unauthenticated
+	//    caller no longer reaches this: it is answered 401 above. An agent's own
+	//    client treats any error as "use defaults", so nothing breaks for one.)
+	if h.db == nil || h.db.Pool == nil {
 		c.JSON(http.StatusOK, defaultAgentConfig())
 		return
 	}

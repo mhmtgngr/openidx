@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **J4's automatable half, proved through the running services
+  (`test/integration/network_access_test.go`).** "Enroll agent/BrowZer →
+  posture check → reach a dark service" was the last Definition-of-Done journey
+  with no automated verification. Its third step needs a Ziti controller, a
+  router and a dark service to dial, and stays an operator drill
+  (`tools/darkprobe`, the going-dark runbook). Its first two steps are HTTP
+  against access-service, and they are the steps that decide the third.
+
+  Eight assertions across one enrolled device: an anonymous caller cannot
+  report its posture, cannot guess its token, cannot report for an agent id
+  nobody enrolled, and cannot take a compliant device's trust away; the device
+  itself can, and the verdict lands in the trail and in the administrator's
+  view; a report filed under another device's id is refused; and the
+  configuration is served to the device and to nobody else. Writing it is what
+  found the authentication hole listed under Fixed — the journey's question is
+  not "is posture recorded" but "who is allowed to say what a device's posture
+  is", and the answer was "anybody".
+
 - **J8's audit half, proved against the running trail
   (`test/integration/audit_chain_test.go`).** The product claims a
   tamper-evident audit log. `internal/audit/chain_test.go` proves the sealer's
@@ -127,6 +145,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   defect.
 
 ### Fixed
+
+- **The posture endpoint that decides a device's network tier accepted reports
+  from anyone (`internal/access.HandleReport`, `HandleConfig`).**
+  `POST /api/v1/access/agent/report` and `GET /api/v1/access/agent/config` are
+  registered outside the JWT middleware, because an agent has no tenant JWT and
+  authenticates with the credentials enrollment issued it. Neither handler read
+  those credentials. `/agent/report` took the agent id out of the JSON body,
+  falling back to a header, and trusted it; `/agent/config` took it from a
+  header or an `agent_id` query parameter.
+
+  A posture report is not a status line. `applyPostureDeviceTrust` turns the
+  verdict into the `device-trusted` Ziti role attribute, which is the Tier‑2
+  gate the reconciler's dial policies require for the remote/PAM and admin
+  surfaces. So an unauthenticated HTTP request could grant a device network
+  access it had not earned, or strip a compliant laptop of the access it had —
+  and could write posture rows and compliance verdicts for any agent id at all.
+
+  Proven against the running service, with no credentials and an agent id that
+  had never been enrolled: `202 {"compliance_score":1,"status":"accepted"}`,
+  and the row was in `agent_posture_results`. The same request now answers
+  `401 {"error":"invalid agent credentials"}`.
+
+  Both shipped agents already send the credential — the Android one as
+  `X-Auth-Token`, the Go one as `Authorization: Bearer` — and
+  `api/openapi/access-service.yaml` has always documented a `401` on both
+  paths. Only the server never looked, so no deployed agent is affected by the
+  fix. The lookup now lives once in `internal/access/agent_auth.go`; the two
+  handlers that already had a copy of it (the remote-support WebSocket and the
+  Windows-app discovery report, both of which cite `/agent/report` in their
+  comments as the pattern they follow) delegate to the same function. The
+  authenticated id is also the subject of the report: a body naming a different
+  agent is refused rather than honoured.
 
 - **Every audit event access-service ever emitted was refused and dropped
   (`internal/audit.LogEvent`).** `audit_events.id` is

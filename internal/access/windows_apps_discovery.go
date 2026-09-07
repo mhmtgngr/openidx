@@ -29,27 +29,14 @@ import (
 )
 
 // verifyAgentToken checks an agent's X-Auth-Token against the stored
-// enrolled_agents.auth_token_hash, mirroring RemoteSupportHandler.verifyAgentAuth
-// so the Windows-app discovery endpoint authenticates agents the same way as
-// /agent/report and the remote-support WebSocket. Dev mode (no DB) accepts any
-// non-empty token, matching the other agent surfaces.
+// enrolled_agents.auth_token_hash.
+//
+// This was one of three copies of the same lookup. It is now the shared one in
+// agent_auth.go, which is where the comment explaining the RLS bypass lives —
+// and, more to the point, where /agent/report and /agent/config finally get the
+// check that this file's own header said they already had.
 func (s *Service) verifyAgentToken(ctx context.Context, agentID, token string) bool {
-	if agentID == "" || token == "" {
-		return false
-	}
-	if s.db == nil || s.db.Pool == nil {
-		return token != "" // dev mode: any non-empty token
-	}
-	// Agent callback carries no tenant context; enrolled_agents is a global
-	// fleet table keyed on the globally-unique agent_id, so bypass RLS.
-	ctx = orgctx.WithBypassRLS(ctx)
-	var stored string
-	if err := s.db.Pool.QueryRow(ctx,
-		`SELECT auth_token_hash FROM enrolled_agents WHERE agent_id = $1`,
-		agentID).Scan(&stored); err != nil {
-		return false
-	}
-	return sha256Hex(token) == stored
+	return verifyEnrolledAgent(ctx, s.db, agentID, token)
 }
 
 // handleAgentWindowsAppReport — POST /agent/windows-apps/report (public agent

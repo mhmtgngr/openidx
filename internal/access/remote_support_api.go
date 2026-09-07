@@ -1062,19 +1062,11 @@ func (h *RemoteSupportHandler) evictSession(sessionID string) {
 }
 
 // verifyAgentAuth checks the supplied auth token against the
-// enrolled_agents.auth_token_hash for the given agent_id.
+// enrolled_agents.auth_token_hash for the given agent_id. See agent_auth.go —
+// this was the second of three copies; the shared one also rejects an empty
+// agent id outright and bypasses RLS, which this copy did not.
 func (h *RemoteSupportHandler) verifyAgentAuth(ctx context.Context, agentID, token string) bool {
-	if h.db == nil || h.db.Pool == nil {
-		return token != "" // dev mode: any non-empty token
-	}
-	var stored string
-	err := h.db.Pool.QueryRow(ctx,
-		`SELECT auth_token_hash FROM enrolled_agents WHERE agent_id = $1`,
-		agentID).Scan(&stored)
-	if err != nil {
-		return false
-	}
-	return sha256Hex(token) == stored
+	return verifyEnrolledAgent(ctx, h.db, agentID, token)
 }
 
 // activeSessionInfo carries the per-agent session pointer that
