@@ -44,6 +44,7 @@ import (
 	"github.com/openidx/openidx/internal/webhooks"
 
 	"github.com/openidx/openidx/internal/common/logsafe"
+	"github.com/openidx/openidx/internal/revocation"
 )
 
 // OAuthClient represents an OAuth 2.0 client application
@@ -797,8 +798,15 @@ func accessTokenBlacklistKey(token string) string {
 // userTokensRevokedAtKey returns the Redis key recording the most recent
 // "revoke everything for this user" timestamp. Any access token whose `iat`
 // is older than the value at this key is considered revoked.
+//
+// The format lives in internal/revocation because this service is not the only
+// writer: governance sets the same marker when an access review revokes
+// somebody's access. It used to set a DIFFERENT key -- the format came from
+// internal/auth's TokenService, which no binary reaches -- so that revocation
+// was written where nothing read it and the reviewed user's session kept
+// working.
 func userTokensRevokedAtKey(userID string) string {
-	return "oauth:user_tokens_revoked_at:" + userID
+	return revocation.UserTokensRevokedAtKey(userID)
 }
 
 // MarkAccessTokenRevoked adds an access token to the revocation blacklist.
@@ -829,7 +837,7 @@ func (s *Service) MarkUserTokensRevoked(ctx context.Context, userID string) erro
 	// 7 days is comfortably longer than the configured access-token lifetime
 	// (3600s by default) and bounds memory at one short string per user.
 	return s.redis.Client.Set(ctx, userTokensRevokedAtKey(userID),
-		strconv.FormatInt(time.Now().Unix(), 10), 7*24*time.Hour).Err()
+		revocation.MarkerValue(time.Now()), revocation.MarkerTTL).Err()
 }
 
 // IsAccessTokenRevoked returns true when either (a) the token's own
@@ -863,7 +871,7 @@ func (s *Service) IsAccessTokenRevoked(ctx context.Context, token string, userID
 				return err
 			}
 			if v != "" {
-				cutoff, perr := strconv.ParseInt(v, 10, 64)
+				cutoff, perr := revocation.ParseMarker(v)
 				// `<=` means "tokens issued in the same wall-clock second as
 				// (or before) the logout-all call are revoked." This is the
 				// right semantic for /oauth/logout-all: every outstanding
@@ -874,7 +882,7 @@ func (s *Service) IsAccessTokenRevoked(ctx context.Context, token string, userID
 				// the cutoff went away when handleLogout switched to a
 				// per-token blacklist for single-session logout (only
 				// logout-all bumps the cutoff now).
-				if perr == nil && issuedAt <= cutoff {
+				if perr == nil && revocation.IsRevoked(issuedAt, cutoff) {
 					revoked = true
 				}
 			}

@@ -28,6 +28,7 @@ import (
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/leader"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/revocation"
 	"github.com/openidx/openidx/internal/vault"
 )
 
@@ -641,15 +642,27 @@ func (s *Service) revokeReviewItemAccess(ctx context.Context, tx pgx.Tx, itemID,
 }
 
 // killUserSessions forces a user to re-authenticate by setting the user-wide
-// token-revocation marker the auth middleware checks, so a live session cannot
-// keep using access an access review just revoked. Best-effort: the revocation
-// has already committed, so a Redis hiccup must not fail the request. Guards a
-// missing Redis (e.g. in tests) rather than panicking.
+// token-revocation marker, so a live session cannot keep using access an access
+// review just revoked.
+//
+// It used to write auth:user_revoked:<uid>, a key format that came from
+// internal/auth's TokenService -- a service no binary reaches. NOTHING HAS EVER
+// READ THAT KEY. The enforcement point is internal/oauth's
+// IsAccessTokenRevoked, which reads the marker internal/revocation defines, so
+// every revocation this function performed was written where no check would
+// find it and the reviewed user's session and access tokens kept working until
+// they expired on their own. The write succeeded, the audit said the access was
+// revoked, and the access survived.
+//
+// Best-effort remains right: the revocation has already committed, so a Redis
+// hiccup must not fail the request. Guards a missing Redis (e.g. in tests)
+// rather than panicking.
 func (s *Service) killUserSessions(ctx context.Context, userID string) {
 	if s.redis == nil || s.redis.Client == nil {
 		return
 	}
-	if err := s.redis.Client.Set(ctx, auth.UserRevocationKey(userID), time.Now().Unix(), 24*time.Hour).Err(); err != nil {
+	if err := s.redis.Client.Set(ctx, revocation.UserTokensRevokedAtKey(userID),
+		revocation.MarkerValue(time.Now()), revocation.MarkerTTL).Err(); err != nil {
 		s.logger.Warn("failed to invalidate sessions after access-review revocation",
 			zap.String("user_id", userID), zap.Error(err))
 	}

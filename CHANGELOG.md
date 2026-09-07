@@ -78,6 +78,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **An access review's revocation wrote a key nothing read
+  (`internal/revocation`).** When a reviewer revokes somebody's access in a
+  certification campaign, governance calls `killUserSessions` to set *"the
+  user-wide token-revocation marker the auth middleware checks, so a live
+  session cannot keep using access an access review just revoked"*. It wrote
+  `auth:user_revoked:<uid>` — a key format that came from `internal/auth`'s
+  `TokenService`, whose `isUserRevoked` was **its only reader in the entire
+  tree**, and which no binary reaches. The enforcement point,
+  `internal/oauth`'s `IsAccessTokenRevoked`, reads a different key,
+  `oauth:user_tokens_revoked_at:<uid>`. So an access review could revoke
+  access, record it and audit it while the user's live session and outstanding
+  access tokens kept working until they expired on their own — and the reviewer
+  had no way to know, because the write succeeded. Neither half was wrong on its
+  own: each was a correct implementation of a contract the other did not share,
+  and the piece they shared lived in unreachable code where it looked
+  authoritative. `internal/revocation` now holds one definition — the key, the
+  value format, the TTL and the `iat <= cutoff` comparison — and both `/oauth/
+  logout-all` and the review path go through it. The comparison is `<=`, not
+  `<`, so a token minted in the same wall-clock second as the revocation does
+  not survive it. Two guards: a test that writes the marker exactly as
+  governance writes it and requires `IsAccessTokenRevoked` to see it, and a
+  census that fails if any file outside the package spells a revocation key
+  itself — restoring the old literal in `killUserSessions` makes it name the
+  file and the fragment.
+
 - **The kill switch did not revoke the elevation the product actually grants,
   and reported zero (migration v183, `internal/jitgrant`).** OpenIDX had two
   representations of a just-in-time elevation. The live one is an
@@ -107,6 +132,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `parseDuration` takes, so a "time-bound" elevation still has no ceiling.
 
 ### Removed
+
+- **`internal/auth`'s `TokenService`, `SessionService` and `RBACMiddleware`.**
+  JWT mint/validate/revoke, Redis sessions with a concurrency cap, and gin RBAC
+  enforcement — 1,498 lines with four test files, each type constructed **only
+  by its own tests**. The live equivalents are `internal/oauth` (tokens,
+  sessions, and a per-client concurrent-session policy that is richer than the
+  cap here) and each service's own auth middleware. The project readiness guide
+  held `token.go`'s configurable fail-closed revocation up as a pattern to copy;
+  it survives where it matters — `IsAccessTokenRevoked` returns the error and
+  its callers fail closed — so what was deleted is the copy, not the pattern.
+  One of these files was load-bearing in the worst way: `UserRevocationKey`
+  lived in it, and governance called it, which is the defect above. The
+  package's live half (`context.go`, `roles.go` and their tests) is untouched.
 
 - **Two governance services no binary could reach, and the table one of them
   wrote (migration v182).** `internal/governance/request.go` was a 676-line

@@ -36,12 +36,20 @@ var knownDead = map[string]string{
 	"internal/audit.AnomalyDetector": "brute-force and suspicious-pattern detection over audit events, with per-principal failed-login trackers and a DetectorConfig of thresholds. Nothing constructs it and no route exposes it. The live risk signals are elsewhere and unrelated: internal/admin/continuous_auth.go scores IP change, device and behaviour, and internal/risk scores logins. A SECOND IMPLEMENTATION of a job the product already does, minus the audit-event corpus this one would have read. Delete, or fold its thresholds into internal/risk.",
 
 	// ---- auth --------------------------------------------------------------
-
-	"internal/auth.TokenService": "JWT mint, validate and revoke, with the configurable fail-closed revocation check the project readiness guide holds up as a pattern to copy. It is constructed only by internal/auth/token_test.go. The live token path is internal/oauth (handleToken, handleRefreshTokenGrant, handleRevoke) with its own revocation. A SECOND IMPLEMENTATION whose tests read as coverage of the product's token handling and are not: deleting it costs nothing and stops the next reader fixing the wrong file.",
-
-	"internal/auth.SessionService": "Redis session lifecycle with a MaxSessions concurrency cap (default 5) and a cleanup ticker, constructed only by session_test.go and session_limit_test.go. The live sessions are user_sessions rows in PostgreSQL plus the Redis revocation markers internal/oauth writes. So the concurrent-session limit is tested and absent. Decide whether the product wants that cap -- if it does, it belongs on the live path, not here.",
-
-	"internal/auth.RBACMiddleware": "gin RBAC enforcement (RequireRole, RequireAnyRole, RequirePermission, RequireAnyPermission) over a TokenValidator, constructed only by its four test files. Each service wires its own auth middleware instead. A SECOND IMPLEMENTATION: delete, or make it the one the services use.",
+	//
+	// auth.TokenService, auth.SessionService and auth.RBACMiddleware stood
+	// here: JWT mint/validate/revoke, Redis sessions with a concurrency cap,
+	// and gin RBAC enforcement, each constructed only by its own tests. All
+	// three are deleted -- the live equivalents are internal/oauth (tokens,
+	// sessions and the per-client concurrency policy) and each service's own
+	// auth middleware.
+	//
+	// One of them was load-bearing in the worst way. auth.UserRevocationKey
+	// lived in TokenService's file, and governance called it to write the
+	// marker that forces a reviewed user to re-authenticate -- to a key whose
+	// only reader was TokenService itself. internal/revocation now holds one
+	// definition of that marker, and the enforcement point reads what
+	// governance writes.
 
 	// ---- governance --------------------------------------------------------
 	//
