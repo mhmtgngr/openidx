@@ -228,13 +228,21 @@ curl -X PATCH http://localhost:8003/scim/v2/Users/{id} \
 Currently not supported (coming soon)
 
 ### 3. Filtering and Searching
+
+One equality test on one filterable attribute, value in double quotes. See
+[SCIM.md](./SCIM.md#filtering) for the attribute table and for why anything
+else is a 400 rather than an ignored filter.
+
 ```bash
 # Filter users by email (API only)
-curl "http://localhost:8003/scim/v2/Users?filter=emails.value eq 'user@example.com'"
+curl 'http://localhost:8003/scim/v2/Users?filter=emails.value eq "user@example.com"'
 
-# Search users by name (API only)
-curl "http://localhost:8003/scim/v2/Users?filter=name.givenName sw 'John'"
+# Filter users by username (API only)
+curl 'http://localhost:8003/scim/v2/Users?filter=userName eq "john.doe"'
 ```
+
+Searching by name prefix (`name.givenName sw "John"`) is **not** supported:
+`sw` is not implemented and `name.givenName` is not filterable.
 
 ## Integration Diagram
 

@@ -181,6 +181,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **A second, unreachable SCIM 2.0 server in `internal/identity` — and the
+  documentation that described it instead of the live one.** 6,114 lines across
+  eleven files: full Users and Groups handlers, a SCIM schema layer, a
+  member-management path, a PATCH path parser with filtered operations, a
+  recursive-descent filter parser and a SQL renderer for it, and 2,257 lines of
+  tests exercising all of it. `RegisterSCIMRoutes` is exported, complete and
+  called by nothing: its single mention anywhere in the tree is its own doc
+  comment. The product's SCIM is `internal/provisioning`, mounted by
+  `cmd/provisioning-service` at the same `/scim/v2` paths and covering the same
+  surface. Removing the eleven files leaves `internal/identity` building and
+  vetting unchanged — nothing outside them referenced a single one of their 201
+  declarations.
+  The cost of the duplicate was paid by the documentation. `docs/SCIM.md`
+  advertised seven filter operators (`eq`, `ne`, `co`, `sw`, `ew`, `gt`, `lt`)
+  and an example composing two conditions with `and`;
+  `docs/SCIM-FEATURES-LOCATION.md` printed two curl commands, one filtering
+  `name.givenName sw`, both quoting values with `'`.
+  The live parser implements exactly one form —
+  `attribute eq "value"`, double-quoted, over a four-attribute allowlist for
+  Users and two for Groups — and answers **400 `invalidFilter`** to everything
+  else, deliberately, because an IdP treats a filtered lookup as an existence
+  check and a silently-ignored filter would return the whole page: the IdP then
+  creates a duplicate account or skips a deprovision. So six of the seven
+  documented operators, the composition and three of the four printed examples
+  failed against the running product. They were written against the richer
+  parser — the one no binary reaches. Both documents now describe the live
+  behaviour, including what is refused and why, and
+  `TestEveryDocumentedSCIMFilterIsOneTheProductAccepts` extracts every
+  `?filter=` expression printed in them and drives it through the parser, so a
+  filter example that cannot work cannot be published again.
 - **`internal/auth`'s `TokenService`, `SessionService` and `RBACMiddleware`.**
   JWT mint/validate/revoke, Redis sessions with a concurrency cap, and gin RBAC
   enforcement — 1,498 lines with four test files, each type constructed **only

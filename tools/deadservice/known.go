@@ -122,8 +122,5 @@ var knownDead = map[string]string{
 
 	// ---- identity / access -------------------------------------------------
 
-	"internal/identity.filterParser":     "the recursive-descent SCIM filter parser behind identity.ParseFilter, which internal/identity/scim.go calls -- and those handlers are unreachable too. The product's SCIM is internal/provisioning, with its own parseSCIMFilter over an allow-list of attributes. A SECOND IMPLEMENTATION, and the one without the allow-list. Delete identity's SCIM surface with it.",
-	"internal/identity.sqlFilterBuilder": "the SQL renderer for identity.filterParser: it turns a parsed SCIM filter into a WHERE clause. Unreachable with the parser and with identity's whole SCIM surface; delete with them.",
-
 	"internal/access.UpstreamPool": "the operator's declaration of a route's backend set -- weights, hash key, active health checks -- and the pure functions that render it for the data plane. tools/tablewriters already carries the other half of this finding: upstream_pools and upstream_pool_members are read by the reconciler and written by nothing, because no handler, route or console page can create a pool. Same verdict, same fix: build the CRUD surface or delete both halves.",
 }

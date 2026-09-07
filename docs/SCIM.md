@@ -290,22 +290,44 @@ GET /scim/v2/Users?startIndex=1&count=50
 
 ### Filtering
 
+One filter form is supported: a single equality test on one attribute, with a
+double-quoted value.
+
 ```bash
 # Filter users by username
 GET /scim/v2/Users?filter=userName eq "john.doe@example.com"
 
-# Filter by multiple attributes
-GET /scim/v2/Users?filter=userName eq "john.doe" and active eq true
+# Filter users by external ID (Entra ID / Okta existence checks)
+GET /scim/v2/Users?filter=externalId eq "00u1a2b3c4d5"
+
+# Filter groups by display name
+GET /scim/v2/Groups?filter=displayName eq "Engineering"
 ```
 
-Supported operators:
-- `eq` - equals
-- `ne` - not equals
-- `co` - contains
-- `sw` - starts with
-- `ew` - ends with
-- `gt` - greater than
-- `lt` - less than
+The only operator is `eq`. The attribute must be one of the filterable
+attributes below; the value must be in double quotes (`"`), not single quotes.
+
+| Resource | Filterable attributes | Matching |
+| --- | --- | --- |
+| Users | `userName`, `email`, `emails.value`, `externalId` | case-insensitive except `externalId` |
+| Groups | `displayName`, `externalId` | case-insensitive except `externalId` |
+
+Anything else — `ne`, `co`, `sw`, `ew`, `gt`, `lt`, `pr`, an `and`/`or`/`not`
+composition, parentheses, or an attribute outside the table — is answered with
+**400 `invalidFilter`**. That is deliberate, and it is the safer of the two
+behaviours available: an identity provider issues
+`GET /Users?filter=userName eq "x"` as an existence check before it creates or
+deprovisions an account, so a filter the server quietly ignored would return the
+whole page and let the IdP conclude the user is absent (creating a duplicate) or
+present (skipping a deprovision). A loud 400 is a configuration error somebody
+fixes; a silent superset is an account that outlives an employee.
+
+This is enough for the provisioning flows Okta and Microsoft Entra ID actually
+perform. If you need a richer filter, open an issue describing the IdP and the
+exact expression it sends rather than assuming an operator works: every filter
+expression printed in this documentation is checked against the parser by
+`TestEveryDocumentedSCIMFilterIsOneTheProductAccepts`, so what is written here
+is what the server answers.
 
 ## Error Responses
 
