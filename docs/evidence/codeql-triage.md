@@ -316,6 +316,33 @@ So the triage rule gains a second question. Ask which argument the tainted
 value reaches — and if the answer is "a field, through `logsafe`", the alert is
 closed by this entry.
 
+### Update — the numbered list is itself a list that drifts
+
+Alert **2493**, raised later on this branch, is `internal/admin/attestation.go`
+— the same shape a third time. Every `zap.String` in that file goes through
+`logsafe.Clean` or `logsafe.String`; the sanitiser is there and the query
+cannot see it.
+
+That is the third batch of numbers added to this section, which is the tell
+worth acting on: **the list of alert ids is a hand-written list, and it drifts
+from the tree exactly the way every other hand-written list on this branch
+has.** Applying the sanitiser to one more site raises one more alert, and the
+maintainer's dismissal instructions go stale the moment that happens.
+
+So the instruction below is written as a rule first and a list second. The
+numbers are a convenience for the current UI session, not the criterion:
+
+> **Rule.** A `go/log-injection` alert whose flagged line passes its value
+> through any `logsafe` call is a false positive, closed by this entry.
+> Verify by reading the line — not by looking the number up here.
+
+The class that would be a real defect is guarded in code rather than in this
+document: `TestNoTaintedLogFields`
+(`internal/common/logsafe/no_tainted_field_test.go`) fails when a handler puts
+a value it read from the request straight into a `zap.String`, and
+`TestNoInterpolatedLogMessages` fails when one reaches a log *message*. Those
+run on every CI run. This file records verdicts; those tests hold the line.
+
 ---
 
 ## What the maintainer needs to do
@@ -334,10 +361,13 @@ alert list nobody has triaged is an alert list nobody reads.
    filter cannot remove them from a Go analysis — see the entry above — so the
    UI is the only place this verdict can be recorded, and it has to be
    re-recorded whenever a vendor bump moves those lines.
-3b. Dismiss as **"false positive"**, citing this file: `go/log-injection`
-   alerts 2477–2486 and 2488–2489, which are on lines that call `logsafe`. Read the
-   "nine alerts on lines that ARE sanitised" entry first — the reason matters,
-   because the change that would clear them is a change that must not be made.
+3b. Dismiss as **"false positive"**, citing this file: every `go/log-injection`
+   alert whose flagged line passes its value through a `logsafe` call. At the
+   time of writing that is 2477–2486, 2488–2489 and 2493, but **apply the rule,
+   not the list** — see "the numbered list is itself a list that drifts". Read
+   the "eleven alerts on lines that ARE sanitised" entry first: the reason
+   matters, because the change that would clear them is a change that must not
+   be made.
 4. Nothing to do for `go/insecure-hostkeycallback`: it is no longer raised.
    Read its entry anyway before concluding the unpinned path went away.
 
