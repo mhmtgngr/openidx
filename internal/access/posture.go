@@ -485,6 +485,24 @@ func (zm *ZitiManager) EvaluateIdentityPosture(ctx context.Context, identityID s
 }
 
 // SyncGovernancePolicy creates or updates a Ziti service policy from a governance policy
+// recordPolicySyncFailure stores why a governance policy could not be pushed to
+// the overlay.
+//
+// The caller returns the controller's error either way, so this is not what
+// tells the operator the sync failed -- but policy_sync_state.last_error is the
+// durable half: it is what the governance policy's sync status reads, and
+// without it a policy whose push keeps failing shows no error at all, or, on a
+// first sync, no sync row at all. Six of these were written unchecked, all on
+// paths that had just failed for another reason, which is exactly where a
+// second silent failure is hardest to spot.
+func (zm *ZitiManager) recordPolicySyncFailure(ctx context.Context, what, sql string, args ...any) {
+	if _, err := zm.db.Pool.Exec(ctx, sql, args...); err != nil {
+		zm.logger.Error("a governance policy failed to sync to the overlay and the failure could not "+
+			"be recorded; its sync status will not show the error",
+			zap.String("stage", what), zap.Error(err))
+	}
+}
+
 func (zm *ZitiManager) SyncGovernancePolicy(ctx context.Context, governancePolicyID string, config map[string]interface{}) error {
 	// Extract role mappings from config
 	serviceRoles := []string{"#all"}
@@ -537,7 +555,7 @@ func (zm *ZitiManager) SyncGovernancePolicy(ctx context.Context, governancePolic
 		respData, statusCode, err := zm.mgmtRequest("POST", "/edge/management/v1/service-policies", zitiBody)
 		if err != nil {
 			// Record the failed sync state
-			zm.db.Pool.Exec(ctx,
+			zm.recordPolicySyncFailure(ctx, "create service policy",
 				`INSERT INTO policy_sync_state (id, governance_policy_id, sync_type, status, last_error, config, created_at, updated_at)
 				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
 				syncState.ID, governancePolicyID, policyType, "error", err.Error(), configJSON, now, now)
@@ -545,7 +563,7 @@ func (zm *ZitiManager) SyncGovernancePolicy(ctx context.Context, governancePolic
 		}
 		if statusCode != http.StatusCreated && statusCode != http.StatusOK {
 			errMsg := fmt.Sprintf("unexpected status %d: %s", statusCode, string(respData))
-			zm.db.Pool.Exec(ctx,
+			zm.recordPolicySyncFailure(ctx, "create service policy",
 				`INSERT INTO policy_sync_state (id, governance_policy_id, sync_type, status, last_error, config, created_at, updated_at)
 				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
 				syncState.ID, governancePolicyID, policyType, "error", errMsg, configJSON, now, now)
@@ -586,13 +604,13 @@ func (zm *ZitiManager) SyncGovernancePolicy(ctx context.Context, governancePolic
 			_, statusCode, err := zm.mgmtRequest("PUT",
 				fmt.Sprintf("/edge/management/v1/service-policies/%s", syncState.ZitiPolicyID), zitiBody)
 			if err != nil {
-				zm.db.Pool.Exec(ctx,
+				zm.recordPolicySyncFailure(ctx, "update service policy",
 					`UPDATE policy_sync_state SET status=$1, last_error=$2, config=$3, updated_at=$4 WHERE id=$5`,
 					"error", err.Error(), configJSON, now, syncState.ID)
 				return fmt.Errorf("failed to update ziti service policy: %w", err)
 			}
 			if statusCode != http.StatusOK && statusCode != http.StatusNoContent {
-				zm.db.Pool.Exec(ctx,
+				zm.recordPolicySyncFailure(ctx, "update service policy",
 					`UPDATE policy_sync_state SET status=$1, last_error=$2, config=$3, updated_at=$4 WHERE id=$5`,
 					"error", fmt.Sprintf("unexpected status %d updating ziti policy", statusCode), configJSON, now, syncState.ID)
 				return fmt.Errorf("unexpected status %d updating ziti policy", statusCode)
@@ -601,14 +619,14 @@ func (zm *ZitiManager) SyncGovernancePolicy(ctx context.Context, governancePolic
 			// Ziti policy was lost - recreate it
 			respData, statusCode, err := zm.mgmtRequest("POST", "/edge/management/v1/service-policies", zitiBody)
 			if err != nil {
-				zm.db.Pool.Exec(ctx,
+				zm.recordPolicySyncFailure(ctx, "recreate service policy",
 					`UPDATE policy_sync_state SET status=$1, last_error=$2, config=$3, updated_at=$4 WHERE id=$5`,
 					"error", err.Error(), configJSON, now, syncState.ID)
 				return fmt.Errorf("failed to recreate ziti service policy: %w", err)
 			}
 			if statusCode != http.StatusCreated && statusCode != http.StatusOK {
 				errMsg := fmt.Sprintf("unexpected status %d recreating ziti policy: %s", statusCode, string(respData))
-				zm.db.Pool.Exec(ctx,
+				zm.recordPolicySyncFailure(ctx, "recreate service policy",
 					`UPDATE policy_sync_state SET status=$1, last_error=$2, config=$3, updated_at=$4 WHERE id=$5`,
 					"error", errMsg, configJSON, now, syncState.ID)
 				return fmt.Errorf("unexpected status %d recreating ziti policy: %s", statusCode, string(respData))

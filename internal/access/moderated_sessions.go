@@ -178,6 +178,7 @@ func (s *Service) handleGetModerationStatus(c *gin.Context) {
 	// Lazily mark an over-window pending request as expired so pollers see a
 	// terminal state without waiting for a sweeper.
 	if status == "pending" && expiresAt != nil && time.Now().After(*expiresAt) {
+		//silentwrite:ok the answer below is derived from expires_at, not from this write -- status is set to "expired" either way -- so a failure costs only the persisted label, and the next poll re-derives and re-attempts it from the same column
 		_, _ = s.db.Pool.Exec(ctx,
 			`UPDATE guacamole_moderation_sessions SET status='expired', ended_at=NOW()
 			  WHERE id=$1 AND org_id=$2 AND status='pending'`, id, org.ID)

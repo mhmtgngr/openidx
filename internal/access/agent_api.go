@@ -437,10 +437,25 @@ func (h *AgentAPIHandler) ensureAgentZitiIdentity(ctx context.Context, agentID s
 			return
 		}
 	}
+	// The identity now exists on the controller carrying #openidx-agent, and
+	// this is the only thing that ties it to an agent row. Losing it leaves an
+	// overlay identity with that attribute which no agent record names -- so
+	// removing the agent does not remove its network access, and the console
+	// cannot show it.
+	//
+	// It is recoverable rather than permanent: the duplicate-value branch
+	// above finds the orphan by name on the next enrolment and replaces it.
+	// That recovery only runs when somebody enrols again, though, so the gap
+	// has to be visible in the meantime.
 	if h.db != nil && h.db.Pool != nil {
-		h.db.Pool.Exec(ctx,
+		if _, err := h.db.Pool.Exec(ctx,
 			"UPDATE enrolled_agents SET ziti_identity_id = $1 WHERE agent_id = $2",
-			zitiID, agentID)
+			zitiID, agentID); err != nil {
+			h.logger.Error("created a Ziti identity for an agent and could not link it to the agent row; "+
+				"the identity holds #openidx-agent on the overlay and nothing in the product names it "+
+				"until this agent enrols again",
+				logsafe.String("agent_id", agentID), zap.String("ziti_id", zitiID), zap.Error(err))
+		}
 	}
 	result.ZitiJWT = zitiJWT
 	result.ZitiService = remoteSupportZitiService
@@ -1868,10 +1883,17 @@ func (h *AgentAPIHandler) HandleApproveAgent(c *gin.Context) {
 			if zitiErr != nil {
 				h.logger.Warn("HandleApproveAgent: failed to create Ziti identity",
 					logsafe.String("agent_id", agentID), zap.Error(zitiErr))
+			} else if _, linkErr := h.db.Pool.Exec(ctx,
+				`UPDATE enrolled_agents SET ziti_identity_id = $1 WHERE agent_id = $2`,
+				zitiID, agentID); linkErr != nil {
+				// Approving is what puts this device on the network. The
+				// identity is live; the row that says which agent owns it is
+				// not, so removing the agent will not remove its access.
+				h.logger.Error("approved an agent and could not link its new Ziti identity to the agent row",
+					logsafe.String("agent_id", agentID), zap.String("ziti_id", zitiID), zap.Error(linkErr))
+				response["warning"] = "The agent was approved and its network identity created, but the two " +
+					"could not be linked. Re-run the agent's enrolment, or remove the identity by hand."
 			} else {
-				h.db.Pool.Exec(ctx,
-					`UPDATE enrolled_agents SET ziti_identity_id = $1 WHERE agent_id = $2`,
-					zitiID, agentID)
 				response["ziti_jwt"] = zitiJWT
 			}
 		}

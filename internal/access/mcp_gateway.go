@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/middleware"
 	"github.com/openidx/openidx/internal/common/orgctx"
 	"go.uber.org/zap"
@@ -310,10 +311,18 @@ func (s *Service) auditMCP(ctx context.Context, clientID, subject, server, tool,
 	// run an MCP server, and before v142 each could read the other's tool-call
 	// log off the audit page.
 	orgID, _ := orgctx.AuditOrgID(ctx)
-	_, _ = s.db.Pool.Exec(ctx, `
+	// The tool call has already been proxied by the time this runs, so there
+	// is nothing to refuse -- but this row is the only record that an AI agent
+	// reached a tenant's MCP server and what it invoked, which is the whole
+	// point of putting the gateway in front of it. A lost insert is a tool
+	// call that, as far as the audit page is concerned, never happened.
+	if _, err := s.db.Pool.Exec(ctx, `
         INSERT INTO unified_audit_events (id, org_id, source, event_type, user_id, details, created_at)
         VALUES (gen_random_uuid(), $1, 'mcp', $2, NULLIF($3,'')::uuid, $4, NOW())`,
-		orgID, "mcp.tool."+outcome, subject, details)
+		orgID, "mcp.tool."+outcome, subject, details); err != nil {
+		s.logger.Error("an MCP tool call was served and could not be audited",
+			logsafe.String("mcp_server", server), logsafe.String("tool", tool), zap.Error(err))
+	}
 }
 
 // --- helpers ---

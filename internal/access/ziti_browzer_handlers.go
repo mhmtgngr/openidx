@@ -10,6 +10,7 @@ import (
 	apperrors "github.com/openidx/openidx/internal/common/errors"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -150,9 +151,22 @@ func (s *Service) handleEnableBrowZerOnService(c *gin.Context) {
 			toURL := fmt.Sprintf("http://%s:%d", serviceHost, servicePort)
 			routeName := fmt.Sprintf("browzer-%s", serviceName)
 
-			// Delete any existing route for this service, then insert fresh
-			_, _ = s.db.Pool.Exec(c.Request.Context(),
-				`DELETE FROM proxy_routes WHERE ziti_service_name = $1 AND browzer_enabled = true AND org_id = $2`, serviceName, org.ID)
+			// Delete any existing route for this service, then insert fresh.
+			//
+			// The delete used to be unchecked, and from_url carries no unique
+			// constraint: a failed delete followed by a successful insert
+			// leaves two BrowZer routes for the same service, with no defined
+			// winner in the route table or in the generated BrowZer config.
+			// Refuse to insert rather than create the ambiguity.
+			if _, delErr := s.db.Pool.Exec(c.Request.Context(),
+				`DELETE FROM proxy_routes WHERE ziti_service_name = $1 AND browzer_enabled = true AND org_id = $2`,
+				serviceName, org.ID); delErr != nil {
+				s.logger.Error("could not clear the existing BrowZer path route; not inserting a second one",
+					logsafe.String("service", serviceName), zap.Error(delErr))
+				apperrors.HandleErrorWithLogger(c, apperrors.Internal(
+					"BrowZer was enabled on the service, but its path route could not be replaced", delErr), s.logger)
+				return
+			}
 			_, dbErr := s.db.Pool.Exec(c.Request.Context(),
 				`INSERT INTO proxy_routes (name, description, from_url, to_url, require_auth, enabled, priority, ziti_enabled, ziti_service_name, browzer_enabled, org_id)
 				 VALUES ($1, $2, $3, $4, true, true, 10, true, $5, true, $6)`,
@@ -184,8 +198,17 @@ func (s *Service) handleEnableBrowZerOnService(c *gin.Context) {
 			toURL := fmt.Sprintf("http://%s:%d", serviceHost, servicePort)
 			routeName := fmt.Sprintf("browzer-vhost-%s", serviceName)
 
-			_, _ = s.db.Pool.Exec(c.Request.Context(),
-				`DELETE FROM proxy_routes WHERE name = $1 AND browzer_enabled = true AND org_id = $2`, routeName, org.ID)
+			// Same replacement, same reason: two vhost routes for one domain
+			// is not a state the router or the BrowZer config can resolve.
+			if _, delErr := s.db.Pool.Exec(c.Request.Context(),
+				`DELETE FROM proxy_routes WHERE name = $1 AND browzer_enabled = true AND org_id = $2`,
+				routeName, org.ID); delErr != nil {
+				s.logger.Error("could not clear the existing BrowZer vhost route; not inserting a second one",
+					logsafe.String("service", serviceName), zap.Error(delErr))
+				apperrors.HandleErrorWithLogger(c, apperrors.Internal(
+					"BrowZer was enabled on the service, but its vhost route could not be replaced", delErr), s.logger)
+				return
+			}
 			_, dbErr := s.db.Pool.Exec(c.Request.Context(),
 				`INSERT INTO proxy_routes (name, description, from_url, to_url, require_auth, enabled, priority, ziti_enabled, ziti_service_name, browzer_enabled, org_id)
 				 VALUES ($1, $2, $3, $4, true, true, 10, true, $5, true, $6)`,
@@ -260,8 +283,23 @@ func (s *Service) handleDisableBrowZerOnService(c *gin.Context) {
 	if err := s.db.Pool.QueryRow(c.Request.Context(),
 		`SELECT name FROM ziti_services WHERE ziti_id = $1 AND org_id = $2`, zitiServiceID, org.ID,
 	).Scan(&serviceName); err == nil {
-		_, _ = s.db.Pool.Exec(c.Request.Context(),
-			`DELETE FROM proxy_routes WHERE ziti_service_name = $1 AND browzer_enabled = true AND org_id = $2`, serviceName, org.ID)
+		// BrowZer has already been taken off the service on the controller.
+		// This route row is what RegenerateConfigs (immediately below) reads to
+		// build the BrowZer target list, so a discarded error here republishes
+		// the service in the BrowZer config after the API said BrowZer was
+		// disabled on it -- the network changed, the record did not, and the
+		// generated config follows the record.
+		if _, delErr := s.db.Pool.Exec(c.Request.Context(),
+			`DELETE FROM proxy_routes WHERE ziti_service_name = $1 AND browzer_enabled = true AND org_id = $2`,
+			serviceName, org.ID); delErr != nil {
+			s.logger.Error("BrowZer was disabled on the service but its route row was not removed; "+
+				"the regenerated BrowZer config will still publish it",
+				logsafe.String("service", serviceName), zap.Error(delErr))
+			apperrors.HandleErrorWithLogger(c, apperrors.Internal(
+				"BrowZer was disabled on the service, but its route could not be removed; "+
+					"the service is still published to BrowZer", delErr), s.logger)
+			return
+		}
 	}
 
 	// Regenerate BrowZer configs synchronously (the proxy_routes cleanup above is

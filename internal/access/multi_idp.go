@@ -300,7 +300,8 @@ func (s *Service) handleCallbackWithIDP(c *gin.Context, idpID, idpIssuer, verifi
 		return
 	}
 
-	// Store IDP ID on the session
+	// Store IDP ID on the session.
+	//silentwrite:ok nothing reads proxy_sessions.idp_id -- it is written here and by nothing else, and no query in the product selects it (the idp_id reads elsewhere are on proxy_routes, which is route configuration). The session itself is already created and valid; losing this costs a column that no surface, gate or report consults today
 	s.db.Pool.Exec(c.Request.Context(),
 		"UPDATE proxy_sessions SET idp_id=$1 WHERE id=$2 AND org_id=$3", idpID, session.ID, org.ID)
 

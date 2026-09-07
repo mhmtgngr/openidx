@@ -285,7 +285,8 @@ func (s *Service) lookupIPGeo(ctx context.Context, ip string) (country, city str
 	if s.config.GeoIPServiceURL != "" {
 		geoCountry, geoCity := s.fetchGeoIP(ctx, ip)
 		if geoCountry != "" {
-			// Cache the result
+			// Cache the result.
+			//silentwrite:ok the caller is served the country and city that were just fetched either way; a failed cache write costs one extra call to the GeoIP service on the next lookup for this address, and the row is re-written on that call
 			s.db.Pool.Exec(ctx,
 				`INSERT INTO ip_geolocation_cache (ip_address, country_code, city, cached_at)
 				 VALUES ($1, $2, $3, NOW())

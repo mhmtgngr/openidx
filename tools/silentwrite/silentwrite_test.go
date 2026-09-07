@@ -247,22 +247,26 @@ func TestNoWriteIsSilentWithoutAReason(t *testing.T) {
 			"would pass vacuously", scanned)
 	}
 
-	// THE RATCHET. The tree had 137 of these when this gate was written. The
-	// fixes so far -- the invitation acceptance, the approval-chain builder, the
-	// directory sync that replaced a group's membership without checking either
-	// half, the remote-support refusal that did not end the session, and the
-	// device-trust approval that left the device untrusted -- have taken it to
-	// the number below. Every site still in it has
-	// to be read and then either fixed or given a reason; until that is done, a
-	// bare count is what keeps the number from going back up.
+	// THE RATCHET, now closed. The tree had 137 of these when this gate was
+	// written, and 161 by the time the scanner stopped missing some of them.
+	// Every one has since been read and either handled or given a reason above
+	// the call, so the backlog is zero and the ratchet has become the rule it
+	// was always going to be: a write that changes the database and cannot tell
+	// whether it did is a defect, and the only way past this gate is to say
+	// what is lost when it fails.
 	//
-	// A count is a weaker guard than a per-site register, and it is worth saying
-	// why rather than pretending otherwise: it cannot tell a site that was fixed
-	// from one that was swapped for a new one somewhere else. It is here because
-	// the alternative -- landing the gate only once all 128 carry a verdict --
-	// leaves the tree unguarded in the meantime, and because the number can only
-	// go down, so the register it becomes is the empty one.
-	const backlog = 44
+	// The count was a weaker guard than a per-site register while it lasted --
+	// it could not tell a site that was fixed from one swapped for a new one
+	// somewhere else. At zero that distinction disappears: there is nothing to
+	// swap against.
+	//
+	// If you are reading this because the gate just failed: the finding names
+	// the file, the line and the statement. Handle the error where the caller's
+	// answer depends on the write. Where it genuinely does not, write the
+	// reason immediately above the call, saying what is lost when the write
+	// fails and why that is acceptable -- not "best effort", which restates the
+	// shape without saying anything a reader could not already see.
+	const backlog = 0
 
 	var lines []string
 	for _, f := range findings {
@@ -270,15 +274,9 @@ func TestNoWriteIsSilentWithoutAReason(t *testing.T) {
 	}
 
 	if len(findings) > backlog {
-		t.Errorf("%d write(s) change the database and cannot tell whether they did, up from %d. A new one has "+
-			"landed. Handle the error, or write the reason above the call as %s <what is lost>:\n  %s",
-			len(findings), backlog, marker, strings.Join(lines, "\n  "))
-		return
-	}
-	if len(findings) < backlog {
-		t.Errorf("the backlog is down to %d from %d. Lower the `backlog` constant in this file to %d so it "+
-			"cannot drift back up -- a ratchet that is not tightened is a ceiling nobody is under.",
-			len(findings), backlog, len(findings))
+		t.Errorf("%d write(s) change the database and cannot tell whether they did. Handle the error, "+
+			"or write the reason above the call as %s <what is lost>:\n  %s",
+			len(findings), marker, strings.Join(lines, "\n  "))
 	}
 }
 

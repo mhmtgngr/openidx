@@ -2049,6 +2049,10 @@ func (zm *ZitiManager) TeardownZitiServiceByName(ctx context.Context, serviceNam
 }
 
 func (zm *ZitiManager) TeardownZitiForRoute(ctx context.Context, routeID string) error {
+	// Records the teardown removed from the controller but not from the
+	// database; reported once at the end so the rest of the teardown still runs.
+	var undeleted []string
+
 	// Find service for this route
 	var zitiServiceID, serviceName string
 	err := zm.db.Pool.QueryRow(ctx,
@@ -2072,16 +2076,33 @@ func (zm *ZitiManager) TeardownZitiForRoute(ctx context.Context, routeID string)
 			}
 			rows.Close()
 		}
-		zm.db.Pool.Exec(ctx,
+		// The controller side of the teardown has already happened by the time
+		// these two run, so a discarded error is the same divergence the Ziti
+		// handlers carried before: the network changed and the record did not.
+		// What is left behind is a ziti_services / ziti_service_policies row
+		// naming a service the controller no longer has -- which the console
+		// lists as live and the reconciler treats as existing.
+		//
+		// Neither returns early: the rest of the teardown is worth finishing.
+		// They are collected and reported after it.
+		if _, err := zm.db.Pool.Exec(ctx,
 			//orgscope:ignore Ziti teardown reachable from cross-org reconciliation; policies keyed by globally-unique ziti service name
 			"DELETE FROM ziti_service_policies WHERE name LIKE $1",
-			fmt.Sprintf("%%-%s", serviceName))
+			fmt.Sprintf("%%-%s", serviceName)); err != nil {
+			zm.logger.Error("deleted a service's policies on the controller but not the rows recording them",
+				zap.String("service", logsafe.Clean(serviceName)), zap.Error(err))
+			undeleted = append(undeleted, "ziti_service_policies")
+		}
 
 		// Delete the service
 		zm.DeleteService(ctx, zitiServiceID)
-		zm.db.Pool.Exec(ctx,
+		if _, err := zm.db.Pool.Exec(ctx,
 			//orgscope:ignore Ziti teardown reachable from cross-org reconciliation; service keyed by globally-unique ziti service name / route id
-			"DELETE FROM ziti_services WHERE route_id=$1", routeID)
+			"DELETE FROM ziti_services WHERE route_id=$1", routeID); err != nil {
+			zm.logger.Error("deleted a service on the controller but not the row recording it",
+				zap.String("service", logsafe.Clean(serviceName)), zap.Error(err))
+			undeleted = append(undeleted, "ziti_services")
+		}
 
 		// Remove the name-keyed host.v1 config and service-edge-router policy.
 		// These are NOT tracked in ziti_service_policies, so the loop above
@@ -2103,6 +2124,12 @@ func (zm *ZitiManager) TeardownZitiForRoute(ctx context.Context, routeID string)
 		routeID)
 	if err != nil {
 		return fmt.Errorf("failed to update proxy route: %w", err)
+	}
+
+	if len(undeleted) > 0 {
+		return fmt.Errorf("the ziti service was torn down on the controller but %s still name it; "+
+			"the console will list a service the overlay no longer has",
+			strings.Join(undeleted, " and "))
 	}
 
 	zm.logger.Info("Ziti teardown complete for route", zap.String("route_id", routeID))

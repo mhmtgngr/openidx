@@ -858,11 +858,19 @@ func (s *Service) provisionGuacamoleForRoute(ctx context.Context, route *ProxyRo
 		return fmt.Errorf("failed to save guacamole connection mapping: %w", err)
 	}
 
-	// Update route with connection ID
+	// Update route with connection ID.
+	//
+	// The connection exists in Guacamole by now. This column is what the route
+	// brokers to, and what stops the next provision creating another one, so a
+	// lost write leaves a live connection nothing brokers to and a route that
+	// provisions a fresh duplicate every time it is touched.
 	if org, oerr := orgctx.From(ctx); oerr == nil {
-		s.db.Pool.Exec(ctx,
+		if _, err := s.db.Pool.Exec(ctx,
 			"UPDATE proxy_routes SET guacamole_connection_id=$1, updated_at=NOW() WHERE id=$2 AND org_id=$3",
-			connID, route.ID, org.ID)
+			connID, route.ID, org.ID); err != nil {
+			return fmt.Errorf("guacamole connection %s was created but the route could not be pointed "+
+				"at it; it will be provisioned again on the next attempt: %w", connID, err)
+		}
 	}
 
 	s.logger.Info("Provisioned Guacamole connection for route",

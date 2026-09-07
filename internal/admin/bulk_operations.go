@@ -123,9 +123,15 @@ func (s *Service) handleCreateBulkOperation(c *gin.Context) {
 			 VALUES ($1, $2, $3, 'pending', $4)`, opID, uid, username, org.ID); err != nil {
 			s.logger.Error("could not record a bulk-operation item; refusing to run the operation",
 				logsafe.String("operation_id", opID), zap.Error(err))
-			_, _ = s.db.Pool.Exec(ctx,
+			// The failure of the failure path: without this the operation stays
+			// 'running' for ever on the bulk-operations page, over a run that
+			// never started and never will.
+			if _, markErr := s.db.Pool.Exec(ctx,
 				`UPDATE bulk_operations SET status = 'failed', completed_at = NOW() WHERE id = $1 AND org_id = $2`,
-				opID, org.ID)
+				opID, org.ID); markErr != nil {
+				s.logger.Error("could not mark a refused bulk operation as failed; it will show as running",
+					logsafe.String("operation_id", opID), zap.Error(markErr))
+			}
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"error": "The operation could not be recorded in full and was not started. No users were changed.",
 			})

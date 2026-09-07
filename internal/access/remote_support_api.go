@@ -971,13 +971,25 @@ func (h *RemoteSupportHandler) markActive(ctx context.Context, sessionID string)
 	}
 	// TENANCY (v150): broker path. Called from the signalling loop, which has
 	// no HTTP request and no tenant; the session id is the key.
+	// The broker starts relaying whether or not this lands, so a lost write
+	// leaves a live remote-support session recorded as 'pending': it does not
+	// appear as active anywhere, and the janitor's aging sweep reads the
+	// activity stamp this statement sets. Auditing it as a success afterwards
+	// would repeat the mistake the consent denial made -- a record of
+	// something the database does not hold.
 	//orgscope:ignore broker signalling path — no request context, keyed on the session id
-	_, _ = h.db.Pool.Exec(orgctx.WithBypassRLS(ctx), `
+	if _, err := h.db.Pool.Exec(orgctx.WithBypassRLS(ctx), `
         UPDATE remote_support_sessions
            SET status = 'active', accepted_at = COALESCE(accepted_at, NOW()),
                last_activity_at = NOW()
          WHERE id = $1 AND status = 'pending'
-    `, sessionID)
+    `, sessionID); err != nil {
+		h.logger.Error("both peers connected but the remote-support session could not be marked active; "+
+			"it is being relayed while the record still says pending",
+			logsafe.String("session_id", sessionID), zap.Error(err))
+		h.audit(ctx, "remote_support.session_active", sessionID, "failure", "could not record the session as active")
+		return
+	}
 	h.audit(ctx, "remote_support.session_active", sessionID, "success", "")
 }
 
@@ -986,10 +998,19 @@ func (h *RemoteSupportHandler) touchSession(ctx context.Context, sessionID strin
 	if h.db == nil || h.db.Pool == nil {
 		return
 	}
-	_, _ = h.db.Pool.Exec(orgctx.WithBypassRLS(ctx),
+	// The janitor ends sessions whose last_activity_at is older than the stall
+	// window (see the sweep at the bottom of this file). A heartbeat that is
+	// not recorded therefore does not merely lose a timestamp: it makes a
+	// session somebody is actively using look abandoned, and it is torn down
+	// under them.
+	if _, err := h.db.Pool.Exec(orgctx.WithBypassRLS(ctx),
 		//orgscope:ignore broker signalling path — no request context, keyed on the session id
 		`UPDATE remote_support_sessions SET last_activity_at = NOW() WHERE id = $1`,
-		sessionID)
+		sessionID); err != nil {
+		h.logger.Warn("could not record activity on a live remote-support session; "+
+			"the janitor may age it out while it is still in use",
+			logsafe.String("session_id", sessionID), zap.Error(err))
+	}
 }
 
 // endSession persists end state and tears down any live broker entry.

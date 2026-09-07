@@ -10,6 +10,8 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/common/logsafe"
+
 	"github.com/openidx/openidx/internal/appaccess"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
@@ -185,11 +187,26 @@ func (zm *ZitiManager) SyncUserToZiti(ctx context.Context, userID string) (*Sync
 	}, nil
 }
 
+// recordSyncState writes the ziti_user_sync row -- the single row behind the
+// console's "Ziti user sync" panel.
+//
+// It is created 'running' and only these writes ever move it on, so a lost
+// 'completed' leaves a finished sync showing as in progress for ever, and a
+// lost 'failed' leaves a sync that died looking like one still going. Neither
+// changes what was synced, which is why all four were written unchecked; both
+// leave an operator watching a panel that will never change again.
+func (zm *ZitiManager) recordSyncState(ctx context.Context, what, sql string, args ...any) {
+	if _, err := zm.db.Pool.Exec(ctx, sql, args...); err != nil {
+		zm.logger.Error("could not record the state of a Ziti user sync; the sync panel is now stuck "+
+			"on whatever it last showed", zap.String("stage", what), zap.Error(err))
+	}
+}
+
 // SyncAllUsersToZiti creates Ziti identities for all users that don't have one,
 // and refreshes group attributes for all linked identities.
 func (zm *ZitiManager) SyncAllUsersToZiti(ctx context.Context) (*BatchSyncResult, error) {
 	// Mark sync as running
-	zm.db.Pool.Exec(ctx,
+	zm.recordSyncState(ctx, "running",
 		`UPDATE ziti_user_sync SET status='running', updated_at=NOW()
 		 WHERE id = (SELECT id FROM ziti_user_sync LIMIT 1)`)
 
@@ -200,7 +217,7 @@ func (zm *ZitiManager) SyncAllUsersToZiti(ctx context.Context) (*BatchSyncResult
 		 LEFT JOIN ziti_identities zi ON zi.user_id = u.id
 		 WHERE zi.id IS NULL AND u.enabled = true`)
 	if err != nil {
-		zm.db.Pool.Exec(ctx,
+		zm.recordSyncState(ctx, "failed",
 			`UPDATE ziti_user_sync SET status='failed', updated_at=NOW()
 			 WHERE id = (SELECT id FROM ziti_user_sync LIMIT 1)`)
 		return nil, fmt.Errorf("query unsynced users: %w", err)
@@ -233,7 +250,7 @@ func (zm *ZitiManager) SyncAllUsersToZiti(ctx context.Context) (*BatchSyncResult
 	}
 
 	// Update sync status
-	zm.db.Pool.Exec(ctx,
+	zm.recordSyncState(ctx, "completed",
 		`UPDATE ziti_user_sync SET status='completed', last_full_sync_at=NOW(),
 		 users_synced=$1, users_failed=$2, groups_synced=$3, updated_at=NOW()
 		 WHERE id = (SELECT id FROM ziti_user_sync LIMIT 1)`,
@@ -427,12 +444,24 @@ func (zm *ZitiManager) SyncGroupAttributesForUser(ctx context.Context, userID st
 		return fmt.Errorf("patch ziti identity attributes: %w", err)
 	}
 
-	// Update local DB
+	// Update local DB.
+	//
+	// The controller already has these attributes -- the patch above is
+	// checked -- so access is correct either way. What is lost is the local
+	// copy the console shows and, more usefully, group_attrs_synced_at: the
+	// staleness poller re-syncs identities whose stamp is older than five
+	// minutes, so an identity that cannot be stamped is re-patched on every
+	// poll, for ever. Self-healing in effect, but only because it never stops
+	// trying, and nothing said so.
 	attrsJSON, _ := json.Marshal(attrs)
-	zm.db.Pool.Exec(ctx,
+	if _, err := zm.db.Pool.Exec(ctx,
 		//orgscope:ignore Ziti user-sync engine; updates the identity by its primary key resolved from the org-bounded user_id lookup above
 		`UPDATE ziti_identities SET attributes=$1, group_attrs_synced_at=NOW(), updated_at=NOW()
-		 WHERE id=$2`, attrsJSON, zitiIdentityID)
+		 WHERE id=$2`, attrsJSON, zitiIdentityID); err != nil {
+		zm.logger.Warn("patched an identity's attributes on the controller but could not record it; "+
+			"the console shows the old attributes and the staleness poller will re-patch every cycle",
+			zap.String("ziti_identity", logsafe.Clean(zitiIdentityID)), zap.Error(err))
+	}
 
 	// Reconcile BrowZer external-JWT auth on every attribute sync. This is the
 	// choke point that runs for all linked identities (including ones synced
@@ -570,7 +599,7 @@ func (zm *ZitiManager) runAutoSync(ctx context.Context) {
 
 	if synced > 0 {
 		zm.logger.Info("Auto-synced users to Ziti", zap.Int("count", synced))
-		zm.db.Pool.Exec(ctx,
+		zm.recordSyncState(ctx, "auto-sync",
 			`UPDATE ziti_user_sync SET last_auto_sync_at=NOW(), updated_at=NOW()
 			 WHERE id = (SELECT id FROM ziti_user_sync LIMIT 1)`)
 	}

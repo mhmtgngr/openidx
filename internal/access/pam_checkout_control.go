@@ -398,10 +398,23 @@ func (s *Service) handlePamListActiveCheckouts(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
 		return
 	}
-	// Retire expired leases so the live list is accurate.
-	_, _ = s.db.Pool.Exec(ctx, `
+	// Retire expired leases so the stored state matches the clock.
+	//
+	// This used to be the only thing keeping the list honest: the SELECT below
+	// filtered on status alone, so a refused retire listed a lease that had
+	// already expired as one somebody still holds -- on the page whose whole
+	// job is "who holds what right now".
+	//
+	// The listing no longer depends on it. The expiry predicate is in the
+	// SELECT too, so the answer is derived from expires_at whatever happened
+	// to the write; the write is now only about persisting that state, and a
+	// failure is said rather than shown.
+	if _, err := s.db.Pool.Exec(ctx, `
 		UPDATE pam_active_checkouts SET status = 'expired', released_at = NOW()
-		 WHERE org_id = $1 AND status = 'active' AND expires_at IS NOT NULL AND expires_at <= NOW()`, org.ID)
+		 WHERE org_id = $1 AND status = 'active' AND expires_at IS NOT NULL AND expires_at <= NOW()`, org.ID); err != nil {
+		s.logger.Warn("could not retire expired PAM checkouts; the list below is still correct "+
+			"because it re-derives expiry, but the stored rows stay 'active'", zap.Error(err))
+	}
 
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT ac.id, ac.entry_id::text, COALESCE(e.name,''), ac.principal_id::text, ac.action,
@@ -409,6 +422,7 @@ func (s *Service) handlePamListActiveCheckouts(c *gin.Context) {
 		  FROM pam_active_checkouts ac
 		  LEFT JOIN pam_entries e ON e.id = ac.entry_id
 		 WHERE ac.org_id = $1 AND ac.status = 'active'
+		   AND (ac.expires_at IS NULL OR ac.expires_at > NOW())
 		 ORDER BY ac.leased_at DESC LIMIT 200`, org.ID)
 	if err != nil {
 		s.logger.Error("handlePamListActiveCheckouts: query failed", zap.Error(err))

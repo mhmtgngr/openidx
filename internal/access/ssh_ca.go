@@ -395,12 +395,23 @@ func (s *Service) handleListBrokeredSessions(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
 		return
 	}
-	_, _ = s.db.Pool.Exec(ctx, `
+	// Same shape as the PAM checkout list: this retire used to be the only
+	// thing that turned an expired brokered session into an expired one on the
+	// page, so a refused write showed a session that ended hours ago as still
+	// active. The status is now derived from expires_at in the SELECT, and the
+	// write only persists it.
+	if _, err := s.db.Pool.Exec(ctx, `
 		UPDATE brokered_sessions SET status = 'expired', ended_at = NOW()
-		 WHERE org_id = $1 AND status = 'active' AND expires_at IS NOT NULL AND expires_at <= NOW()`, org.ID)
+		 WHERE org_id = $1 AND status = 'active' AND expires_at IS NOT NULL AND expires_at <= NOW()`, org.ID); err != nil {
+		s.logger.Warn("could not retire expired brokered sessions; the list below still reports them "+
+			"as expired, but the stored rows stay 'active'", zap.Error(err))
+	}
 
 	rows, err := s.db.Pool.Query(ctx, `
-		SELECT id, user_id::text, target_type, target, principal, COALESCE(reason,''), status, started_at, expires_at
+		SELECT id, user_id::text, target_type, target, principal, COALESCE(reason,''),
+		       CASE WHEN status = 'active' AND expires_at IS NOT NULL AND expires_at <= NOW()
+		            THEN 'expired' ELSE status END,
+		       started_at, expires_at
 		  FROM brokered_sessions WHERE org_id = $1 ORDER BY started_at DESC LIMIT 500`, org.ID)
 	if err != nil {
 		s.logger.Error("handleListBrokeredSessions: query failed", zap.Error(err))

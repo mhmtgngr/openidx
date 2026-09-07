@@ -390,8 +390,17 @@ func (zm *ZitiManager) DisableBrowZer(ctx context.Context) error {
 			fmt.Sprintf("/edge/management/v1/external-jwt-signers/%s", cfg.ExternalJWTSignerID), nil)
 	}
 
-	// Update DB
-	zm.db.Pool.Exec(ctx, "UPDATE ziti_browzer_config SET enabled=false, updated_at=NOW()")
+	// Update DB.
+	//
+	// The external JWT signer is gone from the controller by this point, so
+	// BrowZer cannot authenticate anybody whatever this row says. Losing the
+	// write leaves the console reporting BrowZer as enabled over a signer that
+	// no longer exists -- broken, and reported healthy.
+	if _, err := zm.db.Pool.Exec(ctx,
+		"UPDATE ziti_browzer_config SET enabled=false, updated_at=NOW()"); err != nil {
+		return fmt.Errorf("browzer was disabled on the controller but the configuration still records "+
+			"it as enabled; the console will show BrowZer as on with no signer behind it: %w", err)
+	}
 
 	zm.logger.Info("BrowZer disabled")
 	return nil

@@ -3079,6 +3079,7 @@ func (s *Service) updateSessionActivity(c *gin.Context, session *ProxySession) {
 		return
 	}
 
+	//silentwrite:ok the idle window is enforced from the Redis blob refreshed immediately below, not from this column; the only reader of proxy_sessions.last_active_at is the admin sessions list's "Last active" column (service.go:1641), which goes stale by one heartbeat -- at most 30 seconds -- and corrects itself on the next proxied request
 	s.db.Pool.Exec(orgctx.WithBypassRLS(ctx),
 		//orgscope:ignore proxy data-plane activity heartbeat; updates the active session by its primary key on every proxied request
 		"UPDATE proxy_sessions SET last_active_at=NOW() WHERE id=$1", session.ID)

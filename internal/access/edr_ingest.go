@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/openidx/openidx/internal/access/edr"
+	"github.com/openidx/openidx/internal/common/logsafe"
 	"go.uber.org/zap"
 )
 
@@ -415,7 +416,15 @@ func (s *Service) upsertEDRMapping(ctx context.Context, src *EDRSource, d edr.De
 	default:
 		matchVal = d.Serial
 	}
-	_, _ = s.db.Pool.Exec(ctx, `
+	// This row is the EDR-device-to-identity mapping the caller keeps "for the
+	// admin UI". Enforcement does not depend on it -- the posture result the
+	// gate reads is written separately from the same pass -- so a failure here
+	// does not change anybody's access.
+	//
+	// Worth recording while looking at it: no query in the product selects
+	// from edr_device_mappings. The rows are written for a surface that does
+	// not exist yet, which is why nothing has ever noticed them going missing.
+	if _, err := s.db.Pool.Exec(ctx, `
         INSERT INTO edr_device_mappings
             (org_id, source_id, external_device_id, match_value, identity_id,
              last_compliant, last_risk, last_seen_at)
@@ -425,23 +434,42 @@ func (s *Service) upsertEDRMapping(ctx context.Context, src *EDRSource, d edr.De
                       last_compliant=EXCLUDED.last_compliant, last_risk=EXCLUDED.last_risk,
                       last_seen_at=EXCLUDED.last_seen_at, updated_at=NOW()`,
 		src.OrgID, src.ID, d.ExternalID, edrNullIfEmpty(matchVal),
-		edrNullUUID(identityID), d.Compliant, edrNullIfEmpty(d.Risk), d.LastSeen)
+		edrNullUUID(identityID), d.Compliant, edrNullIfEmpty(d.Risk), d.LastSeen); err != nil {
+		s.logger.Warn("could not record an EDR device mapping",
+			logsafe.String("source_id", src.ID), logsafe.String("external_device_id", d.ExternalID),
+			zap.Error(err))
+	}
 }
+
+// The two marks below are an EDR source's health as the console reports it.
+// They are a display -- nothing disables a source on them -- but they are the
+// only signal that a posture feed has stopped, and the failure case is
+// asymmetric: a lost 'error' stamp leaves the source showing the last status
+// it managed to write, which for a feed that has been failing since its last
+// success reads as healthy.
 
 func (s *Service) markEDRSyncOK(ctx context.Context, sourceID string, st *edrSourceStatus) {
 	summary, _ := json.Marshal(st)
 	//orgscope:ignore ingestion worker (runs under bypass_rls) stamping the sync outcome on a source it just polled
-	_, _ = s.db.Pool.Exec(ctx, `
+	if _, err := s.db.Pool.Exec(ctx, `
         UPDATE edr_posture_sources
            SET last_sync_at=NOW(), last_sync_status='ok', last_sync_error=NULL, updated_at=NOW()
-         WHERE id=$1`, sourceID)
+         WHERE id=$1`, sourceID); err != nil {
+		s.logger.Warn("an EDR sync succeeded and its status could not be recorded; "+
+			"the sources page still shows whatever it last managed to write",
+			logsafe.String("source_id", sourceID), zap.Error(err))
+	}
 	s.logger.Info("EDR sync complete", zap.String("source", sourceID), zap.ByteString("summary", summary))
 }
 
 func (s *Service) markEDRSyncError(ctx context.Context, sourceID string, cause error) {
 	//orgscope:ignore ingestion worker (runs under bypass_rls) stamping a sync failure on a source it just polled
-	_, _ = s.db.Pool.Exec(ctx, `
+	if _, err := s.db.Pool.Exec(ctx, `
         UPDATE edr_posture_sources
            SET last_sync_at=NOW(), last_sync_status='error', last_sync_error=$2, updated_at=NOW()
-         WHERE id=$1`, sourceID, cause.Error())
+         WHERE id=$1`, sourceID, cause.Error()); err != nil {
+		s.logger.Error("an EDR sync failed and the failure could not be recorded; "+
+			"this posture feed is broken and the console still reports it as healthy",
+			logsafe.String("source_id", sourceID), zap.Error(err))
+	}
 }
