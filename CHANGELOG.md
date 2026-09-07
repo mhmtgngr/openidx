@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The GDPR report's data-access section counted an event nothing writes** —
+  and an earlier commit on this branch said it was fixed when it was not. All
+  four of its queries filtered `event_type = 'data_access'`, a value declared as
+  `EventTypeDataAccess` in `internal/audit/service.go` and written by no line of
+  this codebase, so total access events, access by actor, access by data type
+  and the last access timestamp were empty on every report ever generated and
+  `ComplianceStatus` was permanently `"partial"` — a control telling an auditor
+  this installation cannot account for who read what. The earlier fix corrected
+  the by-data-type query, which asked for a `resource_type` column
+  `audit_events` does not have, and the commit message said the section "has
+  therefore been empty in every report". The column was **one** reason and not
+  the reason. What this trail records as a read is an action under
+  `event_type = 'authorization'`, and `internal/audit.DataAccessActions` now
+  names the five that are one — a revealed credential, an injected credential on
+  either path, a downloaded session recording or transcript — with the session
+  events that are *not* reads named as deliberately excluded, because an
+  overstated control is as useless as an empty one. The test that covered this
+  had seeded a `data_access` row: it built the value the product never produces
+  and then proved the query could find it. It now seeds the row
+  `internal/access` actually writes.
+
 - **Every switch on the notification preferences page controlled nothing.**
   The page offered seven types — `access_request`, `security_alert`,
   `session_revoked`, `review_assigned`, `group_request`, `password_expiry`,

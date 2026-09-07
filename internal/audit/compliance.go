@@ -673,24 +673,30 @@ func (s *Service) getDataAccessMetrics(ctx context.Context, startDate, endDate t
 	org, _ := orgctx.From(ctx)
 
 	if s.db != nil && s.db.Pool != nil {
+		// event_type = 'data_access' is declared in service.go and written by
+		// nothing, so these four queries counted zero on every report ever
+		// generated. What this trail actually records as a read is an action
+		// under event_type 'authorization' -- see DataAccessActions, which says
+		// which five and why, and whose own test fails on a name nothing
+		// writes. The event_type term stays for the day a writer adopts it.
 		s.db.Pool.QueryRow(ctx, `
 			SELECT COALESCE(COUNT(*), 0)
 			FROM audit_events
-			WHERE event_type = 'data_access'
+			WHERE (event_type = 'data_access' OR action = ANY($4))
 			AND timestamp BETWEEN $1 AND $2
 			AND org_id = $3
-		`, startDate, endDate, org.ID).Scan(&metrics.TotalAccessEvents)
+		`, startDate, endDate, org.ID, DataAccessActions).Scan(&metrics.TotalAccessEvents)
 
 		rows, err := s.db.Pool.Query(ctx, `
 			SELECT actor_id, COUNT(*)
 			FROM audit_events
-			WHERE event_type = 'data_access'
+			WHERE (event_type = 'data_access' OR action = ANY($4))
 			AND timestamp BETWEEN $1 AND $2
 			AND org_id = $3
 			GROUP BY actor_id
 			ORDER BY COUNT(*) DESC
 			LIMIT 10
-		`, startDate, endDate, org.ID)
+		`, startDate, endDate, org.ID, DataAccessActions)
 		if err == nil {
 			for rows.Next() {
 				var actorID string
@@ -703,16 +709,17 @@ func (s *Service) getDataAccessMetrics(ctx context.Context, startDate, endDate t
 		}
 
 		// audit_events describes what was acted on as (target_id, target_type);
-		// it has no resource_type. The GDPR report's "access by data type"
-		// section has therefore been empty in every report.
+		// it has no resource_type, which an earlier commit corrected here. That
+		// was one reason this section was empty in every report and not the
+		// reason: the predicate below matched no row either.
 		rows, err = s.db.Pool.Query(ctx, `
 			SELECT target_type, COUNT(*)
 			FROM audit_events
-			WHERE event_type = 'data_access'
+			WHERE (event_type = 'data_access' OR action = ANY($4))
 			AND timestamp BETWEEN $1 AND $2
 			AND org_id = $3
 			GROUP BY target_type
-		`, startDate, endDate, org.ID)
+		`, startDate, endDate, org.ID, DataAccessActions)
 		if err == nil {
 			for rows.Next() {
 				var resourceType string
@@ -727,9 +734,9 @@ func (s *Service) getDataAccessMetrics(ctx context.Context, startDate, endDate t
 		s.db.Pool.QueryRow(ctx, `
 			SELECT COALESCE(MAX(timestamp), '1970-01-01'::timestamp)
 			FROM audit_events
-			WHERE event_type = 'data_access'
+			WHERE (event_type = 'data_access' OR action = ANY($2))
 			AND org_id = $1
-		`, org.ID).Scan(&metrics.LastAccessLog)
+		`, org.ID, DataAccessActions).Scan(&metrics.LastAccessLog)
 	}
 
 	if metrics.TotalAccessEvents == 0 {

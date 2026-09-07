@@ -128,7 +128,18 @@ func TestComplianceControlsAgainstTheRealSchema(t *testing.T) {
 	      VALUES (gen_random_uuid(), $1, 'console', $2, NOW() - INTERVAL '1 hour', NOW() + INTERVAL '3 hours')`,
 		user, org)
 
-	// A data-access event of a known target type.
+	// A data access, in the shape the product actually writes one.
+	//
+	// This fixture used to be event_type = 'data_access', and NOTHING IN THIS
+	// PRODUCT WRITES THAT VALUE -- so the test built the row it then asserted
+	// on and proved only that the query could find a row invented for it. What
+	// internal/access records when somebody reveals a stored credential is an
+	// action under event_type 'authorization'; see audit.DataAccessActions.
+	exec(`INSERT INTO audit_events (id, event_type, category, action, outcome, actor_id, target_id, target_type, details, timestamp, created_at, org_id)
+	      VALUES (gen_random_uuid(), 'authorization', 'access_proxy', 'pam.entry_revealed', 'success', $1, $1, 'pam_entry', '{}', NOW(), NOW(), $2)`,
+		user, org)
+	// And one row in the never-written spelling, so the OR term that keeps it
+	// is exercised rather than carried on faith.
 	exec(`INSERT INTO audit_events (id, event_type, category, action, outcome, actor_id, target_id, target_type, details, timestamp, created_at, org_id)
 	      VALUES (gen_random_uuid(), 'data_access', 'data', 'record.read', 'success', $1, $1, 'user_record', '{}', NOW(), NOW(), $2)`,
 		user, org)
@@ -156,11 +167,27 @@ func TestComplianceControlsAgainstTheRealSchema(t *testing.T) {
 		}
 	})
 
-	t.Run("data access is grouped by the type of thing accessed", func(t *testing.T) {
+	t.Run("data access counts what the product records as a read", func(t *testing.T) {
 		m := svc.getDataAccessMetrics(ctx, from, to)
+		// The credential reveal: the row this product actually writes, and the
+		// one the control missed on every report it has ever produced.
+		if got := m.AccessByDataType["pam_entry"]; got != 1 {
+			t.Errorf("AccessByDataType[pam_entry] = %d, want 1 -- a revealed credential "+
+				"is a data access; got map %v", got, m.AccessByDataType)
+		}
 		if got := m.AccessByDataType["user_record"]; got != 1 {
-			t.Errorf("AccessByDataType[user_record] = %d, want 1; got map %v",
-				got, m.AccessByDataType)
+			t.Errorf("AccessByDataType[user_record] = %d, want 1 (the event_type spelling "+
+				"is still honoured); got map %v", got, m.AccessByDataType)
+		}
+		if m.TotalAccessEvents != 2 {
+			t.Errorf("TotalAccessEvents = %d, want 2", m.TotalAccessEvents)
+		}
+		if m.ComplianceStatus != "compliant" {
+			t.Errorf("ComplianceStatus = %q with two access events recorded; it reads "+
+				"\"partial\" only when the installation can account for nothing", m.ComplianceStatus)
+		}
+		if m.AccessByActor[user] != 2 {
+			t.Errorf("AccessByActor[%s] = %d, want 2", user, m.AccessByActor[user])
 		}
 	})
 
