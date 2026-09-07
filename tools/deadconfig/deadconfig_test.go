@@ -4,8 +4,41 @@ import (
 	"go/token"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 )
+
+// moduleFields is the expensive half of this file, done once.
+//
+// analyze("../../...") is packages.Load over every package in the module with
+// NeedTypes|NeedSyntax|NeedDeps — it type-checks the whole tree, and if the
+// caller has not already built the module it builds it too. Measured under
+// -race: 8.8 GB of peak toolchain memory and 75s wall for this package alone.
+// The two tests below each used to do it, so the file paid that twice, and the
+// CI job that runs `go test ./tools/...` (which compiles only ./tools/, so the
+// load below starts from nothing) died with a runner shutdown five pushes
+// running. That job now passes -short, which skips both of these; this makes
+// the cost honest for everyone else who runs them.
+var (
+	moduleOnce     sync.Once
+	moduleDeclared []field
+	moduleRead     map[token.Pos]bool
+	moduleErr      error
+)
+
+func moduleFields(t *testing.T) ([]field, map[token.Pos]bool) {
+	t.Helper()
+	moduleOnce.Do(func() {
+		moduleDeclared, moduleRead, moduleErr = analyze([]string{"../../..."})
+	})
+	if moduleErr != nil {
+		t.Fatalf("analyze: %v", moduleErr)
+	}
+	if len(moduleDeclared) == 0 {
+		t.Fatal("no mapstructure-tagged fields found; the load found nothing and every check that reads this would pass vacuously")
+	}
+	return moduleDeclared, moduleRead
+}
 
 // The finding rule is one line, so it is tested against synthetic input first:
 // no load, no type checking, no fixtures. TestTheFixtureIsRead below runs the
@@ -101,13 +134,7 @@ func TestTheRegisterMatchesTheTree(t *testing.T) {
 	if testing.Short() {
 		t.Skip("loads and type-checks the whole module")
 	}
-	declared, read, err := analyze([]string{"../../..."})
-	if err != nil {
-		t.Fatalf("analyze: %v", err)
-	}
-	if len(declared) == 0 {
-		t.Fatal("no mapstructure-tagged fields found; the load found nothing and every check below would pass vacuously")
-	}
+	declared, read := moduleFields(t)
 
 	findings := map[string]bool{}
 	for _, f := range report(declared, read) {
@@ -135,10 +162,7 @@ func TestNoDocumentedSettingIsBoundByNothing(t *testing.T) {
 	if testing.Short() {
 		t.Skip("loads and type-checks the whole module")
 	}
-	declared, _, err := analyze([]string{"../../..."})
-	if err != nil {
-		t.Fatalf("analyze: %v", err)
-	}
+	declared, _ := moduleFields(t)
 	root = "../.."
 	t.Cleanup(func() { root = "." })
 	phantom, err := documentedButUnbound(declared)

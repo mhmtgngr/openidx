@@ -42,6 +42,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   computed hashes; restoring the row exactly makes it whole again, which is what
   keeps `intact: false` from being an answer the chain gives to everything.
 
+  It writes the event it verifies: the test posts one through the audit ingest
+  endpoint — the same path `internal/access` posts every credential reveal to —
+  and waits for the running sealer to chain it before doctoring the row. That
+  wait is the point of the test rather than an inconvenience in it, because
+  waiting for a real sweep is what separates "the deployed sealer sealed a row
+  the product wrote" from "a sealer built inside a unit test hashed a struct".
+
   Asking the question was worth it independently of the answer: the same
   question one step earlier — *are the events even there* — is what turned up
   the ingest defect below.

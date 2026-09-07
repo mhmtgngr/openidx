@@ -106,9 +106,14 @@ test-coverage:
 	$(GOCMD) tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report: coverage.html"
 
+# ./cmd/rekey/... is in this target because CI's test-integration job runs it and
+# this target did not: rekey's only test file carries the `integration` build tag,
+# so every job that passes no tags compiles zero tests out of it. A local target
+# that runs less than the gate is how you learn about a failure from a red pull
+# request instead of from your own machine.
 test-integration:
 	@echo "🔗 Running integration tests..."
-	$(GOTEST) -v -tags=integration ./test/integration/...
+	$(GOTEST) -v -tags=integration ./test/integration/... ./cmd/rekey/...
 
 # The database-gated packages, against a real PostgreSQL. `make test` on a
 # machine with neither Docker nor OPENIDX_TEST_DATABASE_URL skips them all and

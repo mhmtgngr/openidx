@@ -553,8 +553,27 @@ jobs:
           # The gates' own self-tests. The lint jobs below `go run` these tools;
           # until this entry existed, nothing ran `go test` on the registers
           # that keep their verdicts honest.
+          #
+          # -short, and it is the only entry that needs a flag. Two of these
+          # tools -- deadconfig and deadservice -- answer a question about the
+          # WHOLE MODULE, so their tests call packages.Load over every package
+          # in it with NeedTypes|NeedSyntax. Both already guard that half behind
+          # testing.Short(), and both have a dedicated job further down this
+          # file that runs `go test -short ./tools/X/` and then the tool itself
+          # over the whole module as a hard gate -- so nothing here is skipped
+          # that CI does not prove anyway, in a job whose name says what broke.
+          #
+          # Without the flag this job builds ./tools/... and then the load
+          # inside the test has to build the rest of the module from scratch.
+          # Measured on this branch: 8.8 GB of peak toolchain memory for
+          # ./tools/deadconfig alone under -race. The job died with
+          # `exit code 143` and "the runner has received a shutdown signal" on
+          # five consecutive pushes, always at the same package boundary, and
+          # never printed a test failure -- which is why it read as
+          # infrastructure and went unread for five runs.
           - package: tools
             paths: ./tools/...
+            flags: -short
           # The four leaf packages that decide whether access is allowed,
           # elevated or revoked. Small enough to share a runner, load-bearing
           # enough that they must not share one with something unrelated.
@@ -644,7 +663,10 @@ jobs:
           # -timeout for the same reason test-race carries one: Go's default
           # ten minutes per package is a bound for uninstrumented tests, and
           # under -race it stops distinguishing a hang from a slow runner.
-          go test -v -race -timeout 20m -coverprofile=coverage_${{ steps.cov.outputs.slug }}.out -covermode=atomic ${{ matrix.paths }}
+          #
+          # matrix.flags is empty for every entry but `tools`, which passes
+          # -short; the reason is written out beside that entry above.
+          go test -v -race -timeout 20m ${{ matrix.flags }} -coverprofile=coverage_${{ steps.cov.outputs.slug }}.out -covermode=atomic ${{ matrix.paths }}
 
       # Upload whatever coverage was produced even when the tests failed, so a
       # red run still yields a coverage artifact to inspect.
@@ -844,6 +866,15 @@ jobs:
           # sealer runs in the integration stack rather than only in unit tests,
           # and so a J5 credential reveal is written into a chained trail.
           export AUDIT_CHAIN_SECRET="integration-audit-chain-secret-00"
+          # And swept often, because one test waits for a real sweep.
+          # audit_chain_test.go posts an audit event through the ingest endpoint
+          # and waits for the RUNNING sealer to chain it before doctoring the
+          # row — that wait is what makes it a proof about the deployed sealer
+          # rather than about one constructed in a unit test. The default
+          # interval is 60s and the sealer ignores rows younger than chainGrace
+          # (30s, a constant), so at the default this test would spend up to a
+          # minute and a half sleeping. At 5s it is the grace period plus a tick.
+          export AUDIT_CHAIN_INTERVAL=5s
 
           /tmp/identity-service > /tmp/identity.log 2>&1 &
           IDENTITY_PID=$!
