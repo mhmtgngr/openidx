@@ -4,6 +4,8 @@ package integration
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"testing"
@@ -44,6 +46,30 @@ import (
 
 const accessURL = "http://localhost:8007"
 
+// freshCredential returns the secret material an entry will hold, generated per
+// run rather than written as a literal.
+//
+// The first draft of this file used `const secret = "correct-horse-battery-
+// staple-J5"`, and the merge gate caught it: gitleaks reads every file in the
+// tree, a quoted high-entropy string assigned to something called `secret` is
+// what it is built to find, and it cannot tell a fixture from a live key. The
+// repository's answer to that is not an allowlist entry — .gitleaks.toml says
+// so in its own header, and the workflow's canary step assembles its planted
+// credentials at run time for exactly this reason: a literal added to quiet the
+// scanner is still a scannable secret sitting in the tree.
+//
+// Generated is also the better fixture. Nothing in the product can match it by
+// accident, and a reveal that returned a stale cached value from an earlier run
+// would now fail instead of passing.
+func freshCredential(t *testing.T) string {
+	t.Helper()
+	b := make([]byte, 24)
+	if _, err := rand.Read(b); err != nil {
+		t.Fatalf("generating the fixture credential: %v", err)
+	}
+	return "j5-" + hex.EncodeToString(b)
+}
+
 // createPamEntry provisions a PAM entry holding a secret and returns its id.
 // Created through the admin API rather than seeded, because the secret has to
 // reach the vault sealed with the running service's keyring — a hand-written
@@ -83,7 +109,7 @@ func TestPrivilegedCredentialRevealIsGranted(t *testing.T) {
 	nonce := fmt.Sprintf("%d", time.Now().UnixNano())
 	adminToken := getAdminToken(t)
 
-	const secret = "correct-horse-battery-staple-J5"
+	secret := freshCredential(t)
 	entryID := createPamEntry(t, adminToken, "j5-revealable-"+nonce, secret, true)
 	t.Cleanup(func() {
 		apiRequest(t, "DELETE", accessURL+"/api/v1/access/pam/entries/"+entryID, "", adminToken)
@@ -180,7 +206,7 @@ func TestAnInjectionOnlyEntryRefusesEvenAnAdministrator(t *testing.T) {
 	nonce := fmt.Sprintf("%d", time.Now().UnixNano())
 	adminToken := getAdminToken(t)
 
-	const secret = "never-to-be-shown-J5"
+	secret := freshCredential(t)
 	entryID := createPamEntry(t, adminToken, "j5-injection-only-"+nonce, secret, false)
 	t.Cleanup(func() {
 		apiRequest(t, "DELETE", accessURL+"/api/v1/access/pam/entries/"+entryID, "", adminToken)

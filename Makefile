@@ -527,10 +527,38 @@ scan-sbom:
 		-o spdx-json > sboms/admin-console-$(VERSION).spdx.json 2>/dev/null || echo "    Warning: Could not generate SBOM for admin-console"
 	@echo "  SBOMs saved to sboms/"
 
+# Runs the scan the merge gate runs: same pinned binary, same `dir` mode (the
+# working tree, not history), same config, same exit code.
+#
+# It used to be `gitleaks detect --source . ... || true` behind an install of
+# `github.com/gitleaks/gitleaks/v4/cmd/gitleaks`, a module path that does not
+# exist — so on a machine without gitleaks the target failed to install it, and
+# on a machine with it the `|| true` meant a finding still exited 0. Neither the
+# scan nor its result reached anyone locally, which is why the gate was
+# CI-only and a leak was something you learned from a red pull request.
+#
+# The version is read out of the workflow instead of pinned a second time here,
+# so the local scan and the gate cannot drift apart.
 scan-secrets:
 	@echo "🔐 Scanning for secrets..."
-	@which gitleaks > /dev/null || (echo "Installing Gitleaks..." && go install github.com/gitleaks/gitleaks/v4/cmd/gitleaks@latest)
-	gitleaks detect --source . --verbose --report-format json --report-name gitleaks-report.json || true
+	@set -eu; \
+	workflow=.github/workflows/security-scan.yml; \
+	version=$$(awk '/GITLEAKS_VERSION:/ { print $$2; exit }' $$workflow); \
+	if [ -z "$$version" ]; then \
+		echo "  no GITLEAKS_VERSION in $$workflow — the pin the gate uses has moved"; exit 1; \
+	fi; \
+	bin=$$(command -v gitleaks 2>/dev/null || true); \
+	if [ -z "$$bin" ] || [ "$$($$bin version 2>/dev/null)" != "$$version" ]; then \
+		os=$$(uname -s | tr '[:upper:]' '[:lower:]'); \
+		case $$(uname -m) in aarch64|arm64) arch=arm64 ;; *) arch=x64 ;; esac; \
+		echo "  Installing gitleaks $$version ($${os}_$${arch}) into bin/..."; \
+		mkdir -p bin; \
+		curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v$${version}/gitleaks_$${version}_$${os}_$${arch}.tar.gz" \
+			| tar -xz -C bin gitleaks; \
+		bin=bin/gitleaks; \
+	fi; \
+	"$$bin" dir . --config .gitleaks.toml --no-banner --redact \
+		--report-format json --report-path gitleaks-report.json
 
 scan-deps:
 	@echo "📦 Scanning dependencies..."

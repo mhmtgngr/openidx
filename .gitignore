@@ -87,6 +87,11 @@ secrets.yaml
 # tdv.org_*.zip from being swept in by `git add -A`)
 *.zip
 
+# `make scan-secrets` writes its findings here. The report names the file and
+# line of every match, so committing one would publish the map to whatever the
+# scan found — including the values it exists to keep out of the tree.
+/gitleaks-report.json
+
 # --- Local-only: AI-agent tooling, market research, and personal docs ---
 # These are intentionally kept out of the public repository but remain on
 # local disk. Do not commit.
