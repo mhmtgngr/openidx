@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -237,7 +238,7 @@ func (s *Service) handleGetConnectionTestHistory(c *gin.Context) {
 		if err != nil {
 			// A dropped row reads as "that test never ran". Say so instead.
 			s.logger.Warn("connection test row skipped",
-				zap.String("route_id", routeID), zap.Error(err))
+				logsafe.String("route_id", routeID), zap.Error(err))
 			continue
 		}
 

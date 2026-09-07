@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -179,7 +180,7 @@ func (s *Service) handleRevokeUserPAT(c *gin.Context) {
 
 	s.logger.Info("Personal access token revoked",
 		zap.String("user_id", userID),
-		zap.String("key_id", keyID))
+		logsafe.String("key_id", keyID))
 
 	c.JSON(http.StatusOK, gin.H{"message": "Token revoked successfully"})
 }
@@ -285,7 +286,7 @@ func (s *Service) handleRevokeUserConsent(c *gin.Context) {
 
 	s.logger.Info("User consent revoked",
 		zap.String("user_id", userID),
-		zap.String("client_id", clientID))
+		logsafe.String("client_id", clientID))
 
 	c.JSON(http.StatusOK, gin.H{"message": "Authorization revoked successfully"})
 }

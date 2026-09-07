@@ -133,7 +133,7 @@ func GinMiddleware(logger *zap.Logger) gin.HandlerFunc {
 				fields = append(fields, logsafe.String("request_id", id))
 			}
 		} else if id := c.GetHeader("X-Request-ID"); logsafe.PlausibleID(id) {
-			fields = append(fields, zap.String("request_id", id))
+			fields = append(fields, logsafe.String("request_id", id))
 		}
 
 		// Add user ID if authenticated

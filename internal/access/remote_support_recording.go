@@ -30,6 +30,7 @@ import (
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -452,7 +453,7 @@ func (h *RemoteSupportHandler) HandleUploadRecordingChunk(c *gin.Context) {
 	written, err := h.recordingStore.Append(sessionID, chunkIndex, body)
 	if err != nil {
 		h.logger.Warn("HandleUploadRecordingChunk: append failed",
-			zap.String("session_id", sessionID), zap.Int("chunk", chunkIndex), zap.Error(err))
+			logsafe.String("session_id", sessionID), zap.Int("chunk", chunkIndex), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "append failed"})
 		return
 	}
@@ -552,6 +553,6 @@ func (h *RemoteSupportHandler) HandleDownloadRecording(c *gin.Context) {
 	}
 	if _, err := io.Copy(c.Writer, reader); err != nil {
 		h.logger.Warn("HandleDownloadRecording: copy failed",
-			zap.String("session_id", sessionID), zap.Error(err))
+			logsafe.String("session_id", sessionID), zap.Error(err))
 	}
 }

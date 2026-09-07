@@ -10,6 +10,7 @@ import (
 	"go.uber.org/zap"
 
 	apperrors "github.com/openidx/openidx/internal/common/errors"
+	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -165,7 +166,7 @@ func (s *Service) handleUserRiskProfile(c *gin.Context) {
 	)
 	if err != nil {
 		// If no baseline exists, populate defaults and try to get the username
-		s.logger.Debug("No risk baseline found for user, using defaults", zap.String("user_id", userID), zap.Error(err))
+		s.logger.Debug("No risk baseline found for user, using defaults", logsafe.String("user_id", userID), zap.Error(err))
 		profile.TypicalLoginHours = json.RawMessage("[]")
 		profile.TypicalCountries = json.RawMessage("[]")
 		profile.TypicalIPs = json.RawMessage("[]")
@@ -192,7 +193,7 @@ func (s *Service) handleUserRiskProfile(c *gin.Context) {
 		LIMIT 10
 	`, userID, org.ID)
 	if err != nil {
-		s.logger.Error("Failed to query user login history", zap.Error(err), zap.String("user_id", userID))
+		s.logger.Error("Failed to query user login history", zap.Error(err), logsafe.String("user_id", userID))
 		profile.RecentLogins = []LoginAnomaly{}
 	} else {
 		defer loginRows.Close()

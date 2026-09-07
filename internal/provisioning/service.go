@@ -1039,7 +1039,7 @@ func (s *Service) handleReplaceUser(c *gin.Context) {
 
 	updated, err := s.UpdateSCIMUser(c.Request.Context(), id, &user)
 	if err != nil {
-		s.logger.Error("failed to update SCIM user", zap.String("id", id), zap.Error(err))
+		s.logger.Error("failed to update SCIM user", logsafe.String("id", id), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -1085,7 +1085,7 @@ func (s *Service) handlePatchUser(c *gin.Context) {
 	// Update user
 	updated, err := s.UpdateSCIMUser(c.Request.Context(), id, user)
 	if err != nil {
-		s.logger.Error("failed to patch SCIM user", zap.String("id", id), zap.Error(err))
+		s.logger.Error("failed to patch SCIM user", logsafe.String("id", id), zap.Error(err))
 		c.JSON(500, SCIMError{
 			Schemas: []string{"urn:ietf:params:scim:api:messages:2.0:Error"},
 			Status:  "500",
@@ -1325,7 +1325,7 @@ func (s *Service) handleDeleteUser(c *gin.Context) {
 
 	ctx := ContextWithActorID(c.Request.Context(), c.GetString("user_id"))
 	if err := s.DeleteSCIMUser(ctx, id); err != nil {
-		s.logger.Error("failed to delete SCIM user", zap.String("id", id), zap.Error(err))
+		s.logger.Error("failed to delete SCIM user", logsafe.String("id", id), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -1671,7 +1671,7 @@ func (s *Service) handleReplaceGroup(c *gin.Context) {
 
 	updated, err := s.UpdateSCIMGroup(c.Request.Context(), id, &group)
 	if err != nil {
-		s.logger.Error("failed to replace SCIM group", zap.String("id", id), zap.Error(err))
+		s.logger.Error("failed to replace SCIM group", logsafe.String("id", id), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -1709,7 +1709,7 @@ func (s *Service) handlePatchGroup(c *gin.Context) {
 	// Update group
 	updated, err := s.UpdateSCIMGroup(c.Request.Context(), id, group)
 	if err != nil {
-		s.logger.Error("failed to patch SCIM group", zap.String("id", id), zap.Error(err))
+		s.logger.Error("failed to patch SCIM group", logsafe.String("id", id), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -1725,7 +1725,7 @@ func (s *Service) handleDeleteGroup(c *gin.Context) {
 
 	ctx := ContextWithActorID(c.Request.Context(), c.GetString("user_id"))
 	if err := s.DeleteSCIMGroup(ctx, id); err != nil {
-		s.logger.Error("failed to delete SCIM group", zap.String("id", id), zap.Error(err))
+		s.logger.Error("failed to delete SCIM group", logsafe.String("id", id), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}

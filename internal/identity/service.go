@@ -3905,7 +3905,7 @@ func (s *Service) handleUpdateUser(c *gin.Context) {
 
 	user.ID = userID
 	if err := s.UpdateUser(auditCtx(c), &user); err != nil {
-		s.logger.Error("failed to update user", zap.String("user_id", userID), zap.Error(err))
+		s.logger.Error("failed to update user", logsafe.String("user_id", userID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -3919,7 +3919,7 @@ func (s *Service) handleDeleteUser(c *gin.Context) {
 
 	ctx := ContextWithActorID(c.Request.Context(), c.GetString("user_id"))
 	if err := s.DeleteUser(ctx, userID); err != nil {
-		s.logger.Error("failed to delete user", zap.String("user_id", userID), zap.Error(err))
+		s.logger.Error("failed to delete user", logsafe.String("user_id", userID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -4002,7 +4002,7 @@ func (s *Service) handleUpdateIdentityProvider(c *gin.Context) {
 	}
 	idp.ID = parsedID
 	if err := s.UpdateIdentityProvider(auditCtx(c), &idp); err != nil {
-		s.logger.Error("failed to update identity provider", zap.String("id", idpID), zap.Error(err))
+		s.logger.Error("failed to update identity provider", logsafe.String("id", idpID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -4014,7 +4014,7 @@ func (s *Service) handleDeleteIdentityProvider(c *gin.Context) {
 	idpID := c.Param("id")
 
 	if err := s.DeleteIdentityProvider(auditCtx(c), idpID); err != nil {
-		s.logger.Error("failed to delete identity provider", zap.String("id", idpID), zap.Error(err))
+		s.logger.Error("failed to delete identity provider", logsafe.String("id", idpID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -4027,7 +4027,7 @@ func (s *Service) handleGetUserSessions(c *gin.Context) {
 
 	sessions, err := s.GetUserSessions(c.Request.Context(), userID)
 	if err != nil {
-		s.logger.Error("failed to get user sessions", zap.String("user_id", userID), zap.Error(err))
+		s.logger.Error("failed to get user sessions", logsafe.String("user_id", userID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -4072,7 +4072,7 @@ func (s *Service) handleTerminateSession(c *gin.Context) {
 	}
 
 	if err := s.TerminateSession(c.Request.Context(), sessionID); err != nil {
-		s.logger.Error("failed to terminate session", zap.String("session_id", sessionID), zap.Error(err))
+		s.logger.Error("failed to terminate session", logsafe.String("session_id", sessionID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -4155,7 +4155,7 @@ func (s *Service) handleUpdateRole(c *gin.Context) {
 			c.JSON(404, gin.H{"error": "role not found"})
 			return
 		}
-		s.logger.Error("failed to update role", zap.String("role_id", roleID), zap.Error(err))
+		s.logger.Error("failed to update role", logsafe.String("role_id", roleID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -4172,7 +4172,7 @@ func (s *Service) handleDeleteRole(c *gin.Context) {
 			c.JSON(404, gin.H{"error": "role not found"})
 			return
 		}
-		s.logger.Error("failed to delete role", zap.String("role_id", roleID), zap.Error(err))
+		s.logger.Error("failed to delete role", logsafe.String("role_id", roleID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -4185,7 +4185,7 @@ func (s *Service) handleGetUserRoles(c *gin.Context) {
 
 	roles, err := s.GetUserRoles(c.Request.Context(), userID)
 	if err != nil {
-		s.logger.Error("failed to get user roles", zap.String("user_id", userID), zap.Error(err))
+		s.logger.Error("failed to get user roles", logsafe.String("user_id", userID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -4232,7 +4232,7 @@ func (s *Service) handleGetUserRoleAssignments(c *gin.Context) {
 
 	assignments, err := s.GetUserRoleAssignments(c.Request.Context(), userID)
 	if err != nil {
-		s.logger.Error("failed to get user role assignments", zap.String("user_id", userID), zap.Error(err))
+		s.logger.Error("failed to get user role assignments", logsafe.String("user_id", userID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -4284,7 +4284,7 @@ func (s *Service) handleUpdateUserRoles(c *gin.Context) {
 
 	err := s.UpdateUserRoles(auditCtx(c), userID, req.RoleIDs, assignedBy)
 	if err != nil {
-		s.logger.Error("failed to update user roles", zap.String("user_id", userID), zap.Error(err))
+		s.logger.Error("failed to update user roles", logsafe.String("user_id", userID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -4356,7 +4356,7 @@ func (s *Service) handleGetGroupMembers(c *gin.Context) {
 	members, total, err := s.GetGroupMembersPaginated(
 		c.Request.Context(), groupID, c.Query("search"), offset, limit)
 	if err != nil {
-		s.logger.Error("failed to get group members", zap.String("group_id", groupID), zap.Error(err))
+		s.logger.Error("failed to get group members", logsafe.String("group_id", groupID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -4423,7 +4423,7 @@ func (s *Service) handleUpdateGroup(c *gin.Context) {
 
 	group.ID = groupID
 	if err := s.UpdateGroup(c.Request.Context(), &group); err != nil {
-		s.logger.Error("failed to update group", zap.String("group_id", groupID), zap.Error(err))
+		s.logger.Error("failed to update group", logsafe.String("group_id", groupID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -4436,7 +4436,7 @@ func (s *Service) handleDeleteGroup(c *gin.Context) {
 	groupID := c.Param("id")
 
 	if err := s.DeleteGroup(auditCtx(c), groupID); err != nil {
-		s.logger.Error("failed to delete group", zap.String("group_id", groupID), zap.Error(err))
+		s.logger.Error("failed to delete group", logsafe.String("group_id", groupID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -4477,7 +4477,7 @@ func (s *Service) handleAddGroupMember(c *gin.Context) {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}
-		s.logger.Error("failed to add group member", zap.String("group_id", groupID), zap.Error(err))
+		s.logger.Error("failed to add group member", logsafe.String("group_id", groupID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -4508,7 +4508,7 @@ func (s *Service) handleRemoveGroupMember(c *gin.Context) {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}
-		s.logger.Error("failed to remove group member", zap.String("group_id", groupID), zap.String("user_id", userID), zap.Error(err))
+		s.logger.Error("failed to remove group member", logsafe.String("group_id", groupID), logsafe.String("user_id", userID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -4523,7 +4523,7 @@ func (s *Service) handleGetSubgroups(c *gin.Context) {
 
 	subgroups, err := s.GetSubgroups(c.Request.Context(), parentID)
 	if err != nil {
-		s.logger.Error("failed to get subgroups", zap.String("parent_id", parentID), zap.Error(err))
+		s.logger.Error("failed to get subgroups", logsafe.String("parent_id", parentID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -5351,7 +5351,7 @@ func (s *Service) handleAdminResetPassword(c *gin.Context) {
 		if err := s.directoryService.ResetPassword(ctx, *directoryID, username, req.NewPassword); err != nil {
 			s.logger.Error("Failed to reset directory password",
 				zap.String("admin_id", fmt.Sprintf("%v", adminID)),
-				zap.String("target_user_id", userID),
+				logsafe.String("target_user_id", userID),
 				zap.String("source", *source),
 				zap.Error(err))
 			c.JSON(500, gin.H{"error": "Failed to reset directory password"})
@@ -5363,7 +5363,7 @@ func (s *Service) handleAdminResetPassword(c *gin.Context) {
 
 		s.logger.Info("Admin reset directory password",
 			zap.String("admin_id", fmt.Sprintf("%v", adminID)),
-			zap.String("target_user_id", userID),
+			logsafe.String("target_user_id", userID),
 			zap.String("source", *source))
 
 		c.JSON(200, gin.H{
@@ -5390,7 +5390,7 @@ func (s *Service) handleAdminResetPassword(c *gin.Context) {
 
 	s.logger.Info("Admin triggered password reset",
 		zap.String("admin_id", fmt.Sprintf("%v", adminID)),
-		zap.String("target_user_id", userID),
+		logsafe.String("target_user_id", userID),
 		zap.String("target_email", email))
 
 	if s.emailService != nil {
@@ -5674,7 +5674,7 @@ func (s *Service) handleGetRolePermissions(c *gin.Context) {
 	roleID := c.Param("id")
 	perms, err := s.GetRolePermissions(c.Request.Context(), roleID)
 	if err != nil {
-		s.logger.Error("failed to get role permissions", zap.String("role_id", roleID), zap.Error(err))
+		s.logger.Error("failed to get role permissions", logsafe.String("role_id", roleID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -5691,7 +5691,7 @@ func (s *Service) handleSetRolePermissions(c *gin.Context) {
 		return
 	}
 	if err := s.SetRolePermissions(c.Request.Context(), roleID, req.PermissionIDs); err != nil {
-		s.logger.Error("failed to set role permissions", zap.String("role_id", roleID), zap.Error(err))
+		s.logger.Error("failed to set role permissions", logsafe.String("role_id", roleID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -5882,7 +5882,7 @@ func (s *Service) handleDeleteInvitation(c *gin.Context) {
 	_, err = s.db.Pool.Exec(c.Request.Context(),
 		"DELETE FROM user_invitations WHERE id = $1 AND org_id = $2", id, org.ID)
 	if err != nil {
-		s.logger.Error("failed to delete invitation", zap.String("id", id), zap.Error(err))
+		s.logger.Error("failed to delete invitation", logsafe.String("id", id), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -6042,7 +6042,7 @@ func (s *Service) handleOffboardUser(c *gin.Context) {
 		})
 	}
 
-	s.logger.Info("User offboarded", zap.String("user_id", userID))
+	s.logger.Info("User offboarded", logsafe.String("user_id", userID))
 	c.JSON(200, gin.H{"message": "User offboarded successfully"})
 }
 
@@ -6676,7 +6676,7 @@ func (s *Service) handleGetLifecycleWorkflow(c *gin.Context) {
 			c.JSON(404, gin.H{"error": "Workflow not found"})
 			return
 		}
-		s.logger.Error("failed to get lifecycle workflow", zap.String("id", id), zap.Error(err))
+		s.logger.Error("failed to get lifecycle workflow", logsafe.String("id", id), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -6700,7 +6700,7 @@ func (s *Service) handleUpdateLifecycleWorkflow(c *gin.Context) {
 			c.JSON(404, gin.H{"error": "Workflow not found"})
 			return
 		}
-		s.logger.Error("failed to update lifecycle workflow", zap.String("id", id), zap.Error(err))
+		s.logger.Error("failed to update lifecycle workflow", logsafe.String("id", id), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -6716,7 +6716,7 @@ func (s *Service) handleDeleteLifecycleWorkflow(c *gin.Context) {
 			c.JSON(404, gin.H{"error": "Workflow not found"})
 			return
 		}
-		s.logger.Error("failed to delete lifecycle workflow", zap.String("id", id), zap.Error(err))
+		s.logger.Error("failed to delete lifecycle workflow", logsafe.String("id", id), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -6755,7 +6755,7 @@ func (s *Service) handleExecuteLifecycleWorkflow(c *gin.Context) {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}
-		s.logger.Error("failed to execute lifecycle workflow", zap.String("workflow_id", workflowID), zap.Error(err))
+		s.logger.Error("failed to execute lifecycle workflow", logsafe.String("workflow_id", workflowID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -6821,7 +6821,7 @@ func (s *Service) handleGetLifecycleExecution(c *gin.Context) {
 			c.JSON(404, gin.H{"error": "Execution not found"})
 			return
 		}
-		s.logger.Error("failed to get lifecycle execution", zap.String("id", id), zap.Error(err))
+		s.logger.Error("failed to get lifecycle execution", logsafe.String("id", id), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}

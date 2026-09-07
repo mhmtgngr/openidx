@@ -19,6 +19,7 @@ import (
 	"github.com/openidx/openidx/internal/auth"
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
 	"github.com/openidx/openidx/internal/sms"
 	"github.com/openidx/openidx/internal/webhooks"
@@ -1515,7 +1516,7 @@ func (s *Service) handleUpdateApplication(c *gin.Context) {
 	}
 
 	if err := s.UpdateApplication(c.Request.Context(), id, updates); err != nil {
-		s.logger.Error("failed to update application", zap.String("id", id), zap.Error(err))
+		s.logger.Error("failed to update application", logsafe.String("id", id), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -1803,7 +1804,7 @@ func (s *Service) handleSyncDirectory(c *gin.Context) {
 
 	if s.directoryService != nil {
 		if err := s.directoryService.TriggerSync(c.Request.Context(), id, fullSync); err != nil {
-			s.logger.Error("failed to trigger directory sync", zap.String("id", id), zap.Error(err))
+			s.logger.Error("failed to trigger directory sync", logsafe.String("id", id), zap.Error(err))
 			c.JSON(500, gin.H{"error": "internal server error"})
 			return
 		}
@@ -1971,7 +1972,7 @@ func (s *Service) handleGetApplicationSSOSettings(c *gin.Context) {
 
 	settings, err := s.GetApplicationSSOSettings(c.Request.Context(), applicationID)
 	if err != nil {
-		s.logger.Error("failed to get SSO settings", zap.String("application_id", applicationID), zap.Error(err))
+		s.logger.Error("failed to get SSO settings", logsafe.String("application_id", applicationID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -1991,7 +1992,7 @@ func (s *Service) handleUpdateApplicationSSOSettings(c *gin.Context) {
 	settings.ApplicationID = applicationID
 
 	if err := s.UpdateApplicationSSOSettings(c.Request.Context(), &settings); err != nil {
-		s.logger.Error("failed to update SSO settings", zap.String("application_id", applicationID), zap.Error(err))
+		s.logger.Error("failed to update SSO settings", logsafe.String("application_id", applicationID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -2043,7 +2044,7 @@ func (s *Service) handleUserDevices(c *gin.Context) {
 	userID := c.Param("id")
 	devices, err := s.riskService.GetUserDevices(c.Request.Context(), userID)
 	if err != nil {
-		s.logger.Error("failed to get user devices", zap.String("user_id", userID), zap.Error(err))
+		s.logger.Error("failed to get user devices", logsafe.String("user_id", userID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -2070,7 +2071,7 @@ func (s *Service) handleTrustDevice(c *gin.Context) {
 		`SELECT user_id FROM known_devices WHERE id = $1 AND org_id = $2`, deviceID, org.ID).Scan(&userID)
 
 	if err := s.riskService.TrustDevice(c.Request.Context(), deviceID); err != nil {
-		s.logger.Error("failed to trust device", zap.String("device_id", deviceID), zap.Error(err))
+		s.logger.Error("failed to trust device", logsafe.String("device_id", deviceID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -2097,7 +2098,7 @@ func (s *Service) handleRevokeDevice(c *gin.Context) {
 		`SELECT user_id FROM known_devices WHERE id = $1 AND org_id = $2`, deviceID, org.ID).Scan(&userID)
 
 	if err := s.riskService.RevokeDevice(c.Request.Context(), deviceID); err != nil {
-		s.logger.Error("failed to revoke device", zap.String("device_id", deviceID), zap.Error(err))
+		s.logger.Error("failed to revoke device", logsafe.String("device_id", deviceID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -2231,7 +2232,7 @@ func (s *Service) handleDeleteServiceAccount(c *gin.Context) {
 
 	id := c.Param("id")
 	if err := s.apiKeyService.DeleteServiceAccount(c.Request.Context(), id); err != nil {
-		s.logger.Error("failed to delete service account", zap.String("id", id), zap.Error(err))
+		s.logger.Error("failed to delete service account", logsafe.String("id", id), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -2249,7 +2250,7 @@ func (s *Service) handleListServiceAccountAPIKeys(c *gin.Context) {
 	id := c.Param("id")
 	keys, err := s.apiKeyService.ListAPIKeys(c.Request.Context(), id, "service_account")
 	if err != nil {
-		s.logger.Error("failed to list service account API keys", zap.String("id", id), zap.Error(err))
+		s.logger.Error("failed to list service account API keys", logsafe.String("id", id), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -2340,7 +2341,7 @@ func (s *Service) handleRevokeAPIKey(c *gin.Context) {
 
 	id := c.Param("id")
 	if err := s.apiKeyService.RevokeAPIKey(c.Request.Context(), id); err != nil {
-		s.logger.Error("failed to revoke API key", zap.String("id", id), zap.Error(err))
+		s.logger.Error("failed to revoke API key", logsafe.String("id", id), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -2473,7 +2474,7 @@ func (s *Service) handleDeleteWebhook(c *gin.Context) {
 
 	id := c.Param("id")
 	if err := s.webhookService.DeleteSubscription(c.Request.Context(), id); err != nil {
-		s.logger.Error("failed to delete webhook", zap.String("id", id), zap.Error(err))
+		s.logger.Error("failed to delete webhook", logsafe.String("id", id), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -2500,7 +2501,7 @@ func (s *Service) handleWebhookDeliveries(c *gin.Context) {
 
 	deliveries, err := s.webhookService.GetDeliveryHistory(c.Request.Context(), id, limit)
 	if err != nil {
-		s.logger.Error("failed to get webhook deliveries", zap.String("id", id), zap.Error(err))
+		s.logger.Error("failed to get webhook deliveries", logsafe.String("id", id), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -2515,7 +2516,7 @@ func (s *Service) handleRetryWebhookDelivery(c *gin.Context) {
 
 	id := c.Param("id")
 	if err := s.webhookService.RetryDelivery(c.Request.Context(), id); err != nil {
-		s.logger.Error("failed to retry webhook delivery", zap.String("id", id), zap.Error(err))
+		s.logger.Error("failed to retry webhook delivery", logsafe.String("id", id), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -2531,7 +2532,7 @@ func (s *Service) handleTestWebhook(c *gin.Context) {
 	id := c.Param("id")
 	delivery, err := s.webhookService.PingSubscription(c.Request.Context(), id)
 	if err != nil {
-		s.logger.Error("failed to test webhook", zap.String("id", id), zap.Error(err))
+		s.logger.Error("failed to test webhook", logsafe.String("id", id), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -2547,7 +2548,7 @@ func (s *Service) handleWebhookStats(c *gin.Context) {
 	id := c.Param("id")
 	stats, err := s.webhookService.GetDeliveryStats(c.Request.Context(), id)
 	if err != nil {
-		s.logger.Error("failed to get webhook stats", zap.String("id", id), zap.Error(err))
+		s.logger.Error("failed to get webhook stats", logsafe.String("id", id), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -3441,7 +3442,7 @@ func (s *Service) handleUpdateEntitlementMetadata(c *gin.Context) {
 			c.JSON(403, gin.H{"error": "organization context required"})
 			return
 		}
-		s.logger.Error("failed to update entitlement metadata", zap.String("type", entType), zap.String("id", entID), zap.Error(err))
+		s.logger.Error("failed to update entitlement metadata", logsafe.String("type", entType), logsafe.String("id", entID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -3900,7 +3901,7 @@ func (s *Service) handleUpdateDelegation(c *gin.Context) {
 			c.JSON(404, gin.H{"error": "Delegation not found"})
 			return
 		}
-		s.logger.Error("failed to update delegation", zap.String("id", id), zap.Error(err))
+		s.logger.Error("failed to update delegation", logsafe.String("id", id), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}

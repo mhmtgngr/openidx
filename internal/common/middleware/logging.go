@@ -148,7 +148,7 @@ func RequestLoggerWithConfig(config LoggingConfig) gin.HandlerFunc {
 		// internal/common/logsafe for what "cleaned" means and why a zap field
 		// still needs it.
 		fields := []zapcore.Field{
-			zap.String("request_id", requestID),
+			logsafe.String("request_id", requestID),
 			logsafe.String("method", c.Request.Method),
 			logsafe.String("path", c.Request.URL.Path),
 			logsafe.String("client_ip", getClientIP(c)),

@@ -747,7 +747,7 @@ func (s *Service) handleDecideAttestationItem(c *gin.Context) {
 		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND org_id = $2 AND decision = 'pending'", campaignID, org.ID,
 	).Scan(&pendingCount); err != nil {
 		s.logger.Error("could not count pending attestation items; leaving the campaign open",
-			zap.String("campaign_id", campaignID), zap.Error(err))
+			logsafe.String("campaign_id", campaignID), zap.Error(err))
 		pendingCount = -1
 	}
 	if pendingCount == 0 {
@@ -764,7 +764,7 @@ func (s *Service) handleDecideAttestationItem(c *gin.Context) {
 		switch {
 		case cerr != nil:
 			s.logger.Error("failed to complete attestation campaign",
-				zap.String("campaign_id", campaignID), zap.Error(cerr))
+				logsafe.String("campaign_id", campaignID), zap.Error(cerr))
 		case tag.RowsAffected() > 0 && s.webhookService != nil:
 			if perr := s.webhookService.Publish(orgctx.Detached(c.Request.Context()),
 				webhooks.EventReviewCompleted, map[string]interface{}{
@@ -773,7 +773,7 @@ func (s *Service) handleDecideAttestationItem(c *gin.Context) {
 					"actor_id":    c.GetString("user_id"),
 				}); perr != nil {
 				s.logger.Warn("failed to publish review.completed",
-					zap.String("campaign_id", campaignID), zap.Error(perr))
+					logsafe.String("campaign_id", campaignID), zap.Error(perr))
 			}
 		}
 	}

@@ -1605,7 +1605,7 @@ func (s *Service) handleDeleteRoute(c *gin.Context) {
 	// has no Ziti service.
 	if zm := s.ziti(); zm != nil {
 		if err := zm.TeardownZitiForRoute(c.Request.Context(), id); err != nil {
-			s.logger.Warn("ziti teardown on route delete failed", zap.String("route_id", id), zap.Error(err))
+			s.logger.Warn("ziti teardown on route delete failed", logsafe.String("route_id", id), zap.Error(err))
 		}
 	}
 

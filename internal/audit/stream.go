@@ -15,6 +15,7 @@ import (
 	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/middleware"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
@@ -293,7 +294,7 @@ func (es *EventStreamer) handleWebSocketStream(c *gin.Context) {
 	es.clientsMutex.Unlock()
 
 	es.logger.Info("WebSocket client connected",
-		zap.String("client_id", clientID),
+		logsafe.String("client_id", clientID),
 		zap.String("remote_addr", c.Request.RemoteAddr))
 
 	// Start reader and writer goroutines

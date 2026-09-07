@@ -14,6 +14,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
 	"go.uber.org/zap"
 )
@@ -86,7 +87,7 @@ func (s *Service) handleSocialLoginInit(c *gin.Context) {
 	provider, err := s.loadSocialProviderConfig(c.Request.Context(), providerID)
 	if err != nil {
 		s.logger.Error("Failed to load social provider config",
-			zap.String("provider_id", providerID), zap.Error(err))
+			logsafe.String("provider_id", providerID), zap.Error(err))
 		c.JSON(http.StatusNotFound, gin.H{"error": "Identity provider not found"})
 		return
 	}
@@ -130,7 +131,7 @@ func (s *Service) handleSocialLoginInit(c *gin.Context) {
 	fullURL := authURL + "?" + params.Encode()
 
 	s.logger.Info("Initiating social login",
-		zap.String("provider_id", providerID),
+		logsafe.String("provider_id", providerID),
 		zap.String("provider_type", provider.ProviderType),
 	)
 
@@ -146,8 +147,8 @@ func (s *Service) handleSocialLoginCallback(c *gin.Context) {
 	if errorParam != "" {
 		errorDesc := c.Query("error_description")
 		s.logger.Error("Social login error from provider",
-			zap.String("error", errorParam),
-			zap.String("description", errorDesc))
+			logsafe.String("error", errorParam),
+			logsafe.String("description", errorDesc))
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error":             "social_login_failed",
 			"error_description": errorDesc,

@@ -78,6 +78,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **115 log fields carried a request value nothing cleaned
+  (`internal/common/logsafe`, new guard).** CodeQL filed two "Log entries
+  created from user input" alerts against `internal/admin/attestation.go`.
+  Reading the file showed the shape plainly: two fields there already went
+  through `logsafe`, and three more logged a campaign id taken straight from
+  `c.Param("id")`. The earlier sweep had fixed the sites CodeQL named rather
+  than the class behind them, so an AST census over the tree — function-scoped,
+  because two handlers in one file routinely both call something `id` or
+  `token` — found 115 of them across 24 files: agent ids, session ids, SAML
+  provider ids, group and role ids, an OAuth redirect URI, a social-login
+  provider's `error_description`. All now go through `logsafe.String`.
+  This is not a log-forging fix: `encoder_test.go` already established that
+  both zap encoders escape a field, and the guard against forging a line is
+  `no_interpolated_message_test.go`. It is a fix for the other three reasons
+  the package exists — nothing bounded the length, so a megabyte of `id` in
+  every warning fills a disk and buries the entry that mattered; the escaping
+  belongs to the encoder and does not survive the hop to Elasticsearch and on
+  to a SIEM; and it is the shape a static analyser will keep reporting until
+  the class is closed. `TestNoRequestValueReachesALogFieldUnwashed` now fails
+  the build on the next one, and eight cases built from synthetic source keep
+  the guard itself honest in both directions.
 - **The dead-service gate brought a vulnerable dependency in with it
   (`golang.org/x/mod`).** Promoting `golang.org/x/tools` to a direct dependency
   so `tools/deadservice` could do reachability analysis also recorded

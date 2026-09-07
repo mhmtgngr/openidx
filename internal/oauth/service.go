@@ -3171,7 +3171,7 @@ func (s *Service) handleAuthorizationCodeGrant(c *gin.Context) {
 
 	s.logger.Debug("Token request received",
 		zap.String("client_id", clientID),
-		zap.String("redirect_uri", redirectURI),
+		logsafe.String("redirect_uri", redirectURI),
 		zap.Bool("has_code", code != ""),
 		zap.Bool("has_verifier", codeVerifier != ""))
 

@@ -10,6 +10,7 @@ import (
 	"go.uber.org/zap"
 
 	apperrors "github.com/openidx/openidx/internal/common/errors"
+	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -683,7 +684,7 @@ func (s *Service) handleDeleteServicePolicy(c *gin.Context) {
 	}
 
 	if err := s.ziti().DeleteServicePolicy(c.Request.Context(), zitiID); err != nil {
-		s.logger.Error("failed to delete service policy from controller", zap.String("id", id), zap.Error(err))
+		s.logger.Error("failed to delete service policy from controller", logsafe.String("id", id), zap.Error(err))
 	}
 
 	s.db.Pool.Exec(c.Request.Context(), "DELETE FROM ziti_service_policies WHERE id=$1 AND org_id=$2", id, org.ID)

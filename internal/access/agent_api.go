@@ -877,7 +877,7 @@ func (h *AgentAPIHandler) HandleReport(c *gin.Context) {
 	}
 
 	h.logger.Info("agent report received",
-		zap.String("agent_id", agentID),
+		logsafe.String("agent_id", agentID),
 		zap.Int("result_count", len(report.Results)),
 	)
 
@@ -939,7 +939,7 @@ func (h *AgentAPIHandler) HandleReport(c *gin.Context) {
 			h.bridgeDevicePostureResult(ctx, agentID, r.CheckType, r.Result.Status, detailsJSON)
 			if dbErr != nil {
 				h.logger.Warn("Failed to persist posture result",
-					zap.String("agent_id", agentID),
+					logsafe.String("agent_id", agentID),
 					zap.String("check_type", r.CheckType),
 					zap.Error(dbErr))
 			}
@@ -987,7 +987,7 @@ func (h *AgentAPIHandler) HandleReport(c *gin.Context) {
 		`, complianceScore, complianceStatus, now, agentID)
 		if dbErr != nil {
 			h.logger.Warn("Failed to update agent compliance",
-				zap.String("agent_id", agentID),
+				logsafe.String("agent_id", agentID),
 				zap.Error(dbErr))
 		}
 	}
@@ -1478,7 +1478,7 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 	if err != nil {
 		// Agent not found or DB error — return defaults.
 		h.logger.Warn("HandleConfig: could not fetch agent status",
-			zap.String("agent_id", agentID), zap.Error(err))
+			logsafe.String("agent_id", agentID), zap.Error(err))
 		c.JSON(http.StatusOK, defaultAgentConfig())
 		return
 	}
@@ -1538,7 +1538,7 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 		rows, queryErr := h.db.Pool.Query(ctx, query, args...)
 		if queryErr != nil {
 			h.logger.Warn("HandleConfig: could not query posture_checks",
-				zap.String("agent_id", agentID), zap.Error(queryErr))
+				logsafe.String("agent_id", agentID), zap.Error(queryErr))
 			c.JSON(http.StatusOK, h.defaultConfigWithSupport(ctx, agentID))
 			return
 		}
@@ -1586,7 +1586,7 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 			cfg.KioskPolicy = kp
 		} else if kpErr != nil {
 			h.logger.Warn("HandleConfig: kiosk policy resolution failed",
-				zap.String("agent_id", agentID), zap.Error(kpErr))
+				logsafe.String("agent_id", agentID), zap.Error(kpErr))
 		}
 
 		// Phase 4: embed an in-flight remote-support session pointer if one
@@ -1804,7 +1804,7 @@ func (h *AgentAPIHandler) HandleRevokeAgent(c *gin.Context) {
 		)
 		if err != nil {
 			h.logger.Error("HandleRevokeAgent: failed to update status",
-				zap.String("agent_id", agentID), zap.Error(err))
+				logsafe.String("agent_id", agentID), zap.Error(err))
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to revoke agent"})
 			return
 		}
@@ -1813,7 +1813,7 @@ func (h *AgentAPIHandler) HandleRevokeAgent(c *gin.Context) {
 		if h.zm != nil && zitiIdentityID != "" {
 			if delErr := h.zm.DeleteIdentity(ctx, zitiIdentityID); delErr != nil {
 				h.logger.Warn("HandleRevokeAgent: failed to delete Ziti identity",
-					zap.String("agent_id", agentID),
+					logsafe.String("agent_id", agentID),
 					zap.String("ziti_identity_id", zitiIdentityID),
 					zap.Error(delErr))
 			}
@@ -1822,11 +1822,11 @@ func (h *AgentAPIHandler) HandleRevokeAgent(c *gin.Context) {
 		// No DB but ZitiManager present — best-effort removal using agentID as identity name.
 		if delErr := h.zm.DeleteIdentity(context.Background(), agentID); delErr != nil {
 			h.logger.Warn("HandleRevokeAgent: failed to delete Ziti identity (no db)",
-				zap.String("agent_id", agentID), zap.Error(delErr))
+				logsafe.String("agent_id", agentID), zap.Error(delErr))
 		}
 	}
 
-	h.logger.Info("Agent revoked", zap.String("agent_id", agentID))
+	h.logger.Info("Agent revoked", logsafe.String("agent_id", agentID))
 	h.logAuditEvent("agent.revoked", agentID, "success", "admin action")
 	h.logAuditEventToDB(c.Request.Context(), "agent.revoked", agentID, "success", "admin action")
 	c.JSON(http.StatusOK, gin.H{"status": "revoked", "agent_id": agentID})
@@ -1851,7 +1851,7 @@ func (h *AgentAPIHandler) HandleApproveAgent(c *gin.Context) {
 		)
 		if err != nil {
 			h.logger.Error("HandleApproveAgent: failed to update status",
-				zap.String("agent_id", agentID), zap.Error(err))
+				logsafe.String("agent_id", agentID), zap.Error(err))
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to approve agent"})
 			return
 		}
@@ -1867,7 +1867,7 @@ func (h *AgentAPIHandler) HandleApproveAgent(c *gin.Context) {
 			zitiID, zitiJWT, zitiErr := h.zm.CreateIdentity(ctx, agentID, "Device", []string{"openidx-agent"})
 			if zitiErr != nil {
 				h.logger.Warn("HandleApproveAgent: failed to create Ziti identity",
-					zap.String("agent_id", agentID), zap.Error(zitiErr))
+					logsafe.String("agent_id", agentID), zap.Error(zitiErr))
 			} else {
 				h.db.Pool.Exec(ctx,
 					`UPDATE enrolled_agents SET ziti_identity_id = $1 WHERE agent_id = $2`,
@@ -1877,7 +1877,7 @@ func (h *AgentAPIHandler) HandleApproveAgent(c *gin.Context) {
 		}
 	}
 
-	h.logger.Info("Agent approved", zap.String("agent_id", agentID))
+	h.logger.Info("Agent approved", logsafe.String("agent_id", agentID))
 	h.logAuditEvent("agent.approved", agentID, "success", "admin action")
 	h.logAuditEventToDB(c.Request.Context(), "agent.approved", agentID, "success", "admin action")
 	c.JSON(http.StatusOK, response)
@@ -2159,13 +2159,13 @@ func (h *AgentAPIHandler) HandleRevokeToken(c *gin.Context) {
 		)
 		if err != nil {
 			h.logger.Error("HandleRevokeToken: failed to revoke token",
-				zap.String("token_id", tokenID), zap.Error(err))
+				logsafe.String("token_id", tokenID), zap.Error(err))
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to revoke token"})
 			return
 		}
 	}
 
-	h.logger.Info("Enrollment token revoked", zap.String("token_id", tokenID))
+	h.logger.Info("Enrollment token revoked", logsafe.String("token_id", tokenID))
 	h.logAuditEvent("token.revoked", tokenID, "success", "admin action")
 	h.logAuditEventToDB(c.Request.Context(), "token.revoked", tokenID, "success", "admin action")
 	c.JSON(http.StatusOK, gin.H{"status": "revoked", "id": tokenID})

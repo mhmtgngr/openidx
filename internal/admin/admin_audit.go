@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -276,7 +277,7 @@ func (s *Service) handleGetAdminAuditEntry(c *gin.Context) {
 	)
 
 	if err != nil {
-		s.logger.Debug("Admin audit entry not found", zap.String("id", id), zap.Error(err))
+		s.logger.Debug("Admin audit entry not found", logsafe.String("id", id), zap.Error(err))
 		c.JSON(http.StatusNotFound, gin.H{"error": "audit entry not found"})
 		return
 	}

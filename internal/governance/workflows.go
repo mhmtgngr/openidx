@@ -699,7 +699,7 @@ func (s *Service) handleApproveRequest(c *gin.Context) {
 			// to land in this branch is the SoD gate refusing the role, which
 			// is a policy answer they need to read, not a line in a server log.
 			s.logger.Error("Failed to fulfill approved request",
-				zap.String("request_id", id), zap.Error(fulfillErr))
+				logsafe.String("request_id", id), zap.Error(fulfillErr))
 			c.JSON(http.StatusConflict, gin.H{
 				"error":   "approval recorded, but the access was not granted",
 				"status":  "approved",

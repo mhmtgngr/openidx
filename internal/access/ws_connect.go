@@ -38,6 +38,7 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/crypto/ssh"
 
+	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -184,14 +185,14 @@ func (s *Service) handlePamWSConnect(c *gin.Context) {
 	if pinnedHostKey == "" {
 		if s.config != nil && s.config.PAMSSHRequireHostKey {
 			s.logger.Warn("ws-connect: refused, entry pins no ssh host key and PAM_SSH_REQUIRE_HOST_KEY is on",
-				zap.String("entry_id", entryID))
+				logsafe.String("entry_id", entryID))
 			c.JSON(http.StatusForbidden, gin.H{"error": "this entry has no pinned SSH host key"})
 			return
 		}
 		// Not an error, but not silent either: an operator asking "which of my
 		// entries accept any host key" has to be able to answer it.
 		s.logger.Warn("ws-connect: ssh host key not pinned for this entry",
-			zap.String("entry_id", entryID), zap.String("host", host))
+			logsafe.String("entry_id", entryID), zap.String("host", host))
 	}
 	sshConfig, cfgErr := buildSSHClientConfig(username, secretType, cred, pinnedHostKey)
 	// Zero the plaintext as soon as the signer/password is built.
