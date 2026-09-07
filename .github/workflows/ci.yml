@@ -467,7 +467,16 @@ jobs:
           path: bin/
           retention-days: 7
 
-  # Parallel test execution by package
+  # Parallel test execution by package.
+  #
+  # `package` is the label the check carries; `paths` is what actually runs.
+  # They were one field until this list was found to be missing cmd/ entirely —
+  # seven production-config gate tests, one per service, red for several pushes
+  # and reported by nothing here. Splitting the two lets one entry cover several
+  # small packages without inventing a directory that does not exist, and
+  # tools/testmatrix fails the build when a package holding tests is named by
+  # neither this list nor its register. Keep the two halves consistent: the
+  # guard reads `paths`, a human reads `package`.
   test-unit:
     name: Unit Tests (${{ matrix.package }})
     runs-on: ubuntu-latest
@@ -477,31 +486,80 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        package:
-          - internal/access
-          - internal/admin
-          - internal/apikeys
-          - internal/audit
-          - internal/auth
-          - internal/common
-          - internal/directory
-          - internal/email
-          - internal/gateway
-          - internal/governance
-          - internal/health
-          - internal/identity
-          - internal/metrics
-          - internal/middleware
-          - internal/migrations
-          - internal/notifications
-          - internal/oauth
-          - internal/organization
-          - internal/portal
-          - internal/provisioning
-          - internal/risk
-          - internal/server
-          - internal/webhooks
-          - pkg/
+        include:
+          - package: internal/access
+            paths: ./internal/access/...
+          - package: internal/admin
+            paths: ./internal/admin/...
+          - package: internal/apikeys
+            paths: ./internal/apikeys/...
+          - package: internal/audit
+            paths: ./internal/audit/...
+          - package: internal/auth
+            paths: ./internal/auth/...
+          - package: internal/common
+            paths: ./internal/common/...
+          - package: internal/directory
+            paths: ./internal/directory/...
+          - package: internal/email
+            paths: ./internal/email/...
+          - package: internal/gateway
+            paths: ./internal/gateway/...
+          - package: internal/governance
+            paths: ./internal/governance/...
+          - package: internal/health
+            paths: ./internal/health/...
+          - package: internal/identity
+            paths: ./internal/identity/...
+          - package: internal/metrics
+            paths: ./internal/metrics/...
+          - package: internal/middleware
+            paths: ./internal/middleware/...
+          - package: internal/migrations
+            paths: ./internal/migrations/...
+          - package: internal/notifications
+            paths: ./internal/notifications/...
+          - package: internal/oauth
+            paths: ./internal/oauth/...
+          - package: internal/organization
+            paths: ./internal/organization/...
+          - package: internal/portal
+            paths: ./internal/portal/...
+          - package: internal/provisioning
+            paths: ./internal/provisioning/...
+          - package: internal/risk
+            paths: ./internal/risk/...
+          - package: internal/server
+            paths: ./internal/server/...
+          - package: internal/webhooks
+            paths: ./internal/webhooks/...
+          - package: pkg/
+            paths: ./pkg/...
+          # Every service's main package. Each carries a
+          # *_ProductionConfigValidation test that is the only automated proof
+          # that that service accepts a correctly configured production start
+          # and refuses a weak one; all seven were red for several pushes with
+          # no job here to say so.
+          - package: cmd
+            paths: ./cmd/...
+          # The gates' own self-tests. The lint jobs below `go run` these tools;
+          # until this entry existed, nothing ran `go test` on the registers
+          # that keep their verdicts honest.
+          - package: tools
+            paths: ./tools/...
+          # The four leaf packages that decide whether access is allowed,
+          # elevated or revoked. Small enough to share a runner, load-bearing
+          # enough that they must not share one with something unrelated.
+          - package: internal/abac+appaccess+jitgrant+revocation
+            paths: ./internal/abac/... ./internal/appaccess/... ./internal/jitgrant/... ./internal/revocation/...
+          - package: internal/vault+credentials+signingkeys
+            paths: ./internal/vault/... ./internal/credentials/... ./internal/signingkeys/...
+          - package: internal/ai+api+backup+intelligence+scimclient+selfheal+sms
+            paths: ./internal/ai/... ./internal/api/... ./internal/backup/... ./internal/intelligence/... ./internal/scimclient/... ./internal/selfheal/... ./internal/sms/...
+          # Go tests that assert things about the deployment surface and the
+          # published specs rather than about a service.
+          - package: deploy+deployments+test/openapi
+            paths: ./deploy/... ./deployments/... ./test/openapi/...
 
     services:
       postgres:
@@ -547,7 +605,7 @@ jobs:
             ${{ runner.os }}-go-build-${{ env.GO_VERSION }}-
             ${{ runner.os }}-go-build-
 
-      # The matrix value is an import path ("internal/metrics", "pkg/"), so it
+      # The matrix label reads like a path ("internal/metrics", "pkg/"), so it
       # cannot go into a filename as-is: -coverprofile=coverage_internal/metrics.out
       # asks Go to write into a directory that does not exist, and it fails in
       # under a second, before compiling a single package. That is what the old
@@ -578,7 +636,7 @@ jobs:
           # -timeout for the same reason test-race carries one: Go's default
           # ten minutes per package is a bound for uninstrumented tests, and
           # under -race it stops distinguishing a hang from a slow runner.
-          go test -v -race -timeout 20m -coverprofile=coverage_${{ steps.cov.outputs.slug }}.out -covermode=atomic ./${{ matrix.package }}/...
+          go test -v -race -timeout 20m -coverprofile=coverage_${{ steps.cov.outputs.slug }}.out -covermode=atomic ${{ matrix.paths }}
 
       # Upload whatever coverage was produced even when the tests failed, so a
       # red run still yields a coverage artifact to inspect.
@@ -818,7 +876,15 @@ jobs:
           # informational while PRs #102, #105, #106, #107, #108, #110,
           # #112, and #114 worked through the layered bugs that the
           # foundation surfaced.
-          go test -v -tags=integration -timeout=20m ./test/integration/...
+          #
+          # cmd/rekey is here rather than in the unit matrix because its only
+          # test file is behind the same `integration` tag, so every job that
+          # does not pass -tags compiles zero tests out of that package and
+          # reports success. It had never run anywhere: a 294-line end-to-end
+          # proof that a KEK rotation re-seals every encrypted value under the
+          # new key and leaves the plaintext intact — the tool an operator uses
+          # after a key compromise — going through CI as an empty package.
+          go test -v -tags=integration -timeout=20m ./test/integration/... ./cmd/rekey/...
 
   # Benchmark regression detection
   # status-check: informational — publishes a comparison comment; a slower
@@ -1246,6 +1312,70 @@ jobs:
             echo '```'
             head -60 ds.out
             tail -n1 ds.err
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
+
+  # testmatrix holds this file next to the tree: every directory that contains a
+  # _test.go, against every path the unit matrix above actually names.
+  #
+  # The matrix was a hand-written list of internal/* and pkg/. It did not name
+  # cmd/, so the ten service main packages had no job — including the seven
+  # *_ProductionConfigValidation tests, one per service, each being that
+  # service's only automated proof that it accepts a correct production start
+  # and refuses a weak one. When AUDIT_CHAIN_SECRET became required, all seven
+  # went red and stayed red across several pushes with nothing on the pull
+  # request to say so.
+  #
+  # They were not unverified — test-race runs `go test -race ./...` over the
+  # whole module — but that arrives twenty minutes in under a check named "Race
+  # Detector", and a red tick with that name reads as a concurrency problem, not
+  # as "the config gate is broken in seven services". A signal that late and
+  # that misnamed is most of the way to no signal.
+  #
+  # The gate also refuses to accept coverage that compiles nothing: cmd/rekey
+  # sits under ./cmd/... and its only test file is behind `//go:build
+  # integration`, so it had gone through CI its whole life as an empty package —
+  # a 294-line proof that a KEK rotation re-seals every encrypted value while
+  # leaving the plaintext readable, never once executed.
+  testmatrix:
+    name: Every tested package has a job
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.go_changed == 'true'
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Self-test the tool first
+        # A guard whose own cases do not pass has no standing to fail a build.
+        run: go test ./tools/testmatrix/
+
+      - name: Run testmatrix (hard gate)
+        run: |
+          set +e
+          go run ./tools/testmatrix -fail > tm.out 2> tm.err
+          rc=$?
+          set -e
+          {
+            echo "## testmatrix — packages whose tests no job runs"
+            echo
+            if [ "$rc" -ne 0 ]; then
+              echo "❌ **Gate failed.** A package here holds tests that no named job runs, or is covered only by a job that passes no build tag and so compiles none of them. Add it to the \`test-unit\` matrix as a \`package\`/\`paths\` pair (one entry may list several directories), or name it in the command of the job that does run it and record that in \`tools/testmatrix/known.go\`."
+            else
+              echo "✅ $(tail -n1 tm.out 2>/dev/null || echo 'every package holding tests is run by a named job')"
+            fi
+            echo
+            echo '```'
+            head -40 tm.out
+            tail -n1 tm.err
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           exit $rc
@@ -1880,6 +2010,7 @@ jobs:
       - test-integration
       - test-race
       - test-unit
+      - testmatrix
       - ui-safety-guards
       - vulnerability-check
       - zeroanswer

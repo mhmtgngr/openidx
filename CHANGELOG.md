@@ -94,6 +94,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   this branch, so the requirement had been holding a compiled-in Rego runtime
   the product never called. Policy decisions go to the OPA **server** over HTTP,
   as they always did.
+- **`cmd/` had no unit-test job, and one package's tests had never run at all
+  (`tools/testmatrix`, new gate).** The unit-test matrix in CI was a
+  hand-written list of `internal/*` and `pkg/`. It did not name `cmd/`, so the
+  ten service main packages had no per-package job — which is how the seven red
+  production-config tests below went unremarked across several pushes. They were
+  never unverified (`go test -race ./...` covers the module), but that signal
+  arrives twenty minutes in under a check named "Race Detector", and a red tick
+  with that name reads as a concurrency problem rather than as a broken
+  production gate in seven services. The matrix now names every package, in
+  `package`/`paths` pairs so several small directories can share a runner, and
+  `tools/testmatrix` fails the build when a directory holding `_test.go` files
+  is named by neither the matrix nor a register entry citing the job that does
+  run it — the same inversion applied to `tools/orgscope`, for the same reason:
+  a hand-maintained allow-list cannot notice what is missing from it.
+  The gate also refuses coverage that compiles nothing, which turned up
+  `cmd/rekey`: its single test file is behind `//go:build integration`, so
+  although the package sits under `./cmd/...` every job compiled zero tests out
+  of it. Two tests — a 294-line end-to-end proof that rotating the key-encryption
+  key re-seals every stored secret under the new key and leaves the plaintext
+  readable, the tool an operator reaches for after a key compromise — had never
+  executed anywhere. They pass; the Integration Tests job now names
+  `./cmd/rekey/...` so they keep doing so.
 - **Seven production-config gate tests went stale when the audit chain became
   required (`cmd/*/main_test.go`).** `AUDIT_CHAIN_SECRET` joined the
   `ValidateProduction` critical list in the audit hash-chain change above. The
