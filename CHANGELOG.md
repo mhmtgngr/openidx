@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`tools/deadservice` — a gate for whole services no binary can reach.**
+  `internal/governance/request.go` is 676 lines of access-request workflow:
+  submit, approve, deny, cancel, manager resolution, notification hooks, and an
+  escalation sweep that finds every request past its approval SLA and adds the
+  escalation approvers. It has tests. It is the only code that writes
+  `request_approval_chains`, a table migration v58 created for it and v64 put
+  under the RLS belt. `NewRequestService` is called nowhere: the live workflow
+  is a different implementation in `workflows.go`, which never writes that
+  table, so the sweep's `INNER JOIN` matches zero rows on every install and
+  would keep matching zero even if the checker were started. Nothing in the
+  repository could see this — it compiles, its SQL is valid and carries its
+  tenant predicate, its tests are real tests exercising real code, and
+  `tablewriters` counts its `INSERT` as a writer because a census of SQL
+  literals cannot tell a statement that runs from one that cannot. An earlier
+  fix on this branch spent its effort on a bug inside that sweep. The gate is
+  Rapid Type Analysis from every binary's `main`; a finding is a type whose
+  constructor is unreachable and not one of whose methods any binary reaches,
+  which is the shape that misleads rather than every unused helper. The register
+  opened at **41**, with a verdict apiece saying whether the answer is to wire
+  it or delete it, and it shrinks. The largest entry is its own task: the
+  tamper-evident HMAC hash-chain audit log advertised on the docs index, the
+  architecture page, the audit reference and the README's readiness checklist is
+  implemented in `internal/audit/logger.go`, reachable from nothing, and no
+  migration creates a column to store a chain in.
+
 - **`tools/zeroanswer` — a gate for the defect class behind the three entries
   below.** A one-row aggregate (`COUNT`, `SUM`, `AVG`, `MIN`, `MAX`, `EXISTS`)
   always returns exactly one row, so a discarded `Scan` error there can never

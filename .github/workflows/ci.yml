@@ -1193,6 +1193,63 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           exit $rc
 
+  # deadservice holds the call graph next to the code: Rapid Type Analysis from
+  # every binary's main, against every service type the tree declares. A type
+  # whose constructor is never called and not one of whose methods is reachable
+  # is a feature that cannot run -- and it is the version a reader finds first.
+  #
+  # internal/governance/request.go is 676 lines of access-request workflow with
+  # an escalation sweep, tests, and two migrations for the table only it writes.
+  # NewRequestService is called nowhere; the live workflow is a different
+  # implementation in workflows.go. An earlier fix in this repository spent its
+  # effort on a bug inside that escalation sweep -- code that has never run.
+  #
+  # Nothing else in this repository could see it: it compiles, its SQL is valid
+  # and carries its tenant predicate, its tests are real tests exercising real
+  # code, and tablewriters counts its INSERT as a writer because a census of SQL
+  # literals cannot tell a statement that runs from one that cannot.
+  deadservice:
+    name: Unreachable-service lint
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.go_changed == 'true'
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Self-test the tool first
+        # A guard whose own cases do not pass has no standing to fail a build.
+        run: go test -short ./tools/deadservice/
+
+      - name: Run deadservice (hard gate)
+        run: |
+          set +e
+          go run ./tools/deadservice -fail > ds.out 2> ds.err
+          rc=$?
+          set -e
+          {
+            echo "## deadservice — whole services no binary can reach"
+            echo
+            if [ "$rc" -ne 0 ]; then
+              echo "❌ **Gate failed.** A NEW finding is a service type whose constructor is never called and none of whose methods any binary reaches: it looks finished in review, it may have tests and migrations, and it cannot run. Wire it, delete it, or record the verdict in \`tools/deadservice/known.go\`. A STALE entry is one a binary reaches now, and its line must go — the register only shrinks."
+            else
+              echo "✅ $(tail -n1 ds.err 2>/dev/null || echo 'every service type is reachable or carries a verdict')"
+            fi
+            echo
+            echo '```'
+            head -60 ds.out
+            tail -n1 ds.err
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
+
   # tablewriters holds the schema next to the code: every table the migration
   # registry creates, against every table a SQL literal in the product writes.
   # A table with no writer is a measurement that cannot measure -- the Usage
@@ -1800,6 +1857,7 @@ jobs:
     needs:
       - build-matrix
       - ci-resilience-guards
+      - deadservice
       - detect-changes
       - e2e
       - fault-matrix
