@@ -9,6 +9,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A compliance report could be produced entirely out of measurements nobody
+  took.** Every figure in the SOC 2, ISO 27001 and GDPR reports came from an
+  aggregate — `COUNT`, `SUM`, `AVG`, `MAX` — and every one of those queries
+  discarded its error. An aggregate returns exactly one row, always, so a
+  failed `Scan` there can never mean "there is no data": it means the query did
+  not run, and the destination kept its zero. The report then published that
+  zero as a measurement. *"0 overdue access reviews." "0 data-subject requests
+  outstanding." "Average session length: 0 hours."* — in a document an auditor
+  reads as evidence. This is not hypothetical: two queries in this file named
+  columns the schema does not have (`access_reviews.due_date`,
+  `sessions.created_at`), and both were found by a tool that plans the SQL, not
+  by anything in the reporting code, because nothing in the reporting code was
+  looking at the error. A third failure mode needed no broken query at all —
+  the organization was read as `org, _ := orgctx.From(ctx)`, so a report
+  generated without a tenant filtered every metric on an empty `org_id` and
+  came back all zeros. Each section now runs through `metricQuery`, which
+  remembers the first measurement that could not be taken and names it; a
+  section that cannot be measured fails the report and the endpoint answers
+  500, because a compliance report is the one document where *"I could not
+  measure this"* must never be rendered as a measurement. The two grouped reads
+  behind ISO 27001 A.12 are the same defect in multi-row shape — an `if err ==
+  nil` around the loop meant a failed query left the per-day breakdown empty,
+  which is a **logging coverage of 0%** and a `non_compliant` verdict on the
+  strength of a query that never ran. **The tests that covered all this could
+  not fail:** three of them built a service with no database at all, generated
+  all three reports and asserted things like `TotalUsers >= 0` — true of the
+  zero value, which was the only value any field ever held. They are replaced
+  by one test that asserts the refusal, and by a real-schema test that
+  generates all three reports against a migrated database and checks the
+  numbers against seeded rows.
+
 - **Every audit event the access service posted was filed under the default
   organisation, and a refusal was silent.** `internal/access.logAuditEvent` is
   how the most sensitive actions in the product reach the audit trail — every

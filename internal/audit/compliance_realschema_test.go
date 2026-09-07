@@ -149,7 +149,10 @@ func TestComplianceControlsAgainstTheRealSchema(t *testing.T) {
 	from, to := time.Now().Add(-24*time.Hour), time.Now().Add(time.Hour)
 
 	t.Run("an overdue access review is counted", func(t *testing.T) {
-		m := svc.getAccessReviewMetrics(ctx, from, to)
+		m, err := svc.getAccessReviewMetrics(ctx, from, to)
+		if err != nil {
+			t.Fatalf("access review metrics: %v", err)
+		}
 		if m.OverdueReviews != 1 {
 			t.Errorf("OverdueReviews = %d, want 1 -- a review a week past its end_date "+
 				"and still pending", m.OverdueReviews)
@@ -157,7 +160,10 @@ func TestComplianceControlsAgainstTheRealSchema(t *testing.T) {
 	})
 
 	t.Run("session length is measured", func(t *testing.T) {
-		m := svc.getSessionManagementMetrics(ctx)
+		m, err := svc.getSessionManagementMetrics(ctx)
+		if err != nil {
+			t.Fatalf("session management metrics: %v", err)
+		}
 		if m.ActiveSessions != 1 {
 			t.Errorf("ActiveSessions = %d, want 1", m.ActiveSessions)
 		}
@@ -168,7 +174,10 @@ func TestComplianceControlsAgainstTheRealSchema(t *testing.T) {
 	})
 
 	t.Run("data access counts what the product records as a read", func(t *testing.T) {
-		m := svc.getDataAccessMetrics(ctx, from, to)
+		m, err := svc.getDataAccessMetrics(ctx, from, to)
+		if err != nil {
+			t.Fatalf("data access metrics: %v", err)
+		}
 		// The credential reveal: the row this product actually writes, and the
 		// one the control missed on every report it has ever produced.
 		if got := m.AccessByDataType["pam_entry"]; got != 1 {
@@ -212,6 +221,53 @@ func TestComplianceControlsAgainstTheRealSchema(t *testing.T) {
 		}
 		if !evidenced {
 			t.Errorf("CC6 evidence does not carry the measured key counts: %v", a.Evidence)
+		}
+	})
+
+	// The whole document, end to end, against a migrated schema.
+	//
+	// Every section above is a gatherer tested on its own. This drives the three
+	// generators an operator actually calls, because the failure this file
+	// exists for is not one metric being wrong -- it is a REPORT being produced
+	// out of metrics nobody measured. The old no-database tests asserted these
+	// same three reports and passed with every field at its zero value; the
+	// only way to tell that apart from a real report is to hold one of each
+	// next to real rows.
+	t.Run("the three reports are produced from measured data", func(t *testing.T) {
+		soc2, err := svc.GenerateSOC2Report(ctx, from, to, "test-user")
+		if err != nil {
+			t.Fatalf("SOC 2 report: %v", err)
+		}
+		if soc2.AccessReviews.OverdueReviews != 1 {
+			t.Errorf("SOC 2 overdue reviews = %d, want the one seeded review",
+				soc2.AccessReviews.OverdueReviews)
+		}
+		if soc2.SessionMgmt.ActiveSessions != 1 {
+			t.Errorf("SOC 2 active sessions = %d, want 1", soc2.SessionMgmt.ActiveSessions)
+		}
+		if soc2.MFAAdoption.TotalUsers == 0 {
+			t.Error("SOC 2 reports zero enabled users against a schema that has some; " +
+				"that is the shape of a report built from queries that did not run")
+		}
+
+		iso, err := svc.GenerateISO27001Report(ctx, from, to, "test-user")
+		if err != nil {
+			t.Fatalf("ISO 27001 report: %v", err)
+		}
+		if iso.AccessControl.TotalUsers == 0 {
+			t.Error("ISO 27001 reports zero users")
+		}
+		if iso.OperationalSecurity.TotalEvents == 0 {
+			t.Error("ISO 27001 reports zero audit events against a trail this test seeded")
+		}
+
+		gdpr, err := svc.GenerateGDPRReport(ctx, from, to, "test-user")
+		if err != nil {
+			t.Fatalf("GDPR report: %v", err)
+		}
+		if gdpr.DataAccessLogs.TotalAccessEvents != 2 {
+			t.Errorf("GDPR data-access events = %d, want the two seeded reads",
+				gdpr.DataAccessLogs.TotalAccessEvents)
 		}
 	})
 }

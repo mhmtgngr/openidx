@@ -128,7 +128,10 @@ func TestGetConsentMetrics_RealTable(t *testing.T) {
 	s := &Service{db: db, logger: zap.NewNop()}
 
 	// Org A: 2 records, 1 active, 1 withdrawn, compliant, real timestamp.
-	mA := s.getConsentMetrics(orgctx.With(context.Background(), orgctx.Org{ID: orgA}))
+	mA, err := s.getConsentMetrics(orgctx.With(context.Background(), orgctx.Org{ID: orgA}))
+	if err != nil {
+		t.Fatalf("org A consent metrics: %v", err)
+	}
 	if mA.TotalConsentRecords != 2 || mA.ActiveConsents != 1 || mA.WithdrawnConsents != 1 {
 		t.Fatalf("org A metrics: got total=%d active=%d withdrawn=%d", mA.TotalConsentRecords, mA.ActiveConsents, mA.WithdrawnConsents)
 	}
@@ -140,14 +143,20 @@ func TestGetConsentMetrics_RealTable(t *testing.T) {
 	}
 
 	// Org B sees only its own record — no cross-tenant bleed.
-	mB := s.getConsentMetrics(orgctx.With(context.Background(), orgctx.Org{ID: orgB}))
+	mB, err := s.getConsentMetrics(orgctx.With(context.Background(), orgctx.Org{ID: orgB}))
+	if err != nil {
+		t.Fatalf("org B consent metrics: %v", err)
+	}
 	if mB.TotalConsentRecords != 1 || mB.ActiveConsents != 1 || mB.WithdrawnConsents != 0 {
 		t.Fatalf("org B metrics: got total=%d active=%d withdrawn=%d", mB.TotalConsentRecords, mB.ActiveConsents, mB.WithdrawnConsents)
 	}
 
 	// An org with genuinely zero consents is non_compliant — but that verdict
 	// now comes from real data, not from a swallowed query error.
-	mC := s.getConsentMetrics(orgctx.With(context.Background(), orgctx.Org{ID: orgC}))
+	mC, err := s.getConsentMetrics(orgctx.With(context.Background(), orgctx.Org{ID: orgC}))
+	if err != nil {
+		t.Fatalf("org C consent metrics: %v", err)
+	}
 	if mC.TotalConsentRecords != 0 || mC.ComplianceStatus != "non_compliant" {
 		t.Fatalf("org C: want 0/non_compliant, got %d/%s", mC.TotalConsentRecords, mC.ComplianceStatus)
 	}

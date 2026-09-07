@@ -9,164 +9,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
-
-func TestGenerateSOC2Report(t *testing.T) {
-	// Create test service
-	service := createTestService(t)
-	ctx := context.Background()
-
-	startDate := time.Now().UTC().Add(-30 * 24 * time.Hour)
-	endDate := time.Now().UTC()
-
-	report, err := service.GenerateSOC2Report(ctx, startDate, endDate, "test-user")
-	require.NoError(t, err)
-	require.NotNil(t, report)
-
-	// Verify report structure
-	assert.NotEmpty(t, report.ReportID)
-	assert.Equal(t, startDate, report.PeriodStart)
-	assert.Equal(t, endDate, report.PeriodEnd)
-	assert.Equal(t, "test-user", report.GeneratedBy)
-	assert.False(t, report.GeneratedAt.IsZero())
-
-	// Verify access review metrics
-	assert.GreaterOrEqual(t, report.AccessReviews.TotalReviews, 0)
-	assert.GreaterOrEqual(t, report.AccessReviews.PendingReviews, 0)
-	assert.GreaterOrEqual(t, report.AccessReviews.CompletedReviews, 0)
-	assert.GreaterOrEqual(t, report.AccessReviews.OverdueReviews, 0)
-	assert.GreaterOrEqual(t, report.AccessReviews.CompletionRate, 0.0)
-	assert.LessOrEqual(t, report.AccessReviews.CompletionRate, 100.0)
-	assert.Contains(t, []string{"compliant", "partial", "non_compliant"},
-		report.AccessReviews.ComplianceStatus)
-
-	// Verify password policy metrics
-	assert.Greater(t, report.PasswordPolicy.MinLength, 0)
-	assert.IsType(t, false, report.PasswordPolicy.RequireUppercase)
-	assert.IsType(t, false, report.PasswordPolicy.RequireLowercase)
-	assert.IsType(t, false, report.PasswordPolicy.RequireNumbers)
-	assert.IsType(t, false, report.PasswordPolicy.RequireSpecialChars)
-	assert.Contains(t, []string{"compliant", "partial", "non_compliant"},
-		report.PasswordPolicy.ComplianceStatus)
-
-	// Verify MFA adoption metrics
-	assert.GreaterOrEqual(t, report.MFAAdoption.TotalUsers, 0)
-	assert.GreaterOrEqual(t, report.MFAAdoption.UsersWithMFA, 0)
-	assert.GreaterOrEqual(t, report.MFAAdoption.UsersWithTOTP, 0)
-	assert.GreaterOrEqual(t, report.MFAAdoption.UsersWithWebAuthn, 0)
-	assert.GreaterOrEqual(t, report.MFAAdoption.AdoptionRate, 0.0)
-	assert.LessOrEqual(t, report.MFAAdoption.AdoptionRate, 100.0)
-	assert.Contains(t, []string{"compliant", "partial", "non_compliant"},
-		report.MFAAdoption.ComplianceStatus)
-
-	// Verify session management metrics
-	assert.GreaterOrEqual(t, report.SessionMgmt.ActiveSessions, 0)
-	assert.GreaterOrEqual(t, report.SessionMgmt.AverageSessionHours, 0.0)
-	assert.GreaterOrEqual(t, report.SessionMgmt.SessionTimeoutMins, 0)
-	assert.Contains(t, []string{"compliant", "partial", "non_compliant"},
-		report.SessionMgmt.ComplianceStatus)
-}
-
-func TestGenerateISO27001Report(t *testing.T) {
-	service := createTestService(t)
-	ctx := context.Background()
-
-	startDate := time.Now().UTC().Add(-30 * 24 * time.Hour)
-	endDate := time.Now().UTC()
-
-	report, err := service.GenerateISO27001Report(ctx, startDate, endDate, "test-user")
-	require.NoError(t, err)
-	require.NotNil(t, report)
-
-	// Verify report structure
-	assert.NotEmpty(t, report.ReportID)
-	assert.Equal(t, startDate, report.PeriodStart)
-	assert.Equal(t, endDate, report.PeriodEnd)
-	assert.Equal(t, "test-user", report.GeneratedBy)
-	assert.False(t, report.GeneratedAt.IsZero())
-
-	// Verify access control metrics
-	assert.GreaterOrEqual(t, report.AccessControl.TotalUsers, 0)
-	assert.GreaterOrEqual(t, report.AccessControl.AdminUsers, 0)
-	assert.GreaterOrEqual(t, report.AccessControl.RolesDefined, 0)
-	assert.GreaterOrEqual(t, report.AccessControl.GroupsDefined, 0)
-	assert.GreaterOrEqual(t, report.AccessControl.AdminRatio, 0.0)
-	assert.LessOrEqual(t, report.AccessControl.AdminRatio, 100.0)
-	assert.Contains(t, []string{"compliant", "partial", "non_compliant"},
-		report.AccessControl.ComplianceStatus)
-
-	// Verify cryptography metrics
-	assert.IsType(t, false, report.Cryptography.TLSEnabled)
-	assert.NotEmpty(t, report.Cryptography.TLSMinVersion)
-	assert.IsType(t, false, report.Cryptography.EncryptionAtRest)
-	assert.IsType(t, false, report.Cryptography.KeyRotationEnabled)
-	assert.Contains(t, []string{"compliant", "partial", "non_compliant"},
-		report.Cryptography.ComplianceStatus)
-
-	// Verify operational security metrics
-	assert.GreaterOrEqual(t, report.OperationalSecurity.TotalEvents, 0)
-	assert.NotNil(t, report.OperationalSecurity.EventsByType)
-	assert.NotNil(t, report.OperationalSecurity.EventsByDay)
-	assert.GreaterOrEqual(t, report.OperationalSecurity.FailedEvents, 0)
-	assert.GreaterOrEqual(t, report.OperationalSecurity.ErrorRate, 0.0)
-	assert.GreaterOrEqual(t, report.OperationalSecurity.LoggingCoverage, 0.0)
-	assert.LessOrEqual(t, report.OperationalSecurity.LoggingCoverage, 100.0)
-	assert.Contains(t, []string{"compliant", "partial", "non_compliant"},
-		report.OperationalSecurity.ComplianceStatus)
-}
-
-func TestGenerateGDPRReport(t *testing.T) {
-	service := createTestService(t)
-	ctx := context.Background()
-
-	startDate := time.Now().UTC().Add(-30 * 24 * time.Hour)
-	endDate := time.Now().UTC()
-
-	report, err := service.GenerateGDPRReport(ctx, startDate, endDate, "test-user")
-	require.NoError(t, err)
-	require.NotNil(t, report)
-
-	// Verify report structure
-	assert.NotEmpty(t, report.ReportID)
-	assert.Equal(t, startDate, report.PeriodStart)
-	assert.Equal(t, endDate, report.PeriodEnd)
-	assert.Equal(t, "test-user", report.GeneratedBy)
-	assert.False(t, report.GeneratedAt.IsZero())
-
-	// Verify data access metrics
-	assert.GreaterOrEqual(t, report.DataAccessLogs.TotalAccessEvents, 0)
-	assert.NotNil(t, report.DataAccessLogs.AccessByActor)
-	assert.NotNil(t, report.DataAccessLogs.AccessByDataType)
-	assert.Contains(t, []string{"compliant", "partial", "non_compliant"},
-		report.DataAccessLogs.ComplianceStatus)
-
-	// Verify consent metrics
-	assert.GreaterOrEqual(t, report.ConsentRecords.TotalConsentRecords, 0)
-	assert.GreaterOrEqual(t, report.ConsentRecords.ActiveConsents, 0)
-	assert.GreaterOrEqual(t, report.ConsentRecords.WithdrawnConsents, 0)
-	assert.GreaterOrEqual(t, report.ConsentRecords.PendingConsents, 0)
-	assert.Contains(t, []string{"compliant", "partial", "non_compliant"},
-		report.ConsentRecords.ComplianceStatus)
-
-	// Verify data subject request metrics
-	assert.GreaterOrEqual(t, report.DataSubjectRequests.TotalRequests, 0)
-	assert.NotNil(t, report.DataSubjectRequests.RequestsByType)
-	assert.GreaterOrEqual(t, report.DataSubjectRequests.PendingRequests, 0)
-	assert.GreaterOrEqual(t, report.DataSubjectRequests.CompletedRequests, 0)
-	assert.GreaterOrEqual(t, report.DataSubjectRequests.OverdueRequests, 0)
-	assert.GreaterOrEqual(t, report.DataSubjectRequests.AverageResponseDays, 0.0)
-	assert.Contains(t, []string{"compliant", "partial", "non_compliant"},
-		report.DataSubjectRequests.ComplianceStatus)
-
-	// Verify data deletion metrics
-	assert.GreaterOrEqual(t, report.DataDeletionRecords.TotalDeletionRequests, 0)
-	assert.GreaterOrEqual(t, report.DataDeletionRecords.CompletedDeletions, 0)
-	assert.GreaterOrEqual(t, report.DataDeletionRecords.PendingDeletions, 0)
-	assert.GreaterOrEqual(t, report.DataDeletionRecords.FailedDeletions, 0)
-	assert.GreaterOrEqual(t, report.DataDeletionRecords.AverageDeletionDays, 0.0)
-	assert.Contains(t, []string{"compliant", "partial", "non_compliant"},
-		report.DataDeletionRecords.ComplianceStatus)
-}
 
 func TestDetermineComplianceStatus(t *testing.T) {
 	tests := []struct {
@@ -396,39 +241,51 @@ func TestGDPRReportSerialization(t *testing.T) {
 	assert.Equal(t, report.DataSubjectRequests.ComplianceStatus, unmarshaled.DataSubjectRequests.ComplianceStatus)
 }
 
-// Run benchmarks
-func BenchmarkGenerateSOC2Report(b *testing.B) {
-	service := createTestService(&testing.T{})
-	ctx := context.Background()
-	startDate := time.Now().UTC().Add(-30 * 24 * time.Hour)
-	endDate := time.Now().UTC()
+// A compliance report that cannot be measured is refused, not published.
+//
+// This replaces three tests that could not fail. They built a Service whose
+// pool is nil, generated all three reports, and asserted things like
+// `assert.GreaterOrEqual(t, report.MFAAdoption.TotalUsers, 0)` -- true of the
+// zero value, and the zero value was all any of those fields ever held,
+// because every query in the report had been skipped. The reports were
+// complete documents made entirely of numbers nobody measured, and the suite
+// certified their shape.
+//
+// The two ways a report can arrive unmeasured are the two cases here: no
+// database, and no organization to scope the queries to. Both used to produce a
+// full report of zeros; both now produce an error, and the handler answers 500.
+func TestAnUnmeasurableComplianceReportIsRefused(t *testing.T) {
+	start := time.Now().UTC().Add(-30 * 24 * time.Hour)
+	end := time.Now().UTC()
+	orgCtx := orgctx.With(context.Background(), orgctx.Org{ID: "00000000-0000-0000-0000-000000000010"})
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = service.GenerateSOC2Report(ctx, startDate, endDate, "benchmark")
+	generators := map[string]func(*Service, context.Context) (interface{}, error){
+		"SOC 2": func(s *Service, ctx context.Context) (interface{}, error) {
+			return s.GenerateSOC2Report(ctx, start, end, "test-user")
+		},
+		"ISO 27001": func(s *Service, ctx context.Context) (interface{}, error) {
+			return s.GenerateISO27001Report(ctx, start, end, "test-user")
+		},
+		"GDPR": func(s *Service, ctx context.Context) (interface{}, error) {
+			return s.GenerateGDPRReport(ctx, start, end, "test-user")
+		},
 	}
-}
 
-func BenchmarkGenerateISO27001Report(b *testing.B) {
-	service := createTestService(&testing.T{})
-	ctx := context.Background()
-	startDate := time.Now().UTC().Add(-30 * 24 * time.Hour)
-	endDate := time.Now().UTC()
+	for name, generate := range generators {
+		t.Run(name+" without a database", func(t *testing.T) {
+			report, err := generate(createTestService(t), orgCtx)
+			require.Error(t, err, "a report generated with no database is a document of "+
+				"numbers nobody measured; it must not be produced")
+			assert.ErrorIs(t, err, errNoComplianceDatabase)
+			assert.Nil(t, report)
+		})
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = service.GenerateISO27001Report(ctx, startDate, endDate, "benchmark")
-	}
-}
-
-func BenchmarkGenerateGDPRReport(b *testing.B) {
-	service := createTestService(&testing.T{})
-	ctx := context.Background()
-	startDate := time.Now().UTC().Add(-30 * 24 * time.Hour)
-	endDate := time.Now().UTC()
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = service.GenerateGDPRReport(ctx, startDate, endDate, "benchmark")
+		t.Run(name+" without an organization", func(t *testing.T) {
+			report, err := generate(createTestService(t), context.Background())
+			require.Error(t, err, "every metric filters on org_id: with no organization "+
+				"in context each one comes back zero, and a report of zeros reads as a finding")
+			assert.Contains(t, err.Error(), "organization context")
+			assert.Nil(t, report)
+		})
 	}
 }
