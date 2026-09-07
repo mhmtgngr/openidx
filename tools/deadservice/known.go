@@ -33,45 +33,46 @@ var knownDead = map[string]string{
 	// GET /api/v1/audit/chain/verify answers whether the trail is intact -- so
 	// both entries left this register the way an entry is supposed to.
 
-	"internal/audit.AnomalyDetector": "brute-force and suspicious-pattern detection over audit events, with per-principal failed-login trackers and a DetectorConfig of thresholds. Nothing constructs it and no route exposes it. The live risk signals are elsewhere and unrelated: internal/admin/continuous_auth.go scores IP change, device and behaviour, and internal/risk scores logins. A SECOND IMPLEMENTATION of a job the product already does, minus the audit-event corpus this one would have read. Delete, or fold its thresholds into internal/risk.",
+	// internal/audit.AnomalyDetector is gone: brute-force and suspicious-pattern
+	// detection over audit events, with per-principal failed-login trackers and
+	// a DetectorConfig of thresholds, constructed by nothing. The live risk
+	// signals are elsewhere and unrelated -- internal/admin/continuous_auth.go
+	// scores IP change, device and behaviour, and internal/risk scores logins --
+	// so this was a second implementation minus the audit-event corpus it would
+	// have read.
 
-	// ---- auth --------------------------------------------------------------
+	// ---- risk ---------------------------------------------------------------
 	//
-	// auth.TokenService, auth.SessionService and auth.RBACMiddleware stood
-	// here: JWT mint/validate/revoke, Redis sessions with a concurrency cap,
-	// and gin RBAC enforcement, each constructed only by its own tests. All
-	// three are deleted -- the live equivalents are internal/oauth (tokens,
-	// sessions and the per-client concurrency policy) and each service's own
-	// auth middleware.
+	// All four risk entries are gone.
 	//
-	// One of them was load-bearing in the worst way. auth.UserRevocationKey
-	// lived in TokenService's file, and governance called it to write the
-	// marker that forces a reviewed user to re-authenticate -- to a key whose
-	// only reader was TokenService itself. internal/revocation now holds one
-	// definition of that marker, and the enforcement point reads what
-	// governance writes.
-
-	// ---- governance --------------------------------------------------------
+	// AlertManager: alert dedup, severity routing and delivery to a security
+	// mailing list. The detection and the record were never the gap --
+	// risk.Service.RunAnomalyCheck is wired into the identity service, runs the
+	// impossible-travel, brute-force and blocked-IP detectors on a login, and
+	// writes security_alerts, the table the console's Security Alerts page and
+	// the admin dashboard count both read. What AlertManager added was delivery,
+	// and nothing in the product sends one. Still open, and recorded here rather
+	// than lost with the type: an alert carries a remediation_actions array
+	// ("block_request", "notify_admin") that is persisted, displayed nowhere and
+	// acted on by nothing.
 	//
-	// governance.RequestService and governance.PolicyEvaluator have left this
-	// register the way an entry is supposed to: deleted. The first was 676
-	// lines of second access-request workflow whose escalation sweep could
-	// never match a row, plus request_approval_chains, the table only it wrote
-	// (migration v182 drops it). The second was the third OPA evaluator in the
-	// tree. JITService followed once the five live paths that read or revoked
-	// jit_grants -- the kill switch, the lifecycle sweep, deprovisioning, User
-	// Access 360 and the portal dashboard -- were pointed at the elevations the
-	// product actually grants (internal/jitgrant, migration v183).
-
-	// ---- risk --------------------------------------------------------------
-
-	"internal/risk.AlertManager": "security alert generation, deduplication, severity routing and delivery to a security-team mailing list, over its own AlertConfig. A SECOND IMPLEMENTATION -- and this entry previously said something stronger and wrong, that a high-risk login is scored, recorded and nobody told. It is not: risk.Service.RunAnomalyCheck is wired into the identity service through an adapter in cmd/identity-service/main.go, it runs the impossible-travel, brute-force and blocked-IP detectors on a login attempt, and its own CreateSecurityAlert writes security_alerts -- the table the console's Security Alerts page and the admin dashboard's count both read. What AlertManager adds over that is delivery: dedup, severity routing and an email to a security team. Nothing in the product sends one. So the verdict is: delete it, or lift its delivery half onto risk.Service, but the detection and the record are already there. One loose end it leaves behind: alerts carry a remediation_actions array (\"block_request\", \"notify_admin\") that is persisted, displayed nowhere and acted on by nothing.",
-
-	"internal/risk.BehaviorTracker": "behavioural baselines -- typical hours, locations, devices and resources per principal, with MaxDevices/MaxResources thresholds. internal/admin/continuous_auth.go computes a behavioural-anomaly factor of its own. A SECOND IMPLEMENTATION, and the richer of the two: decide which one is the product's, and delete the other.",
-
-	"internal/risk.DeviceFingerprinter": "device fingerprint capture and matching (canvas, WebGL, optional audio) with a fingerprint store. The live device signal is the posture agent plus device_trust. Unreachable, and its config comments describe browser-side collection nothing in web/admin-console performs. Delete unless the browser half is planned.",
-
-	"internal/risk.RiskAssessment": "the result type the three services above return. Dead with them; it will leave this register when they do.",
+	// BehaviorTracker: per-principal baselines of typical hours, locations,
+	// devices and resources. internal/admin/continuous_auth.go computes a
+	// behavioural-anomaly factor of its own, and that one runs. Its
+	// haversineDistance went to geo.go, because the impossible-travel detector
+	// and two live signals measure with it.
+	//
+	// DeviceFingerprinter: canvas/WebGL/audio fingerprint capture with a
+	// fingerprint store, whose configuration comments describe browser-side
+	// collection no console page performs. The live device signal is the posture
+	// agent and device_trust. TrustLevel and IsPrivateIP came out with it, into
+	// trust_level.go and ip.go, because the risk scorer uses both.
+	//
+	// RiskAssessment stays -- CalculateRiskScore returns it and the service acts
+	// on its Score and Recommendation. What left the register with it were its
+	// three methods, GetSignalSummary, ToJSON and GetHighRiskSignals: a
+	// reporting surface no caller anywhere used, whose only exercise was three
+	// tests written against it.
 
 	// ---- metrics -----------------------------------------------------------
 
@@ -167,10 +168,20 @@ var knownDead = map[string]string{
 
 	// ---- backup ------------------------------------------------------------
 
-	"internal/backup.LocalStorage": "the filesystem implementation of the backup Storage interface. cmd/backup takes a StorageDir and writes to it directly, so this and the interface are unused. AN ABSTRACTION NOBODY ADOPTED: adopt it in cmd/backup (which is where an S3 destination would have to plug in anyway) or delete the interface and both implementations.",
-	"internal/backup.Progress":     "the progress reporter internal/backup.LocalStorage and S3Storage would emit while copying. Unreachable with them, because cmd/backup does not use the Storage interface at all. Delete with it.",
-	"internal/backup.dirEntry":     "a fs.DirEntry shim internal/backup.LocalStorage.List builds while walking the backup directory. Unreachable with LocalStorage; delete with it.",
-	"internal/backup.fileInfo":     "the fs.FileInfo half of the same shim in internal/backup/storage.go. Unreachable with internal/backup.LocalStorage; delete with it.",
+	// The four backup entries are gone, and one of them was holding up a false
+	// claim in a document an operator reads during a disaster.
+	//
+	// LocalStorage implemented a Storage interface with no reference outside
+	// its own declaration, and docs/PRODUCTION-READINESS.md said Manager
+	// "routes through the Storage interface; both LocalStorage and S3Storage
+	// are wired". Manager does not: local backups are plain os.ReadFile /
+	// os.WriteFile against config.StorageDir, and S3 is reached through the
+	// concrete *S3Storage. The capability was real -- a created backup is
+	// uploaded, and a restore falls back to the bucket -- so the document is
+	// corrected rather than the code bent to match. Progress, its Reader, the
+	// DirEntry/FileInfo shims and the whole os-function indirection layer the
+	// tests substituted went with it: every one of them existed so LocalStorage
+	// could walk a directory.
 
 	// ---- identity / access -------------------------------------------------
 

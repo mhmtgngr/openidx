@@ -138,7 +138,7 @@ func parseDuration(s string) (time.Duration, error) {
 	}
 	// A window this long is a mistake or an attack, and letting it through is
 	// how an int64 of nanoseconds wraps to a date in the past.
-	if n > int64(math.MaxInt64/int64(perUnit)) {
+	if n > math.MaxInt64/int64(perUnit) {
 		return 0, fmt.Errorf("invalid duration %q: that is longer than any access window can be", s)
 	}
 	return time.Duration(n) * perUnit, nil

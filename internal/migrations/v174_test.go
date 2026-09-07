@@ -1,7 +1,10 @@
 package migrations
 
 import (
+	"io/fs"
 	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -56,7 +59,17 @@ func TestSecurityAlertWritersNameOnlyRealColumns(t *testing.T) {
 		"acknowledged_by": true, "acknowledged_at": true,
 	}
 
-	for _, file := range []string{"../risk/alert.go", "../audit/anomaly.go"} {
+	// The writers are FOUND, not listed. This test named ../risk/alert.go and
+	// ../audit/anomaly.go when it was written; both were deleted as unreachable
+	// in v1.34.0, and a hard-coded list would then have gone green by checking
+	// nothing -- while internal/risk/anomaly.go, the writer that actually runs,
+	// was never on it. A list drifts from the tree; a search does not.
+	files := findWriters(t, "security_alerts")
+	if len(files) == 0 {
+		t.Fatal("no file in internal/ inserts into security_alerts — either the table lost its last " +
+			"writer, or this search stopped working; both are worth knowing")
+	}
+	for _, file := range files {
 		src, err := os.ReadFile(file)
 		if err != nil {
 			t.Fatalf("read %s: %v", file, err)
@@ -70,6 +83,35 @@ func TestSecurityAlertWritersNameOnlyRealColumns(t *testing.T) {
 			}
 		}
 	}
+}
+
+// findWriters returns every non-test Go file under internal/ that inserts into
+// the named table.
+func findWriters(t *testing.T, table string) []string {
+	t.Helper()
+	var out []string
+	needle := "INSERT INTO " + table
+	err := filepath.WalkDir("..", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		src, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		if strings.Contains(string(src), needle) {
+			out = append(out, path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk internal/: %v", err)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // insertColumnLists returns the parenthesised column list of every

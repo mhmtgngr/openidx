@@ -125,8 +125,8 @@ Supporting binaries: `cmd/migrate` (schema migrations), `cmd/backup` (backup + r
 
 ### 2.11 Backup & Disaster Recovery
 
-- `internal/backup/` — `Manager` routes through the `Storage` interface; both `LocalStorage` and `S3Storage` are wired (S3 was unwired pre-v1; fixed and verified end-to-end before tag).
-- `cmd/backup` CLI — `backup create` / `backup restore` / `backup list` against either backend.
+- `internal/backup/` — `Manager` writes the local backup with `os.WriteFile` under `BACKUP_STORAGE_DIR`, and uploads to S3 through `S3Storage` when `BACKUP_S3_BUCKET` is set. A restore reads the file from disk and falls back to the bucket when it is not there, so an offsite copy is restorable. (This entry used to say `Manager` "routes through the `Storage` interface; both `LocalStorage` and `S3Storage` are wired". It never did: the interface had no reference outside its own declaration and `LocalStorage` was constructed by nothing, so both were deleted in v1.34.0. The S3 capability the sentence was really claiming is real and unchanged.)
+- `cmd/backup` CLI — `backup create` / `backup restore` / `backup list`, local plus S3 when a bucket is configured.
 - Encryption at rest for backups; integrity verification on restore.
 - Helm `CronJob` template included for scheduled backups.
 - `docs/disaster-recovery.md` — verified runbook including restore drill steps.
