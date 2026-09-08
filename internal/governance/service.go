@@ -168,8 +168,22 @@ func (s *Service) openIDXAuthMiddleware() gin.HandlerFunc {
 		// Scoped to the evaluate endpoints (constant-time compare) so a leaked
 		// token can't drive user-facing governance operations. The org is
 		// resolved by the global TenantResolver (X-Org-ID / default fallback).
+		//
+		// THE SCOPE IS THE ROUTE gin MATCHED, NOT THE PATH THE CALLER WROTE.
+		// This tested the suffix of c.Request.URL.Path, and gin backtracks from a
+		// static segment to a parameter when nothing static matches: a request to
+		// DELETE /api/v1/governance/policies/evaluate ends in "/evaluate" and is
+		// served by /policies/:id -- handleDeletePolicy, with the id "evaluate".
+		// Fourteen requests reached non-evaluate handlers that way, among them
+		// delete and update on policies, ABAC policies, approval policies,
+		// campaigns and reviews: precisely the "user-facing governance
+		// operations" this bound exists to keep a leaked token away from.
+		// c.FullPath() is the registered template, so no segment a caller writes
+		// can widen it; an unmatched route yields "" and fails closed.
+		// internal/governance/internal_token_scope_test.go derives that census
+		// from the route table on every run.
 		if tok := s.config.InternalServiceToken; tok != "" &&
-			strings.HasSuffix(c.Request.URL.Path, "/evaluate") &&
+			strings.HasSuffix(c.FullPath(), "/evaluate") &&
 			subtle.ConstantTimeCompare([]byte(c.GetHeader("X-Internal-Token")), []byte(tok)) == 1 {
 			c.Set("user_id", "svc:internal")
 			c.Next()

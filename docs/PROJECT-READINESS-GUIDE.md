@@ -229,6 +229,28 @@ product; either wire them or remove them from the UI.
   logged as such instead of pretending.
 - **A5 — Assignment isn't a grant until the rollout flips** (§1.1) — the
   systemic instance of this class.
+- **A6 — Three gates decided on the URL the caller wrote, not the route the
+  router chose.** *Fixed on this branch.* gin backtracks from a static segment
+  to a parameter when nothing static matches, so a request can read like one
+  route and be served by another — and three authorization decisions were
+  reading the request path. identity's `requireAdminUnlessSelfService` treated
+  `/users/me/...` as self-service, so eleven administrative routes (grant and
+  remove roles, set and reset a password, offboard, delete, revoke every MFA
+  bypass code) answered a caller with no admin role who spelled the target
+  `me`; each was stopped further down, three by an ownership check and eight by
+  PostgreSQL refusing `me` for a `uuid`, so the gate was open without being
+  walked through. governance scoped its internal service token by testing
+  whether the path ended in `/evaluate`, and fourteen requests reached
+  delete/update handlers on policies, ABAC policies, approval policies,
+  campaigns and reviews. And the OPA middleware built `input.resource.type`
+  from the path's last segment, so 101 of the 341 routes it guards asked the
+  policy about a resource type that was a UUID — on every one of them the
+  role-permission map and the object-scoped rules silently did not apply.
+  All three now decide on `c.FullPath()`, and all three are held there by a
+  census derived from the service's own route table:
+  `internal/identity/authz_surface_test.go`,
+  `internal/governance/internal_token_scope_test.go`,
+  `internal/common/middleware/opa_resource_census_test.go`.
 - Minor same-class: DB-backed feature flags silently fall back to memory
   (`internal/feature/flag.go:295`); gateway `logInfo`/`logError` are empty
   bodies (`internal/gateway/service.go:235`).

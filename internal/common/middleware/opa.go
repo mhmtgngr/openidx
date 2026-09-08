@@ -46,8 +46,9 @@ func OPAAuthz(client *opa.Client, logger *zap.Logger, devMode bool) gin.HandlerF
 		tenantID, _ := c.Get("tenant_id")
 		tid, _ := tenantID.(string)
 
-		// Derive resource type from the request path
-		resourceType := inferResourceType(c.Request.URL.Path)
+		// Derive the resource type from the route gin matched, never from the
+		// path the caller wrote -- see inferResourceType.
+		resourceType := inferResourceType(c.FullPath())
 
 		input := opa.Input{
 			User: opa.UserContext{
@@ -102,13 +103,38 @@ func OPAAuthz(client *opa.Client, logger *zap.Logger, devMode bool) gin.HandlerF
 	}
 }
 
-// inferResourceType maps URL path segments to resource types used in OPA policies
-func inferResourceType(path string) string {
-	segments := strings.Split(strings.Trim(path, "/"), "/")
+// inferResourceType maps a ROUTE TEMPLATE to the resource type OPA policies key
+// on ("user", "session", "report", ...).
+//
+// IT TAKES THE LAST STATIC SEGMENT, NOT THE LAST SEGMENT. This read the request
+// path and took whatever came last, so /api/v1/identity/users/<uuid> produced
+// the UUID as the resource type -- and authz.rego keys five rules on
+// input.resource.type, among them role_permissions[input.resource.type][method]
+// and the "user"/"session"/"report" rules. A UUID matches none of them, so on
+// EVERY endpoint that names a specific object the role-permission map silently
+// did not apply and the object-scoped rules never fired. Only collection
+// endpoints ever produced a type the policy could match. A rule that cannot fire
+// is worse than one that denies: nothing reports it.
+//
+// The template's last static segment is the collection the object belongs to
+// (/users/:id -> "users" -> "user"), which is the vocabulary the policy is
+// written in. Callers pass c.FullPath(); an unmatched route yields "", exactly
+// as a short path did before.
+func inferResourceType(routeTemplate string) string {
+	segments := strings.Split(strings.Trim(routeTemplate, "/"), "/")
 	// Look for known resource segments: /api/v1/<service>/<resource>
 	if len(segments) >= 3 {
-		// e.g. /api/v1/identity/users → "user"
-		resource := segments[len(segments)-1]
+		// e.g. /api/v1/identity/users → "user", /api/v1/identity/users/:id → "user"
+		resource := ""
+		for i := len(segments) - 1; i >= 0; i-- {
+			if s := segments[i]; s != "" && !strings.HasPrefix(s, ":") && !strings.HasPrefix(s, "*") {
+				resource = s
+				break
+			}
+		}
+		if resource == "" {
+			return ""
+		}
 		// Strip trailing 's' for plurals to match OPA resource types
 		if strings.HasSuffix(resource, "ies") {
 			resource = strings.TrimSuffix(resource, "ies") + "y"

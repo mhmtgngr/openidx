@@ -475,13 +475,26 @@ func (s *Service) openIDXAuthMiddleware() gin.HandlerFunc {
 	}
 }
 
-// isIdentitySelfService reports whether an /api/v1/identity request path is a
+// isIdentitySelfService reports whether an /api/v1/identity ROUTE TEMPLATE is a
 // caller-scoped self-service operation (operating on the authenticated user's
 // own account), as opposed to an administrative one that acts on other users
 // or system-wide resources. Matching is precise to avoid e.g. "/users/me"
 // accidentally matching "/users/members".
-func isIdentitySelfService(path string) bool {
-	rest := strings.TrimPrefix(path, "/api/v1/identity")
+//
+// THE ARGUMENT IS THE REGISTERED TEMPLATE ("/api/v1/identity/users/:id/roles"),
+// NOT THE REQUESTED PATH. It used to be the requested path, and the two are not
+// the same string: gin backtracks from a static segment to a parameter when no
+// static route matches, so POST /users/me/roles -- for which nothing is
+// registered -- is served by /users/:id/roles, the administrative role-grant
+// handler, while the path the caller wrote starts with "/users/me/" and this
+// predicate answered "self-service". Eleven routes collided that way, every one
+// of them in the escalating direction. Deciding on the template makes the
+// classification a property of the route the router actually chose, so no string
+// a caller can write in a parameter slot can move a route between tiers.
+// internal/identity/authz_surface_test.go derives that census from the route
+// table and fails on any disagreement.
+func isIdentitySelfService(routeTemplate string) bool {
+	rest := strings.TrimPrefix(routeTemplate, "/api/v1/identity")
 	switch {
 	case rest == "/users/me" || strings.HasPrefix(rest, "/users/me/"):
 		return true // profile, password, PATs, consents, privacy, identity-links
@@ -512,15 +525,20 @@ func isIdentitySelfService(path string) bool {
 }
 
 // requireAdminUnlessSelfService enforces authorization on the identity API.
-// Self-service paths are allowed for any authenticated user; everything else
+// Self-service routes are allowed for any authenticated user; everything else
 // (user/role/group/provider management, etc.) requires an admin role. This is
-// deny-by-default: any path not explicitly recognized as self-service needs
+// deny-by-default: any route not explicitly recognized as self-service needs
 // admin, so new administrative routes are protected automatically.
+//
+// The decision is made on the ROUTE gin matched (c.FullPath()), never on the
+// path the caller wrote -- see isIdentitySelfService for what that distinction
+// cost. An empty FullPath means no route matched, which cannot happen for
+// middleware registered on a route group, so it fails closed.
 //
 // Must run after openIDXAuthMiddleware (which sets "roles" from the token).
 func (s *Service) requireAdminUnlessSelfService() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if isIdentitySelfService(c.Request.URL.Path) {
+		if route := c.FullPath(); route != "" && isIdentitySelfService(route) {
 			c.Next()
 			return
 		}

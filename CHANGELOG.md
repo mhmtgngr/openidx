@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Three authorization decisions were computed from the URL the caller wrote,
+  not the route the router chose.** gin backtracks from a static path segment to
+  a parameter when nothing static matches, so a request can read like one route
+  and be served by another. Every one of these now decides on the matched route
+  template (`c.FullPath()`), and each is held there by a census derived from the
+  service's own route table rather than by a list of paths somebody thought of.
+
+  - **identity-service: naming the target `me` satisfied the admin gate.**
+    `requireAdminUnlessSelfService` asked whether the request path was
+    self-service. `POST /api/v1/identity/users/me/roles` is not a registered
+    route, so it is served by `/users/:id/roles` — the administrative role-grant
+    handler — while the string the caller wrote begins `/users/me/`. Eleven
+    routes collided this way, every one of them an administrative operation
+    answering a caller with no admin role: grant, list, replace and remove a
+    user's roles; read their role assignments; set and reset their password;
+    offboard them; delete them; revoke all their MFA bypass codes; and revoke a
+    bypass code by writing `verify` in its place. Each was stopped further down
+    — three by an explicit ownership check in the handler, the other eight by
+    PostgreSQL refusing `me` for a `uuid` column — so the gate has been open
+    without being walked through. `internal/identity/authz_surface_test.go`
+    derives all three tiers by driving the real middleware, records every one of
+    the 8 anonymous and 71 self-service routes with a mandatory reason, and
+    requires every self-service route whose template names a target to say where
+    its ownership check lives.
+
+  - **governance-service: the internal service token reached more than
+    `/evaluate`.** The shared secret that lets the access-proxy call the policy
+    evaluator was scoped by testing whether the request path ended in
+    `/evaluate`. Fourteen requests reached handlers that do not: delete and
+    update on policies, ABAC policies, approval policies, campaigns and reviews,
+    and reads of access requests — reached by writing `evaluate` where an id
+    belongs. The middleware's own comment says the scope exists so "a leaked
+    token can't drive user-facing governance operations"; those are exactly
+    user-facing governance operations.
+
+  - **OPA was asked about a resource type that was a UUID.**
+    `deployments/docker/opa/policies/authz.rego` keys five rules on
+    `input.resource.type`, among them the role-permission map. The middleware
+    took that type from the request path's last segment, so
+    `/api/v1/identity/users/<uuid>` asked about a resource of type
+    `3f2a…`. 101 of the 341 routes OPA guards were affected — every read, update
+    and delete of a specific object — so on all of them the role map and the
+    object-scoped rules silently did not apply. Nothing logged it, because a
+    rule that does not match is not a denial.
+
 ### Added
 
 - **The unauthenticated surface of access-service, derived and declared
