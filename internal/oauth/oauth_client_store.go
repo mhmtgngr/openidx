@@ -80,20 +80,24 @@ func (r *PostgresOAuthClientStore) GetByClientID(ctx context.Context, clientID s
 	var client OAuthClient
 	var clientSecret, description, logoURI, policyURI, tosURI *string
 	var redirectURIsJSON, grantTypesJSON, responseTypesJSON, scopesJSON []byte
+	// NULL means uncapped, which is every browser client. Only the native
+	// clients — the ones whose refresh token sits at rest on a device someone
+	// can pick up — carry a family cap (v187).
+	var refreshTokenMaxLifetime *int
 
 	err = r.db.Pool.QueryRow(dbCtx, `
 		SELECT id, client_id, client_secret, name, description, type,
 		       redirect_uris, grant_types, response_types, scopes,
 		       logo_uri, policy_uri, tos_uri, pkce_required,
 		       allow_refresh_token, access_token_lifetime, refresh_token_lifetime,
-		       created_at, updated_at
+		       refresh_token_max_lifetime, created_at, updated_at
 		FROM oauth_clients WHERE client_id = $1 AND org_id = $2
 	`, clientID, org.ID).Scan(
 		&client.ID, &client.ClientID, &clientSecret, &client.Name, &description,
 		&client.Type, &redirectURIsJSON, &grantTypesJSON, &responseTypesJSON, &scopesJSON,
 		&logoURI, &policyURI, &tosURI, &client.PKCERequired,
 		&client.AllowRefreshToken, &client.AccessTokenLifetime, &client.RefreshTokenLifetime,
-		&client.CreatedAt, &client.UpdatedAt,
+		&refreshTokenMaxLifetime, &client.CreatedAt, &client.UpdatedAt,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -116,6 +120,9 @@ func (r *PostgresOAuthClientStore) GetByClientID(ctx context.Context, clientID s
 	}
 	if tosURI != nil {
 		client.TOSUri = *tosURI
+	}
+	if refreshTokenMaxLifetime != nil {
+		client.RefreshTokenMaxLifetime = *refreshTokenMaxLifetime
 	}
 	json.Unmarshal(redirectURIsJSON, &client.RedirectURIs)
 	json.Unmarshal(grantTypesJSON, &client.GrantTypes)
@@ -227,6 +234,12 @@ func (r *PostgresOAuthClientStore) Update(ctx context.Context, clientID string, 
 	dbCtx, cancel := r.withTimeout(ctx)
 	defer cancel()
 
+	// refresh_token_max_lifetime is deliberately NOT in this SET list. The
+	// console's client editor does not offer the field, so it would arrive as
+	// the struct's zero value on every save — and zero means uncapped, which
+	// would quietly remove the family cap from a native client the first time
+	// anyone renamed it. The cap is set by migration; changing it is a
+	// deliberate SQL change, not a side effect of editing a description.
 	result, err := r.db.Pool.Exec(dbCtx, `
 		UPDATE oauth_clients
 		SET name = $2, description = $3, redirect_uris = $4, grant_types = $5,

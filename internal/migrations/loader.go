@@ -1329,5 +1329,12 @@ func allMigrations() []*Migration {
 			UpSQL:       sessionMFAVerifiedAtUp,
 			DownSQL:     sessionMFAVerifiedAtDown,
 		},
+		{
+			Version:     187,
+			Name:        "refresh_family_lifetime",
+			Description: "Add oauth_refresh_tokens.family_started_at and oauth_clients.refresh_token_max_lifetime so an authorization has an END, not just a token that expires. refresh_token_lifetime was enforced per token and reset on every rotation (ExpiresAt = now + lifetime), and every native client refreshes far more often than the window -- the desktop agent hourly -- so the seeded 30 days bound only on a device that went dark for thirty days. A phone taken while unlocked kept a valid chain for as long as it kept refreshing. family_started_at is copied forward by rotation and backfilled from each family's MIN(created_at); a stored column rather than a MIN() at read time because rows age out with their own expires_at, so a computed origin would recede ahead of the client forever -- the same never-binding failure one level down. Checked at the refresh grant before an access token is minted: past the cap the family is revoked and the client re-authenticates. Values are the decision recorded in docs/CLIENT-ACCESS-DESIGN.md §2: 14 days per token for the two mobile clients, 30 for the Windows agent (it re-attests posture continuously), 90-day family cap for all three; an operator who already retuned refresh_token_lifetime keeps their value, because the UPDATE matches the seeded 2592000. Browser clients stay uncapped -- their token lives in a browser, not at rest on a device someone can pick up, and capping the console would sign administrators out on a schedule nobody asked for.",
+			UpSQL:       refreshFamilyLifetimeUp,
+			DownSQL:     refreshFamilyLifetimeDown,
+		},
 	}
 }

@@ -180,9 +180,37 @@ send it. The binding is a routing key for revocation; the device's
 authentication is the agent credential on `/agent/*` and the Ziti identity on
 the overlay.
 
-**DECISION:** native refresh-token lifetime. 30 days on a phone is long;
-recommended **14 days, sliding on use**, hard cap 90. Windows agent may keep
-30 (it re-attests posture continuously).
+**DECISION — taken, item 8 landed.** Native refresh-token lifetime. 30 days on a
+phone is long; the recommendation was **14 days, sliding on use**, hard cap 90,
+with the Windows agent keeping 30 because it re-attests posture continuously.
+Taken as written rather than left open; migration **v187** carries it, and an
+operator who has already retuned `refresh_token_lifetime` keeps their value
+(the UPDATE matches only the seeded `2592000`).
+
+**And the finding that came with it, which was bigger than the numbers.**
+`refresh_token_lifetime` is enforced — `GetRefreshToken` refuses a token past its
+`expires_at` — but rotation issues each successor with `now + lifetime`, so the
+window restarts on every use. Every native client refreshes far more often than
+the window: the desktop agent hourly, the phone whenever it opens. **So the
+thirty days bound only on a device that went DARK for thirty days**, which is the
+opposite of the case the number exists for. A phone taken while unlocked, or an
+agent on a machine that changed hands, held a working chain for as long as it
+kept refreshing.
+
+v187 gives the family an end: `oauth_refresh_tokens.family_started_at` (copied
+forward by rotation, backfilled from each family's `MIN(created_at)`) and
+`oauth_clients.refresh_token_max_lifetime`. The grant refuses and revokes the
+whole family past the cap, before an access token is minted. A stored column
+rather than a `MIN()` at read time because rows age out with their own
+`expires_at`, so a computed origin would recede ahead of the client forever — the
+same never-binding failure one level down.
+
+Browser clients (`admin-console`, `access-proxy`, the playground) stay uncapped
+on purpose: their refresh token lives in a browser rather than at rest on a
+device someone can pick up, and capping the console would sign administrators out
+on a schedule nobody asked for. `TestEveryNativeClientHasAFamilyCap` derives the
+native set from the clients' own source, so a fourth one that ships without a cap
+fails the build.
 
 ## 3. MFA
 
@@ -347,7 +375,7 @@ rollout in §7 is written for, and that is the whole of the claim.)
 | 5 | ✅ Gate the no-DB enroll fallback on `APP_ENV=development`, refusing when no config is present. (`push_mfa.auto_approve` needed a correction, not a rejection — see §3) | `internal/access/agent_api.go` | small — done |
 | 6 | ✅ The client shows what the server allows: `enrollment_status` + `device_trusted` on `/agent/config`, `DeviceState()` on the engine (+ gomobile and all three plugin bridges), a banner on the home screen | `internal/access`, `agent/internal/control`, `agent/mobile`, `client/plugins/openidx_engine`, `client/lib` | small — done |
 | 7 | ✅ Step-up when the last factor is stale: `sessions.mfa_verified_at` (v186) stamped at login and by `/oauth/stepup-verify`; `STEPUP_GATE` off\|observe\|enforce at the PAM launch/reveal routes and at every write made with admin authority; a route census keeps the launch set from drifting | v186, `internal/stepup`, `internal/oauth`, `internal/access`, `internal/common/middleware` | medium — done |
-| 8 | Refresh-token lifetime per client (after DECISION) | migration | small |
+| 8 | ✅ Refresh-token lifetime per client — and the family cap that makes it bind. `refresh_token_lifetime` was enforced per token and reset by every rotation, so on a client that refreshes hourly it bounded how long the device could be OFFLINE and nothing else. v187 adds `family_started_at` (carried through rotation, backfilled per family) and `refresh_token_max_lifetime`; the grant revokes a family past its cap before minting anything. 14 days / 90-day cap for the two mobile clients, 30 / 90 for the Windows agent. A derived test fails the build on a native client shipped without a cap | v187, `internal/oauth`, `internal/migrations` | small — done |
 
 Each item ships with the same discipline as the rest of this programme: a
 derived guard where a list would drift, a red-proof, and a CHANGELOG entry.

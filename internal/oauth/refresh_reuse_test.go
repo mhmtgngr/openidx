@@ -35,7 +35,10 @@ CREATE TABLE oauth_refresh_tokens (
     family_id   UUID,
     used_at     TIMESTAMPTZ,
     revoked_at  TIMESTAMPTZ,
-    agent_id    VARCHAR(64)
+    agent_id    VARCHAR(64),
+    -- v187. Not a copy of created_at: created_at moves on every rotation and
+    -- this does not, which is the whole reason the family cap can bind.
+    family_started_at TIMESTAMPTZ
 );`
 
 const (

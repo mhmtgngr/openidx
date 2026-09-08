@@ -68,6 +68,14 @@ type OAuthClient struct {
 	RefreshTokenLifetime int       `json:"refresh_token_lifetime"` // seconds
 	CreatedAt            time.Time `json:"created_at"`
 	UpdatedAt            time.Time `json:"updated_at"`
+
+	// RefreshTokenMaxLifetime caps the whole FAMILY, in seconds; 0 means
+	// uncapped. RefreshTokenLifetime limits how long one token may sit unused,
+	// and rotation restarts it, so on a client that refreshes hourly it bounds
+	// how long the device may be OFFLINE and nothing else. This bounds the
+	// authorization itself: past it the chain is revoked whatever it has been
+	// doing (v187).
+	RefreshTokenMaxLifetime int `json:"refresh_token_max_lifetime,omitempty"`
 }
 
 // AuthorizationCode represents an OAuth authorization code
@@ -118,6 +126,12 @@ type RefreshToken struct {
 	// UsedAt is set when this token is rotated away. A non-nil value on a
 	// presented token means someone is replaying it — see detectRefreshReuse.
 	UsedAt *time.Time `json:"used_at,omitempty"`
+	// FamilyStartedAt is when the family's FIRST token was issued, copied
+	// forward by every rotation (v187). CreatedAt moves on each rotation and so
+	// cannot answer "how old is this authorization"; this can. Zero means a row
+	// written by a binary that predates the column, which only happens mid
+	// rolling-upgrade — the grant reads CreatedAt in that case.
+	FamilyStartedAt time.Time `json:"family_started_at,omitempty"`
 }
 
 // TokenResponse represents an OAuth token response
@@ -636,10 +650,19 @@ func (s *Service) CreateRefreshToken(ctx context.Context, token *RefreshToken) e
 		agentID = token.AgentID
 	}
 
+	// A token that names no family origin is the first of its family, so the
+	// family starts now. Rotation passes the inherited value and it is carried
+	// unchanged — which is the whole point: CreatedAt moves on every rotation,
+	// this does not, and only a value that does not move can bound how long one
+	// authorization may be stretched by continuous use (v187).
+	if token.FamilyStartedAt.IsZero() {
+		token.FamilyStartedAt = token.CreatedAt
+	}
+
 	_, err = s.db.Pool.Exec(ctx, `
-		INSERT INTO oauth_refresh_tokens (token, client_id, user_id, scope, session_id, expires_at, created_at, org_id, family_id, agent_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-	`, token.Token, token.ClientID, token.UserID, token.Scope, sessionID, token.ExpiresAt, token.CreatedAt, org.ID, familyID, agentID)
+		INSERT INTO oauth_refresh_tokens (token, client_id, user_id, scope, session_id, expires_at, created_at, org_id, family_id, agent_id, family_started_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+	`, token.Token, token.ClientID, token.UserID, token.Scope, sessionID, token.ExpiresAt, token.CreatedAt, org.ID, familyID, agentID, token.FamilyStartedAt)
 
 	return err
 }
@@ -658,13 +681,14 @@ func (s *Service) GetRefreshToken(ctx context.Context, token string) (*RefreshTo
 	// to see it in order to recognise a replay. Only an explicitly revoked
 	// token is filtered out here, because that one carries no new information.
 	var familyID, agentID *string
+	var familyStartedAt *time.Time
 	err = s.db.Pool.QueryRow(ctx, `
-		SELECT token, client_id, user_id, scope, session_id, expires_at, created_at, family_id, used_at, agent_id
+		SELECT token, client_id, user_id, scope, session_id, expires_at, created_at, family_id, used_at, agent_id, family_started_at
 		FROM oauth_refresh_tokens WHERE token = $1 AND org_id = $2 AND revoked_at IS NULL
 	`, token, org.ID).Scan(
 		&refreshToken.Token, &refreshToken.ClientID, &refreshToken.UserID,
 		&refreshToken.Scope, &sessionID, &refreshToken.ExpiresAt, &refreshToken.CreatedAt,
-		&familyID, &refreshToken.UsedAt, &agentID,
+		&familyID, &refreshToken.UsedAt, &agentID, &familyStartedAt,
 	)
 
 	if err != nil {
@@ -679,6 +703,16 @@ func (s *Service) GetRefreshToken(ctx context.Context, token string) (*RefreshTo
 	}
 	if agentID != nil {
 		refreshToken.AgentID = *agentID
+	}
+	// NULL only for a row written by a binary older than v187, i.e. during a
+	// rolling upgrade — the migration backfills every row that existed before
+	// it. Reading the token's own created_at starts that family's clock at the
+	// upgrade instead of retroactively signing everybody out, and the next
+	// rotation stamps it properly.
+	if familyStartedAt != nil {
+		refreshToken.FamilyStartedAt = *familyStartedAt
+	} else {
+		refreshToken.FamilyStartedAt = refreshToken.CreatedAt
 	}
 
 	if time.Now().After(refreshToken.ExpiresAt) {
@@ -778,6 +812,63 @@ func (s *Service) markRefreshTokenRotated(ctx context.Context, token string) (bo
 		return false, err
 	}
 	return tag.RowsAffected() == 1, nil
+}
+
+// refreshFamilyWithinCap reports whether this family may still be refreshed,
+// and revokes it when it may not.
+//
+// WHAT IT IS FOR. RefreshTokenLifetime bounds one token, and rotation restarts
+// it, so on a client that refreshes hourly it bounds how long the device may be
+// OFFLINE and nothing else. The seeded thirty days therefore never arrived for
+// any device that was actually in use — including one in the wrong hands, which
+// is the case the number was there for. RefreshTokenMaxLifetime bounds the
+// authorization itself, from the moment it was granted, whatever the chain has
+// been doing since.
+//
+// A client with no cap (every browser client) is unaffected: 0 means uncapped
+// and this returns true without a query.
+//
+// Passing the cap revokes the whole family rather than this one token, because
+// the point is that this authorization is over. The client's own refresh token
+// is already the newest of the chain, so revoking just it would leave the older
+// entries as a live re-entry for anyone holding one.
+func (s *Service) refreshFamilyWithinCap(ctx context.Context, client *OAuthClient, token *RefreshToken) bool {
+	if client == nil || client.RefreshTokenMaxLifetime <= 0 {
+		return true
+	}
+	// Zero cannot happen after GetRefreshToken, which falls back to CreatedAt,
+	// but a caller with a hand-built token would otherwise measure the family
+	// from the zero time and refuse every request. Treat it as "unknown, so not
+	// yet expired" and let the next rotation stamp it.
+	started := token.FamilyStartedAt
+	if started.IsZero() {
+		return true
+	}
+	deadline := started.Add(time.Duration(client.RefreshTokenMaxLifetime) * time.Second)
+	if !time.Now().After(deadline) {
+		return true
+	}
+
+	s.logger.Info("refresh grant denied: family past its maximum lifetime",
+		zap.String("client_id", logsafe.Clean(client.ClientID)),
+		zap.String("user_id", token.UserID),
+		zap.String("family_id", token.FamilyID),
+		zap.Time("family_started_at", started),
+		zap.Int("max_lifetime_seconds", client.RefreshTokenMaxLifetime))
+
+	if token.FamilyID != "" {
+		if _, err := s.revokeRefreshTokenFamily(ctx, token.FamilyID); err != nil {
+			// The refusal above already stands; failing to tombstone the rest of
+			// the chain is worth knowing but does not make the answer any more
+			// permissive.
+			s.logger.Error("failed to revoke a refresh family past its cap",
+				zap.String("family_id", token.FamilyID), zap.Error(err))
+		}
+	} else if err := s.RevokeRefreshToken(ctx, token.Token); err != nil {
+		s.logger.Error("failed to revoke an unfamilied refresh token past its cap",
+			zap.Error(err))
+	}
+	return false
 }
 
 // revokeRefreshTokenFamily revokes every token descended from one authorization.
@@ -3417,6 +3508,18 @@ func (s *Service) handleRefreshTokenGrant(c *gin.Context) {
 		return
 	}
 
+	// The family's own end (v187). Everything above bounds one token; this
+	// bounds the AUTHORIZATION. Checked here, before an access token is minted,
+	// because a chain past its cap must not buy one more hour of access on the
+	// way out.
+	if !s.refreshFamilyWithinCap(c.Request.Context(), client, token) {
+		c.JSON(400, gin.H{
+			"error":             "invalid_grant",
+			"error_description": "refresh token family has reached its maximum lifetime; sign in again",
+		})
+		return
+	}
+
 	// Re-validate the token's subject: a refresh token outlives its access
 	// token, so a user disabled or deleted AFTER the grant would keep minting
 	// fresh access tokens until the refresh token itself expired. Gate issuance
@@ -3515,6 +3618,11 @@ func (s *Service) handleRefreshTokenGrant(c *gin.Context) {
 			// caught the first token of a chain would be defeated by the
 			// client refreshing once, which it does every hour.
 			AgentID: token.AgentID,
+			// And the family's origin. This is the field the cap is measured
+			// from, so letting CreateRefreshToken default it to now would reset
+			// the clock on every refresh — which is exactly the defect v187
+			// exists to fix, reintroduced one line below the fix.
+			FamilyStartedAt: token.FamilyStartedAt,
 		}); err != nil {
 			s.logger.Error("failed to persist rotated refresh token",
 				zap.String("client_id", logsafe.Clean(clientID)),

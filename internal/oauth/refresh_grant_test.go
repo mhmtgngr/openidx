@@ -72,6 +72,10 @@ CREATE TABLE oauth_clients (
     allow_refresh_token    BOOLEAN NOT NULL DEFAULT true,
     access_token_lifetime  INT NOT NULL DEFAULT 3600,
     refresh_token_lifetime INT NOT NULL DEFAULT 2592000,
+    -- v187: NULL means uncapped, which is what every client in this fixture is
+    -- unless a case sets it. Nullable rather than DEFAULT 0 so "no cap" and
+    -- "a cap of zero seconds" stay distinguishable.
+    refresh_token_max_lifetime INT,
     created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     org_id                 UUID NOT NULL,

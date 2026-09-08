@@ -426,6 +426,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **A refresh-token lifetime that could not bind on the case it existed for.**
+  `oauth_clients.refresh_token_lifetime` is enforced — `GetRefreshToken` refuses
+  a token past its `expires_at` — but rotation issues each successor with
+  `now + lifetime`, so the window restarts on every use. Every native client
+  refreshes far more often than the window: the desktop agent hourly, the phone
+  whenever it opens. **The thirty days the three native clients were seeded with
+  therefore bound only on a device that went dark for thirty days**, which is the
+  opposite of the case the number was there for. A phone taken while unlocked, or
+  an agent on a machine that changed hands, kept a working chain for as long as
+  it kept refreshing — indefinitely, until someone noticed and revoked the device
+  by hand.
+
+  Migration **v187** gives the authorization an end rather than the token:
+  `oauth_refresh_tokens.family_started_at`, copied forward by every rotation and
+  backfilled from each family's `MIN(created_at)`, plus
+  `oauth_clients.refresh_token_max_lifetime`. The refresh grant checks it before
+  minting anything and revokes the whole family past the cap — the whole family,
+  because the client's own token is the newest of the chain and revoking only
+  that would leave every earlier entry as a live way back in. A stored column
+  rather than a `MIN()` at read time: rows age out with their own `expires_at`,
+  so a computed origin would recede ahead of the client forever, which is the
+  same never-binding failure one level down.
+
+  Values, and they are a decision rather than a measurement — the one
+  `docs/CLIENT-ACCESS-DESIGN.md` §2 recommended, taken as written: **14 days per
+  token and a 90-day family cap** for `openidx-mobile` and
+  `openidx-agent-android`; **30 days and the same 90-day cap** for
+  `openidx-desktop`, which re-attests posture continuously so a long offline
+  window costs less there. An operator who has already retuned
+  `refresh_token_lifetime` keeps their value — the UPDATE matches only the seeded
+  `2592000`. Browser clients stay uncapped on purpose: their token lives in a
+  browser rather than at rest on a device someone can pick up, and capping the
+  console would sign administrators out on a schedule nobody asked for.
+  `TestEveryNativeClientHasAFamilyCap` derives the native set from the clients'
+  own source, so a fourth one that ships without a cap fails the build.
+
 - **The list of every authorization control that is switched off had no
   reader.** `Config.ReportModeGates` names each of the eight gates that is
   configured but not deciding — assignment enforcement, ABAC, step-up, OPA, the
