@@ -21,6 +21,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **On Windows the agent's secrets were protected by a mode Windows discards.**
+  `user-tokens.json` (the signed-in user's access token and their 30-day
+  refresh token) and `control-endpoint.json` (the loopback bearer that fully
+  drives the control engine — sign-in, enrolment, PAM launch, Ziti dial) were
+  both written with `os.WriteFile(..., 0600)`. Go maps that to "not read-only"
+  on Windows and nothing else, so each file inherited the ACL of
+  `%ProgramData%\OpenIDX\agent` and, through it, `%ProgramData%`, where
+  `BUILTIN\Users` can read. Every local account could read the refresh token
+  and the control bearer, and both call sites said `0600`, which is what made
+  it invisible. `authstore.go` even carried the note "hardening follow-up:
+  DPAPI".
+
+  New `agent/internal/secretfile` writes each file the way the platform
+  enforces: on Windows **DPAPI** (`CryptProtectData`, per-user scope, so the
+  bytes are useless to another account) plus an **explicit file DACL** —
+  SYSTEM, Administrators and the writing user, with inheritance switched off so
+  `%ProgramData%`'s entries stop applying. Elsewhere it is the same 0600 file as
+  before, re-asserted on every write (`os.WriteFile` applies its mode only when
+  it creates the file, so a token file left world-readable once stayed that way
+  through every later sign-in). A file written before this exists still loads,
+  so an upgrade does not sign anyone out.
+
+  The Windows-only tests are run by a Windows job. `windows-client-build.yml`
+  runs the agent's `go test ./...` on `ubuntu-latest`, where every
+  `//go:build windows` file is compiled out — so its `windows-latest` job now
+  runs the packages with Windows-specific behaviour, and the DPAPI round trip
+  and the DACL assertions execute on the platform they describe.
+
+  Not covered, deliberately: `agent.json` carries the agent's own `auth_token`
+  and is read by both the SYSTEM service and the user's tray, so a per-user
+  blob would break one of them. That one needs a directory-ACL decision and is
+  recorded in `docs/CLIENT-ACCESS-DESIGN.md` §4 rather than half-done here.
+
 - **Any signed-in user could answer another user's push-MFA prompt.**
   `POST /api/v1/identity/mfa/push/verify` is on the authenticated identity
   group, and `isIdentitySelfService` admits every authenticated user to

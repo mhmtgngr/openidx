@@ -10,6 +10,8 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+
+	"github.com/openidx/openidx/agent/internal/secretfile"
 )
 
 // endpointFileName holds the chosen loopback port + bearer token so a local GUI
@@ -52,13 +54,14 @@ func newListener() (ln net.Listener, addr, token string, err error) {
 	}
 	token = hex.EncodeToString(buf)
 
+	// This file hands whoever reads it a bearer that fully drives the engine —
+	// sign-in, enrolment, PAM launch, Ziti dial. It was written 0600, which
+	// Windows ignores, so it inherited %ProgramData%'s ACL and every local
+	// account could read it. secretfile applies DPAPI (per-user) plus an
+	// explicit file ACL; see agent/internal/secretfile.
 	path := endpointPath()
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		_ = ln.Close()
-		return nil, "", "", fmt.Errorf("creating endpoint dir: %w", err)
-	}
 	data, _ := json.Marshal(endpointInfo{Addr: addr, Token: token})
-	if err := os.WriteFile(path, data, 0600); err != nil {
+	if err := secretfile.Write(path, data); err != nil {
 		_ = ln.Close()
 		return nil, "", "", fmt.Errorf("writing endpoint file: %w", err)
 	}
