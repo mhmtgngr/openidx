@@ -1383,11 +1383,25 @@ type agentCheck struct {
 // (or has reconnected mid-session). The agent uses this block to know
 // where to dial the signaling WebSocket.
 type agentConfigResponse struct {
-	Checks            []agentCheck            `json:"checks"`
-	ReportInterval    string                  `json:"report_interval"`
-	EnforcementPolicy string                  `json:"enforcement_policy,omitempty"`
-	KioskPolicy       *kioskPolicyRow         `json:"kiosk_policy,omitempty"`
-	RemoteSupport     *agentRemoteSupportInfo `json:"remote_support,omitempty"`
+	Checks            []agentCheck `json:"checks"`
+	ReportInterval    string       `json:"report_interval"`
+	EnforcementPolicy string       `json:"enforcement_policy,omitempty"`
+	// EnrollmentStatus and DeviceTrusted are the device's own state, told to
+	// the device.
+	//
+	// The server has always known both — this handler already branches on
+	// status to decide which checks to send — and never said either out loud,
+	// so a client could not tell "enrolled and waiting for an admin" from
+	// "enrolled and working". The design's first rule is that a device earns
+	// access by proving things and the user always sees which of those it has;
+	// a client that cannot render the difference makes controlled access read
+	// as broken. DeviceTrusted is the IAM device-trust flag on the linked
+	// known_devices row (v80), which is what the overlay's #device-trusted
+	// attribute follows.
+	EnrollmentStatus string                  `json:"enrollment_status,omitempty"`
+	DeviceTrusted    bool                    `json:"device_trusted"`
+	KioskPolicy      *kioskPolicyRow         `json:"kiosk_policy,omitempty"`
+	RemoteSupport    *agentRemoteSupportInfo `json:"remote_support,omitempty"`
 	// WindowsAppDiscovery is present only when this agent is bound to a
 	// windows_app_host (migration v120). It tells the agent to run the host-prep
 	// script's -Report and POST the JSON back, so the app catalog auto-syncs.
@@ -1613,9 +1627,14 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 	//    we can filter posture_checks to the rows applicable to this client.
 	var status string
 	var platform *string
-	err := h.db.Pool.QueryRow(ctx,
-		`SELECT status, platform FROM enrolled_agents WHERE agent_id = $1`, agentID,
-	).Scan(&status, &platform)
+	var deviceTrusted *bool
+	//orgscope:ignore enrolled_agents is a fleet table with no org_id; the agent authenticated with its own credential above
+	err := h.db.Pool.QueryRow(ctx, `
+		SELECT ea.status, ea.platform, kd.trusted
+		  FROM enrolled_agents ea
+		  LEFT JOIN known_devices kd ON kd.id = ea.known_device_id
+		 WHERE ea.agent_id = $1`, agentID,
+	).Scan(&status, &platform, &deviceTrusted)
 	if err != nil {
 		// Agent not found or DB error — return defaults.
 		h.logger.Warn("HandleConfig: could not fetch agent status",
@@ -1627,6 +1646,10 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 	if platform != nil {
 		agentPlatform = *platform
 	}
+	// A device with no linked known_devices row (token-enrolled or legacy) is
+	// not trusted rather than unknown: the overlay reads the same absence the
+	// same way.
+	trusted := deviceTrusted != nil && *deviceTrusted
 
 	// 4. Build response based on status.
 	switch status {
@@ -1641,6 +1664,8 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 			Checks:            []agentCheck{},
 			ReportInterval:    "24h",
 			EnforcementPolicy: "block",
+			EnrollmentStatus:  status,
+			DeviceTrusted:     trusted,
 		}
 		c.JSON(http.StatusOK, cfg)
 		return
@@ -1652,6 +1677,8 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 			},
 			ReportInterval:    "1h",
 			EnforcementPolicy: "monitor",
+			EnrollmentStatus:  status,
+			DeviceTrusted:     trusted,
 		}
 		c.JSON(http.StatusOK, cfg)
 		return
@@ -1718,6 +1745,8 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 			Checks:            checks,
 			ReportInterval:    baselinePollInterval,
 			EnforcementPolicy: "enforce",
+			EnrollmentStatus:  status,
+			DeviceTrusted:     trusted,
 		}
 
 		// Embed the effective kiosk policy (Phase 3). Errors during

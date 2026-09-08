@@ -115,6 +115,13 @@ class MobileEngineClient implements EngineClient {
   }
 
   @override
+  Future<DeviceState> deviceState() async {
+    await _ensureStarted();
+    final json = await _guard(_engine.deviceState, 'deviceState');
+    return DeviceState.fromJson(_decodeMap(json, 'deviceState'));
+  }
+
+  @override
   Future<EnrollResult> enroll(String code, {String? serverUrl}) async {
     await _ensureStarted();
     // Mobile has no seeded config: tell the engine which server to enroll against

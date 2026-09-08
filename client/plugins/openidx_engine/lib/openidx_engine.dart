@@ -75,6 +75,11 @@ class OpenidxEngine {
   /// [PlatformException] ("not authenticated") when no session is present.
   Future<String> accessToken() => _invokeString('accessToken');
 
+  /// What the server currently allows this device to do: `pending`, `active`,
+  /// `suspended`, `revoked`, `not_enrolled`, or `unknown` when it could not be
+  /// asked. Returns JSON; see DeviceState in client/lib/engine/models.dart.
+  Future<String> deviceState() => _invokeString('deviceState');
+
   Future<void> logout() async {
     await _channel.invokeMethod<void>('logout');
   }

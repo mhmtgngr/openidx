@@ -60,6 +60,8 @@ public class OpenidxEnginePlugin: NSObject, FlutterPlugin {
       return try callString { MobileLoginFinish(str(args, "callbackUrl"), $0) }
     case "accessToken":
       return try callString { MobileAccessToken($0) }
+    case "deviceState":
+      return try callString { MobileDeviceState($0) }
     case "logout":
       try callVoid { MobileLogout($0) }
       return nil

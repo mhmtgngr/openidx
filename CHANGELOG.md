@@ -21,6 +21,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A device waiting for approval looked exactly like a broken one.** The
+  client knew only what was on disk — enrolled, has a Ziti identity, signed in —
+  which cannot tell "enrolled and waiting for an administrator" from "enrolled
+  and working", or either from "revoked". The server has always known: `GET
+  /agent/config` branches on the agent's status to decide which posture checks
+  to send, and answers `403` for a revoked one. It never said so.
+
+  It does now: `enrollment_status` and `device_trusted` on the config response
+  (the IAM device-trust flag the overlay's `#device-trusted` attribute follows,
+  read from the linked `known_devices` row). The engine gains `DeviceState()`,
+  which asks with the device's own agent credential and returns a flat payload;
+  it is bound for gomobile and wired through all three plugin bridges, and the
+  desktop control server serves it at `GET /device-state`. The companion app
+  renders it as a banner above everything else, with one line of what the state
+  means and one of what changes it.
+
+  Five states rather than three, because two of them were being hidden:
+  **revoked** is named instead of surfacing as a network error, and **cannot
+  check with the server** is kept distinct from a refusal — a phone in a lift
+  must not be told it has been revoked. Trust is only ever shown alongside an
+  active status, and a server too old to report the field produces "unknown"
+  rather than a confident "active" the server never granted.
+
 - **Device enrolment's no-database fallback had no environment gate.**
   `HandleEnroll` ends in a branch that accepts any non-empty token and mints a
   working agent credential for it, under the comment "Dev mode: no DB, accept

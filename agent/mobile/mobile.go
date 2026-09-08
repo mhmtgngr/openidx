@@ -169,6 +169,19 @@ func AccessToken() (string, error) {
 	return e.AccessToken()
 }
 
+// DeviceState asks the server what this device is currently allowed to do —
+// pending admin approval, active, suspended or revoked, and whether it has
+// earned device trust — and returns it as JSON. Not enrolled, offline and
+// revoked are all states with an answer, never errors, because each is
+// something the user needs shown.
+func DeviceState() (string, error) {
+	e, err := get()
+	if err != nil {
+		return "", err
+	}
+	return e.DeviceState()
+}
+
 // Logout clears the stored session.
 func Logout() error {
 	e, err := get()

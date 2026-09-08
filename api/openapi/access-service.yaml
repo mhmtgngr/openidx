@@ -2908,6 +2908,11 @@ paths:
     get:
       tags: [Agent Enrollment]
       summary: Handle config
+      description: >-
+        The device's posture-check list, report cadence and enforcement policy,
+        plus what the server currently allows it to do. Authenticated with the
+        agent's own credential (X-Agent-ID + X-Auth-Token). A revoked agent is
+        answered 403.
       operationId: handleConfig
       x-openidx-handler: internal/access.(*AgentAPIHandler).HandleConfig
       responses:
@@ -2918,6 +2923,21 @@ paths:
               schema:
                 type: object
                 additionalProperties: true
+                properties:
+                  enrollment_status:
+                    type: string
+                    enum: [pending, active, suspended]
+                    description: >-
+                      What the server allows this device to do. Absent when the
+                      server cannot resolve the agent (it then serves defaults);
+                      a client must treat that as unknown rather than active.
+                      Revoked is not a value here — it is the 403.
+                  device_trusted:
+                    type: boolean
+                    description: >-
+                      The IAM device-trust flag on the linked known_devices row,
+                      which the overlay's #device-trusted attribute follows.
+                      Only meaningful alongside enrollment_status=active.
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':

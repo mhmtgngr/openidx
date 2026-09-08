@@ -251,6 +251,10 @@ class DesktopEngineClient implements EngineClient {
   }
 
   @override
+  Future<DeviceState> deviceState() async =>
+      DeviceState.fromJson(_asMap(await _send('GET', '/device-state'), '/device-state'));
+
+  @override
   Future<EnrollResult> enroll(String code, {String? serverUrl}) async =>
       EnrollResult.fromJson(_asMap(
           await _send('POST', '/enroll', {

@@ -106,6 +106,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /logout", s.handleLogout)
 	mux.HandleFunc("POST /enroll", s.handleEnroll)
 	mux.HandleFunc("GET /posture", s.handlePosture)
+	mux.HandleFunc("GET /device-state", s.handleDeviceState)
 	mux.HandleFunc("GET /token", s.handleToken)
 	mux.HandleFunc("GET /pam/entries", s.handlePamList)
 	mux.HandleFunc("POST /pam/connect", s.handlePamConnect)
@@ -152,6 +153,15 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handlePosture(w http.ResponseWriter, r *http.Request) {
 	out, err := s.engine.Posture()
+	writeEngineJSON(w, out, err)
+}
+
+// handleDeviceState reports what the server currently allows this device to do
+// — pending admin approval, active, suspended, revoked — and whether it has
+// earned device trust, so the desktop GUI can show the difference instead of
+// showing a device that is waiting as one that is broken.
+func (s *Server) handleDeviceState(w http.ResponseWriter, r *http.Request) {
+	out, err := s.engine.DeviceState()
 	writeEngineJSON(w, out, err)
 }
 

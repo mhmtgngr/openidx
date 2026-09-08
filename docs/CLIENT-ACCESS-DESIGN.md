@@ -80,7 +80,14 @@ Two consequences worth saying out loud:
   token (no `agent.enroll`) can no longer enroll a device by accident.
 - **The client shows three states**: *Enrolled — waiting for approval*,
   *Enrolled — Tier 1*, *Trusted — Tier 2*, each with one line on what unlocks
-  the next.
+  the next. ✅ *Item 6, landed.* `GET /agent/config` now states
+  `enrollment_status` and `device_trusted` — the server always knew both and
+  never said either — the engine's `DeviceState()` asks with the device's own
+  credential, and the companion app renders it as a banner above everything
+  else. Five states, not three: *revoked* is named rather than left to look
+  like a network error, and *cannot check with the server* is kept distinct
+  from a refusal, because a phone in a lift must not be told it has been
+  revoked.
 
 ## 2. Access (ZTNA)
 
@@ -269,7 +276,7 @@ belongs in `ProductionWarnings` at most. The report-mode warnings themselves —
 | 3 | ✅ Push approval checks who is answering, how often they may guess, and whether the approving device may still approve | `internal/identity/pushmfa.go`, `pushmfa_approval_gate.go`, `handlers_mfa.go` | small — done |
 | 4 | ✅ Windows: DPAPI + an explicit file DACL for `user-tokens.json` and `control-endpoint.json`; the Windows-only tests now run on a Windows runner | `agent/internal/secretfile`, `agent/internal/authstore`, `agent/internal/control/listener_windows.go`, `windows-client-build.yml` | medium — done |
 | 5 | ✅ Gate the no-DB enroll fallback on `APP_ENV=development`, refusing when no config is present. (`push_mfa.auto_approve` needed a correction, not a rejection — see §3) | `internal/access/agent_api.go` | small — done |
-| 6 | Client shows the three enrollment states; iOS says "Tier 1" plainly | `client/lib/ui/screens/` | small |
+| 6 | ✅ The client shows what the server allows: `enrollment_status` + `device_trusted` on `/agent/config`, `DeviceState()` on the engine (+ gomobile and all three plugin bridges), a banner on the home screen | `internal/access`, `agent/internal/control`, `agent/mobile`, `client/plugins/openidx_engine`, `client/lib` | small — done |
 | 7 | Step-up on PAM launch and admin writes when last MFA is older than the window | `internal/oauth`, `internal/access` | medium |
 | 8 | Refresh-token lifetime per client (after DECISION) | migration | small |
 

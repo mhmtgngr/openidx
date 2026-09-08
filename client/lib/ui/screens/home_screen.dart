@@ -4,6 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../engine/models.dart';
 import '../../state/providers.dart';
+import '../widgets/device_state_banner.dart';
 import 'my_access_screen.dart';
 import 'settings_screen.dart';
 
@@ -16,6 +17,7 @@ class HomeScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final status = ref.watch(currentStatusProvider);
     final postureAsync = ref.watch(postureProvider);
+    final deviceStateAsync = ref.watch(deviceStateProvider);
 
     return Scaffold(
       appBar: AppBar(
@@ -27,6 +29,7 @@ class HomeScreen extends ConsumerWidget {
             onPressed: () {
               ref.invalidate(statusProvider);
               ref.invalidate(postureProvider);
+              ref.invalidate(deviceStateProvider);
             },
           ),
           IconButton(
@@ -43,6 +46,13 @@ class HomeScreen extends ConsumerWidget {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          // What this device is allowed to do, first, because it decides
+          // whether anything below it will work.
+          DeviceStateBanner(
+            state: deviceStateAsync.valueOrNull ?? DeviceState.unknown,
+            onRefresh: () => ref.invalidate(deviceStateProvider),
+          ),
+          const SizedBox(height: 16),
           _StatusCard(status: status),
           const SizedBox(height: 16),
           _PostureCard(postureAsync: postureAsync),
