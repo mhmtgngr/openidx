@@ -426,6 +426,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **The local control socket was world-connectable for the length of one
+  syscall.** On Unix the control server has no bearer token: the socket's
+  filesystem permissions *are* the authentication, and what they guard has no
+  second lock — `/token` hands out the signed-in user's access token,
+  `/pam/connect` launches a privileged session, `/ziti/dial` opens the overlay.
+  That mode was established one step too late. `net.Listen` creates a Unix
+  socket at `0777 &^ umask`, and a daemon's usual umask of `022` leaves it
+  `0755` until the `os.Chmod(0600)` on the following line — at a fixed,
+  predictable path under `$XDG_RUNTIME_DIR` or `/tmp`. A connection accepted in
+  that window is not closed by the chmod that follows it. The bind now happens
+  under a narrowed umask, so the socket is `0600` from the instant it exists;
+  the chmod stays as belt and to repair a socket left by an older build. The
+  test that proves this calls the bind alone and reads the mode with no chmod in
+  between, because reading it afterwards proves only that the chmod ran.
+
+- **The control server's bearer token was compared with `!=`.** Go's string
+  comparison returns at the first differing byte, so the time it takes leaks how
+  many leading bytes were right — and this is the one place in the product where
+  that is most usable, because the caller is on the same machine and can retry
+  without network jitter. `internal/oauth` compares the client secret with
+  `subtle.ConstantTimeCompare` for exactly this reason; this one was missed.
+  `authWrap` also had **no test that sent a wrong token**: every existing case
+  attaches the correct bearer, and on Unix the token is empty so the wrapper is
+  a no-op — meaning on the platform CI runs most, the happy path proved nothing
+  about it either. Twelve cases now cover refusal, including the prefix guesses
+  a timing attack builds toward, and one that states the Unix contract
+  explicitly rather than leaving it to be inferred.
+
 - **The agent executed plugins from a directory anyone could write.**
   `plugin.Discover` walks `plugin_dir`, takes any file with an executable bit,
   and hands it to `exec.CommandContext`. Both callers of `LoadPlugins` are

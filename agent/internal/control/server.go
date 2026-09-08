@@ -2,6 +2,7 @@ package control
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"net"
@@ -87,10 +88,23 @@ func (s *Server) Serve(ctx context.Context) error {
 }
 
 // authWrap enforces the bearer token when one is configured (Windows loopback).
+//
+// The comparison is constant-time. It used to be a plain `!=` on the header,
+// which Go implements as a byte-wise compare that returns at the first
+// difference, so the time it takes leaks how many leading bytes were right. This
+// is the one place in the product where that leak is at its most usable: the
+// caller is on the same machine, so there is no network jitter to hide in, and
+// it can retry as fast as the loop allows. internal/oauth compares the client
+// secret with subtle.ConstantTimeCompare for exactly this reason; this one was
+// missed, and it guards more — /token hands out the signed-in user's access
+// token, /pam/connect launches a privileged session, /ziti/dial opens the
+// overlay.
 func (s *Server) authWrap(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.token != "" {
-			if r.Header.Get("Authorization") != "Bearer "+s.token {
+			want := "Bearer " + s.token
+			got := r.Header.Get("Authorization")
+			if subtle.ConstantTimeCompare([]byte(got), []byte(want)) != 1 {
 				writeErr(w, http.StatusUnauthorized, "invalid control token")
 				return
 			}
