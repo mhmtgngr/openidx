@@ -133,6 +133,18 @@ jobs:
         run: bash scripts/check-macos-pod-priming.test.sh
       - name: A macOS Flutter build must create its spec source first
         run: bash scripts/check-macos-pod-priming.sh
+      - name: Verify the iOS URL-scheme registration works and is idempotent
+        # `flutter create` regenerates ios/ from a template with no
+        # CFBundleURLTypes, so the scheme is set by a step rather than by a
+        # committed file, and a step is a thing to forget. The configure script
+        # is tested here (it must refuse a missing plist rather than no-op, and
+        # must not eat the keys Flutter generated) and the guard below is what
+        # notices the next iOS job that skips it.
+        run: bash scripts/ci-configure-ios-deeplinks.test.sh
+      - name: Verify the iOS deep-link guard can go red
+        run: bash scripts/check-ios-deeplink-config.test.sh
+      - name: An iOS runner must register the URL scheme it was built to receive
+        run: bash scripts/check-ios-deeplink-config.sh --enforce
       - name: Verify the toolchain-pin guard can go red
         run: bash scripts/check-go-toolchain-pin.test.sh
       - name: Every setup-go step installs the toolchain go.mod pins

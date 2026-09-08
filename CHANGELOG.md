@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The iOS build could finish a login in the browser and never receive the
+  redirect.** Two `openidx://` links arrive from outside the app and must be
+  routed by the operating system — `openidx://oauth-callback`, the server's 302
+  after login (`agent/internal/sso/sso.go`'s `MobileRedirectURI`), and
+  `openidx://enroll`, the QR-free enrolment link. Android routes both through a
+  committed manifest. **iOS routed neither**: `client/.gitignore` excludes
+  `/ios/` because `flutter create` generates it, Flutter's template carries no
+  `CFBundleURLTypes`, and nothing put the entry back. The `.ipa` attached to
+  every release therefore had no way to complete a sign-in, on a build that
+  compiled, analyzed and packaged clean.
+
+  Verified rather than assumed in the other direction too: the remaining two
+  links the client parses — `openidx://qr-login` from the camera scanner and
+  `openidx://approve` from a notification tap — arrive inside the app and need
+  no platform registration, so Android's two intent-filters were already
+  complete.
+
+  `scripts/ci-configure-ios-deeplinks.sh` registers the scheme in the plist
+  `flutter create` just generated, reading the scheme out of the Android
+  manifest so the two platforms cannot drift, and refusing to run rather than
+  no-op when the plist is absent. All five iOS-materializing CI jobs call it,
+  and `scripts/check-ios-deeplink-config.sh` fails the build on the next job
+  that skips it — including one that runs the step *before* the create, where
+  there is nothing to patch.
+
 - **The mobile engine's boundary was unchecked in four different senses, and
   three of them were invisible.** The gomobile engine in `agent/mobile` is the
   code that runs on every enrolled phone; its seventeen exported bindings are
