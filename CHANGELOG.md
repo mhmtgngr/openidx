@@ -426,6 +426,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **The agent's self-updater installed an artifact it had not verified, whenever
+  the manifest said not to.** `downloadVerified` checked the downloaded file's
+  SHA-256 only `if wantSHA != ""`, and `Fetch` required a manifest to carry only
+  `version` and `url`. A manifest that omitted `sha256` — or supplied an empty
+  string — therefore reached `apply()` unchecked, and `apply()` runs
+  `msiexec /i` as SYSTEM on Windows, `sudo -n dpkg -i` / `rpm -U --force` /
+  `installer -pkg` on Linux and macOS, or replaces the agent's own executable
+  and `syscall.Exec`s into it. The one control on that path was switched off by
+  the very input it existed to check.
+
+  Three `//nolint:gosec` comments in `apply_other.go` each justified themselves
+  with "artifact is checksum-verified", which was conditionally false — and the
+  `nolint` silenced the linter that would have asked. The package doc said the
+  updater applies "a newer **signed** artifact"; nothing verifies a signature
+  anywhere, and saying so made the weaker control read as the stronger one.
+  Neither URL was scheme-checked either, so a plain-`http` manifest made the
+  digest moot: whoever rewrites the artifact rewrites the digest with it.
+
+  Now: `sha256` is **mandatory** and shape-checked (64 hex characters, so
+  `"TODO"` is rejected as malformed rather than failing later as a confusing
+  mismatch); verification is unconditional, with no path through
+  `downloadVerified` that returns a file it did not check; both the manifest and
+  artifact URLs must be `https` (loopback excepted, documented, for local
+  artifact servers and the tests); and the download is capped at 1 GiB, because
+  the digest catches a substituted artifact only after it is on disk and the
+  agent runs on endpoints. The doc comment now states what is verified, that the
+  manifest is therefore the root of trust, and that signature verification is a
+  separate item rather than something already done.
+
+  `Fetch`, `downloadVerified` and `CheckAndApply` — every function that touches
+  the network or decides what runs — had **no tests**; only the two pure helpers
+  did. Thirteen cases now cover the refusals. A second test reads the release
+  workflow's PowerShell manifest generator and requires the three fields `Fetch`
+  demands over https, because producer and consumer are in different languages
+  with nothing checking they agree.
+
+  **Behaviour change for operators:** an existing `update_manifest_url` whose
+  manifest omits `sha256`, or is served over plain http, will now be refused with
+  an error naming the reason instead of silently installing. The manifest the
+  release workflow publishes already carries a `Get-FileHash` SHA-256 and an
+  https URL, so the shipped path is unaffected.
+
 - **A refresh-token lifetime that could not bind on the case it existed for.**
   `oauth_clients.refresh_token_lifetime` is enforced — `GetRefreshToken` refuses
   a token past its `expires_at` — but rotation issues each successor with

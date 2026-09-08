@@ -364,6 +364,23 @@ product; either wire them or remove them from the UI.
   30 / 90 for the Windows agent; browser clients uncapped by decision. A derived
   test fails the build on a native client shipped without a cap.
 
+- **A15 — The agent's self-updater installed what it had not verified, whenever
+  the manifest said not to.** *Fixed on this branch.* `downloadVerified` checked
+  the artifact's SHA-256 only `if wantSHA != ""`, and `Fetch` required only
+  `version` and `url` — so a manifest omitting `sha256` reached `apply()`
+  unchecked, which is `msiexec /i` as SYSTEM, `sudo -n dpkg -i` / `rpm -U
+  --force` / `installer -pkg`, or a replace-and-re-exec of the agent's own
+  binary. The control was switched off by the input it existed to check, three
+  `//nolint:gosec` comments asserted "artifact is checksum-verified"
+  unconditionally, and the package doc claimed a "signed artifact" where no
+  signature is verified. Neither URL was scheme-checked, so plain http made the
+  digest moot. The digest is now mandatory and shape-checked, verification
+  unconditional, both URLs https (loopback excepted), and the download capped.
+  `Fetch`, `downloadVerified` and `CheckAndApply` had no tests at all; they do
+  now, and a second test holds the release workflow's manifest generator to what
+  the agent will accept. Still open and stated rather than implied: the manifest
+  is the root of trust — verifying a signature over it is a separate item.
+
 **B. First-contact failures** — what a new operator/evaluator hits in hour one.
 
 - **B1 — Default admin `admin@openidx.local` / `Admin@123` seeds every
