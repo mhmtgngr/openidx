@@ -11,6 +11,14 @@
 # rules file with an <include> in it — the file that reads like a control and
 # is not — would be this repository's own defect class in the tool built to
 # catch it.
+#
+# NOT COVERED HERE, and said rather than implied: rule 4, that both files are
+# tracked by git. These cases write fixtures to a temp directory where being
+# untracked is the expected state, so the guard turns that rule off whenever the
+# path overrides are in use — which is every case below. Its passing at all is
+# the evidence that the gating works; the rule itself is proven against the real
+# tree by `git rm --cached` on the resource, which is the exact state that
+# shipped and reddens the guard.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
