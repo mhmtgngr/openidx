@@ -699,8 +699,30 @@ func (h *AgentAPIHandler) HandleEnrollOAuth(c *gin.Context) {
 		return
 	}
 
+	// The token must have been issued for device enrolment. A console session
+	// token carries openid/profile/email and nothing more; accepting it here
+	// meant any signed-in browser -- or anything holding its token -- could
+	// register a device against the user. The seeded enrolment clients (v184,
+	// openidx-agent-android) are granted agent.enroll; browser clients are not.
+	if !tokenScopeAllows(c, enrollScope) {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error":             "insufficient_scope",
+			"error_description": "enrolling a device needs a token issued with the " + enrollScope + " scope",
+		})
+		return
+	}
+
 	var enrollReq enrollRequest
 	_ = c.ShouldBindJSON(&enrollReq)
+
+	org, _ := orgctx.From(c.Request.Context())
+	// Same auto-trust decision the enrollment-session path makes: MFA-verified
+	// (read from the token's amr, which the middleware exposes) and, when the
+	// operator requires it, a compliant posture -- which an enrolment cannot
+	// carry yet, so under DEVICE_AUTOTRUST_REQUIRE_POSTURE this stays pending
+	// until the first report. Before this the OAuth path passed a literal
+	// false: safe, and silently unlike the path next to it.
+	trusted, mode := decideAutoTrust(h.cfg(), h.logger, amrIndicatesMFA(c.GetStringSlice("amr")), false, org.ID)
 
 	creds := h.issueAgentCredentials(c.Request.Context(), enrollReq, "oauth", userID)
 
@@ -710,13 +732,30 @@ func (h *AgentAPIHandler) HandleEnrollOAuth(c *gin.Context) {
 	// is the join point that lets device trust (IAM) and device compliance
 	// (Ziti posture) be reconciled per physical device. Best-effort: a failure
 	// here never blocks enrollment.
-	org, _ := orgctx.From(c.Request.Context())
-	h.linkAgentToKnownDevice(c.Request.Context(), c.ClientIP(), creds.AgentID, creds.DeviceID, userID, org.ID, enrollReq, false)
+	h.linkAgentToKnownDevice(c.Request.Context(), c.ClientIP(), creds.AgentID, creds.DeviceID, userID, org.ID, enrollReq, trusted)
 
 	writeEnrollResponse(c, creds, "oauth", nil)
 
-	h.logAuditEvent("agent.enrolled", creds.AgentID, "success", "method=oauth user="+userID)
-	h.logAuditEventToDB(c.Request.Context(), "agent.enrolled", creds.AgentID, "success", "method=oauth user="+userID)
+	detail := fmt.Sprintf("method=oauth user=%s auto_trusted=%t autotrust_mode=%s", userID, trusted, mode)
+	h.logAuditEvent("agent.enrolled", creds.AgentID, "success", detail)
+	h.logAuditEventToDB(c.Request.Context(), "agent.enrolled", creds.AgentID, "success", detail)
+}
+
+// enrollScope is the OAuth scope a token must carry to enroll a device through
+// /agent/enroll/oauth. It is granted to the native enrolment clients by
+// migration (v184) and to nothing else by default.
+const enrollScope = "agent.enroll"
+
+// tokenScopeAllows reports whether the bearer's granted scope -- the
+// space-delimited string the auth middleware copies from the token's "scope"
+// claim -- includes want. A token with no scope claim allows nothing here.
+func tokenScopeAllows(c *gin.Context, want string) bool {
+	for _, s := range strings.Fields(c.GetString("scope")) {
+		if s == want {
+			return true
+		}
+	}
+	return false
 }
 
 // linkAgentToKnownDevice upserts a known_devices row for a user-bound agent

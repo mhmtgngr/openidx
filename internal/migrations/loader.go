@@ -1308,5 +1308,12 @@ func allMigrations() []*Migration {
 			UpSQL:       dropJITGrantsUp,
 			DownSQL:     dropJITGrantsDown,
 		},
+		{
+			Version:     184,
+			Name:        "seed_android_agent_oauth_client",
+			Description: "Seed the openidx-agent-android public (PKCE) OAuth client -- redirect com.openidx.agent://oauth/redirect, scopes openid profile offline_access agent.enroll -- so the native Android agent's 'Sign in with your work email to enroll this device' screen can complete. The Kotlin agent has requested this client_id and scope since it was written and no migration ever registered either, so internal/oauth refused the authorize request with invalid_client on every install; only the QR/token enrollment path beside it worked. agent.enroll is now required by /agent/enroll/oauth, so a browser-client session token can no longer enroll a device. v184_test.go derives, from the shipped clients' own source, that every hardcoded client_id, redirect and requested scope is registered by some migration. Idempotent (ON CONFLICT DO NOTHING).",
+			UpSQL:       androidAgentClientUp,
+			DownSQL:     androidAgentClientDown,
+		},
 	}
 }

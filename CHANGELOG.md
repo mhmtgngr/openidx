@@ -7,7 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A client access design** — `docs/CLIENT-ACCESS-DESIGN.md`: registration,
+  MFA, ZTNA tiers, permissions per role per client, revocation, secrets at rest
+  and the production gate, for the Windows agent, the Android agent and the
+  companion app, with an ordered implementation plan (Android and Windows first)
+  and the operator rollout order. Every "today" statement in it was read from
+  the file it names. Its three load-bearing findings: the Android agent's OAuth
+  enrollment could never work (fixed below); **revoking a device leaves its
+  30-day refresh token alive**; and on Windows every secret sits under
+  `%ProgramData%` protected by Unix mode bits Windows ignores.
+
 ### Fixed
+
+- **The Android agent's first screen could not enroll a device, on any
+  install.** `EnrollmentActivity` shows "Sign in with your work email to enroll
+  this device" and runs a PKCE flow as `client_id=openidx-agent-android` with
+  scope `agent.enroll`. No migration ever seeded that client — the native
+  clients were `openidx-mobile` (v84) and `openidx-desktop` (v85) — and
+  `scopeAllowedForClient` refuses a scope the client is not registered for, so
+  the authorize request answered `invalid_client` since the day the screen was
+  written. The QR/token path beside it worked, which is why nobody noticed.
+
+  Migration **v184** seeds the client (public, PKCE, redirect
+  `com.openidx.agent://oauth/redirect`, scopes `openid profile offline_access
+  agent.enroll`). The auth middleware now exposes the token's granted `scope`
+  beside `amr`, and `/agent/enroll/oauth` **requires `agent.enroll`** — so a
+  console session token, which no browser client can obtain that scope for, can
+  no longer enroll a device by accident (`403 insufficient_scope`). The same
+  handler now makes the same auto-trust decision as the enrollment-session
+  path (MFA-verified from `amr`, `DEVICE_AUTOTRUST_MODE`) instead of passing a
+  literal `trusted=false`.
+
+  The guard that would have caught this on the day it was written:
+  `TestEveryShippedClientIsSeededByAMigration` derives every `client_id`,
+  redirect URI and requested scope from the shipped clients' own source
+  (`agent/internal/sso/sso.go` and the Kotlin `OAuthEnrollmentFlow`) and checks
+  each against every migration's `oauth_clients` INSERT. A client named in
+  source and seeded nowhere fails the build rather than the user's first
+  sign-in.
 
 - **The iOS build could finish a login in the browser and never receive the
   redirect.** Two `openidx://` links arrive from outside the app and must be

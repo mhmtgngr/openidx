@@ -284,6 +284,19 @@ product; either wire them or remove them from the UI.
   `internal/governance/policy_condition_test.go` derives the contract from the
   type assertions and checks the page against it, names and types.
 
+- **A9 — The Android agent's "Sign in with your work email to enroll this
+  device" could never succeed.** *Fixed on this branch.* The screen runs a PKCE
+  flow as `openidx-agent-android` requesting `agent.enroll`; no migration seeded
+  the client and `scopeAllowedForClient` refuses the scope, so the first thing
+  every Android user tapped answered `invalid_client` on every install. Only
+  the QR/token path worked. v184 seeds the client; `/agent/enroll/oauth` now
+  requires `agent.enroll` (a console token can no longer enroll a device) and
+  makes the same auto-trust decision as the session path.
+  `TestEveryShippedClientIsSeededByAMigration` derives every client id,
+  redirect and scope from the clients' own source and checks them against every
+  migration's seed. The full client design — registration, MFA, tiers,
+  revocation, secrets at rest — is in `docs/CLIENT-ACCESS-DESIGN.md`.
+
 **B. First-contact failures** — what a new operator/evaluator hits in hour one.
 
 - **B1 — Default admin `admin@openidx.local` / `Admin@123` seeds every
