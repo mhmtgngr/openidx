@@ -9,6 +9,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The mobile engine's boundary was unchecked in four different senses, and
+  three of them were invisible.** The gomobile engine in `agent/mobile` is the
+  code that runs on every enrolled phone; its seventeen exported bindings are
+  the whole contract between the Flutter client and the agent.
+
+  1. **No CI job ran its tests.** The agent module's only test invocation was
+     `go test ./internal/...`, and measured with `go list`, exactly two packages
+     holding tests sit outside `./internal/...` — `agent/mobile` and
+     `agent/cmd/openidx-agent`, the agent's own entry point. Five tests, run
+     nowhere, including the one asserting the bindings are gomobile-bindable at
+     all.
+  2. **That invocation could not fail.** It ended `2>&1 | tail -20`, and GitHub
+     runs `run:` under `bash -e` without `pipefail`, so the step reported
+     `tail`'s status. Reproduced: `bash -e -c 'false 2>&1 | tail -20'` exits 0.
+     It was the only instance of the shape in the tree, and
+     `scripts/check-run-blocks-can-fail.sh` now carries a second rule that
+     flags it — with the real line, verbatim, as a self-test case.
+  3. **The signature census was a hand-written list of sixteen** where the
+     package exports seventeen. The one it omitted was `RegisterPushDevice`,
+     the push-registration binding all three platform bridges wire. It now
+     derives the set from the package's own AST.
+  4. **The bindings are re-declared by hand in three more languages** — the
+     Dart plugin, the Kotlin `when` arms, the Swift `case`s — and nothing
+     checked the four agree. They do today. What they permitted is quiet and
+     one-sided: add a binding, wire Dart and Kotlin, forget Swift, and Android
+     is fine while iOS answers `MissingPluginException` at runtime, on a screen
+     that looks finished, in a build that compiled and analyzed clean.
+     `agent/mobile/bridge_test.go` now derives the Go side and requires each
+     platform to answer for it in both directions.
+
+  The workflow's path filter gained `client/plugins/openidx_engine/**` for the
+  same reason: filtering on `agent/**` alone would have left the new census
+  blind exactly where the defect lives — editing the Swift plugin would not
+  have run the test that exists to check the Swift plugin.
+
 - **The Race Detector CI check went red for 13 GB of type-checking, not for a
   race.** `go test -race ./...` reaches `./tools/...`, where two gates answer a
   question about the whole module: `deadconfig` type-checks every package and

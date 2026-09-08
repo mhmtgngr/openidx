@@ -11,13 +11,25 @@ name: Agent Build & Release
 # The job names are the check names branch protection references, so they are
 # stable even though the workflow's own name has changed.
 
+# client/plugins/openidx_engine/** is in the path filter because
+# agent/mobile/bridge_test.go reads it: the engine's bindings are written down
+# once in Go and three more times in Dart, Kotlin and Swift, and that test is
+# the only thing checking the four agree. Filtering on agent/** alone would have
+# left it blind exactly where the defect lives -- editing the Swift plugin would
+# not have run the census that exists to check the Swift plugin.
 on:
   push:
     branches: [main]
-    paths: ['agent/**', '.github/workflows/windows-client-build.yml']
+    paths:
+      - 'agent/**'
+      - 'client/plugins/openidx_engine/**'
+      - '.github/workflows/windows-client-build.yml'
     tags: ['agent-v*']
   pull_request:
-    paths: ['agent/**', '.github/workflows/windows-client-build.yml']
+    paths:
+      - 'agent/**'
+      - 'client/plugins/openidx_engine/**'
+      - '.github/workflows/windows-client-build.yml'
   workflow_dispatch:
     inputs:
       version:
@@ -53,7 +65,34 @@ jobs:
         run: |
           go vet ./...
           GOOS=windows GOARCH=amd64 go build ./...
-          go test ./internal/... 2>&1 | tail -20
+
+      # This was `go test ./internal/... 2>&1 | tail -20` inside the step above,
+      # and it was two failures in one line.
+      #
+      # FIRST, ./internal/... IS NOT THE MODULE. Two packages holding tests sit
+      # outside it -- agent/cmd/openidx-agent, the agent's own entry point, and
+      # agent/mobile, the entire gomobile engine that runs on every enrolled
+      # phone. Measured with `go list -f '{{if .TestGoFiles}}...'`: those two and
+      # no others. Five tests, run by no job in this repository, including the
+      # one asserting the bindings are gomobile-safe at all.
+      #
+      # SECOND, THE PIPE THREW THE RESULT AWAY. GitHub runs `run:` under
+      # `bash -e {0}` -- no pipefail -- so a pipeline's status is its LAST
+      # command's, and `tail` always succeeds. Reproduced:
+      #
+      #     $ bash -e -c 'false 2>&1 | tail -20; echo $?'
+      #     0
+      #
+      # So the agent module's tests could not fail this build, whichever of them
+      # ran. That is the same shape as the `|| true` removed from ci-android.yml,
+      # arriving through a pipe instead of an operator; scripts/check-run-blocks-
+      # can-fail.sh now flags it, and its self-test carries this exact line.
+      #
+      # The whole module was green before this changed, so this widens what CI
+      # proves without widening what it has to fix.
+      - name: go test (the whole agent module)
+        working-directory: agent
+        run: go test ./...
 
   # Linux packages. agent/Makefile has had a `package-linux` target since the
   # packaging files landed -- nfpm config, postinstall, systemd unit, desktop

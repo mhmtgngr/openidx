@@ -30,6 +30,26 @@
 #     That is how the integration suite itself gates.
 #   - `|| true`, `|| echo ...`, `&&` chains and `if ! CMD` are all deliberate
 #     and pass. Saying "this may fail" out loud is the point.
+#
+# THE SECOND RULE: A PIPE THROWS THE STATUS AWAY, AND -e DOES NOT SAVE YOU.
+#
+# GitHub runs `run:` under `bash -e {0}`. -e is not pipefail: a pipeline's exit
+# status is its LAST stage's, so a gate piped into anything reports that
+# something's status, not its own. Measured:
+#
+#     $ bash -e -c 'false 2>&1 | tail -20; echo $?'
+#     0
+#
+# windows-client-build.yml carried `go test ./internal/... 2>&1 | tail -20` for
+# the agent module -- the endpoint agent's whole test suite, unable to fail the
+# build, under a step that reads as a test step. It was the only instance in the
+# tree (measured across every workflow), and it is fixed; this rule is what
+# stops the next one, because it is the same "a checker that cannot fail" defect
+# arriving through a pipe rather than through `|| true`.
+#
+# This rule applies to EVERY run block, not only the -e-less ones, because the
+# pipe defeats -e too. A block that sets `pipefail` is exempt: there the
+# pipeline's status is the first failure's, which is what the author asked for.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -67,6 +87,25 @@ for path in paths:
             run = step.get("run")
             if not isinstance(run, str):
                 continue
+            # RULE 2 first, because it applies to every block: -e does not make
+            # a pipeline fail on its first stage, only pipefail does.
+            pipefail = re.search(r'^\s*set -\S*\s*(-o\s+)?pipefail', run, re.M) \
+                or re.search(r'^\s*set -o pipefail', run, re.M)
+            if not pipefail:
+                for line in run.split("\n"):
+                    if not GATING.match(line):
+                        continue
+                    stripped = line.strip()
+                    # `||` is an or, not a pipe; strip it before looking for one.
+                    if "|" not in stripped.replace("||", ""):
+                        continue
+                    findings += 1
+                    print("%s: job %s, step %r" % (path, job_name, step.get("name", "?")))
+                    print("    %s" % stripped[:100])
+                    print("    is piped into another command in a block without `pipefail`, so the")
+                    print("    step reports the LAST stage's status, not this one's. Drop the pipe,")
+                    print("    or add `set -o pipefail` and say why the output needs filtering.")
+
             opts = re.search(r'^\s*set -([a-z]+)', run, re.M)
             if not opts or "e" in opts.group(1):
                 continue  # -e present, or no set line: a bare failure aborts
@@ -93,10 +132,11 @@ for path in paths:
 
 if findings == 0:
     print("check-run-blocks-can-fail: ok — %d run block(s) without -e, every gating "
-          "command in them guarded" % blocks)
+          "command in them guarded, and no gating command piped away" % blocks)
     sys.exit(0)
 
 print()
-print("check-run-blocks-can-fail: %d unguarded gating command(s)" % findings, file=sys.stderr)
+print("check-run-blocks-can-fail: %d gating command(s) whose failure is discarded" % findings,
+      file=sys.stderr)
 sys.exit(1 if enforce else 0)
 PYEOF

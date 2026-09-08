@@ -113,6 +113,71 @@ run_case "non-gating commands are ignored" 0 'jobs:
           docker compose up -d
           echo done'
 
+# ---------------------------------------------------------------------------
+# RULE 2: a gate piped into another command reports that command's status.
+#
+# The positive case is the real line, verbatim, that carried the agent module's
+# entire test suite past CI for as long as it existed -- the whole endpoint
+# agent, plus the gomobile engine on every enrolled phone, under a step named
+# for testing that could not go red. No `set` line at all here, which is the
+# point: GitHub's default `bash -e` does not make a pipeline fail.
+run_case "a gate piped into tail is a finding, even with no set line" 1 'jobs:
+  smoke:
+    steps:
+      - name: go vet + build (windows target)
+        run: |
+          go vet ./...
+          go test ./internal/... 2>&1 | tail -20'
+
+# ...and -e does not rescue it either, so the rule must not be scoped to
+# -e-less blocks the way rule 1 is.
+run_case "a piped gate under an explicit -e is still a finding" 1 'jobs:
+  smoke:
+    steps:
+      - name: check
+        run: |
+          set -e
+          go test ./... | tail -5'
+
+# The negatives. pipefail is the author saying "the first failure is the
+# status", which is exactly the thing rule 2 asks for.
+run_case "pipefail makes a piped gate legitimate" 0 'jobs:
+  smoke:
+    steps:
+      - name: check
+        run: |
+          set -euo pipefail
+          go test ./... | tee test.log'
+
+run_case "set -o pipefail on its own line counts too" 0 'jobs:
+  smoke:
+    steps:
+      - name: check
+        run: |
+          set -o pipefail
+          go test ./... | tee test.log'
+
+# `||` is an or, not a pipe. Rule 1 already accepts it and rule 2 must not
+# double back and reject the same line.
+run_case "|| true is not a pipe" 0 'jobs:
+  smoke:
+    steps:
+      - name: check
+        run: |
+          set -uo pipefail
+          go test ./... || true
+          echo done'
+
+# A pipe in a non-gating command is somebody formatting output, not a gate
+# throwing its status away.
+run_case "a pipe in a non-gating command is ignored" 0 'jobs:
+  smoke:
+    steps:
+      - name: check
+        run: |
+          set -e
+          docker compose logs | tail -50'
+
 echo
 echo "check-run-blocks-can-fail.test: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
