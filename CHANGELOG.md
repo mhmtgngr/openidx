@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The unauthenticated surface of access-service, derived and declared
+  (`internal/access/public_surface_test.go`).** The service registers 325
+  routes; fourteen of them answer without the tenant-JWT middleware. Those
+  fourteen are the product's unauthenticated attack surface, and until now
+  nothing said which they were — the authentication hole listed under Fixed
+  lived in two of them for the life of the code, while four comments elsewhere
+  in the package named one of those two as the pattern they copied.
+
+  The guard does not read a list to find them. It registers every route with a
+  stub auth middleware that refuses everything, then drives each route: one
+  that answers anything else is outside the middleware *by construction*. A
+  hand-kept list would already have missed `POST /api/v1/access/enroll`, the
+  Tier-0 dark-platform door, which is registered on the router directly rather
+  than in the group with the other four agent routes.
+
+  What is written down is the decision about each route, and it is checked. Each
+  entry records the shape of its refusal — refuses before reading anything;
+  resolves the subject first and so answers 404 for one that does not exist;
+  or exists to answer an anonymous caller (a login redirect, an OIDC callback,
+  an installer, a link whose path is the secret). The first shape is driven
+  against a *nil database*, which makes "did this handler read something before
+  it refused" an observable question: a handler that touches state first panics,
+  and the panic is the finding. Restoring the defect below — reading the body
+  and querying before the credential check — turns it red with the fix named.
+
 - **J4's automatable half, proved through the running services
   (`test/integration/network_access_test.go`).** "Enroll agent/BrowZer →
   posture check → reach a dark service" was the last Definition-of-Done journey
