@@ -49,6 +49,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   not the served policy fails the build — because no Go code here reads or
   compiles rego, so nothing else can ever be evaluated.
 
+- **Six of the policy's resource types named services it does not guard.** The
+  same question asked of the other half of the input: `input.resource.type` is
+  what the role-permission table and four rules key on, and a type no guarded
+  route produces is a row that cannot match. `authz.rego` guards admin-api,
+  governance and provisioning; its table also carried rows for `group`, `role`
+  and `identity` (identity-service), `certificate` (not under the guarded group)
+  and `route` (access-service), and its auditor rules keyed on `report`
+  (audit-service). So `group-admin`, `role-admin`, `identity-admin`,
+  `security-admin` and `access-admin` read as enforced permissions in the policy
+  an operator reviews, and granting or withholding any of them changed nothing.
+  The dead rows and the `report` rules are removed, each with a note naming the
+  service that really serves it and what wiring that service would have to
+  settle first (identity-service has eight deliberately anonymous routes,
+  access-service fourteen, audit-service an open service-to-service ingest
+  endpoint). `internal/common/middleware/opa_resource_census_test.go` now parses
+  those types out of the policy — rules and table keys both, replacing a
+  hand-written list that named six and missed the table's ten — and fails when
+  one becomes unreachable.
+
 - **Three authorization decisions were computed from the URL the caller wrote,
   not the route the router chose.** gin backtracks from a static path segment to
   a parameter when nothing static matches, so a request can read like one route

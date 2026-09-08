@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -42,28 +44,72 @@ import (
 //
 // This is an external test package because those services import this one.
 
-// regoResourceTypes are the resource types authz.rego keys a rule on. Each must
-// be produced by at least one route the middleware guards, or the rule is a
-// decision about a resource nobody can ask for. Read from the policy file:
-//
-//	authz.rego:118  input.resource.type == "user"
-//	authz.rego:125  input.resource.type == "session"
-//	authz.rego:133  input.resource.type in {"event", "report", "review", "statistic"}
-//	authz.rego:140  input.resource.type == "report"
-var regoResourceTypes = []string{"user", "session", "event", "report", "review", "statistic"}
+// policyFile is the policy the guarded services are authorized against.
+const policyFile = "../../../deployments/docker/opa/policies/authz.rego"
 
-// knownUnreachableRegoTypes are the rego resource types no guarded route can
-// produce, with the reason. An entry is a recorded finding, not a waiver: the
-// rule it names cannot fire today, and the test fails if a type here becomes
-// reachable, so the entry cannot outlive the problem.
-var knownUnreachableRegoTypes = map[string]string{
-	"report": "the only /reports routes in the product are audit-service's " +
-		"(internal/audit/service.go and reports.go), and audit-service does not wire " +
-		"OPAAuthz -- only governance, provisioning and admin-api do. So authz.rego's two " +
-		"auditor rules (\"Auditors can read audit events, reviews, and reports\" and " +
-		"\"Auditors can create reports\") describe a service OPA never sees. Guard " +
-		"audit-service or drop the rules; either way the policy should not read as though " +
-		"reports are covered.",
+// regoResourceTypes reads the resource types authz.rego keys on OUT OF THE
+// POLICY, in both shapes it uses them: a rule comparing input.resource.type to a
+// literal or a set, and the keys of the role_permissions table. Each must be
+// produced by at least one route the middleware guards, or the rule (or the
+// table row) is a decision about a resource nobody can ask for.
+//
+// This was a hand-written list of six, which is the shape this whole file exists
+// to replace: it happened to be right, but only because somebody had just read
+// the policy, and it named none of the ten role_permissions keys. Deriving it
+// found seven more types to check.
+var (
+	typeEquals = regexp.MustCompile(`input\.resource\.type\s*==\s*"([^"]+)"`)
+	typeInSet  = regexp.MustCompile(`input\.resource\.type\s+in\s*\{([^}]*)\}`)
+	quoted     = regexp.MustCompile(`"([^"]+)"`)
+	tableKey   = regexp.MustCompile(`(?m)^\s{4}"([^"]+)"\s*:\s*\{`)
+	tableBlock = regexp.MustCompile(`(?s)role_permissions\s*:=\s*\{(.*?)\n\}`)
+)
+
+func regoResourceTypes(t *testing.T) []string {
+	t.Helper()
+	raw, err := os.ReadFile(policyFile)
+	if err != nil {
+		t.Fatalf("cannot read the policy this census is about (%s): %v", policyFile, err)
+	}
+	// Comments are stripped: the auditor rules quote the "report" type they used
+	// to carry, and a scan that read comments would keep checking a type the
+	// policy no longer keys on.
+	var code strings.Builder
+	for _, line := range strings.Split(string(raw), "\n") {
+		if i := strings.Index(line, "#"); i >= 0 {
+			line = line[:i]
+		}
+		code.WriteString(line)
+		code.WriteByte('\n')
+	}
+	src := code.String()
+
+	seen := map[string]bool{}
+	for _, m := range typeEquals.FindAllStringSubmatch(src, -1) {
+		seen[m[1]] = true
+	}
+	for _, m := range typeInSet.FindAllStringSubmatch(src, -1) {
+		for _, q := range quoted.FindAllStringSubmatch(m[1], -1) {
+			seen[q[1]] = true
+		}
+	}
+	if block := tableBlock.FindStringSubmatch(src); block != nil {
+		for _, m := range tableKey.FindAllStringSubmatch(block[1], -1) {
+			seen[m[1]] = true
+		}
+	}
+
+	var out []string
+	for typ := range seen {
+		out = append(out, typ)
+	}
+	sort.Strings(out)
+	if len(out) < 8 {
+		t.Fatalf("only %d resource type(s) parsed out of %s; the policy is either much smaller "+
+			"than it was or this parser no longer matches its syntax, and either way the "+
+			"reachability half of this census is checking almost nothing", len(out), policyFile)
+	}
+	return out
 }
 
 func censusConfig() *config.Config {
@@ -191,40 +237,25 @@ func TestOPAIsAskedAboutARealResourceTypeOnEveryGuardedRoute(t *testing.T) {
 			found, strings.Join(bad, "\n  "))
 	}
 
-	var unreachable, recovered []string
-	for _, want := range regoResourceTypes {
-		_, known := knownUnreachableRegoTypes[want]
-		switch {
-		case !produced[want] && !known:
+	keyed := regoResourceTypes(t)
+	var unreachable []string
+	for _, want := range keyed {
+		if !produced[want] {
 			unreachable = append(unreachable, want)
-		case produced[want] && known:
-			recovered = append(recovered, want)
 		}
 	}
 	if len(unreachable) > 0 {
-		t.Errorf("authz.rego keys a rule on resource type(s) that NO guarded route produces: "+
-			"%s\n\nEither the rule is dead -- a decision about a resource nobody can ask for -- "+
-			"or the middleware stopped producing that spelling. Both are worth knowing; neither "+
-			"shows up as a denial. Fix it, or record it in knownUnreachableRegoTypes with the "+
-			"reason.", strings.Join(unreachable, ", "))
-	}
-	if len(recovered) > 0 {
-		sort.Strings(recovered)
-		t.Errorf("knownUnreachableRegoTypes records %s as unreachable, but a guarded route now "+
-			"produces it -- delete the entry so the register keeps meaning what it says",
-			strings.Join(recovered, ", "))
-	}
-	for typ, why := range knownUnreachableRegoTypes {
-		if len(strings.TrimSpace(why)) < 40 {
-			t.Errorf("knownUnreachableRegoTypes[%q] has no real reason; an unreachable policy "+
-				"rule recorded without one is a waiver, which is what this register exists not "+
-				"to be", typ)
-		}
+		t.Errorf("authz.rego keys on resource type(s) that NO guarded route produces: %s\n\n"+
+			"A rule or a role_permissions row for a type nobody can ask for is a decision about "+
+			"nothing. Either the policy names a resource this deployment does not guard -- the "+
+			"auditor rules named \"report\", which only audit-service serves, and audit-service "+
+			"does not wire OPAAuthz -- or the middleware stopped producing that spelling. "+
+			"Neither shows up as a denial.", strings.Join(unreachable, ", "))
 	}
 
 	t.Logf("OPA resource-type census: %d guarded route(s), %d distinct resource type(s), "+
-		"%d of the %d types authz.rego keys on are reachable",
-		len(askings), len(produced), len(regoResourceTypes)-len(unreachable), len(regoResourceTypes))
+		"%d of the %d type(s) authz.rego keys on reachable",
+		len(askings), len(produced), len(keyed)-len(unreachable), len(keyed))
 }
 
 func concreteFor(template string) string {

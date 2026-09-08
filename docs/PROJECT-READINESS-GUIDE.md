@@ -4359,6 +4359,17 @@ class this whole program exists for.
    the proof: `internal/common/opa/policy_input_test.go` fails on any `.rego` in
    the tree that is not the policy actually served.
 
+   And the other half of the input, asked the same way: `input.resource.type` is
+   what the role-permission table and four rules key on, and six of the types the
+   policy named are produced by no route it guards — `group`, `role` and
+   `identity` (identity-service), `certificate`, `route` (access-service) and
+   `report` (audit-service). `group-admin`, `role-admin`, `identity-admin`,
+   `security-admin` and `access-admin` were role names an operator could read as
+   enforced permissions here while granting them changed nothing. Removed, each
+   naming the service that really serves it; the census derives these types out
+   of the policy now instead of from a hand-written list, so a seventh cannot
+   appear quietly.
+
    The same sweep found the third copy of this problem. `dev-kube/opa.yaml`
    embedded its own `package openidx.authz` ConfigMap — the package the
    middleware queries — in which *every* rule read something the product does not
