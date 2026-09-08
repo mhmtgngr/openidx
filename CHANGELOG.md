@@ -21,6 +21,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Any signed-in user could answer another user's push-MFA prompt.**
+  `POST /api/v1/identity/mfa/push/verify` is on the authenticated identity
+  group, and `isIdentitySelfService` admits every authenticated user to
+  anything under `/mfa/` — "the caller's own MFA verification", says the
+  comment. The handler read `challenge_id` and the two-digit number from the
+  body and never compared the challenge's user to the caller, so the comment
+  was not true of this route. `VerifyPushMFAChallenge` now takes the
+  authenticated subject and refuses a challenge that is not theirs (`403`).
+
+  Three things in the same handler, found with it:
+
+  - **The number match had no attempt limit.** A wrong code returned an error
+    and left the challenge pending, so all ninety two-digit values could be
+    tried in turn. Three wrong answers now deny the challenge outright; when
+    no Redis counter is available the first wrong answer is final, because a
+    missing counter must never read as an unlimited one.
+  - **The approving device was never checked.** Revoking a phone deletes its
+    overlay identity, untrusts it and (above) revokes its tokens, and left its
+    push registration on the approver list. An approval now requires the push
+    registration to be enabled and, when it was created by a device enrolment
+    (the v135 `agent_id` linkage), the enrolled agent to be active. A **deny**
+    is never refused on device grounds — a revoked phone reporting "this wasn't
+    me" is a signal worth keeping.
+  - **A prompt could be raised for somebody else.** `POST /mfa/push/challenge`
+    took `user_id` from the request body on that same open route: one account
+    could make another account's phone buzz on demand, and learn the challenge
+    id it got back. It is raised for the caller only now (`403` otherwise). The
+    login flow is unaffected — it calls `CreatePushMFAChallenge` in-process.
+
+  Also corrected: `push_mfa.auto_approve` logged "Auto-approving push
+  challenge" and approved nothing. It skips the FCM/APNs send; the prompt still
+  goes out over ntfy and still needs a tap and the right number. The log line
+  now says that.
+
 - **Revoking a device did not revoke its tokens.** `executeDeviceRevoke` deleted
   the Ziti identity, terminated the overlay sessions and untrusted the known
   device — every pillar except the one a phone actually talks to. Nothing

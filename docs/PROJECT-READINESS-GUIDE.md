@@ -311,6 +311,17 @@ product; either wire them or remove them from the UI.
   already issued survives up to its one-hour lifetime, since only the refresh
   grant reads the session marker.
 
+- **A11 — Any signed-in user could answer another user's push-MFA prompt.**
+  *Fixed on this branch.* `/mfa/push/verify` is self-service for every
+  authenticated user (`isIdentitySelfService` admits everything under `/mfa/`)
+  and the handler compared nothing about the caller to the challenge. The same
+  handler counted no failed number-matches, so the two-digit code could be
+  walked through; `/mfa/push/challenge` took its `user_id` from the body, so a
+  prompt could be raised on somebody else's phone at will; and the approving
+  device's state was never read, so a revoked phone stayed an approver. All
+  four are closed, with the design's reasoning in
+  `docs/CLIENT-ACCESS-DESIGN.md` §3.
+
 **B. First-contact failures** — what a new operator/evaluator hits in hour one.
 
 - **B1 — Default admin `admin@openidx.local` / `Admin@123` seeds every

@@ -176,10 +176,16 @@ recommended **14 days, sliding on use**, hard cap 90. Windows agent may keep
 - **Adaptive**: new device +30, new location +20, impossible travel +50, blocked
   IP +40, failed login +10; ≥ 70 requires MFA (`adaptive_mfa.*`).
 - **Step-up** endpoints exist (`/oauth/stepup-challenge`, `-verify`, `-status`).
-- `push_mfa.auto_approve` (default false) **approves every push challenge
-  without a tap** — "development mode" in `internal/identity/pushmfa.go` — and
-  `ValidateProduction` does not reject it. `dev_admin_bypass` is rejected; this
-  must be too.
+- `push_mfa.auto_approve` (default false) does **not** do what its name says.
+  *Corrected here after reading it again:* the flag only makes
+  `sendPushNotification` return early, skipping the FCM/APNs hop and logging
+  "Auto-approving push challenge". No challenge is approved — the prompt is
+  still delivered over ntfy and still needs a tap and the right number. The
+  log line was the lie, and it is now fixed; the flag's real effect is
+  "skip the provider send", which matters only for availability (a deployment
+  with neither a provider nor ntfy would deliver nothing). Left in place rather
+  than deleted: three shipped documents describe it, and its effect is real,
+  just smaller than its name.
 
 ### The policy
 
@@ -191,9 +197,31 @@ recommended **14 days, sliding on use**, hard cap 90. Windows agent may keep
   admin write, on any client, if the session's last MFA is older than the org's
   step-up window (recommended 15 minutes; `PAM_SESSION_RISK_GATE` already
   carries the PAM half).
-- **Push number-match is the phone's job, not its right.** A device that is
-  pending approval or revoked must not be able to approve a challenge: push
-  approval checks the approving device's trust state server-side.
+- **Push number-match is the phone's job, not its right.** ✅ *Item 3, landed.*
+  A device that is pending approval or revoked cannot approve a challenge:
+  `VerifyPushMFAChallenge` checks the approving device's state server-side (the
+  push registration must be enabled, and the enrolled agent behind it — the
+  v135 linkage — must be active). A **deny** is never refused on device
+  grounds: a revoked phone saying "this wasn't me" is a signal worth keeping.
+
+  Two things found while implementing it, both worse than the item as written,
+  both fixed with it:
+
+  - **Anyone could answer anyone's prompt.** `/mfa/push/verify` is on the
+    authenticated identity group and `isIdentitySelfService` admits every
+    authenticated user to anything under `/mfa/` — "the caller's own MFA
+    verification". The handler passed `challenge_id` and the number straight
+    through and never compared the challenge's user to the caller. It does now.
+  - **The number match had unlimited attempts.** A wrong code returned an error
+    and left the challenge pending, so all ninety two-digit values could be
+    tried. Three wrong answers now deny the challenge; with no Redis counter
+    available the first wrong answer is final, because "no counter" must never
+    mean "no limit".
+  - **A prompt could be raised for someone else.** `POST /mfa/push/challenge`
+    took `user_id` from the request body on that same open route, so one
+    account could make another account's phone buzz at will. It is now raised
+    for the caller only; the login flow does not use this route (it calls
+    `CreatePushMFAChallenge` in-process).
 - **Recommended defaults for a new org**: MFA required for `operator` and
   above always; for `user` on new device / new location (adaptive); backup
   codes issued at first MFA enrollment; SMS off unless a real provider is
@@ -211,8 +239,11 @@ recommended **14 days, sliding on use**, hard cap 90. Windows agent may keep
 
 `ValidateProduction` errors:
 
-- `push_mfa.auto_approve=true` (MFA becomes a no-op)
 - `HandleEnroll` no-DB fallback reachable outside `APP_ENV=development`
+
+(`push_mfa.auto_approve` was listed here on the strength of its name; §3 records
+what it actually does. It is an availability setting, not an MFA bypass, so it
+belongs in `ProductionWarnings` at most.)
 
 `ProductionWarnings` (report mode is allowed, but visible):
 
@@ -225,7 +256,7 @@ recommended **14 days, sliding on use**, hard cap 90. Windows agent may keep
 |---|---|---|---|
 | 1 | ✅ Seed `openidx-agent-android` + `agent.enroll` scope; require the scope on `/agent/enroll/oauth`; make the OAuth path use `decideAutoTrust`; derive a census of every shipped client's id/redirect/scopes against the seeds | v184, `internal/common/middleware`, `internal/access/agent_api.go`, `internal/migrations/v184_test.go` | small — done |
 | 2 | ✅ Device revoke revokes bound tokens: `agent_id` at token exchange → stored on the refresh family (v185) and carried through rotation → `executeDeviceRevoke` revokes the families, the sessions and publishes the markers; `Logout()` calls `/oauth/revoke` | v185, `internal/oauth`, `internal/access`, `agent/internal/sso`, `agent/internal/control`, `agent/internal/tray` | medium — done |
-| 3 | Push approval checks the approving device's trust state | `internal/identity/pushmfa.go` | small |
+| 3 | ✅ Push approval checks who is answering, how often they may guess, and whether the approving device may still approve | `internal/identity/pushmfa.go`, `pushmfa_approval_gate.go`, `handlers_mfa.go` | small — done |
 | 4 | Windows: DPAPI for `user-tokens.json` and `control-endpoint.json`; ACL on the agent directory | `agent/internal/authstore`, `agent/internal/control/listener_windows.go` | medium |
 | 5 | `ValidateProduction`: reject `push_mfa.auto_approve`; gate the no-DB enroll fallback | `internal/common/config`, `internal/access` | small |
 | 6 | Client shows the three enrollment states; iOS says "Tier 1" plainly | `client/lib/ui/screens/` | small |
