@@ -21,6 +21,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Device enrolment's no-database fallback had no environment gate.**
+  `HandleEnroll` ends in a branch that accepts any non-empty token and mints a
+  working agent credential for it, under the comment "Dev mode: no DB, accept
+  any non-empty token". It is latent rather than live — `cmd/access-service`
+  fatals without `database_url` — and that is why it needed a gate rather than a
+  comment: what keeps it unreachable is a startup check in a different package,
+  so a refactor that makes the pool optional, or a handler constructed without
+  one, would arm an unauthenticated enrolment endpoint silently. It is now
+  allowed only under `APP_ENV=development`, and refused **when no config is
+  present at all** — a gate whose safe state depends on someone having wired
+  configuration is not a gate. The refusal is a `503` and is audited.
+
 - **On Windows the agent's secrets were protected by a mode Windows discards.**
   `user-tokens.json` (the signed-in user's access token and their 30-day
   refresh token) and `control-endpoint.json` (the loopback bearer that fully

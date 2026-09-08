@@ -239,11 +239,21 @@ recommended **14 days, sliding on use**, hard cap 90. Windows agent may keep
 
 `ValidateProduction` errors:
 
-- `HandleEnroll` no-DB fallback reachable outside `APP_ENV=development`
+- ✅ *Item 5, landed.* The `HandleEnroll` no-database fallback — the branch that
+  accepts any non-empty token and mints a working agent credential — is refused
+  outside `APP_ENV=development`, **including when no config is present at all**:
+  a gate whose safe state depends on someone having wired configuration is not a
+  gate. It answers `503` and audits the refusal. The branch was latent (the
+  binary fatals without `database_url`), which is why it needed a gate rather
+  than a comment: what kept it unreachable was a startup check in another
+  package.
 
 (`push_mfa.auto_approve` was listed here on the strength of its name; §3 records
 what it actually does. It is an availability setting, not an MFA bypass, so it
-belongs in `ProductionWarnings` at most.)
+belongs in `ProductionWarnings` at most. The report-mode warnings themselves —
+`ACCESS_ASSIGNMENT_ENFORCE`, `ABAC_ENFORCE`, `ENABLE_OPA_AUTHZ`,
+`PAM_SESSION_RISK_GATE`, `POSTURE_DEVICE_TRUST_GATE` — already ship in
+`ProductionWarnings`.)
 
 `ProductionWarnings` (report mode is allowed, but visible):
 
@@ -258,7 +268,7 @@ belongs in `ProductionWarnings` at most.)
 | 2 | ✅ Device revoke revokes bound tokens: `agent_id` at token exchange → stored on the refresh family (v185) and carried through rotation → `executeDeviceRevoke` revokes the families, the sessions and publishes the markers; `Logout()` calls `/oauth/revoke` | v185, `internal/oauth`, `internal/access`, `agent/internal/sso`, `agent/internal/control`, `agent/internal/tray` | medium — done |
 | 3 | ✅ Push approval checks who is answering, how often they may guess, and whether the approving device may still approve | `internal/identity/pushmfa.go`, `pushmfa_approval_gate.go`, `handlers_mfa.go` | small — done |
 | 4 | ✅ Windows: DPAPI + an explicit file DACL for `user-tokens.json` and `control-endpoint.json`; the Windows-only tests now run on a Windows runner | `agent/internal/secretfile`, `agent/internal/authstore`, `agent/internal/control/listener_windows.go`, `windows-client-build.yml` | medium — done |
-| 5 | `ValidateProduction`: reject `push_mfa.auto_approve`; gate the no-DB enroll fallback | `internal/common/config`, `internal/access` | small |
+| 5 | ✅ Gate the no-DB enroll fallback on `APP_ENV=development`, refusing when no config is present. (`push_mfa.auto_approve` needed a correction, not a rejection — see §3) | `internal/access/agent_api.go` | small — done |
 | 6 | Client shows the three enrollment states; iOS says "Tier 1" plainly | `client/lib/ui/screens/` | small |
 | 7 | Step-up on PAM launch and admin writes when last MFA is older than the window | `internal/oauth`, `internal/access` | medium |
 | 8 | Refresh-token lifetime per client (after DECISION) | migration | small |

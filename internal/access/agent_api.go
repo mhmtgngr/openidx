@@ -616,10 +616,36 @@ func (h *AgentAPIHandler) HandleEnroll(c *gin.Context) {
 		return
 	}
 
-	// Dev mode: no DB, accept any non-empty token.
+	// No database: the branch that accepts ANY non-empty token and mints a
+	// working agent credential for it.
+	//
+	// It is latent rather than live — cmd/access-service fatals without
+	// database_url, so a shipped binary never reaches here — and that is
+	// exactly why it needs a gate rather than a comment. The thing that keeps
+	// it unreachable is a startup check in a different package; a refactor that
+	// makes the pool optional, or a handler constructed without one in a new
+	// caller, arms an unauthenticated enrolment endpoint silently.
+	//
+	// So it is now allowed only where it is meant to be used, and refused
+	// everywhere else including when no config is present at all: a gate whose
+	// safe state depends on someone having wired configuration is not a gate.
+	if cfg := h.cfg(); cfg == nil || !cfg.IsDevelopment() {
+		env := "(no config)"
+		if cfg != nil {
+			env = cfg.Environment
+		}
+		h.logger.Error("SECURITY: agent enrolment reached the no-database fallback outside development; refusing",
+			zap.String("environment", env))
+		h.logAuditEvent("agent.enroll_denied", "", "denied", "no-db fallback refused outside development")
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "enrollment is unavailable: the service has no database configured",
+		})
+		return
+	}
+
 	creds := h.issueAgentCredentials(c.Request.Context(), enrollReq, "token", "")
 	writeEnrollResponse(c, creds, "token", nil)
-	h.logAuditEvent("agent.enrolled", creds.AgentID, "success", "method=token (no-db)")
+	h.logAuditEvent("agent.enrolled", creds.AgentID, "success", "method=token (no-db, development only)")
 }
 
 // writeEnrollResponse serializes the agent credentials into the standard

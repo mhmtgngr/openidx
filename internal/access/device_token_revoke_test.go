@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
@@ -297,5 +299,54 @@ func TestEnrollOAuth_NoDatabaseIsSafe(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status %d, want 200 (body %s)", w.Code, w.Body.String())
+	}
+}
+
+// TestEnroll_NoDatabaseFallbackIsDevelopmentOnly pins the gate on the branch
+// that accepts ANY non-empty enrolment token and mints a working agent
+// credential for it.
+//
+// The branch is latent — cmd/access-service fatals without database_url, so a
+// shipped binary never reaches it — and that is precisely why it needs a gate
+// rather than a comment: what keeps it unreachable is a startup check in
+// another package, and a refactor that makes the pool optional would arm an
+// unauthenticated enrolment endpoint with nothing to say so.
+//
+// The handler is built with no database on purpose, which is the only way to
+// reach the branch at all.
+func TestEnroll_NoDatabaseFallbackIsDevelopmentOnly(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	for _, tc := range []struct {
+		name string
+		conf *config.Config
+		want int
+	}{
+		{"no config at all", nil, http.StatusServiceUnavailable},
+		{"production", &config.Config{Environment: "production"}, http.StatusServiceUnavailable},
+		{"staging", &config.Config{Environment: "staging"}, http.StatusServiceUnavailable},
+		{"an empty environment", &config.Config{}, http.StatusServiceUnavailable},
+		{"development", &config.Config{Environment: "development"}, http.StatusOK},
+		{"dev", &config.Config{Environment: "dev"}, http.StatusOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := NewAgentAPIHandler(zap.NewNop(), nil, nil, tc.conf)
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request = httptest.NewRequest(http.MethodPost, "/agent/enroll", nil)
+			c.Request.Header.Set("Authorization", "Bearer any-token-at-all")
+
+			h.HandleEnroll(c)
+
+			if w.Code != tc.want {
+				t.Fatalf("status %d, want %d (body %s)", w.Code, tc.want, w.Body.String())
+			}
+			if tc.want == http.StatusOK && !strings.Contains(w.Body.String(), "auth_token") {
+				t.Errorf("development did not mint a credential: %s", w.Body.String())
+			}
+			if tc.want != http.StatusOK && strings.Contains(w.Body.String(), "auth_token") {
+				t.Errorf("a credential was minted anyway: %s", w.Body.String())
+			}
+		})
 	}
 }
