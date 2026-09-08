@@ -426,6 +426,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **The agent executed plugins from a directory anyone could write.**
+  `plugin.Discover` walks `plugin_dir`, takes any file with an executable bit,
+  and hands it to `exec.CommandContext`. Both callers of `LoadPlugins` are
+  long-running daemons — `openidx-agent serve` and, on Windows, the service,
+  **which runs as SYSTEM** — and nothing checked who else could write the file
+  about to be run. A world-writable plugin directory, or a tight directory with
+  a world-writable binary in it, meant the privileged process was running
+  whoever got there last rather than the operator's code.
+
+  This is the rule every tool facing this shape keeps: sudo refuses a
+  world-writable sudoers, ssh a group-writable key, git a repository owned by
+  someone else. The plugin root, each plugin's own directory and the executable
+  are now all checked; a bad plugin is skipped rather than costing the operator
+  the good ones, and a bad root refuses the lot. The error names who can write
+  and what to run to fix it, because a control people cannot act on is one they
+  switch off.
+
+  **On Windows it refuses outright, and says why.** The check is Unix mode bits,
+  which Windows discards — the Go runtime maps `0755` to "not read-only" and
+  nothing else — so the same code there would report every path as trusted while
+  checking nothing, in the one place where the caller is the SYSTEM service.
+  Doing it properly means reading the DACL and resolving which non-privileged
+  SIDs hold a write right; `agent/internal/secretfile` does the writing half of
+  that for two files and there is no reading half, and one written without a
+  Windows machine to test against would be either too strict or a pass that was
+  never earned. Nothing in the repository sets `plugin_dir` — it is read in one
+  place and written nowhere — so no shipped configuration is affected.
+
 - **The agent's self-updater installed an artifact it had not verified, whenever
   the manifest said not to.** `downloadVerified` checked the downloaded file's
   SHA-256 only `if wantSHA != ""`, and `Fetch` required a manifest to carry only
