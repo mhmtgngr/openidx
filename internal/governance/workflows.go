@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -72,26 +74,93 @@ type ApprovalPolicy struct {
 	UpdatedAt             time.Time              `json:"updated_at"`
 }
 
+// defaultAccessRequestMaxHours bounds how long an access request may elevate
+// somebody for when the deployment has not set a maximum of its own.
+//
+// 90 days = 2160 hours. The number is not invented here: "90d" is the longest
+// window parseDuration's own documentation has ever offered as an example, so a
+// default at that value rejects nothing the product has ever said it supports
+// and turns "no ceiling at all" into "the documented ceiling". An operator who
+// wants a tighter one sets ACCESS_REQUEST_MAX_DURATION_HOURS.
+//
+// STILL A PRODUCT DECISION, and left as one rather than settled quietly:
+// whether a vault credential, a role and an application assignment should have
+// DIFFERENT ceilings. They plainly should -- a credential checkout is not a
+// project-length group membership -- but picking three numbers is a product
+// call, and one bound applied honestly is better than three invented in
+// passing. What is fixed below is the part that was never a decision: a
+// "time-bound" elevation that was not bounded, by a parser that did not parse.
+const defaultAccessRequestMaxHours = 90 * 24
+
 // parseDuration converts a human-friendly duration string to time.Duration.
-// Supports: "4h", "8h", "1d", "3d", "7d", "30d", "90d"
+// Supports: "4h", "8h", "1d", "3d", "7d", "30d", "90d".
+//
+// The previous implementation used fmt.Sscanf("%d"), which stops at the first
+// byte it cannot read and reports success for what it got, while the unit came
+// from the LAST byte of the string. Nothing checked that the two met in the
+// middle, so several inputs parsed as a value nobody asked for:
+//
+//	"3zd"            -> 3 days   (the z was simply skipped)
+//	"12 d"           -> 12 days
+//	"-5d"            -> MINUS 5 days: a request created already expired
+//	"0h"             -> expires at the moment it is created
+//	"9999999999999d" -> int64 nanoseconds overflow, wrapping NEGATIVE: an
+//	                    expires_at in 1939
+//	"100000000d"     -> overflow again, landing on 2246 rather than the year
+//	                    asked for -- the value stored is not the value chosen
+//
+// It now parses the whole string or refuses it, requires a positive value, and
+// refuses anything that would overflow rather than wrapping into a date that
+// looks deliberate.
 func parseDuration(s string) (time.Duration, error) {
 	if len(s) < 2 {
-		return 0, fmt.Errorf("invalid duration: %s", s)
+		return 0, fmt.Errorf("invalid duration %q: expected a number and a unit, like 4h or 7d", s)
 	}
 	unit := s[len(s)-1]
-	value := s[:len(s)-1]
-	var n int
-	if _, err := fmt.Sscanf(value, "%d", &n); err != nil {
-		return 0, fmt.Errorf("invalid duration value: %s", s)
-	}
+	var perUnit time.Duration
 	switch unit {
 	case 'h':
-		return time.Duration(n) * time.Hour, nil
+		perUnit = time.Hour
 	case 'd':
-		return time.Duration(n) * 24 * time.Hour, nil
+		perUnit = 24 * time.Hour
 	default:
-		return 0, fmt.Errorf("unsupported duration unit: %c", unit)
+		return 0, fmt.Errorf("unsupported duration unit %q in %q: use h (hours) or d (days)", string(unit), s)
 	}
+
+	// ParseInt, not Sscanf: it consumes the whole string or fails, so "3zd"
+	// and "12 d" are refused rather than silently read as 3d and 12d.
+	n, err := strconv.ParseInt(s[:len(s)-1], 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid duration %q: %q is not a whole number", s, s[:len(s)-1])
+	}
+	if n <= 0 {
+		return 0, fmt.Errorf("invalid duration %q: an access window must be longer than zero", s)
+	}
+	// A window this long is a mistake or an attack, and letting it through is
+	// how an int64 of nanoseconds wraps to a date in the past.
+	if n > math.MaxInt64/int64(perUnit) {
+		return 0, fmt.Errorf("invalid duration %q: that is longer than any access window can be", s)
+	}
+	return time.Duration(n) * perUnit, nil
+}
+
+// maxAccessRequestDuration is the ceiling this deployment applies to a
+// time-bound access request.
+func (s *Service) maxAccessRequestDuration() time.Duration {
+	hours := defaultAccessRequestMaxHours
+	if s.config != nil && s.config.AccessRequestMaxDurationHours > 0 {
+		hours = s.config.AccessRequestMaxDurationHours
+	}
+	return time.Duration(hours) * time.Hour
+}
+
+// humanDuration renders a ceiling the way the request that hit it was written,
+// so the error names a value the caller could have typed.
+func humanDuration(d time.Duration) string {
+	if h := int64(d / time.Hour); h%24 == 0 {
+		return fmt.Sprintf("%dd", h/24)
+	}
+	return fmt.Sprintf("%dh", int64(d/time.Hour))
 }
 
 // handleCreateAccessRequest creates a new access request
@@ -154,12 +223,23 @@ func (s *Service) handleCreateAccessRequest(c *gin.Context) {
 		}
 	}
 
-	// Parse duration to calculate expires_at
+	// Parse duration to calculate expires_at.
+	//
+	// Over the ceiling is refused, not silently shortened: an elevation granted
+	// for less than the window an approver read and approved is the same class
+	// of defect as one granted for longer, and the requester cannot see either.
 	var expiresAt *time.Time
 	if body.Duration != "" {
 		d, err := parseDuration(body.Duration)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid duration: " + err.Error()})
+			return
+		}
+		if max := s.maxAccessRequestDuration(); d > max {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":        fmt.Sprintf("Requested access window %s is longer than this deployment allows (%s)", body.Duration, humanDuration(max)),
+				"max_duration": humanDuration(max),
+			})
 			return
 		}
 		t := time.Now().Add(d)
@@ -181,8 +261,27 @@ func (s *Service) handleCreateAccessRequest(c *gin.Context) {
 		return
 	}
 
-	// Find matching approval policy and create approval rows
-	s.createApprovalRows(c.Request.Context(), id, body.ResourceType, body.ResourceID)
+	// Find matching approval policy and create approval rows.
+	//
+	// A request whose chain came out short is worse than no request at all: the
+	// approvers who did get a row approve it, the pending count reaches zero,
+	// and the request is fulfilled having skipped a step its policy required.
+	// So a half-built chain does not get to stand. The request row is removed
+	// and the caller is told to try again -- nothing is granted, and the
+	// requester keeps the ability to ask.
+	if err := s.createApprovalRows(c.Request.Context(), id, body.ResourceType, body.ResourceID); err != nil {
+		s.logger.Error("could not build the approval chain for a new access request; withdrawing the request",
+			logsafe.String("request_id", id), zap.Error(err))
+		if _, derr := s.db.Pool.Exec(c.Request.Context(),
+			`DELETE FROM access_requests WHERE id = $1 AND org_id = $2`, id, org.ID); derr != nil {
+			s.logger.Error("the access request whose approval chain failed could not be withdrawn either; "+
+				"it will sit with an incomplete chain and must be cancelled by hand",
+				logsafe.String("request_id", id), zap.Error(derr))
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "the request could not be routed for approval and was not created; please try again"})
+		return
+	}
 
 	c.JSON(http.StatusCreated, AccessRequest{
 		ID:            id,
@@ -199,12 +298,35 @@ func (s *Service) handleCreateAccessRequest(c *gin.Context) {
 	})
 }
 
-// createApprovalRows looks up approval policies and creates approval rows for a request
-func (s *Service) createApprovalRows(ctx context.Context, requestID, resourceType, resourceID string) {
+// insertApproval records one pending approver for a request.
+//
+// It is a function because the five places that used to write this row each
+// discarded the error, and five discards are five chances for an approval chain
+// to come out shorter than the policy says. Missing the whole chain is a request
+// nobody can approve -- handleApproveRequest answers "No pending approval found
+// for this approver" and the request sits. Missing PART of it is worse and
+// quieter: the approvers who did get a row approve, the pending count reaches
+// zero, and the request is fulfilled having skipped a step the policy required.
+func (s *Service) insertApproval(ctx context.Context, requestID, approverID string, order int, orgID string) error {
+	_, err := s.db.Pool.Exec(ctx,
+		`INSERT INTO access_request_approvals (id, request_id, approver_id, step_order, decision, created_at, org_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		uuid.New().String(), requestID, approverID, order, "pending", time.Now(), orgID,
+	)
+	if err != nil {
+		return fmt.Errorf("record the approver for step %d: %w", order, err)
+	}
+	return nil
+}
+
+// createApprovalRows looks up approval policies and creates approval rows for a
+// request. It returns an error when the chain could not be built in full; the
+// caller must then not leave a request standing whose approval chain is shorter
+// than its policy.
+func (s *Service) createApprovalRows(ctx context.Context, requestID, resourceType, resourceID string) error {
 	org, err := orgctx.From(ctx)
 	if err != nil {
-		s.logger.Error("createApprovalRows: no org context", zap.Error(err))
-		return
+		return fmt.Errorf("organization context required to build an approval chain: %w", err)
 	}
 
 	// Resolve the requester up front so approver steps can EXCLUDE them:
@@ -230,12 +352,7 @@ func (s *Service) createApprovalRows(ctx context.Context, requestID, resourceTyp
 	if err != nil {
 		// No matching policy — create a default admin approval
 		adminID := "00000000-0000-0000-0000-000000000001"
-		_, _ = s.db.Pool.Exec(ctx,
-			`INSERT INTO access_request_approvals (id, request_id, approver_id, step_order, decision, created_at, org_id)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-			uuid.New().String(), requestID, adminID, 1, "pending", time.Now(), org.ID,
-		)
-		return
+		return s.insertApproval(ctx, requestID, adminID, 1, org.ID)
 	}
 
 	// V-007: evaluate the policy's typed auto_approve_conditions before
@@ -247,13 +364,13 @@ func (s *Service) createApprovalRows(ctx context.Context, requestID, resourceTyp
 			s.logger.Warn("createApprovalRows: malformed auto_approve_conditions; ignoring",
 				zap.String("request_id", requestID), zap.Error(uerr))
 		} else if s.tryAutoApprove(ctx, requestID, &cond) {
-			return
+			return nil
 		}
 	}
 
 	var steps []ApprovalStep
 	if err := json.Unmarshal(stepsJSON, &steps); err != nil || len(steps) == 0 {
-		return
+		return nil
 	}
 
 	for i, step := range steps {
@@ -261,11 +378,9 @@ func (s *Service) createApprovalRows(ctx context.Context, requestID, resourceTyp
 		switch step.Type {
 		case ApprovalStepTypeSpecificUser:
 			if step.ApproverID != "" {
-				_, _ = s.db.Pool.Exec(ctx,
-					`INSERT INTO access_request_approvals (id, request_id, approver_id, step_order, decision, created_at, org_id)
-					 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-					uuid.New().String(), requestID, step.ApproverID, step.Order, "pending", time.Now(), org.ID,
-				)
+				if err := s.insertApproval(ctx, requestID, step.ApproverID, step.Order, org.ID); err != nil {
+					return err
+				}
 			}
 		case ApprovalStepTypeRole:
 			if step.RoleID != "" {
@@ -291,11 +406,9 @@ func (s *Service) createApprovalRows(ctx context.Context, requestID, resourceTyp
 						if userID == requesterID {
 							continue // four-eyes: never make the requester their own approver
 						}
-						_, _ = s.db.Pool.Exec(ctx,
-							`INSERT INTO access_request_approvals (id, request_id, approver_id, step_order, decision, created_at, org_id)
-							 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-							uuid.New().String(), requestID, userID, step.Order, "pending", time.Now(), org.ID,
-						)
+						if err := s.insertApproval(ctx, requestID, userID, step.Order, org.ID); err != nil {
+							return err
+						}
 					}
 				}
 			}
@@ -317,11 +430,9 @@ func (s *Service) createApprovalRows(ctx context.Context, requestID, resourceTyp
 						if userID == requesterID {
 							continue // four-eyes: never make the requester their own approver
 						}
-						_, _ = s.db.Pool.Exec(ctx,
-							`INSERT INTO access_request_approvals (id, request_id, approver_id, step_order, decision, created_at, org_id)
-							 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-							uuid.New().String(), requestID, userID, step.Order, "pending", time.Now(), org.ID,
-						)
+						if err := s.insertApproval(ctx, requestID, userID, step.Order, org.ID); err != nil {
+							return err
+						}
 					}
 				}
 			}
@@ -341,11 +452,9 @@ func (s *Service) createApprovalRows(ctx context.Context, requestID, resourceTyp
 				if err != nil {
 					s.logger.Error("Failed to get manager for requester", zap.Error(err), zap.String("requester_id", requesterID))
 				} else if managerID != nil {
-					_, _ = s.db.Pool.Exec(ctx,
-						`INSERT INTO access_request_approvals (id, request_id, approver_id, step_order, decision, created_at, org_id)
-						 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-						uuid.New().String(), requestID, *managerID, step.Order, "pending", time.Now(), org.ID,
-					)
+					if err := s.insertApproval(ctx, requestID, *managerID, step.Order, org.ID); err != nil {
+						return err
+					}
 				}
 			}
 		case ApprovalStepTypeAuto:
@@ -355,6 +464,7 @@ func (s *Service) createApprovalRows(ctx context.Context, requestID, resourceTyp
 			s.logger.Warn("Unknown approval step type", zap.String("type", string(step.Type)))
 		}
 	}
+	return nil
 }
 
 // handleListAccessRequests lists access requests with optional filtering
@@ -597,16 +707,33 @@ func (s *Service) handleApproveRequest(c *gin.Context) {
 	// createApprovalRows already excludes the requester when it expands a
 	// role- or group-based approver step, and that is the right place to
 	// PREVENT the row. It is not the only way one arrives: an
-	// escalate_to target is inserted without that check (request.go), a
+	// escalate_to target was inserted without that check by the unreachable
+	// request.go this branch deleted (its rows can still be in a database), a
 	// policy step may name the requester explicitly, the no-policy fallback
 	// inserts a fixed admin id, and rows written before that guard existed are
 	// still in the table. Every one of those routes ends here, so this is where
 	// the rule has to hold. A 403 rather than a 404: the approval row exists,
 	// it is the caller who may not act on it.
-	var requesterID string
+	// The status is read alongside the requester, and it is not bookkeeping.
+	//
+	// Nothing below looks at it: the approval UPDATE only requires the
+	// APPROVER'S OWN row to be pending, and the fulfilment gate counts rows
+	// still marked 'pending' -- a count that is blind to rows marked 'denied'.
+	// So on a request with two approvers where the first denied, the second's
+	// row is untouched, their approval drives the pending count to zero, and
+	// the request is flipped from 'denied' back to 'approved' and fulfilled.
+	// The role is granted over the top of a recorded refusal, and the audit
+	// trail holds both decisions with nothing to say one overrode the other.
+	//
+	// A denial is final (handleDenyRequest ends the request on the first one),
+	// so anything that is no longer pending -- denied, cancelled, already
+	// approved -- is a decided request, and a decided request does not accept
+	// another decision. 409 rather than 403: the caller may well be a
+	// legitimate approver, it is the request's state that refuses them.
+	var requesterID, status string
 	switch err := s.db.Pool.QueryRow(c.Request.Context(),
-		`SELECT requester_id FROM access_requests WHERE id = $1 AND org_id = $2`, id, org.ID,
-	).Scan(&requesterID); {
+		`SELECT requester_id, status FROM access_requests WHERE id = $1 AND org_id = $2`, id, org.ID,
+	).Scan(&requesterID, &status); {
 	case err == pgx.ErrNoRows:
 		c.JSON(http.StatusNotFound, gin.H{"error": "Access request not found"})
 		return
@@ -616,6 +743,12 @@ func (s *Service) handleApproveRequest(c *gin.Context) {
 		return
 	case requesterID == approverID:
 		c.JSON(http.StatusForbidden, gin.H{"error": "you cannot approve your own access request"})
+		return
+	case status != "pending":
+		c.JSON(http.StatusConflict, gin.H{
+			"error":  fmt.Sprintf("this request is already %s and cannot be approved", status),
+			"status": status,
+		})
 		return
 	}
 
@@ -676,7 +809,7 @@ func (s *Service) handleApproveRequest(c *gin.Context) {
 			// to land in this branch is the SoD gate refusing the role, which
 			// is a policy answer they need to read, not a line in a server log.
 			s.logger.Error("Failed to fulfill approved request",
-				zap.String("request_id", id), zap.Error(fulfillErr))
+				logsafe.String("request_id", id), zap.Error(fulfillErr))
 			c.JSON(http.StatusConflict, gin.H{
 				"error":   "approval recorded, but the access was not granted",
 				"status":  "approved",
@@ -1403,8 +1536,22 @@ func (s *Service) handleReturnCredential(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "revoke grant"})
 		return
 	}
-	_, _ = s.db.Pool.Exec(ctx,
+	// The grant is gone; the record has to say so. If this UPDATE does not
+	// happen the request stays 'fulfilled' -- the console still shows the
+	// credential checked out to this user, the JIT expiry sweep still counts it
+	// as held, and the audit event written below says it was returned. Access
+	// removed but recorded as held is the safe direction of a half-done return,
+	// so the answer is a 500 the caller can retry (the status gate above still
+	// reads 'fulfilled', so a retry goes through), never the "returned" this
+	// used to report unconditionally.
+	tag, err := s.db.Pool.Exec(ctx,
 		`UPDATE access_requests SET status='expired', updated_at=NOW() WHERE id=$1 AND org_id=$2`, reqID, org.ID)
+	if err != nil || tag.RowsAffected() == 0 {
+		s.logger.Error("credential grant revoked but the request could not be marked returned",
+			zap.String("request_id", logsafe.Clean(reqID)), zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "grant revoked but the request could not be marked returned; retry the return"})
+		return
+	}
 	s.bumpRotationOnReturn(ctx, resourceID)
 	// Best-effort audit.
 	retDetails, _ := json.Marshal(map[string]any{"request_id": reqID, "secret_id": resourceID})

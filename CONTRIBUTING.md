@@ -64,7 +64,12 @@ migrations/             # Database migration files
    make lint        # Go linting
    make lint-web    # Frontend linting
    make test        # Unit tests
+   make guards      # Every shell guard CI runs (~40s)
    ```
+   `make guards` reads the guard list out of `.github/workflows`, so it runs
+   what CI runs rather than a copy that can drift from it. It prints the few
+   invocations it cannot run locally — the ones CI computes an argument for —
+   instead of counting them as passes.
 6. **Open a Pull Request** against the `dev` branch
 
 ## Branching Strategy

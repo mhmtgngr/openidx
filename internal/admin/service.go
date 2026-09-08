@@ -19,8 +19,10 @@ import (
 	"github.com/openidx/openidx/internal/auth"
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
 	"github.com/openidx/openidx/internal/sms"
+	"github.com/openidx/openidx/internal/webhooks"
 )
 
 // Dashboard contains overview statistics
@@ -1037,6 +1039,7 @@ func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 
 	// Webhooks
 	admin.GET("/webhooks", svc.handleListWebhooks)
+	admin.GET("/webhooks/event-types", svc.handleWebhookEventTypes)
 	admin.POST("/webhooks", svc.handleCreateWebhook)
 	admin.GET("/webhooks/:id", svc.handleGetWebhook)
 	admin.DELETE("/webhooks/:id", svc.handleDeleteWebhook)
@@ -1105,7 +1108,6 @@ func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 	// Enhanced analytics (Phase 12)
 	admin.GET("/analytics/auth-dashboard", svc.handleAuthAnalyticsDashboard)
 	admin.GET("/analytics/usage", svc.handleUsageAnalytics)
-	admin.GET("/analytics/api-usage", svc.handleAPIUsageMetrics)
 	admin.GET("/analytics/feature-adoption", svc.handleFeatureAdoption)
 	admin.GET("/analytics/risk-timeline", svc.handleRiskScoreTimeline)
 	admin.GET("/analytics/activity-heatmap", svc.handleUserActivityHeatmap)
@@ -1319,20 +1321,6 @@ func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 
 // HTTP Handlers
 
-func (s *Service) handleUpdateSettings(c *gin.Context) {
-	var settings Settings
-	if err := c.ShouldBindJSON(&settings); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
-		return
-	}
-	if err := s.UpdateSettings(c.Request.Context(), &settings); err != nil {
-		s.logger.Error("failed to update settings", zap.Error(err))
-		c.JSON(500, gin.H{"error": "internal server error"})
-		return
-	}
-	c.JSON(200, settings)
-}
-
 func (s *Service) handleGetSMSSettings(c *gin.Context) {
 	valueBytes, err := s.settings.GetRaw(c.Request.Context(), "sms_config")
 
@@ -1528,7 +1516,7 @@ func (s *Service) handleUpdateApplication(c *gin.Context) {
 	}
 
 	if err := s.UpdateApplication(c.Request.Context(), id, updates); err != nil {
-		s.logger.Error("failed to update application", zap.String("id", id), zap.Error(err))
+		s.logger.Error("failed to update application", logsafe.String("id", id), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -1794,9 +1782,19 @@ func (s *Service) handleSyncDirectory(c *gin.Context) {
 	}
 	id := c.Param("id")
 
-	// Verify directory exists
+	// Verify directory exists.
+	//
+	// The error was discarded, so a failed check left exists false and the
+	// handler answered "Directory integration not found" -- the same answer it
+	// gives for an id belonging to another tenant. An operator chasing the
+	// second had no way to see the first.
 	var exists bool
-	s.db.Pool.QueryRow(c.Request.Context(), `SELECT EXISTS(SELECT 1 FROM directory_integrations WHERE id = $1 AND org_id = $2)`, id, org.ID).Scan(&exists)
+	q := s.newTileQuery(c.Request.Context())
+	q.scan("the directory integration", &exists,
+		`SELECT EXISTS(SELECT 1 FROM directory_integrations WHERE id = $1 AND org_id = $2)`, id, org.ID)
+	if q.failed(c) {
+		return
+	}
 	if !exists {
 		c.JSON(404, gin.H{"error": "Directory integration not found"})
 		return
@@ -1804,17 +1802,24 @@ func (s *Service) handleSyncDirectory(c *gin.Context) {
 
 	fullSync := c.Query("full") == "true"
 
-	if s.directoryService != nil {
-		if err := s.directoryService.TriggerSync(c.Request.Context(), id, fullSync); err != nil {
-			s.logger.Error("failed to trigger directory sync", zap.String("id", id), zap.Error(err))
-			c.JSON(500, gin.H{"error": "internal server error"})
-			return
-		}
-	} else {
-		// Fallback: just mark as syncing if no directory service
-		s.db.Pool.Exec(c.Request.Context(), `
-			UPDATE directory_integrations SET sync_status = 'syncing', last_sync_at = NOW(), updated_at = NOW()
-			WHERE id = $1 AND org_id = $2`, id, org.ID)
+	// Without a directory service there is no sync engine in this process, so
+	// nothing can run. The old fallback wrote sync_status = 'syncing' and
+	// answered "Directory sync initiated" -- a sync that was not initiated and
+	// could not be, parking the integration in a status that only a completed
+	// run ever clears. The integration would show a sync in progress for ever,
+	// and every check of the console would confirm it.
+	if s.directoryService == nil {
+		s.logger.Error("directory sync requested but this deployment has no directory service wired",
+			logsafe.String("id", id))
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "Directory synchronisation is not available in this deployment",
+		})
+		return
+	}
+	if err := s.directoryService.TriggerSync(c.Request.Context(), id, fullSync); err != nil {
+		s.logger.Error("failed to trigger directory sync", logsafe.String("id", id), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
+		return
 	}
 
 	syncType := "incremental"
@@ -1842,11 +1847,20 @@ func (s *Service) handleTestConnection(c *gin.Context) {
 		return
 	}
 
-	if s.directoryService != nil {
-		if err := s.directoryService.TestConnection(c.Request.Context(), dirType, configBytes); err != nil {
-			c.JSON(400, gin.H{"error": err.Error(), "success": false})
-			return
-		}
+	// Same shape, same lie: with no directory service there is nothing to test
+	// against, and answering "Connection test successful" told an operator
+	// their LDAP bind credentials worked when nothing had connected to
+	// anything.
+	if s.directoryService == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"success": false,
+			"error":   "Directory connection testing is not available in this deployment",
+		})
+		return
+	}
+	if err := s.directoryService.TestConnection(c.Request.Context(), dirType, configBytes); err != nil {
+		c.JSON(400, gin.H{"error": err.Error(), "success": false})
+		return
 	}
 
 	c.JSON(200, gin.H{"success": true, "message": "Connection test successful"})
@@ -1974,7 +1988,7 @@ func (s *Service) handleGetApplicationSSOSettings(c *gin.Context) {
 
 	settings, err := s.GetApplicationSSOSettings(c.Request.Context(), applicationID)
 	if err != nil {
-		s.logger.Error("failed to get SSO settings", zap.String("application_id", applicationID), zap.Error(err))
+		s.logger.Error("failed to get SSO settings", logsafe.String("application_id", applicationID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -1994,7 +2008,7 @@ func (s *Service) handleUpdateApplicationSSOSettings(c *gin.Context) {
 	settings.ApplicationID = applicationID
 
 	if err := s.UpdateApplicationSSOSettings(c.Request.Context(), &settings); err != nil {
-		s.logger.Error("failed to update SSO settings", zap.String("application_id", applicationID), zap.Error(err))
+		s.logger.Error("failed to update SSO settings", logsafe.String("application_id", applicationID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -2046,7 +2060,7 @@ func (s *Service) handleUserDevices(c *gin.Context) {
 	userID := c.Param("id")
 	devices, err := s.riskService.GetUserDevices(c.Request.Context(), userID)
 	if err != nil {
-		s.logger.Error("failed to get user devices", zap.String("user_id", userID), zap.Error(err))
+		s.logger.Error("failed to get user devices", logsafe.String("user_id", userID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -2073,7 +2087,7 @@ func (s *Service) handleTrustDevice(c *gin.Context) {
 		`SELECT user_id FROM known_devices WHERE id = $1 AND org_id = $2`, deviceID, org.ID).Scan(&userID)
 
 	if err := s.riskService.TrustDevice(c.Request.Context(), deviceID); err != nil {
-		s.logger.Error("failed to trust device", zap.String("device_id", deviceID), zap.Error(err))
+		s.logger.Error("failed to trust device", logsafe.String("device_id", deviceID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -2100,7 +2114,7 @@ func (s *Service) handleRevokeDevice(c *gin.Context) {
 		`SELECT user_id FROM known_devices WHERE id = $1 AND org_id = $2`, deviceID, org.ID).Scan(&userID)
 
 	if err := s.riskService.RevokeDevice(c.Request.Context(), deviceID); err != nil {
-		s.logger.Error("failed to revoke device", zap.String("device_id", deviceID), zap.Error(err))
+		s.logger.Error("failed to revoke device", logsafe.String("device_id", deviceID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -2234,7 +2248,7 @@ func (s *Service) handleDeleteServiceAccount(c *gin.Context) {
 
 	id := c.Param("id")
 	if err := s.apiKeyService.DeleteServiceAccount(c.Request.Context(), id); err != nil {
-		s.logger.Error("failed to delete service account", zap.String("id", id), zap.Error(err))
+		s.logger.Error("failed to delete service account", logsafe.String("id", id), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -2252,7 +2266,7 @@ func (s *Service) handleListServiceAccountAPIKeys(c *gin.Context) {
 	id := c.Param("id")
 	keys, err := s.apiKeyService.ListAPIKeys(c.Request.Context(), id, "service_account")
 	if err != nil {
-		s.logger.Error("failed to list service account API keys", zap.String("id", id), zap.Error(err))
+		s.logger.Error("failed to list service account API keys", logsafe.String("id", id), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -2343,7 +2357,7 @@ func (s *Service) handleRevokeAPIKey(c *gin.Context) {
 
 	id := c.Param("id")
 	if err := s.apiKeyService.RevokeAPIKey(c.Request.Context(), id); err != nil {
-		s.logger.Error("failed to revoke API key", zap.String("id", id), zap.Error(err))
+		s.logger.Error("failed to revoke API key", logsafe.String("id", id), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -2365,6 +2379,19 @@ func (s *Service) handleListWebhooks(c *gin.Context) {
 		return
 	}
 	c.JSON(200, gin.H{"webhooks": subs})
+}
+
+// handleWebhookEventTypes serves the event catalogue an operator subscribes
+// from.
+//
+// The console used to hard-code this list, and it had drifted into offering six
+// event types that nothing published: a subscription to "user.updated" or
+// "somebody left this group" was accepted, listed, and never delivered.
+// internal/webhooks/catalogue_test.go now fails on a catalogue entry with no
+// publisher, so serving that same list is what makes the form honest -- the
+// console can only offer what something sends.
+func (s *Service) handleWebhookEventTypes(c *gin.Context) {
+	c.JSON(200, gin.H{"event_types": webhooks.EventCatalogue})
 }
 
 func (s *Service) handleCreateWebhook(c *gin.Context) {
@@ -2392,6 +2419,18 @@ func (s *Service) handleCreateWebhook(c *gin.Context) {
 	if len(req.Events) == 0 {
 		c.JSON(400, gin.H{"error": "at least one event is required"})
 		return
+	}
+	// An accepted subscription to an event nothing publishes is a delivery log
+	// that stays empty for ever, and no way for the operator to tell that from a
+	// quiet week. Refusing it here is the only moment they can be told.
+	for _, e := range req.Events {
+		if !webhooks.KnownEventType(e) {
+			c.JSON(400, gin.H{
+				"error": "unknown event type: " + e,
+				"hint":  "GET /api/v1/webhooks/event-types lists what this deployment publishes",
+			})
+			return
+		}
 	}
 	if len(req.Secret) < 16 {
 		c.JSON(400, gin.H{"error": "webhook secret must be at least 16 characters"})
@@ -2451,7 +2490,7 @@ func (s *Service) handleDeleteWebhook(c *gin.Context) {
 
 	id := c.Param("id")
 	if err := s.webhookService.DeleteSubscription(c.Request.Context(), id); err != nil {
-		s.logger.Error("failed to delete webhook", zap.String("id", id), zap.Error(err))
+		s.logger.Error("failed to delete webhook", logsafe.String("id", id), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -2478,7 +2517,7 @@ func (s *Service) handleWebhookDeliveries(c *gin.Context) {
 
 	deliveries, err := s.webhookService.GetDeliveryHistory(c.Request.Context(), id, limit)
 	if err != nil {
-		s.logger.Error("failed to get webhook deliveries", zap.String("id", id), zap.Error(err))
+		s.logger.Error("failed to get webhook deliveries", logsafe.String("id", id), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -2493,7 +2532,7 @@ func (s *Service) handleRetryWebhookDelivery(c *gin.Context) {
 
 	id := c.Param("id")
 	if err := s.webhookService.RetryDelivery(c.Request.Context(), id); err != nil {
-		s.logger.Error("failed to retry webhook delivery", zap.String("id", id), zap.Error(err))
+		s.logger.Error("failed to retry webhook delivery", logsafe.String("id", id), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -2509,7 +2548,7 @@ func (s *Service) handleTestWebhook(c *gin.Context) {
 	id := c.Param("id")
 	delivery, err := s.webhookService.PingSubscription(c.Request.Context(), id)
 	if err != nil {
-		s.logger.Error("failed to test webhook", zap.String("id", id), zap.Error(err))
+		s.logger.Error("failed to test webhook", logsafe.String("id", id), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -2525,7 +2564,7 @@ func (s *Service) handleWebhookStats(c *gin.Context) {
 	id := c.Param("id")
 	stats, err := s.webhookService.GetDeliveryStats(c.Request.Context(), id)
 	if err != nil {
-		s.logger.Error("failed to get webhook stats", zap.String("id", id), zap.Error(err))
+		s.logger.Error("failed to get webhook stats", logsafe.String("id", id), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -2715,22 +2754,30 @@ func (s *Service) handleRiskAnalytics(c *gin.Context) {
 	// a bare [{level,count}] array, so risk was undefined and the whole page
 	// rendered empty. Build the full overview the UI expects.
 
-	// Average risk score + high-risk logins in the last 24h.
+	// Average risk score + high-risk logins in the last 24h, and the unresolved
+	// alert count. All three discarded their errors, so the risk dashboard's
+	// headline read "average risk 0, no high-risk sign-ins, no open alerts" --
+	// which is what a safe day looks like, on the page where somebody decides
+	// whether today was one.
+	q := s.newTileQuery(ctx)
 	var avgRiskScore float64
-	_ = s.db.Pool.QueryRow(ctx,
+	q.scan("average risk score", &avgRiskScore,
 		`SELECT COALESCE(AVG(risk_score),0) FROM login_history
-		 WHERE org_id = $2 AND created_at > NOW() - $1::interval`, interval, org.ID).Scan(&avgRiskScore)
+		 WHERE org_id = $2 AND created_at > NOW() - $1::interval`, interval, org.ID)
 
 	var highRiskLogins24h int
-	_ = s.db.Pool.QueryRow(ctx,
+	q.scan("high-risk sign-ins", &highRiskLogins24h,
 		`SELECT COUNT(*) FROM login_history
-		 WHERE org_id = $1 AND created_at > NOW() - INTERVAL '24 hours' AND risk_score >= 51`, org.ID).Scan(&highRiskLogins24h)
+		 WHERE org_id = $1 AND created_at > NOW() - INTERVAL '24 hours' AND risk_score >= 51`, org.ID)
 
 	// Active (unresolved) security alerts.
 	var activeAlerts int
-	_ = s.db.Pool.QueryRow(ctx,
+	q.scan("open security alerts", &activeAlerts,
 		`SELECT COUNT(*) FROM security_alerts
-		 WHERE org_id = $1 AND status <> 'resolved'`, org.ID).Scan(&activeAlerts)
+		 WHERE org_id = $1 AND status <> 'resolved'`, org.ID)
+	if q.failed(c) {
+		return
+	}
 
 	// Risk score distribution into fixed buckets (0-20, 21-40, ...).
 	type bucket struct {
@@ -2840,8 +2887,12 @@ func (s *Service) handleUserAnalytics(c *gin.Context) {
 
 	// Total and active users
 	var total, active int
-	s.db.Pool.QueryRow(c.Request.Context(), "SELECT COUNT(*) FROM users WHERE org_id = $1", org.ID).Scan(&total)
-	s.db.Pool.QueryRow(c.Request.Context(), "SELECT COUNT(*) FROM users WHERE enabled = true AND org_id = $1", org.ID).Scan(&active)
+	q := s.newTileQuery(c.Request.Context())
+	q.scan("total agents", &total, "SELECT COUNT(*) FROM users WHERE org_id = $1", org.ID)
+	if q.failed(c) {
+		return
+	}
+	q.scan("active agents", &active, "SELECT COUNT(*) FROM users WHERE enabled = true AND org_id = $1", org.ID)
 
 	c.JSON(200, gin.H{
 		"growth": growth,
@@ -2956,10 +3007,13 @@ func (s *Service) GetCompliancePosture(ctx context.Context) (*CompliancePosture,
 		s.logger.Warn("Failed to query review counts", zap.Error(err))
 	}
 
-	// Dormant accounts: users who haven't logged in for 90+ days
+	// Dormant accounts: users who haven't logged in for 90+ days.
+	// users records the last sign-in as last_login_at; spelled last_login this
+	// count failed to plan and the security-posture card read 0 dormant
+	// accounts on every install -- the opposite of what it exists to surface.
 	err = s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM users
-		WHERE enabled = true AND org_id = $1 AND (last_login IS NULL OR last_login < NOW() - INTERVAL '90 days')
+		WHERE enabled = true AND org_id = $1 AND (last_login_at IS NULL OR last_login_at < NOW() - INTERVAL '90 days')
 	`, org.ID).Scan(&posture.DormantAccountsCount)
 	if err != nil {
 		s.logger.Warn("Failed to query dormant accounts", zap.Error(err))
@@ -3198,10 +3252,14 @@ func (s *Service) GetEntitlementStats(ctx context.Context) (*EntitlementStats, e
 		return nil, err
 	}
 
+	// GetEntitlementStats already returns an error and every one of these
+	// counts discarded its own, so an entitlement catalogue that could not be
+	// read reported a catalogue with nothing in it.
 	var roleCount, groupCount, appCount int
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM roles WHERE org_id = $1", org.ID).Scan(&roleCount)
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM groups WHERE org_id = $1", org.ID).Scan(&groupCount)
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM applications WHERE org_id = $1", org.ID).Scan(&appCount)
+	q := s.newTileQuery(ctx)
+	q.scan("roles", &roleCount, "SELECT COUNT(*) FROM roles WHERE org_id = $1", org.ID)
+	q.scan("groups", &groupCount, "SELECT COUNT(*) FROM groups WHERE org_id = $1", org.ID)
+	q.scan("applications", &appCount, "SELECT COUNT(*) FROM applications WHERE org_id = $1", org.ID)
 
 	stats.ByType["role"] = roleCount
 	stats.ByType["group"] = groupCount
@@ -3239,11 +3297,14 @@ func (s *Service) GetEntitlementStats(ctx context.Context) (*EntitlementStats, e
 	}
 
 	var orphanCount int
-	s.db.Pool.QueryRow(ctx, `
+	q.scan("orphaned entitlements", &orphanCount, `
 		SELECT
 			(SELECT COUNT(*) FROM roles r WHERE r.org_id = $1 AND NOT EXISTS (SELECT 1 FROM user_roles WHERE role_id = r.id AND org_id = $1)) +
 			(SELECT COUNT(*) FROM groups g WHERE g.org_id = $1 AND NOT EXISTS (SELECT 1 FROM group_memberships WHERE group_id = g.id AND org_id = $1))
-	`, org.ID).Scan(&orphanCount)
+	`, org.ID)
+	if err := q.failure(); err != nil {
+		return nil, err
+	}
 	stats.OrphanCount = orphanCount
 
 	return stats, nil
@@ -3397,7 +3458,7 @@ func (s *Service) handleUpdateEntitlementMetadata(c *gin.Context) {
 			c.JSON(403, gin.H{"error": "organization context required"})
 			return
 		}
-		s.logger.Error("failed to update entitlement metadata", zap.String("type", entType), zap.String("id", entID), zap.Error(err))
+		s.logger.Error("failed to update entitlement metadata", logsafe.String("type", entType), logsafe.String("id", entID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -3856,7 +3917,7 @@ func (s *Service) handleUpdateDelegation(c *gin.Context) {
 			c.JSON(404, gin.H{"error": "Delegation not found"})
 			return
 		}
-		s.logger.Error("failed to update delegation", zap.String("id", id), zap.Error(err))
+		s.logger.Error("failed to update delegation", logsafe.String("id", id), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}

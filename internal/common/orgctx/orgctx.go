@@ -116,6 +116,27 @@ func IsBypassRLS(ctx context.Context) bool {
 	return v
 }
 
+// Detached returns a background context carrying only ctx's organization: the
+// deadline and cancellation of the request are dropped, the tenant is kept.
+//
+// It exists for work a handler starts and does not wait for — publishing a
+// webhook, filing a notification — where two mistakes are easy and both are
+// silent. Passing the request context means a client that hangs up mid-redirect
+// cancels the write. Passing context.Background() loses the org, and every
+// table this kind of work touches is behind the RLS belt, so the query matches
+// no rows and the send simply does not happen, for every tenant, with nothing
+// logged.
+func Detached(ctx context.Context) context.Context {
+	out := context.Background()
+	if org, err := From(ctx); err == nil {
+		out = With(out, org)
+	}
+	if IsBypassRLS(ctx) {
+		out = WithBypassRLS(out)
+	}
+	return out
+}
+
 // DefaultOrgID is the organization the installer seeds. Audit writers fall back
 // to it (via AuditOrgID) for a record that genuinely belongs to no tenant —
 // install-level infrastructure — so the row lands somewhere an operator can see

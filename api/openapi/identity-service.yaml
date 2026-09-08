@@ -210,39 +210,7 @@ paths:
       tags: [Users]
       summary: List users
       operationId: listUsers
-      responses:
-    BadRequest:
-      description: The request was malformed or failed validation
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/Error'
-    Unauthorized:
-      description: No valid bearer token was presented
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/Error'
-    Forbidden:
-      description: The caller is authenticated but not permitted
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/Error'
-    NotFound:
-      description: No such resource in the caller's organization
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/Error'
-    ServerError:
-      description: The request could not be completed
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/Error'
-
-  parameters:
+      parameters:
         - name: offset
           in: query
           schema:
@@ -3376,6 +3344,44 @@ paths:
         '500':
           $ref: '#/components/responses/ServerError'
 
+  /api/v1/identity/notifications/preference-types:
+    get:
+      tags: [Notifications]
+      summary: The notification types a user can switch off
+      description: >-
+        Serves internal/notifications.TypeCatalogue: the types this deployment
+        actually sends. The preferences page reads this instead of a list of its
+        own, which had drifted to seven types nothing has ever sent.
+      operationId: getIdentityNotificationPreferenceTypes
+      x-openidx-handler: internal/notifications.(*Service).handlePreferenceTypes
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  types:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        type:
+                          type: string
+                        title:
+                          type: string
+                        description:
+                          type: string
+                        channels:
+                          type: array
+                          items:
+                            type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
   /api/v1/identity/notifications/push-config:
     get:
       tags: [Notifications]
@@ -4576,6 +4582,37 @@ paths:
         '500':
           $ref: '#/components/responses/ServerError'
 components:
+  responses:
+    BadRequest:
+      description: The request was malformed or failed validation
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: No valid bearer token was presented
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: The caller is authenticated but not permitted
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: No such resource in the caller's organization
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    ServerError:
+      description: The request could not be completed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
   securitySchemes:
     bearerAuth:
       type: http

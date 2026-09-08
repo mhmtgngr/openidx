@@ -5,6 +5,7 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/openidx/openidx/internal/common/orgctx"
 	"go.uber.org/zap"
 )
@@ -75,9 +77,23 @@ func (s *Service) handleSSFReceive(c *gin.Context) {
 	// Dedup: if we already applied this jti FOR THIS TENANT, ack without
 	// re-applying. Before v172 jti was the table's install-wide primary key, so
 	// this read and the key it rests on now agree.
+	//
+	// The read half of the replay protection had the same defect the write half
+	// below is documented as having had: the error was discarded. No row is the
+	// NORMAL answer here and arrives as pgx.ErrNoRows, so the two had to be told
+	// apart -- and anything else means the dedup did not run. Applying a
+	// Security Event Token you cannot check for replay is the unsafe direction,
+	// so it is refused rather than applied a second time.
 	var exists bool
-	_ = s.db.Pool.QueryRow(c.Request.Context(),
-		`SELECT true FROM ssf_received_events WHERE jti=$1 AND org_id=$2`, jti, org.ID).Scan(&exists)
+	if err := s.db.Pool.QueryRow(c.Request.Context(),
+		`SELECT true FROM ssf_received_events WHERE jti=$1 AND org_id=$2`, jti, org.ID).Scan(&exists); err != nil &&
+		!errors.Is(err, pgx.ErrNoRows) {
+		s.logger.Error("SSF replay check failed; refusing the event rather than applying it twice",
+			zap.String("jti", jti), zap.Error(err))
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"err": "temporarily_unavailable", "description": "replay check unavailable"})
+		return
+	}
 	if exists {
 		c.JSON(http.StatusAccepted, gin.H{"status": "accepted"})
 		return
@@ -85,6 +101,23 @@ func (s *Service) handleSSFReceive(c *gin.Context) {
 
 	eventType, subject, eventClaims := extractCAEPEvent(claims)
 	outcome, detail := s.applyCAEPEvent(c.Request.Context(), eventType, subject, eventClaims)
+
+	// An event this receiver could not apply is not acknowledged, and is not
+	// recorded as seen.
+	//
+	// RFC 8935's 202 acknowledges receipt, and a transmitter that gets one does
+	// not re-deliver -- so answering 202 for an account-disabled event that did
+	// not disable the account loses it permanently. Worse, the dedup row below
+	// would record the jti, so the re-delivery that never came would have been
+	// deduped away anyway. A 503 leaves both open.
+	if outcome == "error" {
+		s.logger.Error("SSF receive: event could NOT be applied; refusing so the transmitter re-delivers",
+			zap.String("event", eventType), zap.String("subject", subject),
+			zap.String("detail", detail), zap.String("issuer", issuer))
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"err": "temporarily_unavailable", "description": "event could not be applied"})
+		return
+	}
 
 	// This write is the replay protection: the event has already been applied
 	// above, so a failure here means the next re-delivery of the same SET applies
@@ -99,7 +132,7 @@ func (s *Service) handleSSFReceive(c *gin.Context) {
 			zap.String("jti", jti), zap.String("event", eventType), zap.Error(err))
 	}
 
-	s.logger.Info("SSF receive: event applied",
+	s.logger.Info("SSF receive: event handled",
 		zap.String("event", eventType), zap.String("subject", subject),
 		zap.String("outcome", outcome), zap.String("issuer", issuer))
 
@@ -213,7 +246,13 @@ func (s *Service) applyCAEPEvent(ctx context.Context, eventType, subject string,
 		if subject == "" {
 			return "ignored", "no subject"
 		}
-		userID := s.resolveUserBySubject(ctx, subject)
+		userID, lookupErr := s.resolveUserBySubject(ctx, subject)
+		if lookupErr != nil {
+			// A lookup that could not run is not "this subject is unknown".
+			// Reported as an error so the caller re-delivers rather than
+			// recording an event it never applied.
+			return "error", fmt.Sprintf("resolve subject: %v", lookupErr)
+		}
 		if userID == "" {
 			return "ignored", "subject not found locally"
 		}
@@ -221,12 +260,33 @@ func (s *Service) applyCAEPEvent(ctx context.Context, eventType, subject string,
 		if err := s.revokeAllUserSessions(ctx, userID); err != nil {
 			return "error", err.Error()
 		}
-		_ = s.revokeAllUserRefreshTokens(ctx, userID)
+		// The refresh-token revocation's error was discarded. A refresh token
+		// that survives a session revocation is a live credential for the
+		// account a federated partner just told us to shut down.
+		if err := s.revokeAllUserRefreshTokens(ctx, userID); err != nil {
+			return "error", fmt.Sprintf("revoke refresh tokens: %v", err)
+		}
 		// Account-disabled/purged also disables the local account.
+		//
+		// THIS WRITE'S ERROR WAS DISCARDED, and the function returned "applied"
+		// regardless. A partner sends account-disabled for a compromised
+		// account; the UPDATE fails; the receiver records outcome='applied',
+		// answers 202, and the account stays enabled. The transmitter is told
+		// the account was disabled and never re-delivers. The org check had the
+		// same shape: with no organization the disable was skipped and the
+		// result was still "applied".
 		if eventType == EventAccountDisabled || eventType == EventAccountPurged {
-			if org, oerr := orgctx.From(ctx); oerr == nil {
-				_, _ = s.db.Pool.Exec(ctx,
-					`UPDATE users SET enabled=false, updated_at=NOW() WHERE id=$1 AND org_id=$2`, userID, org.ID)
+			org, oerr := orgctx.From(ctx)
+			if oerr != nil {
+				return "error", fmt.Sprintf("no organization to disable the account in: %v", oerr)
+			}
+			tag, uerr := s.db.Pool.Exec(ctx,
+				`UPDATE users SET enabled=false, updated_at=NOW() WHERE id=$1 AND org_id=$2`, userID, org.ID)
+			if uerr != nil {
+				return "error", fmt.Sprintf("disable account: %v", uerr)
+			}
+			if tag.RowsAffected() == 0 {
+				return "error", "disable account: no row was updated"
 			}
 		}
 		return "applied", fmt.Sprintf("revoked sessions for user %s", userID)
@@ -236,20 +296,29 @@ func (s *Service) applyCAEPEvent(ctx context.Context, eventType, subject string,
 }
 
 // resolveUserBySubject maps a SET subject (email or user id) to a local user id.
-func (s *Service) resolveUserBySubject(ctx context.Context, subject string) string {
+//
+// An empty id means the subject is not a user here, which is a legitimate
+// answer -- a partner may send events about people this tenant does not have.
+// A returned error means the lookup did not RUN, which is not the same thing:
+// both errors used to be discarded, so a broken query and an unknown subject
+// produced the identical "ignored: subject not found locally".
+func (s *Service) resolveUserBySubject(ctx context.Context, subject string) (string, error) {
 	org, err := orgctx.From(ctx)
 	if err != nil {
-		return ""
+		return "", err
+	}
+	query := `SELECT id FROM users WHERE id::text=$1 AND org_id=$2`
+	if strings.Contains(subject, "@") {
+		query = `SELECT id FROM users WHERE lower(email)=lower($1) AND org_id=$2`
 	}
 	var userID string
-	if strings.Contains(subject, "@") {
-		_ = s.db.Pool.QueryRow(ctx,
-			`SELECT id FROM users WHERE lower(email)=lower($1) AND org_id=$2`, subject, org.ID).Scan(&userID)
-	} else {
-		_ = s.db.Pool.QueryRow(ctx,
-			`SELECT id FROM users WHERE id::text=$1 AND org_id=$2`, subject, org.ID).Scan(&userID)
+	if err := s.db.Pool.QueryRow(ctx, query, subject, org.ID).Scan(&userID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", nil
+		}
+		return "", err
 	}
-	return userID
+	return userID, nil
 }
 
 // parseJWKRSA builds an *rsa.PublicKey from base64url modulus + exponent.

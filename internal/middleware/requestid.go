@@ -6,6 +6,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 // RequestID header name constants
@@ -46,14 +48,16 @@ func ContextWithRequestID(ctx context.Context, requestID string) context.Context
 
 // RequestID generates a unique request ID for each incoming request.
 // It propagates the request ID through the Gin context and adds it to response headers.
-// If X-Request-ID header is present in the request, it uses that value; otherwise generates a UUID.
+// An inbound X-Request-ID is adopted when it is id-shaped (logsafe.PlausibleID),
+// so a caller can correlate across services; anything else is replaced with a
+// fresh UUID rather than echoed back and logged.
 func RequestID() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Try to get existing request ID from header
 		requestID := c.GetHeader(HeaderXRequestID)
 
-		// Generate new UUID if not present
-		if requestID == "" {
+		// Generate new UUID if absent or not id-shaped
+		if !logsafe.PlausibleID(requestID) {
 			requestID = uuid.New().String()
 		}
 
@@ -80,8 +84,8 @@ func RequestIDWithCustomGenerator(generator RequestIDGenerator) gin.HandlerFunc 
 		// Try to get existing request ID from header
 		requestID := c.GetHeader(HeaderXRequestID)
 
-		// Use custom generator if not present
-		if requestID == "" {
+		// Use custom generator if absent or not id-shaped
+		if !logsafe.PlausibleID(requestID) {
 			requestID = generator()
 		}
 

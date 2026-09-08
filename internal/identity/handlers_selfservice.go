@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -179,7 +180,7 @@ func (s *Service) handleRevokeUserPAT(c *gin.Context) {
 
 	s.logger.Info("Personal access token revoked",
 		zap.String("user_id", userID),
-		zap.String("key_id", keyID))
+		logsafe.String("key_id", keyID))
 
 	c.JSON(http.StatusOK, gin.H{"message": "Token revoked successfully"})
 }
@@ -268,14 +269,24 @@ func (s *Service) handleRevokeUserConsent(c *gin.Context) {
 		return
 	}
 
-	// Also delete access tokens
-	s.db.Pool.Exec(c.Request.Context(),
+	// Also delete access tokens.
+	//
+	// The refresh-token delete above is checked; this one was not, and it is
+	// the one that matters first: an access token is usable until it expires,
+	// so a user who revokes an application's authorization and is told
+	// "Authorization revoked successfully" could have that application still
+	// calling the API on their behalf.
+	if _, err := s.db.Pool.Exec(c.Request.Context(),
 		"DELETE FROM oauth_access_tokens WHERE user_id = $1 AND client_id = $2 AND org_id = $3",
-		userID, clientID, org.ID)
+		userID, clientID, org.ID); err != nil {
+		s.logger.Error("Failed to revoke the application's access tokens", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to revoke authorization"})
+		return
+	}
 
 	s.logger.Info("User consent revoked",
 		zap.String("user_id", userID),
-		zap.String("client_id", clientID))
+		logsafe.String("client_id", clientID))
 
 	c.JSON(http.StatusOK, gin.H{"message": "Authorization revoked successfully"})
 }

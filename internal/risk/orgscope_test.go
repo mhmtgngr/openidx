@@ -98,24 +98,13 @@ func TestRisk_requireOrgContext(t *testing.T) {
 	})
 }
 
-func TestRisk_AlertManager_requireOrgContext(t *testing.T) {
-	a := &AlertManager{}
-	ctx := context.Background()
-
-	t.Run("GetAlert", func(t *testing.T) {
-		_, err := a.GetAlert(ctx, "a-1")
-		assertNoOrg(t, err)
-	})
-	t.Run("AcknowledgeAlert", func(t *testing.T) {
-		assertNoOrg(t, a.AcknowledgeAlert(ctx, "a-1", "admin"))
-	})
-	t.Run("ResolveAlert", func(t *testing.T) {
-		assertNoOrg(t, a.ResolveAlert(ctx, "a-1", "admin"))
-	})
-	t.Run("MarkAsFalsePositive", func(t *testing.T) {
-		assertNoOrg(t, a.MarkAsFalsePositive(ctx, "a-1", "admin"))
-	})
-}
+// TestRisk_AlertManager_requireOrgContext stood here, checking that four
+// AlertManager methods refuse a request with no organization. AlertManager is
+// deleted: nothing constructed it, and the alerts the product actually raises
+// go through risk.Service.CreateSecurityAlert, whose org handling the cases
+// above cover. What AlertManager added over that was delivery -- dedup,
+// severity routing, an email to a security team -- and nothing in the product
+// sends one.
 
 func assertNoOrg(t *testing.T, err error) {
 	t.Helper()

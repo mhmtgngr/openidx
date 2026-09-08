@@ -11,119 +11,25 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"sort"
 	"strings"
 	"time"
 )
 
-// Storage defines the interface for backup storage backends
-type Storage interface {
-	// Save stores a backup and returns its location
-	Save(ctx context.Context, name string, data []byte) (string, error)
+// A Storage interface and a LocalStorage implementing it stood here, and
+// docs/PRODUCTION-READINESS.md said Manager "routes through the Storage
+// interface; both LocalStorage and S3Storage are wired". It did not. Manager
+// reads and writes local backups with plain os.ReadFile / os.WriteFile against
+// config.StorageDir, and reaches S3 through the concrete *S3Storage below -- so
+// LocalStorage was never constructed by anything, and the interface had no
+// reference outside its own declaration.
+//
+// S3 itself works: a created backup is uploaded through S3Storage.Save, and a
+// restore falls back to S3Storage.Load when the file is not on disk. What was
+// untrue was the architecture, not the capability, so the document is corrected
+// rather than the code bent to match a design nobody adopted.
 
-	// Load retrieves a backup by name
-	Load(ctx context.Context, name string) ([]byte, error)
-
-	// Delete removes a backup
-	Delete(ctx context.Context, name string) error
-
-	// List returns all available backups
-	List(ctx context.Context) ([]*Backup, error)
-
-	// Exists checks if a backup exists
-	Exists(ctx context.Context, name string) (bool, error)
-
-	// URL returns a URL for accessing the backup (for S3)
-	URL(name string) string
-}
-
-// LocalStorage implements Storage for local filesystem
-type LocalStorage struct {
-	baseDir string
-}
-
-// NewLocalStorage creates a new local storage backend
-func NewLocalStorage(baseDir string) *LocalStorage {
-	return &LocalStorage{baseDir: baseDir}
-}
-
-// Save stores a backup to the local filesystem
-func (s *LocalStorage) Save(ctx context.Context, name string, data []byte) (string, error) {
-	path := joinPath(s.baseDir, name)
-	return path, writeFile(path, data, 0600)
-}
-
-// Load retrieves a backup from the local filesystem
-func (s *LocalStorage) Load(ctx context.Context, name string) ([]byte, error) {
-	path := joinPath(s.baseDir, name)
-	return readFile(path)
-}
-
-// Delete removes a backup from the local filesystem
-func (s *LocalStorage) Delete(ctx context.Context, name string) error {
-	path := joinPath(s.baseDir, name)
-	return removeFile(path)
-}
-
-// List returns all backups in the local storage directory
-func (s *LocalStorage) List(ctx context.Context) ([]*Backup, error) {
-	entries, err := readDir(s.baseDir)
-	if err != nil {
-		return nil, err
-	}
-
-	var backups []*Backup
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		name := entry.Name()
-
-		// Skip metadata files
-		if hasSuffix(name, ".meta.json") {
-			continue
-		}
-
-		// Only process backup files
-		if !isBackupFile(name) {
-			continue
-		}
-
-		info, err := entry.Info()
-		if err != nil {
-			continue
-		}
-
-		backup := &Backup{
-			Filename:  name,
-			CreatedAt: info.ModTime(),
-			Size:      info.Size(),
-			Storage:   "local",
-		}
-
-		// Try to extract name from filename
-		backup.Name = extractBackupName(name)
-		backup.Encrypted = hasSuffix(name, ".enc")
-
-		backups = append(backups, backup)
-	}
-
-	return backups, nil
-}
-
-// Exists checks if a backup exists in local storage
-func (s *LocalStorage) Exists(ctx context.Context, name string) (bool, error) {
-	path := joinPath(s.baseDir, name)
-	return fileExists(path)
-}
-
-// URL returns a file:// URL for local storage
-func (s *LocalStorage) URL(name string) string {
-	return "file://" + joinPath(s.baseDir, name)
-}
-
-// S3Storage implements Storage for S3-compatible object storage
+// S3Storage stores backups in an S3-compatible bucket.
 type S3Storage struct {
 	bucket    string
 	region    string
@@ -468,65 +374,9 @@ func (s *S3Storage) key(name string) string {
 	return name
 }
 
-// Reader provides an io.Reader for backup data with progress tracking
-type Reader struct {
-	reader   io.Reader
-	total    int64
-	progress *Progress
-}
-
-// NewReader creates a new progress-tracking reader
-func NewReader(r io.Reader, total int64, progress *Progress) *Reader {
-	return &Reader{
-		reader:   r,
-		total:    total,
-		progress: progress,
-	}
-}
-
-// Read implements io.Reader
-func (r *Reader) Read(p []byte) (n int, err error) {
-	n, err = r.reader.Read(p)
-	if r.progress != nil {
-		r.progress.BytesRead += int64(n)
-	}
-	return n, err
-}
-
-// Progress tracks backup operation progress
-type Progress struct {
-	BytesRead  int64
-	TotalBytes int64
-	StartTime  time.Time
-	LastUpdate time.Time
-}
-
-// BytesPerSecond returns the current throughput
-func (p *Progress) BytesPerSecond() float64 {
-	elapsed := time.Since(p.StartTime).Seconds()
-	if elapsed == 0 {
-		return 0
-	}
-	return float64(p.BytesRead) / elapsed
-}
-
-// PercentComplete returns the completion percentage
-func (p *Progress) PercentComplete() float64 {
-	if p.TotalBytes == 0 {
-		return 0
-	}
-	return float64(p.BytesRead) / float64(p.TotalBytes) * 100
-}
-
-// ETA returns the estimated time to completion
-func (p *Progress) ETA() time.Duration {
-	bps := p.BytesPerSecond()
-	if bps == 0 {
-		return 0
-	}
-	remaining := p.TotalBytes - p.BytesRead
-	return time.Duration(float64(remaining)/bps) * time.Second
-}
+// A progress-tracking Reader and its Progress (bytes per second, percent
+// complete, ETA) stood here, for a caller that would stream a backup through
+// them. Nothing did. Deleted with LocalStorage.
 
 // Common errors
 var (
@@ -556,31 +406,6 @@ func (e *BackupError) Unwrap() error {
 	return e.Err
 }
 
-// File system helper functions (to avoid import issues)
-func joinPath(base, name string) string {
-	return base + "/" + name
-}
-
-func writeFile(path string, data []byte, perm int) error {
-	return writeFileOS(path, data, perm)
-}
-
-func readFile(path string) ([]byte, error) {
-	return readFileOS(path)
-}
-
-func removeFile(path string) error {
-	return removeFileOS(path)
-}
-
-func readDir(path string) ([]DirEntry, error) {
-	return readDirOS(path)
-}
-
-func fileExists(path string) (bool, error) {
-	return fileExistsOS(path)
-}
-
 func hasSuffix(s, suffix string) bool {
 	return len(s) >= len(suffix) && s[len(s)-len(suffix):] == suffix
 }
@@ -608,100 +433,12 @@ func trimSuffix(s, suffix string) string {
 	return s
 }
 
-// OS-specific implementations (to be replaced with actual os calls)
-type DirEntry interface {
-	Name() string
-	IsDir() bool
-	Info() (FileInfo, error)
-}
-
-type FileInfo interface {
-	Name() string
-	Size() int64
-	Mode() int64
-	ModTime() time.Time
-	IsDir() bool
-	Sys() interface{}
-}
-
-// Functions implemented by os package
-func writeFileOS(path string, data []byte, perm int) error {
-	// Use actual os.WriteFile
-	return osWriteFile(path, data, perm)
-}
-
-func readFileOS(path string) ([]byte, error) {
-	return osReadFile(path)
-}
-
-func removeFileOS(path string) error {
-	return osRemove(path)
-}
-
-func readDirOS(path string) ([]DirEntry, error) {
-	return osReadDir(path)
-}
-
-func fileExistsOS(path string) (bool, error) {
-	return osStat(path)
-}
-
-// OS function indirection. These are vars (rather than calling os.*
-// inline) so tests can substitute them with fakes. They are initialized
-// directly with the real implementations — there is no uninitialized
-// window. (Previously these started as panic("not initialized") and were
-// reassigned in init(), which made the package look broken even though
-// init() always ran first.)
-var (
-	osWriteFile = func(path string, data []byte, perm int) error {
-		return os.WriteFile(path, data, os.FileMode(perm))
-	}
-	osReadFile = os.ReadFile
-	osRemove   = os.Remove
-	osReadDir  = func(path string) ([]DirEntry, error) {
-		entries, err := os.ReadDir(path)
-		if err != nil {
-			return nil, err
-		}
-		result := make([]DirEntry, len(entries))
-		for i, e := range entries {
-			result[i] = &dirEntry{e: e}
-		}
-		return result, nil
-	}
-	osStat = func(path string) (bool, error) {
-		_, err := os.Stat(path)
-		if err == nil {
-			return true, nil
-		}
-		if os.IsNotExist(err) {
-			return false, nil
-		}
-		return false, err
-	}
-)
-
-type dirEntry struct {
-	e os.DirEntry
-}
-
-func (d *dirEntry) Name() string { return d.e.Name() }
-func (d *dirEntry) IsDir() bool  { return d.e.IsDir() }
-func (d *dirEntry) Info() (FileInfo, error) {
-	info, err := d.e.Info()
-	if err != nil {
-		return nil, err
-	}
-	return &fileInfo{info}, nil
-}
-
-type fileInfo struct {
-	info os.FileInfo
-}
-
-func (f *fileInfo) Name() string       { return f.info.Name() }
-func (f *fileInfo) Size() int64        { return f.info.Size() }
-func (f *fileInfo) Mode() int64        { return int64(f.info.Mode()) }
-func (f *fileInfo) ModTime() time.Time { return f.info.ModTime() }
-func (f *fileInfo) IsDir() bool        { return f.info.IsDir() }
-func (f *fileInfo) Sys() interface{}   { return f.info.Sys() }
+// A DirEntry/FileInfo interface pair, five wrapper functions over them, five
+// more os-level wrappers underneath, and the package-level os function vars the
+// tests substituted, all stood here. Every one of them existed so LocalStorage
+// could list a directory against a fake filesystem. With LocalStorage gone
+// nothing reads a directory in this package: S3Storage lists a bucket over
+// HTTP, and Manager touches the local backup directory with os.* directly.
+//
+// dirEntry and fileInfo were os.DirEntry / os.FileInfo shims LocalStorage.List
+// built while walking the backup directory. Deleted with it.

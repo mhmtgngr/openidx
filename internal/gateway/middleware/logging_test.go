@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"io"
 )
 
 func init() {
@@ -422,52 +423,10 @@ func TestGetLogger(t *testing.T) {
 	})
 }
 
-func TestContextLogger(t *testing.T) {
-	t.Run("Adds correlation ID to logs", func(t *testing.T) {
-		baseLogger := &mockLogger{}
-		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
-		c.Set("correlation_id", "test-123")
-		c.Request = httptest.NewRequest("GET", "/test", nil)
-
-		contextLogger := WithLogger(baseLogger, c)
-		contextLogger.Info("test message")
-
-		assert.Greater(t, baseLogger.infoCount, 0)
-
-		// Check that correlation_id is in fields
-		found := false
-		for i := 0; i < len(baseLogger.lastFields); i += 2 {
-			if i+1 < len(baseLogger.lastFields) && baseLogger.lastFields[i] == "correlation_id" {
-				found = true
-				assert.Equal(t, "test-123", baseLogger.lastFields[i+1])
-				break
-			}
-		}
-		assert.True(t, found)
-	})
-
-	t.Run("Adds path to logs", func(t *testing.T) {
-		baseLogger := &mockLogger{}
-		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
-		c.Request = httptest.NewRequest("GET", "/api/test", nil)
-
-		contextLogger := WithLogger(baseLogger, c)
-		contextLogger.Info("test message")
-
-		// Check that path is in fields
-		found := false
-		for i := 0; i < len(baseLogger.lastFields); i += 2 {
-			if i+1 < len(baseLogger.lastFields) && baseLogger.lastFields[i] == "path" {
-				found = true
-				assert.Equal(t, "/api/test", baseLogger.lastFields[i+1])
-				break
-			}
-		}
-		assert.True(t, found)
-	})
-}
+// TestContextLogger stood here, covering WithLogger and the contextLogger it
+// returned. Both are deleted: nothing in the gateway ever called WithLogger,
+// and the correlation id it stamped reaches the logs through CorrelationID
+// and the request entry/exit lines below, which these tests cover.
 
 func TestLogRequestEntry(t *testing.T) {
 	t.Run("Logs request entry details", func(t *testing.T) {
@@ -663,4 +622,40 @@ func (t *testGatewayLogger) Fatal(msg string, fields ...interface{}) {
 
 func (t *testGatewayLogger) Sync() error {
 	return t.mockLogger.Sync()
+}
+
+// TestRequestLogger_doesNotTruncateTheRequestItLogs pins the worse of the two
+// defects a Semgrep finding led to here.
+//
+// This middleware read the body through an io.LimitReader and then handed the
+// TRUNCATED bytes back to the handler. Turning on LogRequestBody would therefore
+// have silently cut every request over MaxBodySize before it reached the code
+// that had to act on it — a logging option corrupting the data it observes. And
+// the body went into the log verbatim, on the path that carries passwords and
+// authorization codes.
+func TestRequestLogger_doesNotTruncateTheRequestItLogs(t *testing.T) {
+	cfg := DefaultLoggingConfig()
+	cfg.LogRequestBody = true
+	cfg.MaxBodySize = 64
+
+	body := `{"password":"hunter2","payload":"` + strings.Repeat("z", 4096) + `"}`
+
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(RequestLogger(&mockLogger{}, cfg))
+
+	var seen string
+	r.POST("/x", func(c *gin.Context) {
+		b, _ := io.ReadAll(c.Request.Body)
+		seen = string(b)
+		c.JSON(http.StatusOK, gin.H{})
+	})
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(body)))
+
+	if seen != body {
+		t.Fatalf("the handler received %d bytes, the client sent %d — the logger truncated the request",
+			len(seen), len(body))
+	}
 }

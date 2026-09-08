@@ -1,7 +1,7 @@
 # OpenIDX Makefile
 # Build, test, and deploy automation
 
-.PHONY: all build test lint clean dev dev-infra docker helm docs smoke-test ha-drill k8s-chaos dr-game-day dark-drill dark-drill-live build-agent build-agent-all test-agent docker-build-agent ziti-quickstart ziti-down
+.PHONY: all build test test-db guards lint clean dev dev-infra docker helm docs smoke-test ha-drill k8s-chaos dr-game-day dark-drill dark-drill-live build-agent build-agent-all test-agent docker-build-agent ziti-quickstart ziti-down
 
 # Variables
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -106,9 +106,27 @@ test-coverage:
 	$(GOCMD) tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report: coverage.html"
 
+# ./cmd/rekey/... is in this target because CI's test-integration job runs it and
+# this target did not: rekey's only test file carries the `integration` build tag,
+# so every job that passes no tags compiles zero tests out of it. A local target
+# that runs less than the gate is how you learn about a failure from a red pull
+# request instead of from your own machine.
 test-integration:
 	@echo "🔗 Running integration tests..."
-	$(GOTEST) -v -tags=integration ./test/integration/...
+	$(GOTEST) -v -tags=integration ./test/integration/... ./cmd/rekey/...
+
+# The database-gated packages, against a real PostgreSQL. `make test` on a
+# machine with neither Docker nor OPENIDX_TEST_DATABASE_URL skips them all and
+# still prints ok, which is how a red CI arrives after a green local run.
+# Needs OPENIDX_DB_SUITE_ADMIN_URL; see scripts/db-suite.sh.
+test-db:
+	@./scripts/db-suite.sh
+
+# Every shell guard the workflows run, in one command. The list is read out
+# of .github/workflows, not written down here, so it cannot drift from what
+# CI runs -- which is how a guard came to be missed before a push.
+guards:
+	@./scripts/run-ci-guards.sh
 
 test-e2e:
 	@echo "🎭 Running end-to-end tests..."
@@ -380,7 +398,6 @@ helm-template:
 		--values deployments/kubernetes/helm/openidx/values.yaml \
 		--set secrets.postgresPassword=render-only-not-a-credential \
 		--set secrets.redisPassword=render-only-not-a-credential \
-		--set secrets.jwtSecret=render-only-not-a-credential-000000 \
 		--set secrets.encryptionKey=render-only-not-a-credential32b
 
 helm-install:
@@ -515,10 +532,38 @@ scan-sbom:
 		-o spdx-json > sboms/admin-console-$(VERSION).spdx.json 2>/dev/null || echo "    Warning: Could not generate SBOM for admin-console"
 	@echo "  SBOMs saved to sboms/"
 
+# Runs the scan the merge gate runs: same pinned binary, same `dir` mode (the
+# working tree, not history), same config, same exit code.
+#
+# It used to be `gitleaks detect --source . ... || true` behind an install of
+# `github.com/gitleaks/gitleaks/v4/cmd/gitleaks`, a module path that does not
+# exist — so on a machine without gitleaks the target failed to install it, and
+# on a machine with it the `|| true` meant a finding still exited 0. Neither the
+# scan nor its result reached anyone locally, which is why the gate was
+# CI-only and a leak was something you learned from a red pull request.
+#
+# The version is read out of the workflow instead of pinned a second time here,
+# so the local scan and the gate cannot drift apart.
 scan-secrets:
 	@echo "🔐 Scanning for secrets..."
-	@which gitleaks > /dev/null || (echo "Installing Gitleaks..." && go install github.com/gitleaks/gitleaks/v4/cmd/gitleaks@latest)
-	gitleaks detect --source . --verbose --report-format json --report-name gitleaks-report.json || true
+	@set -eu; \
+	workflow=.github/workflows/security-scan.yml; \
+	version=$$(awk '/GITLEAKS_VERSION:/ { print $$2; exit }' $$workflow); \
+	if [ -z "$$version" ]; then \
+		echo "  no GITLEAKS_VERSION in $$workflow — the pin the gate uses has moved"; exit 1; \
+	fi; \
+	bin=$$(command -v gitleaks 2>/dev/null || true); \
+	if [ -z "$$bin" ] || [ "$$($$bin version 2>/dev/null)" != "$$version" ]; then \
+		os=$$(uname -s | tr '[:upper:]' '[:lower:]'); \
+		case $$(uname -m) in aarch64|arm64) arch=arm64 ;; *) arch=x64 ;; esac; \
+		echo "  Installing gitleaks $$version ($${os}_$${arch}) into bin/..."; \
+		mkdir -p bin; \
+		curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v$${version}/gitleaks_$${version}_$${os}_$${arch}.tar.gz" \
+			| tar -xz -C bin gitleaks; \
+		bin=bin/gitleaks; \
+	fi; \
+	"$$bin" dir . --config .gitleaks.toml --no-banner --redact \
+		--report-format json --report-path gitleaks-report.json
 
 scan-deps:
 	@echo "📦 Scanning dependencies..."

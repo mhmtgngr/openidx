@@ -45,9 +45,13 @@ func TestGetAccessOverview_CrossPillar(t *testing.T) {
 		`CREATE TABLE vault_checkouts (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(), org_id UUID,
 			principal_id UUID, status VARCHAR(16))`,
-		`CREATE TABLE jit_grants (
-			id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID, org_id UUID,
-			expires_at TIMESTAMPTZ, status VARCHAR(16))`,
+		// The portal counts time-bound elevations on access_requests: jit_grants
+		// was a second representation nothing in the product ever wrote.
+		`CREATE TABLE IF NOT EXISTS access_requests (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(), requester_id UUID, org_id UUID,
+			resource_type VARCHAR(50), resource_id VARCHAR(255), resource_name VARCHAR(255),
+			status VARCHAR(50), expires_at TIMESTAMPTZ,
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
 		`CREATE TABLE guacamole_sessions (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(), org_id UUID, user_id UUID, status VARCHAR(16))`,
 		`CREATE TABLE guacamole_session_requests (
@@ -74,7 +78,8 @@ func TestGetAccessOverview_CrossPillar(t *testing.T) {
 		`INSERT INTO vault_access_grants (org_id, secret_id, principal_type, principal_id) VALUES ('` + orgID + `','` + secretID + `','user','` + userID + `')`,
 		`INSERT INTO vault_access_grants (org_id, secret_id, principal_type, principal_id) VALUES ('` + orgID + `','` + secretID + `','role','` + roleID + `')`,
 		`INSERT INTO vault_checkouts (org_id, principal_id, status) VALUES ('` + orgID + `','` + userID + `','active')`,
-		`INSERT INTO jit_grants (user_id, org_id, expires_at, status) VALUES ('` + userID + `','` + orgID + `',NOW()+'1h','active')`,
+		`INSERT INTO access_requests (requester_id, org_id, resource_type, resource_id, resource_name, status, expires_at)
+		   VALUES ('` + userID + `','` + orgID + `','role',gen_random_uuid()::text,'break-glass','fulfilled',NOW()+'1h')`,
 		`INSERT INTO guacamole_sessions (org_id, user_id, status) VALUES ('` + orgID + `','` + userID + `','active')`,
 		`INSERT INTO guacamole_session_requests (org_id, requester_id, status) VALUES ('` + orgID + `','` + userID + `','pending')`,
 		`INSERT INTO ziti_identities (org_id, user_id, enrolled) VALUES ('` + orgID + `','` + userID + `',true)`,

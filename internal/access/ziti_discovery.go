@@ -275,8 +275,16 @@ func (s *Service) importZitiService(ctx context.Context, req *ImportServiceReque
 		VALUES ($1, $2, $3, $4, true, $5)
 	`, uuid.New().String(), req.ZitiID, service.Name, routeID, org.ID)
 	if err != nil {
-		// Rollback the route
-		s.db.Pool.Exec(ctx, `DELETE FROM proxy_routes WHERE id = $1 AND org_id = $2`, routeID, org.ID)
+		// Rollback the route. A failed rollback leaves a proxy_route with
+		// ziti_enabled=true naming a service that has no ziti_services row --
+		// a route the console lists as overlay-backed and the teardown path
+		// cannot find a service for.
+		if _, delErr := s.db.Pool.Exec(ctx,
+			`DELETE FROM proxy_routes WHERE id = $1 AND org_id = $2`, routeID, org.ID); delErr != nil {
+			return nil, fmt.Errorf("failed to link Ziti service: %w; and the half-created route could "+
+				"NOT be rolled back, so a route now names a ziti service with no record behind it: %v",
+				err, delErr)
+		}
 		return nil, fmt.Errorf("failed to link Ziti service: %w", err)
 	}
 
@@ -286,13 +294,20 @@ func (s *Service) importZitiService(ctx context.Context, req *ImportServiceReque
 			s.logger.Warn("Failed to create feature record for imported service",
 				zap.String("route_id", routeID), zap.Error(ferr))
 		}
-		s.db.Pool.Exec(ctx, `
+		// The feature panel reads this row. Losing it shows Ziti as not
+		// enabled on a route that is imported, linked and serving over the
+		// overlay -- and the toggle then offers to enable what is already on.
+		if _, ferr := s.db.Pool.Exec(ctx, `
 			UPDATE service_features
 			SET enabled = true, status = 'enabled',
 			    resource_ids = $1,
 			    enabled_at = NOW()
 			WHERE route_id = $2 AND feature_name = 'ziti' AND org_id = $3
-		`, fmt.Sprintf(`{"ziti_service_id": "%s", "ziti_service_name": "%s"}`, req.ZitiID, service.Name), routeID, org.ID)
+		`, fmt.Sprintf(`{"ziti_service_id": "%s", "ziti_service_name": "%s"}`, req.ZitiID, service.Name), routeID, org.ID); ferr != nil {
+			s.logger.Error("imported a ziti service but could not mark the route's ziti feature enabled; "+
+				"the feature panel will show it as off",
+				zap.String("route_id", routeID), zap.Error(ferr))
+		}
 	}
 
 	s.logger.Info("Imported Ziti service as proxy route",

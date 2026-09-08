@@ -5,11 +5,14 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"os"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/orgctx"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -18,9 +21,17 @@ import (
 func createTestServiceForBench(tb testing.TB) *Service {
 	tb.Helper()
 
-	cfg := &config.Config{
-		DatabaseURL: "postgres://localhost:5432/openidx_test?sslmode=disable",
+	// DATABASE_URL first: the hardcoded DSN names a database (openidx_test) that
+	// neither CI nor the compose stack creates, so these benchmarks skip
+	// everywhere -- the benchmark job runs `go test -bench=. ./...` with no
+	// Postgres service at all. Reading the variable the rest of the suite uses
+	// means they exercise something when anyone runs them, rather than
+	// reporting a skip that reads like a pass.
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		dsn = "postgres://localhost:5432/openidx_test?sslmode=disable"
 	}
+	cfg := &config.Config{DatabaseURL: dsn}
 
 	logger := zap.NewNop()
 
@@ -42,6 +53,23 @@ func createTestServiceForBench(tb testing.TB) *Service {
 
 	return svc
 }
+
+// benchCtx is the context these benchmarks must run under. Every service method
+// here resolves the tenant from the context, so a bare context.Background()
+// makes each call return "orgctx: no organization context on request" before it
+// touches the database -- which is what the whole file was timing. A
+// BenchmarkAuthenticate that reports ~1µs/op is not measuring bcrypt.
+func benchCtx() context.Context {
+	return orgctx.With(context.Background(), orgctx.Org{
+		ID:   "00000000-0000-0000-0000-000000000010",
+		Slug: "default",
+	})
+}
+
+// benchErr holds the last result of the timed call. Checking it after the loop
+// is what keeps these honest: a benchmark that errors on every iteration is
+// timing an error path, and it should say so rather than publish the number.
+var benchErr error
 
 // mockWebhookPublisherForBench is a minimal mock for benchmarking
 type mockWebhookPublisherForBench struct{}
@@ -68,7 +96,7 @@ func BenchmarkAuthenticate(b *testing.B) {
 		return
 	}
 
-	ctx := context.Background()
+	ctx := benchCtx()
 
 	// Create a test user with known credentials
 	username := "bench_user_" + randomString(8)
@@ -80,7 +108,7 @@ func BenchmarkAuthenticate(b *testing.B) {
 		INSERT INTO users (id, username, email, password_hash, enabled, email_verified, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, true, true, $5, $5)
 		ON CONFLICT (username) DO UPDATE SET password_hash = $4
-	`, username+"-id", username, username+"@example.com", hashedPassword, now)
+	`, uuid.NewString(), username, username+"@example.com", hashedPassword, now)
 	if err != nil {
 		b.Fatalf("Failed to create test user: %v", err)
 	}
@@ -92,7 +120,10 @@ func BenchmarkAuthenticate(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = svc.AuthenticateUser(ctx, username, password)
+		_, benchErr = svc.AuthenticateUser(ctx, username, password)
+	}
+	if benchErr != nil {
+		b.Fatalf("%s errored on every iteration: %v", "svc.AuthenticateUser", benchErr)
 	}
 }
 
@@ -103,10 +134,10 @@ func BenchmarkGetUserByID(b *testing.B) {
 		return
 	}
 
-	ctx := context.Background()
+	ctx := benchCtx()
 
 	// Create a test user
-	userID := "bench_user_get_" + randomString(8)
+	userID := uuid.NewString()
 	username := "bench_get_user_" + randomString(8)
 	hashedPassword, _ := bcrypt.GenerateFromPassword([]byte("password"), bcrypt.DefaultCost)
 
@@ -125,7 +156,10 @@ func BenchmarkGetUserByID(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = svc.GetUser(ctx, userID)
+		_, benchErr = svc.GetUser(ctx, userID)
+	}
+	if benchErr != nil {
+		b.Fatalf("%s errored on every iteration: %v", "svc.GetUser", benchErr)
 	}
 }
 
@@ -136,7 +170,7 @@ func BenchmarkListUsersPaginated(b *testing.B) {
 		return
 	}
 
-	ctx := context.Background()
+	ctx := benchCtx()
 
 	// Create test users
 	const testUserCount = 100
@@ -149,7 +183,7 @@ func BenchmarkListUsersPaginated(b *testing.B) {
 			INSERT INTO users (id, username, email, password_hash, enabled, email_verified, created_at, updated_at)
 			VALUES ($1, $2, $3, $4, true, true, $5, $5)
 			ON CONFLICT (username) DO NOTHING
-		`, username+"-id", username, username+"@example.com", hashedPassword, now)
+		`, uuid.NewString(), username, username+"@example.com", hashedPassword, now)
 		if err != nil {
 			b.Fatalf("Failed to create test users: %v", err)
 		}
@@ -157,7 +191,10 @@ func BenchmarkListUsersPaginated(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _, _ = svc.ListUsers(ctx, 0, 20)
+		_, _, benchErr = svc.ListUsers(ctx, 0, 20)
+	}
+	if benchErr != nil {
+		b.Fatalf("%s errored on every iteration: %v", "svc.ListUsers", benchErr)
 	}
 }
 
@@ -168,7 +205,7 @@ func BenchmarkListUsersWithSearch(b *testing.B) {
 		return
 	}
 
-	ctx := context.Background()
+	ctx := benchCtx()
 
 	// Create test users with predictable names
 	const testUserCount = 100
@@ -181,7 +218,7 @@ func BenchmarkListUsersWithSearch(b *testing.B) {
 			INSERT INTO users (id, username, email, password_hash, enabled, email_verified, created_at, updated_at)
 			VALUES ($1, $2, $3, $4, true, true, $5, $5)
 			ON CONFLICT (username) DO NOTHING
-		`, username+"-id", username, username+"@example.com", hashedPassword, now)
+		`, uuid.NewString(), username, username+"@example.com", hashedPassword, now)
 		if err != nil {
 			b.Fatalf("Failed to create test users: %v", err)
 		}
@@ -189,7 +226,10 @@ func BenchmarkListUsersWithSearch(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _, _ = svc.ListUsers(ctx, 0, 20, "search_test")
+		_, _, benchErr = svc.ListUsers(ctx, 0, 20, "search_test")
+	}
+	if benchErr != nil {
+		b.Fatalf("%s errored on every iteration: %v", "svc.ListUsers", benchErr)
 	}
 }
 
@@ -200,10 +240,10 @@ func BenchmarkCreateSession(b *testing.B) {
 		return
 	}
 
-	ctx := context.Background()
+	ctx := benchCtx()
 
 	// Create a test user
-	userID := "bench_session_user_" + randomString(8)
+	userID := uuid.NewString()
 	hashedPassword, _ := bcrypt.GenerateFromPassword([]byte("password"), bcrypt.DefaultCost)
 	now := time.Now()
 
@@ -222,7 +262,10 @@ func BenchmarkCreateSession(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = svc.CreateSession(ctx, userID, "test-client", "127.0.0.1", "test-agent", 24*time.Hour)
+		_, benchErr = svc.CreateSession(ctx, userID, "test-client", "127.0.0.1", "test-agent", 24*time.Hour)
+	}
+	if benchErr != nil {
+		b.Fatalf("%s errored on every iteration: %v", "svc.CreateSession", benchErr)
 	}
 }
 
@@ -233,11 +276,10 @@ func BenchmarkIsSessionValid(b *testing.B) {
 		return
 	}
 
-	ctx := context.Background()
+	ctx := benchCtx()
 
 	// Create a test user and session
-	userID := "bench_valid_session_user_" + randomString(8)
-	sessionID := "bench_session_" + randomString(8)
+	userID := uuid.NewString()
 	hashedPassword, _ := bcrypt.GenerateFromPassword([]byte("password"), bcrypt.DefaultCost)
 	now := time.Now()
 
@@ -249,13 +291,17 @@ func BenchmarkIsSessionValid(b *testing.B) {
 		b.Fatalf("Failed to create test user: %v", err)
 	}
 
-	_, err = svc.db.Pool.Exec(ctx, `
-		INSERT INTO user_sessions (id, user_id, client_id, ip_address, user_agent, started_at, last_seen_at, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $6, $7)
-	`, sessionID, userID, "test-client", "127.0.0.1", "test-agent", now, now.Add(24*time.Hour))
+	// Seed through the product's own path. The hand-written INSERT this
+	// replaces put a row in user_sessions naming three columns that table has
+	// never had (client_id, started_at, last_seen_at) -- and IsSessionValid
+	// reads `sessions`, a different table, so even a corrected insert would
+	// have timed a lookup that finds nothing. Calling CreateSession keeps the
+	// benchmark pointed at whichever table the service actually uses.
+	session, err := svc.CreateSession(ctx, userID, "bench-client", "127.0.0.1", "test-agent", 24*time.Hour)
 	if err != nil {
 		b.Fatalf("Failed to create test session: %v", err)
 	}
+	sessionID := session.ID
 
 	b.Cleanup(func() {
 		svc.db.Pool.Exec(ctx, "DELETE FROM users WHERE id = $1", userID)
@@ -264,7 +310,10 @@ func BenchmarkIsSessionValid(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = svc.IsSessionValid(ctx, sessionID)
+		_, benchErr = svc.IsSessionValid(ctx, sessionID)
+	}
+	if benchErr != nil {
+		b.Fatalf("%s errored on every iteration: %v", "svc.IsSessionValid", benchErr)
 	}
 }
 
@@ -275,10 +324,10 @@ func BenchmarkGetUserRoles(b *testing.B) {
 		return
 	}
 
-	ctx := context.Background()
+	ctx := benchCtx()
 
 	// Create a test user with roles
-	userID := "bench_roles_user_" + randomString(8)
+	userID := uuid.NewString()
 	hashedPassword, _ := bcrypt.GenerateFromPassword([]byte("password"), bcrypt.DefaultCost)
 	now := time.Now()
 
@@ -290,23 +339,40 @@ func BenchmarkGetUserRoles(b *testing.B) {
 		b.Fatalf("Failed to create test user: %v", err)
 	}
 
-	// Create roles and assign them
+	// `ON CONFLICT (name)` needs a unique index on exactly (name), and roles
+	// moved to (org_id, name) in v173, so this statement cannot succeed --
+	// `continue` swallowed the error, and the benchmark itself has never run
+	// (see the DSN note in createTestServiceForBench), which is why nothing
+	// surfaced it. The names are random, so no conflict is possible and the
+	// bare DO NOTHING names no index that can be re-keyed underneath it.
+	// Seeding failures are fatal now: a benchmark whose premise did not land
+	// should stop, not publish.
 	const roleCount = 10
 	for i := 0; i < roleCount; i++ {
-		roleID := "bench_role_" + randomString(8)
-		_, err := svc.db.Pool.Exec(ctx, `
+		roleID := uuid.NewString()
+		if _, err := svc.db.Pool.Exec(ctx, `
 			INSERT INTO roles (id, name, description, created_at, updated_at)
 			VALUES ($1, $2, $3, $4, $4)
-			ON CONFLICT (name) DO NOTHING
-		`, roleID, "role_"+randomString(4), "Benchmark role", now)
-		if err != nil {
-			continue
-		}
-		_, _ = svc.db.Pool.Exec(ctx, `
-			INSERT INTO user_roles (user_id, role_id, assigned_by, assigned_at)
-			VALUES ($1, $2, $3, $4)
 			ON CONFLICT DO NOTHING
-		`, userID, roleID, "system", now)
+		`, roleID, "bench_role_"+uuid.NewString(), "Benchmark role", now); err != nil {
+			b.Fatalf("seed role: %v", err)
+		}
+		if _, err := svc.db.Pool.Exec(ctx, `
+			INSERT INTO user_roles (user_id, role_id, assigned_at)
+			VALUES ($1, $2, $3)
+			ON CONFLICT DO NOTHING
+		`, userID, roleID, now); err != nil {
+			b.Fatalf("grant role: %v", err)
+		}
+	}
+
+	var gotRoles int
+	if err := svc.db.Pool.QueryRow(ctx,
+		"SELECT COUNT(*) FROM user_roles WHERE user_id = $1", userID).Scan(&gotRoles); err != nil {
+		b.Fatalf("count seeded roles: %v", err)
+	}
+	if gotRoles != roleCount {
+		b.Fatalf("seeded %d roles, want %d — this benchmark would time a user with none", gotRoles, roleCount)
 	}
 
 	b.Cleanup(func() {
@@ -316,7 +382,10 @@ func BenchmarkGetUserRoles(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = svc.GetUserRoles(ctx, userID)
+		_, benchErr = svc.GetUserRoles(ctx, userID)
+	}
+	if benchErr != nil {
+		b.Fatalf("%s errored on every iteration: %v", "svc.GetUserRoles", benchErr)
 	}
 }
 
@@ -327,10 +396,10 @@ func BenchmarkVerifyTOTP(b *testing.B) {
 		return
 	}
 
-	ctx := context.Background()
+	ctx := benchCtx()
 
 	// Create a test user with TOTP
-	userID := "bench_totp_user_" + randomString(8)
+	userID := uuid.NewString()
 	hashedPassword, _ := bcrypt.GenerateFromPassword([]byte("password"), bcrypt.DefaultCost)
 	secret := generateBase32Secret(16)
 	now := time.Now()
@@ -346,7 +415,7 @@ func BenchmarkVerifyTOTP(b *testing.B) {
 	_, err = svc.db.Pool.Exec(ctx, `
 		INSERT INTO mfa_totp (id, user_id, secret, enabled, enrolled_at, created_at, updated_at)
 		VALUES ($1, $2, $3, true, $4, $4, $4)
-	`, userID+"-totp", userID, secret, now)
+	`, uuid.NewString(), userID, secret, now)
 	if err != nil {
 		b.Fatalf("Failed to create TOTP: %v", err)
 	}
@@ -362,7 +431,10 @@ func BenchmarkVerifyTOTP(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = svc.VerifyTOTP(ctx, userID, testCode)
+		_, benchErr = svc.VerifyTOTP(ctx, userID, testCode)
+	}
+	if benchErr != nil {
+		b.Fatalf("%s errored on every iteration: %v", "svc.VerifyTOTP", benchErr)
 	}
 }
 
@@ -373,27 +445,32 @@ func BenchmarkListGroups(b *testing.B) {
 		return
 	}
 
-	ctx := context.Background()
+	ctx := benchCtx()
 
-	// Create test groups
+	// Same as the roles seeding above: groups has been keyed (org_id, name) for
+	// some time, so `ON CONFLICT (name)` cannot succeed here either and
+	// `continue` hid it. Left as it was, BenchmarkListGroups would list
+	// whatever the database already held rather than the 50 it says it creates.
 	const groupCount = 50
 	now := time.Now()
 
 	for i := 0; i < groupCount; i++ {
-		groupID := "bench_group_" + randomString(8)
-		_, err := svc.db.Pool.Exec(ctx, `
+		groupID := uuid.NewString()
+		if _, err := svc.db.Pool.Exec(ctx, `
 			INSERT INTO groups (id, name, description, created_at, updated_at)
 			VALUES ($1, $2, $3, $4, $4)
-			ON CONFLICT (name) DO NOTHING
-		`, groupID, "group_"+randomString(4), "Benchmark group", now)
-		if err != nil {
-			continue
+			ON CONFLICT DO NOTHING
+		`, groupID, "bench_group_"+uuid.NewString(), "Benchmark group", now); err != nil {
+			b.Fatalf("seed group: %v", err)
 		}
 	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _, _ = svc.ListGroups(ctx, 0, 20)
+		_, _, benchErr = svc.ListGroups(ctx, 0, 20)
+	}
+	if benchErr != nil {
+		b.Fatalf("%s errored on every iteration: %v", "svc.ListGroups", benchErr)
 	}
 }
 

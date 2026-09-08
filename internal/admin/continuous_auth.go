@@ -47,15 +47,27 @@ type AuthContext struct {
 	UpdatedAt time.Time              `json:"updated_at"`
 }
 
-// RiskFactor represents a specific risk factor in the authentication context
+// RiskFactor is one input to a session's risk score, as the engine measured it.
+//
+// It used to mirror the v77 risk_factors table and carried that table's id,
+// resolved and resolved_at columns. Nothing ever wrote that table: the engine
+// computed five factors, summed them into a score, and returned this slice
+// exactly as empty as it was initialised, on every response. Fields describing
+// a stored, resolvable row described nothing, so what is left is what the
+// engine actually knows -- which factor, what it contributed, at what weight,
+// and what was measured -- in the shape internal/risk.RiskFactor already uses
+// for the same idea.
 type RiskFactor struct {
-	ID          string     `json:"id"`
-	Type        string     `json:"type"`
-	Severity    float64    `json:"severity"` // 0-1
-	Description string     `json:"description"`
-	DetectedAt  time.Time  `json:"detected_at"`
-	Resolved    bool       `json:"resolved"`
-	ResolvedAt  *time.Time `json:"resolved_at,omitempty"`
+	Type string `json:"type"`
+	// Points is the factor's raw contribution before the deployment's weight,
+	// and Weight that weight; Severity is the two multiplied and expressed as a
+	// share of the 0-100 scale, which is the 0-1 number this field always
+	// promised. Keeping all three means a score can be read back apart.
+	Points      float64   `json:"points"`
+	Weight      float64   `json:"weight"`
+	Severity    float64   `json:"severity"`
+	Description string    `json:"description"`
+	DetectedAt  time.Time `json:"detected_at"`
 }
 
 // SessionRisk represents the calculated risk for a session
@@ -122,32 +134,61 @@ func (s *continuousAuthService) CalculateSessionRisk(ctx context.Context, sessio
 		Context:      make(map[string]interface{}),
 	}
 
-	// Calculate individual risk factors
-	totalRisk := 0.0
-
-	// 1. Time-based risk (session age)
-	timeRisk := s.calculateTimeRisk(ctx, authCtx)
-	totalRisk += timeRisk * s.config.RiskFactors["session_age"]
-
-	// 2. Source-address change. The RiskFactors key stays "geo_anomaly" so a
-	// deployment's tuned weights keep working, but what is measured is an
-	// address change, not geography — see calculateIPChangeRisk.
-	ipChangeRisk := s.calculateIPChangeRisk(ctx, authCtx)
-	totalRisk += ipChangeRisk * s.config.RiskFactors["geo_anomaly"]
-
-	// 3. Device fingerprint risk. It reports whether it could measure at all;
-	// an unmeasured factor contributes nothing and says so in Context, rather
-	// than contributing a constant that reads like a finding.
+	// Calculate individual risk factors.
+	//
+	// Each is recorded as it is measured. The five contributions used to be
+	// summed straight into totalRisk and thrown away, so the score was a number
+	// with nothing behind it: the response field named risk_factors was the
+	// empty slice above on every request, and the history row stored the
+	// literal "{}" for the detail. A score of 45 that cannot say which factor
+	// produced it is not evidence for the step-up it triggers.
 	deviceRisk, deviceMeasured := s.calculateDeviceRisk(ctx, authCtx)
-	totalRisk += deviceRisk * s.config.RiskFactors["device_anomaly"]
+	measured := []struct {
+		Type string
+		// WeightKey is the config key, which is not always the factor's name:
+		// "geo_anomaly" stays as the key so a deployment's tuned weights keep
+		// working, while what is measured is an address change, not geography
+		// -- see calculateIPChangeRisk.
+		WeightKey   string
+		Points      float64
+		Measured    bool
+		Description string
+	}{
+		{"session_age", "session_age", s.calculateTimeRisk(ctx, authCtx), true,
+			fmt.Sprintf("session has been open for %s", time.Since(authCtx.AuthTime).Round(time.Minute))},
+		{"ip_change", "geo_anomaly", s.calculateIPChangeRisk(ctx, authCtx), true,
+			"source address differs from this user's previous session"},
+		// calculateDeviceRisk reports whether it could measure at all; an
+		// unmeasured factor contributes nothing and says so in Context, rather
+		// than contributing a constant that reads like a finding.
+		{"device_anomaly", "device_anomaly", deviceRisk, deviceMeasured,
+			"device fingerprint is not among this user's trusted devices"},
+		{"behavioral_anomaly", "behavioral_anomaly", s.calculateBehaviorRisk(ctx, authCtx), true,
+			"activity outside 06:00-22:00"},
+		{"velocity", "velocity", s.calculateVelocityRisk(ctx, authCtx), true,
+			"elevated action rate in the last minute"},
+	}
 
-	// 4. Behavioral risk
-	behaviorRisk := s.calculateBehaviorRisk(ctx, authCtx)
-	totalRisk += behaviorRisk * s.config.RiskFactors["behavioral_anomaly"]
-
-	// 5. Velocity risk (rapid actions)
-	velocityRisk := s.calculateVelocityRisk(ctx, authCtx)
-	totalRisk += velocityRisk * s.config.RiskFactors["velocity"]
+	totalRisk := 0.0
+	for _, f := range measured {
+		weight := s.config.RiskFactors[f.WeightKey]
+		contribution := f.Points * weight
+		totalRisk += contribution
+		// A factor that contributed nothing is not a risk factor. What was
+		// checked is a different question, and Context["factors_measured"]
+		// below answers it.
+		if !f.Measured || contribution <= 0 {
+			continue
+		}
+		risk.RiskFactors = append(risk.RiskFactors, RiskFactor{
+			Type:        f.Type,
+			Points:      f.Points,
+			Weight:      weight,
+			Severity:    math.Min(contribution, 100) / 100,
+			Description: f.Description,
+			DetectedAt:  risk.CalculatedAt,
+		})
+	}
 
 	// Normalize to 0-100
 	risk.OverallRisk = math.Min(totalRisk, 100)
@@ -179,13 +220,31 @@ func (s *continuousAuthService) CalculateSessionRisk(ctx context.Context, sessio
 	// Also clamp overall risk to 0-100 range
 	risk.OverallRisk = math.Max(0, math.Min(100, risk.OverallRisk))
 
+	// The measured factors, stored in the column v77 created for them. This
+	// used to write the literal "{}": a history row saying what a session
+	// scored, at a time, with no record of why -- and the empty object was
+	// written on the same line that had the factors in hand.
+	//
+	// `source` discriminates the two writers of this column: a full calculation
+	// carries its factors, and UpdateAuthScore carries the event that moved the
+	// score. Without it a reader cannot tell which shape it has.
+	factorsJSON, err := json.Marshal(map[string]interface{}{
+		"source":  "calculated",
+		"factors": risk.RiskFactors,
+	})
+	if err != nil {
+		s.logger.Warn("failed to encode risk factors; storing an empty list",
+			zap.String("session_id", logsafe.Clean(sessionID)), zap.Error(err))
+		factorsJSON = []byte(`{"source":"calculated","factors":[]}`)
+	}
+
 	// Store risk calculation (v77 created session_risks; failures are logged,
 	// not swallowed — the risk score is still returned either way)
 	if _, err := s.db.Pool.Exec(ctx, `
 		INSERT INTO session_risks (session_id, overall_risk, risk_level, action_required, risk_factors, calculated_at, previous_risk, risk_delta, org_id)
 		VALUES ($1, $2, $3, $4, $5, NOW(), $6, $7, $8)
 	`, sessionID, risk.OverallRisk, risk.RiskLevel, risk.ActionRequired,
-		[]byte("{}"), previousRisk, risk.RiskDelta, org.ID); err != nil {
+		factorsJSON, previousRisk, risk.RiskDelta, org.ID); err != nil {
 		s.logger.Warn("failed to store session risk history",
 			zap.String("session_id", logsafe.Clean(sessionID)), zap.Error(err))
 	}
@@ -324,12 +383,13 @@ func (s *continuousAuthService) UpdateAuthScore(ctx context.Context, sessionID s
 	level := s.determineRiskLevel(updated)
 
 	payload, mErr := json.Marshal(map[string]interface{}{
+		"source":     "event",
 		"event":      event,
 		"adjustment": adjustment,
 		"metadata":   metadata,
 	})
 	if mErr != nil {
-		payload = []byte(`{}`)
+		payload = []byte(`{"source":"event"}`)
 	}
 
 	_, err = s.db.Pool.Exec(ctx, `
@@ -366,33 +426,11 @@ func (s *continuousAuthService) RequireReauthentication(ctx context.Context, ses
 	return false, "", nil
 }
 
-// GetRiskFactors returns detailed risk factors for a session
-func (s *continuousAuthService) GetRiskFactors(ctx context.Context, sessionID string) ([]RiskFactor, error) {
-	org, err := orgctx.From(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("organization context required: %w", err)
-	}
-
-	rows, err := s.db.Pool.Query(ctx, `
-		SELECT id, type, severity, COALESCE(description, ''), detected_at, resolved, resolved_at
-		FROM risk_factors
-		WHERE session_id = $1 AND org_id = $2 AND resolved = false
-		ORDER BY severity DESC, detected_at DESC
-	`, sessionID, org.ID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	factors := []RiskFactor{}
-	for rows.Next() {
-		var f RiskFactor
-		rows.Scan(&f.ID, &f.Type, &f.Severity, &f.Description, &f.DetectedAt, &f.Resolved, &f.ResolvedAt)
-		factors = append(factors, f)
-	}
-
-	return factors, nil
-}
+// GetRiskFactors is gone with the v77 risk_factors table it read (migration
+// v176). It selected rows from a table nothing has ever inserted into, it had
+// no caller of its own, and the factors it promised are now on the score that
+// produced them -- in the response, and in session_risks.risk_factors for the
+// history.
 
 // Risk calculation helpers
 
@@ -485,11 +523,18 @@ func (s *continuousAuthService) calculateDeviceRisk(ctx context.Context, authCtx
 	if err != nil {
 		return 25, true // org context is required upstream; unknown device is the safe read
 	}
+	// Fail-closed, and said out loud: an unreadable known-device check leaves
+	// isKnown false, which reads the device as unfamiliar and raises the score.
+	// That is the safe direction, but a control that silently degrades is a
+	// control nobody knows has degraded.
 	var isKnown bool
-	s.db.Pool.QueryRow(ctx, `
+	if err := s.db.Pool.QueryRow(ctx, `
 		SELECT EXISTS(SELECT 1 FROM known_devices
 			WHERE user_id = $1 AND fingerprint = $2 AND trusted = true AND org_id = $3)
-	`, authCtx.UserID, authCtx.DeviceFingerprint, org.ID).Scan(&isKnown)
+	`, authCtx.UserID, authCtx.DeviceFingerprint, org.ID).Scan(&isKnown); err != nil {
+		s.logger.Warn("known-device check failed; reading the device as unknown",
+			logsafe.String("user_id", authCtx.UserID), zap.Error(err))
+	}
 
 	if !isKnown {
 		return 25, true
@@ -519,11 +564,22 @@ func (s *continuousAuthService) calculateVelocityRisk(ctx context.Context, authC
 	if err != nil {
 		return 0
 	}
+	//
+	// The error is read now, and the comment above is the reason: this factor
+	// scored 0 for its entire life because the query named a table that does
+	// not exist, and nothing said so. The query was fixed; the discarded error
+	// that hid it was not. A factor that cannot be measured still scores 0 --
+	// inventing a number would be worse -- but it says so, so a risk engine
+	// running on fewer factors than it thinks is visible rather than quiet.
 	var actionCount int
-	s.db.Pool.QueryRow(ctx, `
+	if err := s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM audit_events
 		WHERE actor_id = $1 AND org_id = $2 AND created_at > NOW() - INTERVAL '1 minute'
-	`, authCtx.UserID, org.ID).Scan(&actionCount)
+	`, authCtx.UserID, org.ID).Scan(&actionCount); err != nil {
+		s.logger.Warn("velocity risk could not be measured; scoring it 0",
+			logsafe.String("user_id", authCtx.UserID), zap.Error(err))
+		return 0
+	}
 
 	if actionCount > 100 {
 		return 40 // Very high velocity

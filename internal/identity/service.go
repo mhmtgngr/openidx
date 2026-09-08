@@ -39,9 +39,12 @@ import (
 	"github.com/openidx/openidx/internal/common/orgctx"
 	"github.com/openidx/openidx/internal/common/pwhash"
 	"github.com/openidx/openidx/internal/common/secretcrypt"
+	"github.com/openidx/openidx/internal/revocation"
 	"github.com/openidx/openidx/internal/risk"
+	"github.com/openidx/openidx/internal/webhooks"
 
 	"github.com/openidx/openidx/internal/common/logsafe"
+	"github.com/openidx/openidx/internal/jitgrant"
 )
 
 // Use the min function from pushmfa.go
@@ -214,6 +217,13 @@ type Service struct {
 	smsProviderMu     sync.RWMutex      // Protects smsProvider for runtime hot-swap
 	phoneCallProvider PhoneCallProvider // Phone call MFA provider
 	risk              RiskService       // Risk evaluation service
+
+	// otpSettings is the installation's OTP code length, lifetime and attempt
+	// ceiling, as stored in system_settings and edited in the admin console.
+	// Nil until an administrator has stored something, which is the majority
+	// case; otpConfig() then answers with the defaults.
+	otpSettings *OTPConfig
+	otpConfigMu sync.RWMutex
 
 	// JWKS public key cache
 	jwksCacheMu     sync.RWMutex
@@ -465,13 +475,26 @@ func (s *Service) openIDXAuthMiddleware() gin.HandlerFunc {
 	}
 }
 
-// isIdentitySelfService reports whether an /api/v1/identity request path is a
+// isIdentitySelfService reports whether an /api/v1/identity ROUTE TEMPLATE is a
 // caller-scoped self-service operation (operating on the authenticated user's
 // own account), as opposed to an administrative one that acts on other users
 // or system-wide resources. Matching is precise to avoid e.g. "/users/me"
 // accidentally matching "/users/members".
-func isIdentitySelfService(path string) bool {
-	rest := strings.TrimPrefix(path, "/api/v1/identity")
+//
+// THE ARGUMENT IS THE REGISTERED TEMPLATE ("/api/v1/identity/users/:id/roles"),
+// NOT THE REQUESTED PATH. It used to be the requested path, and the two are not
+// the same string: gin backtracks from a static segment to a parameter when no
+// static route matches, so POST /users/me/roles -- for which nothing is
+// registered -- is served by /users/:id/roles, the administrative role-grant
+// handler, while the path the caller wrote starts with "/users/me/" and this
+// predicate answered "self-service". Eleven routes collided that way, every one
+// of them in the escalating direction. Deciding on the template makes the
+// classification a property of the route the router actually chose, so no string
+// a caller can write in a parameter slot can move a route between tiers.
+// internal/identity/authz_surface_test.go derives that census from the route
+// table and fails on any disagreement.
+func isIdentitySelfService(routeTemplate string) bool {
+	rest := strings.TrimPrefix(routeTemplate, "/api/v1/identity")
 	switch {
 	case rest == "/users/me" || strings.HasPrefix(rest, "/users/me/"):
 		return true // profile, password, PATs, consents, privacy, identity-links
@@ -502,15 +525,20 @@ func isIdentitySelfService(path string) bool {
 }
 
 // requireAdminUnlessSelfService enforces authorization on the identity API.
-// Self-service paths are allowed for any authenticated user; everything else
+// Self-service routes are allowed for any authenticated user; everything else
 // (user/role/group/provider management, etc.) requires an admin role. This is
-// deny-by-default: any path not explicitly recognized as self-service needs
+// deny-by-default: any route not explicitly recognized as self-service needs
 // admin, so new administrative routes are protected automatically.
+//
+// The decision is made on the ROUTE gin matched (c.FullPath()), never on the
+// path the caller wrote -- see isIdentitySelfService for what that distinction
+// cost. An empty FullPath means no route matched, which cannot happen for
+// middleware registered on a route group, so it fails closed.
 //
 // Must run after openIDXAuthMiddleware (which sets "roles" from the token).
 func (s *Service) requireAdminUnlessSelfService() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if isIdentitySelfService(c.Request.URL.Path) {
+		if route := c.FullPath(); route != "" && isIdentitySelfService(route) {
 			c.Next()
 			return
 		}
@@ -653,7 +681,7 @@ func (s *Service) ListUsers(ctx context.Context, offset, limit int, search ...st
 		searchPattern := "%" + escaped + "%"
 		err = s.db.Pool.QueryRow(ctx, `
 			SELECT COUNT(*) FROM users
-			WHERE (username ILIKE $1 ESCAPE '\\' OR email ILIKE $1 ESCAPE '\\' OR first_name ILIKE $1 ESCAPE '\\' OR last_name ILIKE $1 ESCAPE '\\')
+			WHERE (username ILIKE $1 ESCAPE '\' OR email ILIKE $1 ESCAPE '\' OR first_name ILIKE $1 ESCAPE '\' OR last_name ILIKE $1 ESCAPE '\')
 			  AND org_id = $2
 		`, searchPattern, org.ID).Scan(&total)
 		if err != nil {
@@ -675,18 +703,18 @@ func (s *Service) ListUsers(ctx context.Context, offset, limit int, search ...st
 		escaped := strings.NewReplacer("%", "\\%", "_", "\\_").Replace(searchQuery)
 		searchPattern := "%" + escaped + "%"
 		rows, err = s.db.Pool.Query(ctx, `
-			SELECT id, username, email, first_name, last_name, enabled, email_verified,
+			SELECT id, username, email, COALESCE(first_name, ''), COALESCE(last_name, ''), enabled, email_verified,
 			       created_at, updated_at, last_login_at, password_changed_at,
 			       password_must_change, failed_login_count, last_failed_login_at, locked_until
 			FROM users
-			WHERE (username ILIKE $1 ESCAPE '\\' OR email ILIKE $1 ESCAPE '\\' OR first_name ILIKE $1 ESCAPE '\\' OR last_name ILIKE $1 ESCAPE '\\')
+			WHERE (username ILIKE $1 ESCAPE '\' OR email ILIKE $1 ESCAPE '\' OR first_name ILIKE $1 ESCAPE '\' OR last_name ILIKE $1 ESCAPE '\')
 			  AND org_id = $2
 			ORDER BY created_at DESC
 			OFFSET $3 LIMIT $4
 		`, searchPattern, org.ID, offset, limit)
 	} else {
 		rows, err = s.db.Pool.Query(ctx, `
-			SELECT id, username, email, first_name, last_name, enabled, email_verified,
+			SELECT id, username, email, COALESCE(first_name, ''), COALESCE(last_name, ''), enabled, email_verified,
 			       created_at, updated_at, last_login_at, password_changed_at,
 			       password_must_change, failed_login_count, last_failed_login_at, locked_until
 			FROM users
@@ -838,6 +866,17 @@ func (s *Service) deprovisionUser(ctx context.Context, userID, orgID string, har
 		}
 	}
 
+	// The session markers above are honoured by the REFRESH grant. They are not
+	// read by /oauth/userinfo or /oauth/introspect, which consult the per-user
+	// cutoff and the per-token blacklist and nothing else -- so without this
+	// line the access token already in a leaver's browser keeps answering for
+	// the rest of its hour after the account is disabled.
+	if s.redis != nil {
+		if err := revocation.RevokeUserTokens(ctx, s.redis.Client, userID); err != nil {
+			log.Warn("deprovision: revoke outstanding access tokens failed", zap.Error(err))
+		}
+	}
+
 	// PAM: live privileged access must die with the account, in both the soft
 	// and hard paths. Checkouts and direct user grants have no FK to users
 	// (principal_id is a bare UUID), so they would otherwise survive even a
@@ -859,11 +898,11 @@ func (s *Service) deprovisionUser(ctx context.Context, userID, orgID string, har
 		userID, orgID); err != nil {
 		log.Warn("deprovision: expire vault grants failed", zap.Error(err))
 	}
-	if _, err := s.db.Pool.Exec(ctx,
-		`UPDATE jit_grants SET status = 'revoked', revoked_at = NOW(), updated_at = NOW()
-		 WHERE user_id = $1 AND org_id = $2 AND status = 'active'`,
-		userID, orgID); err != nil {
-		log.Warn("deprovision: revoke jit grants failed", zap.Error(err))
+	// Time-bound elevations. This used to update jit_grants, which nothing in
+	// the product writes, so a leaver kept every elevated role the approval
+	// workflow had granted them until it expired on its own.
+	if _, err := jitgrant.EndAllForUser(ctx, s.db.Pool, userID, orgID); err != nil {
+		log.Warn("deprovision: ending time-bound elevations failed", zap.Error(err))
 	}
 
 	if hardDelete {
@@ -1350,7 +1389,7 @@ func (s *Service) SearchUsers(ctx context.Context, query string, limit int) ([]U
 
 	searchPattern := "%" + query + "%"
 	rows, err := s.db.Pool.Query(ctx, `
-		SELECT id, username, email, first_name, last_name, enabled, email_verified,
+		SELECT id, username, email, COALESCE(first_name, ''), COALESCE(last_name, ''), enabled, email_verified,
 		       created_at, updated_at, last_login_at, password_changed_at,
 		       password_must_change, failed_login_count, last_failed_login_at, locked_until
 		FROM users
@@ -1614,7 +1653,7 @@ const (
 		        ELSE locked_until
 		    END
 		WHERE username = $1 AND org_id = $2
-		RETURNING failed_login_count, locked_until`
+		RETURNING id, failed_login_count, locked_until`
 
 	failedLoginIncrementByID = `
 		UPDATE users
@@ -1625,7 +1664,7 @@ const (
 		        ELSE locked_until
 		    END
 		WHERE id = $1 AND org_id = $2
-		RETURNING failed_login_count, locked_until`
+		RETURNING id, failed_login_count, locked_until`
 )
 
 func (s *Service) recordFailedLogin(ctx context.Context, query, subject string) error {
@@ -1638,16 +1677,27 @@ func (s *Service) recordFailedLogin(ctx context.Context, query, subject string) 
 
 	maxFailures, lockoutDuration := s.lockoutPolicy(ctx)
 
+	var userID string
 	var failures int
 	var lockedUntil *time.Time
 	if err := s.db.Pool.QueryRow(ctx, query,
-		subject, org.ID, maxFailures, lockoutDuration.String()).Scan(&failures, &lockedUntil); err != nil {
+		subject, org.ID, maxFailures, lockoutDuration.String()).Scan(&userID, &failures, &lockedUntil); err != nil {
 		return err
 	}
 
 	if lockedUntil != nil && failures >= maxFailures {
 		s.logger.Warn("Account locked due to failed login attempts",
 			zap.String("subject", logsafe.Clean(subject)), zap.Int("failures", failures))
+	}
+	// user.locked, on the attempt that crosses the threshold and not on the
+	// ones after it: while an account stays locked every further attempt still
+	// increments the counter, so `>= maxFailures` would send the same event on
+	// every retry and an operator's integration would see a lockout storm where
+	// there was one lockout. This event type was declared and never published by
+	// anything, so there is no existing subscriber whose expectations this
+	// changes.
+	if failures == maxFailures && lockedUntil != nil {
+		s.emitAccountLocked(ctx, userID, failures)
 	}
 	return nil
 }
@@ -3873,7 +3923,7 @@ func (s *Service) handleCreateUser(c *gin.Context) {
 
 	// Publish webhook event (best-effort)
 	if s.webhookService != nil {
-		s.webhookService.Publish(c.Request.Context(), "user.created", map[string]interface{}{
+		s.webhookService.Publish(publishCtx(c.Request.Context()), webhooks.EventUserCreated, map[string]interface{}{
 			"user_id": user.ID, "username": user.GetUsername(), "email": user.GetEmail(),
 		})
 	}
@@ -3892,11 +3942,12 @@ func (s *Service) handleUpdateUser(c *gin.Context) {
 
 	user.ID = userID
 	if err := s.UpdateUser(auditCtx(c), &user); err != nil {
-		s.logger.Error("failed to update user", zap.String("user_id", userID), zap.Error(err))
+		s.logger.Error("failed to update user", logsafe.String("user_id", userID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 
+	s.emitUserLifecycleEvent(c.Request.Context(), webhooks.EventUserUpdated, userID, getActorID(c))
 	c.JSON(200, user)
 }
 
@@ -3905,11 +3956,12 @@ func (s *Service) handleDeleteUser(c *gin.Context) {
 
 	ctx := ContextWithActorID(c.Request.Context(), c.GetString("user_id"))
 	if err := s.DeleteUser(ctx, userID); err != nil {
-		s.logger.Error("failed to delete user", zap.String("user_id", userID), zap.Error(err))
+		s.logger.Error("failed to delete user", logsafe.String("user_id", userID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 
+	s.emitUserLifecycleEvent(c.Request.Context(), webhooks.EventUserDeleted, userID, getActorID(c))
 	c.JSON(204, nil)
 }
 
@@ -3987,7 +4039,7 @@ func (s *Service) handleUpdateIdentityProvider(c *gin.Context) {
 	}
 	idp.ID = parsedID
 	if err := s.UpdateIdentityProvider(auditCtx(c), &idp); err != nil {
-		s.logger.Error("failed to update identity provider", zap.String("id", idpID), zap.Error(err))
+		s.logger.Error("failed to update identity provider", logsafe.String("id", idpID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -3999,7 +4051,7 @@ func (s *Service) handleDeleteIdentityProvider(c *gin.Context) {
 	idpID := c.Param("id")
 
 	if err := s.DeleteIdentityProvider(auditCtx(c), idpID); err != nil {
-		s.logger.Error("failed to delete identity provider", zap.String("id", idpID), zap.Error(err))
+		s.logger.Error("failed to delete identity provider", logsafe.String("id", idpID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -4012,7 +4064,7 @@ func (s *Service) handleGetUserSessions(c *gin.Context) {
 
 	sessions, err := s.GetUserSessions(c.Request.Context(), userID)
 	if err != nil {
-		s.logger.Error("failed to get user sessions", zap.String("user_id", userID), zap.Error(err))
+		s.logger.Error("failed to get user sessions", logsafe.String("user_id", userID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -4057,7 +4109,7 @@ func (s *Service) handleTerminateSession(c *gin.Context) {
 	}
 
 	if err := s.TerminateSession(c.Request.Context(), sessionID); err != nil {
-		s.logger.Error("failed to terminate session", zap.String("session_id", sessionID), zap.Error(err))
+		s.logger.Error("failed to terminate session", logsafe.String("session_id", sessionID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -4140,11 +4192,12 @@ func (s *Service) handleUpdateRole(c *gin.Context) {
 			c.JSON(404, gin.H{"error": "role not found"})
 			return
 		}
-		s.logger.Error("failed to update role", zap.String("role_id", roleID), zap.Error(err))
+		s.logger.Error("failed to update role", logsafe.String("role_id", roleID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 
+	s.emitRoleLifecycleEvent(c.Request.Context(), webhooks.EventRoleUpdated, roleID, getActorID(c))
 	c.JSON(200, role)
 }
 
@@ -4156,7 +4209,7 @@ func (s *Service) handleDeleteRole(c *gin.Context) {
 			c.JSON(404, gin.H{"error": "role not found"})
 			return
 		}
-		s.logger.Error("failed to delete role", zap.String("role_id", roleID), zap.Error(err))
+		s.logger.Error("failed to delete role", logsafe.String("role_id", roleID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -4169,7 +4222,7 @@ func (s *Service) handleGetUserRoles(c *gin.Context) {
 
 	roles, err := s.GetUserRoles(c.Request.Context(), userID)
 	if err != nil {
-		s.logger.Error("failed to get user roles", zap.String("user_id", userID), zap.Error(err))
+		s.logger.Error("failed to get user roles", logsafe.String("user_id", userID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -4216,7 +4269,7 @@ func (s *Service) handleGetUserRoleAssignments(c *gin.Context) {
 
 	assignments, err := s.GetUserRoleAssignments(c.Request.Context(), userID)
 	if err != nil {
-		s.logger.Error("failed to get user role assignments", zap.String("user_id", userID), zap.Error(err))
+		s.logger.Error("failed to get user role assignments", logsafe.String("user_id", userID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -4268,7 +4321,7 @@ func (s *Service) handleUpdateUserRoles(c *gin.Context) {
 
 	err := s.UpdateUserRoles(auditCtx(c), userID, req.RoleIDs, assignedBy)
 	if err != nil {
-		s.logger.Error("failed to update user roles", zap.String("user_id", userID), zap.Error(err))
+		s.logger.Error("failed to update user roles", logsafe.String("user_id", userID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -4340,7 +4393,7 @@ func (s *Service) handleGetGroupMembers(c *gin.Context) {
 	members, total, err := s.GetGroupMembersPaginated(
 		c.Request.Context(), groupID, c.Query("search"), offset, limit)
 	if err != nil {
-		s.logger.Error("failed to get group members", zap.String("group_id", groupID), zap.Error(err))
+		s.logger.Error("failed to get group members", logsafe.String("group_id", groupID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -4392,6 +4445,7 @@ func (s *Service) handleCreateGroup(c *gin.Context) {
 		return
 	}
 
+	s.emitGroupLifecycleEvent(c.Request.Context(), webhooks.EventGroupCreated, group.ID, getActorID(c))
 	c.JSON(201, group)
 }
 
@@ -4406,11 +4460,12 @@ func (s *Service) handleUpdateGroup(c *gin.Context) {
 
 	group.ID = groupID
 	if err := s.UpdateGroup(c.Request.Context(), &group); err != nil {
-		s.logger.Error("failed to update group", zap.String("group_id", groupID), zap.Error(err))
+		s.logger.Error("failed to update group", logsafe.String("group_id", groupID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 
+	s.emitGroupLifecycleEvent(c.Request.Context(), webhooks.EventGroupUpdated, groupID, getActorID(c))
 	c.JSON(200, group)
 }
 
@@ -4418,11 +4473,12 @@ func (s *Service) handleDeleteGroup(c *gin.Context) {
 	groupID := c.Param("id")
 
 	if err := s.DeleteGroup(auditCtx(c), groupID); err != nil {
-		s.logger.Error("failed to delete group", zap.String("group_id", groupID), zap.Error(err))
+		s.logger.Error("failed to delete group", logsafe.String("group_id", groupID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 
+	s.emitGroupLifecycleEvent(c.Request.Context(), webhooks.EventGroupDeleted, groupID, getActorID(c))
 	c.JSON(204, nil)
 }
 
@@ -4458,11 +4514,14 @@ func (s *Service) handleAddGroupMember(c *gin.Context) {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}
-		s.logger.Error("failed to add group member", zap.String("group_id", groupID), zap.Error(err))
+		s.logger.Error("failed to add group member", logsafe.String("group_id", groupID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 
+	// The event a downstream system needs in order to GRANT the access that
+	// comes with the group.
+	s.emitGroupLifecycleEvent(c.Request.Context(), webhooks.EventGroupMemberAdded, groupID, getActorID(c), req.UserID)
 	c.JSON(200, gin.H{"status": "member added"})
 }
 
@@ -4486,11 +4545,13 @@ func (s *Service) handleRemoveGroupMember(c *gin.Context) {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}
-		s.logger.Error("failed to remove group member", zap.String("group_id", groupID), zap.String("user_id", userID), zap.Error(err))
+		s.logger.Error("failed to remove group member", logsafe.String("group_id", groupID), logsafe.String("user_id", userID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 
+	// And the event it needs in order to REVOKE it again.
+	s.emitGroupLifecycleEvent(c.Request.Context(), webhooks.EventGroupMemberRemoved, groupID, getActorID(c), userID)
 	c.JSON(200, gin.H{"status": "member removed"})
 }
 
@@ -4499,7 +4560,7 @@ func (s *Service) handleGetSubgroups(c *gin.Context) {
 
 	subgroups, err := s.GetSubgroups(c.Request.Context(), parentID)
 	if err != nil {
-		s.logger.Error("failed to get subgroups", zap.String("parent_id", parentID), zap.Error(err))
+		s.logger.Error("failed to get subgroups", logsafe.String("parent_id", parentID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -4846,7 +4907,30 @@ func (s *Service) handleChangePassword(c *gin.Context) {
 			return
 		}
 		// Update password_changed_at in local DB (but NOT the hash — password stays in directory)
-		s.db.Pool.Exec(ctx, `UPDATE users SET password_changed_at = NOW(), password_must_change = false WHERE id = $1 AND org_id = $2`, userID, org.ID)
+		//
+		// The directory has already accepted the new password, and that cannot
+		// be undone from here, so this is the one place a failed write must not
+		// turn into a failed request: answering 500 would send the person back
+		// to a form that wants the OLD password, which no longer works. What it
+		// must not do either is answer a bare success, because
+		// password_must_change is still true and the next sign-in will ask them
+		// to change a password they just changed, again, with no way out.
+		//
+		// So: the truth, both halves of it, and an error in the log for whoever
+		// has to clear the flag.
+		if _, err := s.db.Pool.Exec(ctx,
+			`UPDATE users SET password_changed_at = NOW(), password_must_change = false WHERE id = $1 AND org_id = $2`,
+			userID, org.ID,
+		); err != nil {
+			s.logger.Error("directory password changed but the local record was not updated; "+
+				"password_must_change is still set and the user will be prompted again",
+				logsafe.String("user_id", userID), zap.Error(err))
+			c.JSON(200, gin.H{
+				"status":  "password changed",
+				"warning": "Your password was changed. Your account record could not be updated, so you may be asked to change it again at your next sign-in — contact your administrator if that happens.",
+			})
+			return
+		}
 		c.JSON(200, gin.H{"status": "password changed"})
 		return
 	}
@@ -5132,6 +5216,8 @@ func (s *Service) handleForgotPassword(c *gin.Context) {
 	}
 
 	// Opportunistic cleanup of this org's expired/used tokens
+	//silentwrite:ok redemption re-checks expires_at and used_at under a row lock, so a token this
+	// misses is refused on its own terms; all that is lost is a row nobody can spend.
 	s.db.Pool.Exec(ctx, "DELETE FROM password_reset_tokens WHERE (expires_at < NOW() OR used_at IS NOT NULL) AND org_id = $1", org.ID)
 
 	// Always return success to prevent email enumeration
@@ -5327,19 +5413,42 @@ func (s *Service) handleAdminResetPassword(c *gin.Context) {
 		if err := s.directoryService.ResetPassword(ctx, *directoryID, username, req.NewPassword); err != nil {
 			s.logger.Error("Failed to reset directory password",
 				zap.String("admin_id", fmt.Sprintf("%v", adminID)),
-				zap.String("target_user_id", userID),
+				logsafe.String("target_user_id", userID),
 				zap.String("source", *source),
 				zap.Error(err))
 			c.JSON(500, gin.H{"error": "Failed to reset directory password"})
 			return
 		}
 
-		// Mark password_must_change so user is prompted at next login
-		s.db.Pool.Exec(ctx, `UPDATE users SET password_must_change = true, password_changed_at = NOW() WHERE id = $1 AND org_id = $2`, userID, org.ID)
+		// Mark password_must_change so user is prompted at next login.
+		//
+		// This is the whole point of an admin-issued temporary password: it is
+		// meant to survive exactly one sign-in. The error was discarded and the
+		// response said "User must change password at next login" regardless,
+		// so a failed write left a password the admin typed -- or one generated
+		// above and read out over the phone -- valid indefinitely, with nothing
+		// to say the rotation was never armed.
+		//
+		// The directory password is already reset and cannot be put back, so
+		// the answer names the half that worked and the half that did not.
+		if _, err := s.db.Pool.Exec(ctx,
+			`UPDATE users SET password_must_change = true, password_changed_at = NOW() WHERE id = $1 AND org_id = $2`,
+			userID, org.ID,
+		); err != nil {
+			s.logger.Error("directory password reset but password_must_change was not set; "+
+				"the temporary password will not be forced to change",
+				zap.String("admin_id", fmt.Sprintf("%v", adminID)),
+				logsafe.String("target_user_id", userID), zap.Error(err))
+			c.JSON(500, gin.H{
+				"error":  "The directory password was reset, but this user could not be marked as needing to change it. The temporary password will NOT expire at first sign-in — reset it again, or set the requirement by hand.",
+				"source": *source,
+			})
+			return
+		}
 
 		s.logger.Info("Admin reset directory password",
 			zap.String("admin_id", fmt.Sprintf("%v", adminID)),
-			zap.String("target_user_id", userID),
+			logsafe.String("target_user_id", userID),
 			zap.String("source", *source))
 
 		c.JSON(200, gin.H{
@@ -5366,7 +5475,7 @@ func (s *Service) handleAdminResetPassword(c *gin.Context) {
 
 	s.logger.Info("Admin triggered password reset",
 		zap.String("admin_id", fmt.Sprintf("%v", adminID)),
-		zap.String("target_user_id", userID),
+		logsafe.String("target_user_id", userID),
 		zap.String("target_email", email))
 
 	if s.emailService != nil {
@@ -5650,7 +5759,7 @@ func (s *Service) handleGetRolePermissions(c *gin.Context) {
 	roleID := c.Param("id")
 	perms, err := s.GetRolePermissions(c.Request.Context(), roleID)
 	if err != nil {
-		s.logger.Error("failed to get role permissions", zap.String("role_id", roleID), zap.Error(err))
+		s.logger.Error("failed to get role permissions", logsafe.String("role_id", roleID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -5667,7 +5776,7 @@ func (s *Service) handleSetRolePermissions(c *gin.Context) {
 		return
 	}
 	if err := s.SetRolePermissions(c.Request.Context(), roleID, req.PermissionIDs); err != nil {
-		s.logger.Error("failed to set role permissions", zap.String("role_id", roleID), zap.Error(err))
+		s.logger.Error("failed to set role permissions", logsafe.String("role_id", roleID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -5858,7 +5967,7 @@ func (s *Service) handleDeleteInvitation(c *gin.Context) {
 	_, err = s.db.Pool.Exec(c.Request.Context(),
 		"DELETE FROM user_invitations WHERE id = $1 AND org_id = $2", id, org.ID)
 	if err != nil {
-		s.logger.Error("failed to delete invitation", zap.String("id", id), zap.Error(err))
+		s.logger.Error("failed to delete invitation", logsafe.String("id", id), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -5887,17 +5996,52 @@ func (s *Service) handleAcceptInvitation(c *gin.Context) {
 		return
 	}
 
-	// Look up invitation within the caller's org (the invite link is
-	// org-specific via the subdomain it was sent for)
+	// Hash before anything is claimed. A hashing failure used to be swallowed
+	// by `if err == nil` around the password UPDATE, so the account was created,
+	// answered 201 "Account created successfully", and had no password.
+	hashedPassword, err := pwhash.Hash(req.Password)
+	if err != nil {
+		s.logger.Error("could not hash the password for an invitation acceptance", zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
+		return
+	}
+
+	// CLAIM the invitation, do not merely read it. This one statement replaces
+	// a SELECT ... WHERE status = 'pending' followed, forty lines later, by an
+	// UPDATE ... SET status = 'accepted' whose error was discarded.
+	//
+	// Two things were wrong with that. The UPDATE could fail and nothing looked,
+	// so the invitation stayed pending and the token stayed usable -- a
+	// single-use credential that was never spent, and a second POST with the
+	// same token made a second account. And even had the error been checked,
+	// SELECT-then-UPDATE is a check-then-act: two requests arriving together
+	// both pass the SELECT before either writes.
+	//
+	// An UPDATE ... RETURNING with the predicate on it does both at once and
+	// locks the row until commit, so exactly one caller can claim a token. No
+	// rows back means already used, expired, or not this org's.
 	var invID, email string
 	var roles, groups []string
 	err = s.db.Pool.QueryRow(ctx,
-		`SELECT id, email, roles, groups FROM user_invitations
-		 WHERE token = $1 AND org_id = $2 AND status = 'pending' AND expires_at > NOW()`,
+		`UPDATE user_invitations SET status = 'accepted', accepted_at = NOW()
+		 WHERE token = $1 AND org_id = $2 AND status = 'pending' AND expires_at > NOW()
+		 RETURNING id, email, roles, groups`,
 		token, org.ID).Scan(&invID, &email, &roles, &groups)
 	if err != nil {
 		c.JSON(400, gin.H{"error": "invalid or expired invitation"})
 		return
+	}
+
+	// From here the token is spent. Any failure below must put it back, or an
+	// ordinary retryable problem -- the username is taken -- would cost the
+	// invitee their invitation and need an administrator to issue another.
+	releaseInvitation := func() {
+		if _, rerr := s.db.Pool.Exec(ctx,
+			`UPDATE user_invitations SET status = 'pending', accepted_at = NULL WHERE id = $1 AND org_id = $2`,
+			invID, org.ID); rerr != nil {
+			s.logger.Error("could not release a claimed invitation after a failed acceptance; it must be reissued",
+				logsafe.String("invitation_id", invID), zap.Error(rerr))
+		}
 	}
 
 	// Create user (CreateUser scopes to the org carried on ctx)
@@ -5909,36 +6053,32 @@ func (s *Service) handleAcceptInvitation(c *gin.Context) {
 	}
 
 	if err := s.CreateUser(ctx, user); err != nil {
+		releaseInvitation()
 		s.logger.Error("failed to create user from invitation", zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 
-	// Set password
-	hashedPassword, err := pwhash.Hash(req.Password)
-	if err == nil {
-		s.db.Pool.Exec(ctx,
-			"UPDATE users SET password_hash = $1, password_changed_at = NOW() WHERE id = $2 AND org_id = $3",
-			hashedPassword, user.ID, org.ID)
+	// The password and the grants together, or neither. Each of these was
+	// discarded: an account could be created and answered 201 with no password
+	// set, or with none of the roles and groups the invitation promised -- an
+	// account that exists, cannot log in, and holds no access, while the API
+	// said "Account created successfully".
+	//
+	// The user row itself is outside this transaction (CreateUser goes through
+	// the repository on the pool), so a failure here leaves an account with no
+	// password. That fails closed -- no password means no login -- and the
+	// response says so rather than claiming success.
+	if err := s.grantInvitedAccess(ctx, user.ID, org.ID, hashedPassword, roles, groups); err != nil {
+		s.logger.Error("an invitation was accepted but the account could not be finished",
+			logsafe.String("invitation_id", invID), zap.String("user_id", user.ID), zap.Error(err))
+		c.JSON(500, gin.H{
+			"error": "the account was created but its password and access could not be set; " +
+				"ask an administrator to reset the password and check the assigned roles",
+			"user_id": user.ID,
+		})
+		return
 	}
-
-	// Assign roles (only roles within the caller's org)
-	for _, role := range roles {
-		s.db.Pool.Exec(ctx,
-			"INSERT INTO user_roles (user_id, role_id, org_id) SELECT $1, id, $3 FROM roles WHERE name = $2 AND org_id = $3 ON CONFLICT DO NOTHING",
-			user.ID, role, org.ID)
-	}
-
-	// Add to groups (only groups within the caller's org)
-	for _, group := range groups {
-		s.db.Pool.Exec(ctx,
-			"INSERT INTO group_memberships (user_id, group_id, org_id) SELECT $1, id, $3 FROM groups WHERE name = $2 AND org_id = $3 ON CONFLICT DO NOTHING",
-			user.ID, group, org.ID)
-	}
-
-	// Mark invitation as accepted
-	s.db.Pool.Exec(ctx,
-		"UPDATE user_invitations SET status = 'accepted', accepted_at = NOW() WHERE id = $1 AND org_id = $2", invID, org.ID)
 
 	// Send welcome email
 	if s.emailService != nil {
@@ -5947,12 +6087,68 @@ func (s *Service) handleAcceptInvitation(c *gin.Context) {
 
 	// Publish webhook
 	if s.webhookService != nil {
-		s.webhookService.Publish(c.Request.Context(), "user.created", map[string]interface{}{
+		s.webhookService.Publish(publishCtx(c.Request.Context()), webhooks.EventUserCreated, map[string]interface{}{
 			"user_id": user.ID, "username": user.GetUsername(), "email": email, "source": "invitation",
 		})
 	}
 
 	c.JSON(201, gin.H{"message": "Account created successfully", "user_id": user.ID})
+}
+
+// grantInvitedAccess sets the new account's password and gives it the roles and
+// groups the invitation named, in one transaction.
+//
+// One transaction because these three are one promise. An invitation that says
+// "you will be an auditor in the Finance group" and produces an account with the
+// password but neither grant is not a partial success; it is an account whose
+// holder will be told to raise a ticket. Rolling the lot back leaves a passwordless
+// account -- which cannot be used -- and a caller that knows to say so.
+//
+// A role or group named by the invitation that does not exist in the org is not
+// an error: the INSERT ... SELECT simply matches nothing. That is the existing
+// behaviour and it is the right one, because an administrator can delete a role
+// between issuing an invitation and its acceptance, and refusing the whole
+// acceptance for that would be worse than granting what remains.
+func (s *Service) grantInvitedAccess(ctx context.Context, userID, orgID, hashedPassword string, roles, groups []string) error {
+	tx, err := s.db.Pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	tag, err := tx.Exec(ctx,
+		"UPDATE users SET password_hash = $1, password_changed_at = NOW() WHERE id = $2 AND org_id = $3",
+		hashedPassword, userID, orgID)
+	if err != nil {
+		return fmt.Errorf("set the password: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		// The row was created moments ago in this org. Nought here means a
+		// policy refused the write, and an account with no password that
+		// reports success is the failure this whole change is about.
+		return fmt.Errorf("set the password: the new account row was not updated")
+	}
+
+	for _, role := range roles {
+		if _, err := tx.Exec(ctx,
+			"INSERT INTO user_roles (user_id, role_id, org_id) SELECT $1, id, $3 FROM roles WHERE name = $2 AND org_id = $3 ON CONFLICT DO NOTHING",
+			userID, role, orgID); err != nil {
+			return fmt.Errorf("assign the role the invitation named: %w", err)
+		}
+	}
+
+	for _, group := range groups {
+		if _, err := tx.Exec(ctx,
+			"INSERT INTO group_memberships (user_id, group_id, org_id) SELECT $1, id, $3 FROM groups WHERE name = $2 AND org_id = $3 ON CONFLICT DO NOTHING",
+			userID, group, orgID); err != nil {
+			return fmt.Errorf("add to the group the invitation named: %w", err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
 }
 
 // handleOffboardUser deactivates a user and cleans up their access
@@ -5966,38 +6162,59 @@ func (s *Service) handleOffboardUser(c *gin.Context) {
 		return
 	}
 
-	// Disable user
-	_, err = s.db.Pool.Exec(ctx,
-		"UPDATE users SET enabled = false, updated_at = NOW() WHERE id = $1 AND org_id = $2", userID, org.ID)
+	// OFFBOARDING IS ONE OPERATION, so it runs as one.
+	//
+	// Only the first of these five statements had its error checked. The other
+	// four -- revoke the API keys, remove the group memberships, remove the role
+	// assignments, terminate the sessions -- ran as bare Exec calls with the
+	// error discarded, and the handler then answered "User offboarded
+	// successfully". So a leaver could be disabled while keeping every API key,
+	// every group, every role and every live session, and the operator who
+	// pressed the button was told the offboarding was complete.
+	//
+	// This is the leaver half of joiner-mover-leaver, and a partial one
+	// reported as whole is worse than a failure: nobody goes back to check.
+	tx, err := s.db.Pool.Begin(ctx)
 	if err != nil {
-		c.JSON(500, gin.H{"error": "failed to disable user"})
+		s.logger.Error("failed to begin the offboarding", zap.Error(err))
+		c.JSON(500, gin.H{"error": "failed to offboard user"})
+		return
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	for _, step := range []struct {
+		what string
+		sql  string
+	}{
+		{"disable the account", "UPDATE users SET enabled = false, updated_at = NOW() WHERE id = $1 AND org_id = $2"},
+		{"revoke the API keys", "UPDATE api_keys SET status = 'revoked' WHERE user_id = $1 AND org_id = $2"},
+		{"remove the group memberships", "DELETE FROM group_memberships WHERE user_id = $1 AND org_id = $2"},
+		{"remove the role assignments", "DELETE FROM user_roles WHERE user_id = $1 AND org_id = $2"},
+		{"terminate the sessions", "DELETE FROM sessions WHERE user_id = $1 AND org_id = $2"},
+	} {
+		if _, err := tx.Exec(ctx, step.sql, userID, org.ID); err != nil {
+			s.logger.Error("offboarding step failed; nothing was changed",
+				zap.String("step", step.what),
+				logsafe.String("user_id", userID), zap.Error(err))
+			c.JSON(500, gin.H{"error": "failed to offboard user: could not " + step.what})
+			return
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		s.logger.Error("failed to commit the offboarding", zap.Error(err))
+		c.JSON(500, gin.H{"error": "failed to offboard user"})
 		return
 	}
 
-	// Revoke all API keys
-	s.db.Pool.Exec(ctx,
-		"UPDATE api_keys SET status = 'revoked' WHERE user_id = $1 AND org_id = $2", userID, org.ID)
-
-	// Remove from all groups
-	s.db.Pool.Exec(ctx,
-		"DELETE FROM group_memberships WHERE user_id = $1 AND org_id = $2", userID, org.ID)
-
-	// Remove all role assignments
-	s.db.Pool.Exec(ctx,
-		"DELETE FROM user_roles WHERE user_id = $1 AND org_id = $2", userID, org.ID)
-
-	// Terminate all sessions
-	s.db.Pool.Exec(ctx,
-		"DELETE FROM sessions WHERE user_id = $1 AND org_id = $2", userID, org.ID)
-
 	// Publish webhook
 	if s.webhookService != nil {
-		s.webhookService.Publish(c.Request.Context(), "user.deleted", map[string]interface{}{
+		s.webhookService.Publish(publishCtx(c.Request.Context()), webhooks.EventUserDeleted, map[string]interface{}{
 			"user_id": userID, "action": "offboard",
 		})
 	}
 
-	s.logger.Info("User offboarded", zap.String("user_id", userID))
+	s.logger.Info("User offboarded", logsafe.String("user_id", userID))
 	c.JSON(200, gin.H{"message": "User offboarded successfully"})
 }
 
@@ -6373,8 +6590,13 @@ func (s *Service) executeLifecycleAction(ctx context.Context, userID string, act
 		if !ok {
 			return fmt.Errorf("assign_role action missing 'role_id'")
 		}
+		// user_roles records the grant time as assigned_at; there is no
+		// created_at, so this INSERT could never plan and no lifecycle rule has
+		// ever assigned a role. The error was returned and logged by the
+		// caller, which is why a joiner rule appeared to run and granted
+		// nothing.
 		_, err := s.db.Pool.Exec(ctx,
-			"INSERT INTO user_roles (user_id, role_id, created_at, org_id) VALUES ($1, $2, NOW(), $3) ON CONFLICT DO NOTHING",
+			"INSERT INTO user_roles (user_id, role_id, assigned_at, org_id) VALUES ($1, $2, NOW(), $3) ON CONFLICT DO NOTHING",
 			userID, roleID, org.ID)
 		return err
 
@@ -6626,7 +6848,7 @@ func (s *Service) handleGetLifecycleWorkflow(c *gin.Context) {
 			c.JSON(404, gin.H{"error": "Workflow not found"})
 			return
 		}
-		s.logger.Error("failed to get lifecycle workflow", zap.String("id", id), zap.Error(err))
+		s.logger.Error("failed to get lifecycle workflow", logsafe.String("id", id), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -6650,7 +6872,7 @@ func (s *Service) handleUpdateLifecycleWorkflow(c *gin.Context) {
 			c.JSON(404, gin.H{"error": "Workflow not found"})
 			return
 		}
-		s.logger.Error("failed to update lifecycle workflow", zap.String("id", id), zap.Error(err))
+		s.logger.Error("failed to update lifecycle workflow", logsafe.String("id", id), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -6666,7 +6888,7 @@ func (s *Service) handleDeleteLifecycleWorkflow(c *gin.Context) {
 			c.JSON(404, gin.H{"error": "Workflow not found"})
 			return
 		}
-		s.logger.Error("failed to delete lifecycle workflow", zap.String("id", id), zap.Error(err))
+		s.logger.Error("failed to delete lifecycle workflow", logsafe.String("id", id), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -6705,7 +6927,7 @@ func (s *Service) handleExecuteLifecycleWorkflow(c *gin.Context) {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}
-		s.logger.Error("failed to execute lifecycle workflow", zap.String("workflow_id", workflowID), zap.Error(err))
+		s.logger.Error("failed to execute lifecycle workflow", logsafe.String("workflow_id", workflowID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -6771,7 +6993,7 @@ func (s *Service) handleGetLifecycleExecution(c *gin.Context) {
 			c.JSON(404, gin.H{"error": "Execution not found"})
 			return
 		}
-		s.logger.Error("failed to get lifecycle execution", zap.String("id", id), zap.Error(err))
+		s.logger.Error("failed to get lifecycle execution", logsafe.String("id", id), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}

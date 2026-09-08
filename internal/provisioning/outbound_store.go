@@ -433,10 +433,21 @@ func (s *Service) EnqueueFullSync(ctx context.Context, orgID string, target *Tar
 		total += int(ct.RowsAffected())
 	}
 	// Record the reconcile trigger for the admin UI.
-	_, _ = s.db.Pool.Exec(ctx,
+	//
+	// The work above is done and the queue holds it, so a failure here must not
+	// fail the reconcile: telling the administrator it failed invites a re-run
+	// that enqueues everything a second time. What it must not do is stay
+	// silent either -- "Last sync" would go on showing the previous run, or
+	// never, while a full sync was in fact enqueued.
+	if _, err := s.db.Pool.Exec(ctx,
 		`UPDATE scim_target_apps SET last_sync_at=NOW(), last_sync_status='enqueued', last_sync_error=NULL
 		   WHERE id=$1 AND org_id::text=$2`,
-		target.ID, orgID)
+		target.ID, orgID,
+	); err != nil {
+		s.logger.Error("full sync was enqueued but the target's sync status was not updated; "+
+			"the admin page will show a stale last-sync time",
+			zap.String("target", target.ID), zap.Int("enqueued", total), zap.Error(err))
+	}
 	return total, nil
 }
 

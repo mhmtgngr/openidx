@@ -87,6 +87,11 @@ secrets.yaml
 # tdv.org_*.zip from being swept in by `git add -A`)
 *.zip
 
+# `make scan-secrets` writes its findings here. The report names the file and
+# line of every match, so committing one would publish the map to whatever the
+# scan found — including the values it exists to keep out of the tree.
+/gitleaks-report.json
+
 # --- Local-only: AI-agent tooling, market research, and personal docs ---
 # These are intentionally kept out of the public repository but remain on
 # local disk. Do not commit.
@@ -150,3 +155,28 @@ google-services.json
 # `git add -A` committed 83 files of it once; docs/doc-citations.txt waives the
 # path on the understanding that it is never checked in.
 docs/site/
+
+# Redis snapshot. `redis-server` writes dump.rdb into whatever directory it was
+# started from, which for a local dev stack is the repo root. It is a database
+# file, it turns up in `git status` looking like a build artifact, and there is
+# no version of it that belongs in the tree.
+dump.rdb
+
+# Binaries built by `go build ./tools/...` from the repo root.
+/sqlprepare
+/orgscope
+/inerttests
+/contractcheck
+/tablewriters
+/routereach
+/zeroanswer
+/deadservice
+/testmatrix
+/silentwrite
+
+# Binaries built from tools/ by a plain `go build ./tools/<name>` — the tools are
+# run with `go run`, so a stray binary at the root is always an accident.
+/deadconfig
+/orgscope
+/tablewriters
+/deadservice

@@ -43,19 +43,20 @@ interface Delivery {
  * The event names a subscriber matches on. They are wire identifiers, not
  * prose, so they stay raw in the picker, on the subscription card and in
  * the delivery log.
+ *
+ * This list used to be hard-coded here, and six of the ten names on it were
+ * published by nothing: subscribing to `user.updated`, `group.updated`,
+ * `user.locked`, `login.failed`, `role.updated`, `policy.violated` or
+ * `review.completed` was accepted, listed, and never delivered. It now comes
+ * from the deployment, which serves internal/webhooks.EventCatalogue -- and a
+ * catalogue entry with no publisher fails the build. The picker can only offer
+ * what something sends.
  */
-const EVENT_TYPES = [
-  'user.created',
-  'user.updated',
-  'user.deleted',
-  'login.success',
-  'login.failed',
-  'login.high_risk',
-  'group.updated',
-  'role.updated',
-  'policy.violated',
-  'review.completed',
-]
+interface EventTypeInfo {
+  type: string
+  category: string
+  description: string
+}
 
 export function WebhooksPage() {
   const queryClient = useQueryClient()
@@ -83,6 +84,17 @@ export function WebhooksPage() {
   })
 
   const subscriptions = subsData?.subscriptions || []
+
+  const {
+    data: eventTypesData,
+    isLoading: eventTypesLoading,
+    isError: eventTypesError,
+    error: eventTypesErr,
+  } = useQuery({
+    queryKey: ['webhook-event-types'],
+    queryFn: () => api.get<{ event_types: EventTypeInfo[] }>('/api/v1/webhooks/event-types'),
+  })
+  const eventTypes = eventTypesData?.event_types ?? []
 
   const createMutation = useMutation({
     mutationFn: (body: { name: string; url: string; secret: string; events: string[] }) =>
@@ -259,22 +271,32 @@ export function WebhooksPage() {
             </div>
             <div>
               <label className="text-sm font-medium">{t('pages.webhooks.form.events')}</label>
-              <div className="grid grid-cols-2 gap-2 mt-2">
-                {EVENT_TYPES.map((event) => (
-                  <label
-                    key={event}
-                    className="flex items-center gap-2 text-sm cursor-pointer"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selectedEvents.includes(event)}
-                      onChange={() => toggleEvent(event)}
-                      className="rounded border-border"
-                    />
-                    {event}
-                  </label>
-                ))}
-              </div>
+              {eventTypesLoading ? (
+                <LoadingSpinner />
+              ) : eventTypesError ? (
+                // Without this the grid renders empty, which reads as "this
+                // deployment publishes nothing" — the one thing an operator
+                // must not be told by accident.
+                <QueryError error={eventTypesErr} resource={t('pages.webhooks.form.eventsResource')} />
+              ) : (
+                <div className="grid grid-cols-2 gap-2 mt-2">
+                  {eventTypes.map((event) => (
+                    <label
+                      key={event.type}
+                      title={event.description}
+                      className="flex items-center gap-2 text-sm cursor-pointer"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedEvents.includes(event.type)}
+                        onChange={() => toggleEvent(event.type)}
+                        className="rounded border-border"
+                      />
+                      {event.type}
+                    </label>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
           <DialogFooter>

@@ -15,6 +15,7 @@ import (
 	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/middleware"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
@@ -293,7 +294,7 @@ func (es *EventStreamer) handleWebSocketStream(c *gin.Context) {
 	es.clientsMutex.Unlock()
 
 	es.logger.Info("WebSocket client connected",
-		zap.String("client_id", clientID),
+		logsafe.String("client_id", clientID),
 		zap.String("remote_addr", c.Request.RemoteAddr))
 
 	// Start reader and writer goroutines
@@ -715,15 +716,26 @@ func (es *EventStreamer) deliverWebhook(delivery *WebhookDelivery) bool {
 			zap.String("webhook_url", delivery.WebhookURL),
 			zap.Int("status_code", resp.StatusCode))
 
-		// Update last delivery time
+		// Update last delivery time.
+		//
+		// last_delivery and failure_count are the whole of what the audit
+		// webhooks page knows about an endpoint's health -- nothing else reads
+		// them, and nothing auto-disables on them, so they are a display. That
+		// display is the only way an operator learns their SIEM stopped
+		// receiving audit events, which makes it worth saying when it cannot
+		// be kept: a subscription whose counters are stale reads as healthy.
 		if es.service.db != nil && es.service.db.Pool != nil {
 			updateCtx, cancel := context.WithTimeout(orgctx.WithBypassRLS(context.Background()), 5*time.Second)
 			//orgscope:ignore background webhook-delivery bookkeeping; keyed by webhook url, no request context
-			_, _ = es.service.db.Pool.Exec(updateCtx, `
+			if _, err := es.service.db.Pool.Exec(updateCtx, `
 				UPDATE audit_webhook_subscriptions
 				SET last_delivery = NOW(), failure_count = 0
 				WHERE url = $1
-			`, delivery.WebhookURL)
+			`, delivery.WebhookURL); err != nil {
+				es.logger.Warn("could not record a successful audit-webhook delivery; "+
+					"the subscription's health counters are now behind",
+					logsafe.String("webhook_url", delivery.WebhookURL), zap.Error(err))
+			}
 			cancel()
 		}
 
@@ -735,15 +747,21 @@ func (es *EventStreamer) deliverWebhook(delivery *WebhookDelivery) bool {
 		zap.String("webhook_url", delivery.WebhookURL),
 		zap.Int("status_code", resp.StatusCode))
 
-	// Increment failure count
+	// Increment failure count. The counter that stays at zero is the worse of
+	// the two: an endpoint rejecting every audit event goes on presenting a
+	// clean delivery record, so nobody is ever prompted to look at it.
 	if es.service.db != nil && es.service.db.Pool != nil {
 		updateCtx, cancel := context.WithTimeout(orgctx.WithBypassRLS(context.Background()), 5*time.Second)
 		//orgscope:ignore background webhook-delivery bookkeeping; keyed by webhook url, no request context
-		_, _ = es.service.db.Pool.Exec(updateCtx, `
+		if _, err := es.service.db.Pool.Exec(updateCtx, `
 			UPDATE audit_webhook_subscriptions
 			SET failure_count = failure_count + 1
 			WHERE url = $1
-		`, delivery.WebhookURL)
+		`, delivery.WebhookURL); err != nil {
+			es.logger.Warn("could not count a failed audit-webhook delivery; "+
+				"the subscription still shows a clean delivery record",
+				logsafe.String("webhook_url", delivery.WebhookURL), zap.Error(err))
+		}
 		cancel()
 	}
 

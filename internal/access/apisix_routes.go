@@ -35,15 +35,41 @@ func apisixSlug(host string) string {
 
 // staleBrowZerRouteNames returns the browzer-* routes that exist but are no longer
 // desired (so they should be deleted). Non-browzer routes are never touched.
-func staleBrowZerRouteNames(existing, desired []string) []string {
+// The two prefixes this product generates. Everything else in APISIX belongs to
+// somebody else and is never a prune candidate: an operator's hand-made route
+// deleted by a reconcile pass is an outage nobody can trace back to a config
+// change they made.
+const (
+	browzerRoutePrefix = "browzer-"
+	edgeRoutePrefix    = "oidx-route-"
+)
+
+// prunePrefixes is sugar for the variadic call at the reconcile sites, so the
+// entitlement reads as a list of what this pass may delete.
+func prunePrefixes(p ...string) []string { return p }
+
+// staleGeneratedRouteNames returns the generated routes that exist at the edge
+// and are no longer desired.
+//
+// prefixes is what the caller is ENTITLED to prune, which is not the same as
+// what it generates: a pass that failed to read one of the two desired sets
+// passes only the prefix it did read, and the unread half is left in place
+// rather than deleted for looking undesired.
+func staleGeneratedRouteNames(existing, desired, prefixes []string) []string {
 	want := make(map[string]bool, len(desired))
 	for _, d := range desired {
 		want[d] = true
 	}
 	var stale []string
 	for _, e := range existing {
-		if strings.HasPrefix(e, "browzer-") && !want[e] {
-			stale = append(stale, e)
+		if want[e] {
+			continue
+		}
+		for _, p := range prefixes {
+			if strings.HasPrefix(e, p) {
+				stale = append(stale, e)
+				break
+			}
 		}
 	}
 	return stale

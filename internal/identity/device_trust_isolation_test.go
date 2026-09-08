@@ -40,6 +40,8 @@ func TestDeviceTrustRequests_TenantIsolation(t *testing.T) {
 			device_name VARCHAR(255), device_type VARCHAR(50), ip_address VARCHAR(45), user_agent TEXT,
 			justification TEXT, status VARCHAR(20), reviewed_by UUID, reviewed_at TIMESTAMPTZ,
 			review_notes TEXT, auto_expire_at TIMESTAMPTZ, org_id UUID NOT NULL, created_at TIMESTAMPTZ DEFAULT now());
+		CREATE TABLE known_devices (user_id UUID NOT NULL, fingerprint TEXT NOT NULL, trusted BOOLEAN NOT NULL DEFAULT false, org_id UUID NOT NULL);
+		CREATE TABLE ziti_identities (user_id UUID NOT NULL, group_attrs_synced_at TIMESTAMPTZ, org_id UUID NOT NULL);
 	`); err != nil {
 		t.Fatalf("schema: %v", err)
 	}
@@ -58,6 +60,13 @@ func TestDeviceTrustRequests_TenantIsolation(t *testing.T) {
 	}
 	req(reqA, userA, orgA)
 	req(reqB, userB, orgB)
+	// The device each request is about. Approving a request marks this row
+	// trusted, and that write reports failure now -- so a fixture without it
+	// makes ApproveDeviceTrustRequest fail for a reason that has nothing to do
+	// with tenancy. It used to pass because the write's error was discarded:
+	// this test was approving requests that trusted nothing.
+	exec(`INSERT INTO known_devices (user_id, fingerprint, trusted, org_id) VALUES ($1,'fp',false,$2)`, userA, orgA)
+	exec(`INSERT INTO known_devices (user_id, fingerprint, trusted, org_id) VALUES ($1,'fp',false,$2)`, userB, orgB)
 
 	s := &Service{db: db, logger: zap.NewNop()}
 

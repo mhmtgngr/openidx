@@ -15,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
 	apperrors "github.com/openidx/openidx/internal/common/errors"
+	"github.com/openidx/openidx/internal/common/logsafe"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
@@ -74,7 +75,7 @@ func (s *Service) handleRequestGuacSession(c *gin.Context) {
 			return
 		}
 		s.logger.Error("handleRequestGuacSession: connection lookup failed",
-			zap.String("route_id", routeID), zap.Error(err))
+			logsafe.String("route_id", routeID), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to look up connection"})
 		return
 	}
@@ -155,7 +156,7 @@ func (s *Service) decideGuacSession(c *gin.Context, newStatus, auditAction strin
 		return
 	case err != nil:
 		s.logger.Error("decideGuacSession: requester lookup failed",
-			zap.String("request_id", requestID), zap.Error(err))
+			logsafe.String("request_id", requestID), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update session request"})
 		return
 	case newStatus == "approved" && requesterID == approverID:
@@ -172,7 +173,7 @@ func (s *Service) decideGuacSession(c *gin.Context, newStatus, auditAction strin
 		newStatus, approverID, requestID, org.ID)
 	if err != nil {
 		s.logger.Error("decideGuacSession: update failed",
-			zap.String("request_id", requestID), zap.String("status", newStatus), zap.Error(err))
+			logsafe.String("request_id", requestID), zap.String("status", newStatus), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update session request"})
 		return
 	}
@@ -442,7 +443,7 @@ func (s *Service) handleTerminateGuacSession(c *gin.Context) {
 
 	if err := s.guacamoleClient.TerminateSession(ctx, activeConnID); err != nil {
 		s.logger.Error("handleTerminateGuacSession: failed to terminate session",
-			zap.String("active_conn_id", activeConnID), zap.Error(err))
+			logsafe.String("active_conn_id", activeConnID), zap.Error(err))
 		apperrors.HandleErrorWithLogger(c, apperrors.Internal("terminate guac session", err), s.logger)
 		return
 	}
@@ -471,7 +472,7 @@ func (s *Service) handleTerminateGuacSession(c *gin.Context) {
 		activeConnID)
 	if dbErr != nil {
 		s.logger.Warn("handleTerminateGuacSession: could not update session tracking row",
-			zap.String("active_conn_id", activeConnID), zap.Error(dbErr))
+			logsafe.String("active_conn_id", activeConnID), zap.Error(dbErr))
 		// Not fatal — continue to audit + respond.
 	}
 
@@ -530,7 +531,7 @@ func (s *Service) handleShareGuacSession(c *gin.Context) {
 			return
 		}
 		s.logger.Error("handleShareGuacSession: ShareActiveConnection failed",
-			zap.String("active_conn_id", activeConnID), zap.Error(err))
+			logsafe.String("active_conn_id", activeConnID), zap.Error(err))
 		apperrors.HandleErrorWithLogger(c, apperrors.Internal("share guac session", err), s.logger)
 		return
 	}
@@ -575,7 +576,7 @@ func (s *Service) handleGetGuacTranscript(c *gin.Context) {
 			return
 		}
 		s.logger.Error("handleGetGuacTranscript: query failed",
-			zap.String("session_id", sessionID), zap.Error(err))
+			logsafe.String("session_id", sessionID), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to look up session"})
 		return
 	}
@@ -634,7 +635,7 @@ func (s *Service) handleGetGuacRecording(c *gin.Context) {
 			return
 		}
 		s.logger.Error("handleGetGuacRecording: query failed",
-			zap.String("session_id", sessionID), zap.Error(err))
+			logsafe.String("session_id", sessionID), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to look up session"})
 		return
 	}
@@ -666,13 +667,13 @@ func (s *Service) handleGetGuacRecording(c *gin.Context) {
 		reader := newDecryptingReader(f, s.guacRecordingRing, guacRecordingSessionKey(recordingPath))
 		if _, cErr := io.Copy(c.Writer, reader); cErr != nil {
 			s.logger.Warn("handleGetGuacRecording: decrypt copy failed",
-				zap.String("session_id", sessionID), zap.Error(cErr))
+				logsafe.String("session_id", sessionID), zap.Error(cErr))
 		}
 		return
 	}
 	if _, cErr := io.Copy(c.Writer, f); cErr != nil {
 		s.logger.Warn("handleGetGuacRecording: copy failed",
-			zap.String("session_id", sessionID), zap.Error(cErr))
+			logsafe.String("session_id", sessionID), zap.Error(cErr))
 	}
 }
 

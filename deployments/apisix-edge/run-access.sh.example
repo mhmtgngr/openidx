@@ -14,7 +14,6 @@ cd /home/cmit/openidx   # adapt: repo checkout
 export DATABASE_URL="postgres://openidx:CHANGE_ME@localhost:55432/openidx?sslmode=disable"
 export REDIS_URL="redis://localhost:56379"
 export APP_ENV=development
-export JWT_SECRET="CHANGE_ME_min_32_chars"
 export ENCRYPTION_KEY="CHANGE_ME_exactly_32_bytes_______"
 export OAUTH_ISSUER="https://openidx.tdv.org"
 export OAUTH_JWKS_URL="http://localhost:8006/.well-known/jwks.json"

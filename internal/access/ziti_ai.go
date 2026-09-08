@@ -983,7 +983,21 @@ func (zm *ZitiManager) QuarantineZitiIdentity(ctx context.Context, zitiID, reaso
 
 	if err := zm.PatchIdentityRoleAttributes(ctx, zitiID, []string{"quarantined"}); err != nil {
 		// Roll back the ledger row so the state stays consistent.
-		_, _ = zm.db.Pool.Exec(ctx, `DELETE FROM ziti_ai_quarantine WHERE identity_id = $1`, zitiID)
+		//
+		// A failed rollback is the worst state this function can end in: the
+		// ledger says the identity is quarantined -- which is what the console
+		// shows and what the release path reads to restore its attributes --
+		// while the overlay never took the attribute away, so the identity
+		// still has every service it had. Saying "patch failed" without saying
+		// that would leave somebody to discover it from the network.
+		if _, delErr := zm.db.Pool.Exec(ctx,
+			`DELETE FROM ziti_ai_quarantine WHERE identity_id = $1`, zitiID); delErr != nil {
+			zm.logger.Error("could not roll back a quarantine ledger row after the overlay refused the patch",
+				zap.String("identity_id", logsafe.Clean(zitiID)), zap.Error(delErr))
+			return 0, fmt.Errorf("patch identity attributes: %w; the quarantine record could NOT be "+
+				"rolled back, so this identity is listed as quarantined while it still holds its "+
+				"original access on the overlay: %v", err, delErr)
+		}
 		return 0, fmt.Errorf("patch identity attributes: %w", err)
 	}
 

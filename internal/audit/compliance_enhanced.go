@@ -38,6 +38,29 @@ type ControlAssessment struct {
 
 // GenerateSOC2DetailedReport evaluates SOC 2 Trust Service Criteria (CC1-CC9)
 // with evidence gathering from audit_events, users, and system settings.
+// namedControl pairs a control's identifier with the function that assesses it,
+// so a failed assessment names the control an operator has to look at.
+type namedControl struct {
+	id   string
+	eval func(context.Context, time.Time, time.Time) (ControlAssessment, error)
+}
+
+// assess runs each control in order and stops at the first that could not be
+// measured. Returning a partial report was the alternative and it is the defect
+// this whole change is about: a control scored from a query that did not run is
+// indistinguishable, in the document, from one scored from real data.
+func (s *Service) assess(ctx context.Context, startDate, endDate time.Time, controls []namedControl) ([]ControlAssessment, error) {
+	out := make([]ControlAssessment, 0, len(controls))
+	for _, c := range controls {
+		a, err := c.eval(ctx, startDate, endDate)
+		if err != nil {
+			return nil, fmt.Errorf("control %s: %w", c.id, err)
+		}
+		out = append(out, a)
+	}
+	return out, nil
+}
+
 func (s *Service) GenerateSOC2DetailedReport(ctx context.Context, startDate, endDate time.Time) (*DetailedComplianceReport, error) {
 	s.logger.Info("Generating detailed SOC 2 report",
 		zap.Time("start_date", startDate),
@@ -50,25 +73,20 @@ func (s *Service) GenerateSOC2DetailedReport(ctx context.Context, startDate, end
 		GeneratedAt: time.Now(),
 	}
 
-	var controls []ControlAssessment
-
-	// CC1: Control Environment
-	controls = append(controls, s.evaluateCC1ControlEnvironment(ctx, startDate, endDate))
-
-	// CC2: Communication and Information
-	controls = append(controls, s.evaluateCC2Communication(ctx, startDate, endDate))
-
-	// CC3: Risk Assessment
-	controls = append(controls, s.evaluateCC3RiskAssessment(ctx, startDate, endDate))
-
-	// CC6: Logical and Physical Access
-	controls = append(controls, s.evaluateCC6LogicalAccess(ctx, startDate, endDate))
-
-	// CC7: System Operations
-	controls = append(controls, s.evaluateCC7SystemOperations(ctx, startDate, endDate))
-
-	// CC8: Change Management
-	controls = append(controls, s.evaluateCC8ChangeManagement(ctx, startDate, endDate))
+	// Each control is a set of measurements. A control that cannot be measured
+	// fails the report rather than scoring on the zeros a failed query leaves --
+	// see internal/audit/metricquery.go.
+	controls, err := s.assess(ctx, startDate, endDate, []namedControl{
+		{"CC1", s.evaluateCC1ControlEnvironment},
+		{"CC2", s.evaluateCC2Communication},
+		{"CC3", s.evaluateCC3RiskAssessment},
+		{"CC6", s.evaluateCC6LogicalAccess},
+		{"CC7", s.evaluateCC7SystemOperations},
+		{"CC8", s.evaluateCC8ChangeManagement},
+	})
+	if err != nil {
+		return nil, err
+	}
 
 	report.Controls = controls
 
@@ -110,7 +128,7 @@ func (s *Service) GenerateSOC2DetailedReport(ctx context.Context, startDate, end
 }
 
 // evaluateCC1ControlEnvironment assesses control environment (user counts, admin ratios, password policies).
-func (s *Service) evaluateCC1ControlEnvironment(ctx context.Context, startDate, endDate time.Time) ControlAssessment {
+func (s *Service) evaluateCC1ControlEnvironment(ctx context.Context, startDate, endDate time.Time) (ControlAssessment, error) {
 	assessment := ControlAssessment{
 		ControlID: "CC1",
 		Name:      "Control Environment",
@@ -118,18 +136,18 @@ func (s *Service) evaluateCC1ControlEnvironment(ctx context.Context, startDate, 
 		Findings:  []string{},
 	}
 	score := 100.0
-	org, _ := orgctx.From(ctx)
+	q := s.newMetricQuery(ctx)
 
 	// Check total users and admin ratio
 	var totalUsers, adminUsers int
-	s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM users WHERE enabled = true AND org_id = $1`, org.ID).Scan(&totalUsers)
-	s.db.Pool.QueryRow(ctx, `
+	q.scan("total users", &totalUsers, `SELECT COUNT(*) FROM users WHERE enabled = true AND org_id = $1`, q.org())
+	q.scan("admin users", &adminUsers, `
 		SELECT COUNT(DISTINCT ur.user_id)
 		FROM user_roles ur
 		JOIN roles r ON ur.role_id = r.id AND r.org_id = ur.org_id
 		WHERE r.name IN ('admin', 'super_admin')
 		AND ur.org_id = $1
-	`, org.ID).Scan(&adminUsers)
+	`, q.org())
 
 	assessment.Evidence = append(assessment.Evidence,
 		fmt.Sprintf("Total active users: %d", totalUsers))
@@ -174,13 +192,16 @@ func (s *Service) evaluateCC1ControlEnvironment(ctx context.Context, startDate, 
 			"Configure password policy and security settings")
 	}
 
+	if err := q.failed(); err != nil {
+		return ControlAssessment{}, err
+	}
 	assessment.Score = score
 	assessment.Status = scoreToStatus(score)
-	return assessment
+	return assessment, nil
 }
 
 // evaluateCC2Communication assesses communication and information controls.
-func (s *Service) evaluateCC2Communication(ctx context.Context, startDate, endDate time.Time) ControlAssessment {
+func (s *Service) evaluateCC2Communication(ctx context.Context, startDate, endDate time.Time) (ControlAssessment, error) {
 	assessment := ControlAssessment{
 		ControlID: "CC2",
 		Name:      "Communication and Information",
@@ -188,15 +209,15 @@ func (s *Service) evaluateCC2Communication(ctx context.Context, startDate, endDa
 		Findings:  []string{},
 	}
 	score := 100.0
-	org, _ := orgctx.From(ctx)
+	q := s.newMetricQuery(ctx)
 
 	// Check audit log configuration
 	var auditCount int
-	s.db.Pool.QueryRow(ctx, `
+	q.scan("audit events", &auditCount, `
 		SELECT COUNT(*) FROM audit_events
 		WHERE timestamp BETWEEN $1 AND $2
 		AND org_id = $3
-	`, startDate, endDate, org.ID).Scan(&auditCount)
+	`, startDate, endDate, q.org())
 
 	assessment.Evidence = append(assessment.Evidence,
 		fmt.Sprintf("Audit events recorded in period: %d", auditCount))
@@ -211,11 +232,11 @@ func (s *Service) evaluateCC2Communication(ctx context.Context, startDate, endDa
 
 	// Check distinct event types captured
 	var eventTypeCount int
-	s.db.Pool.QueryRow(ctx, `
+	q.scan("distinct event types", &eventTypeCount, `
 		SELECT COUNT(DISTINCT event_type) FROM audit_events
 		WHERE timestamp BETWEEN $1 AND $2
 		AND org_id = $3
-	`, startDate, endDate, org.ID).Scan(&eventTypeCount)
+	`, startDate, endDate, q.org())
 
 	assessment.Evidence = append(assessment.Evidence,
 		fmt.Sprintf("Distinct event types captured: %d", eventTypeCount))
@@ -230,9 +251,9 @@ func (s *Service) evaluateCC2Communication(ctx context.Context, startDate, endDa
 
 	// Check notification / webhook configuration
 	var webhookCount int
-	s.db.Pool.QueryRow(ctx, `
+	q.scan("active webhook subscriptions", &webhookCount, `
 		SELECT COUNT(*) FROM audit_webhook_subscriptions WHERE enabled = true AND org_id = $1
-	`, org.ID).Scan(&webhookCount)
+	`, q.org())
 
 	if webhookCount > 0 {
 		assessment.Evidence = append(assessment.Evidence,
@@ -245,13 +266,16 @@ func (s *Service) evaluateCC2Communication(ctx context.Context, startDate, endDa
 			"Configure webhook subscriptions for security event notification")
 	}
 
+	if err := q.failed(); err != nil {
+		return ControlAssessment{}, err
+	}
 	assessment.Score = score
 	assessment.Status = scoreToStatus(score)
-	return assessment
+	return assessment, nil
 }
 
 // evaluateCC3RiskAssessment assesses risk assessment controls.
-func (s *Service) evaluateCC3RiskAssessment(ctx context.Context, startDate, endDate time.Time) ControlAssessment {
+func (s *Service) evaluateCC3RiskAssessment(ctx context.Context, startDate, endDate time.Time) (ControlAssessment, error) {
 	assessment := ControlAssessment{
 		ControlID: "CC3",
 		Name:      "Risk Assessment",
@@ -259,16 +283,16 @@ func (s *Service) evaluateCC3RiskAssessment(ctx context.Context, startDate, endD
 		Findings:  []string{},
 	}
 	score := 100.0
-	org, _ := orgctx.From(ctx)
+	q := s.newMetricQuery(ctx)
 
 	// Check risk scoring activity
 	var riskAssessments int
-	s.db.Pool.QueryRow(ctx, `
+	q.scan("risk assessments", &riskAssessments, `
 		SELECT COUNT(*) FROM login_history
 		WHERE risk_score > 0
 		  AND created_at BETWEEN $1 AND $2
 		  AND org_id = $3
-	`, startDate, endDate, org.ID).Scan(&riskAssessments)
+	`, startDate, endDate, q.org())
 
 	assessment.Evidence = append(assessment.Evidence,
 		fmt.Sprintf("Login risk assessments performed: %d", riskAssessments))
@@ -283,23 +307,23 @@ func (s *Service) evaluateCC3RiskAssessment(ctx context.Context, startDate, endD
 
 	// Check for high-risk login alerts
 	var highRiskLogins int
-	s.db.Pool.QueryRow(ctx, `
+	q.scan("high risk logins", &highRiskLogins, `
 		SELECT COUNT(*) FROM login_history
 		WHERE risk_score >= 50
 		  AND created_at BETWEEN $1 AND $2
 		  AND org_id = $3
-	`, startDate, endDate, org.ID).Scan(&highRiskLogins)
+	`, startDate, endDate, q.org())
 
 	assessment.Evidence = append(assessment.Evidence,
 		fmt.Sprintf("High-risk logins (score >= 50): %d", highRiskLogins))
 
 	// Check for security alerts
 	var alertCount int
-	s.db.Pool.QueryRow(ctx, `
+	q.scan("security alerts", &alertCount, `
 		SELECT COUNT(*) FROM security_alerts
 		WHERE created_at BETWEEN $1 AND $2
 		  AND org_id = $3
-	`, startDate, endDate, org.ID).Scan(&alertCount)
+	`, startDate, endDate, q.org())
 
 	assessment.Evidence = append(assessment.Evidence,
 		fmt.Sprintf("Security alerts generated: %d", alertCount))
@@ -312,13 +336,16 @@ func (s *Service) evaluateCC3RiskAssessment(ctx context.Context, startDate, endD
 			"Configure alert rules to trigger on high-risk login events")
 	}
 
+	if err := q.failed(); err != nil {
+		return ControlAssessment{}, err
+	}
 	assessment.Score = score
 	assessment.Status = scoreToStatus(score)
-	return assessment
+	return assessment, nil
 }
 
 // evaluateCC6LogicalAccess assesses logical access controls (MFA, sessions, API keys).
-func (s *Service) evaluateCC6LogicalAccess(ctx context.Context, startDate, endDate time.Time) ControlAssessment {
+func (s *Service) evaluateCC6LogicalAccess(ctx context.Context, startDate, endDate time.Time) (ControlAssessment, error) {
 	assessment := ControlAssessment{
 		ControlID: "CC6",
 		Name:      "Logical and Physical Access Controls",
@@ -326,17 +353,17 @@ func (s *Service) evaluateCC6LogicalAccess(ctx context.Context, startDate, endDa
 		Findings:  []string{},
 	}
 	score := 100.0
-	org, _ := orgctx.From(ctx)
+	q := s.newMetricQuery(ctx)
 
 	// MFA adoption
 	var totalEnabledUsers, mfaTotpUsers, webauthnUsers int
-	s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM users WHERE enabled = true AND org_id = $1`, org.ID).Scan(&totalEnabledUsers)
-	s.db.Pool.QueryRow(ctx, `SELECT COUNT(DISTINCT user_id) FROM mfa_totp WHERE enabled = true AND org_id = $1`, org.ID).Scan(&mfaTotpUsers)
+	q.scan("total enabled users", &totalEnabledUsers, `SELECT COUNT(*) FROM users WHERE enabled = true AND org_id = $1`, q.org())
+	q.scan("users with TOTP", &mfaTotpUsers, `SELECT COUNT(DISTINCT user_id) FROM mfa_totp WHERE enabled = true AND org_id = $1`, q.org())
 	// WebAuthn credentials live in mfa_webauthn (where the wired registration
 	// path writes) — not the phantom `webauthn_credentials` table, which no
 	// migration creates, so the old query errored and left webauthnUsers=0,
 	// under-counting MFA adoption. Org-scoped like its mfa_totp sibling above.
-	s.db.Pool.QueryRow(ctx, `SELECT COUNT(DISTINCT user_id) FROM mfa_webauthn WHERE org_id = $1`, org.ID).Scan(&webauthnUsers)
+	q.scan("users with WebAuthn", &webauthnUsers, `SELECT COUNT(DISTINCT user_id) FROM mfa_webauthn WHERE org_id = $1`, q.org())
 
 	mfaUsers := mfaTotpUsers + webauthnUsers
 	assessment.Evidence = append(assessment.Evidence,
@@ -362,9 +389,9 @@ func (s *Service) evaluateCC6LogicalAccess(ctx context.Context, startDate, endDa
 
 	// Session policy check
 	var activeSessions int
-	s.db.Pool.QueryRow(ctx, `
+	q.scan("active sessions", &activeSessions, `
 		SELECT COUNT(*) FROM sessions WHERE expires_at > NOW() AND org_id = $1
-	`, org.ID).Scan(&activeSessions)
+	`, q.org())
 	assessment.Evidence = append(assessment.Evidence,
 		fmt.Sprintf("Active sessions: %d", activeSessions))
 
@@ -388,12 +415,17 @@ func (s *Service) evaluateCC6LogicalAccess(ctx context.Context, startDate, endDa
 
 	// API key management
 	var activeAPIKeys, expiredAPIKeys int
-	s.db.Pool.QueryRow(ctx, `
-		SELECT COUNT(*) FROM api_keys WHERE revoked_at IS NULL AND (expires_at IS NULL OR expires_at > NOW()) AND org_id = $1
-	`, org.ID).Scan(&activeAPIKeys)
-	s.db.Pool.QueryRow(ctx, `
-		SELECT COUNT(*) FROM api_keys WHERE expires_at IS NOT NULL AND expires_at <= NOW() AND revoked_at IS NULL AND org_id = $1
-	`, org.ID).Scan(&expiredAPIKeys)
+	// api_keys records revocation in `status` ('active' / 'revoked'); it has no
+	// revoked_at column, so BOTH halves of this control failed to plan and both
+	// counts read 0. An expired-key count of zero produces no finding and docks
+	// no points: the control has reported compliant on every install, including
+	// ones with expired keys still accepted.
+	q.scan("active API keys", &activeAPIKeys, `
+		SELECT COUNT(*) FROM api_keys WHERE status = 'active' AND (expires_at IS NULL OR expires_at > NOW()) AND org_id = $1
+	`, q.org())
+	q.scan("expired API keys", &expiredAPIKeys, `
+		SELECT COUNT(*) FROM api_keys WHERE expires_at IS NOT NULL AND expires_at <= NOW() AND status = 'active' AND org_id = $1
+	`, q.org())
 
 	assessment.Evidence = append(assessment.Evidence,
 		fmt.Sprintf("Active API keys: %d, Expired but not revoked: %d", activeAPIKeys, expiredAPIKeys))
@@ -406,13 +438,16 @@ func (s *Service) evaluateCC6LogicalAccess(ctx context.Context, startDate, endDa
 			"Revoke expired API keys and implement automatic key rotation")
 	}
 
+	if err := q.failed(); err != nil {
+		return ControlAssessment{}, err
+	}
 	assessment.Score = score
 	assessment.Status = scoreToStatus(score)
-	return assessment
+	return assessment, nil
 }
 
 // evaluateCC7SystemOperations assesses system operations monitoring.
-func (s *Service) evaluateCC7SystemOperations(ctx context.Context, startDate, endDate time.Time) ControlAssessment {
+func (s *Service) evaluateCC7SystemOperations(ctx context.Context, startDate, endDate time.Time) (ControlAssessment, error) {
 	assessment := ControlAssessment{
 		ControlID: "CC7",
 		Name:      "System Operations",
@@ -420,39 +455,39 @@ func (s *Service) evaluateCC7SystemOperations(ctx context.Context, startDate, en
 		Findings:  []string{},
 	}
 	score := 100.0
-	org, _ := orgctx.From(ctx)
+	q := s.newMetricQuery(ctx)
 
 	// Check health check / monitoring configuration
 	var totalEvents int
-	s.db.Pool.QueryRow(ctx, `
+	q.scan("total events", &totalEvents, `
 		SELECT COUNT(*) FROM audit_events
 		WHERE timestamp BETWEEN $1 AND $2
 		  AND org_id = $3
-	`, startDate, endDate, org.ID).Scan(&totalEvents)
+	`, startDate, endDate, q.org())
 
 	assessment.Evidence = append(assessment.Evidence,
 		fmt.Sprintf("Total audit events in period: %d", totalEvents))
 
 	// Check for system events
 	var systemEvents int
-	s.db.Pool.QueryRow(ctx, `
+	q.scan("system events", &systemEvents, `
 		SELECT COUNT(*) FROM audit_events
 		WHERE event_type = 'system'
 		  AND timestamp BETWEEN $1 AND $2
 		  AND org_id = $3
-	`, startDate, endDate, org.ID).Scan(&systemEvents)
+	`, startDate, endDate, q.org())
 
 	assessment.Evidence = append(assessment.Evidence,
 		fmt.Sprintf("System events logged: %d", systemEvents))
 
 	// Error rate analysis
 	var failedEvents int
-	s.db.Pool.QueryRow(ctx, `
+	q.scan("failed events", &failedEvents, `
 		SELECT COUNT(*) FROM audit_events
 		WHERE outcome = 'failure'
 		  AND timestamp BETWEEN $1 AND $2
 		  AND org_id = $3
-	`, startDate, endDate, org.ID).Scan(&failedEvents)
+	`, startDate, endDate, q.org())
 
 	if totalEvents > 0 {
 		errorRate := float64(failedEvents) / float64(totalEvents) * 100
@@ -477,12 +512,12 @@ func (s *Service) evaluateCC7SystemOperations(ctx context.Context, startDate, en
 	// Check continuous monitoring (events per day coverage)
 	var daysWithEvents int
 	totalDays := int(endDate.Sub(startDate).Hours()/24) + 1
-	s.db.Pool.QueryRow(ctx, `
+	q.scan("days with events", &daysWithEvents, `
 		SELECT COUNT(DISTINCT DATE(timestamp))
 		FROM audit_events
 		WHERE timestamp BETWEEN $1 AND $2
 		  AND org_id = $3
-	`, startDate, endDate, org.ID).Scan(&daysWithEvents)
+	`, startDate, endDate, q.org())
 
 	if totalDays > 0 {
 		coverage := float64(daysWithEvents) / float64(totalDays) * 100
@@ -498,13 +533,16 @@ func (s *Service) evaluateCC7SystemOperations(ctx context.Context, startDate, en
 		}
 	}
 
+	if err := q.failed(); err != nil {
+		return ControlAssessment{}, err
+	}
 	assessment.Score = score
 	assessment.Status = scoreToStatus(score)
-	return assessment
+	return assessment, nil
 }
 
 // evaluateCC8ChangeManagement assesses change management controls.
-func (s *Service) evaluateCC8ChangeManagement(ctx context.Context, startDate, endDate time.Time) ControlAssessment {
+func (s *Service) evaluateCC8ChangeManagement(ctx context.Context, startDate, endDate time.Time) (ControlAssessment, error) {
 	assessment := ControlAssessment{
 		ControlID: "CC8",
 		Name:      "Change Management",
@@ -512,40 +550,40 @@ func (s *Service) evaluateCC8ChangeManagement(ctx context.Context, startDate, en
 		Findings:  []string{},
 	}
 	score := 100.0
-	org, _ := orgctx.From(ctx)
+	q := s.newMetricQuery(ctx)
 
 	// Check admin audit log entries (configuration changes)
 	var configChanges int
-	s.db.Pool.QueryRow(ctx, `
+	q.scan("config changes", &configChanges, `
 		SELECT COUNT(*) FROM audit_events
 		WHERE event_type = 'configuration'
 		  AND timestamp BETWEEN $1 AND $2
 		  AND org_id = $3
-	`, startDate, endDate, org.ID).Scan(&configChanges)
+	`, startDate, endDate, q.org())
 
 	assessment.Evidence = append(assessment.Evidence,
 		fmt.Sprintf("Configuration change events: %d", configChanges))
 
 	// Check role management events
 	var roleChanges int
-	s.db.Pool.QueryRow(ctx, `
+	q.scan("role changes", &roleChanges, `
 		SELECT COUNT(*) FROM audit_events
 		WHERE event_type = 'role_management'
 		  AND timestamp BETWEEN $1 AND $2
 		  AND org_id = $3
-	`, startDate, endDate, org.ID).Scan(&roleChanges)
+	`, startDate, endDate, q.org())
 
 	assessment.Evidence = append(assessment.Evidence,
 		fmt.Sprintf("Role management events: %d", roleChanges))
 
 	// Check user management events
 	var userMgmtEvents int
-	s.db.Pool.QueryRow(ctx, `
+	q.scan("user management events", &userMgmtEvents, `
 		SELECT COUNT(*) FROM audit_events
 		WHERE event_type = 'user_management'
 		  AND timestamp BETWEEN $1 AND $2
 		  AND org_id = $3
-	`, startDate, endDate, org.ID).Scan(&userMgmtEvents)
+	`, startDate, endDate, q.org())
 
 	assessment.Evidence = append(assessment.Evidence,
 		fmt.Sprintf("User management events: %d", userMgmtEvents))
@@ -562,13 +600,13 @@ func (s *Service) evaluateCC8ChangeManagement(ctx context.Context, startDate, en
 
 	// Check if changes have actor attribution
 	var unattributedChanges int
-	s.db.Pool.QueryRow(ctx, `
+	q.scan("unattributed changes", &unattributedChanges, `
 		SELECT COUNT(*) FROM audit_events
 		WHERE event_type IN ('configuration', 'role_management', 'user_management')
 		  AND (actor_id IS NULL OR actor_id = '')
 		  AND timestamp BETWEEN $1 AND $2
 		  AND org_id = $3
-	`, startDate, endDate, org.ID).Scan(&unattributedChanges)
+	`, startDate, endDate, q.org())
 
 	if unattributedChanges > 0 {
 		score -= 20
@@ -581,9 +619,12 @@ func (s *Service) evaluateCC8ChangeManagement(ctx context.Context, startDate, en
 			"All changes have proper actor attribution")
 	}
 
+	if err := q.failed(); err != nil {
+		return ControlAssessment{}, err
+	}
 	assessment.Score = score
 	assessment.Status = scoreToStatus(score)
-	return assessment
+	return assessment, nil
 }
 
 // GenerateISO27001DetailedReport evaluates ISO 27001 Annex A controls
@@ -600,22 +641,16 @@ func (s *Service) GenerateISO27001DetailedReport(ctx context.Context, startDate,
 		GeneratedAt: time.Now(),
 	}
 
-	var controls []ControlAssessment
-
-	// A.5: Information Security Policies
-	controls = append(controls, s.evaluateA5Policies(ctx, startDate, endDate))
-
-	// A.6: Organization of Information Security
-	controls = append(controls, s.evaluateA6Organization(ctx, startDate, endDate))
-
-	// A.9: Access Control
-	controls = append(controls, s.evaluateA9AccessControl(ctx, startDate, endDate))
-
-	// A.12: Operations Security
-	controls = append(controls, s.evaluateA12OperationsSecurity(ctx, startDate, endDate))
-
-	// A.16: Incident Management
-	controls = append(controls, s.evaluateA16IncidentManagement(ctx, startDate, endDate))
+	controls, err := s.assess(ctx, startDate, endDate, []namedControl{
+		{"A.5", s.evaluateA5Policies},
+		{"A.6", s.evaluateA6Organization},
+		{"A.9", s.evaluateA9AccessControl},
+		{"A.12", s.evaluateA12OperationsSecurity},
+		{"A.16", s.evaluateA16IncidentManagement},
+	})
+	if err != nil {
+		return nil, err
+	}
 
 	report.Controls = controls
 
@@ -657,7 +692,7 @@ func (s *Service) GenerateISO27001DetailedReport(ctx context.Context, startDate,
 }
 
 // evaluateA5Policies checks information security policies via system_settings.
-func (s *Service) evaluateA5Policies(ctx context.Context, startDate, endDate time.Time) ControlAssessment {
+func (s *Service) evaluateA5Policies(ctx context.Context, startDate, endDate time.Time) (ControlAssessment, error) {
 	assessment := ControlAssessment{
 		ControlID: "A.5",
 		Name:      "Information Security Policies",
@@ -665,6 +700,13 @@ func (s *Service) evaluateA5Policies(ctx context.Context, startDate, endDate tim
 		Findings:  []string{},
 	}
 	score := 100.0
+	// This control reads only system_settings, which is install-wide, but it
+	// still binds a metricQuery: the report needs a tenant, and a nil pool must
+	// be an error rather than a panic on the line below.
+	q := s.newMetricQuery(ctx)
+	if err := q.failed(); err != nil {
+		return ControlAssessment{}, err
+	}
 
 	// Check for security configuration in system_settings
 	var securityConfigExists bool
@@ -712,13 +754,16 @@ func (s *Service) evaluateA5Policies(ctx context.Context, startDate, endDate tim
 			"Configure authentication policy settings")
 	}
 
+	if err := q.failed(); err != nil {
+		return ControlAssessment{}, err
+	}
 	assessment.Score = score
 	assessment.Status = scoreToStatus(score)
-	return assessment
+	return assessment, nil
 }
 
 // evaluateA6Organization checks organizational security (roles, admin assignments).
-func (s *Service) evaluateA6Organization(ctx context.Context, startDate, endDate time.Time) ControlAssessment {
+func (s *Service) evaluateA6Organization(ctx context.Context, startDate, endDate time.Time) (ControlAssessment, error) {
 	assessment := ControlAssessment{
 		ControlID: "A.6",
 		Name:      "Organization of Information Security",
@@ -726,11 +771,11 @@ func (s *Service) evaluateA6Organization(ctx context.Context, startDate, endDate
 		Findings:  []string{},
 	}
 	score := 100.0
-	org, _ := orgctx.From(ctx)
+	q := s.newMetricQuery(ctx)
 
 	// Check role definitions
 	var roleCount int
-	s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM roles WHERE org_id = $1`, org.ID).Scan(&roleCount)
+	q.scan("roles defined", &roleCount, `SELECT COUNT(*) FROM roles WHERE org_id = $1`, q.org())
 	assessment.Evidence = append(assessment.Evidence,
 		fmt.Sprintf("Defined roles: %d", roleCount))
 
@@ -744,13 +789,13 @@ func (s *Service) evaluateA6Organization(ctx context.Context, startDate, endDate
 
 	// Check admin assignments
 	var adminCount int
-	s.db.Pool.QueryRow(ctx, `
+	q.scan("administrator accounts", &adminCount, `
 		SELECT COUNT(DISTINCT ur.user_id)
 		FROM user_roles ur
 		JOIN roles r ON ur.role_id = r.id AND r.org_id = ur.org_id
 		WHERE r.name IN ('admin', 'super_admin')
 		  AND ur.org_id = $1
-	`, org.ID).Scan(&adminCount)
+	`, q.org())
 	assessment.Evidence = append(assessment.Evidence,
 		fmt.Sprintf("Users with admin roles: %d", adminCount))
 
@@ -764,7 +809,7 @@ func (s *Service) evaluateA6Organization(ctx context.Context, startDate, endDate
 
 	// Check group-based access
 	var groupCount int
-	s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM groups WHERE org_id = $1`, org.ID).Scan(&groupCount)
+	q.scan("groups defined", &groupCount, `SELECT COUNT(*) FROM groups WHERE org_id = $1`, q.org())
 	assessment.Evidence = append(assessment.Evidence,
 		fmt.Sprintf("Defined groups: %d", groupCount))
 
@@ -776,9 +821,12 @@ func (s *Service) evaluateA6Organization(ctx context.Context, startDate, endDate
 			"Create groups to organize users by department or function")
 	}
 
+	if err := q.failed(); err != nil {
+		return ControlAssessment{}, err
+	}
 	assessment.Score = score
 	assessment.Status = scoreToStatus(score)
-	return assessment
+	return assessment, nil
 }
 
 // evaluateA9AccessControl checks MFA, password policies, and session management.
@@ -789,19 +837,19 @@ func (s *Service) evaluateA6Organization(ctx context.Context, startDate, endDate
 // `webauthn_credentials` table that no migration creates, which errored and
 // silently under-counted MFA adoption (producing the deterministic "MFA
 // adoption 0.0%" ISO A.9 finding on every install).
-func (s *Service) countMFAEnabledUsers(ctx context.Context, orgID string) int {
+func (s *Service) countMFAEnabledUsers(q *metricQuery) int {
 	var n int
-	s.db.Pool.QueryRow(ctx, `
+	q.scan("users with an MFA factor", &n, `
 		SELECT COUNT(DISTINCT user_id) FROM (
 			SELECT user_id FROM mfa_totp WHERE enabled = true AND org_id = $1
 			UNION
 			SELECT user_id FROM mfa_webauthn WHERE org_id = $1
 		) mfa_combined
-	`, orgID).Scan(&n)
+	`, q.org())
 	return n
 }
 
-func (s *Service) evaluateA9AccessControl(ctx context.Context, startDate, endDate time.Time) ControlAssessment {
+func (s *Service) evaluateA9AccessControl(ctx context.Context, startDate, endDate time.Time) (ControlAssessment, error) {
 	assessment := ControlAssessment{
 		ControlID: "A.9",
 		Name:      "Access Control",
@@ -809,12 +857,12 @@ func (s *Service) evaluateA9AccessControl(ctx context.Context, startDate, endDat
 		Findings:  []string{},
 	}
 	score := 100.0
-	org, _ := orgctx.From(ctx)
+	q := s.newMetricQuery(ctx)
 
 	// MFA adoption check
 	var totalUsers int
-	s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM users WHERE enabled = true AND org_id = $1`, org.ID).Scan(&totalUsers)
-	mfaUsers := s.countMFAEnabledUsers(ctx, org.ID)
+	q.scan("total users", &totalUsers, `SELECT COUNT(*) FROM users WHERE enabled = true AND org_id = $1`, q.org())
+	mfaUsers := s.countMFAEnabledUsers(q)
 
 	assessment.Evidence = append(assessment.Evidence,
 		fmt.Sprintf("MFA enabled users: %d/%d", mfaUsers, totalUsers))
@@ -855,12 +903,13 @@ func (s *Service) evaluateA9AccessControl(ctx context.Context, startDate, endDat
 
 	// Session management
 	var avgSessionHours *float64
-	s.db.Pool.QueryRow(ctx, `
-		SELECT AVG(EXTRACT(EPOCH FROM (expires_at - created_at)) / 3600.0)
+	// started_at, not created_at -- see the same correction in compliance.go.
+	q.scan("average session length", &avgSessionHours, `
+		SELECT AVG(EXTRACT(EPOCH FROM (expires_at - started_at)) / 3600.0)
 		FROM sessions
-		WHERE created_at > NOW() - INTERVAL '30 days'
+		WHERE started_at > NOW() - INTERVAL '30 days'
 		  AND org_id = $1
-	`, org.ID).Scan(&avgSessionHours)
+	`, q.org())
 	if avgSessionHours != nil {
 		assessment.Evidence = append(assessment.Evidence,
 			fmt.Sprintf("Average session duration: %.1f hours", *avgSessionHours))
@@ -875,23 +924,26 @@ func (s *Service) evaluateA9AccessControl(ctx context.Context, startDate, endDat
 
 	// Failed authentication analysis
 	var failedAuth int
-	s.db.Pool.QueryRow(ctx, `
+	q.scan("failed authentications", &failedAuth, `
 		SELECT COUNT(*) FROM audit_events
 		WHERE event_type = 'authentication' AND outcome = 'failure'
 		  AND timestamp BETWEEN $1 AND $2
 		  AND org_id = $3
-	`, startDate, endDate, org.ID).Scan(&failedAuth)
+	`, startDate, endDate, q.org())
 
 	assessment.Evidence = append(assessment.Evidence,
 		fmt.Sprintf("Failed authentication attempts in period: %d", failedAuth))
 
+	if err := q.failed(); err != nil {
+		return ControlAssessment{}, err
+	}
 	assessment.Score = score
 	assessment.Status = scoreToStatus(score)
-	return assessment
+	return assessment, nil
 }
 
 // evaluateA12OperationsSecurity checks audit logging and monitoring.
-func (s *Service) evaluateA12OperationsSecurity(ctx context.Context, startDate, endDate time.Time) ControlAssessment {
+func (s *Service) evaluateA12OperationsSecurity(ctx context.Context, startDate, endDate time.Time) (ControlAssessment, error) {
 	assessment := ControlAssessment{
 		ControlID: "A.12",
 		Name:      "Operations Security",
@@ -899,15 +951,15 @@ func (s *Service) evaluateA12OperationsSecurity(ctx context.Context, startDate, 
 		Findings:  []string{},
 	}
 	score := 100.0
-	org, _ := orgctx.From(ctx)
+	q := s.newMetricQuery(ctx)
 
 	// Audit logging check
 	var totalEvents int
-	s.db.Pool.QueryRow(ctx, `
+	q.scan("total events", &totalEvents, `
 		SELECT COUNT(*) FROM audit_events
 		WHERE timestamp BETWEEN $1 AND $2
 		  AND org_id = $3
-	`, startDate, endDate, org.ID).Scan(&totalEvents)
+	`, startDate, endDate, q.org())
 
 	assessment.Evidence = append(assessment.Evidence,
 		fmt.Sprintf("Total audit events: %d", totalEvents))
@@ -921,6 +973,9 @@ func (s *Service) evaluateA12OperationsSecurity(ctx context.Context, startDate, 
 	}
 
 	// Check monitoring coverage by event type
+	if err := q.failed(); err != nil {
+		return ControlAssessment{}, err
+	}
 	eventTypes := map[string]int{}
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT event_type, COUNT(*)
@@ -928,19 +983,32 @@ func (s *Service) evaluateA12OperationsSecurity(ctx context.Context, startDate, 
 		WHERE timestamp BETWEEN $1 AND $2
 		  AND org_id = $3
 		GROUP BY event_type
-	`, startDate, endDate, org.ID)
-	if err == nil {
-		for rows.Next() {
-			var et string
-			var cnt int
-			if rows.Scan(&et, &cnt) == nil {
-				eventTypes[et] = cnt
-			}
+	`, startDate, endDate, q.org())
+	if err != nil {
+		return ControlAssessment{}, fmt.Errorf("monitoring coverage by event type: %w", err)
+	}
+	for rows.Next() {
+		var et string
+		var cnt int
+		if err := rows.Scan(&et, &cnt); err != nil {
+			rows.Close()
+			return ControlAssessment{}, fmt.Errorf("monitoring coverage by event type: %w", err)
 		}
-		rows.Close()
+		eventTypes[et] = cnt
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return ControlAssessment{}, fmt.Errorf("monitoring coverage by event type: %w", err)
 	}
 
-	requiredTypes := []string{"authentication", "authorization", "user_management"}
+	// "identity", not "user_management". This list asked for an event type no
+	// writer in this product produces: user_management is a CATEGORY, and the
+	// event type stamped on a user lifecycle row is "identity" -- which is why
+	// A.12 deducted ten points and reported "Required event type
+	// 'user_management' has no events in period" on every install ever
+	// assessed. A control that manufactures a finding against a correctly
+	// configured system is worth less than no control.
+	requiredTypes := []string{"authentication", "authorization", "identity"}
 	for _, rt := range requiredTypes {
 		if cnt, ok := eventTypes[rt]; ok && cnt > 0 {
 			assessment.Evidence = append(assessment.Evidence,
@@ -956,12 +1024,12 @@ func (s *Service) evaluateA12OperationsSecurity(ctx context.Context, startDate, 
 
 	// Daily logging consistency
 	var daysWithEvents int
-	s.db.Pool.QueryRow(ctx, `
+	q.scan("days with events", &daysWithEvents, `
 		SELECT COUNT(DISTINCT DATE(timestamp))
 		FROM audit_events
 		WHERE timestamp BETWEEN $1 AND $2
 		  AND org_id = $3
-	`, startDate, endDate, org.ID).Scan(&daysWithEvents)
+	`, startDate, endDate, q.org())
 
 	totalDays := int(endDate.Sub(startDate).Hours()/24) + 1
 	if totalDays > 0 {
@@ -970,13 +1038,16 @@ func (s *Service) evaluateA12OperationsSecurity(ctx context.Context, startDate, 
 			fmt.Sprintf("Logging coverage: %d/%d days (%.1f%%)", daysWithEvents, totalDays, coverage))
 	}
 
+	if err := q.failed(); err != nil {
+		return ControlAssessment{}, err
+	}
 	assessment.Score = score
 	assessment.Status = scoreToStatus(score)
-	return assessment
+	return assessment, nil
 }
 
 // evaluateA16IncidentManagement checks security alert handling and response times.
-func (s *Service) evaluateA16IncidentManagement(ctx context.Context, startDate, endDate time.Time) ControlAssessment {
+func (s *Service) evaluateA16IncidentManagement(ctx context.Context, startDate, endDate time.Time) (ControlAssessment, error) {
 	assessment := ControlAssessment{
 		ControlID: "A.16",
 		Name:      "Information Security Incident Management",
@@ -984,22 +1055,22 @@ func (s *Service) evaluateA16IncidentManagement(ctx context.Context, startDate, 
 		Findings:  []string{},
 	}
 	score := 100.0
-	org, _ := orgctx.From(ctx)
+	q := s.newMetricQuery(ctx)
 
 	// Check security alerts
 	var totalAlerts, resolvedAlerts int
-	s.db.Pool.QueryRow(ctx, `
+	q.scan("security alerts in period", &totalAlerts, `
 		SELECT COUNT(*) FROM security_alerts
 		WHERE created_at BETWEEN $1 AND $2
 		  AND org_id = $3
-	`, startDate, endDate, org.ID).Scan(&totalAlerts)
+	`, startDate, endDate, q.org())
 
-	s.db.Pool.QueryRow(ctx, `
+	q.scan("resolved alerts", &resolvedAlerts, `
 		SELECT COUNT(*) FROM security_alerts
 		WHERE created_at BETWEEN $1 AND $2
 		  AND status = 'resolved'
 		  AND org_id = $3
-	`, startDate, endDate, org.ID).Scan(&resolvedAlerts)
+	`, startDate, endDate, q.org())
 
 	assessment.Evidence = append(assessment.Evidence,
 		fmt.Sprintf("Security alerts in period: %d (resolved: %d)", totalAlerts, resolvedAlerts))
@@ -1020,14 +1091,14 @@ func (s *Service) evaluateA16IncidentManagement(ctx context.Context, startDate, 
 
 	// Check average response time for resolved alerts
 	var avgResponseHours *float64
-	s.db.Pool.QueryRow(ctx, `
+	q.scan("average alert response time", &avgResponseHours, `
 		SELECT AVG(EXTRACT(EPOCH FROM (resolved_at - created_at)) / 3600.0)
 		FROM security_alerts
 		WHERE created_at BETWEEN $1 AND $2
 		  AND status = 'resolved'
 		  AND resolved_at IS NOT NULL
 		  AND org_id = $3
-	`, startDate, endDate, org.ID).Scan(&avgResponseHours)
+	`, startDate, endDate, q.org())
 
 	if avgResponseHours != nil {
 		assessment.Evidence = append(assessment.Evidence,
@@ -1050,21 +1121,24 @@ func (s *Service) evaluateA16IncidentManagement(ctx context.Context, startDate, 
 
 	// Check for high-risk events that were not alerted
 	var highRiskLogins int
-	s.db.Pool.QueryRow(ctx, `
+	q.scan("high risk logins", &highRiskLogins, `
 		SELECT COUNT(*) FROM login_history
 		WHERE risk_score >= 70
 		  AND created_at BETWEEN $1 AND $2
 		  AND org_id = $3
-	`, startDate, endDate, org.ID).Scan(&highRiskLogins)
+	`, startDate, endDate, q.org())
 
 	if highRiskLogins > 0 {
 		assessment.Evidence = append(assessment.Evidence,
 			fmt.Sprintf("High-risk logins (score >= 70): %d", highRiskLogins))
 	}
 
+	if err := q.failed(); err != nil {
+		return ControlAssessment{}, err
+	}
 	assessment.Score = score
 	assessment.Status = scoreToStatus(score)
-	return assessment
+	return assessment, nil
 }
 
 // handleGenerateSOC2Detailed handles POST requests to generate a detailed SOC 2 report.

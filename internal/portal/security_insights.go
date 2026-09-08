@@ -65,14 +65,22 @@ type InsightLogin struct {
 func (s *Service) computeSecurityInsights(ctx context.Context, userID, orgID string) (*SecurityInsights, error) {
 	out := &SecurityInsights{}
 
+	// computeSecurityInsights already returns an error, and this page is the
+	// user's own reading of their account's safety. A discarded error made
+	// every number here zero: no risk, no failed sign-ins, and -- below -- no
+	// MFA. Telling somebody their account looks clean because the query broke
+	// is the worst available wrong answer on this surface, and telling somebody
+	// who has enrolled MFA that they have not is the second.
 	var avgRisk float64
 	var maxRisk, failed7d int
-	_ = s.db.Pool.QueryRow(ctx, `
+	if err := s.db.Pool.QueryRow(ctx, `
 		SELECT COALESCE(AVG(risk_score),0), COALESCE(MAX(risk_score),0),
 		       COUNT(*) FILTER (WHERE NOT success AND created_at > NOW() - INTERVAL '7 days')
 		  FROM login_history
 		 WHERE user_id = $1 AND org_id = $2 AND created_at > NOW() - INTERVAL '30 days'`,
-		userID, orgID).Scan(&avgRisk, &maxRisk, &failed7d)
+		userID, orgID).Scan(&avgRisk, &maxRisk, &failed7d); err != nil {
+		return nil, fmt.Errorf("login risk history: %w", err)
+	}
 	out.FailedLogins7d = failed7d
 
 	var alertSevs []string
@@ -90,10 +98,12 @@ func (s *Service) computeSecurityInsights(ctx context.Context, userID, orgID str
 	out.OpenAlerts = len(alertSevs)
 
 	var mfaEnrolled bool
-	_ = s.db.Pool.QueryRow(ctx, `
+	if err := s.db.Pool.QueryRow(ctx, `
 		SELECT EXISTS(SELECT 1 FROM mfa_totp t WHERE t.user_id = $1 AND t.org_id = $2 AND t.enabled = true)
 		    OR EXISTS(SELECT 1 FROM mfa_webauthn w WHERE w.user_id = $1 AND w.org_id = $2)`,
-		userID, orgID).Scan(&mfaEnrolled)
+		userID, orgID).Scan(&mfaEnrolled); err != nil {
+		return nil, fmt.Errorf("MFA enrolment: %w", err)
+	}
 	out.MFAEnrolled = mfaEnrolled
 
 	trusted, untrusted := 0, 0

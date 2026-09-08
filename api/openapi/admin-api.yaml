@@ -1156,27 +1156,6 @@ paths:
         '500':
           $ref: '#/components/responses/ServerError'
 
-  /api/v1/analytics/api-usage:
-    get:
-      tags: [Analytics]
-      summary: API usage metrics
-      operationId: apiUsageMetrics
-      x-openidx-handler: internal/admin.(*Service).handleAPIUsageMetrics
-      responses:
-        '200':
-          description: Success
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '500':
-          $ref: '#/components/responses/ServerError'
-
   /api/v1/analytics/auth-dashboard:
     get:
       tags: [Analytics]
@@ -4717,6 +4696,45 @@ paths:
         '500':
           $ref: '#/components/responses/ServerError'
 
+  /api/v1/notifications/preference-types:
+    get:
+      tags: [Notifications]
+      summary: The notification types a user can switch off
+      description: >-
+        Serves internal/notifications.EventCatalogue: the types this deployment
+        actually sends, with the wording a person choosing reads. The console's
+        preferences page reads this instead of a list of its own, which had
+        drifted to seven types nothing has ever sent.
+      operationId: getNotificationPreferenceTypes
+      x-openidx-handler: internal/notifications.(*Service).handlePreferenceTypes
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  types:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        type:
+                          type: string
+                        title:
+                          type: string
+                        description:
+                          type: string
+                        channels:
+                          type: array
+                          items:
+                            type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
   /api/v1/notifications/push-config:
     get:
       tags: [Notifications]
@@ -7210,6 +7228,43 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/webhooks/event-types:
+    get:
+      tags: [Webhooks]
+      summary: The event types a subscription can name
+      description: >-
+        Serves internal/webhooks.EventCatalogue. A subscription to anything
+        outside it is refused by POST /api/v1/webhooks, because an accepted
+        subscription to an event nothing publishes is a delivery log that stays
+        empty for ever with no way to tell that from a quiet week.
+      operationId: listWebhookEventTypes
+      x-openidx-handler: internal/admin.(*Service).handleWebhookEventTypes
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  event_types:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        type:
+                          type: string
+                        category:
+                          type: string
+                        description:
+                          type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/ServerError'
 

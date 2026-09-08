@@ -7,6 +7,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 // CSRFConfig configures the CSRF protection middleware
@@ -76,7 +78,7 @@ func CSRFProtection(cfg CSRFConfig, logger *zap.Logger) gin.HandlerFunc {
 				return
 			}
 			logger.Warn("CSRF: Origin header rejected",
-				zap.String("origin", origin),
+				logsafe.String("origin", origin),
 				zap.String("trusted_domain", cfg.TrustedDomain))
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
 				"error": "cross-origin request blocked",
@@ -92,7 +94,7 @@ func CSRFProtection(cfg CSRFConfig, logger *zap.Logger) gin.HandlerFunc {
 				return
 			}
 			logger.Warn("CSRF: Referer header rejected",
-				zap.String("referer", referer),
+				logsafe.String("referer", referer),
 				zap.String("trusted_domain", cfg.TrustedDomain))
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
 				"error": "cross-origin request blocked",
@@ -102,8 +104,8 @@ func CSRFProtection(cfg CSRFConfig, logger *zap.Logger) gin.HandlerFunc {
 
 		// Cookie present but no Origin/Referer — block (suspicious browser request)
 		logger.Warn("CSRF: Cookie-authenticated request with no Origin/Referer header",
-			zap.String("path", c.Request.URL.Path),
-			zap.String("method", method))
+			logsafe.String("path", c.Request.URL.Path),
+			logsafe.String("method", method))
 		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
 			"error": "missing origin header",
 		})

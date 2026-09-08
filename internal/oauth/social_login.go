@@ -14,6 +14,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
 	"go.uber.org/zap"
 )
@@ -86,7 +87,7 @@ func (s *Service) handleSocialLoginInit(c *gin.Context) {
 	provider, err := s.loadSocialProviderConfig(c.Request.Context(), providerID)
 	if err != nil {
 		s.logger.Error("Failed to load social provider config",
-			zap.String("provider_id", providerID), zap.Error(err))
+			logsafe.String("provider_id", providerID), zap.Error(err))
 		c.JSON(http.StatusNotFound, gin.H{"error": "Identity provider not found"})
 		return
 	}
@@ -130,7 +131,7 @@ func (s *Service) handleSocialLoginInit(c *gin.Context) {
 	fullURL := authURL + "?" + params.Encode()
 
 	s.logger.Info("Initiating social login",
-		zap.String("provider_id", providerID),
+		logsafe.String("provider_id", providerID),
 		zap.String("provider_type", provider.ProviderType),
 	)
 
@@ -146,8 +147,8 @@ func (s *Service) handleSocialLoginCallback(c *gin.Context) {
 	if errorParam != "" {
 		errorDesc := c.Query("error_description")
 		s.logger.Error("Social login error from provider",
-			zap.String("error", errorParam),
-			zap.String("description", errorDesc))
+			logsafe.String("error", errorParam),
+			logsafe.String("description", errorDesc))
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error":             "social_login_failed",
 			"error_description": errorDesc,
@@ -661,6 +662,8 @@ func (s *Service) linkOrCreateSocialUser(ctx context.Context, providerID string,
 
 	if err == nil {
 		// Already linked - update last login info and return
+		//silentwrite:ok the account was chosen by provider_id + external_id above, the only columns
+		// ever read for a decision; what is lost is a stale last_login_at and display name.
 		_, _ = s.db.Pool.Exec(ctx, `
 			UPDATE social_account_links SET last_login_at = NOW(),
 				profile_data = jsonb_set(COALESCE(profile_data, '{}'::jsonb), '{display_name}', to_jsonb($3::text)),

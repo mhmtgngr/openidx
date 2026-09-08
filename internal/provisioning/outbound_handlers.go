@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
 	"github.com/openidx/openidx/internal/scimclient"
 	"go.uber.org/zap"
@@ -188,7 +189,7 @@ func (s *Service) handleSyncTarget(c *gin.Context) {
 	}
 	enqueued, err := s.EnqueueFullSync(c.Request.Context(), orgID, target)
 	if err != nil {
-		s.logger.Error("outbound SCIM full sync enqueue failed", zap.String("target", id), zap.Error(err))
+		s.logger.Error("outbound SCIM full sync enqueue failed", logsafe.String("target", id), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to enqueue sync"})
 		return
 	}

@@ -706,6 +706,18 @@ func (s *Service) ExecuteDSAR(ctx context.Context, dsar *DataSubjectRequest, act
 // user-keyed table reachable from internal/identity and the OAuth flows;
 // extending the export when new PII surfaces are added is a one-line entry
 // in `categories` below.
+//
+// A CATEGORY THAT FAILS IS RECORDED, NOT DROPPED. Four of these queries named
+// columns the schema does not have -- audit_events.resource_type (it is
+// target_type), mfa_totp.verified_at (enrolled_at), mfa_webauthn.friendly_name
+// (name) and mfa_push_devices.device_type (platform / device_name /
+// device_model) -- and the loop below logged each failure at Debug and left the
+// section out. So the subject's own activity log and all three MFA enrolment
+// records were missing from every data package this product has ever produced,
+// and the result said "categories: 8" as though eight were all there were.
+// A data package that silently omits sections is worse than one that fails:
+// the recipient has no way to know. Failures now go into the bundle under
+// _incomplete, are counted in the result, and are logged at Warn.
 func (s *Service) executeDSARExport(ctx context.Context, dsar *DataSubjectRequest, actorID string) (map[string]interface{}, error) {
 	// This executor is also driven by the background DSAR processor, which
 	// runs without a request org. Fall back to the default org so the
@@ -732,7 +744,11 @@ func (s *Service) executeDSARExport(ctx context.Context, dsar *DataSubjectReques
 		{"sessions",
 			`SELECT COALESCE(json_agg(row_to_json(s)), '[]'::json) FROM (SELECT id, client_id, ip_address, started_at, expires_at FROM sessions WHERE user_id = $1) s`},
 		{"audit_events",
-			`SELECT COALESCE(json_agg(row_to_json(a)), '[]'::json) FROM (SELECT id, event_type, action, resource_type, created_at FROM audit_events WHERE actor_id = $1 ORDER BY created_at DESC LIMIT 1000) a`},
+			// target_type, not resource_type: audit_events records what was
+			// acted on as (target_id, target_type) and carries a separate
+			// resource_id. Naming a column the table has never had cost the
+			// subject their entire activity log.
+			`SELECT COALESCE(json_agg(row_to_json(a)), '[]'::json) FROM (SELECT id, event_type, action, target_type, resource_id, created_at FROM audit_events WHERE actor_id = $1 ORDER BY created_at DESC LIMIT 1000) a`},
 		{"roles",
 			`SELECT COALESCE(json_agg(row_to_json(r)), '[]'::json) FROM (SELECT ur.role_id, r.name, ur.expires_at FROM user_roles ur LEFT JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = $1) r`},
 		{"groups",
@@ -742,24 +758,52 @@ func (s *Service) executeDSARExport(ctx context.Context, dsar *DataSubjectReques
 		{"access_requests",
 			`SELECT COALESCE(json_agg(row_to_json(ar)), '[]'::json) FROM (SELECT id, resource_type, resource_name, status, created_at FROM access_requests WHERE requester_id = $1) ar`},
 		{"mfa_totp",
-			`SELECT COALESCE(json_agg(row_to_json(t)), '[]'::json) FROM (SELECT enabled, verified_at, created_at FROM mfa_totp WHERE user_id = $1) t`},
+			// enrolled_at, not verified_at. The secret is deliberately not
+			// exported: it is a credential, not a record about the subject.
+			`SELECT COALESCE(json_agg(row_to_json(t)), '[]'::json) FROM (SELECT enabled, enrolled_at, last_used_at, created_at FROM mfa_totp WHERE user_id = $1) t`},
 		{"mfa_webauthn",
-			`SELECT COALESCE(json_agg(row_to_json(w)), '[]'::json) FROM (SELECT id, friendly_name, created_at FROM mfa_webauthn WHERE user_id = $1) w`},
+			// name, not friendly_name -- the label the subject typed when they
+			// enrolled the key, which is the part of this row they would
+			// recognise.
+			`SELECT COALESCE(json_agg(row_to_json(w)), '[]'::json) FROM (SELECT id, name, created_at, last_used_at FROM mfa_webauthn WHERE user_id = $1) w`},
 		{"mfa_push_devices",
-			`SELECT COALESCE(json_agg(row_to_json(p)), '[]'::json) FROM (SELECT id, device_type, created_at FROM mfa_push_devices WHERE user_id = $1) p`},
+			// There is no device_type here; the device is described by
+			// platform, device_name and device_model. The push token is a
+			// credential and stays out.
+			`SELECT COALESCE(json_agg(row_to_json(p)), '[]'::json) FROM (SELECT id, platform, device_name, device_model, created_at, last_used_at FROM mfa_push_devices WHERE user_id = $1) p`},
+		// The phone factors and the device records. These hold a phone number,
+		// an IP address, a user agent and a device fingerprint apiece, and the
+		// export's own opening line claims to cover "every table that holds
+		// any" PII -- it did not cover these.
+		{"mfa_sms",
+			`SELECT COALESCE(json_agg(row_to_json(m)), '[]'::json) FROM (SELECT id, phone_number, country_code, verified, enabled, created_at, last_used_at FROM mfa_sms WHERE user_id = $1) m`},
+		{"mfa_phone_call",
+			`SELECT COALESCE(json_agg(row_to_json(m)), '[]'::json) FROM (SELECT id, phone_number, country_code, verified, enabled, created_at, last_used_at FROM mfa_phone_call WHERE user_id = $1) m`},
+		{"known_devices",
+			`SELECT COALESCE(json_agg(row_to_json(k)), '[]'::json) FROM (SELECT id, name, device_type, ip_address, user_agent, location, trusted, last_seen_at, created_at FROM known_devices WHERE user_id = $1) k`},
+		{"trusted_browsers",
+			`SELECT COALESCE(json_agg(row_to_json(b)), '[]'::json) FROM (SELECT id, name, ip_address, user_agent, trusted_at, expires_at, last_used_at, revoked FROM trusted_browsers WHERE user_id = $1) b`},
 		{"earlier_dsars",
 			`SELECT COALESCE(json_agg(row_to_json(d)), '[]'::json) FROM (SELECT id, request_type, status, created_at, completed_at FROM data_subject_requests WHERE user_id = $1) d`},
 	}
+	incomplete := map[string]string{}
 	for _, c := range categories {
 		var raw json.RawMessage
 		if err := s.db.Pool.QueryRow(ctx, c.sql, dsar.UserID).Scan(&raw); err == nil {
 			userData[c.key] = raw
+			continue
 		} else {
-			// Don't blank the export on a single missing-table failure
-			// (older Postgres clusters may pre-date some optional tables).
-			s.logger.Debug("DSAR export skipped category",
-				zap.String("category", c.key), zap.Error(err))
+			// A category that cannot be produced is named in the bundle rather
+			// than left out of it. The subject can then see that a section is
+			// missing and ask again; before this the package simply did not
+			// have it, and neither they nor the operator had any way to tell.
+			incomplete[c.key] = err.Error()
+			s.logger.Warn("DSAR export category failed; the data package is incomplete",
+				zap.String("dsar_id", dsar.ID), zap.String("category", c.key), zap.Error(err))
 		}
+	}
+	if len(incomplete) > 0 {
+		userData["_incomplete"] = incomplete
 	}
 
 	// Write a gzip'd JSON bundle. Keep using the local-fs path the original
@@ -802,12 +846,29 @@ func (s *Service) executeDSARExport(ctx context.Context, dsar *DataSubjectReques
 		zap.String("user_id", dsar.UserID),
 		zap.String("actor_id", actorID),
 		zap.Int64("file_size", fileSize))
+	message := "Data export completed"
+	if len(incomplete) > 0 {
+		message = "Data export completed with missing sections"
+	}
 	return map[string]interface{}{
-		"message":    "Data export completed",
-		"categories": len(userData),
-		"file_path":  filePath,
-		"file_size":  fileSize,
+		"message": message,
+		// categories counts what the package contains; categories_failed is
+		// what it could not answer. Reporting only the first made an
+		// incomplete package indistinguishable from a complete one.
+		"categories":        len(userData) - boolToInt(len(incomplete) > 0),
+		"categories_failed": len(incomplete),
+		"file_path":         filePath,
+		"file_size":         fileSize,
 	}, nil
+}
+
+// boolToInt discounts the _incomplete entry from the category count: it is a
+// report about the export, not a category of the subject's data.
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // executeDSARDelete implements the GDPR Article 17 "right to erasure": tear
@@ -829,6 +890,14 @@ func (s *Service) executeDSARDelete(ctx context.Context, dsar *DataSubjectReques
 
 	// Anonymize the user row. Disable the account so a stale session can't
 	// be revived and the user can't log back in.
+	//
+	// This statement used to set phone_number and avatar_url as well. The users
+	// table has neither column and never has, so the UPDATE failed with
+	// SQLSTATE 42703 -- and being the FIRST statement, its error was returned
+	// and no erasure has ever reached the wipes below: not one session, MFA
+	// enrolment or consent has been erased on any install. A subject's phone
+	// number lives on the factor rows (mfa_sms, mfa_phone_call and the
+	// challenge records), which is where it is now erased.
 	deletedEmail := fmt.Sprintf("deleted-%s@deleted.local", dsar.UserID)
 	if _, err := s.db.Pool.Exec(ctx, `
 		UPDATE users
@@ -836,8 +905,6 @@ func (s *Service) executeDSARDelete(ctx context.Context, dsar *DataSubjectReques
 		    first_name = 'Deleted',
 		    last_name  = 'Deleted',
 		    username   = $1,
-		    phone_number = NULL,
-		    avatar_url   = NULL,
 		    password_hash = NULL,
 		    enabled = false,
 		    updated_at = NOW()
@@ -846,9 +913,14 @@ func (s *Service) executeDSARDelete(ctx context.Context, dsar *DataSubjectReques
 	}
 
 	// Wipe everything that holds PII *about* the subject. Each statement is
-	// idempotent and `DELETE FROM … WHERE user_id = $1 AND org_id = $2` — if
-	// the table doesn't exist on this install, log and continue rather than
-	// rolling back the whole erasure.
+	// idempotent and `DELETE FROM … WHERE user_id = $1 AND org_id = $2`.
+	//
+	// A FAILED WIPE IS A FAILED ERASURE. These used to be logged at Debug and
+	// counted as skipped, so a statement that could not run left the subject's
+	// data in place while the request was marked completed -- the same silence
+	// as the export's dropped categories, on the side where the promise is that
+	// data is gone. Failures are now collected and returned, and the request
+	// stays incomplete.
 	wipes := []string{
 		`DELETE FROM sessions WHERE user_id = $1 AND org_id = $2`,
 		`DELETE FROM oauth_refresh_tokens WHERE user_id = $1 AND org_id = $2`,
@@ -859,17 +931,34 @@ func (s *Service) executeDSARDelete(ctx context.Context, dsar *DataSubjectReques
 		`DELETE FROM mfa_webauthn WHERE user_id = $1 AND org_id = $2`,
 		`DELETE FROM mfa_push_devices WHERE user_id = $1 AND org_id = $2`,
 		`DELETE FROM mfa_backup_codes WHERE user_id = $1 AND org_id = $2`,
+		// The tables that actually hold a phone number. The doc comment above
+		// has always promised "no leftover phone numbers"; nothing wiped these.
+		`DELETE FROM mfa_sms WHERE user_id = $1 AND org_id = $2`,
+		`DELETE FROM mfa_phone_call WHERE user_id = $1 AND org_id = $2`,
+		`DELETE FROM phone_call_challenges WHERE user_id = $1 AND org_id = $2`,
+		// And the ones that hold a device fingerprint, an address and a user
+		// agent -- the "device IDs" half of the same promise.
+		`DELETE FROM known_devices WHERE user_id = $1 AND org_id = $2`,
+		`DELETE FROM trusted_browsers WHERE user_id = $1 AND org_id = $2`,
 		`DELETE FROM user_consents WHERE user_id = $1 AND org_id = $2`,
 		`DELETE FROM api_keys WHERE user_id = $1 AND org_id = $2`,
 	}
 	wiped := 0
+	var failures []string
 	for _, sql := range wipes {
 		if _, err := s.db.Pool.Exec(ctx, sql, dsar.UserID, orgID); err != nil {
-			s.logger.Debug("DSAR delete skipped table",
-				zap.String("sql", sql), zap.Error(err))
+			s.logger.Error("DSAR erasure statement failed; the subject's data is still present",
+				zap.String("dsar_id", dsar.ID), zap.String("sql", sql), zap.Error(err))
+			failures = append(failures, sql)
 			continue
 		}
 		wiped++
+	}
+	if len(failures) > 0 {
+		// Not marked completed: an erasure that left data behind is not one.
+		return nil, fmt.Errorf("erasure incomplete: %d of %d statements failed, "+
+			"the subject's data is still present (see the logged statements)",
+			len(failures), len(wipes))
 	}
 
 	if _, err := s.db.Pool.Exec(ctx,

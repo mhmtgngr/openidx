@@ -3,7 +3,6 @@ package risk
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
@@ -357,69 +356,13 @@ func TestCalculateSpeed(t *testing.T) {
 	}
 }
 
-// TestRiskAssessment_GetSignalSummary tests signal summary generation
-func TestRiskAssessment_GetSignalSummary(t *testing.T) {
-	assessment := &RiskAssessment{
-		Score: 65,
-		Level: RiskLevelHigh,
-		Signals: []Signal{
-			{Name: "ip_reputation", Weight: 0.20, Score: 0, Description: "IP not on blocklist"},
-			{Name: "device_trust", Weight: 0.20, Score: 40, Description: "Unknown device"},
-			{Name: "failed_attempts", Weight: 0.10, Score: 25, Description: "3 failed attempts"},
-		},
-		Recommendation: RecommendationStepUpMFA,
-		AssessedAt:     time.Now(),
-	}
+// TestRiskAssessment_GetSignalSummary and TestRiskAssessment_GetHighRiskSignals
+// stood here, along with TestRiskAssessment_ToJSON in scorer_test.go. All three
+// methods are deleted: they were a reporting surface on the assessment that no
+// caller anywhere used, and these tests were their only exercise. The
+// assessment itself stays live -- the service reads its Score and
+// Recommendation, which the scorer tests above cover.
 
-	summary := assessment.GetSignalSummary()
-
-	if summary == "" {
-		t.Error("Summary should not be empty")
-	}
-
-	// Check for key components
-	expectedStrings := []string{
-		"Risk Score: 65",
-		"high",
-		"step_up_mfa",
-		"ip_reputation",
-		"device_trust",
-		"failed_attempts",
-	}
-
-	for _, expected := range expectedStrings {
-		if !strings.Contains(summary, expected) {
-			t.Errorf("Summary should contain '%s'", expected)
-		}
-	}
-}
-
-// TestRiskAssessment_GetHighRiskSignals tests filtering high risk signals
-func TestRiskAssessment_GetHighRiskSignals(t *testing.T) {
-	assessment := &RiskAssessment{
-		Score: 75,
-		Signals: []Signal{
-			{Name: "low_risk", Score: 5},
-			{Name: "medium_risk", Score: 15},
-			{Name: "high_risk1", Score: 25},
-			{Name: "high_risk2", Score: 30},
-		},
-	}
-
-	highRisk := assessment.GetHighRiskSignals()
-
-	if len(highRisk) != 2 {
-		t.Errorf("Expected 2 high risk signals, got %d", len(highRisk))
-	}
-
-	for _, signal := range highRisk {
-		if signal.Score < 20 {
-			t.Errorf("Signal %s has score %.1f, should be >= 20", signal.Name, signal.Score)
-		}
-	}
-}
-
-// TestScorerConfig_CustomThresholds tests custom risk thresholds
 func TestScorerConfig_CustomThresholds(t *testing.T) {
 	config := ScorerConfig{
 		MediumRiskThreshold:   30,

@@ -26,6 +26,11 @@ var (
 	oauthURL    = envOrDefault("OAUTH_URL", "http://localhost:8006")
 	identityURL = envOrDefault("IDENTITY_URL", "http://localhost:8001")
 	gatewayURL  = envOrDefault("GATEWAY_URL", "http://localhost:8008")
+	// adminAPIURL is the only service that mounts TenantResolver AFTER auth
+	// (cmd/admin-api/main.go, on the /api/v1 group), which is what makes the
+	// JWT-claim and platform-admin resolution paths reachable there and nowhere
+	// else. TestCrossOrgIsolation needs it for that reason.
+	adminAPIURL = envOrDefault("ADMIN_API_URL", "http://localhost:8005")
 	clientID    = "admin-console"
 	// Must match the redirect_uri the admin-console client is seeded with
 	// (deployments seed migration v10) — previously /login, which never

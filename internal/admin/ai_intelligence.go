@@ -196,11 +196,16 @@ func (s *Service) computeOrgIntelligence(ctx context.Context, orgID string) (*or
 		rows.Close()
 	}
 
+	// The 24-hour sign-in totals behind the org intelligence summary. A
+	// discarded error reported "0 sign-ins, 0 failures" -- the reading an
+	// operator takes as a quiet day rather than as a broken query.
 	var logins24h, failed24h int
-	_ = s.db.Pool.QueryRow(ctx, `
+	if err := s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*), COUNT(*) FILTER (WHERE NOT success)
 		  FROM login_history WHERE org_id = $1 AND created_at > NOW() - INTERVAL '24 hours'`,
-		orgID).Scan(&logins24h, &failed24h)
+		orgID).Scan(&logins24h, &failed24h); err != nil {
+		return nil, fmt.Errorf("24-hour sign-in totals: %w", err)
+	}
 
 	out := &orgIntelligence{
 		Levels:        map[string]int{"low": 0, "medium": 0, "high": 0, "critical": 0},

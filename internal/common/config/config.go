@@ -66,7 +66,15 @@ type Config struct {
 	OAuthJWKSURL string `mapstructure:"oauth_jwks_url"`
 
 	// Security settings
-	JWTSecret          string `mapstructure:"jwt_secret"`
+	//
+	// JWT_SECRET is NOT here. Every token this product mints or accepts is
+	// RS256, signed with the rotatable key in oauth_signing_keys and verified
+	// through JWKS; the shared middleware refuses any other algorithm by name
+	// (internal/oauth/jwt_signature_verify_test.go pins that). A symmetric
+	// secret had a field, a default, an environment binding, a compose
+	// `:?required`, a line in the generator and a production check that blocked
+	// startup without it -- and nothing signed or verified anything with it.
+	// See retired.go.
 	EncryptionKey      string `mapstructure:"encryption_key"`
 	CORSAllowedOrigins string `mapstructure:"cors_allowed_origins"`
 
@@ -210,6 +218,18 @@ type Config struct {
 	// AgentDownloadsDir is the directory of per-OS agent installers (msi/pkg/deb/
 	// rpm) served at /downloads/<file> and advertised by /downloads/agent-manifest.json.
 	AgentDownloadsDir string `mapstructure:"agent_downloads_dir"`
+
+	// AccessRequestMaxDurationHours bounds how long a time-bound access request
+	// may elevate somebody for. Default 2160 (90 days) — the longest window the
+	// product has ever documented as supported, so the default rejects nothing
+	// that previously worked while ending the state it replaced: a
+	// "time-bound" elevation that accepted any number at all, including one
+	// large enough to wrap the clock into the past.
+	//
+	// A request over the ceiling is refused with the maximum named; it is never
+	// silently shortened, because an approver reading "30 days" must not be
+	// approving something else.
+	AccessRequestMaxDurationHours int `mapstructure:"access_request_max_duration_hours"`
 
 	// SelfHealStateDir is where the self-heal loop writes its runtime state
 	// (latest.json, ledger.jsonl, actions.jsonl, MODE, DISABLE, flap). The
@@ -476,6 +496,24 @@ type Config struct {
 	// Audit Stream WebSocket configuration
 	AuditStreamAllowedOrigins string `mapstructure:"audit_stream_allowed_origins"`
 
+	// AuditChainSecret is the HMAC key the audit sealer chains events with.
+	// Empty means the chain does not run: audit rows are still written and
+	// still readable, they simply carry no tamper evidence, and
+	// GET /api/v1/audit/chain/verify says so rather than reporting an intact
+	// chain over nothing. Production requires it, because the documentation
+	// states the product keeps a tamper-evident log and a control that is
+	// documented but silently off is the defect this whole programme exists
+	// for. It is deliberately NOT derived from ENCRYPTION_KEY or
+	// ACCESS_SESSION_SECRET: whoever can read the audit database must not also
+	// hold the key that would let them re-seal a doctored trail.
+	AuditChainSecret string `mapstructure:"audit_chain_secret"`
+
+	// AuditChainInterval is how often the sealer sweeps for unsealed rows.
+	// Shorter closes the window in which a row can be altered before it is
+	// covered; longer costs less. The verification response reports the
+	// unsealed count so the window is visible either way.
+	AuditChainInterval time.Duration `mapstructure:"audit_chain_interval"`
+
 	// Redis Sentinel configuration
 	RedisSentinelEnabled    bool   `mapstructure:"redis_sentinel_enabled"`
 	RedisSentinelMasterName string `mapstructure:"redis_sentinel_master_name"`
@@ -640,11 +678,9 @@ func (w WebAuthnConfig) HasAndroidAssetLinks() bool {
 
 // PushMFAConfig holds Push MFA configuration
 type PushMFAConfig struct {
+	// Enabled turns the push MFA factor on. Off refuses enrolment and refuses to
+	// raise a challenge, rather than raising one nothing can answer.
 	Enabled bool `mapstructure:"enabled"`
-	// FCMServerKey is the legacy FCM server key. DEPRECATED: Google decommissioned
-	// the legacy HTTP and XMPP APIs in 2024; it is unused. Configure the HTTP v1
-	// credentials below instead.
-	FCMServerKey string `mapstructure:"fcm_server_key"`
 	// FCMCredentialsFile is the path to a Firebase service-account JSON used for
 	// FCM HTTP v1 (OAuth2 bearer token). Required for Android/web push.
 	FCMCredentialsFile string `mapstructure:"fcm_credentials_file"`
@@ -673,9 +709,13 @@ type SMSConfig struct {
 	WebhookURL    string `mapstructure:"webhook_url"`     // Custom webhook URL for SMS delivery
 	WebhookAPIKey string `mapstructure:"webhook_api_key"` // API key for webhook authentication
 	MessagePrefix string `mapstructure:"message_prefix"`  // Prefix for OTP messages (default: "OpenIDX")
-	OTPLength     int    `mapstructure:"otp_length"`      // Length of OTP code (default: 6)
-	OTPExpiry     int    `mapstructure:"otp_expiry"`      // OTP expiry in seconds (default: 300)
-	MaxAttempts   int    `mapstructure:"max_attempts"`    // Max verification attempts (default: 3)
+
+	// The OTP code's length, lifetime and attempt ceiling are NOT here. They are
+	// installation settings stored in system_settings and edited in the admin
+	// console under Settings → SMS, which the identity service picks up without
+	// a restart. They were duplicated here as sms.otp_length / sms.otp_expiry /
+	// sms.max_attempts, read by nothing, so an install that set them got the
+	// defaults and no indication otherwise; see retired.go.
 
 	// Turkish SMS gateway providers
 	NetGSMUserCode     string `mapstructure:"netgsm_usercode"`     // NetGSM user code
@@ -794,6 +834,7 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("device_autotrust_require_posture", false)
 	v.SetDefault("enroll_session_ttl_minutes", 15)
 	v.SetDefault("agent_downloads_dir", "deployments/downloads")
+	v.SetDefault("access_request_max_duration_hours", 90*24)
 	v.SetDefault("selfheal_state_dir", "/home/cmit/oidx-runtime/selfheal")
 	v.SetDefault("selfheal_scripts_dir", "scripts/selfheal")
 	v.SetDefault("pam_session_risk_gate", "off")
@@ -934,9 +975,6 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("sms.enabled", false)
 	v.SetDefault("sms.provider", "mock")
 	v.SetDefault("sms.message_prefix", "OpenIDX")
-	v.SetDefault("sms.otp_length", 6)
-	v.SetDefault("sms.otp_expiry", 300)
-	v.SetDefault("sms.max_attempts", 3)
 
 	// Redis Sentinel defaults
 	v.SetDefault("redis_sentinel_enabled", false)
@@ -993,6 +1031,8 @@ func setDefaults(v *viper.Viper, serviceName string) {
 
 	// Audit Stream WebSocket defaults (development-friendly)
 	v.SetDefault("audit_stream_allowed_origins", "")
+	v.SetDefault("audit_chain_secret", "")
+	v.SetDefault("audit_chain_interval", 60*time.Second)
 
 	// Vault (PAM credential vault) defaults
 	v.SetDefault("vault_reveal_lease_ttl_seconds", 300)
@@ -1015,117 +1055,117 @@ func setDefaults(v *viper.Viper, serviceName string) {
 func bindEnvVars(v *viper.Viper) {
 	// Common environment variable mappings
 	envMappings := map[string]string{
-		"database_url":                        "DATABASE_URL",
-		"redis_url":                           "REDIS_URL",
-		"elasticsearch_url":                   "ELASTICSEARCH_URL",
-		"opa_url":                             "OPA_URL",
-		"environment":                         "APP_ENV",
-		"log_level":                           "LOG_LEVEL",
-		"port":                                "PORT",
-		"bind_addr":                           "SERVICE_BIND_ADDR",
-		"dark_mode_tier1":                     "DARK_MODE_TIER1",
-		"dark_mode_tier2":                     "DARK_MODE_TIER2",
-		"posture_device_trust_gate":           "POSTURE_DEVICE_TRUST_GATE",
-		"device_autotrust_mode":               "DEVICE_AUTOTRUST_MODE",
-		"device_autotrust_known_orgs":         "DEVICE_AUTOTRUST_KNOWN_ORGS",
-		"device_autotrust_require_posture":    "DEVICE_AUTOTRUST_REQUIRE_POSTURE",
-		"enroll_session_ttl_minutes":          "ENROLL_SESSION_TTL_MINUTES",
-		"agent_downloads_dir":                 "AGENT_DOWNLOADS_DIR",
-		"selfheal_state_dir":                  "SELFHEAL_STATE_DIR",
-		"selfheal_scripts_dir":                "SELFHEAL_SCRIPTS_DIR",
-		"pam_session_risk_gate":               "PAM_SESSION_RISK_GATE",
-		"pam_ssh_require_host_key":            "PAM_SSH_REQUIRE_HOST_KEY",
-		"abac_enforce":                        "ABAC_ENFORCE",
-		"pam_session_risk_threshold":          "PAM_SESSION_RISK_THRESHOLD",
-		"dev_admin_bypass":                    "DEV_ADMIN_BYPASS",
-		"access_api_require_auth":             "ACCESS_API_REQUIRE_AUTH",
-		"admin_api_require_auth":              "ADMIN_API_REQUIRE_AUTH",
-		"show_all_apps_when_unassigned":       "SHOW_ALL_APPS_WHEN_UNASSIGNED",
-		"access_assignment_enforce":           "ACCESS_ASSIGNMENT_ENFORCE",
-		"oauth_login_url":                     "OAUTH_LOGIN_URL",
-		"shutdown_timeout_seconds":            "SHUTDOWN_TIMEOUT_SECONDS",
-		"public_base_url":                     "PUBLIC_BASE_URL",
-		"oauth_issuer":                        "OAUTH_ISSUER",
-		"tenant_base_domain":                  "TENANT_BASE_DOMAIN",
-		"dcr_initial_access_token":            "DCR_INITIAL_ACCESS_TOKEN",
-		"dcr_allow_open_registration":         "DCR_ALLOW_OPEN_REGISTRATION",
-		"ssf_receiver_issuer":                 "SSF_RECEIVER_ISSUER",
-		"ssf_receiver_jwks_url":               "SSF_RECEIVER_JWKS_URL",
-		"ziti_per_org_attributes":             "ZITI_PER_ORG_ATTRIBUTES",
-		"default_org_fallback":                "DEFAULT_ORG_FALLBACK",
-		"default_org_id":                      "DEFAULT_ORG_ID",
-		"oauth_jwks_url":                      "OAUTH_JWKS_URL",
-		"governance_url":                      "GOVERNANCE_URL",
-		"audit_url":                           "AUDIT_URL",
-		"internal_service_token":              "INTERNAL_SERVICE_TOKEN",
-		"access_session_secret":               "ACCESS_SESSION_SECRET",
-		"access_proxy_domain":                 "ACCESS_PROXY_DOMAIN",
-		"access_apps_domain":                  "ACCESS_APPS_DOMAIN",
-		"ziti_enabled":                        "ZITI_ENABLED",
-		"ziti_reconciler":                     "ZITI_RECONCILER",
-		"ziti_ctrl_url":                       "ZITI_CTRL_URL",
-		"ziti_ctrl_urls":                      "ZITI_CTRL_URLS",
-		"ziti_ctrl_public_address":            "ZITI_CTRL_PUBLIC_ADDRESS",
-		"ziti_admin_user":                     "ZITI_ADMIN_USER",
-		"ziti_admin_password":                 "ZITI_ADMIN_PASSWORD",
-		"ziti_identity_dir":                   "ZITI_IDENTITY_DIR",
-		"ziti_insecure_skip_verify":           "ZITI_INSECURE_SKIP_VERIFY",
-		"ziti_console_url":                    "ZITI_CONSOLE_URL",
-		"continuous_verify_enabled":           "CONTINUOUS_VERIFY_ENABLED",
-		"continuous_verify_interval":          "CONTINUOUS_VERIFY_INTERVAL",
-		"geoip_service_url":                   "GEOIP_SERVICE_URL",
-		"guacamole_url":                       "GUACAMOLE_URL",
-		"guacamole_admin_user":                "GUACAMOLE_ADMIN_USER",
-		"guacamole_admin_password":            "GUACAMOLE_ADMIN_PASSWORD",
-		"guacamole_recording_path":            "GUACAMOLE_RECORDING_PATH",
-		"guacamole_public_url":                "GUACAMOLE_PUBLIC_URL",
-		"guacamole_ziti_url":                  "GUACAMOLE_ZITI_URL",
-		"guacamole_ziti_admin_user":           "GUACAMOLE_ZITI_ADMIN_USER",
-		"guacamole_ziti_admin_password":       "GUACAMOLE_ZITI_ADMIN_PASSWORD",
-		"guacamole_ziti_public_url":           "GUACAMOLE_ZITI_PUBLIC_URL",
-		"guacamole_per_user_identities":       "GUACAMOLE_PER_USER_IDENTITIES",
-		"guacamole_http_timeout_seconds":      "GUACAMOLE_HTTP_TIMEOUT_SECONDS",
-		"ziti_http_timeout_seconds":           "ZITI_HTTP_TIMEOUT_SECONDS",
-		"ai_enabled":                          "AI_ENABLED",
-		"ai_base_url":                         "AI_BASE_URL",
-		"ai_model":                            "AI_MODEL",
-		"ai_http_timeout_seconds":             "AI_HTTP_TIMEOUT_SECONDS",
-		"browzer_enabled":                     "BROWZER_ENABLED",
-		"browzer_client_id":                   "BROWZER_CLIENT_ID",
-		"browzer_targets_path":                "BROWZER_TARGETS_PATH",
-		"browzer_router_config_path":          "BROWZER_ROUTER_CONFIG_PATH",
-		"browzer_hop_config_path":             "BROWZER_HOP_CONFIG_PATH",
-		"browzer_hop_cert_path":               "BROWZER_HOP_CERT_PATH",
-		"browzer_hop_key_path":                "BROWZER_HOP_KEY_PATH",
-		"browzer_certs_path":                  "BROWZER_CERTS_PATH",
-		"browzer_router_host":                 "BROWZER_ROUTER_HOST",
-		"browzer_router_port":                 "BROWZER_ROUTER_PORT",
-		"ziti_browzer_hop_addr":               "BROWZER_HOP_ADDR",
-		"browzer_vhost_config_path":           "BROWZER_VHOST_CONFIG_PATH",
-		"browzer_bootstrapper_addr":           "BROWZER_BOOTSTRAPPER_ADDR",
-		"browzer_vhost_ssl_cert":              "BROWZER_VHOST_SSL_CERT",
-		"browzer_vhost_ssl_key":               "BROWZER_VHOST_SSL_KEY",
-		"browzer_oidc_callback_paths":         "BROWZER_OIDC_CALLBACK_PATHS",
-		"apisix_config_path":                  "APISIX_CONFIG_PATH",
-		"apisix_edge_enabled":                 "APISIX_EDGE_ENABLED",
-		"require_device_trust_for_clientless": "OPENIDX_REQUIRE_DEVICE_TRUST_FOR_CLIENTLESS",
-		"apisix_admin_url":                    "APISIX_ADMIN_URL",
-		"apisix_admin_key":                    "APISIX_ADMIN_KEY",
-		"apisix_bootstrapper_node":            "APISIX_BOOTSTRAPPER_NODE",
-		"enable_opa_authz":                    "ENABLE_OPA_AUTHZ",
-		"jwt_secret":                          "JWT_SECRET",
-		"encryption_key":                      "ENCRYPTION_KEY",
-		"vault_kek":                           "VAULT_KEK",
-		"vault_keks":                          "VAULT_KEKS",
-		"vault_active_kek_id":                 "VAULT_ACTIVE_KEK_ID",
-		"vault_reveal_lease_ttl_seconds":      "VAULT_REVEAL_LEASE_TTL_SECONDS",
-		"bao_addr":                            "BAO_ADDR",
-		"bao_token":                           "BAO_TOKEN",
-		"bao_kek_path":                        "BAO_KEK_PATH",
-		"bao_cacert":                          "BAO_CACERT",
-		"ntfy_base_url":                       "NTFY_BASE_URL",
-		"ntfy_token":                          "NTFY_TOKEN",
-		"ntfy_topic_secret":                   "NTFY_TOPIC_SECRET",
+		"database_url":                                    "DATABASE_URL",
+		"redis_url":                                       "REDIS_URL",
+		"elasticsearch_url":                               "ELASTICSEARCH_URL",
+		"opa_url":                                         "OPA_URL",
+		"environment":                                     "APP_ENV",
+		"log_level":                                       "LOG_LEVEL",
+		"port":                                            "PORT",
+		"bind_addr":                                       "SERVICE_BIND_ADDR",
+		"dark_mode_tier1":                                 "DARK_MODE_TIER1",
+		"dark_mode_tier2":                                 "DARK_MODE_TIER2",
+		"posture_device_trust_gate":                       "POSTURE_DEVICE_TRUST_GATE",
+		"device_autotrust_mode":                           "DEVICE_AUTOTRUST_MODE",
+		"device_autotrust_known_orgs":                     "DEVICE_AUTOTRUST_KNOWN_ORGS",
+		"device_autotrust_require_posture":                "DEVICE_AUTOTRUST_REQUIRE_POSTURE",
+		"enroll_session_ttl_minutes":                      "ENROLL_SESSION_TTL_MINUTES",
+		"agent_downloads_dir":                             "AGENT_DOWNLOADS_DIR",
+		"access_request_max_duration_hours":               "ACCESS_REQUEST_MAX_DURATION_HOURS",
+		"selfheal_state_dir":                              "SELFHEAL_STATE_DIR",
+		"selfheal_scripts_dir":                            "SELFHEAL_SCRIPTS_DIR",
+		"pam_session_risk_gate":                           "PAM_SESSION_RISK_GATE",
+		"pam_ssh_require_host_key":                        "PAM_SSH_REQUIRE_HOST_KEY",
+		"abac_enforce":                                    "ABAC_ENFORCE",
+		"pam_session_risk_threshold":                      "PAM_SESSION_RISK_THRESHOLD",
+		"dev_admin_bypass":                                "DEV_ADMIN_BYPASS",
+		"access_api_require_auth":                         "ACCESS_API_REQUIRE_AUTH",
+		"admin_api_require_auth":                          "ADMIN_API_REQUIRE_AUTH",
+		"show_all_apps_when_unassigned":                   "SHOW_ALL_APPS_WHEN_UNASSIGNED",
+		"access_assignment_enforce":                       "ACCESS_ASSIGNMENT_ENFORCE",
+		"oauth_login_url":                                 "OAUTH_LOGIN_URL",
+		"shutdown_timeout_seconds":                        "SHUTDOWN_TIMEOUT_SECONDS",
+		"public_base_url":                                 "PUBLIC_BASE_URL",
+		"oauth_issuer":                                    "OAUTH_ISSUER",
+		"tenant_base_domain":                              "TENANT_BASE_DOMAIN",
+		"dcr_initial_access_token":                        "DCR_INITIAL_ACCESS_TOKEN",
+		"dcr_allow_open_registration":                     "DCR_ALLOW_OPEN_REGISTRATION",
+		"ssf_receiver_issuer":                             "SSF_RECEIVER_ISSUER",
+		"ssf_receiver_jwks_url":                           "SSF_RECEIVER_JWKS_URL",
+		"ziti_per_org_attributes":                         "ZITI_PER_ORG_ATTRIBUTES",
+		"default_org_fallback":                            "DEFAULT_ORG_FALLBACK",
+		"default_org_id":                                  "DEFAULT_ORG_ID",
+		"oauth_jwks_url":                                  "OAUTH_JWKS_URL",
+		"governance_url":                                  "GOVERNANCE_URL",
+		"audit_url":                                       "AUDIT_URL",
+		"internal_service_token":                          "INTERNAL_SERVICE_TOKEN",
+		"access_session_secret":                           "ACCESS_SESSION_SECRET",
+		"access_proxy_domain":                             "ACCESS_PROXY_DOMAIN",
+		"access_apps_domain":                              "ACCESS_APPS_DOMAIN",
+		"ziti_enabled":                                    "ZITI_ENABLED",
+		"ziti_reconciler":                                 "ZITI_RECONCILER",
+		"ziti_ctrl_url":                                   "ZITI_CTRL_URL",
+		"ziti_ctrl_urls":                                  "ZITI_CTRL_URLS",
+		"ziti_ctrl_public_address":                        "ZITI_CTRL_PUBLIC_ADDRESS",
+		"ziti_admin_user":                                 "ZITI_ADMIN_USER",
+		"ziti_admin_password":                             "ZITI_ADMIN_PASSWORD",
+		"ziti_identity_dir":                               "ZITI_IDENTITY_DIR",
+		"ziti_insecure_skip_verify":                       "ZITI_INSECURE_SKIP_VERIFY",
+		"ziti_console_url":                                "ZITI_CONSOLE_URL",
+		"continuous_verify_enabled":                       "CONTINUOUS_VERIFY_ENABLED",
+		"continuous_verify_interval":                      "CONTINUOUS_VERIFY_INTERVAL",
+		"geoip_service_url":                               "GEOIP_SERVICE_URL",
+		"guacamole_url":                                   "GUACAMOLE_URL",
+		"guacamole_admin_user":                            "GUACAMOLE_ADMIN_USER",
+		"guacamole_admin_password":                        "GUACAMOLE_ADMIN_PASSWORD",
+		"guacamole_recording_path":                        "GUACAMOLE_RECORDING_PATH",
+		"guacamole_public_url":                            "GUACAMOLE_PUBLIC_URL",
+		"guacamole_ziti_url":                              "GUACAMOLE_ZITI_URL",
+		"guacamole_ziti_admin_user":                       "GUACAMOLE_ZITI_ADMIN_USER",
+		"guacamole_ziti_admin_password":                   "GUACAMOLE_ZITI_ADMIN_PASSWORD",
+		"guacamole_ziti_public_url":                       "GUACAMOLE_ZITI_PUBLIC_URL",
+		"guacamole_per_user_identities":                   "GUACAMOLE_PER_USER_IDENTITIES",
+		"guacamole_http_timeout_seconds":                  "GUACAMOLE_HTTP_TIMEOUT_SECONDS",
+		"ziti_http_timeout_seconds":                       "ZITI_HTTP_TIMEOUT_SECONDS",
+		"ai_enabled":                                      "AI_ENABLED",
+		"ai_base_url":                                     "AI_BASE_URL",
+		"ai_model":                                        "AI_MODEL",
+		"ai_http_timeout_seconds":                         "AI_HTTP_TIMEOUT_SECONDS",
+		"browzer_enabled":                                 "BROWZER_ENABLED",
+		"browzer_client_id":                               "BROWZER_CLIENT_ID",
+		"browzer_targets_path":                            "BROWZER_TARGETS_PATH",
+		"browzer_router_config_path":                      "BROWZER_ROUTER_CONFIG_PATH",
+		"browzer_hop_config_path":                         "BROWZER_HOP_CONFIG_PATH",
+		"browzer_hop_cert_path":                           "BROWZER_HOP_CERT_PATH",
+		"browzer_hop_key_path":                            "BROWZER_HOP_KEY_PATH",
+		"browzer_certs_path":                              "BROWZER_CERTS_PATH",
+		"browzer_router_host":                             "BROWZER_ROUTER_HOST",
+		"browzer_router_port":                             "BROWZER_ROUTER_PORT",
+		"ziti_browzer_hop_addr":                           "BROWZER_HOP_ADDR",
+		"browzer_vhost_config_path":                       "BROWZER_VHOST_CONFIG_PATH",
+		"browzer_bootstrapper_addr":                       "BROWZER_BOOTSTRAPPER_ADDR",
+		"browzer_vhost_ssl_cert":                          "BROWZER_VHOST_SSL_CERT",
+		"browzer_vhost_ssl_key":                           "BROWZER_VHOST_SSL_KEY",
+		"browzer_oidc_callback_paths":                     "BROWZER_OIDC_CALLBACK_PATHS",
+		"apisix_config_path":                              "APISIX_CONFIG_PATH",
+		"apisix_edge_enabled":                             "APISIX_EDGE_ENABLED",
+		"require_device_trust_for_clientless":             "OPENIDX_REQUIRE_DEVICE_TRUST_FOR_CLIENTLESS",
+		"apisix_admin_url":                                "APISIX_ADMIN_URL",
+		"apisix_admin_key":                                "APISIX_ADMIN_KEY",
+		"apisix_bootstrapper_node":                        "APISIX_BOOTSTRAPPER_NODE",
+		"enable_opa_authz":                                "ENABLE_OPA_AUTHZ",
+		"encryption_key":                                  "ENCRYPTION_KEY",
+		"vault_kek":                                       "VAULT_KEK",
+		"vault_keks":                                      "VAULT_KEKS",
+		"vault_active_kek_id":                             "VAULT_ACTIVE_KEK_ID",
+		"vault_reveal_lease_ttl_seconds":                  "VAULT_REVEAL_LEASE_TTL_SECONDS",
+		"bao_addr":                                        "BAO_ADDR",
+		"bao_token":                                       "BAO_TOKEN",
+		"bao_kek_path":                                    "BAO_KEK_PATH",
+		"bao_cacert":                                      "BAO_CACERT",
+		"ntfy_base_url":                                   "NTFY_BASE_URL",
+		"ntfy_token":                                      "NTFY_TOKEN",
+		"ntfy_topic_secret":                               "NTFY_TOPIC_SECRET",
 		"credentials_rotation_scheduler_interval_seconds": "CREDENTIALS_ROTATION_SCHEDULER_INTERVAL_SECONDS",
 		"credentials_rotation_default_length":             "CREDENTIALS_ROTATION_DEFAULT_LENGTH",
 		"smtp_host":                                       "SMTP_HOST",
@@ -1143,13 +1183,20 @@ func bindEnvVars(v *viper.Viper) {
 		"sms.aws_secret_key":                              "AWS_SECRET_ACCESS_KEY",
 		"sms.webhook_url":                                 "SMS_WEBHOOK_URL",
 		"sms.webhook_api_key":                             "SMS_WEBHOOK_API_KEY",
-		"push_mfa.fcm_credentials_file":                   "PUSH_MFA_FCM_CREDENTIALS_FILE",
-		"push_mfa.fcm_project_id":                         "PUSH_MFA_FCM_PROJECT_ID",
-		"push_mfa.apns_key_id":                            "PUSH_MFA_APNS_KEY_ID",
-		"push_mfa.apns_team_id":                           "PUSH_MFA_APNS_TEAM_ID",
-		"push_mfa.apns_key_path":                          "PUSH_MFA_APNS_KEY_PATH",
-		"push_mfa.apns_bundle_id":                         "PUSH_MFA_APNS_BUNDLE_ID",
-		"push_mfa.apns_production":                        "PUSH_MFA_APNS_PRODUCTION",
+		// Push MFA's switch and its challenge window, unprefixed. Without these
+		// bindings PUSH_MFA_ENABLED is ignored -- viper's prefixed AutomaticEnv
+		// only matches OPENIDX_PUSH_MFA_* -- while configs/audit-service.yaml
+		// writes `enabled: ${PUSH_MFA_ENABLED:true}` and the deployment guide
+		// names it. Same shape as the WebAuthn bindings below.
+		"push_mfa.enabled":              "PUSH_MFA_ENABLED",
+		"push_mfa.challenge_timeout":    "PUSH_MFA_CHALLENGE_TIMEOUT",
+		"push_mfa.fcm_credentials_file": "PUSH_MFA_FCM_CREDENTIALS_FILE",
+		"push_mfa.fcm_project_id":       "PUSH_MFA_FCM_PROJECT_ID",
+		"push_mfa.apns_key_id":          "PUSH_MFA_APNS_KEY_ID",
+		"push_mfa.apns_team_id":         "PUSH_MFA_APNS_TEAM_ID",
+		"push_mfa.apns_key_path":        "PUSH_MFA_APNS_KEY_PATH",
+		"push_mfa.apns_bundle_id":       "PUSH_MFA_APNS_BUNDLE_ID",
+		"push_mfa.apns_production":      "PUSH_MFA_APNS_PRODUCTION",
 		// Turkish SMS providers
 		"sms.netgsm_usercode":        "NETGSM_USERCODE",
 		"sms.netgsm_password":        "NETGSM_PASSWORD",
@@ -1227,6 +1274,8 @@ func bindEnvVars(v *viper.Viper) {
 		"recordings_s3_access_key":          "RECORDINGS_S3_ACCESS_KEY",
 		"recordings_s3_secret_key":          "RECORDINGS_S3_SECRET_KEY",
 		"recordings_s3_use_ssl":             "RECORDINGS_S3_USE_SSL",
+		"audit_chain_secret":                "AUDIT_CHAIN_SECRET",
+		"audit_chain_interval":              "AUDIT_CHAIN_INTERVAL",
 	}
 
 	for key, env := range envMappings {
@@ -1375,9 +1424,6 @@ func (c *Config) ProductionWarnings() []string {
 		return nil
 	}
 	var warnings []string
-	if c.JWTSecret == "" || strings.Contains(strings.ToLower(c.JWTSecret), "change") {
-		warnings = append(warnings, "jwt_secret uses a default or placeholder value")
-	}
 	if c.EncryptionKey == "" || strings.Contains(strings.ToLower(c.EncryptionKey), "change") {
 		warnings = append(warnings, "encryption_key uses a default or placeholder value")
 	}
@@ -1431,12 +1477,6 @@ func (c *Config) ValidateProduction() error {
 			"access_session_secret must be set to a secure random value (at least 32 bytes)")
 	}
 
-	// Critical: JWT signing key must be secure
-	if c.JWTSecret == "" || strings.Contains(strings.ToLower(c.JWTSecret), "change") {
-		criticalIssues = append(criticalIssues,
-			"jwt_secret must be set to a secure random value (at least 32 bytes)")
-	}
-
 	// Critical: Encryption key for sensitive data
 	if c.EncryptionKey == "" || strings.Contains(strings.ToLower(c.EncryptionKey), "change") {
 		criticalIssues = append(criticalIssues,
@@ -1451,6 +1491,20 @@ func (c *Config) ValidateProduction() error {
 	if c.VaultKEK == "" && c.VaultKEKs == "" {
 		criticalIssues = append(criticalIssues,
 			"vault_kek or vault_keks must be set in production; do not rely on the ENCRYPTION_KEY fallback for the vault key-encryption key")
+	}
+
+	// Critical: the audit trail's tamper evidence must actually run. The docs
+	// index, the architecture page, the audit reference page and the README's
+	// readiness checklist all state that OpenIDX keeps a tamper-evident
+	// HMAC hash-chain audit log. Without a chain secret the sealer does not
+	// start and every audit row is unchained -- editable in the database with
+	// nothing to show for it. A documented control that is silently off is
+	// worse than an absent one, because the evidence package still claims it.
+	// Deliberately not defaulted to another secret: whoever can read the audit
+	// store must not also hold the key to re-seal a doctored trail.
+	if c.AuditChainSecret == "" || strings.Contains(strings.ToLower(c.AuditChainSecret), "change") {
+		criticalIssues = append(criticalIssues,
+			"audit_chain_secret must be set to a secure random value; without it the audit hash chain does not run and the trail carries no tamper evidence")
 	}
 
 	// Critical: Wildcard CORS in production allows any origin

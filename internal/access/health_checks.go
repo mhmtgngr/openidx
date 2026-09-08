@@ -299,10 +299,16 @@ func registerChecks(s *Service) []Check {
 		// users ↔ ziti_identities — report only.
 		&fnCheck{id: "identity-ziti", domain: "identity",
 			detect: func(ctx context.Context) ([]Finding, error) {
+				// A doctor that cannot look does not get to say "ok". The error
+				// was discarded here, so a failed scan left unlinked at 0 and
+				// the check reported a clean install -- which is the one answer
+				// an integrity check must never give from no evidence.
 				var unlinked int
-				s.db.Pool.QueryRow(ctx,
+				if err := s.db.Pool.QueryRow(ctx,
 					//orgscope:ignore Relations & Integrity Doctor: identity↔user orphan scan across the whole install (all orgs by design)
-					`SELECT count(*) FROM ziti_identities zi WHERE zi.user_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id=zi.user_id)`).Scan(&unlinked)
+					`SELECT count(*) FROM ziti_identities zi WHERE zi.user_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id=zi.user_id)`).Scan(&unlinked); err != nil {
+					return nil, fmt.Errorf("identity-ziti orphan scan: %w", err)
+				}
 				if unlinked > 0 {
 					return []Finding{{CheckID: "identity-ziti", Domain: "identity", Severity: "warn", Status: "orphan",
 						Safe: false, Subject: "ziti_identities", Detail: fmt.Sprintf("%d identities reference a missing user", unlinked), Action: "review (manual)"}}, nil
@@ -313,11 +319,18 @@ func registerChecks(s *Service) []Check {
 		// governance + devices wired? — presence only.
 		&fnCheck{id: "domain-presence", domain: "governance",
 			detect: func(ctx context.Context) ([]Finding, error) {
+				// Same reading: presenceFinding turns 0 into "not present", so a
+				// query that could not run reported a domain as missing rather
+				// than reporting that it could not be checked.
 				var policies, devices int
 				//orgscope:ignore Relations & Integrity Doctor: domain-presence count across the whole install (all orgs by design)
-				s.db.Pool.QueryRow(ctx, `SELECT count(*) FROM policies`).Scan(&policies)
+				if err := s.db.Pool.QueryRow(ctx, `SELECT count(*) FROM policies`).Scan(&policies); err != nil {
+					return nil, fmt.Errorf("policy presence count: %w", err)
+				}
 				//orgscope:ignore Relations & Integrity Doctor: domain-presence count across the whole install (all orgs by design)
-				s.db.Pool.QueryRow(ctx, `SELECT count(*) FROM known_devices`).Scan(&devices)
+				if err := s.db.Pool.QueryRow(ctx, `SELECT count(*) FROM known_devices`).Scan(&devices); err != nil {
+					return nil, fmt.Errorf("device presence count: %w", err)
+				}
 				return []Finding{presenceFinding("domain-presence", "governance", policies), presenceFinding("domain-presence", "devices", devices)}, nil
 			}},
 	}

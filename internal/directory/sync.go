@@ -27,6 +27,72 @@ func NewSyncEngine(db *database.PostgresDB, logger *zap.Logger) *SyncEngine {
 	}
 }
 
+// replaceDirectoryMemberships makes a group's directory-managed membership
+// match what the directory just said, atomically.
+//
+// It replaces two unchecked statements that both LDAP and Entra ID sync ran per
+// group: a DELETE of the directory-managed rows, then an INSERT per current
+// member. Neither error was looked at, and the pair was not a transaction, so
+// three things could go wrong and none of them was reported:
+//
+//   - The DELETE fails and the INSERTs succeed. A membership the directory
+//     REMOVED survives, and the sync goes on to report success. That is
+//     deprovisioning that did not happen, on the schedule an operator relies on
+//     to take access away when somebody leaves a team.
+//   - The DELETE succeeds and an INSERT fails. Access the directory still
+//     grants is dropped. Safe, but wrong, and equally silent.
+//   - Between the two, the group is empty. A membership check landing in that
+//     window is answered no for a user who has the access.
+//
+// One transaction closes all three: the old rows and the new ones move
+// together, and a failure leaves the previous membership exactly as it was for
+// the caller to report.
+func (e *SyncEngine) replaceDirectoryMemberships(ctx context.Context, groupID, directoryID, orgID string, memberUserIDs []string) error {
+	tx, err := e.db.Pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM group_memberships WHERE group_id = $1 AND org_id = $3 AND user_id IN (
+			SELECT id FROM users WHERE directory_id = $2 AND org_id = $3
+		)`, groupID, directoryID, orgID); err != nil {
+		return fmt.Errorf("clear the directory-managed members: %w", err)
+	}
+
+	for _, userID := range memberUserIDs {
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO group_memberships (user_id, group_id, org_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+			userID, groupID, orgID); err != nil {
+			return fmt.Errorf("add the current members: %w", err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
+}
+
+// record runs one of the sync's bookkeeping writes and says what is lost when
+// it does not land.
+//
+// None of these statements changes anybody's access, which is why they were
+// written unchecked. But each of them is the only thing that tells somebody --
+// an operator reading the console, or the scheduler deciding when to run again
+// -- what this run did. A sync whose bookkeeping is lost is a sync that
+// happened and left no trace, and the four Execs here used to lose it in
+// silence.
+func (e *SyncEngine) record(ctx context.Context, what, sql string, args ...any) error {
+	if _, err := e.db.Pool.Exec(ctx, sql, args...); err != nil {
+		e.logger.Error("a directory sync could not write down part of what it did",
+			zap.String("not_recorded", what), zap.Error(err))
+		return fmt.Errorf("%s: %w", what, err)
+	}
+	return nil
+}
+
 // RunSync executes a directory sync (full or incremental)
 func (e *SyncEngine) RunSync(ctx context.Context, directoryID string, dirType string, configBytes []byte, fullSync bool) (*SyncResult, error) {
 	start := time.Now()
@@ -56,9 +122,18 @@ func (e *SyncEngine) RunSync(ctx context.Context, directoryID string, dirType st
 		return nil, fmt.Errorf("failed to create sync log: %w", err)
 	}
 
-	e.db.Pool.Exec(ctx,
+	// unrecorded collects the bookkeeping this run could not write down. The
+	// sync's own outcome takes precedence over it -- a failure to record a
+	// success must never be reported as a failed sync -- but it is not
+	// swallowed either: with every one of these lost, a run that moved a
+	// thousand accounts is indistinguishable from one that never started.
+	var unrecorded []string
+	if err := e.record(ctx,
+		"that the sync had started",
 		`UPDATE directory_integrations SET sync_status = 'syncing', updated_at = NOW() WHERE id = $1 AND org_id = $2`,
-		directoryID, orgID)
+		directoryID, orgID); err != nil {
+		unrecorded = append(unrecorded, err.Error())
+	}
 
 	syncErr := e.doSync(ctx, directoryID, orgID, dirType, configBytes, fullSync, result)
 
@@ -76,16 +151,32 @@ func (e *SyncEngine) RunSync(ctx context.Context, directoryID string, dirType st
 	}
 
 	now := time.Now()
-	e.db.Pool.Exec(ctx,
+
+	// The log row was created 'running' and this is the only statement that
+	// ever takes it out of that state, so losing it leaves a finished run
+	// showing as in progress for ever -- and error_message is the only place a
+	// failed sync's reason is kept, so the sync history shows a run that is
+	// still going and never says what went wrong with it.
+	if err := e.record(ctx,
+		"the outcome of the run",
 		`UPDATE directory_sync_logs
 		 SET status = $2, completed_at = $3, users_added = $4, users_updated = $5, users_disabled = $6,
 		     groups_added = $7, groups_updated = $8, groups_deleted = $9, error_message = $10
 		 WHERE id = $1 AND org_id = $11`,
 		logID, status, now, result.UsersAdded, result.UsersUpdated, result.UsersDisabled,
-		result.GroupsAdded, result.GroupsUpdated, result.GroupsDeleted, errMsg, orgID)
+		result.GroupsAdded, result.GroupsUpdated, result.GroupsDeleted, errMsg, orgID); err != nil {
+		unrecorded = append(unrecorded, err.Error())
+	}
 
+	// last_sync_at is not a display value: Scheduler.checkAndRunSyncs reads it
+	// to decide whether a sync is due, and a NULL there means "never synced"
+	// -- which schedules a FULL sync. So losing this write does not merely
+	// leave the console stale; it makes the scheduler run a full directory
+	// sync on every 60-second tick, for ever, against the customer's LDAP or
+	// Graph tenant, with nothing anywhere saying why.
 	durationMs := int(result.Duration.Milliseconds())
-	e.db.Pool.Exec(ctx,
+	if err := e.record(ctx,
+		"when the directory was last synced",
 		`INSERT INTO directory_sync_state (directory_id, last_sync_at, users_synced, groups_synced, errors_count, sync_duration_ms, updated_at, org_id)
 		 VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7)
 		 ON CONFLICT (directory_id) DO UPDATE SET
@@ -93,18 +184,36 @@ func (e *SyncEngine) RunSync(ctx context.Context, directoryID string, dirType st
 		directoryID, now,
 		result.UsersAdded+result.UsersUpdated,
 		result.GroupsAdded+result.GroupsUpdated,
-		len(result.Errors), durationMs, orgID)
+		len(result.Errors), durationMs, orgID); err != nil {
+		unrecorded = append(unrecorded, err.Error())
+	}
 
+	// The integration's own status. Nothing else moves it out of 'syncing',
+	// so a lost write here is the directories page showing a sync in progress
+	// that finished hours ago -- and, when the sync failed, hiding that it
+	// failed at all.
 	dirStatus := "synced"
 	if syncErr != nil {
 		dirStatus = "failed"
 	}
-	e.db.Pool.Exec(ctx,
+	if err := e.record(ctx,
+		"the directory's sync status",
 		`UPDATE directory_integrations SET sync_status = $2, last_sync_at = $3, updated_at = NOW() WHERE id = $1 AND org_id = $4`,
-		directoryID, dirStatus, now, orgID)
+		directoryID, dirStatus, now, orgID); err != nil {
+		unrecorded = append(unrecorded, err.Error())
+	}
 
+	// The sync's own failure comes first: it is the more serious of the two,
+	// and reporting a bookkeeping failure in its place would hide it.
 	if syncErr != nil {
 		return result, syncErr
+	}
+
+	if len(unrecorded) > 0 {
+		return result, fmt.Errorf(
+			"the directory sync itself completed, but its outcome was not recorded (%s); "+
+				"the console and the sync schedule are now wrong about this directory",
+			strings.Join(unrecorded, "; "))
 	}
 
 	e.logger.Info("Directory sync completed",
@@ -479,6 +588,7 @@ func (e *SyncEngine) syncMemberships(ctx context.Context, connector *LDAPConnect
 		}
 	}
 
+	var failed []string
 	for _, entry := range entries {
 		record := MapGroupEntry(entry, cfg.AttributeMapping, memberAttr)
 		groupID, ok := groupDNMap[record.DN]
@@ -486,24 +596,23 @@ func (e *SyncEngine) syncMemberships(ctx context.Context, connector *LDAPConnect
 			continue
 		}
 
-		// Clear existing memberships for this group (LDAP-managed)
-		e.db.Pool.Exec(ctx,
-			`DELETE FROM group_memberships WHERE group_id = $1 AND org_id = $3 AND user_id IN (
-				SELECT id FROM users WHERE directory_id = $2 AND org_id = $3
-			)`, groupID, directoryID, orgID)
-
-		// Re-insert current members
+		members := make([]string, 0, len(record.MemberDNs))
 		for _, memberDN := range record.MemberDNs {
-			userID, found := userDNMap[memberDN]
-			if !found {
-				continue
+			if userID, found := userDNMap[memberDN]; found {
+				members = append(members, userID)
 			}
-			e.db.Pool.Exec(ctx,
-				`INSERT INTO group_memberships (user_id, group_id, org_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
-				userID, groupID, orgID)
+		}
+		if err := e.replaceDirectoryMemberships(ctx, groupID, directoryID, orgID, members); err != nil {
+			e.logger.Error("could not apply the directory's membership for a group; its previous membership stands",
+				zap.String("group_id", groupID), zap.Error(err))
+			failed = append(failed, groupID)
 		}
 	}
 
+	if len(failed) > 0 {
+		return fmt.Errorf("%d group(s) kept the membership they had because the directory's could not be applied: %v",
+			len(failed), failed)
+	}
 	return nil
 }
 
@@ -521,6 +630,7 @@ type dbAzureUser struct {
 
 func (e *SyncEngine) syncAzureADUsers(ctx context.Context, connector *AzureADConnector, directoryID, orgID string, cfg AzureADConfig, fullSync bool, result *SyncResult) error {
 	var records []UserRecord
+	var newDeltaLink string
 
 	if fullSync {
 		users, err := connector.SearchUsers(ctx)
@@ -539,19 +649,17 @@ func (e *SyncEngine) syncAzureADUsers(ctx context.Context, connector *AzureADCon
 		if deltaLink != nil {
 			dl = *deltaLink
 		}
-		users, newDeltaLink, err := connector.SearchUsersIncremental(ctx, dl)
+		users, dlNext, err := connector.SearchUsersIncremental(ctx, dl)
 		if err != nil {
 			return err
 		}
 		records = users
-
-		// Save new delta link
-		if newDeltaLink != "" {
-			e.db.Pool.Exec(ctx,
-				`UPDATE directory_sync_state SET last_delta_link = $2, updated_at = NOW() WHERE directory_id = $1 AND org_id = $3`,
-				directoryID, newDeltaLink, orgID)
-		}
+		newDeltaLink = dlNext
 	}
+
+	// Everything below appends to result.Errors rather than returning, so this
+	// is where the delta link's fate is decided: see the end of the function.
+	errorsBefore := len(result.Errors)
 
 	// Build map of existing DB users for this directory (keyed by external_id)
 	dbUsers := make(map[string]dbAzureUser)
@@ -638,7 +746,52 @@ func (e *SyncEngine) syncAzureADUsers(ctx context.Context, connector *AzureADCon
 		}
 	}
 
+	// The delta link is a cursor, and it used to be stored the moment Graph
+	// handed it over -- before a single one of the records it covers had been
+	// applied. A delta query returns only what has changed since the token was
+	// issued, so storing it means never being offered those records again: a
+	// user whose UPDATE the database refused was stepped over permanently, and
+	// the sync went on to report itself partial without ever saying that the
+	// change had been lost rather than deferred.
+	//
+	// It is now stored last, and only when every record landed. Holding it
+	// costs one repeated page on the next run -- the writes are upserts keyed
+	// on external_id, so re-applying them is free -- and that is the cheaper
+	// side of the trade by a wide margin.
+	e.storeDeltaLink(ctx, directoryID, orgID, newDeltaLink, len(result.Errors)-errorsBefore, result)
+
 	return nil
+}
+
+// storeDeltaLink advances the Azure AD delta cursor, or deliberately does not.
+//
+// unapplied is how many of the records this page carried could not be written.
+// While it is non-zero the cursor is held where it is: Graph will offer those
+// records again on the next run, which is the only way they are ever seen
+// again. Advancing past them is permanent.
+func (e *SyncEngine) storeDeltaLink(ctx context.Context, directoryID, orgID, deltaLink string, unapplied int, result *SyncResult) {
+	if deltaLink == "" {
+		return
+	}
+	if unapplied > 0 {
+		e.logger.Warn("holding the Azure AD delta cursor: records in this page were not applied, "+
+			"so advancing it would skip them for good; the next sync re-fetches from the previous cursor",
+			zap.String("directory_id", directoryID),
+			zap.Int("records_not_applied", unapplied))
+		return
+	}
+	// An upsert, not an UPDATE. On a directory's first incremental sync there
+	// is no state row yet -- RunSync creates it after doSync returns -- so the
+	// old UPDATE matched nothing and stored no cursor at all, without saying
+	// so, and that run's delta token was thrown away.
+	if err := e.record(ctx,
+		"the Azure AD delta cursor",
+		`INSERT INTO directory_sync_state (directory_id, last_delta_link, updated_at, org_id)
+		 VALUES ($1, $2, NOW(), $3)
+		 ON CONFLICT (directory_id) DO UPDATE SET last_delta_link = $2, updated_at = NOW()`,
+		directoryID, deltaLink, orgID); err != nil {
+		result.Errors = append(result.Errors, err.Error())
+	}
 }
 
 func (e *SyncEngine) syncAzureADGroups(ctx context.Context, connector *AzureADConnector, directoryID, orgID string, result *SyncResult) error {
@@ -743,6 +896,7 @@ func (e *SyncEngine) syncAzureADMemberships(ctx context.Context, connector *Azur
 		}
 	}
 
+	var failed []string
 	// For each group, fetch members from Azure AD and sync
 	for azureGroupID, groupID := range groupExtMap {
 		memberIDs, err := connector.SearchGroupMembers(ctx, azureGroupID)
@@ -752,23 +906,22 @@ func (e *SyncEngine) syncAzureADMemberships(ctx context.Context, connector *Azur
 			continue
 		}
 
-		// Clear existing memberships for this group (Azure AD-managed)
-		e.db.Pool.Exec(ctx,
-			`DELETE FROM group_memberships WHERE group_id = $1 AND org_id = $3 AND user_id IN (
-				SELECT id FROM users WHERE directory_id = $2 AND org_id = $3
-			)`, groupID, directoryID, orgID)
-
-		// Re-insert current members
+		members := make([]string, 0, len(memberIDs))
 		for _, memberAzureID := range memberIDs {
-			userID, found := userExtMap[memberAzureID]
-			if !found {
-				continue
+			if userID, found := userExtMap[memberAzureID]; found {
+				members = append(members, userID)
 			}
-			e.db.Pool.Exec(ctx,
-				`INSERT INTO group_memberships (user_id, group_id, org_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
-				userID, groupID, orgID)
+		}
+		if err := e.replaceDirectoryMemberships(ctx, groupID, directoryID, orgID, members); err != nil {
+			e.logger.Error("could not apply the directory's membership for a group; its previous membership stands",
+				zap.String("group_id", groupID), zap.Error(err))
+			failed = append(failed, groupID)
 		}
 	}
 
+	if len(failed) > 0 {
+		return fmt.Errorf("%d group(s) kept the membership they had because the directory's could not be applied: %v",
+			len(failed), failed)
+	}
 	return nil
 }

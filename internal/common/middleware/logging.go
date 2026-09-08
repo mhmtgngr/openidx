@@ -13,14 +13,20 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
-// DefaultSanitizedFields contains default sensitive field names to redact
-var DefaultSanitizedFields = []string{
-	"password", "token", "secret", "key", "api_key", "access_token",
-	"refresh_token", "authorization", "bearer", "credentials",
-	"client_secret", "private_key", "passphrase", "otp", "ssn",
-}
+// DefaultSanitizedFields is the default LoggingConfig.SanitizeFields value.
+//
+// It is logsafe.DefaultSensitiveFieldNames, which is where the classification
+// now lives: three request loggers in this tree redacted (or did not redact) by
+// three different rules, and only one of them was mounted. See
+// internal/common/logsafe/redact.go for what the rule is and why.
+var DefaultSanitizedFields = logsafe.DefaultSensitiveFieldNames
+
+// redactedMarker is re-exported for the tests in this package that assert on it.
+const redactedMarker = logsafe.RedactedMarker
 
 // LoggingConfig holds configuration options for request logging
 type LoggingConfig struct {
@@ -78,9 +84,13 @@ func RequestLoggerWithConfig(config LoggingConfig) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
 
-		// Generate or retrieve request ID
+		// Generate or retrieve request ID. An inbound X-Request-ID is honoured so
+		// a caller can correlate across services, but it is not trusted: it is
+		// echoed back in the response header below and stamped on every log line
+		// for the request. logsafe.PlausibleID says what "trusted" means here and
+		// why a rejected value is replaced rather than cleaned.
 		requestID := c.GetHeader("X-Request-ID")
-		if requestID == "" {
+		if !logsafe.PlausibleID(requestID) {
 			requestID = uuid.New().String()
 		}
 
@@ -117,32 +127,51 @@ func RequestLoggerWithConfig(config LoggingConfig) gin.HandlerFunc {
 				requestBody = string(bodyBytes)
 			}
 
+			// Sanitize BEFORE truncating. The other order looks equivalent and is
+			// not: truncated JSON does not parse, so a body over the limit would
+			// reach the sanitiser as an unparseable string and be discarded whole
+			// -- every large body reduced to one apologetic line, which is the
+			// opposite of what the option is for. Redact first, cut second.
+			requestBody = sanitizeJSON(requestBody, sanitizeFields)
+
 			// Truncate body if too large (limit to 10KB)
 			const maxBodySize = 10 * 1024
 			if len(requestBody) > maxBodySize {
 				requestBody = requestBody[:maxBodySize] + "... (truncated)"
 			}
-
-			// Sanitize sensitive fields in request body
-			requestBody = sanitizeJSON(requestBody, sanitizeFields)
 		}
 
-		// Prepare log fields before processing
+		// Prepare log fields before processing. Everything here except request_id
+		// (already validated above) came off the wire: the path carries whatever
+		// %-encoding the client chose, the user agent is a free-text header, and
+		// client_ip is X-Forwarded-For behind a trusted proxy. See
+		// internal/common/logsafe for what "cleaned" means and why a zap field
+		// still needs it.
 		fields := []zapcore.Field{
-			zap.String("request_id", requestID),
-			zap.String("method", c.Request.Method),
-			zap.String("path", c.Request.URL.Path),
-			zap.String("client_ip", getClientIP(c)),
-			zap.String("user_agent", c.Request.UserAgent()),
+			logsafe.String("request_id", requestID),
+			logsafe.String("method", c.Request.Method),
+			logsafe.String("path", c.Request.URL.Path),
+			logsafe.String("client_ip", getClientIP(c)),
+			logsafe.String("user_agent", c.Request.UserAgent()),
 		}
 
-		// Add query parameters if enabled
+		// Add query parameters if enabled. sanitizeQueryParams redacts the values
+		// of sensitive KEYS; it does not touch the rest of the query string, which
+		// is entirely the client's.
 		if config.LogQueryParams && c.Request.URL.RawQuery != "" {
 			sanitizedQuery := sanitizeQueryParams(c.Request.URL.RawQuery, sanitizeFields)
-			fields = append(fields, zap.String("query_params", sanitizedQuery))
+			fields = append(fields, logsafe.String("query_params", sanitizedQuery))
 		}
 
-		// Add request body if enabled and present
+		// Add request body if enabled and present.
+		//
+		// Deliberately NOT cleaned through logsafe: this field is a payload, not
+		// an identifier, and logsafe.MaxLen would cut it to 256 bytes, which
+		// defeats the option somebody turned on. Its bound is the 10 KB truncation
+		// above, and it is a zap field, so both encoders escape it (see
+		// internal/common/logsafe/encoder_test.go). LogBody is off by default and
+		// is a debugging tool; turning it on means accepting client bytes in the
+		// log by definition.
 		if config.LogBody && requestBody != "" {
 			fields = append(fields, zap.String("request_body", requestBody))
 		}
@@ -223,89 +252,17 @@ func getClientIP(c *gin.Context) string {
 }
 
 // sanitizeQueryParams redacts sensitive values from query parameters
+// sanitizeQueryParams redacts sensitive parameter values. The implementation is
+// logsafe.QueryString; this wrapper exists so the callers and tests in this
+// package keep reading the way they did.
 func sanitizeQueryParams(query string, sensitiveFields map[string]bool) string {
-	if query == "" {
-		return ""
-	}
-
-	params := strings.Split(query, "&")
-	sanitized := make([]string, 0, len(params))
-
-	for _, param := range params {
-		parts := strings.SplitN(param, "=", 2)
-		if len(parts) != 2 {
-			sanitized = append(sanitized, param)
-			continue
-		}
-
-		key := strings.ToLower(parts[0])
-		if sensitiveFields[key] {
-			sanitized = append(sanitized, parts[0]+"=***REDACTED***")
-		} else {
-			sanitized = append(sanitized, param)
-		}
-	}
-
-	return strings.Join(sanitized, "&")
+	return logsafe.QueryString(query, sensitiveFields)
 }
 
-// sanitizeJSON redacts sensitive field values in JSON strings
+// sanitizeJSON redacts sensitive fields in a request body. The implementation is
+// logsafe.JSONBody.
 func sanitizeJSON(jsonStr string, sensitiveFields map[string]bool) string {
-	// Simple JSON sanitization - replaces sensitive field values
-	// This is a basic implementation; for production use, consider using
-	// proper JSON parsing with streaming to handle large payloads
-
-	result := jsonStr
-	for field := range sensitiveFields {
-		// Replace values for keys like "password":"value"
-		// Handle both quoted and unquoted variations
-		patterns := []string{
-			`"` + field + `":"`,
-			`"` + field + `": "`,
-			`"` + field + `":"`,
-			`"` + field + `":"`,
-			`"` + field + `":"`,
-		}
-
-		for _, pattern := range patterns {
-			if strings.Contains(result, pattern) {
-				// Find the value and replace it
-				// This is a simplified approach - for robust sanitization,
-				// use json.Decoder with custom handling
-				result = redactFieldValue(result, pattern)
-			}
-		}
-	}
-
-	return result
-}
-
-// redactFieldValue replaces sensitive field values with REDACTED
-func redactFieldValue(jsonStr, keyPattern string) string {
-	// Find the key pattern position
-	idx := strings.Index(jsonStr, keyPattern)
-	if idx == -1 {
-		return jsonStr
-	}
-
-	// Start after the key pattern
-	start := idx + len(keyPattern)
-	end := start
-
-	// Find the closing quote or end of value
-	for end < len(jsonStr) {
-		if jsonStr[end] == '"' && jsonStr[end-1] != '\\' {
-			break
-		}
-		end++
-	}
-
-	if end >= len(jsonStr) {
-		return jsonStr
-	}
-
-	// Replace the value
-	return jsonStr[:start] + "***REDACTED***" + jsonStr[end:]
+	return logsafe.JSONBody(jsonStr, sensitiveFields)
 }
 
 // determineLogLevel returns the appropriate log level based on status and duration

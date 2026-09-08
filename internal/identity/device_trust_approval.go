@@ -4,6 +4,7 @@ package identity
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -115,9 +116,13 @@ func (s *Service) CreateDeviceTrustRequest(ctx context.Context, userID, deviceID
 		return nil, err
 	}
 
-	// If auto-approved, also trust the device
+	// If auto-approved, also trust the device. An approval that does not reach
+	// known_devices is an approval in name only: the posture gate goes on
+	// refusing the device while the request says approved.
 	if status == "approved" {
-		s.trustDevice(ctx, userID, deviceFingerprint)
+		if err := s.trustDevice(ctx, userID, deviceFingerprint); err != nil {
+			return nil, fmt.Errorf("the request was auto-approved but the device could not be trusted: %w", err)
+		}
 	}
 
 	// Notify admins if configured
@@ -234,8 +239,12 @@ func (s *Service) ApproveDeviceTrustRequest(ctx context.Context, requestID, admi
 		return err
 	}
 
-	// Trust the device
-	s.trustDevice(ctx, userID, fingerprint)
+	// Trust the device. The request is already marked approved above; if this
+	// fails the administrator is told so, rather than being shown an approval
+	// the device never received.
+	if err := s.trustDevice(ctx, userID, fingerprint); err != nil {
+		return fmt.Errorf("the request was approved but the device could not be trusted: %w", err)
+	}
 
 	// Notify user
 	settings, _ := s.GetDeviceTrustSettings(ctx)
@@ -420,15 +429,33 @@ func (s *Service) ExpireOldRequests(ctx context.Context) (int, error) {
 
 // Helper functions
 
-func (s *Service) trustDevice(ctx context.Context, userID, fingerprint string) {
+// trustDevice marks a device trusted. It reports failure, because the two
+// callers each answer an administrator or a user that the device now is.
+//
+// This write used to be discarded -- while the Ziti nudge below it, which is
+// belt and braces, was checked and logged. So the load-bearing statement was
+// the unchecked one: a trust approval could be recorded, announced to the user,
+// and leave the device untrusted, which the posture gate then keeps refusing
+// for a reason nobody can see in the console.
+//
+// Nought rows is a failure too. It means no known_devices row matched this user
+// and fingerprint in this org, so nothing was trusted and the caller must not
+// say otherwise.
+func (s *Service) trustDevice(ctx context.Context, userID, fingerprint string) error {
 	org, err := orgctx.From(ctx)
 	if err != nil {
-		return
+		return fmt.Errorf("organization context required to trust a device: %w", err)
 	}
-	s.db.Pool.Exec(ctx,
+	tag, err := s.db.Pool.Exec(ctx,
 		"UPDATE known_devices SET trusted = true WHERE user_id = $1 AND fingerprint = $2 AND org_id = $3",
 		userID, fingerprint, org.ID,
 	)
+	if err != nil {
+		return fmt.Errorf("mark the device trusted: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("no known device matches this user and fingerprint; nothing was trusted")
+	}
 	// Nudge the Ziti mirror: identity-service has no controller access, but
 	// marking the user's Ziti identity attributes stale makes the
 	// access-service sync poller (30s tick; IS NULL qualifies immediately)
@@ -439,8 +466,12 @@ func (s *Service) trustDevice(ctx context.Context, userID, fingerprint string) {
 	if _, err := s.db.Pool.Exec(ctx,
 		"UPDATE ziti_identities SET group_attrs_synced_at = NULL WHERE user_id = $1 AND org_id = $2",
 		userID, org.ID); err != nil {
+		// A warning and not a failure: the poller recomputes the attribute
+		// within its staleness window anyway, so this only costs promptness.
+		// The trust itself is already recorded.
 		s.logger.Warn("device trust: failed to mark ziti identity attrs stale", zap.Error(err))
 	}
+	return nil
 }
 
 func (s *Service) isKnownIP(ctx context.Context, userID, ipAddress string) bool {
@@ -448,12 +479,19 @@ func (s *Service) isKnownIP(ctx context.Context, userID, ipAddress string) bool 
 	if err != nil {
 		return false
 	}
+	// Fail-closed, and said out loud: a failed count reads as "not a known IP",
+	// which makes the sign-in look less familiar and the decision stricter.
+	// That is the safe direction, but a check that silently stops working is
+	// one nobody knows has stopped.
 	var count int
-	s.db.Pool.QueryRow(ctx,
+	if err := s.db.Pool.QueryRow(ctx,
 		`SELECT COUNT(*) FROM known_devices
 		WHERE user_id = $1 AND ip_address = $2 AND trusted = true AND org_id = $3`,
 		userID, ipAddress, org.ID,
-	).Scan(&count)
+	).Scan(&count); err != nil {
+		s.logger.Warn("known-IP check failed; reading the address as unfamiliar", zap.Error(err))
+		return false
+	}
 	return count > 0
 }
 
@@ -487,15 +525,20 @@ func (s *Service) notifyAdminsOfTrustRequest(ctx context.Context, userID, device
 		s.logger.Warn("device-trust admin notify: no org in context", zap.Error(err))
 		return
 	}
+	// NOT EXISTS is the administrator's own preference, applied in the same
+	// statement: this fan-out never went through CreateNotification, so the
+	// switch on the preferences page was read by nothing on this path.
 	if _, err := s.db.Pool.Exec(ctx, `
 		INSERT INTO notifications (user_id, channel, type, title, body, metadata, org_id)
-		SELECT DISTINCT ur.user_id, 'in_app', 'device_trust',
+		SELECT DISTINCT ur.user_id, 'in_app', $4::varchar,
 			'New device trust request',
 			'A device ("' || $1 || '") is awaiting trust approval.',
 			jsonb_build_object('requesting_user', $2::text), r.org_id
 		FROM user_roles ur JOIN roles r ON r.id = ur.role_id
-		WHERE r.name = 'admin' AND r.org_id = $3`,
-		deviceName, userID, org.ID); err != nil {
+		WHERE r.name = 'admin' AND r.org_id = $3
+		  AND NOT EXISTS (SELECT 1 FROM notification_preferences p
+		      WHERE p.user_id = ur.user_id AND p.channel = 'in_app' AND p.event_type = $4::varchar AND p.enabled = false)`,
+		deviceName, userID, org.ID, notifications.TypeDeviceTrust); err != nil {
 		s.logger.Warn("failed to notify admins of device-trust request", zap.Error(err))
 	}
 }
@@ -513,7 +556,7 @@ func (s *Service) notifyUserOfTrustDecision(ctx context.Context, userID, decisio
 		body += " Note: " + notes
 	}
 	notif := notifications.NewService(s.db, s.logger)
-	if err := notif.CreateMultiChannelNotification(ctx, userID, org.ID, "device_trust",
+	if err := notif.CreateMultiChannelNotification(ctx, userID, org.ID, notifications.TypeDeviceTrust,
 		"Device trust "+decision, body, "/devices", nil); err != nil {
 		s.logger.Warn("failed to notify user of device-trust decision", zap.String("user_id", userID), zap.Error(err))
 	}

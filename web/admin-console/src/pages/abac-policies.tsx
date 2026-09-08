@@ -84,24 +84,41 @@ interface ABACEvaluationResult {
 // These lists are module-level, so they carry catalog keys rather than
 // English. `value` is the wire value; `labelKey` is the catalog key -- they
 // differ only for the '*' wildcard, which is not a valid key segment.
-const resourceTypes = [
+// Both lists are checked against the evaluator by
+// internal/abac/vocabulary_test.go, because a choice here that the evaluator
+// cannot decide is worse than no choice at all: the policy saves, lists as
+// enabled, and never matches. With Gate composing deny-wins-else-allow, a DENY
+// on such a condition permits exactly what it was written to stop.
+//
+// `route` and `service` were offered here and no enforcement point has ever
+// asked about either — both PEPs (internal/oauth at token issuance,
+// internal/access at the proxy) authorize an APPLICATION and pass the
+// application id, so a policy scoped to anything else is never selected.
+export const resourceTypes = [
   { value: 'application', labelKey: 'application' },
-  { value: 'route', labelKey: 'route' },
-  { value: 'service', labelKey: 'service' },
   { value: '*', labelKey: 'all' },
 ]
 
-const attributeOptions = [
+// Exactly what abac.SubjectAttributes puts on the subject map. Six of the seven
+// options that used to be here — location, device_trust_level, time_of_day,
+// risk_score, group_membership, ip_range — were never populated by anything, so
+// a condition on them was false for every user. `group_membership` was the
+// sharpest of them: the evaluator carries `groups`, one word away, so a policy
+// meant to gate on group membership silently did nothing while the working
+// spelling sat unoffered.
+export const attributeOptions = [
   'department',
-  'location',
-  'device_trust_level',
-  'time_of_day',
-  'risk_score',
-  'group_membership',
-  'ip_range',
+  'job_title',
+  'employment_status',
+  'roles',
+  'groups',
+  'email',
+  'username',
+  'enabled',
+  'user_id',
 ]
 
-const operatorOptions = [
+export const operatorOptions = [
   'eq',
   'neq',
   'in',
@@ -163,7 +180,12 @@ export function ABACPoliciesPage() {
   // Test state
   const [testResourceType, setTestResourceType] = useState('application')
   const [testResourceId, setTestResourceId] = useState('')
-  const [testAttributes, setTestAttributes] = useState('{\n  "department": "engineering",\n  "risk_score": 25\n}')
+  // The prefilled subject is written in the vocabulary the evaluator actually
+  // populates (see attributeOptions). It used to carry "risk_score", so the
+  // example a user starts from was itself a condition that could never match.
+  const [testAttributes, setTestAttributes] = useState(
+    '{\n  "department": "engineering",\n  "job_title": "Staff Engineer",\n  "roles": ["user"]\n}',
+  )
   const [testResult, setTestResult] = useState<ABACEvaluationResult | null>(null)
 
   const { data: policies, isLoading, isError, error } = useQuery({

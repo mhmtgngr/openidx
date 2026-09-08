@@ -83,6 +83,10 @@ interface ProxySession {
   ip_address: string
   user_agent: string
   last_active_at: string
+  // The external identity provider that authenticated this session, empty for
+  // OpenIDX's own login. It is the column to look down when a provider is
+  // compromised and every session it issued has to go.
+  idp_name: string
 }
 
 interface AuditEvent {
@@ -223,6 +227,7 @@ export function ZeroTrustPage() {
         ip_address: sess?.ip_address ?? '',
         user_agent: sess?.user_agent ?? '',
         last_active_at: sess?.last_active_at ?? '',
+        idp_name: sess?.idp_name ?? '',
       }))
       return { sessions }
     },
@@ -423,13 +428,14 @@ export function ZeroTrustPage() {
               ) : (
                 <Table>
                   <TableHeader><TableRow>
-                    <TableHead>{t('pages.zeroTrust.live.user')}</TableHead><TableHead>{t('pages.zeroTrust.live.resource')}</TableHead><TableHead>{t('pages.zeroTrust.live.ip')}</TableHead><TableHead>{t('pages.zeroTrust.live.lastActive')}</TableHead>
+                    <TableHead>{t('pages.zeroTrust.live.user')}</TableHead><TableHead>{t('pages.zeroTrust.live.resource')}</TableHead><TableHead>{t('pages.zeroTrust.live.signedInWith')}</TableHead><TableHead>{t('pages.zeroTrust.live.ip')}</TableHead><TableHead>{t('pages.zeroTrust.live.lastActive')}</TableHead>
                   </TableRow></TableHeader>
                   <TableBody>
                     {(sessionsQuery.data?.sessions || []).map((sess) => (
                       <TableRow key={sess.id}>
                         <TableCell className="font-mono text-xs">{sess.user_id}</TableCell>
                         <TableCell className="text-xs">{routeName(routes, sess.route_id)}</TableCell>
+                        <TableCell className="text-xs">{sess.idp_name || t('pages.zeroTrust.live.localLogin')}</TableCell>
                         <TableCell className="font-mono text-xs">{sess.ip_address}</TableCell>
                         <TableCell className="text-xs">{fmt(sess.last_active_at)}</TableCell>
                       </TableRow>

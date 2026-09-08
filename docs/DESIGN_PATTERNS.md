@@ -148,7 +148,12 @@ svc := container.MustResolve("identity").(*identity.Service)
 
 **Purpose:** Composable middleware with ordering and conditions.
 
-**Location:** `internal/common/middleware/registry.go`
+**Status: built, never adopted, removed in v1.34.0.** `internal/common/middleware`
+carried a Registry and a fluent Builder implementing exactly this sketch. Every
+service composed its chain by hand in `cmd/*/main.go` instead, for the whole
+life of the code, so the registry was deleted rather than left as the pattern a
+reader would find first. The sketch stands as a proposal; adopting it means
+adopting it everywhere, in one change, not adding a ninth way to build a chain.
 
 ```go
 // MiddlewareRegistry manages middleware
@@ -174,8 +179,9 @@ router.Use(registry.Build()...)
 
 **Purpose:** Abstract data access from business logic.
 
-**Status: proposed, not built.** Six of the eight patterns below are in the
-tree at the location named; this one and the Builder below are not. Services
+**Status: proposed, not built.** Five of the eight patterns below are in the
+tree at the location named; this one, the Middleware Registry above and the
+Builder below are not. Services
 reach `*pgxpool.Pool` directly through their own store types today. The sketch
 stands as a proposal.
 

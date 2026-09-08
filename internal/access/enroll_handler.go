@@ -138,7 +138,14 @@ func (s *Service) validateEnrollmentToken(ctx context.Context, token string) (st
 		return "", enrollError{"enrollment token already used"}
 	}
 	if !reusable {
-		_, _ = s.db.Pool.Exec(ctx, `UPDATE agent_enrollment_tokens SET used_at = NOW() WHERE id = $1`, tokenID)
+		// This IS the single-use property. The error was discarded, so a failed
+		// mark left used_at NULL and the same one-time enrolment token could be
+		// redeemed again -- while this function returned success. A token that
+		// cannot be spent is not a token that may be used.
+		if _, err := s.db.Pool.Exec(ctx,
+			`UPDATE agent_enrollment_tokens SET used_at = NOW() WHERE id = $1`, tokenID); err != nil {
+			return "", fmt.Errorf("mark enrollment token used: %w", err)
+		}
 	}
 	if createdBy != nil && *createdBy != "" {
 		return *createdBy, nil
@@ -219,7 +226,8 @@ func (s *Service) mintZitiEnrollmentJWT(ctx context.Context, subject string) (jw
 		return "", "", enrollError{"no enrollment JWT could be minted for identity"}
 	}
 
-	// Persist the fresh JWT so subsequent reads are consistent (best-effort).
+	// Persist the fresh JWT so subsequent reads are consistent.
+	//silentwrite:ok this caches a token the controller has already returned and the caller is served it either way; a lost write costs one extra mint on the next read, and the JWT itself is re-derivable from the controller at any time
 	_, _ = s.db.Pool.Exec(ctx,
 		//orgscope:ignore ziti_identities.ziti_id is a globally-unique controller identity id, not org-scoped
 		"UPDATE ziti_identities SET enrollment_jwt = $1 WHERE ziti_id = $2", jwt, zitiID)

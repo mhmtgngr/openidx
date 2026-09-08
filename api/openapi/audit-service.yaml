@@ -37,39 +37,7 @@ paths:
       tags: [Audit Events]
       summary: List audit events
       operationId: listEvents
-      responses:
-    BadRequest:
-      description: The request was malformed or failed validation
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/Error'
-    Unauthorized:
-      description: No valid bearer token was presented
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/Error'
-    Forbidden:
-      description: The caller is authenticated but not permitted
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/Error'
-    NotFound:
-      description: No such resource in the caller's organization
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/Error'
-    ServerError:
-      description: The request could not be completed
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/Error'
-
-  parameters:
+      parameters:
         - name: event_type
           in: query
           schema:
@@ -156,6 +124,101 @@ paths:
                 $ref: '#/components/schemas/AuditEvent'
         '404':
           description: Event not found
+
+  /api/v1/audit/event-types:
+    get:
+      tags: [Audit Events]
+      summary: The event types this tenant's trail contains
+      description: >-
+        Derived from the data, not from a list. The console's filter offered
+        eight names taken from internal/audit's EventType constants and only two
+        of them are ever written, so six of its choices returned an empty result
+        -- which on an audit surface reads as "nothing happened" -- while the
+        values the trail does hold could not be filtered for at all. Migration
+        v180 adds the (org_id, event_type) index this scan and the filtered read
+        both want.
+      operationId: listAuditEventTypes
+      x-openidx-handler: internal/audit.(*Service).handleEventTypes
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  event_types:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        type:
+                          type: string
+                        count:
+                          type: integer
+                          format: int64
+        '403':
+          description: Organization context required
+        '500':
+          description: Internal error
+
+  /api/v1/audit/chain/verify:
+    get:
+      tags: [Audit Events]
+      summary: Verify this tenant's audit hash chain
+      description: >-
+        Walks the organization's sealed events in chain order and reports the
+        first break: a row altered since it was sealed, a sealed row deleted
+        (the gap in the sequence), or a link that does not match the event
+        before it. The product publishes a claim that this trail is
+        tamper-evident; this is where an auditor, or the tenant, checks it
+        rather than taking the claim on faith. Migration v181 adds the chain
+        columns and internal/audit/chain.go seals them; without
+        AUDIT_CHAIN_SECRET the response is enabled=false, because reporting an
+        intact chain over no chain is the failure this endpoint exists to
+        prevent. unsealed_events is reported alongside the verdict so the
+        sealer's lag -- the window in which a row is not yet covered -- is
+        visible rather than assumed away.
+      operationId: verifyAuditChain
+      x-openidx-handler: internal/audit.(*Service).handleVerifyChain
+      responses:
+        '200':
+          description: The verdict, including the not-configured case
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled:
+                    type: boolean
+                    description: False when no chain secret is configured; the trail then carries no tamper evidence.
+                  detail:
+                    type: string
+                    description: Present only when enabled is false.
+                  org_id:
+                    type: string
+                  sealed_events:
+                    type: integer
+                    format: int64
+                  unsealed_events:
+                    type: integer
+                    format: int64
+                    description: Events written but not yet chained; outside the tamper evidence.
+                  last_sequence:
+                    type: integer
+                    format: int64
+                  intact:
+                    type: boolean
+                  break:
+                    type: string
+                    description: What is wrong, in a sentence. Empty when intact.
+                  break_event_id:
+                    type: string
+                    description: The event the break was found at. Empty when intact.
+        '403':
+          description: Organization context required
+        '500':
+          description: The verification could not run
 
   /api/v1/audit/statistics:
     get:
@@ -451,6 +514,37 @@ paths:
         '500':
           $ref: '#/components/responses/ServerError'
 components:
+  responses:
+    BadRequest:
+      description: The request was malformed or failed validation
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: No valid bearer token was presented
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: The caller is authenticated but not permitted
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: No such resource in the caller's organization
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    ServerError:
+      description: The request could not be completed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
   securitySchemes:
     bearerAuth:
       type: http

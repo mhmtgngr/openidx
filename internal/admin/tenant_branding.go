@@ -397,8 +397,13 @@ func (s *Service) handleSwitchTenant(c *gin.Context) {
 		Domain      *string `json:"domain"`
 		Enabled     bool    `json:"enabled"`
 	}
+	// organizations is (id, name, slug, domain, plan, status, ...). It has
+	// neither display_name nor enabled, so this SELECT could never plan and
+	// every switch answered 404 "Organization not found" -- the console's
+	// tenant switcher has never worked. name doubles as the display name, and
+	// status = 'active' is what enabled meant.
 	err := s.db.Pool.QueryRow(c.Request.Context(),
-		`SELECT id, name, display_name, domain, enabled
+		`SELECT id, name, name, domain, status = 'active'
 		 FROM organizations WHERE id = $1`, req.OrgID,
 	).Scan(&org.ID, &org.Name, &org.DisplayName, &org.Domain, &org.Enabled)
 	if err != nil {
@@ -433,8 +438,10 @@ func (s *Service) handleGetCurrentTenant(c *gin.Context) {
 		Domain      *string `json:"domain"`
 		Enabled     bool    `json:"enabled"`
 	}
+	// Same two absent columns as handleSwitchTenant: this is the lookup of
+	// the caller's current organization, and it answered 404 every time.
 	err := s.db.Pool.QueryRow(c.Request.Context(),
-		`SELECT o.id, o.name, o.display_name, o.domain, o.enabled
+		`SELECT o.id, o.name, o.name, o.domain, o.status = 'active'
 		 FROM organizations o
 		 JOIN organization_members om ON o.id = om.organization_id
 		 WHERE om.user_id = $1

@@ -48,9 +48,13 @@ func TestGetAccessOverview_AppsCountIncludesGroupAssignments(t *testing.T) {
 		`CREATE TABLE vault_checkouts (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(), org_id UUID,
 			principal_id UUID, status VARCHAR(16))`,
-		`CREATE TABLE jit_grants (
-			id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID, org_id UUID,
-			expires_at TIMESTAMPTZ, status VARCHAR(16))`,
+		// The portal counts time-bound elevations on access_requests: jit_grants
+		// was a second representation nothing in the product ever wrote.
+		`CREATE TABLE IF NOT EXISTS access_requests (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(), requester_id UUID, org_id UUID,
+			resource_type VARCHAR(50), resource_id VARCHAR(255), resource_name VARCHAR(255),
+			status VARCHAR(50), expires_at TIMESTAMPTZ,
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
 		`CREATE TABLE guacamole_sessions (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(), org_id UUID, user_id UUID, status VARCHAR(16))`,
 		`CREATE TABLE guacamole_session_requests (

@@ -9,8 +9,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
-
-	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // SOC2Report represents a SOC 2 Type II compliance report
@@ -189,11 +187,22 @@ func (s *Service) GenerateSOC2Report(ctx context.Context, startDate, endDate tim
 		GeneratedBy: generatedBy,
 	}
 
-	// Gather metrics
-	report.AccessReviews = s.getAccessReviewMetrics(ctx, startDate, endDate)
-	report.PasswordPolicy = s.getPasswordPolicyMetrics(ctx)
-	report.MFAAdoption = s.getMFAMetrics(ctx)
-	report.SessionMgmt = s.getSessionManagementMetrics(ctx)
+	// Gather metrics. A section that cannot be measured fails the report:
+	// see metricQuery for why a compliance document must not publish the zero
+	// left behind by a query that did not run.
+	var err error
+	if report.AccessReviews, err = s.getAccessReviewMetrics(ctx, startDate, endDate); err != nil {
+		return nil, fmt.Errorf("access review metrics: %w", err)
+	}
+	if report.PasswordPolicy, err = s.getPasswordPolicyMetrics(ctx); err != nil {
+		return nil, fmt.Errorf("password policy metrics: %w", err)
+	}
+	if report.MFAAdoption, err = s.getMFAMetrics(ctx); err != nil {
+		return nil, fmt.Errorf("MFA adoption metrics: %w", err)
+	}
+	if report.SessionMgmt, err = s.getSessionManagementMetrics(ctx); err != nil {
+		return nil, fmt.Errorf("session management metrics: %w", err)
+	}
 
 	return report, nil
 }
@@ -212,9 +221,16 @@ func (s *Service) GenerateISO27001Report(ctx context.Context, startDate, endDate
 		GeneratedBy: generatedBy,
 	}
 
-	report.AccessControl = s.getISOAccessControlMetrics(ctx, startDate, endDate)
-	report.Cryptography = s.getCryptographyMetrics(ctx)
-	report.OperationalSecurity = s.getOperationalSecurityMetrics(ctx, startDate, endDate)
+	var err error
+	if report.AccessControl, err = s.getISOAccessControlMetrics(ctx, startDate, endDate); err != nil {
+		return nil, fmt.Errorf("access control metrics: %w", err)
+	}
+	if report.Cryptography, err = s.getCryptographyMetrics(ctx); err != nil {
+		return nil, fmt.Errorf("cryptography metrics: %w", err)
+	}
+	if report.OperationalSecurity, err = s.getOperationalSecurityMetrics(ctx, startDate, endDate); err != nil {
+		return nil, fmt.Errorf("operational security metrics: %w", err)
+	}
 
 	return report, nil
 }
@@ -233,58 +249,73 @@ func (s *Service) GenerateGDPRReport(ctx context.Context, startDate, endDate tim
 		GeneratedBy: generatedBy,
 	}
 
-	report.DataAccessLogs = s.getDataAccessMetrics(ctx, startDate, endDate)
-	report.ConsentRecords = s.getConsentMetrics(ctx)
-	report.DataSubjectRequests = s.getDataSubjectRequestMetrics(ctx, startDate, endDate)
-	report.DataDeletionRecords = s.getDataDeletionMetrics(ctx, startDate, endDate)
+	var err error
+	if report.DataAccessLogs, err = s.getDataAccessMetrics(ctx, startDate, endDate); err != nil {
+		return nil, fmt.Errorf("data access metrics: %w", err)
+	}
+	if report.ConsentRecords, err = s.getConsentMetrics(ctx); err != nil {
+		return nil, fmt.Errorf("consent metrics: %w", err)
+	}
+	if report.DataSubjectRequests, err = s.getDataSubjectRequestMetrics(ctx, startDate, endDate); err != nil {
+		return nil, fmt.Errorf("data subject request metrics: %w", err)
+	}
+	if report.DataDeletionRecords, err = s.getDataDeletionMetrics(ctx, startDate, endDate); err != nil {
+		return nil, fmt.Errorf("data deletion metrics: %w", err)
+	}
 
 	return report, nil
 }
 
 // Metric gathering methods
 
-func (s *Service) getAccessReviewMetrics(ctx context.Context, startDate, endDate time.Time) AccessReviewMetrics {
+func (s *Service) getAccessReviewMetrics(ctx context.Context, startDate, endDate time.Time) (AccessReviewMetrics, error) {
 	metrics := AccessReviewMetrics{}
-	org, _ := orgctx.From(ctx)
+	q := s.newMetricQuery(ctx)
 
-	if s.db != nil && s.db.Pool != nil {
-		s.db.Pool.QueryRow(ctx, `
-			SELECT COALESCE(COUNT(*), 0)
-			FROM access_reviews
-			WHERE created_at BETWEEN $1 AND $2
-			AND org_id = $3
-		`, startDate, endDate, org.ID).Scan(&metrics.TotalReviews)
+	q.scan("total access reviews", &metrics.TotalReviews, `
+		SELECT COALESCE(COUNT(*), 0)
+		FROM access_reviews
+		WHERE created_at BETWEEN $1 AND $2
+		AND org_id = $3
+	`, startDate, endDate, q.org())
 
-		s.db.Pool.QueryRow(ctx, `
-			SELECT COALESCE(COUNT(*), 0)
-			FROM access_reviews
-			WHERE status = 'pending'
-			AND org_id = $1
-		`, org.ID).Scan(&metrics.PendingReviews)
+	q.scan("pending access reviews", &metrics.PendingReviews, `
+		SELECT COALESCE(COUNT(*), 0)
+		FROM access_reviews
+		WHERE status = 'pending'
+		AND org_id = $1
+	`, q.org())
 
-		s.db.Pool.QueryRow(ctx, `
-			SELECT COALESCE(COUNT(*), 0)
-			FROM access_reviews
-			WHERE status = 'completed'
-			AND completed_at BETWEEN $1 AND $2
-			AND org_id = $3
-		`, startDate, endDate, org.ID).Scan(&metrics.CompletedReviews)
+	q.scan("completed access reviews", &metrics.CompletedReviews, `
+		SELECT COALESCE(COUNT(*), 0)
+		FROM access_reviews
+		WHERE status = 'completed'
+		AND completed_at BETWEEN $1 AND $2
+		AND org_id = $3
+	`, startDate, endDate, q.org())
 
-		s.db.Pool.QueryRow(ctx, `
-			SELECT COALESCE(COUNT(*), 0)
-			FROM access_reviews
-			WHERE status = 'pending' AND due_date < NOW()
-			AND org_id = $1
-		`, org.ID).Scan(&metrics.OverdueReviews)
+	// access_reviews has no due_date; the campaign's deadline is end_date.
+	// The overdue count therefore read 0 on every report ever generated --
+	// a compliance dashboard stating that no access review is overdue,
+	// which is the reading an auditor takes as evidence.
+	q.scan("overdue access reviews", &metrics.OverdueReviews, `
+		SELECT COALESCE(COUNT(*), 0)
+		FROM access_reviews
+		WHERE status = 'pending' AND end_date < NOW()
+		AND org_id = $1
+	`, q.org())
 
-		var lastReview time.Time
-		s.db.Pool.QueryRow(ctx, `
-			SELECT COALESCE(MAX(completed_at), '1970-01-01'::timestamp)
-			FROM access_reviews
-			WHERE status = 'completed'
-			AND org_id = $1
-		`, org.ID).Scan(&lastReview)
-		metrics.LastReviewDate = lastReview
+	var lastReview time.Time
+	q.scan("last completed access review", &lastReview, `
+		SELECT COALESCE(MAX(completed_at), '1970-01-01'::timestamp)
+		FROM access_reviews
+		WHERE status = 'completed'
+		AND org_id = $1
+	`, q.org())
+	metrics.LastReviewDate = lastReview
+
+	if err := q.failed(); err != nil {
+		return AccessReviewMetrics{}, err
 	}
 
 	if metrics.TotalReviews > 0 {
@@ -293,10 +324,10 @@ func (s *Service) getAccessReviewMetrics(ctx context.Context, startDate, endDate
 
 	metrics.ComplianceStatus = determineComplianceStatus(metrics.CompletionRate, 80, 50)
 
-	return metrics
+	return metrics, nil
 }
 
-func (s *Service) getPasswordPolicyMetrics(ctx context.Context) PasswordPolicyMetrics {
+func (s *Service) getPasswordPolicyMetrics(ctx context.Context) (PasswordPolicyMetrics, error) {
 	metrics := PasswordPolicyMetrics{
 		MinLength:           8,
 		RequireUppercase:    true,
@@ -306,49 +337,59 @@ func (s *Service) getPasswordPolicyMetrics(ctx context.Context) PasswordPolicyMe
 		MaxAgeDays:          90,
 		ComplianceStatus:    "compliant",
 	}
-	org, _ := orgctx.From(ctx)
+	q := s.newMetricQuery(ctx)
 
-	if s.db != nil && s.db.Pool != nil {
-		var settingsJSON []byte
-		err := s.db.Pool.QueryRow(ctx, `
+	// The settings row is the one read here that legitimately may not exist: a
+	// deployment that has never opened the security settings page has no row,
+	// and the defaults above are then the policy in force. So this one keeps
+	// its own error handling and does not fail the report.
+	var settingsJSON []byte
+	if q.failed() == nil {
+		if err := s.db.Pool.QueryRow(ctx, `
 			SELECT COALESCE(value::text, '{}')
 			FROM system_settings
 			WHERE key = 'security'
-		`).Scan(&settingsJSON)
+		`).Scan(&settingsJSON); err != nil {
+			settingsJSON = nil
+		}
+	}
 
-		if err == nil && len(settingsJSON) > 0 {
-			var secSettings map[string]interface{}
-			if json.Unmarshal(settingsJSON, &secSettings) == nil {
-				if pp, ok := secSettings["password_policy"].(map[string]interface{}); ok {
-					if ml, ok := pp["min_length"].(float64); ok {
-						metrics.MinLength = int(ml)
-					}
-					if uc, ok := pp["require_uppercase"].(bool); ok {
-						metrics.RequireUppercase = uc
-					}
-					if lc, ok := pp["require_lowercase"].(bool); ok {
-						metrics.RequireLowercase = lc
-					}
-					if num, ok := pp["require_numbers"].(bool); ok {
-						metrics.RequireNumbers = num
-					}
-					if sc, ok := pp["require_special_chars"].(bool); ok {
-						metrics.RequireSpecialChars = sc
-					}
-					if ma, ok := pp["max_age_days"].(float64); ok {
-						metrics.MaxAgeDays = int(ma)
-					}
+	if len(settingsJSON) > 0 {
+		var secSettings map[string]interface{}
+		if json.Unmarshal(settingsJSON, &secSettings) == nil {
+			if pp, ok := secSettings["password_policy"].(map[string]interface{}); ok {
+				if ml, ok := pp["min_length"].(float64); ok {
+					metrics.MinLength = int(ml)
+				}
+				if uc, ok := pp["require_uppercase"].(bool); ok {
+					metrics.RequireUppercase = uc
+				}
+				if lc, ok := pp["require_lowercase"].(bool); ok {
+					metrics.RequireLowercase = lc
+				}
+				if num, ok := pp["require_numbers"].(bool); ok {
+					metrics.RequireNumbers = num
+				}
+				if sc, ok := pp["require_special_chars"].(bool); ok {
+					metrics.RequireSpecialChars = sc
+				}
+				if ma, ok := pp["max_age_days"].(float64); ok {
+					metrics.MaxAgeDays = int(ma)
 				}
 			}
 		}
+	}
 
-		s.db.Pool.QueryRow(ctx, `
-			SELECT COALESCE(COUNT(*), 0)
-			FROM users
-			WHERE enabled = true
-			AND CHAR_LENGTH(password_hash) < 50
-			AND org_id = $1
-		`, org.ID).Scan(&metrics.UsersWithWeakPasswords)
+	q.scan("users with weak passwords", &metrics.UsersWithWeakPasswords, `
+		SELECT COALESCE(COUNT(*), 0)
+		FROM users
+		WHERE enabled = true
+		AND CHAR_LENGTH(password_hash) < 50
+		AND org_id = $1
+	`, q.org())
+
+	if err := q.failed(); err != nil {
+		return PasswordPolicyMetrics{}, err
 	}
 
 	if metrics.MinLength < 8 || !metrics.RequireNumbers {
@@ -357,44 +398,46 @@ func (s *Service) getPasswordPolicyMetrics(ctx context.Context) PasswordPolicyMe
 		metrics.ComplianceStatus = "partial"
 	}
 
-	return metrics
+	return metrics, nil
 }
 
-func (s *Service) getMFAMetrics(ctx context.Context) MFAAdoptionMetrics {
+func (s *Service) getMFAMetrics(ctx context.Context) (MFAAdoptionMetrics, error) {
 	metrics := MFAAdoptionMetrics{
 		ComplianceStatus: "non_compliant",
 		LastUpdated:      time.Now().UTC(),
 	}
-	org, _ := orgctx.From(ctx)
+	q := s.newMetricQuery(ctx)
 
-	if s.db != nil && s.db.Pool != nil {
-		s.db.Pool.QueryRow(ctx, `
-			SELECT COALESCE(COUNT(*), 0)
-			FROM users
-			WHERE enabled = true
-			AND org_id = $1
-		`, org.ID).Scan(&metrics.TotalUsers)
+	q.scan("enabled users", &metrics.TotalUsers, `
+		SELECT COALESCE(COUNT(*), 0)
+		FROM users
+		WHERE enabled = true
+		AND org_id = $1
+	`, q.org())
 
-		s.db.Pool.QueryRow(ctx, `
-			SELECT COALESCE(COUNT(DISTINCT user_id), 0)
-			FROM mfa_totp
-			WHERE enabled = true
-			AND org_id = $1
-		`, org.ID).Scan(&metrics.UsersWithTOTP)
+	q.scan("users with TOTP", &metrics.UsersWithTOTP, `
+		SELECT COALESCE(COUNT(DISTINCT user_id), 0)
+		FROM mfa_totp
+		WHERE enabled = true
+		AND org_id = $1
+	`, q.org())
 
-		s.db.Pool.QueryRow(ctx, `
-			SELECT COALESCE(COUNT(DISTINCT user_id), 0)
-			FROM mfa_webauthn
-			WHERE org_id = $1
-		`, org.ID).Scan(&metrics.UsersWithWebAuthn)
+	q.scan("users with WebAuthn", &metrics.UsersWithWebAuthn, `
+		SELECT COALESCE(COUNT(DISTINCT user_id), 0)
+		FROM mfa_webauthn
+		WHERE org_id = $1
+	`, q.org())
 
-		s.db.Pool.QueryRow(ctx, `
-			SELECT COALESCE(COUNT(DISTINCT user_id), 0) FROM (
-				SELECT user_id FROM mfa_totp WHERE enabled = true AND org_id = $1
-				UNION
-				SELECT user_id FROM mfa_webauthn WHERE org_id = $1
-			) mfa
-		`, org.ID).Scan(&metrics.UsersWithMFA)
+	q.scan("users with any MFA factor", &metrics.UsersWithMFA, `
+		SELECT COALESCE(COUNT(DISTINCT user_id), 0) FROM (
+			SELECT user_id FROM mfa_totp WHERE enabled = true AND org_id = $1
+			UNION
+			SELECT user_id FROM mfa_webauthn WHERE org_id = $1
+		) mfa
+	`, q.org())
+
+	if err := q.failed(); err != nil {
+		return MFAAdoptionMetrics{}, err
 	}
 
 	if metrics.TotalUsers > 0 {
@@ -403,47 +446,57 @@ func (s *Service) getMFAMetrics(ctx context.Context) MFAAdoptionMetrics {
 
 	metrics.ComplianceStatus = determineComplianceStatus(metrics.AdoptionRate, 80, 50)
 
-	return metrics
+	return metrics, nil
 }
 
-func (s *Service) getSessionManagementMetrics(ctx context.Context) SessionManagementMetrics {
+func (s *Service) getSessionManagementMetrics(ctx context.Context) (SessionManagementMetrics, error) {
 	metrics := SessionManagementMetrics{
 		ComplianceStatus:  "compliant",
 		LastActivityCheck: time.Now().UTC(),
 	}
-	org, _ := orgctx.From(ctx)
+	q := s.newMetricQuery(ctx)
 
-	if s.db != nil && s.db.Pool != nil {
-		s.db.Pool.QueryRow(ctx, `
-			SELECT COALESCE(COUNT(*), 0)
-			FROM sessions
-			WHERE expires_at > NOW()
-			AND org_id = $1
-		`, org.ID).Scan(&metrics.ActiveSessions)
+	q.scan("active sessions", &metrics.ActiveSessions, `
+		SELECT COALESCE(COUNT(*), 0)
+		FROM sessions
+		WHERE expires_at > NOW()
+		AND org_id = $1
+	`, q.org())
 
-		s.db.Pool.QueryRow(ctx, `
-			SELECT COALESCE(AVG(EXTRACT(EPOCH FROM (expires_at - created_at)) / 3600.0), 0)
-			FROM sessions
-			WHERE created_at > NOW() - INTERVAL '30 days'
-			AND org_id = $1
-		`, org.ID).Scan(&metrics.AverageSessionHours)
+	// sessions records its start as started_at; there is no created_at, so
+	// this statement could never plan and the average read 0 hours.
+	q.scan("average session length", &metrics.AverageSessionHours, `
+		SELECT COALESCE(AVG(EXTRACT(EPOCH FROM (expires_at - started_at)) / 3600.0), 0)
+		FROM sessions
+		WHERE started_at > NOW() - INTERVAL '30 days'
+		AND org_id = $1
+	`, q.org())
 
-		var settingsJSON []byte
-		err := s.db.Pool.QueryRow(ctx, `
-			SELECT COALESCE(value::text, '{}')
-			FROM system_settings
-			WHERE key = 'security'
-		`).Scan(&settingsJSON)
+	if err := q.failed(); err != nil {
+		return SessionManagementMetrics{}, err
+	}
 
-		if err == nil && len(settingsJSON) > 0 {
-			var secSettings map[string]interface{}
-			if json.Unmarshal(settingsJSON, &secSettings) == nil {
-				if st, ok := secSettings["session_timeout"].(float64); ok {
-					metrics.SessionTimeoutMins = int(st)
-				}
-				if it, ok := secSettings["idle_timeout"].(float64); ok {
-					metrics.IdleTimeoutMins = int(it)
-				}
+	// As in the password section: a deployment that has never saved security
+	// settings has no row, and the zero timeout below is then a real reading of
+	// an unconfigured install, which the compliance status treats as
+	// non-compliant.
+	var settingsJSON []byte
+	if err := s.db.Pool.QueryRow(ctx, `
+		SELECT COALESCE(value::text, '{}')
+		FROM system_settings
+		WHERE key = 'security'
+	`).Scan(&settingsJSON); err != nil {
+		settingsJSON = nil
+	}
+
+	if len(settingsJSON) > 0 {
+		var secSettings map[string]interface{}
+		if json.Unmarshal(settingsJSON, &secSettings) == nil {
+			if st, ok := secSettings["session_timeout"].(float64); ok {
+				metrics.SessionTimeoutMins = int(st)
+			}
+			if it, ok := secSettings["idle_timeout"].(float64); ok {
+				metrics.IdleTimeoutMins = int(it)
 			}
 		}
 	}
@@ -454,57 +507,59 @@ func (s *Service) getSessionManagementMetrics(ctx context.Context) SessionManage
 		metrics.ComplianceStatus = "partial"
 	}
 
-	return metrics
+	return metrics, nil
 }
 
-func (s *Service) getISOAccessControlMetrics(ctx context.Context, startDate, endDate time.Time) AccessControlMetrics {
+func (s *Service) getISOAccessControlMetrics(ctx context.Context, startDate, endDate time.Time) (AccessControlMetrics, error) {
 	metrics := AccessControlMetrics{
 		ComplianceStatus: "compliant",
 	}
-	org, _ := orgctx.From(ctx)
+	q := s.newMetricQuery(ctx)
 
-	if s.db != nil && s.db.Pool != nil {
-		s.db.Pool.QueryRow(ctx, `
-			SELECT COALESCE(COUNT(*), 0)
-			FROM users
-			WHERE enabled = true
-			AND org_id = $1
-		`, org.ID).Scan(&metrics.TotalUsers)
+	q.scan("enabled users", &metrics.TotalUsers, `
+		SELECT COALESCE(COUNT(*), 0)
+		FROM users
+		WHERE enabled = true
+		AND org_id = $1
+	`, q.org())
 
-		s.db.Pool.QueryRow(ctx, `
-			SELECT COALESCE(COUNT(DISTINCT ur.user_id), 0)
-			FROM user_roles ur
-			JOIN roles r ON ur.role_id = r.id AND r.org_id = ur.org_id
-			WHERE r.name IN ('admin', 'super_admin')
-			AND ur.user_id IN (SELECT id FROM users WHERE enabled = true AND org_id = ur.org_id)
-			AND ur.org_id = $1
-		`, org.ID).Scan(&metrics.AdminUsers)
+	q.scan("administrator accounts", &metrics.AdminUsers, `
+		SELECT COALESCE(COUNT(DISTINCT ur.user_id), 0)
+		FROM user_roles ur
+		JOIN roles r ON ur.role_id = r.id AND r.org_id = ur.org_id
+		WHERE r.name IN ('admin', 'super_admin')
+		AND ur.user_id IN (SELECT id FROM users WHERE enabled = true AND org_id = ur.org_id)
+		AND ur.org_id = $1
+	`, q.org())
 
-		if metrics.TotalUsers > 0 {
-			metrics.AdminRatio = float64(metrics.AdminUsers) / float64(metrics.TotalUsers) * 100
-		}
+	q.scan("roles defined", &metrics.RolesDefined, `
+		SELECT COALESCE(COUNT(*), 0)
+		FROM roles
+		WHERE org_id = $1
+	`, q.org())
 
-		s.db.Pool.QueryRow(ctx, `
-			SELECT COALESCE(COUNT(*), 0)
-			FROM roles
-			WHERE org_id = $1
-		`, org.ID).Scan(&metrics.RolesDefined)
+	q.scan("groups defined", &metrics.GroupsDefined, `
+		SELECT COALESCE(COUNT(*), 0)
+		FROM groups
+		WHERE org_id = $1
+	`, q.org())
 
-		s.db.Pool.QueryRow(ctx, `
-			SELECT COALESCE(COUNT(*), 0)
-			FROM groups
-			WHERE org_id = $1
-		`, org.ID).Scan(&metrics.GroupsDefined)
+	var lastReview time.Time
+	q.scan("last completed access review", &lastReview, `
+		SELECT COALESCE(MAX(completed_at), '1970-01-01'::timestamp)
+		FROM access_reviews
+		WHERE status = 'completed'
+		AND org_id = $1
+	`, q.org())
 
-		var lastReview time.Time
-		s.db.Pool.QueryRow(ctx, `
-			SELECT COALESCE(MAX(completed_at), '1970-01-01'::timestamp)
-			FROM access_reviews
-			WHERE status = 'completed'
-			AND org_id = $1
-		`, org.ID).Scan(&lastReview)
-		metrics.LastAccessReview = lastReview
+	if err := q.failed(); err != nil {
+		return AccessControlMetrics{}, err
 	}
+
+	if metrics.TotalUsers > 0 {
+		metrics.AdminRatio = float64(metrics.AdminUsers) / float64(metrics.TotalUsers) * 100
+	}
+	metrics.LastAccessReview = lastReview
 
 	if metrics.AdminRatio > 20 {
 		metrics.ComplianceStatus = "partial"
@@ -513,10 +568,10 @@ func (s *Service) getISOAccessControlMetrics(ctx context.Context, startDate, end
 		metrics.ComplianceStatus = "non_compliant"
 	}
 
-	return metrics
+	return metrics, nil
 }
 
-func (s *Service) getCryptographyMetrics(ctx context.Context) CryptographyMetrics {
+func (s *Service) getCryptographyMetrics(ctx context.Context) (CryptographyMetrics, error) {
 	metrics := CryptographyMetrics{
 		TLSEnabled:         true,
 		TLSMinVersion:      "1.2",
@@ -524,47 +579,53 @@ func (s *Service) getCryptographyMetrics(ctx context.Context) CryptographyMetric
 		KeyRotationEnabled: true,
 		ComplianceStatus:   "compliant",
 	}
+	q := s.newMetricQuery(ctx)
+	if err := q.failed(); err != nil {
+		return CryptographyMetrics{}, err
+	}
 
-	if s.db != nil && s.db.Pool != nil {
-		var settingsJSON []byte
-		err := s.db.Pool.QueryRow(ctx, `
-			SELECT COALESCE(value::text, '{}')
-			FROM system_settings
-			WHERE key = 'security'
-		`).Scan(&settingsJSON)
+	// The settings row may legitimately not exist; the defaults above are then
+	// the configuration in force.
+	var settingsJSON []byte
+	if err := s.db.Pool.QueryRow(ctx, `
+		SELECT COALESCE(value::text, '{}')
+		FROM system_settings
+		WHERE key = 'security'
+	`).Scan(&settingsJSON); err != nil {
+		settingsJSON = nil
+	}
 
-		if err == nil && len(settingsJSON) > 0 {
-			var secSettings map[string]interface{}
-			if json.Unmarshal(settingsJSON, &secSettings) == nil {
-				if tls, ok := secSettings["tls_enabled"].(bool); ok {
-					metrics.TLSEnabled = tls
-				}
-				if mv, ok := secSettings["tls_min_version"].(string); ok {
-					metrics.TLSMinVersion = mv
-				}
-				if enc, ok := secSettings["encryption_at_rest"].(bool); ok {
-					metrics.EncryptionAtRest = enc
-				}
-				if kr, ok := secSettings["key_rotation_enabled"].(bool); ok {
-					metrics.KeyRotationEnabled = kr
-				}
+	if len(settingsJSON) > 0 {
+		var secSettings map[string]interface{}
+		if json.Unmarshal(settingsJSON, &secSettings) == nil {
+			if tls, ok := secSettings["tls_enabled"].(bool); ok {
+				metrics.TLSEnabled = tls
+			}
+			if mv, ok := secSettings["tls_min_version"].(string); ok {
+				metrics.TLSMinVersion = mv
+			}
+			if enc, ok := secSettings["encryption_at_rest"].(bool); ok {
+				metrics.EncryptionAtRest = enc
+			}
+			if kr, ok := secSettings["key_rotation_enabled"].(bool); ok {
+				metrics.KeyRotationEnabled = kr
 			}
 		}
-
-		// Key rotations are recorded as audit events — the old query hit a
-		// phantom `key_rotation_events` table (no migration creates it) and
-		// always yielded the zero time with the error discarded.
-		org, _ := orgctx.From(ctx)
-		var lastRotation time.Time
-		if err := s.db.Pool.QueryRow(ctx, `
-			SELECT COALESCE(MAX(timestamp), '1970-01-01'::timestamptz)
-			FROM audit_events
-			WHERE event_type = 'key_rotation' AND org_id = $1
-		`, org.ID).Scan(&lastRotation); err != nil {
-			s.logger.Warn("key-rotation metric query failed", zap.Error(err))
-		}
-		metrics.LastKeyRotation = lastRotation
 	}
+
+	// Key rotations are recorded as audit events — the old query hit a
+	// phantom `key_rotation_events` table (no migration creates it) and
+	// always yielded the zero time with the error discarded.
+	var lastRotation time.Time
+	q.scan("last key rotation", &lastRotation, `
+		SELECT COALESCE(MAX(timestamp), '1970-01-01'::timestamptz)
+		FROM audit_events
+		WHERE event_type = 'key_rotation' AND org_id = $1
+	`, q.org())
+	if err := q.failed(); err != nil {
+		return CryptographyMetrics{}, err
+	}
+	metrics.LastKeyRotation = lastRotation
 
 	if !metrics.TLSEnabled || metrics.TLSMinVersion < "1.2" {
 		metrics.ComplianceStatus = "non_compliant"
@@ -572,72 +633,90 @@ func (s *Service) getCryptographyMetrics(ctx context.Context) CryptographyMetric
 		metrics.ComplianceStatus = "partial"
 	}
 
-	return metrics
+	return metrics, nil
 }
 
-func (s *Service) getOperationalSecurityMetrics(ctx context.Context, startDate, endDate time.Time) OperationalSecurityMetrics {
+func (s *Service) getOperationalSecurityMetrics(ctx context.Context, startDate, endDate time.Time) (OperationalSecurityMetrics, error) {
 	metrics := OperationalSecurityMetrics{
 		EventsByType:     make(map[string]int),
 		EventsByDay:      []DayEventCount{},
 		ComplianceStatus: "compliant",
 	}
-	org, _ := orgctx.From(ctx)
+	q := s.newMetricQuery(ctx)
 
-	if s.db != nil && s.db.Pool != nil {
-		s.db.Pool.QueryRow(ctx, `
-			SELECT COALESCE(COUNT(*), 0)
-			FROM audit_events
-			WHERE timestamp BETWEEN $1 AND $2
-			AND org_id = $3
-		`, startDate, endDate, org.ID).Scan(&metrics.TotalEvents)
+	q.scan("total audit events", &metrics.TotalEvents, `
+		SELECT COALESCE(COUNT(*), 0)
+		FROM audit_events
+		WHERE timestamp BETWEEN $1 AND $2
+		AND org_id = $3
+	`, startDate, endDate, q.org())
 
-		rows, err := s.db.Pool.Query(ctx, `
-			SELECT event_type, COUNT(*)
-			FROM audit_events
-			WHERE timestamp BETWEEN $1 AND $2
-			AND org_id = $3
-			GROUP BY event_type
-		`, startDate, endDate, org.ID)
-		if err == nil {
-			for rows.Next() {
-				var eventType string
-				var count int
-				if rows.Scan(&eventType, &count) == nil {
-					metrics.EventsByType[eventType] = count
-				}
-			}
+	q.scan("failed audit events", &metrics.FailedEvents, `
+		SELECT COALESCE(COUNT(*), 0)
+		FROM audit_events
+		WHERE outcome = 'failure'
+		AND timestamp BETWEEN $1 AND $2
+		AND org_id = $3
+	`, startDate, endDate, q.org())
+
+	if err := q.failed(); err != nil {
+		return OperationalSecurityMetrics{}, err
+	}
+
+	// The two grouped reads are the same defect in the multi-row shape: `if err
+	// == nil` around the loop meant a failed query left EventsByDay empty, and
+	// an empty EventsByDay is a LOGGING COVERAGE OF 0% -- the section then
+	// reports "non_compliant" on the strength of a query that never ran.
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT event_type, COUNT(*)
+		FROM audit_events
+		WHERE timestamp BETWEEN $1 AND $2
+		AND org_id = $3
+		GROUP BY event_type
+	`, startDate, endDate, q.org())
+	if err != nil {
+		return OperationalSecurityMetrics{}, fmt.Errorf("events by type: %w", err)
+	}
+	for rows.Next() {
+		var eventType string
+		var count int
+		if err := rows.Scan(&eventType, &count); err != nil {
 			rows.Close()
+			return OperationalSecurityMetrics{}, fmt.Errorf("events by type: %w", err)
 		}
+		metrics.EventsByType[eventType] = count
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return OperationalSecurityMetrics{}, fmt.Errorf("events by type: %w", err)
+	}
 
-		rows, err = s.db.Pool.Query(ctx, `
-			SELECT DATE(timestamp) as day, COUNT(*) as count
-			FROM audit_events
-			WHERE timestamp BETWEEN $1 AND $2
-			AND org_id = $3
-			GROUP BY DATE(timestamp)
-			ORDER BY day
-		`, startDate, endDate, org.ID)
-		if err == nil {
-			for rows.Next() {
-				var day time.Time
-				var count int
-				if rows.Scan(&day, &count) == nil {
-					metrics.EventsByDay = append(metrics.EventsByDay, DayEventCount{
-						Date:  day.Format("2006-01-02"),
-						Count: count,
-					})
-				}
-			}
+	rows, err = s.db.Pool.Query(ctx, `
+		SELECT DATE(timestamp) as day, COUNT(*) as count
+		FROM audit_events
+		WHERE timestamp BETWEEN $1 AND $2
+		AND org_id = $3
+		GROUP BY DATE(timestamp)
+		ORDER BY day
+	`, startDate, endDate, q.org())
+	if err != nil {
+		return OperationalSecurityMetrics{}, fmt.Errorf("events by day: %w", err)
+	}
+	for rows.Next() {
+		var day time.Time
+		var count int
+		if err := rows.Scan(&day, &count); err != nil {
 			rows.Close()
+			return OperationalSecurityMetrics{}, fmt.Errorf("events by day: %w", err)
 		}
-
-		s.db.Pool.QueryRow(ctx, `
-			SELECT COALESCE(COUNT(*), 0)
-			FROM audit_events
-			WHERE outcome = 'failure'
-			AND timestamp BETWEEN $1 AND $2
-			AND org_id = $3
-		`, startDate, endDate, org.ID).Scan(&metrics.FailedEvents)
+		metrics.EventsByDay = append(metrics.EventsByDay, DayEventCount{
+			Date:  day.Format("2006-01-02"),
+			Count: count,
+		})
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return OperationalSecurityMetrics{}, fmt.Errorf("events by day: %w", err)
 	}
 
 	if metrics.TotalEvents > 0 {
@@ -655,204 +734,227 @@ func (s *Service) getOperationalSecurityMetrics(ctx context.Context, startDate, 
 		metrics.ComplianceStatus = "partial"
 	}
 
-	return metrics
+	return metrics, nil
 }
 
-func (s *Service) getDataAccessMetrics(ctx context.Context, startDate, endDate time.Time) DataAccessMetrics {
+func (s *Service) getDataAccessMetrics(ctx context.Context, startDate, endDate time.Time) (DataAccessMetrics, error) {
 	metrics := DataAccessMetrics{
 		AccessByActor:    make(map[string]int),
 		AccessByDataType: make(map[string]int),
 		ComplianceStatus: "compliant",
 	}
-	org, _ := orgctx.From(ctx)
+	q := s.newMetricQuery(ctx)
 
-	if s.db != nil && s.db.Pool != nil {
-		s.db.Pool.QueryRow(ctx, `
-			SELECT COALESCE(COUNT(*), 0)
-			FROM audit_events
-			WHERE event_type = 'data_access'
-			AND timestamp BETWEEN $1 AND $2
-			AND org_id = $3
-		`, startDate, endDate, org.ID).Scan(&metrics.TotalAccessEvents)
+	// event_type = 'data_access' is declared in service.go and written by
+	// nothing, so these four queries counted zero on every report ever
+	// generated. What this trail actually records as a read is an action
+	// under event_type 'authorization' -- see DataAccessActions, which says
+	// which five and why, and whose own test fails on a name nothing
+	// writes. The event_type term stays for the day a writer adopts it.
+	q.scan("total data-access events", &metrics.TotalAccessEvents, `
+		SELECT COALESCE(COUNT(*), 0)
+		FROM audit_events
+		WHERE (event_type = 'data_access' OR action = ANY($4))
+		AND timestamp BETWEEN $1 AND $2
+		AND org_id = $3
+	`, startDate, endDate, q.org(), DataAccessActions)
 
-		rows, err := s.db.Pool.Query(ctx, `
-			SELECT actor_id, COUNT(*)
-			FROM audit_events
-			WHERE event_type = 'data_access'
-			AND timestamp BETWEEN $1 AND $2
-			AND org_id = $3
-			GROUP BY actor_id
-			ORDER BY COUNT(*) DESC
-			LIMIT 10
-		`, startDate, endDate, org.ID)
-		if err == nil {
-			for rows.Next() {
-				var actorID string
-				var count int
-				if rows.Scan(&actorID, &count) == nil {
-					metrics.AccessByActor[actorID] = count
-				}
-			}
+	q.scan("last data-access event", &metrics.LastAccessLog, `
+		SELECT COALESCE(MAX(timestamp), '1970-01-01'::timestamp)
+		FROM audit_events
+		WHERE (event_type = 'data_access' OR action = ANY($2))
+		AND org_id = $1
+	`, q.org(), DataAccessActions)
+
+	if err := q.failed(); err != nil {
+		return DataAccessMetrics{}, err
+	}
+
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT actor_id, COUNT(*)
+		FROM audit_events
+		WHERE (event_type = 'data_access' OR action = ANY($4))
+		AND timestamp BETWEEN $1 AND $2
+		AND org_id = $3
+		GROUP BY actor_id
+		ORDER BY COUNT(*) DESC
+		LIMIT 10
+	`, startDate, endDate, q.org(), DataAccessActions)
+	if err != nil {
+		return DataAccessMetrics{}, fmt.Errorf("data access by actor: %w", err)
+	}
+	for rows.Next() {
+		var actorID string
+		var count int
+		if err := rows.Scan(&actorID, &count); err != nil {
 			rows.Close()
+			return DataAccessMetrics{}, fmt.Errorf("data access by actor: %w", err)
 		}
+		metrics.AccessByActor[actorID] = count
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return DataAccessMetrics{}, fmt.Errorf("data access by actor: %w", err)
+	}
 
-		rows, err = s.db.Pool.Query(ctx, `
-			SELECT resource_type, COUNT(*)
-			FROM audit_events
-			WHERE event_type = 'data_access'
-			AND timestamp BETWEEN $1 AND $2
-			AND org_id = $3
-			GROUP BY resource_type
-		`, startDate, endDate, org.ID)
-		if err == nil {
-			for rows.Next() {
-				var resourceType string
-				var count int
-				if rows.Scan(&resourceType, &count) == nil {
-					metrics.AccessByDataType[resourceType] = count
-				}
-			}
+	// audit_events describes what was acted on as (target_id, target_type);
+	// it has no resource_type, which an earlier commit corrected here. That
+	// was one reason this section was empty in every report and not the
+	// reason: the predicate below matched no row either.
+	rows, err = s.db.Pool.Query(ctx, `
+		SELECT target_type, COUNT(*)
+		FROM audit_events
+		WHERE (event_type = 'data_access' OR action = ANY($4))
+		AND timestamp BETWEEN $1 AND $2
+		AND org_id = $3
+		GROUP BY target_type
+	`, startDate, endDate, q.org(), DataAccessActions)
+	if err != nil {
+		return DataAccessMetrics{}, fmt.Errorf("data access by data type: %w", err)
+	}
+	for rows.Next() {
+		var resourceType string
+		var count int
+		if err := rows.Scan(&resourceType, &count); err != nil {
 			rows.Close()
+			return DataAccessMetrics{}, fmt.Errorf("data access by data type: %w", err)
 		}
-
-		s.db.Pool.QueryRow(ctx, `
-			SELECT COALESCE(MAX(timestamp), '1970-01-01'::timestamp)
-			FROM audit_events
-			WHERE event_type = 'data_access'
-			AND org_id = $1
-		`, org.ID).Scan(&metrics.LastAccessLog)
+		metrics.AccessByDataType[resourceType] = count
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return DataAccessMetrics{}, fmt.Errorf("data access by data type: %w", err)
 	}
 
 	if metrics.TotalAccessEvents == 0 {
 		metrics.ComplianceStatus = "partial"
 	}
 
-	return metrics
+	return metrics, nil
 }
 
-func (s *Service) getConsentMetrics(ctx context.Context) ConsentMetrics {
+func (s *Service) getConsentMetrics(ctx context.Context) (ConsentMetrics, error) {
 	metrics := ConsentMetrics{
 		ComplianceStatus: "compliant",
 	}
-	org, _ := orgctx.From(ctx)
+	// This section had already grown its own version of metricQuery -- a local
+	// closure collecting the first error, and a "unknown" compliance status --
+	// after the same defect was found here: the old queries hit a phantom
+	// `consent_records` table, every Scan error was discarded, and the zero
+	// value forced non_compliant on every install regardless of real consent
+	// state. The status is gone with the closure. One section reporting
+	// "unknown" while the rest reported numbers still produced a document an
+	// auditor would read as a report; a failed measurement now fails the whole
+	// report, which is the only reading that cannot mislead.
+	q := s.newMetricQuery(ctx)
 
-	if s.db != nil && s.db.Pool != nil {
-		// Consent records live in user_consents — the table the routed
-		// self-service (/users/me/privacy/consents) and admin privacy
-		// endpoints actually write. The old queries hit a phantom
-		// `consent_records` table, every Scan error was discarded, and the
-		// zero value forced ComplianceStatus to non_compliant on every
-		// install regardless of real consent state.
-		var queryErr error
-		scan := func(dst interface{}, q string, args ...interface{}) {
-			if err := s.db.Pool.QueryRow(ctx, q, args...).Scan(dst); err != nil && queryErr == nil {
-				queryErr = err
-			}
-		}
-		scan(&metrics.TotalConsentRecords,
-			`SELECT COUNT(*) FROM user_consents WHERE org_id = $1`, org.ID)
-		scan(&metrics.ActiveConsents,
-			`SELECT COUNT(*) FROM user_consents WHERE granted = true AND revoked_at IS NULL AND org_id = $1`, org.ID)
-		scan(&metrics.WithdrawnConsents,
-			`SELECT COUNT(*) FROM user_consents WHERE revoked_at IS NOT NULL AND org_id = $1`, org.ID)
-		// user_consents has no pending state: a consent either exists
-		// (granted/revoked) or does not.
-		metrics.PendingConsents = 0
+	q.scan("consent records", &metrics.TotalConsentRecords,
+		`SELECT COUNT(*) FROM user_consents WHERE org_id = $1`, q.org())
+	q.scan("active consents", &metrics.ActiveConsents,
+		`SELECT COUNT(*) FROM user_consents WHERE granted = true AND revoked_at IS NULL AND org_id = $1`, q.org())
+	q.scan("withdrawn consents", &metrics.WithdrawnConsents,
+		`SELECT COUNT(*) FROM user_consents WHERE revoked_at IS NOT NULL AND org_id = $1`, q.org())
+	// user_consents has no pending state: a consent either exists
+	// (granted/revoked) or does not.
+	metrics.PendingConsents = 0
 
-		var lastUpdate time.Time
-		scan(&lastUpdate, `
-			SELECT COALESCE(MAX(COALESCE(revoked_at, granted_at, created_at)), '1970-01-01'::timestamptz)
-			FROM user_consents WHERE org_id = $1`, org.ID)
-		metrics.LastConsentUpdate = lastUpdate
+	var lastUpdate time.Time
+	q.scan("last consent change", &lastUpdate, `
+		SELECT COALESCE(MAX(COALESCE(revoked_at, granted_at, created_at)), '1970-01-01'::timestamptz)
+		FROM user_consents WHERE org_id = $1`, q.org())
+	metrics.LastConsentUpdate = lastUpdate
 
-		if queryErr != nil {
-			// Fail visibly: report the metric as unknown instead of letting
-			// an errored query masquerade as a non_compliant finding.
-			s.logger.Warn("consent metrics query failed", zap.Error(queryErr))
-			metrics.ComplianceStatus = "unknown"
-			return metrics
-		}
+	if err := q.failed(); err != nil {
+		return ConsentMetrics{}, err
 	}
 
 	if metrics.TotalConsentRecords == 0 {
 		metrics.ComplianceStatus = "non_compliant"
 	}
 
-	return metrics
+	return metrics, nil
 }
 
-func (s *Service) getDataSubjectRequestMetrics(ctx context.Context, startDate, endDate time.Time) DataSubjectRequestMetrics {
+func (s *Service) getDataSubjectRequestMetrics(ctx context.Context, startDate, endDate time.Time) (DataSubjectRequestMetrics, error) {
 	metrics := DataSubjectRequestMetrics{
 		RequestsByType:   make(map[string]int),
 		ComplianceStatus: "compliant",
 	}
-	org, _ := orgctx.From(ctx)
+	q := s.newMetricQuery(ctx)
 
-	if s.db != nil && s.db.Pool != nil {
-		s.db.Pool.QueryRow(ctx, `
-			SELECT COALESCE(COUNT(*), 0)
-			FROM data_subject_requests
-			WHERE created_at BETWEEN $1 AND $2
-			AND org_id = $3
-		`, startDate, endDate, org.ID).Scan(&metrics.TotalRequests)
+	q.scan("data-subject requests", &metrics.TotalRequests, `
+		SELECT COALESCE(COUNT(*), 0)
+		FROM data_subject_requests
+		WHERE created_at BETWEEN $1 AND $2
+		AND org_id = $3
+	`, startDate, endDate, q.org())
 
-		rows, err := s.db.Pool.Query(ctx, `
-			SELECT request_type, COUNT(*)
-			FROM data_subject_requests
-			WHERE created_at BETWEEN $1 AND $2
-			AND org_id = $3
-			GROUP BY request_type
-		`, startDate, endDate, org.ID)
-		if err == nil {
-			for rows.Next() {
-				var reqType string
-				var count int
-				if rows.Scan(&reqType, &count) == nil {
-					metrics.RequestsByType[reqType] = count
-				}
-			}
+	q.scan("pending data-subject requests", &metrics.PendingRequests, `
+		SELECT COALESCE(COUNT(*), 0)
+		FROM data_subject_requests
+		WHERE status = 'pending'
+		AND created_at BETWEEN $1 AND $2
+		AND org_id = $3
+	`, startDate, endDate, q.org())
+
+	q.scan("completed data-subject requests", &metrics.CompletedRequests, `
+		SELECT COALESCE(COUNT(*), 0)
+		FROM data_subject_requests
+		WHERE status = 'completed'
+		AND created_at BETWEEN $1 AND $2
+		AND org_id = $3
+	`, startDate, endDate, q.org())
+
+	q.scan("overdue data-subject requests", &metrics.OverdueRequests, `
+		SELECT COALESCE(COUNT(*), 0)
+		FROM data_subject_requests
+		WHERE status != 'completed'
+		AND created_at < NOW() - INTERVAL '30 days'
+		AND org_id = $1
+	`, q.org())
+
+	q.scan("average data-subject response time", &metrics.AverageResponseDays, `
+		SELECT COALESCE(AVG(EXTRACT(EPOCH FROM (completed_at - created_at)) / 86400.0), 0)
+		FROM data_subject_requests
+		WHERE status = 'completed'
+		AND created_at BETWEEN $1 AND $2
+		AND org_id = $3
+	`, startDate, endDate, q.org())
+
+	var lastReq time.Time
+	q.scan("last data-subject request", &lastReq, `
+		SELECT COALESCE(MAX(created_at), '1970-01-01'::timestamp)
+		FROM data_subject_requests
+		WHERE org_id = $1
+	`, q.org())
+	metrics.LastRequestDate = lastReq
+
+	if err := q.failed(); err != nil {
+		return DataSubjectRequestMetrics{}, err
+	}
+
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT request_type, COUNT(*)
+		FROM data_subject_requests
+		WHERE created_at BETWEEN $1 AND $2
+		AND org_id = $3
+		GROUP BY request_type
+	`, startDate, endDate, q.org())
+	if err != nil {
+		return DataSubjectRequestMetrics{}, fmt.Errorf("data-subject requests by type: %w", err)
+	}
+	for rows.Next() {
+		var reqType string
+		var count int
+		if err := rows.Scan(&reqType, &count); err != nil {
 			rows.Close()
+			return DataSubjectRequestMetrics{}, fmt.Errorf("data-subject requests by type: %w", err)
 		}
-
-		s.db.Pool.QueryRow(ctx, `
-			SELECT COALESCE(COUNT(*), 0)
-			FROM data_subject_requests
-			WHERE status = 'pending'
-			AND created_at BETWEEN $1 AND $2
-			AND org_id = $3
-		`, startDate, endDate, org.ID).Scan(&metrics.PendingRequests)
-
-		s.db.Pool.QueryRow(ctx, `
-			SELECT COALESCE(COUNT(*), 0)
-			FROM data_subject_requests
-			WHERE status = 'completed'
-			AND created_at BETWEEN $1 AND $2
-			AND org_id = $3
-		`, startDate, endDate, org.ID).Scan(&metrics.CompletedRequests)
-
-		s.db.Pool.QueryRow(ctx, `
-			SELECT COALESCE(COUNT(*), 0)
-			FROM data_subject_requests
-			WHERE status != 'completed'
-			AND created_at < NOW() - INTERVAL '30 days'
-			AND org_id = $1
-		`, org.ID).Scan(&metrics.OverdueRequests)
-
-		s.db.Pool.QueryRow(ctx, `
-			SELECT COALESCE(AVG(EXTRACT(EPOCH FROM (completed_at - created_at)) / 86400.0), 0)
-			FROM data_subject_requests
-			WHERE status = 'completed'
-			AND created_at BETWEEN $1 AND $2
-			AND org_id = $3
-		`, startDate, endDate, org.ID).Scan(&metrics.AverageResponseDays)
-
-		var lastReq time.Time
-		s.db.Pool.QueryRow(ctx, `
-			SELECT COALESCE(MAX(created_at), '1970-01-01'::timestamp)
-			FROM data_subject_requests
-			WHERE org_id = $1
-		`, org.ID).Scan(&lastReq)
-		metrics.LastRequestDate = lastReq
+		metrics.RequestsByType[reqType] = count
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return DataSubjectRequestMetrics{}, fmt.Errorf("data-subject requests by type: %w", err)
 	}
 
 	if metrics.OverdueRequests > 0 || metrics.AverageResponseDays > 30 {
@@ -861,67 +963,69 @@ func (s *Service) getDataSubjectRequestMetrics(ctx context.Context, startDate, e
 		metrics.ComplianceStatus = "partial"
 	}
 
-	return metrics
+	return metrics, nil
 }
 
-func (s *Service) getDataDeletionMetrics(ctx context.Context, startDate, endDate time.Time) DataDeletionMetrics {
+func (s *Service) getDataDeletionMetrics(ctx context.Context, startDate, endDate time.Time) (DataDeletionMetrics, error) {
 	metrics := DataDeletionMetrics{
 		ComplianceStatus: "compliant",
 	}
-	org, _ := orgctx.From(ctx)
+	q := s.newMetricQuery(ctx)
 
-	if s.db != nil && s.db.Pool != nil {
-		s.db.Pool.QueryRow(ctx, `
-			SELECT COALESCE(COUNT(*), 0)
-			FROM data_subject_requests
-			WHERE request_type = 'deletion'
-			AND created_at BETWEEN $1 AND $2
-			AND org_id = $3
-		`, startDate, endDate, org.ID).Scan(&metrics.TotalDeletionRequests)
+	q.scan("deletion requests", &metrics.TotalDeletionRequests, `
+		SELECT COALESCE(COUNT(*), 0)
+		FROM data_subject_requests
+		WHERE request_type = 'deletion'
+		AND created_at BETWEEN $1 AND $2
+		AND org_id = $3
+	`, startDate, endDate, q.org())
 
-		s.db.Pool.QueryRow(ctx, `
-			SELECT COALESCE(COUNT(*), 0)
-			FROM data_subject_requests
-			WHERE request_type = 'deletion'
-			AND status = 'completed'
-			AND created_at BETWEEN $1 AND $2
-			AND org_id = $3
-		`, startDate, endDate, org.ID).Scan(&metrics.CompletedDeletions)
+	q.scan("completed deletions", &metrics.CompletedDeletions, `
+		SELECT COALESCE(COUNT(*), 0)
+		FROM data_subject_requests
+		WHERE request_type = 'deletion'
+		AND status = 'completed'
+		AND created_at BETWEEN $1 AND $2
+		AND org_id = $3
+	`, startDate, endDate, q.org())
 
-		s.db.Pool.QueryRow(ctx, `
-			SELECT COALESCE(COUNT(*), 0)
-			FROM data_subject_requests
-			WHERE request_type = 'deletion'
-			AND status = 'pending'
-			AND org_id = $1
-		`, org.ID).Scan(&metrics.PendingDeletions)
+	q.scan("pending deletions", &metrics.PendingDeletions, `
+		SELECT COALESCE(COUNT(*), 0)
+		FROM data_subject_requests
+		WHERE request_type = 'deletion'
+		AND status = 'pending'
+		AND org_id = $1
+	`, q.org())
 
-		s.db.Pool.QueryRow(ctx, `
-			SELECT COALESCE(COUNT(*), 0)
-			FROM data_subject_requests
-			WHERE request_type = 'deletion'
-			AND status = 'failed'
-			AND org_id = $1
-		`, org.ID).Scan(&metrics.FailedDeletions)
+	q.scan("failed deletions", &metrics.FailedDeletions, `
+		SELECT COALESCE(COUNT(*), 0)
+		FROM data_subject_requests
+		WHERE request_type = 'deletion'
+		AND status = 'failed'
+		AND org_id = $1
+	`, q.org())
 
-		s.db.Pool.QueryRow(ctx, `
-			SELECT COALESCE(AVG(EXTRACT(EPOCH FROM (completed_at - created_at)) / 86400.0), 0)
-			FROM data_subject_requests
-			WHERE request_type = 'deletion'
-			AND status = 'completed'
-			AND created_at BETWEEN $1 AND $2
-			AND org_id = $3
-		`, startDate, endDate, org.ID).Scan(&metrics.AverageDeletionDays)
+	q.scan("average deletion time", &metrics.AverageDeletionDays, `
+		SELECT COALESCE(AVG(EXTRACT(EPOCH FROM (completed_at - created_at)) / 86400.0), 0)
+		FROM data_subject_requests
+		WHERE request_type = 'deletion'
+		AND status = 'completed'
+		AND created_at BETWEEN $1 AND $2
+		AND org_id = $3
+	`, startDate, endDate, q.org())
 
-		var lastDel time.Time
-		s.db.Pool.QueryRow(ctx, `
-			SELECT COALESCE(MAX(completed_at), '1970-01-01'::timestamp)
-			FROM data_subject_requests
-			WHERE request_type = 'deletion'
-			AND status = 'completed'
-			AND org_id = $1
-		`, org.ID).Scan(&lastDel)
-		metrics.LastDeletionDate = lastDel
+	var lastDel time.Time
+	q.scan("last completed deletion", &lastDel, `
+		SELECT COALESCE(MAX(completed_at), '1970-01-01'::timestamp)
+		FROM data_subject_requests
+		WHERE request_type = 'deletion'
+		AND status = 'completed'
+		AND org_id = $1
+	`, q.org())
+	metrics.LastDeletionDate = lastDel
+
+	if err := q.failed(); err != nil {
+		return DataDeletionMetrics{}, err
 	}
 
 	if metrics.FailedDeletions > 0 || metrics.AverageDeletionDays > 30 {
@@ -930,7 +1034,7 @@ func (s *Service) getDataDeletionMetrics(ctx context.Context, startDate, endDate
 		metrics.ComplianceStatus = "partial"
 	}
 
-	return metrics
+	return metrics, nil
 }
 
 func generateReportID() string {

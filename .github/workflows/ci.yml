@@ -13,6 +13,13 @@ permissions:
   checks: write
 
 env:
+  # A CACHE-KEY component only. setup-go is given go-version-file: go.mod so it
+  # installs the exact `toolchain` line, and the pin therefore lives in one
+  # place. Asking for '1.26' here is what made every job download a toolchain:
+  # the runner's cache holds 1.26.7, setup-go reported "Successfully set up Go
+  # version 1.26", and the next `go` command fetched go1.26.8 from
+  # proxy.golang.org -- ~70 MB per job, unretried. One of those TLS handshakes
+  # timed out and took Unit Tests (internal/notifications) down with it.
   GO_VERSION: '1.26'
   CACHE_VERSION: v1
 
@@ -126,6 +133,19 @@ jobs:
         run: bash scripts/check-macos-pod-priming.test.sh
       - name: A macOS Flutter build must create its spec source first
         run: bash scripts/check-macos-pod-priming.sh
+      - name: Verify the toolchain-pin guard can go red
+        run: bash scripts/check-go-toolchain-pin.test.sh
+      - name: Every setup-go step installs the toolchain go.mod pins
+        run: bash scripts/check-go-toolchain-pin.sh --enforce
+      - name: Verify the run-block guard can go red
+        run: bash scripts/check-run-blocks-can-fail.test.sh
+      - name: A gate in a run block without -e must exit 1 itself
+        # Added because a gate added to this very file could not fail: the
+        # integration step opens `set -uo pipefail` (no -e), so a bare failing
+        # command is skipped over and the step's status comes from the LAST
+        # command. A checker that cannot fail is the defect this repository
+        # keeps finding, and the checking file is where it is easiest to write.
+        run: bash scripts/check-run-blocks-can-fail.sh --enforce
       - name: Verify the race-timeout guard can go red
         # Same mutation discipline: it must flag a bare `-race`, including one
         # split across a line continuation where the first line looks complete,
@@ -156,6 +176,14 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
+      # The runner that lets a contributor run this job's guards -- and the
+      # other jobs' -- before pushing rather than after. Its own cases run here
+      # because a runner that reports "all guards pass" having found none is a
+      # green light nobody earned, and that is not a failure CI would otherwise
+      # notice: it would simply stop catching things.
+      - name: The guard runner can still tell a pass from a pass it did not make
+        run: bash scripts/run-ci-guards.test.sh
+
       - name: Verify the workflow guard can go red
         run: bash scripts/check-workflows-parse.test.sh
       - name: Every workflow must be one GitHub can run
@@ -180,6 +208,18 @@ jobs:
         run: bash scripts/check-release-dispatch.test.sh
       - name: A dispatched release must stamp images like a tagged one
         run: bash scripts/check-release-dispatch.sh --enforce
+      - name: Verify the test-reachability guard can go red
+        run: bash scripts/check-test-reachability.test.sh
+      - name: No database-backed test may be unreachable from CI
+        run: bash scripts/check-test-reachability.sh --enforce
+      - name: Verify the inert-test guard can go red
+        run: bash scripts/check-inert-tests.test.sh
+      - name: No test may be one unconditional skip
+        run: bash scripts/check-inert-tests.sh --enforce
+      - name: Verify the OpenAPI guard can go red
+        run: bash scripts/check-openapi-parses.test.sh
+      - name: Every OpenAPI spec must parse and resolve
+        run: bash scripts/check-openapi-parses.sh --enforce
       - name: The CodeQL alert summary really names the high-severity rule
         run: bash scripts/codeql-alert-summary.test.sh
 
@@ -384,6 +424,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Names the job ("Build (Go 1.26)") and keys its cache. It is NOT the
+        # toolchain: setup-go below reads go.mod, so the pin lives in one place.
+        # The value stays a minor version deliberately -- this string is part of
+        # a check name that branch protection may require, and a required check
+        # that changes its name stops reporting.
         go-version: ['1.26']
 
     steps:
@@ -392,7 +437,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ matrix.go-version }}
+          go-version-file: go.mod
           cache: true
 
       - name: Set up Go build cache
@@ -430,7 +475,16 @@ jobs:
           path: bin/
           retention-days: 7
 
-  # Parallel test execution by package
+  # Parallel test execution by package.
+  #
+  # `package` is the label the check carries; `paths` is what actually runs.
+  # They were one field until this list was found to be missing cmd/ entirely —
+  # seven production-config gate tests, one per service, red for several pushes
+  # and reported by nothing here. Splitting the two lets one entry cover several
+  # small packages without inventing a directory that does not exist, and
+  # tools/testmatrix fails the build when a package holding tests is named by
+  # neither this list nor its register. Keep the two halves consistent: the
+  # guard reads `paths`, a human reads `package`.
   test-unit:
     name: Unit Tests (${{ matrix.package }})
     runs-on: ubuntu-latest
@@ -440,31 +494,99 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        package:
-          - internal/access
-          - internal/admin
-          - internal/apikeys
-          - internal/audit
-          - internal/auth
-          - internal/common
-          - internal/directory
-          - internal/email
-          - internal/gateway
-          - internal/governance
-          - internal/health
-          - internal/identity
-          - internal/metrics
-          - internal/middleware
-          - internal/migrations
-          - internal/notifications
-          - internal/oauth
-          - internal/organization
-          - internal/portal
-          - internal/provisioning
-          - internal/risk
-          - internal/server
-          - internal/webhooks
-          - pkg/
+        include:
+          - package: internal/access
+            paths: ./internal/access/...
+          - package: internal/admin
+            paths: ./internal/admin/...
+          - package: internal/apikeys
+            paths: ./internal/apikeys/...
+          - package: internal/audit
+            paths: ./internal/audit/...
+          - package: internal/auth
+            paths: ./internal/auth/...
+          - package: internal/common
+            paths: ./internal/common/...
+          - package: internal/directory
+            paths: ./internal/directory/...
+          - package: internal/email
+            paths: ./internal/email/...
+          - package: internal/gateway
+            paths: ./internal/gateway/...
+          - package: internal/governance
+            paths: ./internal/governance/...
+          - package: internal/health
+            paths: ./internal/health/...
+          - package: internal/identity
+            paths: ./internal/identity/...
+          - package: internal/metrics
+            paths: ./internal/metrics/...
+          - package: internal/middleware
+            paths: ./internal/middleware/...
+          - package: internal/migrations
+            paths: ./internal/migrations/...
+          - package: internal/notifications
+            paths: ./internal/notifications/...
+          - package: internal/oauth
+            paths: ./internal/oauth/...
+          - package: internal/organization
+            paths: ./internal/organization/...
+          - package: internal/portal
+            paths: ./internal/portal/...
+          - package: internal/provisioning
+            paths: ./internal/provisioning/...
+          - package: internal/risk
+            paths: ./internal/risk/...
+          - package: internal/server
+            paths: ./internal/server/...
+          - package: internal/webhooks
+            paths: ./internal/webhooks/...
+          - package: pkg/
+            paths: ./pkg/...
+          # Every service's main package. Each carries a
+          # *_ProductionConfigValidation test that is the only automated proof
+          # that that service accepts a correctly configured production start
+          # and refuses a weak one; all seven were red for several pushes with
+          # no job here to say so.
+          - package: cmd
+            paths: ./cmd/...
+          # The gates' own self-tests. The lint jobs below `go run` these tools;
+          # until this entry existed, nothing ran `go test` on the registers
+          # that keep their verdicts honest.
+          #
+          # -short, and it is the only entry that needs a flag. Two of these
+          # tools -- deadconfig and deadservice -- answer a question about the
+          # WHOLE MODULE, so their tests call packages.Load over every package
+          # in it with NeedTypes|NeedSyntax. Both already guard that half behind
+          # testing.Short(), and both have a dedicated job further down this
+          # file that runs `go test -short ./tools/X/` and then the tool itself
+          # over the whole module as a hard gate -- so nothing here is skipped
+          # that CI does not prove anyway, in a job whose name says what broke.
+          #
+          # Without the flag this job builds ./tools/... and then the load
+          # inside the test has to build the rest of the module from scratch.
+          # Measured on this branch: 8.8 GB of peak toolchain memory for
+          # ./tools/deadconfig alone under -race. The job died with
+          # `exit code 143` and "the runner has received a shutdown signal" on
+          # five consecutive pushes, always at the same package boundary, and
+          # never printed a test failure -- which is why it read as
+          # infrastructure and went unread for five runs.
+          - package: tools
+            paths: ./tools/...
+            flags: -short
+          # The four leaf packages that decide whether access is allowed,
+          # elevated or revoked. Small enough to share a runner, load-bearing
+          # enough that they must not share one with something unrelated.
+          - package: internal/abac+appaccess+jitgrant+revocation
+            paths: ./internal/abac/... ./internal/appaccess/... ./internal/jitgrant/... ./internal/revocation/...
+          - package: internal/vault+credentials+signingkeys
+            paths: ./internal/vault/... ./internal/credentials/... ./internal/signingkeys/...
+          - package: internal/ai+api+backup+intelligence+scimclient+selfheal+sms
+            paths: ./internal/ai/... ./internal/api/... ./internal/backup/... ./internal/intelligence/... ./internal/scimclient/... ./internal/selfheal/... ./internal/sms/...
+          # Go tests that assert things about the deployment surface and the
+          # published specs rather than about a service.
+          - package: deploy+deployments+test/openapi
+            paths: ./deploy/... ./deployments/... ./test/openapi/...
 
     services:
       postgres:
@@ -496,7 +618,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
           cache: true
 
       - name: Set up Go build cache
@@ -510,7 +632,7 @@ jobs:
             ${{ runner.os }}-go-build-${{ env.GO_VERSION }}-
             ${{ runner.os }}-go-build-
 
-      # The matrix value is an import path ("internal/metrics", "pkg/"), so it
+      # The matrix label reads like a path ("internal/metrics", "pkg/"), so it
       # cannot go into a filename as-is: -coverprofile=coverage_internal/metrics.out
       # asks Go to write into a directory that does not exist, and it fails in
       # under a second, before compiling a single package. That is what the old
@@ -541,7 +663,10 @@ jobs:
           # -timeout for the same reason test-race carries one: Go's default
           # ten minutes per package is a bound for uninstrumented tests, and
           # under -race it stops distinguishing a hang from a slow runner.
-          go test -v -race -timeout 20m -coverprofile=coverage_${{ steps.cov.outputs.slug }}.out -covermode=atomic ./${{ matrix.package }}/...
+          #
+          # matrix.flags is empty for every entry but `tools`, which passes
+          # -short; the reason is written out beside that entry above.
+          go test -v -race -timeout 20m ${{ matrix.flags }} -coverprofile=coverage_${{ steps.cov.outputs.slug }}.out -covermode=atomic ${{ matrix.paths }}
 
       # Upload whatever coverage was produced even when the tests failed, so a
       # red run still yields a coverage artifact to inspect.
@@ -604,7 +729,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
           cache: true
 
       - name: Set up Go build cache
@@ -627,14 +752,79 @@ jobs:
           set -uo pipefail
 
           # ----- migrations -----
+          # Guarded explicitly: this block runs under `set -uo pipefail` with no
+          # -e, so a bare failing command does NOT stop the script -- the step's
+          # exit code is whatever the LAST command returns. Every failure path
+          # in this block has to say `exit 1` itself, which is why the health
+          # wait below does. A failed migration would otherwise surface sixty
+          # seconds later as "services did not become ready", naming the wrong
+          # cause.
           echo "::group::Migrate DB"
-          go run ./cmd/migrate up
+          if ! go run ./cmd/migrate up; then
+            echo "::error::migrations failed; the schema the rest of this job needs does not exist"
+            exit 1
+          fi
+          echo "::endgroup::"
+
+          # ----- every SQL literal in the tree, planned by the real database --
+          # This job is the only place with a migrated PostgreSQL, and it is the
+          # only place this class can be caught: a query naming a column that
+          # does not exist compiles, reviews clean, and fails at runtime into a
+          # handler that discards the error. A green run of THIS job printed
+          # `column "request_count" does not exist` into the Postgres log while
+          # reporting success. sqlprepare PREPAREs each statement -- parse,
+          # name resolution and planning, no execution -- and fails on anything
+          # its register does not already carry. See tools/sqlprepare.
+          echo "::group::SQL prepares against the migrated schema"
+          if ! go run ./tools/sqlprepare -fail; then
+            echo "::error::sqlprepare: SQL this database refuses to plan. A NEW finding is a query that cannot succeed; a STALE entry is one that was fixed and whose register line must go. See tools/sqlprepare/known.go."
+            exit 1
+          fi
           echo "::endgroup::"
 
           # ----- build services the integration tests hit -----
-          echo "::group::Build identity-service + oauth-service"
-          go build -o /tmp/identity-service ./cmd/identity-service
-          go build -o /tmp/oauth-service    ./cmd/oauth-service
+          # gateway-service is here because TestCrossOrgSpoofing needs it and
+          # nothing was starting it. That test asserts the gateway STRIPS a
+          # client-supplied X-Org-Slug -- forge the header, read another
+          # tenant's user by id, get refused. Its own comment said "it runs
+          # fully in CI"; it did not. helpers_test.go defaults GATEWAY_URL to
+          # localhost:8008, nothing listened there, and the test skipped on
+          # every run since it was merged, so a cross-tenant spoofing defence
+          # was proven nowhere. It passes with a gateway up, and fails with a
+          # gateway whose Header.Del("X-Org-Slug") is removed -- both checked
+          # before this line was added.
+          #
+          # admin-api is here for the same reason, one layer down.
+          # TestCrossOrgIsolation's platform-admin subtest skipped on every run
+          # since it was written ("admin is not a platform admin in this
+          # environment"), so the MANDATORY cross-org audit trail -- the row
+          # that makes a platform admin crossing a tenant boundary accountable
+          # -- had never been written by a test. Chasing that skip found why it
+          # could not pass where it was aimed: TenantResolver is mounted before
+          # route-level auth on identity-service (and five others), so the
+          # platform-admin predicate sees no roles and the X-Org-ID path is
+          # unreachable there. admin-api mounts it on /api/v1 AFTER auth, which
+          # is the one place the control is live -- so that is where it is now
+          # tested, and both halves are asserted (a super_admin crosses and is
+          # audited; a plain admin does not).
+          #
+          # access-service and audit-service are here for J5. The privileged-access
+          # journey's credential half ends at POST /pam/entries/:id/reveal, which
+          # access-service serves and whose audit row audit-service writes -- in a
+          # different process, over HTTP. Driving vault.Service directly (which
+          # jit_checkout_test.go does, and says so in its header) reaches the
+          # mechanics and none of the controls: the org predicate, the
+          # allow_reveal flag, the ACL for non-admins and the audit row all live
+          # in the handler. Standing both up is what turned up that the ingest
+          # endpoint had been refusing every event access-service ever sent it.
+          echo "::group::Build identity-service + oauth-service + gateway-service + admin-api + governance-service + access-service + audit-service"
+          for svc in identity-service oauth-service gateway-service admin-api governance-service access-service audit-service; do
+            if ! go build -o "/tmp/$svc" "./cmd/$svc"; then
+              echo "::error::$svc failed to build; without it the wait below would report" \
+                   "'services did not become ready' sixty seconds from now and name the wrong cause"
+              exit 1
+            fi
+          done
           echo "::endgroup::"
 
           # ----- start services in background -----
@@ -642,7 +832,6 @@ jobs:
           # already exports. JWKS URL points at oauth-service's own metadata.
           export OAUTH_JWKS_URL=http://localhost:8006/.well-known/jwks.json
           export APP_ENV=test
-          export JWT_SECRET=integration-test-jwt-secret-do-not-use-in-prod
           export OAUTH_ISSUER=http://localhost:8006
           # The suite is single-org: most tests log in the seeded admin via the
           # OAuth flow without an X-Org-Slug/subdomain signal, so they need the
@@ -668,33 +857,91 @@ jobs:
           # harness never follows the redirect; the enforced-posture test only
           # asserts the Location it points at.
           export OAUTH_LOGIN_URL=http://localhost:3000/login
+          # admin-api fail-closes at startup without a 32-byte key (its vault
+          # keyring refuses to come up), which is correct and is why this is
+          # exported rather than left unset. Test-only value; the same shape the
+          # other jobs in this file already use.
+          export ENCRYPTION_KEY="0123456789abcdef0123456789abcdef"
+          # audit-service seals its hash chain with this; exported here so the
+          # sealer runs in the integration stack rather than only in unit tests,
+          # and so a J5 credential reveal is written into a chained trail.
+          export AUDIT_CHAIN_SECRET="integration-audit-chain-secret-00"
+          # And swept often, because one test waits for a real sweep.
+          # audit_chain_test.go posts an audit event through the ingest endpoint
+          # and waits for the RUNNING sealer to chain it before doctoring the
+          # row — that wait is what makes it a proof about the deployed sealer
+          # rather than about one constructed in a unit test. The default
+          # interval is 60s and the sealer ignores rows younger than chainGrace
+          # (30s, a constant), so at the default this test would spend up to a
+          # minute and a half sleeping. At 5s it is the grace period plus a tick.
+          export AUDIT_CHAIN_INTERVAL=5s
 
           /tmp/identity-service > /tmp/identity.log 2>&1 &
           IDENTITY_PID=$!
           /tmp/oauth-service    > /tmp/oauth.log    2>&1 &
           OAUTH_PID=$!
-          echo "identity-service pid=$IDENTITY_PID, oauth-service pid=$OAUTH_PID"
+          # The gateway needs no configuration beyond what is already exported
+          # above; it listens on 8008, which is what GATEWAY_URL defaults to.
+          /tmp/gateway-service  > /tmp/gateway.log  2>&1 &
+          GATEWAY_PID=$!
+          # admin-api listens on 8005, which is what ADMIN_API_URL defaults to.
+          /tmp/admin-api        > /tmp/admin-api.log 2>&1 &
+          ADMIN_API_PID=$!
+          # governance-service listens on 8002. It is here for J6: the DoD's
+          # governance journey ends in "revoke propagates", and that step is a
+          # write in THIS process read by oauth-service in another one. The two
+          # once spelled the shared Redis key differently, so an access review
+          # could revoke somebody and they kept working until their token
+          # expired; internal/revocation exists because of it, and
+          # governance_loop_test.go is the only place the two are actually
+          # separate processes and the path can be driven end to end.
+          /tmp/governance-service > /tmp/governance.log 2>&1 &
+          GOVERNANCE_PID=$!
+          # access-service listens on 8007 and audit-service on 8004. J5's reveal
+          # is served by the first and audited by the second: access-service posts
+          # every audit event over HTTP, so without audit-service running the
+          # event is warned about and dropped, and the assertion that a credential
+          # reveal is recorded would pass over an empty trail.
+          /tmp/access-service   > /tmp/access.log   2>&1 &
+          ACCESS_PID=$!
+          /tmp/audit-service    > /tmp/audit.log    2>&1 &
+          AUDIT_PID=$!
+          echo "identity-service pid=$IDENTITY_PID, oauth-service pid=$OAUTH_PID, gateway-service pid=$GATEWAY_PID, admin-api pid=$ADMIN_API_PID, governance-service pid=$GOVERNANCE_PID, access-service pid=$ACCESS_PID, audit-service pid=$AUDIT_PID"
 
           cleanup() {
-            echo "::group::identity-service log"; cat /tmp/identity.log || true; echo "::endgroup::"
-            echo "::group::oauth-service log";    cat /tmp/oauth.log    || true; echo "::endgroup::"
-            kill "$IDENTITY_PID" "$OAUTH_PID" 2>/dev/null || true
+            echo "::group::identity-service log"; cat /tmp/identity.log  || true; echo "::endgroup::"
+            echo "::group::oauth-service log";    cat /tmp/oauth.log     || true; echo "::endgroup::"
+            echo "::group::gateway-service log";  cat /tmp/gateway.log   || true; echo "::endgroup::"
+            echo "::group::admin-api log";        cat /tmp/admin-api.log || true; echo "::endgroup::"
+            echo "::group::governance-service log"; cat /tmp/governance.log || true; echo "::endgroup::"
+            echo "::group::access-service log";      cat /tmp/access.log    || true; echo "::endgroup::"
+            echo "::group::audit-service log";       cat /tmp/audit.log     || true; echo "::endgroup::"
+            kill "$IDENTITY_PID" "$OAUTH_PID" "$GATEWAY_PID" "$ADMIN_API_PID" "$GOVERNANCE_PID" "$ACCESS_PID" "$AUDIT_PID" 2>/dev/null || true
           }
           trap cleanup EXIT
 
-          # ----- wait for both to be healthy -----
+          # ----- wait for all seven to be healthy -----
+          # Each is waited for rather than probed opportunistically: a service
+          # that fails to start must fail this job, not send the test that needs
+          # it back to skipping quietly, which is the state both the gateway and
+          # the admin-api tests spent their whole lives in.
           echo "::group::Wait for service health"
           for i in $(seq 1 60); do
-            id_ok=0; oa_ok=0
+            id_ok=0; oa_ok=0; gw_ok=0; ad_ok=0; go_ok=0; ac_ok=0; au_ok=0
             curl -sf http://localhost:8001/health/ready >/dev/null 2>&1 && id_ok=1
             curl -sf http://localhost:8006/health/ready >/dev/null 2>&1 && oa_ok=1
-            if [ "$id_ok" = "1" ] && [ "$oa_ok" = "1" ]; then
-              echo "both services ready after ${i}s"
+            curl -sf http://localhost:8008/health       >/dev/null 2>&1 && gw_ok=1
+            curl -sf http://localhost:8005/health       >/dev/null 2>&1 && ad_ok=1
+            curl -sf http://localhost:8002/health       >/dev/null 2>&1 && go_ok=1
+            curl -sf http://localhost:8007/health       >/dev/null 2>&1 && ac_ok=1
+            curl -sf http://localhost:8004/health       >/dev/null 2>&1 && au_ok=1
+            if [ "$id_ok" = "1" ] && [ "$oa_ok" = "1" ] && [ "$gw_ok" = "1" ] && [ "$ad_ok" = "1" ] && [ "$go_ok" = "1" ] && [ "$ac_ok" = "1" ] && [ "$au_ok" = "1" ]; then
+              echo "all seven services ready after ${i}s"
               break
             fi
             sleep 1
             if [ "$i" = "60" ]; then
-              echo "::error::services did not become ready within 60s (identity_ok=$id_ok oauth_ok=$oa_ok)"
+              echo "::error::services did not become ready within 60s (identity_ok=$id_ok oauth_ok=$oa_ok gateway_ok=$gw_ok admin_api_ok=$ad_ok governance_ok=$go_ok access_ok=$ac_ok audit_ok=$au_ok)"
               exit 1
             fi
           done
@@ -706,7 +953,15 @@ jobs:
           # informational while PRs #102, #105, #106, #107, #108, #110,
           # #112, and #114 worked through the layered bugs that the
           # foundation surfaced.
-          go test -v -tags=integration -timeout=20m ./test/integration/...
+          #
+          # cmd/rekey is here rather than in the unit matrix because its only
+          # test file is behind the same `integration` tag, so every job that
+          # does not pass -tags compiles zero tests out of that package and
+          # reports success. It had never run anywhere: a 294-line end-to-end
+          # proof that a KEK rotation re-seals every encrypted value under the
+          # new key and leaves the plaintext intact — the tool an operator uses
+          # after a key compromise — going through CI as an empty package.
+          go test -v -tags=integration -timeout=20m ./test/integration/... ./cmd/rekey/...
 
   # Benchmark regression detection
   # status-check: informational — publishes a comparison comment; a slower
@@ -733,7 +988,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
           cache: true
 
       - name: Set up Go build cache
@@ -806,7 +1061,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
           cache: true
 
       - name: Set up Go build cache
@@ -872,7 +1127,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
           cache: true
 
       - name: Run orgscope (hard gate)
@@ -919,6 +1174,403 @@ jobs:
           # Propagate the tool's exit code — non-zero fails the build.
           exit $rc
 
+  # inerttests finds Go tests that execute nothing: every statement assigns to
+  # the blank identifier from an expression that calls nothing, so the function
+  # under test never runs. `_ = service.AuthenticateUser` is a method VALUE, not
+  # a call. Nine of these were in the tree -- seven over the directory
+  # authentication router, one named after a function it never called, one that
+  # read fields off a zero value it had built itself -- and all nine passed on
+  # every CI run of their lives.
+  #
+  # scripts/check-inert-tests.sh cannot see them: that guard looks for an
+  # unconditional t.Skip, and these do not skip. They run and report a tick.
+  inerttests:
+    name: Inert-test lint
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.go_changed == 'true'
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Self-test the tool first
+        # A guard whose own cases do not pass has no standing to fail a build.
+        run: go test ./tools/inerttests/
+
+      - name: Run inerttests (hard gate)
+        run: |
+          set +e
+          go run ./tools/inerttests -fail ./internal ./cmd ./pkg ./tools ./test ./deploy > inert.out 2> inert.err
+          rc=$?
+          set -e
+          {
+            echo "## inerttests — tests that execute nothing"
+            echo
+            if [ "$rc" -ne 0 ]; then
+              echo "❌ **Gate failed.** A test whose every statement is \`_ = <something that is not called>\` runs no code. Call the thing and assert on it, or delete the test."
+            else
+              echo "✅ $(tail -n1 inert.err 2>/dev/null || echo 'every test runs something')"
+            fi
+            echo
+            echo '```'
+            head -50 inert.err
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
+
+  # routereach holds the router's route table next to the handlers the packages
+  # define. Two findings, both invisible to everything else here:
+  #
+  #   - a handler reads c.Param("x") and no route it is mounted on declares x.
+  #     gin returns "" for a name the matched route does not have, so
+  #     `DELETE /users/:id/bypass-codes` asked the database to revoke the empty
+  #     user's MFA break-glass codes and got `invalid input syntax for type
+  #     uuid: ""` -- a 400, worded as if the administrator had sent something
+  #     wrong, on every call this endpoint has ever received.
+  #   - a func(*gin.Context) that no route mounts and no non-test line
+  #     references. _test.go is deliberately not scanned: a handler whose only
+  #     caller is a test that mounts it on a router the test built is the
+  #     sharpest form of this, and that is how internal/oauth's second OIDC
+  #     discovery document -- 415 lines of passing test, served to nobody --
+  #     came to light.
+  routereach:
+    name: Route-reachability lint
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.go_changed == 'true'
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Self-test the tool first
+        # A guard whose own cases do not pass has no standing to fail a build.
+        run: go test ./tools/routereach/
+
+      - name: Run routereach (hard gate)
+        run: |
+          set +e
+          go run ./tools/routereach -fail ./internal ./cmd ./pkg > rr.out 2> rr.err
+          rc=$?
+          set -e
+          {
+            echo "## routereach — parameters with no route, handlers with no router"
+            echo
+            if [ "$rc" -ne 0 ]; then
+              echo "❌ **Gate failed.** A PARAM finding is a handler reading a name its route does not declare: gin hands it \`\"\"\`, so the request acts on the empty id. A NEW unmounted handler is code no request can reach. A STALE entry is a handler a route reaches now, and its line in \`tools/routereach/known.go\` must go. A BLIND route declares parameters and resolves to no handler, which means the census stopped covering it."
+            else
+              echo "✅ $(tail -n1 rr.err 2>/dev/null || echo 'every route parameter is declared and every handler has a verdict')"
+            fi
+            echo
+            echo '```'
+            head -60 rr.out
+            tail -n1 rr.err
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
+
+  # zeroanswer finds the aggregate queries whose failure is reported as a
+  # number. A one-row aggregate -- COUNT, SUM, AVG, MAX, EXISTS -- always
+  # returns exactly one row, so a discarded Scan error there never means "there
+  # is no data": it means the query did not run, and the destination keeps its
+  # zero. The caller then prints that zero on a dashboard, puts it in a
+  # compliance report, or decides a control passed.
+  #
+  # Nothing else in this repository can see it. The SQL is valid, so sqlprepare
+  # plans it; the tenant predicate is there, so orgscope passes it; the handler
+  # answers 200 with a well-formed body, so the contract test passes it; and
+  # COUNT over no rows is 0, indistinguishable in the destination from the zero
+  # a broken query leaves behind. Only the error told them apart.
+  zeroanswer:
+    name: Zero-answer lint
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.go_changed == 'true'
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Self-test the tool first
+        # A guard whose own cases do not pass has no standing to fail a build.
+        run: go test ./tools/zeroanswer/
+
+      - name: Run zeroanswer (hard gate)
+        run: |
+          set +e
+          go run ./tools/zeroanswer -fail ./internal ./cmd > za.out 2> za.err
+          rc=$?
+          set -e
+          {
+            echo "## zeroanswer — a failed measurement reported as zero"
+            echo
+            if [ "$rc" -ne 0 ]; then
+              echo "❌ **Gate failed.** A NEW finding is an aggregate whose error is discarded: read what the caller does with the zero, fix it, or add a line to \`tools/zeroanswer/known.go\` saying what the zero does. A STALE entry is one that no longer reproduces, and its line must go — the register only shrinks."
+            else
+              echo "✅ $(tail -n1 za.err 2>/dev/null || echo 'no new zero answers')"
+            fi
+            echo
+            echo '```'
+            head -60 za.out
+            tail -n1 za.err
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
+
+  # deadservice holds the call graph next to the code: Rapid Type Analysis from
+  # every binary's main, against every service type the tree declares. A type
+  # whose constructor is never called and not one of whose methods is reachable
+  # is a feature that cannot run -- and it is the version a reader finds first.
+  #
+  # internal/governance/request.go is 676 lines of access-request workflow with
+  # an escalation sweep, tests, and two migrations for the table only it writes.
+  # NewRequestService is called nowhere; the live workflow is a different
+  # implementation in workflows.go. An earlier fix in this repository spent its
+  # effort on a bug inside that escalation sweep -- code that has never run.
+  #
+  # Nothing else in this repository could see it: it compiles, its SQL is valid
+  # and carries its tenant predicate, its tests are real tests exercising real
+  # code, and tablewriters counts its INSERT as a writer because a census of SQL
+  # literals cannot tell a statement that runs from one that cannot.
+  deadservice:
+    name: Unreachable-service lint
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.go_changed == 'true'
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Self-test the tool first
+        # A guard whose own cases do not pass has no standing to fail a build.
+        run: go test -short ./tools/deadservice/
+
+      - name: Run deadservice (hard gate)
+        run: |
+          set +e
+          go run ./tools/deadservice -fail > ds.out 2> ds.err
+          rc=$?
+          set -e
+          {
+            echo "## deadservice — whole services no binary can reach"
+            echo
+            if [ "$rc" -ne 0 ]; then
+              echo "❌ **Gate failed.** A NEW finding is a service type whose constructor is never called and none of whose methods any binary reaches: it looks finished in review, it may have tests and migrations, and it cannot run. Wire it, delete it, or record the verdict in \`tools/deadservice/known.go\`. A STALE entry is one a binary reaches now, and its line must go — the register only shrinks."
+            else
+              echo "✅ $(tail -n1 ds.err 2>/dev/null || echo 'every service type is reachable or carries a verdict')"
+            fi
+            echo
+            echo '```'
+            head -60 ds.out
+            tail -n1 ds.err
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
+
+  # testmatrix holds this file next to the tree: every directory that contains a
+  # _test.go, against every path the unit matrix above actually names.
+  #
+  # The matrix was a hand-written list of internal/* and pkg/. It did not name
+  # cmd/, so the ten service main packages had no job — including the seven
+  # *_ProductionConfigValidation tests, one per service, each being that
+  # service's only automated proof that it accepts a correct production start
+  # and refuses a weak one. When AUDIT_CHAIN_SECRET became required, all seven
+  # went red and stayed red across several pushes with nothing on the pull
+  # request to say so.
+  #
+  # They were not unverified — test-race runs `go test -race ./...` over the
+  # whole module — but that arrives twenty minutes in under a check named "Race
+  # Detector", and a red tick with that name reads as a concurrency problem, not
+  # as "the config gate is broken in seven services". A signal that late and
+  # that misnamed is most of the way to no signal.
+  #
+  # The gate also refuses to accept coverage that compiles nothing: cmd/rekey
+  # sits under ./cmd/... and its only test file is behind `//go:build
+  # integration`, so it had gone through CI its whole life as an empty package —
+  # a 294-line proof that a KEK rotation re-seals every encrypted value while
+  # leaving the plaintext readable, never once executed.
+  testmatrix:
+    name: Every tested package has a job
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.go_changed == 'true'
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Self-test the tool first
+        # A guard whose own cases do not pass has no standing to fail a build.
+        run: go test ./tools/testmatrix/
+
+      - name: Run testmatrix (hard gate)
+        run: |
+          set +e
+          go run ./tools/testmatrix -fail > tm.out 2> tm.err
+          rc=$?
+          set -e
+          {
+            echo "## testmatrix — packages whose tests no job runs"
+            echo
+            if [ "$rc" -ne 0 ]; then
+              echo "❌ **Gate failed.** A package here holds tests that no named job runs, or is covered only by a job that passes no build tag and so compiles none of them. Add it to the \`test-unit\` matrix as a \`package\`/\`paths\` pair (one entry may list several directories), or name it in the command of the job that does run it and record that in \`tools/testmatrix/known.go\`."
+            else
+              echo "✅ $(tail -n1 tm.out 2>/dev/null || echo 'every package holding tests is run by a named job')"
+            fi
+            echo
+            echo '```'
+            head -40 tm.out
+            tail -n1 tm.err
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
+
+  # tablewriters holds the schema next to the code: every table the migration
+  # registry creates, against every table a SQL literal in the product writes.
+  # A table with no writer is a measurement that cannot measure -- the Usage
+  # Analytics card reads api_usage_metrics for requests, latency and error rate,
+  # nothing has ever inserted a row, and all three have read 0 on every install.
+  #
+  # Nothing else in this repository can see it. The SQL is valid, so sqlprepare
+  # passes it; the tenant predicate is there, so orgscope passes it; the handler
+  # returns 200 with a well-formed body, so the contract test passes it; and
+  # COUNT(*) of an empty table is 0, not an error, so nothing is logged.
+  tablewriters:
+    name: Unwritten-table lint
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.go_changed == 'true'
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Self-test the tool first
+        # A guard whose own cases do not pass has no standing to fail a build.
+        run: go test ./tools/tablewriters/
+
+      - name: Run tablewriters (hard gate)
+        run: |
+          set +e
+          go run ./tools/tablewriters -fail ./internal ./cmd ./pkg > tw.out 2> tw.err
+          rc=$?
+          set -e
+          {
+            echo "## tablewriters — tables nothing writes"
+            echo
+            if [ "$rc" -ne 0 ]; then
+              echo "❌ **Gate failed.** A NEW finding is a table the schema creates that no production code writes: if something reads it, the numbers it shows are zeros presented as measurements. A STALE entry is a table that has gained a writer, and its line in \`tools/tablewriters/known.go\` must go."
+            else
+              echo "✅ $(tail -n1 tw.err 2>/dev/null || echo 'every live table has a writer or a verdict')"
+            fi
+            echo
+            echo '```'
+            head -60 tw.out
+            tail -n1 tw.err
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
+
+  # deadconfig holds the settings an operator can set next to the settings the
+  # code reads, in both directions.
+  #
+  # A field with a mapstructure tag, a default and a line in a shipped config
+  # file, that nothing consults, is a switch the operator flips and the product
+  # ignores -- ENABLE_MFA=false got you MFA, PUSH_MFA_ENABLED=false got you push
+  # MFA, SMS_OTP_LENGTH=8 got you six-digit codes, and JWT_SECRET was a required
+  # production secret that signed nothing.
+  #
+  # The mirror is the one an operator meets first: a settings table in the
+  # documentation naming a variable nothing binds. The published configuration
+  # reference carried 63 of them -- PASSWORD_MIN_LENGTH, the four OAUTH_*_TTL,
+  # RATE_LIMIT_RPS, MAX_SESSIONS_PER_USER -- and one was misspelled, which is the
+  # clearest evidence that nobody had ever tried it.
+  #
+  # Nothing else here can see either. The field parses, so the compiler is happy;
+  # the viper default makes it non-zero, so no empty-value check fires; the docs
+  # are prose; and nothing fails at runtime, because the product does what it did
+  # before.
+  deadconfig:
+    name: Unread-config lint
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.go_changed == 'true'
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Self-test the tool first
+        # A guard whose own cases do not pass has no standing to fail a build.
+        # -short skips the whole-module half, which the gate step runs anyway.
+        run: go test -short ./tools/deadconfig/
+
+      - name: Run deadconfig (hard gate)
+        run: |
+          set +e
+          go run ./tools/deadconfig -fail > dc.out 2> dc.err
+          rc=$?
+          set -e
+          {
+            echo "## deadconfig — settings nothing reads"
+            echo
+            if [ "$rc" -ne 0 ]; then
+              echo "❌ **Gate failed.** A NEW finding is a field an operator can set that no production code reads: they set it, nothing changes, and nothing tells them. Give it a reader, or retire it in \`internal/common/config/retired.go\` so an operator who still sets it is told at startup what to set instead. A DOC finding is a settings table naming an environment variable nothing binds: correct the name, point the row at where the setting really lives, or delete it. A STALE entry is a field that has gained a reader, and its line in \`tools/deadconfig/known.go\` must go."
+            else
+              echo "✅ $(head -n1 dc.out)"
+            fi
+            echo
+            echo '```'
+            head -60 dc.out
+            tail -n3 dc.err 2>/dev/null || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
+
   # Security vulnerability check
   vulnerability-check:
     name: Vulnerability Check
@@ -933,7 +1585,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
           cache: true
 
       - name: Set up Go build cache
@@ -951,6 +1603,27 @@ jobs:
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
           govulncheck ./...
+
+      # The agent is a separate module with a separate pin, and it needs its own
+      # toolchain rather than inheriting the root one.
+      #
+      # WHY, because this cost a red run. `go-version-file` reads the `go`
+      # directive, not `toolchain`: root go.mod says `go 1.26.0` (with
+      # `toolchain go1.26.8`), so setup-go installs 1.26.0. For the ROOT scan
+      # that is harmless — the toolchain directive makes the go command re-exec
+      # 1.26.8. For the agent it is not, because Go only ever switches UP: the
+      # agent pins go1.25.13, 1.26.0 is newer, so no switch happens and the
+      # agent was analysed against the go1.26.0 standard library. That release
+      # carries 19 advisories fixed in 1.26.1 — including two crypto/x509 ones
+      # the agent's own SSO path reaches — and govulncheck reported every one
+      # of them. Before the toolchain commit the loose '1.26' spec happened to
+      # resolve to the runner's cached 1.26.7, which is why this was green.
+      # Each module is now scanned with the toolchain it actually pins.
+      - name: Set up Go for the agent module
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: agent/go.mod
+          cache: false
 
       # `./...` stops at the module boundary, so this gate never looked at the
       # agent — its own module — and reported "0 reachable vulnerabilities"
@@ -978,7 +1651,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
 
       - name: Download all coverage artifacts
         uses: actions/download-artifact@v8
@@ -1072,6 +1745,29 @@ jobs:
   # own timeout-minutes remains the outer bound. The underlying cost (a
   # container per test rather than per package) is worth attacking separately;
   # it is not what makes this check lie.
+  #
+  # AND IT LIED A SECOND TIME, IN MEMORY RATHER THAN IN TIME. On run 2448 this
+  # job ended:
+  #
+  #   ok  github.com/openidx/openidx/internal/health  1.032s
+  #   ##[error]The runner has received a shutdown signal.
+  #   ##[error]Process completed with exit code 143.
+  #
+  # No FAIL, no WARNING: DATA RACE, neither timeout reached -- the runner died.
+  # `./...` includes ./tools/..., and two gates there load and type-check the
+  # whole module. Measured on a 4-CPU / 16 GB machine, the runner's own shape:
+  # deadconfig peaks at 8.04 GB under -race, deadservice at 13.03 GB, and the
+  # two together (which -p 4 permits, and which is chance, not design) reached
+  # 14.22 GB before the OOM killer took both test binaries. That is why the
+  # crash landed at a package boundary with no failing test near it, and why
+  # the same command passes locally under -p 1.
+  #
+  # The fix is in the tests, not here: both skip their whole-module half when
+  # the race detector is compiled in, and tools/racecost derives from `go list`
+  # which test binaries must do that, so a third analyzer is named before this
+  # job has to die for it. Nothing stops being proven -- the deadconfig and
+  # deadservice jobs below run the same analysis uninstrumented as a hard gate
+  # on every push, and both are in the Required Checks list.
   test-race:
     name: Race Detector
     runs-on: ubuntu-latest
@@ -1084,7 +1780,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
           cache: true
 
       - name: Run race detector
@@ -1145,11 +1841,13 @@ jobs:
       APP_ENV: development
       DEFAULT_ORG_FALLBACK: "true"
       DEFAULT_ORG_ID: 00000000-0000-0000-0000-000000000010
-      JWT_SECRET: smoke-test-jwt-secret-not-for-production
       ACCESS_SESSION_SECRET: smoke-test-access-session-secret-000
       # 32 bytes: governance-service, admin-api and access-service refuse to
       # start without a vault keyring, by design (fail-closed).
       ENCRYPTION_KEY: "0123456789abcdef0123456789abcdef"
+      # Runs the audit hash-chain sealer in the smoke stack, so the startup
+      # path that seals events is exercised rather than only unit-tested.
+      AUDIT_CHAIN_SECRET: smoke-test-audit-chain-secret-000
       OAUTH_ISSUER: http://localhost:8006
       OAUTH_JWKS_URL: http://localhost:8006/.well-known/jwks.json
       OAUTH_LOGIN_URL: http://localhost:3000/login
@@ -1166,7 +1864,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
           cache: true
 
       - name: Set up Node.js
@@ -1324,7 +2022,6 @@ jobs:
       APP_ENV: development
       DEFAULT_ORG_FALLBACK: "true"
       DEFAULT_ORG_ID: 00000000-0000-0000-0000-000000000010
-      JWT_SECRET: e2e-test-jwt-secret-not-for-production
       ACCESS_SESSION_SECRET: e2e-test-access-session-secret-0000
       ENCRYPTION_KEY: "0123456789abcdef0123456789abcdef"
       OAUTH_ISSUER: http://localhost:8006
@@ -1346,7 +2043,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
           cache: true
 
       - name: Set up Node.js
@@ -1453,24 +2150,31 @@ jobs:
     needs:
       - build-matrix
       - ci-resilience-guards
+      - deadconfig
+      - deadservice
       - detect-changes
       - e2e
       - fault-matrix
       - field-fix-scoreboard
       - first-run
       - github-config
+      - inerttests
       - lint
       - no-internal-topology
       - orgscope
+      - routereach
       - selfheal
       - shell-prose
       - smoke
+      - tablewriters
       - test-frontend
       - test-integration
       - test-race
       - test-unit
+      - testmatrix
       - ui-safety-guards
       - vulnerability-check
+      - zeroanswer
     runs-on: ubuntu-latest
     if: always()
     timeout-minutes: 5

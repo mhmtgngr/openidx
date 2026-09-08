@@ -22,9 +22,14 @@ import (
 func TestBypassCodeRoutesAreNotSelfService(t *testing.T) {
 	const base = "/api/v1/identity"
 
+	// Route TEMPLATES, which is what isIdentitySelfService classifies -- see its
+	// comment. "/mfa/bypass-codes/verify" is a real registered route AND a value
+	// a caller can write where :code_id belongs; deciding on the template is what
+	// keeps DELETE /mfa/bypass-codes/verify (served by :code_id, a revoke) on the
+	// administrative side.
 	administrative := []string{
 		base + "/mfa/bypass-codes",
-		base + "/mfa/bypass-codes/some-code-id",
+		base + "/mfa/bypass-codes/:code_id",
 		base + "/mfa/bypass-codes/audit",
 	}
 	for _, path := range administrative {
@@ -41,7 +46,7 @@ func TestBypassCodeRoutesAreNotSelfService(t *testing.T) {
 	})
 
 	// Ordinary MFA enrollment must keep working for regular users.
-	for _, path := range []string{base + "/mfa/totp/enroll", base + "/mfa/webauthn/register"} {
+	for _, path := range []string{base + "/mfa/totp/enroll", base + "/mfa/webauthn/register/begin"} {
 		t.Run("still self-service: "+path, func(t *testing.T) {
 			require.True(t, isIdentitySelfService(path))
 		})

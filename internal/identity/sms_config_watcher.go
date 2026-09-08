@@ -60,6 +60,18 @@ func (s *Service) checkAndReloadSMSConfig(ctx context.Context, lastUpdatedAt *ti
 		return
 	}
 
+	// The OTP settings are the other half of this row, and nothing read them:
+	// createOTPChallenge took DefaultOTPConfig() unconditionally, so an
+	// administrator setting an eight-digit code saw it saved, clamped and read
+	// back while every code the product sent stayed six digits.
+	//
+	// Applied before the provider is built, because they do not depend on it: a
+	// row whose credentials no longer construct a provider is still the row that
+	// says how long a code lives. Clamped here as well as at the write, because
+	// a row stored before ValidateOTPSettings existed can still be in the table.
+	sms.ValidateOTPSettings(&settings)
+	s.SetOTPSettings(settings.OTPLength, settings.OTPExpiry, settings.MaxAttempts)
+
 	cfg := settings.ToConfig()
 	// The admin console can store provider "mock"; that must not become a live
 	// provider outside development any more than an env var can.
@@ -74,5 +86,8 @@ func (s *Service) checkAndReloadSMSConfig(ctx context.Context, lastUpdatedAt *ti
 	s.SetSMSProvider(newService)
 	s.logger.Info("SMS provider reloaded from database config",
 		zap.String("provider", settings.Provider),
-		zap.Bool("enabled", settings.Enabled))
+		zap.Bool("enabled", settings.Enabled),
+		zap.Int("otp_length", settings.OTPLength),
+		zap.Int("otp_expiry_seconds", settings.OTPExpiry),
+		zap.Int("max_attempts", settings.MaxAttempts))
 }

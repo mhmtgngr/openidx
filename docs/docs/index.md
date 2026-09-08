@@ -34,7 +34,7 @@ them straight.
 - **Privileged access** — envelope-encrypted vault with rotation, brokered & recorded SSH/RDP/VNC, in-browser SSH, legal holds
 - **Zero-trust network** — identity-driven dark services over OpenZiti, BrowZer clientless access, posture checks, cross-pillar kill switch
 - **Multi-tenancy** — enforced at the database with PostgreSQL FORCE row-level security and a CI-enforced tenant linter
-- **Audit & compliance** — tamper-evident HMAC hash-chain log, SIEM forwarding, SOC 2 / ISO 27001 / GDPR reporting
+- **Audit & compliance** — tamper-evident HMAC hash-chain log (per tenant, verifiable through the API), SIEM forwarding, SOC 2 / ISO 27001 / GDPR reporting
 
 ## Architecture at a glance
 

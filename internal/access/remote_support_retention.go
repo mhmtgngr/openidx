@@ -602,13 +602,24 @@ func (h *RemoteSupportHandler) generateGuacTranscripts(ctx context.Context) {
 				continue
 			}
 		}
-		_, _ = h.db.Pool.Exec(ctx,
+		// transcript_path is the only pointer to the file guaclog just wrote.
+		// Losing it leaves a transcript of somebody's privileged session on
+		// disk that nothing can find, and -- because this sweep selects on
+		// transcript_path IS NULL -- guaclog is re-run over the same recording
+		// on every pass from now on. Auditing it as generated afterwards would
+		// be a record of a transcript nobody can reach.
+		if _, err := h.db.Pool.Exec(ctx,
 			//orgscope:ignore background sweep; the row id comes from this sweep's own cross-org scan
 			`UPDATE guacamole_sessions
 			    SET transcript_path         = $1,
 			        transcript_generated_at = NOW()
 			  WHERE id = $2`,
-			tpath, j.id)
+			tpath, j.id); err != nil {
+			h.logger.Error("a session transcript was generated but its path was not recorded; "+
+				"the file is on disk and unreachable, and this sweep will regenerate it every pass",
+				zap.String("session_id", j.id), zap.Error(err))
+			continue
+		}
 		h.audit(ctx, "guacamole.transcript_generated", j.id, "session", "")
 	}
 }

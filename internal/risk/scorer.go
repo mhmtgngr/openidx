@@ -3,7 +3,6 @@ package risk
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"math"
 	"time"
@@ -492,38 +491,11 @@ func calculateSpeed(distanceKm float64, timeDelta time.Duration) float64 {
 	return distanceKm / hours
 }
 
-// GetSignalSummary returns a formatted summary of all signals
-func (r *RiskAssessment) GetSignalSummary() string {
-	if len(r.Signals) == 0 {
-		return "No signals evaluated"
-	}
-
-	summary := fmt.Sprintf("Risk Score: %d (%s)\n", r.Score, r.Level)
-	summary += fmt.Sprintf("Recommendation: %s\n\nSignals:\n", r.Recommendation)
-
-	for _, signal := range r.Signals {
-		summary += fmt.Sprintf("  - %s (%.0f%% weight): %.1f points - %s\n",
-			signal.Name, signal.Weight*100, signal.Score, signal.Description)
-	}
-
-	return summary
-}
-
-// ToJSON converts the assessment to JSON
-func (r *RiskAssessment) ToJSON() ([]byte, error) {
-	return json.Marshal(r)
-}
-
-// GetHighRiskSignals returns signals that contributed more than 20 points
-func (r *RiskAssessment) GetHighRiskSignals() []Signal {
-	var highRisk []Signal
-	for _, signal := range r.Signals {
-		if signal.Score >= 20 {
-			highRisk = append(highRisk, signal)
-		}
-	}
-	return highRisk
-}
+// Three RiskAssessment methods stood here -- GetSignalSummary, ToJSON and
+// GetHighRiskSignals -- and no caller anywhere used one. The assessment itself
+// is live: CalculateRiskScore returns it and the service acts on its Score and
+// Recommendation. What was dead was the reporting surface written for a
+// consumer that never arrived; a caller that wants the signals reads the field.
 
 // String returns the string representation of the RiskLevel
 func (r RiskLevel) String() string {

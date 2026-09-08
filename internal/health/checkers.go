@@ -179,71 +179,10 @@ func (r *RedisChecker) Check(ctx context.Context) ComponentStatus {
 	}
 }
 
-// StaticChecker allows creating a simple static health checker
-type StaticChecker struct {
-	name     string
-	status   string
-	details  string
-	critical bool
-}
-
-// NewStaticChecker creates a checker that always returns the same status
-func NewStaticChecker(name, status, details string, critical bool) *StaticChecker {
-	return &StaticChecker{
-		name:     name,
-		status:   status,
-		details:  details,
-		critical: critical,
-	}
-}
-
-// Name returns the checker name
-func (s *StaticChecker) Name() string {
-	return s.name
-}
-
-// IsCritical returns true if this component is critical for readiness
-func (s *StaticChecker) IsCritical() bool {
-	return s.critical
-}
-
-// Check returns the static status
-func (s *StaticChecker) Check(ctx context.Context) ComponentStatus {
-	return ComponentStatus{
-		Status:    s.status,
-		LatencyMS: 0,
-		Details:   s.details,
-		CheckedAt: time.Now().UTC().Format(time.RFC3339),
-	}
-}
-
-// FuncChecker allows creating a health checker from a function
-type FuncChecker struct {
-	name     string
-	check    func(context.Context) ComponentStatus
-	critical bool
-}
-
-// NewFuncChecker creates a checker from a function
-func NewFuncChecker(name string, check func(context.Context) ComponentStatus, critical bool) *FuncChecker {
-	return &FuncChecker{
-		name:     name,
-		check:    check,
-		critical: critical,
-	}
-}
-
-// Name returns the checker name
-func (f *FuncChecker) Name() string {
-	return f.name
-}
-
-// IsCritical returns true if this component is critical for readiness
-func (f *FuncChecker) IsCritical() bool {
-	return f.critical
-}
-
-// Check calls the wrapped function
-func (f *FuncChecker) Check(ctx context.Context) ComponentStatus {
-	return f.check(ctx)
-}
+// StaticChecker and FuncChecker used to follow: a checker with a fixed answer
+// and a checker built from a closure, for a caller that wanted an ad-hoc check.
+// Nothing ever wanted one -- the checks the services mount are the concrete
+// ones above and the certificate check in cert_checker.go, each of which
+// measures something. A checker that returns a constant is a health endpoint
+// that reports what it was told rather than what is true, which is the shape
+// this branch keeps removing.

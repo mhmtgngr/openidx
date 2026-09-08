@@ -269,9 +269,18 @@ func (s *Service) validateQuickLink(ctx context.Context, orgID string, req *quic
 			return errQuickLink("a PAM connection must be selected")
 		}
 		// Verify the referenced entry exists in this org.
+		//
+		// Fail-closed if the check itself fails -- but say which it was. A
+		// discarded error left exists false, so a broken query and a quick link
+		// pointing at a PAM connection in another tenant produced the same
+		// message, and an operator chasing the second one had no way to see the
+		// first.
 		var exists bool
-		_ = s.db.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pam_entries WHERE id=$1 AND org_id=$2)`,
-			req.PamEntryID, orgID).Scan(&exists)
+		if err := s.db.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pam_entries WHERE id=$1 AND org_id=$2)`,
+			req.PamEntryID, orgID).Scan(&exists); err != nil {
+			s.logger.Error("could not verify the referenced PAM connection", zap.Error(err))
+			return errQuickLink("could not verify the referenced PAM connection")
+		}
 		if !exists {
 			return errQuickLink("referenced PAM connection not found")
 		}

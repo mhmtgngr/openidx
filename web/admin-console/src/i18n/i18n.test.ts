@@ -2,6 +2,14 @@ import { describe, it, expect, afterEach } from 'vitest'
 import i18n, { ensureLanguage, setLanguage, supportedLanguages } from './index'
 import en from './locales/en'
 import { API_SPECS } from '@/lib/api-specs'
+import { conditionTemplates as policyConditionTemplatesByType } from '@/pages/policies'
+
+const policyConditionTemplates = Object.values(policyConditionTemplatesByType).flat()
+import {
+  resourceTypes as abacResourceTypes,
+  attributeOptions as abacAttributeOptions,
+  operatorOptions as abacOperatorOptions,
+} from '@/pages/abac-policies'
 
 // The singleton is initialized by the test setup file (same module as
 // main.tsx). Restore English so other test files see the default language.
@@ -292,49 +300,27 @@ describe('i18n', () => {
       ...['allow', 'deny', 'require_approval', 'step_up_mfa'].map(
         (k) => `pages.policies.effects.${k}`,
       ),
-      // conditionTemplates carries only the field name; both the label and the
-      // example resolve from it, so every field needs both halves present
-      ...[
-        'conflicting_roles',
-        'min_risk_score',
-        'max_risk_score',
-        'start_hour',
-        'end_hour',
-        'days',
-        'allowed_ips',
-        'blocked_ips',
-        'require_mfa',
-        'device_trust_required',
-        'allowed_locations',
-        'blocked_locations',
-      ].flatMap((k) => [`pages.policies.conditions.${k}`, `pages.policies.placeholders.${k}`]),
+      // conditionTemplates carries the field name and the JSON type; both the
+      // label and the example resolve from the name, so every field needs both
+      // halves present. Derived from the page's own table, not copied — this was
+      // a copy, and it named `days`, `allowed_ips`, `blocked_ips` and
+      // `min_risk_score`, none of which the governance evaluator has ever read.
+      ...policyConditionTemplates.flatMap((t) => [
+        `pages.policies.conditions.${t.key}`,
+        `pages.policies.placeholders.${t.placeholderKey || t.key}`,
+      ]),
       'pages.policies.placeholders.conditional_max_risk_score',
       // abac-policies: resourceTypes/attributeOptions/operatorOptions are
-      // module-level value lists resolved at render
-      ...['application', 'route', 'service', 'all'].map(
-        (k) => `pages.abacPolicies.resourceTypes.${k}`,
-      ),
-      ...[
-        'department',
-        'location',
-        'device_trust_level',
-        'time_of_day',
-        'risk_score',
-        'group_membership',
-        'ip_range',
-      ].map((k) => `pages.abacPolicies.attributes.${k}`),
-      ...[
-        'eq',
-        'neq',
-        'in',
-        'not_in',
-        'gt',
-        'gte',
-        'lt',
-        'lte',
-        'between',
-        'contains',
-      ].map((k) => `pages.abacPolicies.operators.${k}`),
+      // module-level value lists resolved at render. Derived from the page's
+      // own lists, not copied — these were three hand-written copies, and when
+      // the attribute vocabulary was corrected to what abac.SubjectAttributes
+      // actually populates, the copies were what went stale. The page's lists
+      // are in turn checked against the evaluator by
+      // internal/abac/vocabulary_test.go, so the chain runs catalog → page →
+      // Go, with no list maintained by hand at any link.
+      ...abacResourceTypes.map((r) => `pages.abacPolicies.resourceTypes.${r.labelKey}`),
+      ...abacAttributeOptions.map((k) => `pages.abacPolicies.attributes.${k}`),
+      ...abacOperatorOptions.map((k) => `pages.abacPolicies.operators.${k}`),
       // zero-trust: the access-method chip keys off the route's own transport
       ...['proxy', 'ziti', 'browzer', 'guacamole'].map((k) => `pages.zeroTrust.methods.${k}`),
       ...['notConfigured', 'reachable', 'unreachable'].map(
@@ -714,19 +700,24 @@ describe('i18n', () => {
         (k) => `pages.quickLinks.categories.${k}`,
       ),
       // notification-preferences: one row per event, one column per channel.
+      // These four are internal/notifications.TypeCatalogue -- the types this
+      // product actually sends. The seven that used to be listed here
+      // (access_request, security_alert, session_revoked, review_assigned,
+      // group_request, password_expiry, mfa_change) were never sent by
+      // anything, so the page offered seven switches that controlled nothing
+      // and this test kept their translations warm. The page reads the
+      // catalogue from the server and falls back to the server's own wording,
+      // so a type added there without a key here still renders -- in English.
       ...[
-        'access_request',
-        'security_alert',
-        'session_revoked',
-        'review_assigned',
-        'group_request',
-        'password_expiry',
-        'mfa_change',
+        'access_granted',
+        'device_trust',
+        'security',
+        'broadcast',
       ].flatMap((k) => [
         `pages.notificationPreferences.events.${k}`,
         `pages.notificationPreferences.eventHints.${k}`,
       ]),
-      ...['in_app', 'email'].map((k) => `pages.notificationPreferences.channels.${k}`),
+      ...['in_app', 'push'].map((k) => `pages.notificationPreferences.channels.${k}`),
       // pam-session-window: the phase the frame monitor reports.
       ...['active', 'loading', 'ended', 'failed'].map(
         (k) => `pages.pamSessionWindow.phases.${k}`,

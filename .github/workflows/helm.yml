@@ -70,7 +70,6 @@ jobs:
           helm template openidx "$CHART" \
             --set secrets.postgresPassword=render-only-not-a-credential \
             --set secrets.redisPassword=render-only-not-a-credential \
-            --set secrets.jwtSecret=render-only-not-a-credential-000000 \
             --set secrets.encryptionKey=render-only-not-a-credential32b \
             > /tmp/render-default.yaml
 
@@ -91,7 +90,6 @@ jobs:
             got=$(helm template openidx "$CHART" \
               --set secrets.postgresPassword=render-only-not-a-credential \
               --set secrets.redisPassword=render-only-not-a-credential \
-              --set secrets.jwtSecret=render-only-not-a-credential-000000 \
               --set secrets.encryptionKey=render-only-not-a-credential32b \
               --set "$svc.replicaCount=0" \
               | grep -c '^  replicas: 0' || true)
@@ -112,7 +110,6 @@ jobs:
             helm template openidx "$CHART" \
               --set secrets.postgresPassword=render-only-not-a-credential \
               --set secrets.redisPassword=render-only-not-a-credential \
-              --set secrets.jwtSecret=render-only-not-a-credential-000000 \
               --set secrets.encryptionKey=render-only-not-a-credential32b "$@"
           }
           # The chain is script -> role -> schema: the ConfigMap must exist
@@ -164,7 +161,6 @@ jobs:
             helm template openidx "$CHART" \
               --set secrets.postgresPassword=render-only-not-a-credential \
               --set secrets.redisPassword=render-only-not-a-credential \
-              --set secrets.jwtSecret=render-only-not-a-credential-000000 \
               --set secrets.encryptionKey=render-only-not-a-credential32b \
               $values \
             | python3 -c '

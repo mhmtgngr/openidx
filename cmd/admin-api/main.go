@@ -80,6 +80,13 @@ func main() {
 		log.Fatal("Failed to load configuration", zap.Error(err))
 	}
 
+	// The configured level reaches the logger built above, which had to be
+	// constructed before the config existed. Without this, `log_level:` in a
+	// configuration file is read into a field nothing consults.
+	if err := logger.SetLevel(cfg.LogLevel); err != nil {
+		log.Fatal("Invalid log level", zap.Error(err))
+	}
+
 	// Validate production security settings (blocking)
 	if err := config.ValidateProductionConfig(cfg, log); err != nil {
 		log.Fatal("Production security validation failed", zap.Error(err))
@@ -218,6 +225,9 @@ func main() {
 	healthService.RegisterCheck(newhealth.NewPostgresChecker(db))
 	healthService.RegisterCheck(newhealth.NewReadReplicaChecker(db))
 	healthService.RegisterCheck(newhealth.NewRedisChecker(redis))
+	// An expiring TLS certificate is a scheduled outage; the health endpoint
+	// says so weeks ahead when the service serves TLS from a file.
+	newhealth.RegisterCertCheck(healthService, cfg.TLS.Enabled, cfg.TLS.CertFile)
 
 	// Register standard health check endpoints (/health/live, /health/ready, /health)
 	healthService.RegisterStandardRoutes(router, "")
@@ -304,13 +314,19 @@ func main() {
 	// Resolve the tenant for every request and attach it to the request
 	// context (v1.7.0 #2). Group-level and after Auth, so unlike the
 	// other services the JWT org_id claim path is live here, not just
-	// X-Org-Slug. DefaultOrgFallback keeps single-tenant installs on
-	// the default org — the final v1.7.0 PR flips it off.
+	// X-Org-Slug — and so is the platform-admin X-Org-ID path, which
+	// makes this the only service where a super_admin can cross a tenant
+	// boundary and where CrossOrgAuditor's mandatory row is written.
+	// test/integration/cross_org_test.go asserts that, and asserts a
+	// plain admin cannot. Keep this mount behind auth.
+	// DefaultOrgFallback keeps single-tenant installs on the default
+	// org — the final v1.7.0 PR flips it off.
 	v1.Use(middleware.TenantResolver(organization.NewOrgLookup(orgService), middleware.TenantResolverConfig{
 		DefaultOrgFallback:     cfg.DefaultOrgFallback,
 		DefaultOrgID:           cfg.DefaultOrgID,
 		PlatformAdminPredicate: auth.SuperAdminPredicate,
 		OnPlatformCrossOrg:     audit.CrossOrgAuditor(db.Pool, log),
+		Logger:                 log,
 	}))
 
 	// OPA authorization (opt-in via ENABLE_OPA_AUTHZ)

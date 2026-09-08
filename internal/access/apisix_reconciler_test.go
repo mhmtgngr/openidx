@@ -50,7 +50,8 @@ func TestAPISIXReconcilerKeepsDesiredRoutesWhenPutFails(t *testing.T) {
 		opts:   apisixRouteOpts{bootstrapperNode: "127.0.0.1:8445", hopBasePort: 8095, oidcCallbacks: []string{"signin-oidc"}},
 	}
 	desired := []browzerRouteInfo{{hostname: "psm.tdv.org", serviceName: "psm-zt", hostingMode: "hop"}}
-	if err := rec.applyRoutes(context.Background(), desired); err != nil {
+	objs := buildBrowZerAPISIXRoutes(desired, rec.opts)
+	if err := rec.applyRoutes(context.Background(), objs, prunePrefixes(browzerRoutePrefix)); err != nil {
 		t.Fatalf("applyRoutes: %v", err)
 	}
 	// Both routes are still desired (the DB says so) even though their PUTs failed,
@@ -68,7 +69,7 @@ func TestAPISIXReconcilerPrunesAllWhenNoneDesired(t *testing.T) {
 		client: f,
 		opts:   apisixRouteOpts{bootstrapperNode: "127.0.0.1:8445", hopBasePort: 8095},
 	}
-	if err := rec.applyRoutes(context.Background(), nil); err != nil {
+	if err := rec.applyRoutes(context.Background(), nil, prunePrefixes(browzerRoutePrefix, edgeRoutePrefix)); err != nil {
 		t.Fatalf("applyRoutes: %v", err)
 	}
 	// No apps desired -> every browzer-* route pruned; non-browzer left alone.
@@ -85,7 +86,8 @@ func TestAPISIXReconcilerApplyAndPrune(t *testing.T) {
 		opts:   apisixRouteOpts{bootstrapperNode: "127.0.0.1:8445", hopBasePort: 8095, oidcCallbacks: []string{"signin-oidc"}},
 	}
 	desired := []browzerRouteInfo{{hostname: "psm.tdv.org", serviceName: "psm-zt", hostingMode: "hop"}}
-	if err := rec.applyRoutes(context.Background(), desired); err != nil {
+	objs := buildBrowZerAPISIXRoutes(desired, rec.opts)
+	if err := rec.applyRoutes(context.Background(), objs, prunePrefixes(browzerRoutePrefix, edgeRoutePrefix)); err != nil {
 		t.Fatalf("applyRoutes: %v", err)
 	}
 	if _, ok := f.put["browzer-psm-tdv-org"]; !ok {

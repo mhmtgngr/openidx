@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -154,6 +155,11 @@ type Service struct {
 	es     *database.ElasticsearchClient
 	config *config.Config
 	logger *zap.Logger
+
+	// sealer chains audit rows into a per-org tamper-evident sequence. It is
+	// nil when no AUDIT_CHAIN_SECRET is configured, and the verification
+	// endpoint says so rather than reporting an intact chain over nothing.
+	sealer *ChainSealer
 }
 
 // NewService creates a new audit service
@@ -161,12 +167,76 @@ func NewService(db *database.PostgresDB, es *database.ElasticsearchClient, cfg *
 	if logger == nil {
 		panic("audit service logger cannot be nil")
 	}
-	return &Service{
+	svc := &Service{
 		db:     db,
 		es:     es,
 		config: cfg,
 		logger: logger.With(zap.String("service", "audit")),
 	}
+	// The hash chain runs only with a secret. A construction failure here is
+	// not fatal -- an audit service that refuses to start would lose the trail
+	// entirely, which is worse than a trail without tamper evidence -- but it
+	// is loud, and ValidateProduction refuses a production start without the
+	// secret, so the quiet case cannot happen where it matters.
+	if cfg != nil && cfg.AuditChainSecret != "" && db != nil {
+		sealer, err := NewChainSealer(db.Pool, cfg.AuditChainSecret, svc.logger)
+		if err != nil {
+			svc.logger.Error("audit hash chain disabled: sealer could not be built", zap.Error(err))
+		} else {
+			svc.sealer = sealer
+		}
+	}
+	return svc
+}
+
+// StartChainSealer runs the audit hash-chain sealer until ctx is cancelled.
+// It is a no-op when no AUDIT_CHAIN_SECRET is configured, and says so once
+// rather than looking like a running control.
+func (s *Service) StartChainSealer(ctx context.Context) {
+	if s.sealer == nil {
+		s.logger.Warn("audit hash chain is not running: AUDIT_CHAIN_SECRET is unset, so audit events carry no tamper evidence")
+		return
+	}
+	interval := time.Minute
+	if s.config != nil && s.config.AuditChainInterval > 0 {
+		interval = s.config.AuditChainInterval
+	}
+	go s.sealer.Start(ctx, interval)
+}
+
+// handleVerifyChain answers whether this tenant's audit trail is intact.
+func (s *Service) handleVerifyChain(c *gin.Context) {
+	if s.sealer == nil {
+		// Not an error: the honest answer to "is the chain intact" when there
+		// is no chain is that there is no chain. Reporting intact:true over
+		// zero sealed rows is the failure this endpoint exists to prevent.
+		c.JSON(http.StatusOK, gin.H{
+			"enabled": false,
+			"detail":  "the audit hash chain is not configured; set AUDIT_CHAIN_SECRET to make this trail tamper-evident",
+		})
+		return
+	}
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+	result, err := s.sealer.VerifyChain(c.Request.Context(), org.ID)
+	if err != nil {
+		s.logger.Error("audit chain verification could not run", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not verify the audit chain"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"enabled":         true,
+		"org_id":          result.OrgID,
+		"sealed_events":   result.Sealed,
+		"unsealed_events": result.Unsealed,
+		"last_sequence":   result.LastSeq,
+		"intact":          result.Intact,
+		"break":           result.Break,
+		"break_event_id":  result.BreakEventID,
+	})
 }
 
 // auditIndexMapping defines the Elasticsearch index mapping for audit events
@@ -213,6 +283,23 @@ func (s *Service) LogEvent(ctx context.Context, event *ServiceAuditEvent) error 
 		zap.String("action", event.Action))
 
 	event.Timestamp = time.Now()
+
+	// The id is the server's to assign, and until now nothing assigned it.
+	//
+	// audit_events.id is `uuid NOT NULL DEFAULT gen_random_uuid()`, and the
+	// INSERT below names the column explicitly — so an event that arrives
+	// without an id passed "" into a uuid column, Postgres refused it with
+	// `invalid input syntax for type uuid`, and the endpoint answered 500.
+	//
+	// The only caller of POST /api/v1/audit/events in this product is
+	// internal/access.logAuditEvent, and it has never sent an id. So every
+	// audit event access-service emitted — every PAM credential reveal, every
+	// entry created or deleted, every grant added, every proxy allow and deny —
+	// was refused and dropped, on every install. The loss showed up as one
+	// warning line in the emitting service's log and nowhere else.
+	if strings.TrimSpace(event.ID) == "" {
+		event.ID = uuid.New().String()
+	}
 
 	// Capture the org synchronously. Audit events must never be dropped, so an
 	// unresolved org falls back to the default org rather than failing closed.
@@ -472,7 +559,11 @@ func (s *Service) GenerateComplianceReport(ctx context.Context, reportType Repor
 	case ReportTypeSOC2:
 		report.Framework = "SOC 2 Type II"
 		report.Name = "SOC 2 Compliance Report"
-		report.Findings = s.evaluateSOC2Controls(ctx, startDate, endDate)
+		findings, err := s.evaluateSOC2Controls(ctx, startDate, endDate)
+		if err != nil {
+			return nil, fmt.Errorf("SOC 2 controls: %w", err)
+		}
+		report.Findings = findings
 	case ReportTypeISO27001:
 		report.Framework = "ISO 27001:2022"
 		report.Name = "ISO 27001 Compliance Report"
@@ -507,14 +598,25 @@ func (s *Service) GenerateComplianceReport(ctx context.Context, reportType Repor
 	return report, nil
 }
 
-func (s *Service) evaluateSOC2Controls(ctx context.Context, startDate, endDate time.Time) []ReportFinding {
-	org, _ := orgctx.From(ctx)
-	// Gather evidence counts from the database
+func (s *Service) evaluateSOC2Controls(ctx context.Context, startDate, endDate time.Time) ([]ReportFinding, error) {
+	// These four counts are printed verbatim into the Evidence line of three
+	// SOC 2 findings -- "%d/%d users have MFA enabled; %d failed auth attempts
+	// in period". Each Scan error was discarded, so a query that could not run
+	// wrote "0/0 users have MFA enabled" into a control's evidence, which reads
+	// as a measured finding rather than a missing one. See metricquery.go.
+	q := s.newMetricQuery(ctx)
 	var totalEvents, failedAuth, mfaUsers, totalUsers int
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM audit_events WHERE timestamp BETWEEN $1 AND $2 AND org_id = $3", startDate, endDate, org.ID).Scan(&totalEvents)
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM audit_events WHERE event_type='authentication' AND outcome='failure' AND timestamp BETWEEN $1 AND $2 AND org_id = $3", startDate, endDate, org.ID).Scan(&failedAuth)
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM mfa_totp WHERE enabled = true AND org_id = $1", org.ID).Scan(&mfaUsers)
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM users WHERE enabled = true AND org_id = $1", org.ID).Scan(&totalUsers)
+	q.scan("audit events in period", &totalEvents,
+		"SELECT COUNT(*) FROM audit_events WHERE timestamp BETWEEN $1 AND $2 AND org_id = $3", startDate, endDate, q.org())
+	q.scan("failed authentications", &failedAuth,
+		"SELECT COUNT(*) FROM audit_events WHERE event_type='authentication' AND outcome='failure' AND timestamp BETWEEN $1 AND $2 AND org_id = $3", startDate, endDate, q.org())
+	q.scan("users with TOTP", &mfaUsers,
+		"SELECT COUNT(*) FROM mfa_totp WHERE enabled = true AND org_id = $1", q.org())
+	q.scan("enabled users", &totalUsers,
+		"SELECT COUNT(*) FROM users WHERE enabled = true AND org_id = $1", q.org())
+	if err := q.failed(); err != nil {
+		return nil, err
+	}
 
 	cc61Status := s.evaluateAccessControlStatus(ctx, startDate, endDate)
 	cc62Status := s.evaluateAuthenticationStatus(ctx, startDate, endDate)
@@ -586,7 +688,7 @@ func (s *Service) evaluateSOC2Controls(ctx context.Context, startDate, endDate t
 		},
 	}
 
-	return findings
+	return findings, nil
 }
 
 func (s *Service) evaluateISO27001Controls(ctx context.Context, startDate, endDate time.Time) []ReportFinding {
@@ -1008,15 +1110,20 @@ func (s *Service) GetEventStatistics(ctx context.Context, startDate, endDate tim
 	rows.Close()
 	stats["events_per_day"] = eventsPerDay
 
-	// Get failed authentication count
+	// Get failed authentication count. GetEventStatistics already returns an
+	// error, and every other read in it is checked; this one was not, so a
+	// broken query reported "0 failed authentications" on the security
+	// dashboard -- the reading an operator takes as "no attack in progress".
 	var failedAuthCount int
-	s.db.Pool.QueryRow(ctx, `
+	if err := s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM audit_events
 		WHERE event_type = 'authentication'
 		AND outcome = 'failure'
 		AND timestamp BETWEEN $1 AND $2
 		AND org_id = $3
-	`, startDate, endDate, org.ID).Scan(&failedAuthCount)
+	`, startDate, endDate, org.ID).Scan(&failedAuthCount); err != nil {
+		return nil, fmt.Errorf("failed authentication count: %w", err)
+	}
 	stats["failed_auth_count"] = failedAuthCount
 
 	// Calculate success rate
@@ -1126,6 +1233,15 @@ func RegisterRoutes(router *gin.Engine, svc *Service, extraMiddleware ...gin.Han
 		audit.GET("/events", svc.handleListEvents)
 		audit.GET("/events/:id", svc.handleGetEvent)
 		audit.GET("/events/search", svc.handleSearchEvents)
+		// The event types this tenant's trail actually contains, so the
+		// console's filter offers what is there instead of a list copied from
+		// constants that six of eight nothing writes. See event_types.go.
+		audit.GET("/event-types", svc.handleEventTypes)
+
+		// Tamper evidence. The product publishes a claim that this trail is
+		// hash-chained; this is where an auditor -- or the tenant -- checks it
+		// rather than taking the claim on faith. See chain.go.
+		audit.GET("/chain/verify", svc.handleVerifyChain)
 
 		// Statistics
 		audit.GET("/statistics", svc.handleGetStatistics)

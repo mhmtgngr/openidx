@@ -285,7 +285,7 @@ TOTP funcs in `identity/service.go`, `internal/mfa/**`, `internal/email/**` ·
 **Depends:** F1 (JML/micro-certs/birthright), F2 (fulfillment)
 - **Event-driven JML** + **birthright/attribute provisioning** (rule engine on F1; kill the `provisioning_rules` facade).
 - **Detective SoD scanning** + violation dashboard + exception workflow.
-- **Escalation / delegation / reassignment / reminder workers** (resurrect the dead `RequestService` logic against live rows).
+- **Escalation / delegation / reassignment / reminder workers.** `internal/governance/request.go` carried a version of this — 676 lines with a working escalation sweep — that no binary could reach, writing a table (`request_approval_chains`) the live workflow never used. It was deleted in v1.34.0 along with the table; the shape is in the git history if it is worth reviving, but it has to be built against `access_requests` / `access_request_approvals`, the rows the product actually has.
 - **Entitlement warehouse** (source-account aggregation, correlation, orphan detection).
 - **Certification decision support** (recommendations, dormancy flags, bulk-approve low-risk).
 - **Event-triggered micro-certifications**, **non-employee governance**, **identity risk-weighted certs**, **role mining**, **Slack/Teams + actionable-email approvals**, **downstream fulfillment** (outbound SCIM on F2 + ServiceNow tickets), **NHI/service-account governance**, **ABAC fail-closed enforcement**.

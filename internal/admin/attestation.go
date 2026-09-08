@@ -3,13 +3,17 @@ package admin
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/webhooks"
 )
 
 // AttestationCampaign represents a certification/attestation campaign
@@ -209,15 +213,22 @@ func (s *Service) handleGetAttestationCampaign(c *gin.Context) {
 		return
 	}
 
-	// Get item counts
-	_ = s.db.Pool.QueryRow(c.Request.Context(),
-		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND org_id = $2", id, org.ID).Scan(&ac.TotalItems)
-	_ = s.db.Pool.QueryRow(c.Request.Context(),
-		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND org_id = $2 AND decision = 'certified'", id, org.ID).Scan(&ac.CertifiedCount)
-	_ = s.db.Pool.QueryRow(c.Request.Context(),
-		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND org_id = $2 AND decision = 'revoked'", id, org.ID).Scan(&ac.RevokedCount)
-	_ = s.db.Pool.QueryRow(c.Request.Context(),
-		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND org_id = $2 AND decision = 'pending'", id, org.ID).Scan(&ac.PendingCount)
+	// Get item counts. These four are what the campaign page shows an approver
+	// -- how much is done and how much is left -- and every error was
+	// discarded, so a campaign that could not be counted rendered as a campaign
+	// with nothing in it.
+	q := s.newTileQuery(c.Request.Context())
+	q.scan("campaign items", &ac.TotalItems,
+		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND org_id = $2", id, org.ID)
+	q.scan("certified items", &ac.CertifiedCount,
+		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND org_id = $2 AND decision = 'certified'", id, org.ID)
+	q.scan("revoked items", &ac.RevokedCount,
+		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND org_id = $2 AND decision = 'revoked'", id, org.ID)
+	q.scan("pending items", &ac.PendingCount,
+		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND org_id = $2 AND decision = 'pending'", id, org.ID)
+	if q.failed(c) {
+		return
+	}
 
 	c.JSON(http.StatusOK, ac)
 }
@@ -330,27 +341,47 @@ func (s *Service) handleLaunchAttestationCampaign(c *gin.Context) {
 		return
 	}
 
+	// Launch is a claim, and it used to be a check-then-act with the act
+	// unchecked: read the status, refuse if it was not 'draft', generate the
+	// items, then move the campaign to 'active' with an Exec whose error was
+	// discarded. Two things went wrong with that.
+	//
+	// A failed status write left the campaign in 'draft' with a full set of
+	// items already generated -- and the handler answered "Campaign launched".
+	// The next launch passed the draft check and generated every item a second
+	// time, so each reviewer saw the same entitlement twice and a completed
+	// certification could never reconcile.
+	//
+	// Two launches arriving together did the same thing without any failure at
+	// all: both read 'draft' before either wrote. One conditional UPDATE
+	// settles it under the row lock, before any item exists.
 	id := c.Param("id")
 	var ac AttestationCampaign
 	err := s.db.Pool.QueryRow(c.Request.Context(),
-		`SELECT id, campaign_type, scope, reviewer_strategy, status
-		 FROM attestation_campaigns WHERE id = $1 AND org_id = $2`, id, org.ID,
+		`UPDATE attestation_campaigns SET status = 'active'
+		  WHERE id = $1 AND org_id = $2 AND status = 'draft'
+		  RETURNING id, campaign_type, scope, reviewer_strategy, status`, id, org.ID,
 	).Scan(&ac.ID, &ac.CampaignType, &ac.Scope, &ac.ReviewerStrategy, &ac.Status)
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Campaign not found"})
+	if errors.Is(err, pgx.ErrNoRows) {
+		// Either it does not exist here, or it is not a draft. Say which.
+		var status string
+		if lookupErr := s.db.Pool.QueryRow(c.Request.Context(),
+			`SELECT status FROM attestation_campaigns WHERE id = $1 AND org_id = $2`, id, org.ID,
+		).Scan(&status); lookupErr != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Campaign not found"})
+			return
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Campaign is already launched", "status": status})
 		return
 	}
-	if ac.Status != "draft" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Campaign is already launched"})
+	if err != nil {
+		s.logger.Error("could not launch an attestation campaign", logsafe.String("campaign_id", id), zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to launch campaign"})
 		return
 	}
 
 	// Generate attestation items based on campaign type
 	itemsCreated := s.generateAttestationItems(c.Request.Context(), ac)
-
-	// Update campaign status
-	_, _ = s.db.Pool.Exec(c.Request.Context(),
-		"UPDATE attestation_campaigns SET status = 'active' WHERE id = $1 AND org_id = $2", id, org.ID)
 
 	c.JSON(http.StatusOK, gin.H{"message": "Campaign launched", "items_created": itemsCreated})
 }
@@ -623,7 +654,31 @@ func (s *Service) handleDecideAttestationItem(c *gin.Context) {
 		return
 	}
 
-	tag, err := s.db.Pool.Exec(c.Request.Context(),
+	// THE DECISION AND THE REVOCATION MUST AGREE, so they go in one transaction.
+	//
+	// They used to be separate, and only the decision was checked: the item was
+	// marked decision='revoked' by a statement that returns 500 on failure, and
+	// then the access removal below ran with EVERY error discarded. So a
+	// reviewer clicked Revoke, the certification recorded that the access was
+	// revoked, the campaign counted the item as decided and could auto-complete
+	// on it -- and the role, the application assignment or the group membership
+	// was still there. In an identity governance product that is the worst
+	// available failure: the evidence says the access was removed and it was
+	// not.
+	//
+	// The read that decides WHICH access to tear down had the same defect. A
+	// failed read left resourceType empty and both ids nil, so the switch fell
+	// through and NOTHING was deleted, with the item still marked revoked.
+	ctx := c.Request.Context()
+	tx, err := s.db.Pool.Begin(ctx)
+	if err != nil {
+		s.logger.Error("Failed to begin the attestation decision", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update decision"})
+		return
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	tag, err := tx.Exec(ctx,
 		`UPDATE attestation_items SET decision = $1, comments = $2, decided_at = NOW()
 		 WHERE id = $3 AND campaign_id = $4 AND org_id = $5 AND decision = 'pending'`,
 		req.Decision, req.Comments, itemID, campaignID, org.ID)
@@ -644,24 +699,40 @@ func (s *Service) handleDecideAttestationItem(c *gin.Context) {
 		// The row this reads decides WHICH access is torn down by the four
 		// deletes below. Those deletes have always named the caller's org; the
 		// read that chose their subject did not.
-		_ = s.db.Pool.QueryRow(c.Request.Context(),
+		if err := tx.QueryRow(ctx,
 			"SELECT resource_type, user_id, resource_id FROM attestation_items WHERE id = $1 AND org_id = $2", itemID, org.ID,
-		).Scan(&resourceType, &userID, &resourceID)
+		).Scan(&resourceType, &userID, &resourceID); err != nil {
+			s.logger.Error("could not read the item a revocation applies to; the decision is not recorded",
+				zap.String("item_id", logsafe.Clean(itemID)), zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to revoke the access"})
+			return
+		}
+
+		revoke := func(sql string, args ...any) bool {
+			if _, err := tx.Exec(ctx, sql, args...); err != nil {
+				s.logger.Error("could not revoke the access a certification refused; the decision is not recorded",
+					zap.String("item_id", logsafe.Clean(itemID)),
+					zap.String("resource_type", logsafe.Clean(resourceType)), zap.Error(err))
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to revoke the access"})
+				return false
+			}
+			return true
+		}
 
 		if userID != nil && resourceID != nil {
+			ok := true
 			switch resourceType {
 			case "role":
-				_, _ = s.db.Pool.Exec(c.Request.Context(),
-					"DELETE FROM user_roles WHERE user_id = $1 AND role_id = $2 AND org_id = $3", *userID, *resourceID, org.ID)
+				ok = revoke("DELETE FROM user_roles WHERE user_id = $1 AND role_id = $2 AND org_id = $3", *userID, *resourceID, org.ID)
 			case "application":
-				_, _ = s.db.Pool.Exec(c.Request.Context(),
-					"DELETE FROM user_application_assignments WHERE user_id = $1 AND application_id = $2 AND org_id = $3", *userID, *resourceID, org.ID)
+				ok = revoke("DELETE FROM user_application_assignments WHERE user_id = $1 AND application_id = $2 AND org_id = $3", *userID, *resourceID, org.ID)
 			case "group":
-				_, _ = s.db.Pool.Exec(c.Request.Context(),
-					"DELETE FROM group_memberships WHERE user_id = $1 AND group_id = $2 AND org_id = $3", *userID, *resourceID, org.ID)
+				ok = revoke("DELETE FROM group_memberships WHERE user_id = $1 AND group_id = $2 AND org_id = $3", *userID, *resourceID, org.ID)
 			case "vault_access":
-				_, _ = s.db.Pool.Exec(c.Request.Context(),
-					"DELETE FROM vault_access_grants WHERE id = $1 AND org_id = $2", *resourceID, org.ID)
+				ok = revoke("DELETE FROM vault_access_grants WHERE id = $1 AND org_id = $2", *resourceID, org.ID)
+			}
+			if !ok {
+				return
 			}
 		}
 
@@ -669,20 +740,64 @@ func (s *Service) handleDecideAttestationItem(c *gin.Context) {
 		if resourceID != nil {
 			switch resourceType {
 			case "rotation_policy":
-				_, _ = s.db.Pool.Exec(c.Request.Context(),
-					"UPDATE credential_rotation_policies SET enabled = false, updated_at = NOW() WHERE id = $1 AND org_id = $2", *resourceID, org.ID)
+				if !revoke("UPDATE credential_rotation_policies SET enabled = false, updated_at = NOW() WHERE id = $1 AND org_id = $2", *resourceID, org.ID) {
+					return
+				}
 			}
 		}
 	}
 
-	// Check if all items are decided - auto-complete campaign
+	if err := tx.Commit(ctx); err != nil {
+		s.logger.Error("could not commit the attestation decision", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update decision"})
+		return
+	}
+
+	// Check if all items are decided - auto-complete campaign.
+	//
+	// The error used to be discarded, and this is the one place in the file
+	// where that is not merely a wrong number on a screen: pendingCount stays 0
+	// when the query fails, so a campaign whose items are STILL PENDING gets
+	// marked completed, stamped with completed_at, and announced as
+	// review.completed to whatever evidence pipeline is listening. An access
+	// certification closed without the access being certified, with an audit
+	// trail saying it was.
+	//
+	// A count that could not be taken is not zero. It is not a completion.
 	var pendingCount int
-	_ = s.db.Pool.QueryRow(c.Request.Context(),
+	if err := s.db.Pool.QueryRow(c.Request.Context(),
 		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND org_id = $2 AND decision = 'pending'", campaignID, org.ID,
-	).Scan(&pendingCount)
+	).Scan(&pendingCount); err != nil {
+		s.logger.Error("could not count pending attestation items; leaving the campaign open",
+			logsafe.String("campaign_id", campaignID), zap.Error(err))
+		pendingCount = -1
+	}
 	if pendingCount == 0 {
-		_, _ = s.db.Pool.Exec(c.Request.Context(),
+		// review.completed, at the moment the last item is decided.
+		//
+		// The event type was declared in internal/webhooks and published by
+		// nothing, so an operator whose evidence pipeline waits for "the
+		// certification finished" waited for ever. It is sent only when the
+		// UPDATE actually moved the campaign: the error was discarded here, and
+		// announcing a completion the database refused would be worse than the
+		// silence it replaces.
+		tag, cerr := s.db.Pool.Exec(c.Request.Context(),
 			"UPDATE attestation_campaigns SET status = 'completed', completed_at = NOW() WHERE id = $1 AND org_id = $2", campaignID, org.ID)
+		switch {
+		case cerr != nil:
+			s.logger.Error("failed to complete attestation campaign",
+				logsafe.String("campaign_id", campaignID), zap.Error(cerr))
+		case tag.RowsAffected() > 0 && s.webhookService != nil:
+			if perr := s.webhookService.Publish(orgctx.Detached(c.Request.Context()),
+				webhooks.EventReviewCompleted, map[string]interface{}{
+					"campaign_id": campaignID,
+					"kind":        "attestation",
+					"actor_id":    c.GetString("user_id"),
+				}); perr != nil {
+				s.logger.Warn("failed to publish review.completed",
+					logsafe.String("campaign_id", campaignID), zap.Error(perr))
+			}
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Decision recorded", "decision": req.Decision})
@@ -758,17 +873,24 @@ func (s *Service) handleAttestationProgress(c *gin.Context) {
 
 	campaignID := c.Param("id")
 
+	// The progress bar. A discarded error here drew 0% complete on a campaign
+	// that may be finished, or 100% on one that is not: completionPct is
+	// (certified+revoked)/total, and any of the three could be the zero.
 	var total, certified, revoked, pending, delegated int
-	_ = s.db.Pool.QueryRow(c.Request.Context(),
-		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND org_id = $2", campaignID, org.ID).Scan(&total)
-	_ = s.db.Pool.QueryRow(c.Request.Context(),
-		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND org_id = $2 AND decision = 'certified'", campaignID, org.ID).Scan(&certified)
-	_ = s.db.Pool.QueryRow(c.Request.Context(),
-		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND org_id = $2 AND decision = 'revoked'", campaignID, org.ID).Scan(&revoked)
-	_ = s.db.Pool.QueryRow(c.Request.Context(),
-		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND org_id = $2 AND decision = 'pending'", campaignID, org.ID).Scan(&pending)
-	_ = s.db.Pool.QueryRow(c.Request.Context(),
-		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND org_id = $2 AND delegated_to IS NOT NULL", campaignID, org.ID).Scan(&delegated)
+	q := s.newTileQuery(c.Request.Context())
+	q.scan("campaign items", &total,
+		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND org_id = $2", campaignID, org.ID)
+	q.scan("certified items", &certified,
+		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND org_id = $2 AND decision = 'certified'", campaignID, org.ID)
+	q.scan("revoked items", &revoked,
+		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND org_id = $2 AND decision = 'revoked'", campaignID, org.ID)
+	q.scan("pending items", &pending,
+		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND org_id = $2 AND decision = 'pending'", campaignID, org.ID)
+	q.scan("delegated items", &delegated,
+		"SELECT COUNT(*) FROM attestation_items WHERE campaign_id = $1 AND org_id = $2 AND delegated_to IS NOT NULL", campaignID, org.ID)
+	if q.failed(c) {
+		return
+	}
 
 	completionPct := 0.0
 	if total > 0 {

@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -102,7 +103,14 @@ func (s *Service) handleCreateBulkOperation(c *gin.Context) {
 		return
 	}
 
-	// Insert items
+	// Insert items.
+	//
+	// The worker below is handed req.UserIDs, not these rows, so it acts on
+	// every user whether or not the row exists -- and the per-user result
+	// UPDATEs it writes afterwards match nothing for a missing one. A user
+	// disabled or reset by a bulk operation with no item row is an action taken
+	// and not recorded, on the page whose entire job is showing what was done
+	// to whom. Refuse to start rather than act off the record.
 	for _, uid := range req.UserIDs {
 		// Look up username for display
 		var username string
@@ -110,9 +118,25 @@ func (s *Service) handleCreateBulkOperation(c *gin.Context) {
 		if username == "" {
 			username = uid
 		}
-		_, _ = s.db.Pool.Exec(ctx,
+		if _, err := s.db.Pool.Exec(ctx,
 			`INSERT INTO bulk_operation_items (operation_id, entity_id, entity_name, status, org_id)
-			 VALUES ($1, $2, $3, 'pending', $4)`, opID, uid, username, org.ID)
+			 VALUES ($1, $2, $3, 'pending', $4)`, opID, uid, username, org.ID); err != nil {
+			s.logger.Error("could not record a bulk-operation item; refusing to run the operation",
+				logsafe.String("operation_id", opID), zap.Error(err))
+			// The failure of the failure path: without this the operation stays
+			// 'running' for ever on the bulk-operations page, over a run that
+			// never started and never will.
+			if _, markErr := s.db.Pool.Exec(ctx,
+				`UPDATE bulk_operations SET status = 'failed', completed_at = NOW() WHERE id = $1 AND org_id = $2`,
+				opID, org.ID); markErr != nil {
+				s.logger.Error("could not mark a refused bulk operation as failed; it will show as running",
+					logsafe.String("operation_id", opID), zap.Error(markErr))
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": "The operation could not be recorded in full and was not started. No users were changed.",
+			})
+			return
+		}
 	}
 
 	// Execute the operation (org captured above and threaded into the detached goroutine)
@@ -219,17 +243,19 @@ func (s *Service) executeBulkOperation(orgID, opID, opType string, userIDs []str
 		if errMsg != "" {
 			errorCount++
 			errors = append(errors, map[string]string{"user_id": uid, "error": errMsg})
-			_, _ = s.db.Pool.Exec(ctx,
+			s.recordBulkItem(ctx, opID, uid, orgID,
 				"UPDATE bulk_operation_items SET status = 'error', error_message = $1, processed_at = $2 WHERE operation_id = $3 AND entity_id = $4 AND org_id = $5",
 				errMsg, now, opID, uid, orgID)
 		} else {
 			successCount++
-			_, _ = s.db.Pool.Exec(ctx,
+			s.recordBulkItem(ctx, opID, uid, orgID,
 				"UPDATE bulk_operation_items SET status = 'success', processed_at = $1 WHERE operation_id = $2 AND entity_id = $3 AND org_id = $4",
 				now, opID, uid, orgID)
 		}
 
 		// Update progress
+		//silentwrite:ok the next iteration rewrites the same cumulative counts, so only a failure on the
+		// final user persists -- and the terminal write below is the one that ends the run.
 		_, _ = s.db.Pool.Exec(ctx,
 			"UPDATE bulk_operations SET processed_items = processed_items + 1, success_count = $1, error_count = $2 WHERE id = $3 AND org_id = $4",
 			successCount, errorCount, opID, orgID)
@@ -247,10 +273,34 @@ func (s *Service) executeBulkOperation(orgID, opID, opType string, userIDs []str
 	if cancelled {
 		final = "cancelled"
 	}
-	_, _ = s.db.Pool.Exec(ctx,
+	// This is the only statement that takes the operation out of 'running'.
+	// Losing it leaves the console showing a bulk operation still in progress
+	// over users it finished with minutes ago, with no way to tell.
+	if _, err := s.db.Pool.Exec(ctx,
 		`UPDATE bulk_operations SET status = $1, errors = $2, completed_at = NOW()
 		 WHERE id = $3 AND org_id = $4 AND status <> 'cancelled'`,
-		final, errorsJSON, opID, orgID)
+		final, errorsJSON, opID, orgID); err != nil {
+		s.logger.Error("bulk operation finished but its final status was not recorded; "+
+			"the console will show it as still running",
+			logsafe.String("operation_id", opID), zap.String("final_status", final),
+			zap.Int("succeeded", successCount), zap.Int("failed", errorCount), zap.Error(err))
+	}
+}
+
+// recordBulkItem writes one user's outcome onto the operation's item row.
+//
+// These rows are the operation's record of what happened to whom. Their errors
+// were discarded, so an item could stay 'pending' for ever while the run's own
+// success_count counted it -- an operation reporting ten successes above ten
+// rows that say nothing was done. The action itself already happened and is
+// counted correctly; what is lost is the per-user evidence, so this says so
+// rather than leaving the two halves to disagree in silence.
+func (s *Service) recordBulkItem(ctx context.Context, opID, uid, orgID, sql string, args ...interface{}) {
+	if _, err := s.db.Pool.Exec(ctx, sql, args...); err != nil {
+		s.logger.Error("bulk operation acted on a user but could not record the outcome against them",
+			logsafe.String("operation_id", opID), logsafe.String("user_id", uid),
+			logsafe.String("org_id", orgID), zap.Error(err))
+	}
 }
 
 // bulkActionResult turns one action's outcome into an error string.

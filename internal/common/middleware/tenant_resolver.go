@@ -8,6 +8,9 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -89,7 +92,27 @@ type TenantResolverConfig struct {
 	// context and should return true if the actor is a platform admin
 	// (typically: a super_admin role). When nil, the X-Org-ID header is
 	// ignored and the platform-admin marker is never set.
+	//
+	// PRECONDITION: the predicate reads the GIN CONTEXT, which means it can
+	// only answer once the auth middleware has populated it. Mount this
+	// middleware after auth (as cmd/admin-api does, on the /api/v1 group) or
+	// the predicate is false for every caller and steps 2 and 3 below are
+	// unreachable — the request falls through to the default org. That is the
+	// safe direction, and it is also invisible, which is why Logger exists.
 	PlatformAdminPredicate func(*gin.Context) bool
+
+	// Logger, when set, receives a warning when a request carries an X-Org-ID
+	// header that this resolver cannot act on because auth has not run yet (no
+	// roles in the gin context at all — an inability, distinct from "the caller
+	// is not a platform admin", which is a decision).
+	//
+	// Six of the seven services that wire OnPlatformCrossOrg mount the resolver
+	// globally, before route-level auth, so their platform-admin path is dead.
+	// It stayed dead and unnoticed for a release because a dead branch and a
+	// working one look identical from outside: the request resolves to the
+	// default org either way. This turns that into a line in the log at the
+	// moment someone tries to use the header.
+	Logger *zap.Logger
 
 	// OnPlatformCrossOrg, when set, is invoked exactly when a platform
 	// admin resolves a request to an org via the X-Org-ID header (a
@@ -113,6 +136,15 @@ type TenantResolverConfig struct {
 //     without ambiguity. Every consumer that respects the
 //     platform-admin marker is required to write an audit entry.
 //  4. Default org fallback, if configured.
+//
+// Steps 2 and 3 READ THE GIN CONTEXT, so they exist only where this
+// middleware is mounted AFTER the auth middleware that fills it. Mounted
+// globally with router.Use — which is how identity, oauth, governance,
+// audit, access and provisioning mount it — steps 2 and 3 cannot fire and
+// every request lands on step 1 or step 4. Only cmd/admin-api mounts it on
+// an authenticated group, so only there is the platform-admin path live.
+// Set Logger to have the mismatch reported when a caller actually tries to
+// use X-Org-ID against a resolver that cannot answer.
 //
 // On lookup failure: ErrOrgNotFound → 400. Any other error → 500.
 //
@@ -148,6 +180,34 @@ func TenantResolver(lookup OrgLookup, cfg TenantResolverConfig) gin.HandlerFunc 
 		c.Request = c.Request.WithContext(ctx)
 		c.Next()
 	}
+}
+
+// warnUnanswerableCrossOrg reports the one case where a refused X-Org-ID means
+// the resolver could not answer rather than that it answered "no": the header is
+// present, a predicate is configured, and the gin context holds no roles at all,
+// which is the shape of a resolver mounted ahead of the auth middleware that
+// would have populated them.
+//
+// It is deliberately narrow. A caller who simply is not a platform admin has
+// roles in context and gets nothing logged — that is a normal refusal, and a
+// warning on it would be noise an operator learns to ignore, which is how this
+// kind of signal stops working.
+func warnUnanswerableCrossOrg(c *gin.Context, cfg TenantResolverConfig) {
+	if cfg.Logger == nil || cfg.PlatformAdminPredicate == nil {
+		return
+	}
+	if strings.TrimSpace(c.GetHeader("X-Org-ID")) == "" {
+		return
+	}
+	if _, hasRoles := c.Get("roles"); hasRoles {
+		return
+	}
+	cfg.Logger.Warn(
+		"X-Org-ID ignored: TenantResolver ran before authentication, so the platform-admin predicate has no roles to read. "+
+			"Mount the resolver after the auth middleware (see cmd/admin-api) if this service is meant to honor cross-org access.",
+		logsafe.String("path", c.Request.URL.Path),
+		logsafe.String("method", c.Request.Method),
+	)
 }
 
 // isTenantSkipPath reports whether path is an infrastructure endpoint
@@ -210,6 +270,8 @@ func resolveOrgFromRequest(c *gin.Context, lookup OrgLookup, cfg TenantResolverC
 			}
 			return org, nil
 		}
+	} else {
+		warnUnanswerableCrossOrg(c, cfg)
 	}
 
 	// 4. Default org fallback.

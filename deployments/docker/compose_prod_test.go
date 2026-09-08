@@ -457,9 +457,14 @@ func TestComposeOAuthConfiguration(t *testing.T) {
 	oauthSection := serviceBlock(contentStr, "oauth-service:")
 	_ = oauthIndex
 
-	// Validate JWT secret requirement
-	if !strings.Contains(oauthSection, "${JWT_SECRET:?JWT_SECRET required}") {
-		t.Error("OAuth service should require JWT_SECRET")
+	// Validate the encryption key requirement. It is NOT the old JWT_SECRET
+	// check: that one demanded a secret nothing signed or verified with, while
+	// this one protects the RSA signing key at rest.
+	if !strings.Contains(oauthSection, "ENCRYPTION_KEY") {
+		t.Error("OAuth service should require ENCRYPTION_KEY")
+	}
+	if strings.Contains(oauthSection, "JWT_SECRET") {
+		t.Error("OAuth service should not require the retired JWT_SECRET")
 	}
 
 	// Validate issuer URL

@@ -111,7 +111,6 @@ description = "Placeholder credentials that exist so the Helm chart can be rende
 regexes = [
   '''^ci-postgres-password$''',
   '''^ci-redis-password$''',
-  '''^ci-jwt-secret-at-least-32-bytes-long!!$''',
   '''^ci-encryption-key-exactly-32-byte$''',
   '''^render-only-not-a-credential$''',
   '''^render-only-not-a-credential-000000$''',

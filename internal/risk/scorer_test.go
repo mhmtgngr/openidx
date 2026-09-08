@@ -106,11 +106,6 @@ func TestScorer_HighRiskScenario(t *testing.T) {
 		t.Errorf("Expected elevated score (>=20) for risky scenario, got %d", assessment.Score)
 	}
 
-	// Check that we got some elevated signals
-	highRiskSignals := assessment.GetHighRiskSignals()
-	if len(highRiskSignals) == 0 && assessment.Score < 30 {
-		t.Logf("Warning: No high-risk signals detected for score %d", assessment.Score)
-	}
 }
 
 // TestScorer_TrustedDeviceScenario tests a low-risk trusted device scenario
@@ -303,39 +298,6 @@ func TestScorer_UnusualTime(t *testing.T) {
 	}
 }
 
-// TestRiskAssessment_ToJSON tests JSON serialization
-func TestRiskAssessment_ToJSON(t *testing.T) {
-	assessment := &RiskAssessment{
-		Score: 65,
-		Level: RiskLevelHigh,
-		Signals: []Signal{
-			{Name: "test", Weight: 0.5, Score: 32.5, Description: "test signal"},
-		},
-		Recommendation: RecommendationStepUpMFA,
-		AssessedAt:     time.Now(),
-		UserID:         "user123",
-	}
-
-	data, err := assessment.ToJSON()
-	if err != nil {
-		t.Errorf("ToJSON returned error: %v", err)
-	}
-
-	if len(data) == 0 {
-		t.Error("ToJSON returned empty data")
-	}
-
-	// Verify it contains expected fields
-	json := string(data)
-	expectedStrings := []string{"\"score\":65", "\"level\":\"high\"", "\"recommendation\":\"step_up_mfa\""}
-	for _, expected := range expectedStrings {
-		if !contains(json, expected) {
-			t.Errorf("JSON should contain %s", expected)
-		}
-	}
-}
-
-// TestRiskLevel_String tests string representation of risk levels
 func TestRiskLevel_String(t *testing.T) {
 	tests := []struct {
 		level    RiskLevel

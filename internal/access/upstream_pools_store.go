@@ -20,10 +20,14 @@ import (
 // with RLS bypassed, exactly like the existing route query it feeds. Callers on
 // a user request path must not use this; they go through the org-scoped admin
 // handlers instead.
-func (s *Service) loadUpstreamPools(ctx context.Context) (map[string]*UpstreamPool, error) {
+//
+// Takes the pool rather than hanging off *Service because the APISIX
+// reconciler, which is the only caller that matters, holds a *database.
+// PostgresDB and no Service.
+func loadUpstreamPools(ctx context.Context, db *database.PostgresDB) (map[string]*UpstreamPool, error) {
 	ctx = orgctx.WithBypassRLS(ctx)
 
-	rows, err := s.db.Pool.Query(ctx,
+	rows, err := db.Pool.Query(ctx,
 		//orgscope:ignore install-wide reconciler pass: renders desired upstream state for every org into the shared data plane, mirroring queryBrowZerRoutes
 		`SELECT id, name, algorithm, hash_on, hash_key,
 		        health_check_enabled, health_check_path,
@@ -55,7 +59,7 @@ func (s *Service) loadUpstreamPools(ctx context.Context) (map[string]*UpstreamPo
 		return pools, nil
 	}
 
-	mrows, err := s.db.Pool.Query(ctx,
+	mrows, err := db.Pool.Query(ctx,
 		//orgscope:ignore install-wide reconciler pass: members belong to the pools loaded above, which are already install-wide by design
 		`SELECT pool_id, host, port, weight, enabled
 		 FROM upstream_pool_members

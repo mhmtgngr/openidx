@@ -41,6 +41,7 @@ import {
   FederationConfig,
   SocialProviders,
   ProxyRoutes,
+  UpstreamPools,
   ZitiSetup,
   ZitiNetwork,
   NetworkTopology,
@@ -290,6 +291,7 @@ function App() {
         {/* Network & Access - Admin Protected */}
         <Route path="zero-trust" element={<ZeroTrust />} />
         <Route path="proxy-routes" element={<ProxyRoutes />} />
+        <Route path="upstream-pools" element={<UpstreamPools />} />
         <Route path="ziti-setup" element={<ZitiSetup />} />
         <Route path="ziti-network" element={<ZitiNetwork />} />
         <Route path="network-topology" element={<NetworkTopology />} />

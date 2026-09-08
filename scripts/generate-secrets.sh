@@ -58,8 +58,8 @@ rand_key_32() {
 # --- generate values ---
 POSTGRES_PASSWORD="$(rand_password)"
 REDIS_PASSWORD="$(rand_password)"
-JWT_SECRET="$(rand_hex)"
 ENCRYPTION_KEY="$(rand_key_32)"
+AUDIT_CHAIN_SECRET="$(rand_key_32)"
 GRAFANA_ADMIN_PASSWORD="$(rand_password)"
 ZITI_PWD="$(rand_password)"
 ACCESS_SESSION_SECRET="$(rand_key_32)"
@@ -114,8 +114,17 @@ APISIX_ADMIN_KEY=${APISIX_ADMIN_KEY}
 OPA_URL=http://localhost:8281
 
 # ----- Security -----
-JWT_SECRET=${JWT_SECRET}
+# ENCRYPTION_KEY protects the OAuth signing key at rest, so losing it costs
+# every outstanding token. There is no JWT_SECRET: tokens are RS256, signed with
+# the rotatable key in oauth_signing_keys, and nothing here is an HMAC key for
+# them.
 ENCRYPTION_KEY=${ENCRYPTION_KEY}
+# The HMAC key the audit hash chain seals events with. Separate from every
+# other secret on purpose: whoever can read or write the audit database must
+# not also hold the key that would let them re-seal a doctored trail. Without
+# it the sealer does not run, audit rows carry no tamper evidence, and
+# ValidateProduction refuses a production start.
+AUDIT_CHAIN_SECRET=${AUDIT_CHAIN_SECRET}
 
 # ----- OAuth / OIDC -----
 OAUTH_ISSUER=http://localhost:8006
@@ -183,8 +192,8 @@ echo "  POSTGRES_PASSWORD  = ${POSTGRES_PASSWORD:0:8}..."
 echo "  REDIS_PASSWORD     = ${REDIS_PASSWORD:0:8}..."
 echo "  OPENIDX_APP_PW     = ${OPENIDX_APP_PASSWORD:0:8}..."
 echo "  APISIX_ADMIN_KEY   = ${APISIX_ADMIN_KEY:0:8}..."
-echo "  JWT_SECRET         = ${JWT_SECRET:0:8}..."
 echo "  ENCRYPTION_KEY     = ${ENCRYPTION_KEY:0:8}..."
+echo "  AUDIT_CHAIN_SECRET = ${AUDIT_CHAIN_SECRET:0:8}..."
 echo "  GRAFANA_ADMIN_PW   = ${GRAFANA_ADMIN_PASSWORD:0:8}..."
 echo "  ZITI_PWD           = ${ZITI_PWD:0:8}..."
 echo "  ACCESS_SESSION     = ${ACCESS_SESSION_SECRET:0:8}..."

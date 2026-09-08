@@ -4,8 +4,10 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -149,13 +151,92 @@ func TestZapLoggerWrapper(t *testing.T) {
 	})
 }
 
+// proxiedServices is the set of backends the gateway fronts. It is written out
+// here rather than derived from the code under test, because a route table that
+// checks itself against itself asserts nothing: this list is what a client may
+// rely on reaching through the gateway, and adding a service to the product
+// means adding it here on purpose.
+var proxiedServices = []string{"identity", "oauth", "governance", "audit", "admin", "risk"}
+
+// gatewayRouteTable registers the real service routes on a fresh engine and
+// returns them as a method+path set.
+func gatewayRouteTable(t *testing.T) map[string]bool {
+	t.Helper()
+	router := gin.New()
+	// The claim this test replaced was that this call conflicts in gin. It does
+	// not, and has not since the duplicate health registration moved out (see
+	// registerServiceRoutes' own comment): a panic here IS the finding.
+	registerServiceRoutes(router, &serviceURLProvider{})
+	table := make(map[string]bool)
+	for _, r := range router.Routes() {
+		key := r.Method + " " + r.Path
+		require.False(t, table[key], "route registered twice: %s (gin serves the first and the second is dead)", key)
+		table[key] = true
+	}
+	return table
+}
+
 func TestRegisterServiceRoutes(t *testing.T) {
-	t.Run("Registers all service routes", func(t *testing.T) {
-		// The routes.Register*Routes functions register both specific routes
-		// and wildcard routes, which causes a conflict in Gin when using the full registerServiceRoutes.
-		// We skip this test and just verify that registerServiceRoutes compiles and can be called.
-		// The actual routing is tested via integration tests.
-		t.Skip("Skipping this test due to route conflicts in the routes package")
+	t.Run("every proxied service is reachable by every method a REST client uses", func(t *testing.T) {
+		table := gatewayRouteTable(t)
+		// A missing method on one group is the shape this misses in review: the
+		// console's DELETE lands on 404 while its GET works, and it looks like a
+		// backend bug.
+		for _, svc := range proxiedServices {
+			for _, method := range []string{"GET", "POST", "PUT", "PATCH", "DELETE"} {
+				path := "/api/v1/" + svc + "/*path"
+				assert.True(t, table[method+" "+path],
+					"%s %s is not registered — the gateway cannot forward it", method, path)
+			}
+		}
+	})
+
+	t.Run("a proxied group without a backend URL would 500 at request time", func(t *testing.T) {
+		// The provider is the other half of the route: registering a group for a
+		// service it cannot resolve compiles, deploys, and fails only when a user
+		// hits it. Both directions are checked, so neither list can drift alone.
+		provider := &serviceURLProvider{}
+		table := gatewayRouteTable(t)
+		for _, svc := range proxiedServices {
+			url, err := provider.GetServiceURL(svc)
+			require.NoError(t, err, "route group /api/v1/%s is registered but the provider cannot resolve it", svc)
+			assert.NotEmpty(t, url)
+		}
+		for key := range table {
+			var svc string
+			if _, err := fmt.Sscanf(key, "GET /api/v1/%s", &svc); err != nil {
+				continue
+			}
+			svc = strings.TrimSuffix(svc, "/*path")
+			if svc == "" || strings.Contains(svc, "/") {
+				continue
+			}
+			_, err := provider.GetServiceURL(svc)
+			assert.NoError(t, err, "the gateway proxies /api/v1/%s but no backend URL is configured for it", svc)
+		}
+	})
+
+	t.Run("health is not registered here — registering it twice panics at boot", func(t *testing.T) {
+		// This is a startup invariant with no test in front of it until now:
+		// gatewayService.RegisterRoutes owns /health and /ready, and gin panics
+		// on a duplicate path. That panic happens when the binary starts, in
+		// production, not in CI — so assert the separation here instead.
+		table := gatewayRouteTable(t)
+		for _, path := range []string{"/health", "/ready", "/healthz", "/livez"} {
+			assert.False(t, table["GET "+path],
+				"registerServiceRoutes registered %s; gatewayService.RegisterRoutes registers it too and the gateway will panic on start", path)
+		}
+	})
+
+	t.Run("the documented docs endpoints are served", func(t *testing.T) {
+		table := gatewayRouteTable(t)
+		for _, path := range []string{"/api/docs", "/api/docs/html", "/api/docs/schema"} {
+			assert.True(t, table["GET "+path], "GET %s is not registered", path)
+		}
+		for _, svc := range proxiedServices {
+			assert.True(t, table["GET /api/docs/"+svc],
+				"GET /api/docs/%s is not registered — the service is proxied but undocumented at the gateway", svc)
+		}
 	})
 
 	t.Run("Registers health and docs routes", func(t *testing.T) {

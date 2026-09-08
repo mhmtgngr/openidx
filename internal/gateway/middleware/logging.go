@@ -10,6 +10,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/openidx/openidx/internal/gateway"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 // LoggingMiddlewareConfig holds configuration for the logging middleware
@@ -46,7 +48,9 @@ func RequestLogger(logger gateway.Logger, config LoggingMiddlewareConfig) gin.Ha
 	return func(c *gin.Context) {
 		start := time.Now()
 		path := c.Request.URL.Path
-		query := c.Request.URL.RawQuery
+		// Redacted at the point it is read, so no later field can log the raw
+		// value by accident. See internal/common/logsafe.
+		query := logsafe.QueryString(c.Request.URL.RawQuery, nil)
 
 		// Store logger in context
 		c.Set("logger", logger)
@@ -57,16 +61,30 @@ func RequestLogger(logger gateway.Logger, config LoggingMiddlewareConfig) gin.Ha
 			return
 		}
 
-		// Log request body if configured
+		// Log request body if configured.
+		//
+		// The read is NOT limited, and the limit is applied to what is LOGGED
+		// instead. The other order is what this used to do, and it corrupts the
+		// request: the body handed back to the handler was the truncated one, so
+		// turning on a logging option would have silently cut every request over
+		// MaxBodySize before it reached its handler. A logger must not change what
+		// it observes.
+		//
+		// And the body goes through logsafe.JSONBody rather than out verbatim: on
+		// this path it carries passwords, tokens and authorization codes.
 		if config.LogRequestBody && c.Request.Body != nil && c.Request.Method != "GET" {
-			bodyBytes, _ := io.ReadAll(io.LimitReader(c.Request.Body, config.MaxBodySize))
+			bodyBytes, _ := io.ReadAll(c.Request.Body)
 			c.Request.Body.Close()
 			c.Request.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 
 			if len(bodyBytes) > 0 {
+				logged := logsafe.JSONBody(string(bodyBytes), nil)
+				if int64(len(logged)) > config.MaxBodySize {
+					logged = logged[:config.MaxBodySize] + "... (truncated)"
+				}
 				logger.Debug("Request body",
 					"path", path,
-					"body", string(bodyBytes))
+					"body", logged)
 			}
 		}
 
@@ -172,67 +190,11 @@ func GetLogger(c *gin.Context) (gateway.Logger, bool) {
 	return l, ok
 }
 
-// WithLogger returns a logger with additional context fields
-// Since gateway.Logger doesn't support With(), we return a wrapper
-func WithLogger(logger gateway.Logger, c *gin.Context) gateway.Logger {
-	// Create a context-aware logger wrapper
-	return &contextLogger{
-		logger:        logger,
-		correlationID: GetCorrelationID(c),
-		path:          c.Request.URL.Path,
-	}
-}
-
-// contextLogger wraps gateway.Logger with context fields
-type contextLogger struct {
-	logger        gateway.Logger
-	correlationID string
-	path          string
-}
-
-func (l *contextLogger) Debug(msg string, fields ...interface{}) {
-	allFields := append([]interface{}{
-		"correlation_id", l.correlationID,
-		"path", l.path,
-	}, fields...)
-	l.logger.Debug(msg, allFields...)
-}
-
-func (l *contextLogger) Info(msg string, fields ...interface{}) {
-	allFields := append([]interface{}{
-		"correlation_id", l.correlationID,
-		"path", l.path,
-	}, fields...)
-	l.logger.Info(msg, allFields...)
-}
-
-func (l *contextLogger) Warn(msg string, fields ...interface{}) {
-	allFields := append([]interface{}{
-		"correlation_id", l.correlationID,
-		"path", l.path,
-	}, fields...)
-	l.logger.Warn(msg, allFields...)
-}
-
-func (l *contextLogger) Error(msg string, fields ...interface{}) {
-	allFields := append([]interface{}{
-		"correlation_id", l.correlationID,
-		"path", l.path,
-	}, fields...)
-	l.logger.Error(msg, allFields...)
-}
-
-func (l *contextLogger) Fatal(msg string, fields ...interface{}) {
-	allFields := append([]interface{}{
-		"correlation_id", l.correlationID,
-		"path", l.path,
-	}, fields...)
-	l.logger.Fatal(msg, allFields...)
-}
-
-func (l *contextLogger) Sync() error {
-	return l.logger.Sync()
-}
+// WithLogger and the contextLogger it returned stood here: a wrapper that
+// stamped the correlation id and path onto every line. Nothing ever called
+// WithLogger. The correlation id still reaches the logs -- CorrelationID
+// puts it on the context and LogRequestEntry/LogRequestExit below read it --
+// so what is gone is a second way to say the same thing, not the field.
 
 // LogRequestEntry logs when a request enters the gateway
 func LogRequestEntry(logger gateway.Logger, c *gin.Context) {
@@ -240,7 +202,7 @@ func LogRequestEntry(logger gateway.Logger, c *gin.Context) {
 		"correlation_id", GetCorrelationID(c),
 		"method", c.Request.Method,
 		"path", c.Request.URL.Path,
-		"query", c.Request.URL.RawQuery,
+		"query", logsafe.QueryString(c.Request.URL.RawQuery, nil),
 		"client_ip", c.ClientIP(),
 	)
 }

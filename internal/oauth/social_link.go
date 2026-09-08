@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -92,7 +93,7 @@ func (s *Service) handleSocialLinkStart(c *gin.Context) {
 	provider, err := s.loadSocialProviderConfig(c.Request.Context(), providerID)
 	if err != nil {
 		s.logger.Error("Link start: provider not found",
-			zap.String("provider_id", providerID), zap.Error(err))
+			logsafe.String("provider_id", providerID), zap.Error(err))
 		c.JSON(http.StatusNotFound, gin.H{"error": "Identity provider not found"})
 		return
 	}
@@ -144,7 +145,7 @@ func (s *Service) handleSocialLinkStart(c *gin.Context) {
 	}
 
 	s.logger.Info("Social account link started",
-		zap.String("provider_id", providerID),
+		logsafe.String("provider_id", providerID),
 		zap.String("provider_type", provider.ProviderType),
 		zap.String("user_id", userID))
 

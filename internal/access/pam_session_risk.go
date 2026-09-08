@@ -27,6 +27,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/leader"
+	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -182,10 +183,17 @@ func (p *PAMSessionRiskScorer) scoreActiveSessions(ctx context.Context) {
 				p.logger.Warn("pam risk: terminate failed", zap.String("session_id", a.SessionID), zap.Error(err))
 			}
 		}
+		// The live connection is torn down above; this is the record that says
+		// so. Its error was discarded, so a suspended session could still read
+		// as active on the PAM dashboard and in every report built from this
+		// table.
 		//orgscope:ignore write scoped to this session's own org_id (selected above); background ticker has no request org
-		_, _ = p.svc.db.Pool.Exec(ctx,
+		if _, err := p.svc.db.Pool.Exec(ctx,
 			`UPDATE pam_entry_sessions SET status = 'suspended', ended_at = NOW()
-			  WHERE id = $1 AND org_id = $2`, a.SessionID, a.OrgID)
+			  WHERE id = $1 AND org_id = $2`, a.SessionID, a.OrgID); err != nil {
+			p.logger.Error("pam risk: could not mark the session suspended",
+				logsafe.String("session_id", a.SessionID), zap.Error(err))
+		}
 		p.logger.Warn("PAM session auto-suspended (enforce)",
 			zap.String("session_id", a.SessionID), zap.String("user_id", a.UserID), zap.Int("score", score))
 		p.audit(ctx, a, score, reason, "enforce")

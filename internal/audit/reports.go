@@ -481,7 +481,12 @@ func (s *Service) ListScheduledReports(ctx context.Context, orgID string) ([]Sch
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT id, org_id, name, COALESCE(description, ''), report_type, COALESCE(framework, ''),
 		       COALESCE(parameters::text, '{}'), schedule, format, enabled,
-		       COALESCE(recipients, '[]'), last_run_at, next_run_at,
+		       -- recipients is TEXT[]. It was COALESCEd with the JSON literal
+		       -- '[]', which PostgreSQL rejects while PLANNING ("malformed array
+		       -- literal"), so this statement never ran and the scheduled-report
+		       -- list was empty on every install -- and silently, because the
+		       -- error return below answers an empty slice and a nil error.
+		       COALESCE(recipients, '{}'), last_run_at, next_run_at,
 		       created_by, created_at, updated_at
 		FROM scheduled_reports
 		WHERE org_id = $1

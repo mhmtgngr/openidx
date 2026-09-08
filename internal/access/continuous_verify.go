@@ -11,6 +11,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/leader"
+	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -185,10 +186,18 @@ func (cv *ContinuousVerifier) verifyActiveSessions(ctx context.Context) {
 		now := time.Now()
 
 		if !decision.Allowed {
-			// Revoke the session
-			cv.svc.db.Pool.Exec(ctx,
+			// Revoke the session.
+			//
+			// Continuous verification has just decided this session must not
+			// continue. The write's error was discarded, so a failed revocation
+			// left the session live and the next verification round would score
+			// it again, silently, for as long as the failure lasted.
+			if _, err := cv.svc.db.Pool.Exec(ctx,
 				"UPDATE proxy_sessions SET revoked=true, last_verified_at=$1 WHERE id=$2 AND org_id=$3",
-				now, sess.SessionID, sess.OrgID)
+				now, sess.SessionID, sess.OrgID); err != nil {
+				cv.svc.logger.Error("continuous verification could not revoke a session it denied",
+					logsafe.String("session_id", sess.SessionID), zap.Error(err))
+			}
 
 			// Remove from Redis
 			if tokenHash != "" {
@@ -208,12 +217,22 @@ func (cv *ContinuousVerifier) verifyActiveSessions(ctx context.Context) {
 				zap.String("user_id", sess.UserID),
 				zap.String("reason", decision.Reason))
 
-			// Log audit event
-			cv.svc.db.Pool.Exec(ctx,
+			// Log audit event.
+			//
+			// This is the only record that a security control cut a live
+			// session out from under a user. Losing it leaves the session
+			// revoked, the user locked out mid-task, and nothing anywhere
+			// saying who did it or why -- which is the shape of an incident
+			// that cannot be explained afterwards.
+			if _, err := cv.svc.db.Pool.Exec(ctx,
 				`INSERT INTO audit_events (id, event_type, actor_id, target_type, resource_id, details, created_at, org_id)
 				 VALUES (gen_random_uuid(), 'session.revoked.continuous_verify', $1, 'proxy_session', $2, $3, NOW(), $4)`,
 				sess.UserID, sess.SessionID,
-				fmt.Sprintf(`{"reason":"%s","risk_score":%d}`, decision.Reason, decision.RiskScore), sess.OrgID)
+				fmt.Sprintf(`{"reason":"%s","risk_score":%d}`, decision.Reason, decision.RiskScore), sess.OrgID); err != nil {
+				cv.svc.logger.Error("continuous verification revoked a session and could not audit it",
+					logsafe.String("session_id", sess.SessionID),
+					logsafe.String("reason", decision.Reason), zap.Error(err))
+			}
 
 			revoked++
 			continue
@@ -227,10 +246,24 @@ func (cv *ContinuousVerifier) verifyActiveSessions(ctx context.Context) {
 			stepUpRequired++
 		}
 
-		// Update verification timestamp and risk score
-		cv.svc.db.Pool.Exec(ctx,
+		// Update verification timestamp and risk score.
+		//
+		// Both halves are read by something. last_verified_at is this sweep's
+		// own cursor -- the selection above takes sessions whose stamp is older
+		// than the route's reverify interval -- so a lost write means this
+		// session is re-evaluated on every tick, for as long as it lives.
+		// risk_score is read by the PAM session-risk scorer
+		// (pam_session_risk.go:138) as the user's current risk, and its
+		// COALESCE turns an absent value into 0: a session the gate would have
+		// suspended goes on running because the score that would have
+		// suspended it was never written.
+		if _, err := cv.svc.db.Pool.Exec(ctx,
 			`UPDATE proxy_sessions SET last_verified_at=$1, risk_score=$2 WHERE id=$3 AND org_id=$4`,
-			now, decision.RiskScore, sess.SessionID, sess.OrgID)
+			now, decision.RiskScore, sess.SessionID, sess.OrgID); err != nil {
+			cv.svc.logger.Error("continuous verification could not record a session's verification; "+
+				"the PAM risk gate will read a stale score for this user and the session is re-verified every tick",
+				logsafe.String("session_id", sess.SessionID), zap.Error(err))
+		}
 	}
 
 	if revoked > 0 || stepUpRequired > 0 {

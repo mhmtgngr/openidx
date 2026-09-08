@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -204,7 +205,7 @@ func (s *Service) handleGetSAMLServiceProvider(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Service provider not found"})
 			return
 		}
-		s.logger.Error("Failed to get SAML service provider", zap.Error(err), zap.String("id", spID))
+		s.logger.Error("Failed to get SAML service provider", zap.Error(err), logsafe.String("id", spID))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get service provider"})
 		return
 	}
@@ -309,12 +310,12 @@ func (s *Service) handleUpdateSAMLServiceProvider(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Service provider not found"})
 			return
 		}
-		s.logger.Error("Failed to update SAML service provider", zap.Error(err), zap.String("id", spID))
+		s.logger.Error("Failed to update SAML service provider", zap.Error(err), logsafe.String("id", spID))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update service provider"})
 		return
 	}
 
-	s.logger.Info("Updated SAML service provider", zap.String("id", spID))
+	s.logger.Info("Updated SAML service provider", logsafe.String("id", spID))
 
 	c.JSON(http.StatusOK, sp)
 }
@@ -330,12 +331,12 @@ func (s *Service) handleDeleteSAMLServiceProvider(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Service provider not found"})
 			return
 		}
-		s.logger.Error("Failed to delete SAML service provider", zap.Error(err), zap.String("id", spID))
+		s.logger.Error("Failed to delete SAML service provider", zap.Error(err), logsafe.String("id", spID))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete service provider"})
 		return
 	}
 
-	s.logger.Info("Deleted SAML service provider", zap.String("id", spID))
+	s.logger.Info("Deleted SAML service provider", logsafe.String("id", spID))
 
 	c.JSON(http.StatusOK, gin.H{"message": "Service provider deleted"})
 }
@@ -370,7 +371,7 @@ func (s *Service) handleRotateSPCertificate(c *gin.Context) {
 	`, req.Certificate, now, spID, org.ID)
 
 	if err != nil {
-		s.logger.Error("Failed to rotate SP certificate", zap.Error(err), zap.String("id", spID))
+		s.logger.Error("Failed to rotate SP certificate", zap.Error(err), logsafe.String("id", spID))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to rotate certificate"})
 		return
 	}
@@ -380,7 +381,7 @@ func (s *Service) handleRotateSPCertificate(c *gin.Context) {
 		return
 	}
 
-	s.logger.Info("Rotated SAML SP certificate", zap.String("id", spID))
+	s.logger.Info("Rotated SAML SP certificate", logsafe.String("id", spID))
 
 	c.JSON(http.StatusOK, gin.H{"message": "Certificate rotated successfully"})
 }

@@ -28,6 +28,7 @@ import (
 	"github.com/openidx/openidx/internal/common/orgctx"
 
 	"github.com/openidx/openidx/internal/common/logsafe"
+	"github.com/openidx/openidx/internal/jitgrant"
 )
 
 // AccessMapUser is the identity header of the access map.
@@ -379,10 +380,16 @@ func (s *Service) collectPAMPillar(ctx context.Context, orgID, userID string, ou
 		return err
 	}
 
-	// Active JIT role elevations.
+	// Active time-bound elevations. This read jit_grants, a table nothing in
+	// the product writes, so this list has been empty on every install for
+	// every user -- while the approval workflow was granting elevations
+	// through access_requests all along. internal/jitgrant holds the one
+	// definition of an active elevation; the resource name is what the request
+	// recorded, which is the role/group/application the user was elevated to.
 	rows, err = s.db.Pool.Query(ctx,
-		`SELECT id, role_name, expires_at FROM jit_grants
-		  WHERE user_id = $1 AND org_id = $2 AND status = 'active' AND expires_at > NOW()
+		`SELECT id, COALESCE(resource_name, resource_id), expires_at
+		   FROM access_requests
+		  WHERE requester_id = $1 AND org_id = $2 AND `+jitgrant.ActiveForUserPredicate+`
 		  ORDER BY expires_at`, userID, orgID)
 	if err != nil {
 		return err

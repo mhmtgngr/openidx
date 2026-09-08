@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -83,10 +84,20 @@ func (s *Service) buildAccessContext(c *gin.Context, route *ProxyRoute, session 
 		var identityUUID string
 		// Bypass RLS: forward-auth has no resolved org; keyed by the
 		// already-authenticated session user_id (globally unique).
-		s.db.Pool.QueryRow(orgctx.WithBypassRLS(ctx),
+		//
+		// A user with no Ziti identity yet is the normal negative and arrives as
+		// pgx.ErrNoRows. Anything else means the lookup did not run, and the
+		// discarded error left identityUUID empty -- so the posture checks this
+		// route DECLARES were skipped entirely, silently. device.posture_score
+		// stays 0, which a policy requiring posture reads as a failure, so the
+		// direction is safe; the silence is not.
+		if err := s.db.Pool.QueryRow(orgctx.WithBypassRLS(ctx),
 			//orgscope:ignore proxy data-plane posture eval; resolves the Ziti identity for the already-authenticated session user by user_id on every forward-auth request
 			"SELECT id FROM ziti_identities WHERE user_id=$1 LIMIT 1", // id (uuid) — device_posture_results.identity_id is a uuid
-			session.UserID).Scan(&identityUUID)
+			session.UserID).Scan(&identityUUID); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			s.logger.Warn("could not resolve the Ziti identity; posture checks were not evaluated",
+				logsafe.String("user_id", session.UserID), zap.Error(err))
+		}
 
 		if identityUUID != "" {
 			passed, results, err := s.ziti().EvaluateIdentityPosture(ctx, identityUUID)
@@ -274,7 +285,8 @@ func (s *Service) lookupIPGeo(ctx context.Context, ip string) (country, city str
 	if s.config.GeoIPServiceURL != "" {
 		geoCountry, geoCity := s.fetchGeoIP(ctx, ip)
 		if geoCountry != "" {
-			// Cache the result
+			// Cache the result.
+			//silentwrite:ok the caller is served the country and city that were just fetched either way; a failed cache write costs one extra call to the GeoIP service on the next lookup for this address, and the row is re-written on that call
 			s.db.Pool.Exec(ctx,
 				`INSERT INTO ip_geolocation_cache (ip_address, country_code, city, cached_at)
 				 VALUES ($1, $2, $3, NOW())

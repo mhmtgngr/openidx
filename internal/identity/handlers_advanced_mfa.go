@@ -527,7 +527,14 @@ func (s *Service) handleRevokeBypassCode(c *gin.Context) {
 }
 
 func (s *Service) handleRevokeAllBypassCodes(c *gin.Context) {
-	requestedUserID := c.Param("user_id")
+	// "id", because the route is DELETE /users/:id/bypass-codes. This read was
+	// c.Param("user_id"), a name no route on this path declares, and gin returns
+	// "" for a name the matched route does not have -- so the revoke ran against
+	// the empty user and PostgreSQL rejected it with `invalid input syntax for
+	// type uuid: ""`. Revoking every break-glass code a user holds is what an
+	// administrator does the moment a bypass code leaks, and it has never once
+	// worked. tools/routereach now fails the build on this shape.
+	requestedUserID := c.Param("id")
 	adminID := c.GetString("user_id")
 	authRoles := c.GetStringSlice("roles")
 

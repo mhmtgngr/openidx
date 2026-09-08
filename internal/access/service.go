@@ -69,8 +69,13 @@ type ProxyRoute struct {
 	GuacamoleConnectionID string            `json:"guacamole_connection_id,omitempty"`
 	LandingPath           string            `json:"landing_path,omitempty"`
 	HostingMode           string            `json:"hosting_mode,omitempty"`
-	CreatedAt             time.Time         `json:"created_at"`
-	UpdatedAt             time.Time         `json:"updated_at"`
+	// UpstreamPoolID points the route at an upstream pool instead of the single
+	// address in ToURL. Empty means "use to_url", which is what every route did
+	// before pools existed and what one still does when the pool it names has no
+	// usable member.
+	UpstreamPoolID string    `json:"upstream_pool_id,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 	// ApplicationID/ApplicationName identify the application (if any) whose
 	// applications.route_id points at this route — the same link appForRoute
 	// (proxy_assignment_cache.go) resolves to decide real access under
@@ -117,6 +122,12 @@ type ProxySession struct {
 	AuthMethods       []string  `json:"auth_methods,omitempty"`
 	Location          string    `json:"location,omitempty"`
 	DeviceTrusted     bool      `json:"device_trusted,omitempty"`
+	// IDPName is the external identity provider that authenticated this
+	// session, empty for a session created by OpenIDX's own login. An operator
+	// answering "an IdP is compromised, whose sessions came through it?" has
+	// nothing else to go on: proxy_sessions.idp_id was written by the multi-IdP
+	// callback and read by nothing until this field existed.
+	IDPName string `json:"idp_name,omitempty"`
 }
 
 // Service provides access proxy operations
@@ -426,6 +437,19 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// because a device submits its own posture. `adminOnly` is the shared gate.
 		adminOnly := svc.requireAdminRole()
 
+		// Upstream pools: the operator's declaration of a route's backend set.
+		// Reads are open to any authenticated tenant user like the route list;
+		// every mutation is admin-only, because adding a member or draining one
+		// moves production traffic between backends.
+		api.GET("/upstream-pools", svc.handleListUpstreamPools)
+		api.POST("/upstream-pools", adminOnly, svc.handleCreateUpstreamPool)
+		api.GET("/upstream-pools/:id", svc.handleGetUpstreamPool)
+		api.PUT("/upstream-pools/:id", adminOnly, svc.handleUpdateUpstreamPool)
+		api.DELETE("/upstream-pools/:id", adminOnly, svc.handleDeleteUpstreamPool)
+		api.POST("/upstream-pools/:id/members", adminOnly, svc.handleAddUpstreamPoolMember)
+		api.PUT("/upstream-pools/:id/members/:memberId", adminOnly, svc.handleUpdateUpstreamPoolMember)
+		api.DELETE("/upstream-pools/:id/members/:memberId", adminOnly, svc.handleDeleteUpstreamPoolMember)
+
 		// Runtime connection control (admin-only): configure + connect/disconnect
 		// the OpenZiti controller from the admin panel with no restart.
 		api.GET("/ziti/settings", adminOnly, svc.handleGetZitiSettings)
@@ -529,6 +553,7 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.GET("/ziti/posture/edr", adminOnly, svc.handleListEDRSources)
 		api.POST("/ziti/posture/edr", adminOnly, svc.handleCreateEDRSource)
 		api.GET("/ziti/posture/edr/:id", adminOnly, svc.handleGetEDRSource)
+		api.GET("/ziti/posture/edr/:id/devices", adminOnly, svc.handleListEDRDevices)
 		api.DELETE("/ziti/posture/edr/:id", adminOnly, svc.handleDeleteEDRSource)
 		api.POST("/ziti/posture/edr/:id/test", adminOnly, svc.handleTestEDRSource)
 		api.POST("/ziti/posture/edr/:id/sync", adminOnly, svc.handleSyncEDRSource)
@@ -1110,6 +1135,7 @@ func (s *Service) handleListRoutes(c *gin.Context) {
 		        COALESCE(max_risk_score, 100), guacamole_connection_id,
 		        COALESCE(landing_path, '/'),
 		        COALESCE(hosting_mode, 'identity'),
+		        COALESCE(upstream_pool_id::text, ''),
 		        created_at, updated_at,
 		        -- ORDER BY id LIMIT 1 mirrors appForRoute + ziti_reconciler's pick when
 		        -- more than one application links to the same route (Ruling 13: the
@@ -1138,7 +1164,7 @@ func (s *Service) handleListRoutes(c *gin.Context) {
 			&r.ReverifyInterval, &postureCheckIDs, &inlinePolicy,
 			&r.RequireDeviceTrust, &allowedCountries,
 			&r.MaxRiskScore, &guacConnID,
-			&r.LandingPath, &r.HostingMode,
+			&r.LandingPath, &r.HostingMode, &r.UpstreamPoolID,
 			&r.CreatedAt, &r.UpdatedAt,
 			&r.ApplicationID, &r.ApplicationName)
 		if err != nil {
@@ -1211,9 +1237,16 @@ func (s *Service) handleListRoutes(c *gin.Context) {
 		routes = append(routes, r)
 	}
 
-	// Get total count
+	// Get total count. A discarded error reported "total": 0 in the same
+	// response that carried the routes, which reads as a list that does not
+	// know its own length.
 	var total int
-	s.db.Pool.QueryRow(c.Request.Context(), "SELECT COUNT(*) FROM proxy_routes WHERE org_id = $1", org.ID).Scan(&total)
+	if err := s.db.Pool.QueryRow(c.Request.Context(),
+		"SELECT COUNT(*) FROM proxy_routes WHERE org_id = $1", org.ID).Scan(&total); err != nil {
+		s.logger.Error("failed to count proxy routes", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list routes"})
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"routes": routes,
@@ -1252,6 +1285,7 @@ func (s *Service) handleCreateRoute(c *gin.Context) {
 		MaxRiskScore       int               `json:"max_risk_score"`
 		LandingPath        string            `json:"landing_path"`
 		HostingMode        string            `json:"hosting_mode"`
+		UpstreamPoolID     string            `json:"upstream_pool_id"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -1319,21 +1353,32 @@ func (s *Service) handleCreateRoute(c *gin.Context) {
 		return
 	}
 
+	// A pool id is resolved inside the caller's org before it is stored: the FK
+	// alone would accept another tenant's pool and send this route's traffic to
+	// their backends.
+	poolID, err := s.resolvePoolForRoute(c.Request.Context(), org.ID, req.UpstreamPoolID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
 	_, err = s.db.Pool.Exec(c.Request.Context(),
 		`INSERT INTO proxy_routes (id, name, description, from_url, to_url, preserve_host,
 		  require_auth, allowed_roles, allowed_groups, policy_ids, idle_timeout, absolute_timeout,
 		  cors_allowed_origins, custom_headers, enabled, priority,
 		  idp_id, route_type, remote_host, remote_port,
 		  reverify_interval, posture_check_ids, inline_policy,
-		  require_device_trust, allowed_countries, max_risk_score, landing_path, hosting_mode, org_id)
+		  require_device_trust, allowed_countries, max_risk_score, landing_path, hosting_mode, org_id,
+		  upstream_pool_id)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
-		         $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29)`,
+		         $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30)`,
 		id, req.Name, req.Description, req.FromURL, req.ToURL, req.PreserveHost,
 		requireAuth, rolesJSON, groupsJSON, policyJSON, req.IdleTimeout, req.AbsoluteTimeout,
 		corsJSON, headersJSON, enabled, req.Priority,
 		idpID, req.RouteType, req.RemoteHost, req.RemotePort,
 		req.ReverifyInterval, postureJSON, req.InlinePolicy,
-		req.RequireDeviceTrust, countriesJSON, req.MaxRiskScore, landingPath, hostingMode, org.ID)
+		req.RequireDeviceTrust, countriesJSON, req.MaxRiskScore, landingPath, hostingMode, org.ID,
+		poolID)
 	if err != nil {
 		s.logger.Error("Failed to create route", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create route"})
@@ -1408,6 +1453,9 @@ func (s *Service) handleUpdateRoute(c *gin.Context) {
 		MaxRiskScore       *int              `json:"max_risk_score"`
 		LandingPath        *string           `json:"landing_path"`
 		HostingMode        *string           `json:"hosting_mode"`
+		// Tri-state on the wire, like every other pointer here: absent leaves
+		// the link alone, "" clears it (back to to_url), an id sets it.
+		UpstreamPoolID *string `json:"upstream_pool_id"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -1521,6 +1569,9 @@ func (s *Service) handleUpdateRoute(c *gin.Context) {
 		}
 		existing.HostingMode = mode
 	}
+	if req.UpstreamPoolID != nil {
+		existing.UpstreamPoolID = strings.TrimSpace(*req.UpstreamPoolID)
+	}
 
 	rolesJSON, _ := json.Marshal(existing.AllowedRoles)
 	groupsJSON, _ := json.Marshal(existing.AllowedGroups)
@@ -1541,6 +1592,14 @@ func (s *Service) handleUpdateRoute(c *gin.Context) {
 		return
 	}
 
+	// Same rule as create: the pool must be this org's, or the route would be
+	// pointed at another tenant's backends by id alone.
+	poolID, err := s.resolvePoolForRoute(c.Request.Context(), org.ID, existing.UpstreamPoolID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
 	_, err = s.db.Pool.Exec(c.Request.Context(),
 		`UPDATE proxy_routes SET name=$1, description=$2, from_url=$3, to_url=$4,
 		  preserve_host=$5, require_auth=$6, allowed_roles=$7, allowed_groups=$8,
@@ -1549,8 +1608,8 @@ func (s *Service) handleUpdateRoute(c *gin.Context) {
 		  idp_id=$16, route_type=$17, remote_host=$18, remote_port=$19,
 		  reverify_interval=$20, posture_check_ids=$21, inline_policy=$22,
 		  require_device_trust=$23, allowed_countries=$24, max_risk_score=$25,
-		  landing_path=$26, hosting_mode=$27, updated_at=NOW()
-		 WHERE id=$28 AND org_id=$29`,
+		  landing_path=$26, hosting_mode=$27, upstream_pool_id=$28, updated_at=NOW()
+		 WHERE id=$29 AND org_id=$30`,
 		existing.Name, existing.Description, existing.FromURL, existing.ToURL,
 		existing.PreserveHost, existing.RequireAuth, rolesJSON, groupsJSON,
 		policyJSON, existing.IdleTimeout, existing.AbsoluteTimeout, corsJSON,
@@ -1558,7 +1617,7 @@ func (s *Service) handleUpdateRoute(c *gin.Context) {
 		idpID, existing.RouteType, existing.RemoteHost, existing.RemotePort,
 		existing.ReverifyInterval, postureJSON, existing.InlinePolicy,
 		existing.RequireDeviceTrust, countriesJSON, existing.MaxRiskScore,
-		existing.LandingPath, existing.HostingMode, id, org.ID)
+		existing.LandingPath, existing.HostingMode, poolID, id, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to update route", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update route"})
@@ -1598,7 +1657,7 @@ func (s *Service) handleDeleteRoute(c *gin.Context) {
 	// has no Ziti service.
 	if zm := s.ziti(); zm != nil {
 		if err := zm.TeardownZitiForRoute(c.Request.Context(), id); err != nil {
-			s.logger.Warn("ziti teardown on route delete failed", zap.String("route_id", id), zap.Error(err))
+			s.logger.Warn("ziti teardown on route delete failed", logsafe.String("route_id", id), zap.Error(err))
 		}
 	}
 
@@ -1630,10 +1689,18 @@ func (s *Service) handleListSessions(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
 		return
 	}
+	// The IdP join is a LEFT JOIN because most sessions have no external
+	// provider: proxy_sessions.idp_id is set only by the multi-IdP callback.
+	// It is org-scoped on both sides so a session cannot name another tenant's
+	// provider, which would put the shape of their federation setup on this
+	// tenant's page.
 	rows, err := s.db.Pool.Query(c.Request.Context(),
-		`SELECT id, user_id, route_id, ip_address, user_agent, started_at, last_active_at, expires_at, revoked
-		 FROM proxy_sessions WHERE revoked=false AND expires_at > NOW() AND org_id = $1
-		 ORDER BY last_active_at DESC LIMIT 100`, org.ID)
+		`SELECT s.id, s.user_id, s.route_id, s.ip_address, s.user_agent, s.started_at,
+		        s.last_active_at, s.expires_at, s.revoked, COALESCE(i.name,'')
+		 FROM proxy_sessions s
+		 LEFT JOIN identity_providers i ON i.id = s.idp_id AND i.org_id = s.org_id
+		 WHERE s.revoked=false AND s.expires_at > NOW() AND s.org_id = $1
+		 ORDER BY s.last_active_at DESC LIMIT 100`, org.ID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list sessions"})
 		return
@@ -1641,12 +1708,20 @@ func (s *Service) handleListSessions(c *gin.Context) {
 	defer rows.Close()
 
 	sessions := []ProxySession{}
+	// A row that will not scan used to be skipped in silence. This is the list
+	// an operator revokes sessions from, so a session that quietly falls out of
+	// it is a session nobody revokes -- and the page cannot tell that apart
+	// from a session that has ended. The count travels with the answer.
+	unreadable := 0
 	for rows.Next() {
 		var sess ProxySession
 		var routeID *string
 		err := rows.Scan(&sess.ID, &sess.UserID, &routeID, &sess.IPAddress, &sess.UserAgent,
-			&sess.StartedAt, &sess.LastActiveAt, &sess.ExpiresAt, &sess.Revoked)
+			&sess.StartedAt, &sess.LastActiveAt, &sess.ExpiresAt, &sess.Revoked, &sess.IDPName)
 		if err != nil {
+			unreadable++
+			s.logger.Error("an active proxy session could not be read into the session list; "+
+				"it will not appear on the sessions page and cannot be revoked from it", zap.Error(err))
 			continue
 		}
 		if routeID != nil {
@@ -1655,7 +1730,11 @@ func (s *Service) handleListSessions(c *gin.Context) {
 		sessions = append(sessions, sess)
 	}
 
-	c.JSON(http.StatusOK, gin.H{"sessions": sessions})
+	body := gin.H{"sessions": sessions}
+	if unreadable > 0 {
+		body["unreadable"] = unreadable
+	}
+	c.JSON(http.StatusOK, body)
 }
 
 func (s *Service) handleRevokeSession(c *gin.Context) {
@@ -1980,10 +2059,20 @@ func (s *Service) handleLogout(c *gin.Context) {
 			//orgscope:ignore proxy data-plane logout; session looked up by globally-unique session_token hash, pre-org-resolution
 			"SELECT id FROM proxy_sessions WHERE session_token=$1", hashToken(cookie)).Scan(&sessionID)
 		if err == nil {
-			s.db.Pool.Exec(orgctx.WithBypassRLS(c.Request.Context()),
+			// A logout that did not log anybody out. Both of these had their
+			// errors discarded: the Redis key is what the proxy checks on every
+			// request, so a failed Del leaves the session WORKING, and a failed
+			// UPDATE leaves the durable record saying it is live. The cookie is
+			// cleared either way, so the person is told they signed out.
+			if _, uerr := s.db.Pool.Exec(orgctx.WithBypassRLS(c.Request.Context()),
 				//orgscope:ignore proxy data-plane logout; revoke by primary key resolved from the unique session_token above
-				"UPDATE proxy_sessions SET revoked=true WHERE id=$1", sessionID)
-			s.redis.Client.Del(c.Request.Context(), "proxy_session:"+hashToken(cookie))
+				"UPDATE proxy_sessions SET revoked=true WHERE id=$1", sessionID); uerr != nil {
+				s.logger.Error("logout could not mark the session revoked", zap.Error(uerr))
+			}
+			if derr := s.redis.Client.Del(c.Request.Context(), "proxy_session:"+hashToken(cookie)).Err(); derr != nil {
+				s.logger.Error("logout could not drop the session marker the proxy reads; "+
+					"the session may still be usable", zap.Error(derr))
+			}
 		}
 	}
 
@@ -2358,6 +2447,7 @@ func (s *Service) getRouteByID(ctx context.Context, id string) (*ProxyRoute, err
 		        COALESCE(max_risk_score, 100), guacamole_connection_id,
 		        COALESCE(landing_path, '/'),
 		        COALESCE(hosting_mode, 'identity'),
+		        COALESCE(upstream_pool_id::text, ''),
 		        created_at, updated_at
 		 FROM proxy_routes WHERE id=$1`+orgFilter, args...).Scan(
 		&r.ID, &r.Name, &desc, &r.FromURL, &r.ToURL, &r.PreserveHost,
@@ -2368,7 +2458,7 @@ func (s *Service) getRouteByID(ctx context.Context, id string) (*ProxyRoute, err
 		&r.ReverifyInterval, &postureCheckIDs, &inlinePolicy,
 		&r.RequireDeviceTrust, &allowedCountries,
 		&r.MaxRiskScore, &guacConnID,
-		&r.LandingPath, &r.HostingMode,
+		&r.LandingPath, &r.HostingMode, &r.UpstreamPoolID,
 		&r.CreatedAt, &r.UpdatedAt)
 	if err != nil {
 		return nil, err
@@ -3062,6 +3152,7 @@ func (s *Service) updateSessionActivity(c *gin.Context, session *ProxySession) {
 		return
 	}
 
+	//silentwrite:ok the idle window is enforced from the Redis blob refreshed immediately below, not from this column; the only reader of proxy_sessions.last_active_at is the admin sessions list's "Last active" column (service.go:1641), which goes stale by one heartbeat -- at most 30 seconds -- and corrects itself on the next proxied request
 	s.db.Pool.Exec(orgctx.WithBypassRLS(ctx),
 		//orgscope:ignore proxy data-plane activity heartbeat; updates the active session by its primary key on every proxied request
 		"UPDATE proxy_sessions SET last_active_at=NOW() WHERE id=$1", session.ID)
@@ -3100,9 +3191,12 @@ func (s *Service) revokeIdleProxySession(c *gin.Context, session *ProxySession) 
 		s.redis.Client.Del(c.Request.Context(), "proxy_session:"+hashToken(cookie))
 	}
 	if session != nil && session.ID != "" {
-		s.db.Pool.Exec(orgctx.WithBypassRLS(c.Request.Context()),
+		if _, err := s.db.Pool.Exec(orgctx.WithBypassRLS(c.Request.Context()),
 			//orgscope:ignore data-plane revoke of the idle session by its primary key
-			"UPDATE proxy_sessions SET revoked=true WHERE id=$1", session.ID)
+			"UPDATE proxy_sessions SET revoked=true WHERE id=$1", session.ID); err != nil {
+			s.logger.Error("idle-timeout revocation could not mark the session revoked",
+				logsafe.String("session_id", session.ID), zap.Error(err))
+		}
 	}
 }
 
@@ -3249,18 +3343,71 @@ func (s *Service) logAuditEvent(c *gin.Context, action, targetID, targetType str
 		"timestamp":   time.Now().Format(time.RFC3339),
 	}
 
+	// WHO. Every event this file posts left actor_id empty, so the audit
+	// trail's actor column — the one the console filters on and an auditor
+	// reads first — was blank for every credential reveal, every recording
+	// download and every proxy decision. Some handlers put the id into
+	// `details.user_id` on their way past, which is a JSON blob, not a column:
+	// "who revealed this credential" was not a question the trail could answer.
+	if userID := c.GetString("user_id"); userID != "" {
+		event["actor_id"] = userID
+		event["actor_type"] = "user"
+	}
+
 	if action == "proxy_access_denied" {
 		event["outcome"] = "failure"
 	}
 
+	// The tenant the action happened in, carried to the audit service.
+	//
+	// Without it every event this file posts -- every credential reveal, every
+	// recording download, every proxy allow and deny -- was filed under the
+	// DEFAULT organisation. The ingest endpoint is server-to-server and carries
+	// no JWT, and cmd/audit-service mounts TenantResolver globally, so steps 2
+	// and 3 of its resolution order cannot fire (the middleware's own comment
+	// says so) and the request lands on step 4, the default-org fallback. On a
+	// multi-tenant install that means the most sensitive reads in the product
+	// were invisible in the audit log of the tenant they belonged to and
+	// visible in somebody else's.
+	//
+	// X-Org-Slug is step 1 of that order and exists for exactly this: the
+	// resolver LOOKS THE SLUG UP, so an unknown one is a 400 rather than a free
+	// write into an arbitrary tenant. Nothing is trusted that was not already.
+	orgSlug := ""
+	if org, err := orgctx.From(c.Request.Context()); err == nil {
+		orgSlug = org.Slug
+	}
+
 	body, _ := json.Marshal(event)
 	go func() {
-		resp, err := http.Post(s.auditURL+"/api/v1/audit/events", "application/json", bytes.NewReader(body))
+		req, err := http.NewRequest(http.MethodPost, s.auditURL+"/api/v1/audit/events",
+			bytes.NewReader(body))
+		if err != nil {
+			s.logger.Warn("Failed to build audit event request", zap.Error(err))
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+		if orgSlug != "" {
+			req.Header.Set("X-Org-Slug", orgSlug)
+		}
+
+		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			s.logger.Warn("Failed to log audit event", zap.Error(err))
 			return
 		}
-		resp.Body.Close()
+		defer resp.Body.Close()
+		// The status was thrown away. handleLogEvent answers 400 for a body it
+		// refuses and 500 when the write fails, and both were discarded here --
+		// so an audit event the trail rejected disappeared with nothing logged
+		// anywhere. A dropped audit row is the one loss that must never be
+		// silent.
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			s.logger.Warn("Audit event was refused by the audit service",
+				zap.Int("status", resp.StatusCode),
+				logsafe.String("action", action),
+				logsafe.String("org_slug", orgSlug))
+		}
 	}()
 }
 
@@ -3442,7 +3589,7 @@ func (s *Service) abacGateAllows(c *gin.Context, route *ProxyRoute, userID, orgI
 
 	allow, wouldDeny, res := abac.Gate(ctx, s.db, orgID, mode, abac.EvaluationRequest{
 		UserAttributes: attrs,
-		ResourceType:   "application",
+		ResourceType:   abac.ResourceTypeApplication,
 		ResourceID:     appID,
 	})
 	if wouldDeny {

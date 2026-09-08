@@ -95,7 +95,6 @@ func TestEnvProductionTemplate(t *testing.T) {
 		"DOMAIN=openidx.tdv.org",
 		"POSTGRES_PASSWORD=",
 		"REDIS_PASSWORD=",
-		"JWT_SECRET=",
 		"OAUTH_ISSUER=https://openidx.tdv.org",
 		"OAUTH_JWKS_URL=https://openidx.tdv.org/.well-known/jwks.json",
 		"ACCESS_SESSION_SECRET=",
@@ -544,8 +543,15 @@ func TestProductionConfigurationConsistency(t *testing.T) {
 		t.Error("Should reference REDIS_PASSWORD from environment")
 	}
 
-	if !strings.Contains(composeStr, "JWT_SECRET") {
-		t.Error("Should reference JWT_SECRET from environment")
+	if !strings.Contains(composeStr, "ENCRYPTION_KEY") {
+		t.Error("Should reference ENCRYPTION_KEY from environment")
+	}
+
+	// And must NOT reference JWT_SECRET: it is retired, and a compose file that
+	// still demands it makes the stack refuse to start over a secret nothing
+	// signs with.
+	if strings.Contains(composeStr, "JWT_SECRET") {
+		t.Error("Should not reference the retired JWT_SECRET")
 	}
 }
 

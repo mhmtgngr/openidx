@@ -30,6 +30,7 @@ import (
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -452,28 +453,40 @@ func (h *RemoteSupportHandler) HandleUploadRecordingChunk(c *gin.Context) {
 	written, err := h.recordingStore.Append(sessionID, chunkIndex, body)
 	if err != nil {
 		h.logger.Warn("HandleUploadRecordingChunk: append failed",
-			zap.String("session_id", sessionID), zap.Int("chunk", chunkIndex), zap.Error(err))
+			logsafe.String("session_id", sessionID), zap.Int("chunk", chunkIndex), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "append failed"})
 		return
 	}
 
-	// Update tallies. Best-effort — a missed UPDATE doesn't lose data,
-	// just the accounting (which the finalize step will reconcile from
-	// the file size when needed).
+	// Update tallies.
+	//
+	// The comment that used to sit here said a missed UPDATE only loses
+	// accounting "which the finalize step will reconcile from the file size".
+	// It does not: HandleFinalizeRecording writes recording_finalized_at and
+	// recording_url and nothing else. Nothing ever recomputes these counters,
+	// so a lost chunk tally under-reports that recording's size and chunk
+	// count on the sessions list for the life of the row.
+	//
+	// The recording itself is safe either way -- the chunk is already on disk
+	// and the storage key is derived from the session id -- so this does not
+	// fail the upload. It is now said out loud instead of assumed away.
 	if h.db != nil && h.db.Pool != nil {
 		// TENANCY (v150): the chunk stream is uploaded by the ADMIN viewer's
-		// MediaRecorder, but the request carries no tenant on every deployment,
-		// and a missed tally only loses accounting the finalize step
-		// reconciles from the file size. Keyed on the session id, bypassed.
-		//orgscope:ignore recording chunk tally — keyed on the session id; accounting only, reconciled at finalize
-		_, _ = h.db.Pool.Exec(orgctx.WithBypassRLS(c.Request.Context()), `
+		// MediaRecorder, but the request carries no tenant on every
+		// deployment. Keyed on the session id, bypassed.
+		//orgscope:ignore recording chunk tally — keyed on the session id
+		if _, err := h.db.Pool.Exec(orgctx.WithBypassRLS(c.Request.Context()), `
             UPDATE remote_support_sessions
                SET recording_size_bytes = recording_size_bytes + $2,
                    recording_chunk_count = recording_chunk_count + 1,
                    recording_storage_key = COALESCE(recording_storage_key, $3),
                    last_activity_at = NOW()
              WHERE id = $1
-        `, sessionID, written, h.recordingStore.Key(sessionID))
+        `, sessionID, written, h.recordingStore.Key(sessionID)); err != nil {
+			h.logger.Warn("a recording chunk was stored but not counted; this session's reported "+
+				"recording size and chunk count are now permanently short by one chunk",
+				logsafe.String("session_id", sessionID), zap.Int("chunk", chunkIndex), zap.Error(err))
+		}
 	}
 
 	c.JSON(http.StatusAccepted, gin.H{
@@ -552,6 +565,6 @@ func (h *RemoteSupportHandler) HandleDownloadRecording(c *gin.Context) {
 	}
 	if _, err := io.Copy(c.Writer, reader); err != nil {
 		h.logger.Warn("HandleDownloadRecording: copy failed",
-			zap.String("session_id", sessionID), zap.Error(err))
+			logsafe.String("session_id", sessionID), zap.Error(err))
 	}
 }

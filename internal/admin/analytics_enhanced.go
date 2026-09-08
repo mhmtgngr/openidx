@@ -33,28 +33,29 @@ func (s *Service) handleAuthAnalyticsDashboard(c *gin.Context) {
 
 	// Total logins
 	var totalLogins int
-	s.db.Pool.QueryRow(ctx, `
+	q := s.newTileQuery(ctx)
+	q.scan("total sign-ins", &totalLogins, `
 		SELECT COUNT(*) FROM audit_events
 		WHERE event_type = 'authentication'
 		  AND timestamp > NOW() - $1::interval
-		  AND org_id = $2`, interval, org.ID).Scan(&totalLogins)
+		  AND org_id = $2`, interval, org.ID)
 	result["total_logins"] = totalLogins
 
 	// Successful logins
 	var successLogins int
-	s.db.Pool.QueryRow(ctx, `
+	q.scan("successful sign-ins", &successLogins, `
 		SELECT COUNT(*) FROM audit_events
 		WHERE event_type = 'authentication' AND outcome = 'success'
 		  AND timestamp > NOW() - $1::interval
-		  AND org_id = $2`, interval, org.ID).Scan(&successLogins)
+		  AND org_id = $2`, interval, org.ID)
 
 	// Failed logins
 	var failedLogins int
-	s.db.Pool.QueryRow(ctx, `
+	q.scan("failed sign-ins", &failedLogins, `
 		SELECT COUNT(*) FROM audit_events
 		WHERE event_type = 'authentication' AND outcome = 'failure'
 		  AND timestamp > NOW() - $1::interval
-		  AND org_id = $2`, interval, org.ID).Scan(&failedLogins)
+		  AND org_id = $2`, interval, org.ID)
 
 	// Rates
 	if totalLogins > 0 {
@@ -67,11 +68,14 @@ func (s *Service) handleAuthAnalyticsDashboard(c *gin.Context) {
 
 	// MFA usage rate
 	var mfaLogins int
-	s.db.Pool.QueryRow(ctx, `
+	q.scan("MFA sign-ins", &mfaLogins, `
 		SELECT COUNT(*) FROM audit_events
 		WHERE event_type = 'mfa_verification' AND outcome = 'success'
 		  AND timestamp > NOW() - $1::interval
-		  AND org_id = $2`, interval, org.ID).Scan(&mfaLogins)
+		  AND org_id = $2`, interval, org.ID)
+	if q.failed(c) {
+		return
+	}
 
 	if successLogins > 0 {
 		result["mfa_usage_rate"] = float64(mfaLogins) / float64(successLogins) * 100
@@ -169,63 +173,67 @@ func (s *Service) handleUsageAnalytics(c *gin.Context) {
 
 	// DAU: distinct actors who authenticated today
 	var dau int
-	s.db.Pool.QueryRow(ctx, `
+	q := s.newTileQuery(ctx)
+	q.scan("daily active users", &dau, `
 		SELECT COUNT(DISTINCT actor_id) FROM audit_events
 		WHERE event_type = 'authentication' AND outcome = 'success'
 		  AND timestamp > CURRENT_DATE
 		  AND org_id = $1
-	`, org.ID).Scan(&dau)
+	`, org.ID)
 	result["dau"] = dau
 
 	// WAU: distinct actors who authenticated in last 7 days
 	var wau int
-	s.db.Pool.QueryRow(ctx, `
+	q.scan("weekly active users", &wau, `
 		SELECT COUNT(DISTINCT actor_id) FROM audit_events
 		WHERE event_type = 'authentication' AND outcome = 'success'
 		  AND timestamp > NOW() - INTERVAL '7 days'
 		  AND org_id = $1
-	`, org.ID).Scan(&wau)
+	`, org.ID)
 	result["wau"] = wau
 
 	// MAU: distinct actors who authenticated in last 30 days
 	var mau int
-	s.db.Pool.QueryRow(ctx, `
+	q.scan("monthly active users", &mau, `
 		SELECT COUNT(DISTINCT actor_id) FROM audit_events
 		WHERE event_type = 'authentication' AND outcome = 'success'
 		  AND timestamp > NOW() - INTERVAL '30 days'
 		  AND org_id = $1
-	`, org.ID).Scan(&mau)
+	`, org.ID)
 	result["mau"] = mau
 
 	// New users today
 	var newUsersToday int
-	s.db.Pool.QueryRow(ctx, `
+	q.scan("users created today", &newUsersToday, `
 		SELECT COUNT(*) FROM users
 		WHERE created_at > CURRENT_DATE
 		  AND org_id = $1
-	`, org.ID).Scan(&newUsersToday)
+	`, org.ID)
 	result["new_users_today"] = newUsersToday
 
 	// Total counts
 	var totalUsers int
-	s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM users WHERE org_id = $1`, org.ID).Scan(&totalUsers)
+	q.scan("total users", &totalUsers, `SELECT COUNT(*) FROM users WHERE org_id = $1`, org.ID)
 	result["total_users"] = totalUsers
 
 	var totalGroups int
-	s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM groups WHERE org_id = $1`, org.ID).Scan(&totalGroups)
+	q.scan("total groups", &totalGroups, `SELECT COUNT(*) FROM groups WHERE org_id = $1`, org.ID)
 	result["total_groups"] = totalGroups
 
 	var totalApplications int
-	s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM applications WHERE org_id = $1`, org.ID).Scan(&totalApplications)
+	q.scan("total applications", &totalApplications, `SELECT COUNT(*) FROM applications WHERE org_id = $1`, org.ID)
 	result["total_applications"] = totalApplications
 
 	// Active sessions
 	var activeSessions int
-	s.db.Pool.QueryRow(ctx, `
+	q.scan("active sessions", &activeSessions, `
 		SELECT COUNT(*) FROM sessions
 		WHERE expires_at > NOW()
 		  AND org_id = $1
-	`, org.ID).Scan(&activeSessions)
+	`, org.ID)
+	if q.failed(c) {
+		return
+	}
 	result["active_sessions_count"] = activeSessions
 
 	// Frontend (usage-analytics page) and its unit test read {usage: {...}};
@@ -233,82 +241,19 @@ func (s *Service) handleUsageAnalytics(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"usage": result})
 }
 
-// handleAPIUsageMetrics returns API usage statistics from the api_usage_metrics table.
-// GET /api/v1/analytics/api?period=24h|7d|30d|90d
-func (s *Service) handleAPIUsageMetrics(c *gin.Context) {
-	if !requireAdmin(c) {
-		return
-	}
-	ctx := c.Request.Context()
-
-	period := c.DefaultQuery("period", "30d")
-	interval := periodToInterval(period)
-
-	result := make(map[string]interface{})
-
-	// Total requests in period
-	var totalRequests int
-	s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(request_count), 0)
-		FROM api_usage_metrics
-		WHERE recorded_at > NOW() - $1::interval`, interval).Scan(&totalRequests)
-	result["total_requests"] = totalRequests
-
-	// Top endpoints
-	topEndpoints := []map[string]interface{}{}
-	rows, err := s.db.Pool.Query(ctx, `
-		SELECT endpoint, method, SUM(request_count) AS total,
-		       AVG(avg_latency_ms) AS avg_lat,
-		       SUM(error_count) AS errors
-		FROM api_usage_metrics
-		WHERE recorded_at > NOW() - $1::interval
-		GROUP BY endpoint, method
-		ORDER BY total DESC
-		LIMIT 10
-	`, interval)
-	if err == nil {
-		for rows.Next() {
-			var endpoint, method string
-			var total, errors int
-			var avgLat float64
-			if rows.Scan(&endpoint, &method, &total, &avgLat, &errors) == nil {
-				topEndpoints = append(topEndpoints, map[string]interface{}{
-					"endpoint":       endpoint,
-					"method":         method,
-					"total_requests": total,
-					"avg_latency_ms": avgLat,
-					"error_count":    errors,
-				})
-			}
-		}
-		rows.Close()
-	}
-	result["top_endpoints"] = topEndpoints
-
-	// Overall error rate
-	var totalErrors int
-	s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(error_count), 0)
-		FROM api_usage_metrics
-		WHERE recorded_at > NOW() - $1::interval`, interval).Scan(&totalErrors)
-	if totalRequests > 0 {
-		result["error_rate"] = float64(totalErrors) / float64(totalRequests) * 100
-	} else {
-		result["error_rate"] = 0.0
-	}
-
-	// Average latency across all endpoints
-	var avgLatency float64
-	s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(AVG(avg_latency_ms), 0)
-		FROM api_usage_metrics
-		WHERE recorded_at > NOW() - $1::interval`, interval).Scan(&avgLatency)
-	result["avg_latency_ms"] = avgLatency
-	result["period"] = period
-
-	// Frontend reads {api_usage: {...}}.
-	c.JSON(http.StatusOK, gin.H{"api_usage": result})
-}
+// handleAPIUsageMetrics is gone with the api_usage_metrics table (migration
+// v176). It read total requests, top endpoints, error rate and average latency
+// from a table nothing has ever written a row to, and it read them with column
+// names -- request_count, error_count, recorded_at -- the table never had, so
+// every one of its four statements failed to plan and every value it returned
+// was the Go zero beside it. The console card that displayed them is removed in
+// the same commit.
+//
+// Request volume, latency and status codes ARE measured, by the Prometheus
+// middleware every service mounts (internal/metrics.Middleware), and are
+// exported on /metrics for the Prometheus and Grafana that ship in
+// deployments/docker. That is where this measurement lives; a second copy
+// aggregated into Postgres was never written.
 
 // handleFeatureAdoption returns feature adoption metrics, computed live from
 // the tables that record each feature's use.
@@ -341,7 +286,11 @@ func (s *Service) handleFeatureAdoption(c *gin.Context) {
 
 	// Total enabled users for computing adoption rates
 	var totalUsers int
-	s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM users WHERE enabled = true AND org_id = $1`, org.ID).Scan(&totalUsers)
+	q := s.newTileQuery(ctx)
+	q.scan("total users", &totalUsers, `SELECT COUNT(*) FROM users WHERE enabled = true AND org_id = $1`, org.ID)
+	if q.failed(c) {
+		return
+	}
 
 	features := []map[string]interface{}{}
 
@@ -355,7 +304,9 @@ func (s *Service) handleFeatureAdoption(c *gin.Context) {
 		{"mfa_webauthn", "SELECT COUNT(DISTINCT user_id) FROM mfa_webauthn WHERE org_id = $1", []interface{}{org.ID}},
 		{"passkey_login", "SELECT COUNT(DISTINCT actor_id) FROM audit_events WHERE action = 'passkey_login' AND timestamp > NOW() - INTERVAL '30 days' AND org_id = $1", []interface{}{org.ID}},
 		{"magic_link", "SELECT COUNT(DISTINCT actor_id) FROM audit_events WHERE action = 'magic_link_login' AND timestamp > NOW() - INTERVAL '30 days' AND org_id = $1", []interface{}{org.ID}},
-		{"api_keys", "SELECT COUNT(DISTINCT COALESCE(user_id, service_account_id)) FROM api_keys WHERE revoked_at IS NULL AND org_id = $1", []interface{}{org.ID}},
+		// api_keys records revocation in `status`; there is no revoked_at, so
+		// this source failed to plan and the adoption figure read 0.
+		{"api_keys", "SELECT COUNT(DISTINCT COALESCE(user_id, service_account_id)) FROM api_keys WHERE status = 'active' AND org_id = $1", []interface{}{org.ID}},
 		{"social_login", "SELECT COUNT(DISTINCT actor_id) FROM audit_events WHERE action = 'social_login' AND timestamp > NOW() - INTERVAL '30 days' AND org_id = $1", []interface{}{org.ID}},
 	}
 

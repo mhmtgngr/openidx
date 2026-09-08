@@ -4,7 +4,8 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 // handleGetLoginBranding returns tenant branding for the login page based on domain or org slug.
@@ -64,7 +65,7 @@ func (s *Service) handleGetLoginBranding(c *gin.Context) {
 		&loginMsg, &portalTitle, &customCSS, &customFooter, &poweredBy,
 	)
 	if err != nil {
-		s.logger.Debug("No tenant branding found", zap.String("domain", domain), zap.String("org", org))
+		s.logger.Debug("No tenant branding found", logsafe.String("domain", domain), logsafe.String("org", org))
 		c.JSON(http.StatusOK, defaults)
 		return
 	}

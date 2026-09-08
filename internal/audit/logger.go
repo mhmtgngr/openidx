@@ -65,9 +65,12 @@ type AuditEvent struct {
 	ActorType ActorType `json:"actor_type,omitempty"`
 
 	// Action information
+	EventType    string `json:"event_type,omitempty"`
+	Category     string `json:"category,omitempty"`
 	Action       string `json:"action"`
 	ResourceType string `json:"resource_type,omitempty"`
 	ResourceID   string `json:"resource_id,omitempty"`
+	TargetID     string `json:"target_id,omitempty"`
 
 	// Outcome
 	Outcome Outcome `json:"outcome"`
@@ -76,9 +79,16 @@ type AuditEvent struct {
 	IP            string `json:"ip,omitempty"`
 	UserAgent     string `json:"user_agent,omitempty"`
 	CorrelationID string `json:"correlation_id,omitempty"`
+	SessionID     string `json:"session_id,omitempty"`
+	RequestID     string `json:"request_id,omitempty"`
 
-	// Additional data
+	// Additional data. Details is the raw JSONB the audit row carries; it is
+	// hashed verbatim rather than through Metadata because the fifteen writers
+	// that do not go through LogEvent put arbitrary documents there, and a
+	// chain that skipped it would let the payload of every audit event be
+	// rewritten without breaking a hash.
 	Metadata map[string]interface{} `json:"metadata,omitempty"`
+	Details  string                 `json:"details,omitempty"`
 
 	// Tamper evidence - HMAC chain linking
 	PreviousHash string `json:"previous_hash"`
@@ -110,8 +120,14 @@ func (e *AuditEvent) ComputeHash(secret string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// canonicalBytes creates a canonical byte representation for hashing
-// The order of fields matters for consistency
+// canonicalBytes creates a canonical byte representation for hashing.
+//
+// The order of fields matters for consistency, and so does the SET of them:
+// every column the audit row stores has to appear here. A field left out is a
+// field an attacker can rewrite without breaking the hash, which is worse than
+// no chain at all, because the verification still passes and now vouches for
+// the edit. Adding a column to audit_events means adding it here, and the
+// migration that adds it must say so.
 func (e *AuditEvent) canonicalBytes() ([]byte, error) {
 	// Build canonical representation
 	canonical := []string{
@@ -120,13 +136,19 @@ func (e *AuditEvent) canonicalBytes() ([]byte, error) {
 		e.TenantID,
 		e.ActorID,
 		string(e.ActorType),
+		e.EventType,
+		e.Category,
 		e.Action,
 		e.ResourceType,
 		e.ResourceID,
+		e.TargetID,
 		string(e.Outcome),
 		e.IP,
 		e.UserAgent,
 		e.CorrelationID,
+		e.SessionID,
+		e.RequestID,
+		e.Details,
 		e.PreviousHash,
 	}
 

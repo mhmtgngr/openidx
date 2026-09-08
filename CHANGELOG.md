@@ -9,6 +9,2095 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The Race Detector CI check went red for 13 GB of type-checking, not for a
+  race.** `go test -race ./...` reaches `./tools/...`, where two gates answer a
+  question about the whole module: `deadconfig` type-checks every package and
+  `deadservice` builds SSA over every binary and runs rapid type analysis. Under
+  the race detector those cost **8.04 GB** and **13.03 GB** of peak memory
+  respectively, measured on a 4-CPU / 16 GB machine — the shape of a hosted
+  runner. `go test` runs four packages at a time, so the two together (14.22 GB
+  measured, then the kernel OOM killer) is more than the runner has.
+
+  What that produced was not a test failure: no `FAIL`, no `WARNING: DATA RACE`,
+  neither the job's 30-minute cap nor the per-package `-timeout 20m` reached —
+  just `The runner has received a shutdown signal` and `exit code 143`, under a
+  check whose name says "race". Whether the two overlap is scheduling luck,
+  which is why the same command passed on the runs either side of it.
+
+  Both whole-module halves already skipped under `-short` for this reason; the
+  race job passes no flag, and a blanket `-short` there would have silently
+  stopped running six other packages' real tests (the migration downsweep proof,
+  the RLS enforcement belt, the proxy assignment org scope, the audit chain, the
+  gateway integration case). So the skip is keyed on the race build tag instead
+  — the cost belongs to the instrumentation, not to a flag, and `go test -race
+  ./...` typed by hand on a 16 GB laptop fails the same way. Same command after
+  the fix: **0.82 GB, 2 seconds**.
+
+  Nothing stops being proven: both tools have a dedicated CI job that runs the
+  analysis uninstrumented over the whole module as a hard gate on every push,
+  and both are in the required-checks list.
+  `tools/racecost/racecost_test.go` derives from `go list` which test binaries
+  do module-scale analysis and requires each to carry the skip, so a third
+  analyzer is named before the job has to die for it.
+
+### Security
+
+- **The zero-trust policy editor's conditions never reached the evaluator, and a
+  hardcoded default enforced something else.** `internal/governance` asserts a Go
+  type on every condition it reads (`rule.Condition["start_hour"].(float64)`),
+  and a failed assertion is not an error — the rule is skipped and the evaluator
+  uses the default it was written with. So a condition the evaluator cannot read
+  does not disable the policy; it quietly enforces **09:00–18:00 Monday–Friday**
+  (timebound), **the RFC1918 private ranges** (location) or **a risk threshold of
+  50** (risk-based), while the console shows the administrator the values they
+  typed.
+
+  Both halves were wrong. Three keys did not exist in the evaluator at all — the
+  page offered `days` where it reads `allowed_days`, `allowed_ips` where it reads
+  `allowed_ip_prefixes`, and `min_risk_score`/`max_risk_score` on risk-based
+  where it reads `risk_threshold` — and `blocked_ips` had no evaluator concept
+  whatsoever. On top of that every value was submitted as a **string** while the
+  evaluator wants `float64`, `bool` or a list, so even the keys whose names
+  matched (`start_hour`, `end_hour`, `conflicting_roles`, `require_mfa`,
+  `device_trust_required`) failed their assertion. Of the thirteen inputs the
+  editor offered, three could be read, and all three belong to the one policy
+  type the form cannot create.
+
+  This is on a live enforcement path: `internal/access` calls
+  `POST /api/v1/governance/policies/{id}/evaluate` from the proxy.
+
+  The editor now sends the keys the evaluator reads, coerced to the types it
+  asserts on, and `evaluateSoDPolicy`'s two-step lookup was folded into the same
+  single-statement form the other evaluators use so the contract is stated one
+  way. `internal/governance/policy_condition_test.go` derives that contract from
+  the type assertions themselves and checks the page against it — names and
+  types, both directions. The i18n test's copy of the condition list is derived
+  from the page too; it was the copy that still named `days` and `blocked_ips`.
+
+- **The ABAC policy editor offered seven subject attributes; the evaluator
+  populates nine; they overlapped on one.** `abac.SubjectAttributes` builds
+  `user_id, username, email, department, job_title, employment_status, enabled,
+  roles, groups`. The dropdown offered `department, location,
+  device_trust_level, time_of_day, risk_score, group_membership, ip_range` — so
+  six of the seven choices an administrator could pick were attributes no
+  subject has ever carried. `EvaluateCondition` returns false for an attribute
+  that is absent, so a condition on any of them is false for every user and the
+  policy never matches: it saves, lists as enabled, and decides nothing.
+
+  The direction that matters is deny. `abac.Gate` composes
+  deny-wins-else-allow-else-allow, so a DENY written on one of those attributes
+  permits exactly what it was written to stop — under `ABAC_ENFORCE=enforce`,
+  the state the rollout in the readiness guide works toward. `group_membership`
+  was the sharpest: the evaluator carries `groups`, one word away, so a policy
+  gating on group membership silently did nothing while the spelling that works
+  was not offered at all.
+
+  Two of the four resource types were dead the same way. Both enforcement points
+  — `internal/oauth` at token issuance and `internal/access` at the proxy —
+  authorize an **application** and pass the application id; `Gate` selects
+  `resource_type IN ($1, '*')`, so a policy scoped to `route` or `service` is
+  never even selected. The prefilled subject in the Test dialog used
+  `risk_score`, so the example a user starts from was itself unmatched.
+
+  The vocabulary now lives in `internal/abac/vocabulary.go` next to the code that
+  honours it, both PEPs use the declared constant instead of a bare literal, and
+  `internal/abac/vocabulary_test.go` checks three things: that
+  `SubjectAttributes` really builds the declared keys and no others, that the
+  console offers nothing outside them, and that every offered resource type is
+  one an enforcement point asks about. The i18n test's three hand-copied ABAC
+  key lists are derived from the page's own lists now — they were the copies
+  that went stale when the vocabulary was corrected.
+
+- **The authorization policy was written against an input the product does not
+  send.** `deployments/docker/opa/policies/authz.rego` keys its rules on
+  `input.*`; a rule reading a path the client never marshals is not stricter or
+  looser, it is a rule that cannot fire — OPA answers undefined, the body fails,
+  and nothing logs it. Three separate cases:
+
+  - Two rules in the shipped policy. "Users can modify their own resources"
+    required `input.resource.owner`, and `opa.ResourceContext` had an `Owner`
+    field nothing ever set — the middleware runs before the handler and never
+    loads the row, so it cannot know who owns it. The cross-tenant `deny`
+    required `input.resource.tenant_id`, which that struct did not even declare;
+    the install's cross-tenant control, as far as this policy was concerned, had
+    never produced a message. Both rules and the field are gone, each with a note
+    saying where the control really lives (per-route ownership checks in the
+    services; `org_id` under FORCE ROW LEVEL SECURITY at the database).
+
+  - **`dev-kube/opa.yaml` carried a second, different `package openidx.authz`
+    policy** — the same package the middleware queries — in which *every* rule
+    read something the product does not send: `input.user.role` (singular; the
+    product sends `user.roles`, a list), `input.action` (not a field at all),
+    `input.resource.owner`, and `data.roles` (a data document nothing loads).
+    Under `default allow = false` that policy denies every request, so turning
+    `ENABLE_OPA_AUTHZ` on against that deployment — the first step of the
+    documented rollout — would have 403'd admin-api, governance and provisioning
+    wholesale. It now carries the canonical policy verbatim.
+
+  - **`policies/access_control.rego` (255 lines) and
+    `internal/governance/POLICY_README.md` (385 lines) described a policy engine
+    that does not exist** — no `PolicyEvaluator`, no `LoadPoliciesFromDirectory`,
+    no `internal/governance/policy.go`, and no OPA dependency in `go.mod`. The
+    readiness guide had recorded that policy as deleted while it sat in the tree.
+    Both files are deleted.
+
+  `internal/common/opa/policy_input_test.go` derives all of this rather than
+  listing it: every `openidx.authz` policy in the repository (including rego
+  embedded in a ConfigMap) is checked against the JSON paths `opa.Input` marshals
+  by reflection, the copies must be the same policy, and a `.rego` file that is
+  not the served policy fails the build — because no Go code here reads or
+  compiles rego, so nothing else can ever be evaluated.
+
+- **Six of the policy's resource types named services it does not guard.** The
+  same question asked of the other half of the input: `input.resource.type` is
+  what the role-permission table and four rules key on, and a type no guarded
+  route produces is a row that cannot match. `authz.rego` guards admin-api,
+  governance and provisioning; its table also carried rows for `group`, `role`
+  and `identity` (identity-service), `certificate` (not under the guarded group)
+  and `route` (access-service), and its auditor rules keyed on `report`
+  (audit-service). So `group-admin`, `role-admin`, `identity-admin`,
+  `security-admin` and `access-admin` read as enforced permissions in the policy
+  an operator reviews, and granting or withholding any of them changed nothing.
+  The dead rows and the `report` rules are removed, each with a note naming the
+  service that really serves it and what wiring that service would have to
+  settle first (identity-service has eight deliberately anonymous routes,
+  access-service fourteen, audit-service an open service-to-service ingest
+  endpoint). `internal/common/middleware/opa_resource_census_test.go` now parses
+  those types out of the policy — rules and table keys both, replacing a
+  hand-written list that named six and missed the table's ten — and fails when
+  one becomes unreachable.
+
+- **Three authorization decisions were computed from the URL the caller wrote,
+  not the route the router chose.** gin backtracks from a static path segment to
+  a parameter when nothing static matches, so a request can read like one route
+  and be served by another. Every one of these now decides on the matched route
+  template (`c.FullPath()`), and each is held there by a census derived from the
+  service's own route table rather than by a list of paths somebody thought of.
+
+  - **identity-service: naming the target `me` satisfied the admin gate.**
+    `requireAdminUnlessSelfService` asked whether the request path was
+    self-service. `POST /api/v1/identity/users/me/roles` is not a registered
+    route, so it is served by `/users/:id/roles` — the administrative role-grant
+    handler — while the string the caller wrote begins `/users/me/`. Eleven
+    routes collided this way, every one of them an administrative operation
+    answering a caller with no admin role: grant, list, replace and remove a
+    user's roles; read their role assignments; set and reset their password;
+    offboard them; delete them; revoke all their MFA bypass codes; and revoke a
+    bypass code by writing `verify` in its place. Each was stopped further down
+    — three by an explicit ownership check in the handler, the other eight by
+    PostgreSQL refusing `me` for a `uuid` column — so the gate has been open
+    without being walked through. `internal/identity/authz_surface_test.go`
+    derives all three tiers by driving the real middleware, records every one of
+    the 8 anonymous and 71 self-service routes with a mandatory reason, and
+    requires every self-service route whose template names a target to say where
+    its ownership check lives.
+
+  - **governance-service: the internal service token reached more than
+    `/evaluate`.** The shared secret that lets the access-proxy call the policy
+    evaluator was scoped by testing whether the request path ended in
+    `/evaluate`. Fourteen requests reached handlers that do not: delete and
+    update on policies, ABAC policies, approval policies, campaigns and reviews,
+    and reads of access requests — reached by writing `evaluate` where an id
+    belongs. The middleware's own comment says the scope exists so "a leaked
+    token can't drive user-facing governance operations"; those are exactly
+    user-facing governance operations.
+
+  - **OPA was asked about a resource type that was a UUID.**
+    `deployments/docker/opa/policies/authz.rego` keys five rules on
+    `input.resource.type`, among them the role-permission map. The middleware
+    took that type from the request path's last segment, so
+    `/api/v1/identity/users/<uuid>` asked about a resource of type
+    `3f2a…`. 101 of the 341 routes OPA guards were affected — every read, update
+    and delete of a specific object — so on all of them the role map and the
+    object-scoped rules silently did not apply. Nothing logged it, because a
+    rule that does not match is not a denial.
+
+### Added
+
+- **The unauthenticated surface of access-service, derived and declared
+  (`internal/access/public_surface_test.go`).** The service registers 325
+  routes; fourteen of them answer without the tenant-JWT middleware. Those
+  fourteen are the product's unauthenticated attack surface, and until now
+  nothing said which they were — the authentication hole listed under Fixed
+  lived in two of them for the life of the code, while four comments elsewhere
+  in the package named one of those two as the pattern they copied.
+
+  The guard does not read a list to find them. It registers every route with a
+  stub auth middleware that refuses everything, then drives each route: one
+  that answers anything else is outside the middleware *by construction*. A
+  hand-kept list would already have missed `POST /api/v1/access/enroll`, the
+  Tier-0 dark-platform door, which is registered on the router directly rather
+  than in the group with the other four agent routes.
+
+  What is written down is the decision about each route, and it is checked. Each
+  entry records the shape of its refusal — refuses before reading anything;
+  resolves the subject first and so answers 404 for one that does not exist;
+  or exists to answer an anonymous caller (a login redirect, an OIDC callback,
+  an installer, a link whose path is the secret). The first shape is driven
+  against a *nil database*, which makes "did this handler read something before
+  it refused" an observable question: a handler that touches state first panics,
+  and the panic is the finding. Restoring the defect below — reading the body
+  and querying before the credential check — turns it red with the fix named.
+
+- **J4's automatable half, proved through the running services
+  (`test/integration/network_access_test.go`).** "Enroll agent/BrowZer →
+  posture check → reach a dark service" was the last Definition-of-Done journey
+  with no automated verification. Its third step needs a Ziti controller, a
+  router and a dark service to dial, and stays an operator drill
+  (`tools/darkprobe`, the going-dark runbook). Its first two steps are HTTP
+  against access-service, and they are the steps that decide the third.
+
+  Eight assertions across one enrolled device: an anonymous caller cannot
+  report its posture, cannot guess its token, cannot report for an agent id
+  nobody enrolled, and cannot take a compliant device's trust away; the device
+  itself can, and the verdict lands in the trail and in the administrator's
+  view; a report filed under another device's id is refused; and the
+  configuration is served to the device and to nobody else. Writing it is what
+  found the authentication hole listed under Fixed — the journey's question is
+  not "is posture recorded" but "who is allowed to say what a device's posture
+  is", and the answer was "anybody".
+
+- **J8's audit half, proved against the running trail
+  (`test/integration/audit_chain_test.go`).** The product claims a
+  tamper-evident audit log. `internal/audit/chain_test.go` proves the sealer's
+  arithmetic; this proves the property — that the events the product *writes*
+  are sealed by the sealer that is *running*, and that the verification endpoint
+  an auditor calls notices when one changes.
+
+  The test does the thing the control exists to catch: it edits a sealed row
+  directly, with the privileges an operator or an intruder with database access
+  would have. Tamper-evidence is not a claim about who can reach the database —
+  it is the claim that reaching it is not enough, because the change shows. The
+  endpoint reports `intact: false`, names the event, and prints the stored and
+  computed hashes; restoring the row exactly makes it whole again, which is what
+  keeps `intact: false` from being an answer the chain gives to everything.
+
+  It writes the event it verifies: the test posts one through the audit ingest
+  endpoint — the same path `internal/access` posts every credential reveal to —
+  and waits for the running sealer to chain it before doctoring the row. That
+  wait is the point of the test rather than an inconvenience in it, because
+  waiting for a real sweep is what separates "the deployed sealer sealed a row
+  the product wrote" from "a sealer built inside a unit test hashed a struct".
+
+  Asking the question was worth it independently of the answer: the same
+  question one step earlier — *are the events even there* — is what turned up
+  the ingest defect below.
+
+- **J5, privileged access, proved through the running services
+  (`test/integration/privileged_access_test.go`).** The credential half of the
+  journey — the only path in the product that ever hands PAM secret material to
+  a person — driven against access-service and audited by audit-service, which
+  the integration job now boots alongside the other five.
+
+  `jit_checkout_test.go` says in its own header why it stopped short:
+  "governance HTTP handlers are not driven (gin+JWT wiring is heavy). This
+  validates the checkout mechanics that the HTTP layer delegates to." The
+  mechanics are not the control. The org predicate, the `allow_reveal` flag,
+  the ACL for non-admins and the audit row all live in the handler, and a test
+  of `vault.Service` reaches none of them.
+
+  Four assertions, separately: an ungranted user is refused; the same user,
+  granted, gets the credential; `allow_reveal=false` refuses **even an
+  administrator** (the handler's own claim about injection-only entries); and
+  the reveal is in the audit trail naming who and what. The last one is what
+  found the two defects below.
+
+- **A census of settings nothing reads (`tools/deadconfig`, wired into CI as a
+  hard gate).** Every struct field carrying a `mapstructure` tag is a setting an
+  operator can put in a config file or an environment variable; the type checker
+  says which of them the code ever reads. Subtracting the second from the first
+  is the only thing that can see this defect — the field parses, the viper
+  default makes it non-zero, the docs describe it, and nothing fails at runtime,
+  because the product does what it did before.
+
+  Both halves are derived from the tree rather than listed, for the reason
+  `tools/orgscope` was inverted: a field nobody remembered to add to a list is
+  not unchecked in a way anyone can see, it is invisible. Reads are resolved
+  through `go/types`, not matched by name — prose about a field is not a read of
+  it, and `Enabled` is a field on six config structs here, so a name match let
+  one struct's live field clear another's dead one. Test files are not loaded: a
+  field only a test touches is one the product does not consult, which is
+  exactly the shape `ENABLE_MFA` had.
+
+  The register (`tools/deadconfig/known.go`) is empty and is meant to stay that
+  way, because the destination for a finding is not a register entry — it is
+  `internal/common/config/retired.go`, where the field, its default and its
+  binding go and the name stays behind saying so at startup.
+
+  The first run found six across 295 settable fields; all six are fixed below.
+
+- **The mirror census: a documented setting nothing binds (`tools/deadconfig`,
+  same gate).** The half above finds a field an operator can set that the code
+  never reads. This finds the direction an operator meets first — a settings
+  table naming an environment variable the product has no binding for.
+
+  The published Configuration Reference, `docs/docs/deployment/configuration.md`,
+  had **63 of its 88 rows** in that state: `PASSWORD_MIN_LENGTH` and the four
+  `PASSWORD_REQUIRE_*`, `OAUTH_ACCESS_TOKEN_TTL` and its three siblings,
+  `MAX_SESSIONS_PER_USER`, `SESSION_TTL`, `RATE_LIMIT_ENABLED`/`RPS`/`BURST`,
+  `CSRF_SECRET`, `JWT_PRIVATE_KEY`, `SMTP_SKIP_VERIFY`, `AUDIT_RETENTION_DAYS`,
+  the four `MFA_TOTP_*`, the database and Redis pool knobs. One of them,
+  `MFA_WEBARUTHN_ENABLED`, was misspelled — which is the clearest possible
+  evidence that nobody had ever tried it. The YAML example and all three `.env`
+  samples were written against the same phantom names, and the page described a
+  `--config` flag that does not exist and a config file named after a service
+  when the loader looks only for `config.yaml`.
+
+  The page is rewritten from the bindings. Every row is now a variable the
+  product reads; settings that are real but live elsewhere — the password policy
+  and session limits in the console, token lifetimes per OAuth client, OTP
+  parameters in Settings → SMS, pool sizing in the DSN — have their own section
+  naming where, because "it isn't here" is what made the phantom rows grow in
+  the first place. `PUSH_MFA_ENABLED` and `PUSH_MFA_CHALLENGE_TIMEOUT` gained
+  the unprefixed bindings the shipped config file already assumed.
+
+  The bound set is derived: the environment map, every `os.Getenv` literal in
+  the tree, viper's `OPENIDX_<KEY>` spelling of every field, and the console's
+  own `import.meta.env.VITE_*`. The one written list holds three variables that
+  belong to the Postgres, Redis and Grafana images, each saying whose it is.
+
+- **J6, the governance loop, proved end to end
+  (`test/integration/governance_loop_test.go`).** With J7 above, this closes the
+  last two journeys the Definition of Done listed with no automated proof
+  behind them. The only browser spec aimed at J6,
+  `e2e/access-reviews-flow.spec.ts`, stays on the hold side of `e2e/suite.txt`
+  deliberately: it is 738 lines driven entirely by mocked responses, so
+  promoting it would prove the console renders fixtures, not that a reviewer's
+  decision does anything.
+
+  The integration case drives a certification decision through the API against
+  the running services and asserts its three effects separately, because they
+  fail independently: the item is recorded revoked, the underlying role is
+  actually removed, and the reviewed user's **live** access token stops working.
+  The third crosses a process boundary — governance writes the revocation
+  marker, oauth-service reads it on every `/oauth/userinfo` — and it is the half
+  that failed before: `internal/revocation` exists because the two once spelled
+  that Redis key differently, so a reviewer could revoke somebody, see it
+  recorded and audited, and the person kept working until their token expired.
+  The integration job now boots governance-service, so the two are really
+  separate processes rather than one test binary.
+
+  Red-proofed by restoring the old divergent key: the first three assertions
+  stay green and the fourth goes red, which is the exact shape of the original
+  defect.
+
+### Fixed
+
+- **The posture endpoint that decides a device's network tier accepted reports
+  from anyone (`internal/access.HandleReport`, `HandleConfig`).**
+  `POST /api/v1/access/agent/report` and `GET /api/v1/access/agent/config` are
+  registered outside the JWT middleware, because an agent has no tenant JWT and
+  authenticates with the credentials enrollment issued it. Neither handler read
+  those credentials. `/agent/report` took the agent id out of the JSON body,
+  falling back to a header, and trusted it; `/agent/config` took it from a
+  header or an `agent_id` query parameter.
+
+  A posture report is not a status line. `applyPostureDeviceTrust` turns the
+  verdict into the `device-trusted` Ziti role attribute, which is the Tier‑2
+  gate the reconciler's dial policies require for the remote/PAM and admin
+  surfaces. So an unauthenticated HTTP request could grant a device network
+  access it had not earned, or strip a compliant laptop of the access it had —
+  and could write posture rows and compliance verdicts for any agent id at all.
+
+  Proven against the running service, with no credentials and an agent id that
+  had never been enrolled: `202 {"compliance_score":1,"status":"accepted"}`,
+  and the row was in `agent_posture_results`. The same request now answers
+  `401 {"error":"invalid agent credentials"}`.
+
+  Both shipped agents already send the credential — the Android one as
+  `X-Auth-Token`, the Go one as `Authorization: Bearer` — and
+  `api/openapi/access-service.yaml` has always documented a `401` on both
+  paths. Only the server never looked, so no deployed agent is affected by the
+  fix. The lookup now lives once in `internal/access/agent_auth.go`; the two
+  handlers that already had a copy of it (the remote-support WebSocket and the
+  Windows-app discovery report, both of which cite `/agent/report` in their
+  comments as the pattern they follow) delegate to the same function. The
+  authenticated id is also the subject of the report: a body naming a different
+  agent is refused rather than honoured.
+
+- **Every audit event access-service ever emitted was refused and dropped
+  (`internal/audit.LogEvent`).** `audit_events.id` is
+  `uuid NOT NULL DEFAULT gen_random_uuid()`, and `LogEvent`'s INSERT names the
+  column — so the default never applied, an event that arrived without an id
+  put `""` into a uuid column, and Postgres refused the write. The ingest
+  endpoint answered 500.
+
+  Its only caller in the product is `internal/access.logAuditEvent`, and it has
+  never sent an id. So **every PAM credential reveal, every entry created or
+  deleted, every grant added or removed, every proxy allow and deny** was
+  refused and dropped, on every install, for as long as this code has existed.
+  The loss showed as one warning line in the emitting service's log — and that
+  line only exists because of an earlier fix on this branch; before it, the
+  response status was discarded and the loss was completely silent.
+
+  Proven in the endpoint's own responses before the fix: the body
+  access-service sends → `500 {"error":"INTERNAL_ERROR","message":"log event"}`
+  and no row; the same body with an id → `201` and the row lands. `LogEvent`
+  now assigns an id when the event has none, and keeps one the caller supplied.
+
+  Found by writing J5's integration test — the journey that ends "…and it is
+  audited".
+
+- **The audit trail did not say who** (`internal/access.logAuditEvent`). Even
+  once events land, the event this service builds carried no `actor_id`, so the
+  actor column — the one the console filters on and an auditor reads first —
+  was blank for every credential reveal, every recording download and every
+  proxy decision. Some handlers put the id into `details.user_id` on the way
+  past, which is a JSON blob, not a column: "who revealed this credential" was
+  not a question the trail could answer. Red-proofed: with the fix removed the
+  assertion reports `actual: ""`.
+
+- **The OAuth signing key was stored in plaintext on the reference stack, and
+  the compose file refused to start without a secret that signs nothing.** Two
+  halves of one mistake, found by the same census.
+
+  `JWT_SECRET` had a config field, an environment binding, a line in the
+  generator, a `${JWT_SECRET:?required}` in both compose files, a Kubernetes
+  secret key, a Vault mapping, a production check that blocked startup without
+  it, and a row in `SECURITY-HARDENING.md` reading *"Used to sign access + ID
+  tokens. Rotate together with `OAUTH_JWKS_URL` cache invalidation."* Nothing
+  signed or verified anything with it. Every token OpenIDX mints or accepts is
+  RS256, signed with the rotatable key in `oauth_signing_keys` and verified
+  through JWKS; the shared middleware rejects any other algorithm **by name**.
+  So an operator who rotated `JWT_SECRET` after a suspected compromise rotated
+  nothing, and every outstanding token still verified. `docs/architecture/
+  secret-rotation.md` had already noticed and filed it as "vestigial … consider
+  removing it"; it is removed, retired in `internal/common/config/retired.go`,
+  and that page now names the real procedure —
+  `POST /api/v1/admin/oauth/signing-keys/rotate`.
+
+  `ENCRYPTION_KEY` is the secret that *does* protect the signing key — it
+  encrypts it at rest — and **no service in either compose file received it**.
+  `secretcrypt` falls back to a no-op cipher and warns, so the key that mints
+  every token in the system was written to the database in plaintext on the
+  reference stack, and on the production compose file, while the same files
+  refused to start over the inert one. The Kubernetes paths were unaffected:
+  Helm and `dev-kube` mount the whole secret with `envFrom`. Both compose files
+  now pass it to the six services that read it, and
+  `deployments/docker/encryption_key_reaches_services_test.go` derives that set
+  from the tree — a package that reads `Config.EncryptionKey`, and any binary
+  that imports one — so a service added later is covered without anyone
+  remembering the test exists. Red-proofed by removing the key from
+  `oauth-service`.
+
+- **The admin console's OTP settings reached nothing
+  (`internal/identity.SetOTPSettings`, applied by the SMS config watcher).**
+  Settings → SMS offers OTP code length, lifetime and attempt ceiling. The
+  values were stored, validated, clamped to sensible ranges by
+  `sms.ValidateOTPSettings`, round-tripped back to the page — and
+  `createOTPChallenge` called `DefaultOTPConfig()` unconditionally, with no
+  other `OTPConfig` constructed anywhere in the tree. An administrator who set
+  eight-digit codes valid for a minute got six digits valid for five minutes,
+  with the page showing what they asked for.
+
+  The settings now travel with the provider the watcher hot-swaps, so a change
+  in the console takes effect without a restart, and they are re-clamped on read
+  because a row stored before `ValidateOTPSettings` existed can still be in the
+  table. The rate-limit window and the codes-per-hour ceiling deliberately do
+  not move: they are not on the page, and a settings row must not widen them.
+
+  Red-proofed against a real database by restoring `DefaultOTPConfig()` at the
+  call site: "the code is 6 digits; the administrator asked for 8".
+
+- **`PUSH_MFA_ENABLED=false` did not turn push MFA off
+  (`internal/identity.ErrPushMFADisabled`).** The field had a default and a line
+  in a shipped config file and no reader, so an operator who turned the factor
+  off could still enrol a phone and still be sent a challenge. Turning a factor
+  off is a security decision — a compromised push transport, a vendor being
+  retired — and it was one the product accepted and discarded. Enrolment and
+  challenge creation now refuse with a named error, the challenge refused before
+  the device list is read so a phone enrolled earlier cannot be used either.
+
+- **`log_level` in a configuration file did nothing (`logger.SetLevel`).** A
+  service builds its logger before it loads its config — it has to, or a config
+  error has nowhere to go — so the level came from `os.Getenv("LOG_LEVEL")` and
+  the config field had no reader at all. `LOG_LEVEL` worked; `log_level:` in a
+  file was parsed into a field nothing consulted. Loggers now share one atomic
+  level that every binary sets from its config immediately after loading it, and
+  an unrecognised name is refused rather than silently ignored. A test derives
+  the set of binaries that must do this from the tree, so a tenth service is
+  covered without anyone remembering the test exists.
+
+- **A disabled user's access token kept working for an hour
+  (`internal/revocation.RevokeUserTokens`, wired into every sever path).**
+  Writing J7's missing integration case — "disable or kill-switch a user and
+  everything is severed" — found the journey's third half broken. Identity's and
+  provisioning's `deprovisionUser` and the access-service kill switch each
+  collected the user's live session ids and published `revoked_session:<id>`,
+  which the **refresh grant** honours. Nothing they wrote is read by
+  `/oauth/userinfo` or `/oauth/introspect`: those consult the per-user revocation
+  cutoff and the per-token blacklist and nothing else, and no sever path wrote
+  the cutoff. So an administrator disabling a leaver, or firing the kill switch
+  on a compromised account, cut new logins and cut the refresh — and the access
+  token already in that browser answered for the rest of its hour and
+  introspected `active: true`, while the console showed the account disabled.
+
+  That put the controls in the wrong order. An access-review revocation, the
+  slowest and least urgent control in the product, already wrote the cutoff
+  (that half was fixed when `internal/revocation` was created); the kill switch,
+  the one you reach for when an account is compromised, did not. All three sever
+  paths now call `revocation.RevokeUserTokens`, which lives in the package that
+  owns the key so a fourth spelling cannot appear. The kill switch reports it as
+  `iam_access_tokens_revoked` rather than swallowing a failure, because "the
+  tokens were not actually cut" is something an operator needs in the record.
+
+  `test/integration/leaver_test.go` drives all three halves against the running
+  services and asserts them separately: a test that checked only the login and
+  the refresh would have passed for the whole time this was broken, which is how
+  it stayed broken.
+
+### Removed
+
+- **Five settings that were read by nothing are retired**, joining `ENABLE_MFA`,
+  `ENABLE_AUDIT_LOGGING` and `OAUTH_LOGIN_UI` in
+  `internal/common/config/retired.go`. Each is gone from the struct, the viper
+  defaults and `configs/audit-service.yaml`, and an install that still sets one
+  is told so at startup — in every environment, because development is where an
+  operator tries a switch and needs to hear that it does nothing.
+
+  `configs/audit-service.yaml` is deleted for the same reason one level up: it
+  was the only file in `configs/`, it was named after a service while `Load`
+  looks only for `config.yaml`, and its `${VAR:default}` lines implied an
+  interpolation step nothing performs — so an operator could edit it all day
+  and no process would ever open it. The reference for what can be set is the
+  Configuration Reference, which is gated. The test that kept a retired setting
+  out of shipped configuration now reads every surface an operator actually
+  copies (`.env.example`, the compose and dev-kube samples, the apisix-edge
+  examples) in both the YAML and the `KEY=value` shape, rather than one file
+  nothing read.
+
+  - `JWT_SECRET` (`jwt_secret`) — see Fixed above: a required production secret
+    that signed and verified nothing.
+  - `FCM_SERVER_KEY` (`push_mfa.fcm_server_key`) — the legacy FCM server key.
+    Google decommissioned the legacy HTTP and XMPP APIs in 2024 and no build
+    ever sent it; push goes out over FCM HTTP v1. Set
+    `PUSH_MFA_FCM_CREDENTIALS_FILE` and `PUSH_MFA_FCM_PROJECT_ID` instead. Two
+    documents told operators to configure it; both now describe HTTP v1.
+  - `SMS_OTP_LENGTH`, `SMS_OTP_EXPIRY`, `SMS_MAX_ATTEMPTS` — duplicates of the
+    installation settings the admin console owns, read by nothing. The console's
+    copies now work (see Fixed); these did not and could not, since the identity
+    service hot-swaps SMS configuration from the database.
+
+  Both spellings of a retired setting are reported: the one the shipped config
+  and the docs named, and viper's own `OPENIDX_<KEY>` form, derived from the key
+  rather than listed so the two cannot fall out of step.
+
+### Added
+
+- **Upstream pools reach the operator, and the data plane
+  (`/api/v1/access/upstream-pools`, `internal/access/upstream_pools_handlers.go`,
+  Upstream Pools console page).** Migration v130 built the place to declare a
+  route's backend set — algorithm, hash key, per-node weights, active health
+  checking — and `internal/access/upstream_pools.go` renders it into the APISIX
+  upstream object. Neither half could be used: no handler, route or console page
+  could create a pool, so `upstream_pools` was empty on every install. Building
+  the missing half turned up a third gap neither register had recorded:
+  `BuildEdgeRoutesForPools`, the only function that renders a pool-backed route
+  for the data plane, was **called by nothing**. `APISIXReconciler.Reconcile`
+  loaded the BrowZer routes and stopped there, so a pool inserted by hand and
+  linked by hand would still never have reached APISIX. The reconciler now
+  converges both sets in one pass and prunes only the generated prefixes it was
+  able to read, so a failed pool read leaves the edge alone instead of emptying
+  it. `proxy_routes.upstream_pool_id` is settable from the route API and the
+  pool it names is resolved inside the caller's organization first — the foreign
+  key alone would have accepted another tenant's pool and sent this route's
+  traffic to their backends.
+
+  Two behaviours here are not CRUD, and they are why this was built rather than
+  deleted. **A pool can be configured and not be in effect:** `BuildUpstream`
+  refuses to render a pool with no usable member, because an upstream with no
+  node black-holes the route, so the route falls back to the single address in
+  `to_url`. Right at runtime and, until now, silent — an operator draining the
+  last backend for maintenance would be told "member removed" while traffic kept
+  flowing. Every response describing a pool carries `in_effect` and the reason,
+  and the page leads with it. **Deleting a pool moves traffic:** the foreign key
+  is `ON DELETE SET NULL`, so a delete would quietly revert every route on the
+  pool to one backend with no health checking. It is refused while any route
+  still names the pool, and the refusal lists them.
+
+  This empties the dead-service register (`tools/deadservice`) — `UpstreamPool`
+  was its last entry — and takes both `upstream_pools` and
+  `upstream_pool_members` off the unwritten-table register.
+
+- **The tamper-evident audit log, made real (migration v181,
+  `internal/audit/chain.go`).** The docs index, the architecture page, the audit
+  reference page and the README's readiness checklist all state that OpenIDX
+  keeps a tamper-evident HMAC hash-chain audit log. `internal/audit/logger.go`
+  has carried the primitives from the beginning — HMAC-SHA256 over a canonical
+  form, a previous-hash link, a chain walk that names the first break — and no
+  binary has ever reached them; no migration created a column to store a hash
+  in; and the tests covering the chain declared their own `ComputeHashForChain`
+  method inside the test file to make the assertions work. Four published claims
+  rested on code that has never run. Now: v181 adds `chain_seq`, `prev_hash` and
+  `event_hash` with a unique `(org_id, chain_seq)` index, a background sealer
+  chains each organization's events under a per-org advisory lock, and
+  `GET /api/v1/audit/chain/verify` answers whether that tenant's trail is
+  intact — naming the event where it broke. The chain is **per tenant**, because
+  `audit_events` is under FORCE RLS and an install-wide chain would be
+  unverifiable by the tenant whose rows it covers. It is sealed by a sweep
+  rather than on insert, because sixteen statements across the tree insert into
+  that table and a per-org lock at each would put a serialization point in the
+  middle of login; the cost is reported rather than hidden — verification
+  returns the unsealed count, so the sweep's lag is visible in the evidence.
+  `AUDIT_CHAIN_SECRET` is generated by `scripts/generate-secrets.sh`, separate
+  from every other secret on purpose (whoever can write the audit database must
+  not hold the key to re-seal a doctored trail), and `ValidateProduction`
+  refuses a production start without it. Detects an edit to any sealed row, a
+  deleted sealed row, and a row backdated into a sealed run; a table-driven test
+  rewrites **each** of the fourteen stored columns in turn and requires every
+  one to break the chain, because a hash covering most of a row is worse than
+  none — verification would pass and vouch for the edit.
+
+- **`tools/deadservice` — a gate for whole services no binary can reach.**
+  `internal/governance/request.go` is 676 lines of access-request workflow:
+  submit, approve, deny, cancel, manager resolution, notification hooks, and an
+  escalation sweep that finds every request past its approval SLA and adds the
+  escalation approvers. It has tests. It is the only code that writes
+  `request_approval_chains`, a table migration v58 created for it and v64 put
+  under the RLS belt. `NewRequestService` is called nowhere: the live workflow
+  is a different implementation in `workflows.go`, which never writes that
+  table, so the sweep's `INNER JOIN` matches zero rows on every install and
+  would keep matching zero even if the checker were started. Nothing in the
+  repository could see this — it compiles, its SQL is valid and carries its
+  tenant predicate, its tests are real tests exercising real code, and
+  `tablewriters` counts its `INSERT` as a writer because a census of SQL
+  literals cannot tell a statement that runs from one that cannot. An earlier
+  fix on this branch spent its effort on a bug inside that sweep. The gate is
+  Rapid Type Analysis from every binary's `main`; a finding is a type whose
+  constructor is unreachable and not one of whose methods any binary reaches,
+  which is the shape that misleads rather than every unused helper. The register
+  opened at **41**, with a verdict apiece saying whether the answer is to wire
+  it or delete it, and it shrinks. The largest entry is its own task: the
+  tamper-evident HMAC hash-chain audit log advertised on the docs index, the
+  architecture page, the audit reference and the README's readiness checklist is
+  implemented in `internal/audit/logger.go`, reachable from nothing, and no
+  migration creates a column to store a chain in.
+
+- **`tools/zeroanswer` — a gate for the defect class behind the three entries
+  below.** A one-row aggregate (`COUNT`, `SUM`, `AVG`, `MIN`, `MAX`, `EXISTS`)
+  always returns exactly one row, so a discarded `Scan` error there can never
+  mean "there is no data" — it means the query did not run, and the destination
+  keeps its zero, which the caller then prints on a dashboard, writes into a
+  compliance report, or reads as a control that passed. Nothing else in the
+  repository can see this: the SQL is valid so `sqlprepare` plans it, the tenant
+  predicate is present so `orgscope` passes it, the handler answers 200 with a
+  well-formed body so the contract test passes it, and `COUNT` over no rows is
+  also 0. Only the error told the two apart. The register (`known.go`) opened at
+  83 with a verdict per site saying what the zero does, and shrinks; a new
+  finding fails the build, and so does an entry that no longer reproduces.
+
+### Fixed
+
+- **An invitation token was never spent (`handleAcceptInvitation`).** Accepting
+  an invitation read the row `WHERE status = 'pending'`, created the account,
+  and forty lines later ran `UPDATE user_invitations SET status = 'accepted'`
+  with the error discarded. If that write failed the invitation stayed pending
+  and the token stayed usable — a single-use credential that could create a
+  second account, and a third. Even checked, `SELECT`-then-`UPDATE` is a
+  check-then-act: two requests arriving together both pass the read before
+  either writes. One `UPDATE … RETURNING` now reads and burns at once, so
+  exactly one caller can claim a token, and a failure anywhere after it puts
+  the invitation back rather than costing the invitee their invitation over a
+  taken username. The same handler also skipped the password write entirely
+  when hashing failed (`if err == nil`) and discarded the role and group
+  inserts, so it could answer **201 "Account created successfully"** for an
+  account with no password and none of the access the invitation promised;
+  those three now share a transaction and the response says plainly when it
+  could not be finished.
+- **No way to run the guards CI runs (`make guards`).** There are 29 shell
+  guards under `scripts/` with 27 self-tests, invoked from several different CI
+  jobs with different flags, and nothing ran them as a set — so "I ran the
+  guards" meant "I ran the ones I remembered", and the rest were found by CI
+  twenty minutes later. That happened on this branch: a database-gated test
+  helper that read only a private environment variable, and so would have
+  skipped on every CI run, went in because `check-test-reachability.sh` was not
+  among the five run by hand beforehand. `scripts/run-ci-guards.sh` reads the
+  invocation list out of `.github/workflows` rather than keeping a copy of it,
+  because a hand-kept list drifts from CI exactly the way the unit-test matrix
+  drifted from the tree — and a runner that omits a guard CI runs is worse than
+  none, since it reports that the guards passed. It runs all 54 in about 40
+  seconds, treats an invocation CI writes with `|| true` as informational, and
+  reports the one whose argument CI computes as **not run** rather than as a
+  pass. Six cases of its own keep it honest, chief among them that finding no
+  guards is an error and not an empty success.
+- **Six Ziti handlers answered success over a record they had not changed, and
+  a SCIM mirror the provider reads back.** Each of these makes the controller
+  call first, checks it, and returns on failure — then wrote the database mirror
+  with the error discarded. So `DELETE /ziti/services/:id` answered *"ziti
+  service deleted"* while the row and its BrowZer route survived; the identity
+  delete did the same; `PUT` on a service policy answered 200 with the new
+  service and identity roles while the console kept showing the old ones for a
+  policy the network was already enforcing differently; and the identity
+  attribute patch — the attributes overlay policies match on — did likewise.
+  All six now report the divergence and say which way round it is: the network
+  changed, the record did not, and here is what will look wrong until it does.
+  In the same file, `handleGetEnrollmentJWT`'s write is genuinely best-effort —
+  a cache of a token the controller had just returned — and now carries a
+  `//silentwrite:ok` saying so, which is the distinction the gate exists to make
+  visible.
+  `UpdateSCIMUser` had the same split: the `users` row was checked, its
+  `scim_users` representation was not. That representation is what a SCIM `GET`
+  answers with, so a failure left the identity provider reading back the values
+  it had just replaced — and a provider that reconciles against what it reads
+  either sends the change for ever or concludes it never applied. The two are
+  one transaction now.
+- **A refused remote-support session was not ended
+  (`HandleAgentConsent`).** The denial branch carries the comment *"A denial
+  ends the session immediately (fail-closed)"*, and the statement under it
+  discarded its error. On a failure the session was **not** ended, the audit
+  still recorded `remote_support.consent_denied` with outcome `success`, and
+  the agent was answered `{"consent_status":"denied","status":"ended"}` — so
+  the person at the device refused to have their screen watched, was shown a
+  confirmation, and the session stayed live, with every record saying they had
+  been listened to. Both consent branches now check the write and the row count,
+  audit the failure as a failure, and tell the agent the refusal could not be
+  recorded and the session may still be active.
+- **A device the console called trusted could be untrusted (`trustDevice`).**
+  The function ran two statements: a nudge marking the user's Ziti identity
+  attributes stale, whose error was checked and logged, and the `UPDATE` that
+  actually sets `known_devices.trusted`, whose error was discarded. The
+  belt-and-braces statement was the checked one. An administrator could approve
+  a trust request, the request row would say approved, the user would be
+  notified — and the posture gate would go on refusing the device for a reason
+  visible nowhere. It now reports both a failed write and a row count of zero,
+  and both callers pass that up instead of announcing an approval the device
+  never received.
+- **A directory sync could report success over a group it did not sync
+  (`internal/directory`).** Both the LDAP and the Entra ID membership passes
+  ran, per group, a `DELETE` of the directory-managed rows followed by an
+  `INSERT` per current member — both errors discarded, and no transaction round
+  the pair. The dangerous ordering is the `DELETE` failing while the `INSERT`s
+  succeed: a membership the directory **removed** survives, and `RunSync` goes
+  on to write `sync_status = 'synced'`. That is deprovisioning that did not
+  happen, on the schedule an operator relies on to take access away when
+  somebody leaves a team, with the console saying the sync worked. The reverse
+  order silently drops access the directory still grants, and between the two
+  statements the group is briefly empty, so a membership check landing there is
+  answered no for a user who has the access. One transaction now moves the old
+  rows and the new ones together, and the sync reports which groups kept the
+  membership they had.
+- **An approval chain could come out shorter than its policy
+  (`createApprovalRows`).** Five `INSERT`s into `access_request_approvals`, one
+  per approval-step type, every one discarding its error. Losing the whole
+  chain is visible — nobody can approve the request. Losing *part* of it is
+  silent and worse: `handleApproveRequest` fulfils a request when the count of
+  pending approvals reaches zero, so a two-step policy that produced only its
+  first row is granted by one approver with the second step skipped, and the
+  audit trail says it was approved. The builder reports failure now, and the
+  handler withdraws the request rather than leaving a half-routed one standing.
+- **The writes whose failure nobody learns about (`tools/silentwrite`, new
+  gate).** 137 statements across the tree change the database through
+  `_, _ = …Exec(…)` or a bare call, and cannot tell whether they did. Many are
+  best-effort by design — a last-seen timestamp, a queue counter, a telemetry
+  row — and wrapping those in error paths nobody reads would be worse code. But
+  "best-effort" is a judgement the tree records nowhere: `_, _ =` is Go's
+  spelling for "I meant to drop this", equally true of the timestamp and of the
+  revoked credential. The gate reports each one and is cleared either by
+  handling the error or by a `//silentwrite:ok` reason above the call saying
+  what is lost — the `//orgscope:ignore` convention this repository already
+  uses. The fixes above take the count to 113, one site carries a reason, and
+  the gate holds it there: it can only go down.
+- **115 log fields carried a request value nothing cleaned
+  (`internal/common/logsafe`, new guard).** CodeQL filed two "Log entries
+  created from user input" alerts against `internal/admin/attestation.go`.
+  Reading the file showed the shape plainly: two fields there already went
+  through `logsafe`, and three more logged a campaign id taken straight from
+  `c.Param("id")`. The earlier sweep had fixed the sites CodeQL named rather
+  than the class behind them, so an AST census over the tree — function-scoped,
+  because two handlers in one file routinely both call something `id` or
+  `token` — found 115 of them across 24 files: agent ids, session ids, SAML
+  provider ids, group and role ids, an OAuth redirect URI, a social-login
+  provider's `error_description`. All now go through `logsafe.String`.
+  This is not a log-forging fix: `encoder_test.go` already established that
+  both zap encoders escape a field, and the guard against forging a line is
+  `no_interpolated_message_test.go`. It is a fix for the other three reasons
+  the package exists — nothing bounded the length, so a megabyte of `id` in
+  every warning fills a disk and buries the entry that mattered; the escaping
+  belongs to the encoder and does not survive the hop to Elasticsearch and on
+  to a SIEM; and it is the shape a static analyser will keep reporting until
+  the class is closed. `TestNoRequestValueReachesALogFieldUnwashed` now fails
+  the build on the next one, and eight cases built from synthetic source keep
+  the guard itself honest in both directions.
+- **The dead-service gate brought a vulnerable dependency in with it
+  (`golang.org/x/mod`).** Promoting `golang.org/x/tools` to a direct dependency
+  so `tools/deadservice` could do reachability analysis also recorded
+  `golang.org/x/mod v0.38.0` in `go.mod`, and that version carries
+  CVE-2026-56864 and CVE-2026-56865 — a malicious `GOSUMDB` serving arbitrary
+  module content, and a transparency-log tile verification bypass. `govulncheck`
+  stayed green (nothing reaches `sumdb/tlog` from any binary here) while the
+  filesystem scan went red, which is the difference between the two tools rather
+  than a disagreement. Bumped to v0.40.0, pulling `x/tools` to v0.49.0 and
+  `x/net` to v0.58.0 with it. `go mod tidy` then dropped
+  `github.com/open-policy-agent/opa` and eight of its transitive dependencies:
+  the embedded OPA engine's only importer in the tree was
+  `internal/governance/policy.go`, the third policy evaluator deleted earlier on
+  this branch, so the requirement had been holding a compiled-in Rego runtime
+  the product never called. Policy decisions go to the OPA **server** over HTTP,
+  as they always did.
+- **`cmd/` had no unit-test job, and one package's tests had never run at all
+  (`tools/testmatrix`, new gate).** The unit-test matrix in CI was a
+  hand-written list of `internal/*` and `pkg/`. It did not name `cmd/`, so the
+  ten service main packages had no per-package job — which is how the seven red
+  production-config tests below went unremarked across several pushes. They were
+  never unverified (`go test -race ./...` covers the module), but that signal
+  arrives twenty minutes in under a check named "Race Detector", and a red tick
+  with that name reads as a concurrency problem rather than as a broken
+  production gate in seven services. The matrix now names every package, in
+  `package`/`paths` pairs so several small directories can share a runner, and
+  `tools/testmatrix` fails the build when a directory holding `_test.go` files
+  is named by neither the matrix nor a register entry citing the job that does
+  run it — the same inversion applied to `tools/orgscope`, for the same reason:
+  a hand-maintained allow-list cannot notice what is missing from it.
+  The gate also refuses coverage that compiles nothing, which turned up
+  `cmd/rekey`: its single test file is behind `//go:build integration`, so
+  although the package sits under `./cmd/...` every job compiled zero tests out
+  of it. Two tests — a 294-line end-to-end proof that rotating the key-encryption
+  key re-seals every stored secret under the new key and leaves the plaintext
+  readable, the tool an operator reaches for after a key compromise — had never
+  executed anywhere. They pass; the Integration Tests job now names
+  `./cmd/rekey/...` so they keep doing so.
+- **Seven production-config gate tests went stale when the audit chain became
+  required (`cmd/*/main_test.go`).** `AUDIT_CHAIN_SECRET` joined the
+  `ValidateProduction` critical list in the audit hash-chain change above. The
+  config package's own tests were updated; the seven `cmd/*` copies of "a valid
+  production config" were not, so each service's only automated proof that a
+  production start is accepted began failing. They run in CI — but only inside
+  `go test -race ./...`, since the per-package unit matrix does not list `cmd/`
+  at all, so a self-inflicted red would have arrived twenty minutes late under a
+  job named "Race Detector".
+
+- **An access review's revocation wrote a key nothing read
+  (`internal/revocation`).** When a reviewer revokes somebody's access in a
+  certification campaign, governance calls `killUserSessions` to set *"the
+  user-wide token-revocation marker the auth middleware checks, so a live
+  session cannot keep using access an access review just revoked"*. It wrote
+  `auth:user_revoked:<uid>` — a key format that came from `internal/auth`'s
+  `TokenService`, whose `isUserRevoked` was **its only reader in the entire
+  tree**, and which no binary reaches. The enforcement point,
+  `internal/oauth`'s `IsAccessTokenRevoked`, reads a different key,
+  `oauth:user_tokens_revoked_at:<uid>`. So an access review could revoke
+  access, record it and audit it while the user's live session and outstanding
+  access tokens kept working until they expired on their own — and the reviewer
+  had no way to know, because the write succeeded. Neither half was wrong on its
+  own: each was a correct implementation of a contract the other did not share,
+  and the piece they shared lived in unreachable code where it looked
+  authoritative. `internal/revocation` now holds one definition — the key, the
+  value format, the TTL and the `iat <= cutoff` comparison — and both `/oauth/
+  logout-all` and the review path go through it. The comparison is `<=`, not
+  `<`, so a token minted in the same wall-clock second as the revocation does
+  not survive it. Two guards: a test that writes the marker exactly as
+  governance writes it and requires `IsAccessTokenRevoked` to see it, and a
+  census that fails if any file outside the package spells a revocation key
+  itself — restoring the old literal in `killUserSessions` makes it name the
+  file and the fragment.
+
+- **The kill switch did not revoke the elevation the product actually grants,
+  and reported zero (migration v183, `internal/jitgrant`).** OpenIDX had two
+  representations of a just-in-time elevation. The live one is an
+  `access_requests` row — `resource_type` role/group/application, status
+  `fulfilled`, `expires_at` set — that governance's approval workflow creates
+  along with the assignment, and that its expiry sweep ends. The other was the
+  `jit_grants` table, written only by `internal/governance/jit.go`, a service no
+  binary could reach, so it has been **empty on every install ever run**. Five
+  live paths aimed at it. The kill switch — the control an operator presses when
+  an account is compromised — revoked `jit_grants` and published
+  `pam_jit_grants_revoked`, so it left the user holding every elevated role the
+  approval workflow had granted them and answered `0`, which on that response
+  reads as *"this user held none"*. The lifecycle sweep's revocation of disabled
+  users' elevations and deprovisioning's revocation of a leaver's did nothing at
+  all. User Access 360 listed a user's active elevations (always empty) and the
+  portal dashboard counted them (always 0), on two pages whose entire job is to
+  say what access somebody has. All five now go through the new
+  `internal/jitgrant`, which holds one definition of an active elevation and one
+  way to end one — the shared revocation used to be unexported inside
+  `internal/governance`, which is precisely why the other three packages each
+  wrote their own SQL against the wrong table. The tests that "covered" these
+  paths seeded `jit_grants` rows by hand, so they proved only that a query could
+  find a row invented for it; they now seed a real elevation, and reverting the
+  kill-switch fix makes `TestKillSwitch_SeversAllPillars` report
+  `JITGrantsRevoked:0` with *"active jit grants remain: 1"*. One gap is recorded
+  rather than closed: `handleCreateAccessRequest` accepts any duration
+  `parseDuration` takes, so a "time-bound" elevation still has no ceiling.
+
+### Removed
+
+- **A second, unreachable SCIM 2.0 server in `internal/identity` — and the
+  documentation that described it instead of the live one.** 6,114 lines across
+  eleven files: full Users and Groups handlers, a SCIM schema layer, a
+  member-management path, a PATCH path parser with filtered operations, a
+  recursive-descent filter parser and a SQL renderer for it, and 2,257 lines of
+  tests exercising all of it. `RegisterSCIMRoutes` is exported, complete and
+  called by nothing: its single mention anywhere in the tree is its own doc
+  comment. The product's SCIM is `internal/provisioning`, mounted by
+  `cmd/provisioning-service` at the same `/scim/v2` paths and covering the same
+  surface. Removing the eleven files leaves `internal/identity` building and
+  vetting unchanged — nothing outside them referenced a single one of their 201
+  declarations.
+  The cost of the duplicate was paid by the documentation. `docs/SCIM.md`
+  advertised seven filter operators (`eq`, `ne`, `co`, `sw`, `ew`, `gt`, `lt`)
+  and an example composing two conditions with `and`;
+  `docs/SCIM-FEATURES-LOCATION.md` printed two curl commands, one filtering
+  `name.givenName sw`, both quoting values with `'`.
+  The live parser implements exactly one form —
+  `attribute eq "value"`, double-quoted, over a four-attribute allowlist for
+  Users and two for Groups — and answers **400 `invalidFilter`** to everything
+  else, deliberately, because an IdP treats a filtered lookup as an existence
+  check and a silently-ignored filter would return the whole page: the IdP then
+  creates a duplicate account or skips a deprovision. So six of the seven
+  documented operators, the composition and three of the four printed examples
+  failed against the running product. They were written against the richer
+  parser — the one no binary reaches. Both documents now describe the live
+  behaviour, including what is refused and why, and
+  `TestEveryDocumentedSCIMFilterIsOneTheProductAccepts` extracts every
+  `?filter=` expression printed in them and drives it through the parser, so a
+  filter example that cannot work cannot be published again.
+- **`internal/auth`'s `TokenService`, `SessionService` and `RBACMiddleware`.**
+  JWT mint/validate/revoke, Redis sessions with a concurrency cap, and gin RBAC
+  enforcement — 1,498 lines with four test files, each type constructed **only
+  by its own tests**. The live equivalents are `internal/oauth` (tokens,
+  sessions, and a per-client concurrent-session policy that is richer than the
+  cap here) and each service's own auth middleware. The project readiness guide
+  held `token.go`'s configurable fail-closed revocation up as a pattern to copy;
+  it survives where it matters — `IsAccessTokenRevoked` returns the error and
+  its callers fail closed — so what was deleted is the copy, not the pattern.
+  One of these files was load-bearing in the worst way: `UserRevocationKey`
+  lived in it, and governance called it, which is the defect above. The
+  package's live half (`context.go`, `roles.go` and their tests) is untouched.
+
+- **Two governance services no binary could reach, and the table one of them
+  wrote (migration v182).** `internal/governance/request.go` was a 676-line
+  second implementation of the access-request workflow — submit, approve, deny,
+  cancel, manager resolution, notification hooks and a `StartEscalationChecker`
+  that swept every org for requests past their approval SLA. It had tests, and
+  two migrations existed for `request_approval_chains`, the table only it wrote.
+  `NewRequestService` was called by nothing: the live workflow is
+  `workflows.go`, which writes `access_request_approvals` and has never touched
+  the chain table, so the escalation sweep's `INNER JOIN` matched zero rows on
+  every install and would keep matching zero even if the checker were started.
+  It also carried a defect that would have been a P0 the day anyone wired it: a
+  failed approval-record `INSERT` was logged and skipped, and completion was
+  "no approval row still pending" — so a missing row silently **reduced** the
+  approvals a request needed. `internal/governance/policy.go`'s
+  `PolicyEvaluator` went with it: the third OPA evaluator in the tree, after
+  `internal/common/opa` (which the fail-closed middleware uses) and
+  `internal/abac`. `ApprovalStep` and its constants, which the live workflow
+  reads out of a policy, survive in `approval_chain.go`.
+
+### Fixed
+
+- **A single logout that did not log anyone out, and a returned credential the
+  record still shows as held.** Two more writes whose failure was invisible to
+  the caller, both on paths whose whole job is to take access away. The
+  IdP-initiated SAML SLO deleted the session row in a bare `Exec` inside an
+  `if org, err := ...; err == nil`, then cleared the cookie and rendered *"You
+  have been logged out"* regardless of what happened: a cleared cookie is not a
+  logout, it only stops **this** browser from presenting the token, so anyone
+  else holding it — the shared machine the user just walked away from, a proxy
+  log — kept a live session while the user was told the opposite. The delete is
+  checked now, the cookie is left alone when it fails (a browser that has
+  forgotten a token the server still honours is the same asymmetry, and it costs
+  the user the retry), and the confirmation page is not shown. Returning a
+  checked-out vault credential revoked the grant (checked) and then marked the
+  request expired (`_, _ = ...`), so a failed `UPDATE` left the request reading
+  `fulfilled` — still checked out to that user in the console, still counted as
+  held by the JIT expiry sweep — under a `200 {"status":"returned"}` and an
+  audit event saying `jit_credential.checkout_returned` / `success`. The grant
+  really is gone by then, so the answer is a 500 the caller can retry rather
+  than a return that did not finish, and the audit event is no longer written
+  for one.
+
+- **Offboarding a leaver could leave them everything, and report success.**
+  `handleOffboardUser` is five statements — disable the account, revoke the API
+  keys, remove the group memberships, remove the role assignments, terminate the
+  sessions — and only the first had its error checked. The other four ran as
+  bare `Exec` calls with the error discarded, and the handler then answered
+  *"User offboarded successfully"*. So a leaver could be disabled while keeping
+  every API key, every group, every role and every live session, and the person
+  who pressed the button was told the offboarding was complete — which is the
+  reason nobody would go back and look. It is one transaction now: a step that
+  cannot run changes nothing and answers 500. Three more credentials that could
+  not be spent but were accepted anyway: a **magic link**'s `status='used'`
+  marker (a failed mark left the emailed sign-in link redeemable again, for as
+  long as it had left to live), a **phone-call MFA challenge**'s completion
+  marker (same shape, same code re-presentable), and the **access tokens** a
+  user's *"revoke this application's access"* was supposed to delete — the
+  refresh-token delete beside it was checked, this one was not, so the
+  application kept calling the API while the user was told the authorization was
+  revoked.
+
+- **A certification decision recorded access as revoked while the access was
+  still held.** `handleDecideAttestationItem` marked the item
+  `decision='revoked'` with a statement that answers 500 on failure, and *then*
+  ran the `DELETE FROM user_roles` / `user_application_assignments` /
+  `group_memberships` / `vault_access_grants` that actually removes the access —
+  each with its error discarded. So a reviewer clicked **Revoke**, the
+  certification recorded the access as removed, the campaign counted the item as
+  decided and could auto-complete on it, and the role was still assigned. In an
+  identity governance product this is the worst available failure: the evidence
+  says the access was removed and it was not. The read that decided *which*
+  access to tear down had the same defect — a failed read left the resource type
+  empty and every branch fell through, deleting nothing. The decision and the
+  revocation now share one transaction, so a revocation that cannot run leaves
+  the item pending and answers 500. Seven more writes that silently did not
+  happen: a **logout** left both the durable revocation and the Redis marker the
+  proxy actually reads (so the session kept working while the person was told
+  they had signed out); **continuous verification** could not revoke a session it
+  had just denied; the **PAM risk gate** tore down the live connection but could
+  not mark the session suspended, so it still read as active on the dashboard;
+  the **idle-timeout** revocation; an **AI-agent credential rotation** that
+  minted a new key without revoking the old one and reported success; a
+  **cancelled agent enrolment** whose token stayed live; and — the sharpest of
+  those — the `used_at` marker that *is* the single-use property of an enrolment
+  token, so a failed mark left a one-time token redeemable again.
+
+- **A CAEP `account-disabled` event that did not disable the account was
+  acknowledged as applied.** `applyCAEPEvent` discarded the error on `UPDATE
+  users SET enabled=false` and returned `"applied"` regardless — so a federated
+  partner reporting a compromised account got a `202`, the receiver wrote
+  `outcome='applied'` to its own record, and the account stayed enabled. RFC
+  8935's `202` acknowledges receipt, so the transmitter never re-delivers; the
+  dedup row would have discarded the re-delivery in any case. Three more in the
+  same eight lines: the **refresh-token revocation**'s error was discarded (a
+  refresh token surviving a session revocation is a live credential for the
+  account you were just told to shut down), a **missing organization** silently
+  skipped the disable and still reported success, and **`resolveUserBySubject`**
+  could not tell "this subject is not a user here" from "the lookup did not
+  run", reporting both as `ignored`. An event that cannot be applied now answers
+  `503` and is *not* recorded as seen, so the transmitter re-delivers. **The
+  tests that covered this named a table the product does not have:** the
+  fixtures created `refresh_tokens`, the code deletes from
+  `oauth_refresh_tokens`, and the discarded error meant both tests passed while
+  proving nothing about refresh-token revocation. The fixture is corrected and
+  the assertion that was never there — that the tokens are gone — is.
+
+- **A Security Event Token whose replay check could not run was applied
+  anyway.** `handleSSFReceive` asks whether it has already seen a SET's `jti`
+  for this tenant before applying it. No row is the *normal* answer there and
+  arrives as `pgx.ErrNoRows`, and the read discarded its error — so "already
+  seen", "never seen" and "the check did not run" were one value, and the third
+  meant a re-delivered CAEP event was applied a second time. The comment on the
+  *write* half of the same protection already recorded that its error had been
+  discarded and was fixed; the read was left. It now tells `ErrNoRows` from a
+  real failure and answers `503` when the check cannot run, because applying an
+  event you cannot check for replay is the unsafe direction and a transmitter
+  will re-deliver. Three more of the same shape: a **remote-support session**
+  could be started while another was already running on the same agent when the
+  concurrency check failed; the **posture checks a proxy route declares** were
+  skipped in silence when the Ziti identity lookup failed (the score stays 0, so
+  a policy requiring posture still refuses — the silence was the defect); and a
+  **vault checkout ledger entry** — the record that a stored credential was used
+  — went missing under a log line that named the insert rather than the reason.
+
+- **The rest of the class: 55 more aggregate queries whose failure was served
+  as a number.** `tools/zeroanswer`'s register is now **empty** — it opened at
+  83, after `internal/audit` had already gone from 73 to 0, and every entry left
+  it by the query being fixed rather than by being waived. The certification
+  campaign page reported a campaign with nothing in it when its item counts
+  failed, and drew a progress bar from `(certified+revoked)/total` where any of
+  the three could be the false zero; `campaign_runs.total_items`, the permanent
+  record of how big a review was, took a failed count as **zero items** — a
+  certification with nothing to certify, according to its own record. An
+  escalation whose "does this approver already exist" check failed added a
+  **duplicate pending approval**, and that INSERT's error was discarded too, so
+  neither was recorded anywhere. The authentication, usage, feature-adoption,
+  capacity, AI-agent, recommendation, entitlement and sign-in analytics all
+  answer 500 now instead of rendering zeros the console cannot distinguish from
+  a quiet week. The remaining fail-closed checks — known device, known IP, the
+  PAM quick-link existence gate — keep failing closed and now say so, because a
+  control that silently degrades is a control nobody knows has degraded.
+
+- **A failed query rendered as a calm number on every surface that counts
+  something.** Twenty-four sites of the class above, found by
+  `tools/zeroanswer`. The pagination totals — published apps, proxy routes,
+  known devices — served `0` in the same response that carried the rows, so a
+  list did not know its own length and paging past the first page looked
+  impossible. The Relations & Integrity Doctor reported **`ok`** for a check it
+  could not run, which is the one answer an integrity check must never give
+  from no evidence. The end-user's own security page told somebody who has
+  enrolled MFA that they have none, and reported no risky sign-ins because it
+  could not read them. The risk dashboard's six tiles rendered *"0 high-risk
+  logins, 0 failed logins, average risk 0"* — indistinguishable from a quiet
+  day, on the surface where an operator decides whether to look further. And in
+  the **risk engine itself**, four of the five scored factors bias *harsher*
+  when their query fails (an unreadable device count reads as a new device) but
+  one biases *quieter*: a failed count of recent failed logins removed the
+  brute-force signal from the score entirely. Factors that cannot be measured
+  are still scored from zero — inventing a number would be worse — but they are
+  now logged by name, so an engine running on fewer factors than it thinks is
+  visible instead of silent. This engine has already been caught running with a
+  factor permanently at zero: the WebAuthn count read a table no migration
+  creates, for the life of the query.
+
+- **A failed count auto-completed an access certification campaign.**
+  `handleDecideAttestationItem` counted the campaign's still-pending items to
+  decide whether the last decision had been made — and discarded the error, so a
+  query that could not run left the count at zero, marked the campaign
+  `completed`, stamped `completed_at` and published `review.completed` to
+  whatever evidence pipeline was listening. An access certification closed
+  without the access being certified, with an audit trail saying it was. Two
+  more in the same class: `continuous_auth`'s **velocity risk scored 0** when
+  its query failed (the comment directly above it already recorded that this
+  factor scored 0 for its *entire life* because it read a table that does not
+  exist — the query was fixed, the discarded error that hid it was not), and
+  `campaign_runs.reviewed_items`, the permanent record of how much of a
+  certification campaign was reviewed before it expired, took a failed count as
+  **zero reviewed** rather than leaving the column alone.
+
+- **A compliance report could be produced entirely out of measurements nobody
+  took.** Every figure in the SOC 2, ISO 27001 and GDPR reports came from an
+  aggregate — `COUNT`, `SUM`, `AVG`, `MAX` — and every one of those queries
+  discarded its error. An aggregate returns exactly one row, always, so a
+  failed `Scan` there can never mean "there is no data": it means the query did
+  not run, and the destination kept its zero. The report then published that
+  zero as a measurement. *"0 overdue access reviews." "0 data-subject requests
+  outstanding." "Average session length: 0 hours."* — in a document an auditor
+  reads as evidence. This is not hypothetical: two queries in this file named
+  columns the schema does not have (`access_reviews.due_date`,
+  `sessions.created_at`), and both were found by a tool that plans the SQL, not
+  by anything in the reporting code, because nothing in the reporting code was
+  looking at the error. A third failure mode needed no broken query at all —
+  the organization was read as `org, _ := orgctx.From(ctx)`, so a report
+  generated without a tenant filtered every metric on an empty `org_id` and
+  came back all zeros. Each section now runs through `metricQuery`, which
+  remembers the first measurement that could not be taken and names it; a
+  section that cannot be measured fails the report and the endpoint answers
+  500, because a compliance report is the one document where *"I could not
+  measure this"* must never be rendered as a measurement. The two grouped reads
+  behind ISO 27001 A.12 are the same defect in multi-row shape — an `if err ==
+  nil` around the loop meant a failed query left the per-day breakdown empty,
+  which is a **logging coverage of 0%** and a `non_compliant` verdict on the
+  strength of a query that never ran. **The tests that covered all this could
+  not fail:** three of them built a service with no database at all, generated
+  all three reports and asserted things like `TotalUsers >= 0` — true of the
+  zero value, which was the only value any field ever held. They are replaced
+  by one test that asserts the refusal, and by a real-schema test that
+  generates all three reports against a migrated database and checks the
+  numbers against seeded rows.
+
+- **The detailed SOC 2 and ISO 27001 assessments scored controls from figures
+  nobody measured** — the same defect as above, in the eleven control
+  assessors behind `POST /audit/reports/soc2-detailed` and
+  `.../iso27001-detailed`. Thirty-five aggregate queries, every error
+  discarded, and the resulting numbers went into a control's **Evidence**
+  lines (`"Total active users: 0"`, `"Active API keys: 0, Expired but not
+  revoked: 0"`), its **score**, the report's overall percentage and its summary
+  sentence. A control assessed from a query that did not run is
+  indistinguishable, in the finished document, from one assessed from real
+  data. Each assessor now returns the measurement failure and the report is
+  refused. Nothing had been driving those two generators at all; a real-schema
+  test now produces both and cross-checks a control's evidence against a count
+  it takes from the database itself. Also fixed there: **ISO 27001 A.12
+  required an event type this product has never written.** Its list of
+  required audit event types was `authentication`, `authorization`,
+  `user_management` — and `user_management` is a *category*; the event type
+  stamped on a user lifecycle row is `identity`. So A.12 deducted ten points
+  and reported *"Required event type 'user_management' has no events in
+  period"* against every installation ever assessed. A control that
+  manufactures a finding against a correctly configured system is worth less
+  than no control. And in `internal/audit/service.go`, the four counts printed
+  into the SOC 2 findings' evidence (`"%d/%d users have MFA enabled; %d failed
+  auth attempts in period"`) and the security dashboard's failed-authentication
+  count — which reads as *"no attack in progress"* when it is really *"the
+  query broke"* — are checked as well.
+
+- **Every audit event the access service posted was filed under the default
+  organisation, and a refusal was silent.** `internal/access.logAuditEvent` is
+  how the most sensitive actions in the product reach the audit trail — every
+  revealed PAM credential, every injected credential, every downloaded session
+  recording and transcript, every proxy allow and deny. It sent no tenant
+  signal at all. The ingest endpoint (`POST /api/v1/audit/events`) is
+  server-to-server and carries no JWT, and `cmd/audit-service` mounts
+  `TenantResolver` globally with `router.Use`, which — as that middleware's own
+  comment states — means its JWT and `X-Org-ID` steps cannot fire and every
+  request lands on step 1 or the step-4 default-organisation fallback. With no
+  header, always step 4: on a multi-tenant install the product's most sensitive
+  reads were missing from the audit log of the tenant they belonged to and
+  present in another's. The POST now carries `X-Org-Slug` — step 1, which
+  *looks the slug up*, so an unknown one is a `400` rather than a free write
+  into an arbitrary tenant. The response status was also thrown away: only a
+  transport error produced a log line, so a `400` for a body the trail refused
+  or a `500` when the write failed dropped the row with nothing recorded
+  anywhere. A non-2xx is now a warning naming the status, the action and the
+  tenant, because a dropped audit row is the one loss that must never be
+  silent.
+
+- **Six of the audit log's eight filter choices returned an empty list.** The
+  console's event-type filter offered eight names copied from the `EventType`
+  constants in `internal/audit/service.go`, and only two of them —
+  `authentication` and `authorization` — are ever written. Choosing
+  `user_management`, `group_management`, `role_management`, `configuration`,
+  `data_access` or `system` returned nothing, and an empty audit list reads as
+  *"nothing happened"*, which on this surface is the worst available wrong
+  answer: an auditor asking for every configuration change was told there were
+  none. Meanwhile the values the trail does hold — `identity`, `provisioning`,
+  `oauth`, `access`, `security`, and the specific rows `internal/access` writes
+  one at a time (`pam.session.risk_suspend`, `pam.recording.sealed`,
+  `certificate.rotate`, `session.revoked.continuous_verify`,
+  `platform_admin_cross_org_access`) — could not be filtered for at all. The
+  filter now reads `GET /api/v1/audit/event-types`, which asks the tenant's own
+  trail and returns each type with its count, ordered by frequency: what is
+  offered is what is there. A catalogue would have to be kept in step with
+  twenty writers by hand, and the drift it replaced is exactly what that costs.
+  **Migration v180** adds the `(org_id, event_type)` index that scan and the
+  filtered read both want — every read of `audit_events` is tenant-scoped
+  first, so the console's own `WHERE org_id = $1 AND event_type = $2` had been
+  walking every row of that type across the whole install and discarding the
+  other tenants'.
+
+- **The GDPR report's data-access section counted an event nothing writes** —
+  and an earlier commit on this branch said it was fixed when it was not. All
+  four of its queries filtered `event_type = 'data_access'`, a value declared as
+  `EventTypeDataAccess` in `internal/audit/service.go` and written by no line of
+  this codebase, so total access events, access by actor, access by data type
+  and the last access timestamp were empty on every report ever generated and
+  `ComplianceStatus` was permanently `"partial"` — a control telling an auditor
+  this installation cannot account for who read what. The earlier fix corrected
+  the by-data-type query, which asked for a `resource_type` column
+  `audit_events` does not have, and the commit message said the section "has
+  therefore been empty in every report". The column was **one** reason and not
+  the reason. What this trail records as a read is an action under
+  `event_type = 'authorization'`, and `internal/audit.DataAccessActions` now
+  names the five that are one — a revealed credential, an injected credential on
+  either path, a downloaded session recording or transcript — with the session
+  events that are *not* reads named as deliberately excluded, because an
+  overstated control is as useless as an empty one. The test that covered this
+  had seeded a `data_access` row: it built the value the product never produces
+  and then proved the query could find it. It now seeds the row
+  `internal/access` actually writes.
+
+- **Every switch on the notification preferences page controlled nothing.**
+  The page offered seven types — `access_request`, `security_alert`,
+  `session_revoked`, `review_assigned`, `group_request`, `password_expiry`,
+  `mfa_change` — and this product has never sent a notification of **any** of
+  them; the four it does send (`access_granted`, `device_trust`, `security`,
+  `broadcast`) appeared on no switch, and one column offered a channel,
+  `email`, that nothing has ever delivered on. It was worse than a naming
+  mismatch: `isNotificationEnabled` is consulted by `CreateNotification`, and
+  four of the six senders never went through it — the broadcast fan-out, the
+  ISPM MFA reminder, the AI-recommendation reminder and the device-trust
+  request all ran `INSERT INTO notifications` directly as set-based writes. A
+  preference no writer reads is not a preference, however it is spelled. Each
+  of those statements now carries the preference predicate itself, measured
+  against a real database: the user who switched security reminders off
+  receives none, the user who never opened the page receives them, because an
+  absent row means enabled — the same default `isNotificationEnabled` applies.
+  `internal/notifications.TypeCatalogue` is now the one place a type is named,
+  `GET /notifications/preference-types` serves it, the console's picker reads
+  it instead of its own stale list, and `PUT /notifications/preferences`
+  refuses a preference for a type this deployment does not send. The lookup
+  behind that default is no longer silent either: `isNotificationEnabled`
+  answered *every* failure — a missing table, a permission error, a dead
+  connection — with "enabled", so a preferences store that had stopped working
+  was indistinguishable from a population that had simply never opened the
+  page. A failed read still sends, because nobody should stop being told their
+  device was approved by a broken query, but only `pgx.ErrNoRows` is the quiet
+  default now; anything else is logged.
+
+- **The migration chain could not be rolled back past v29.** Every migration
+  carries a `Down` half and `RollbackTo` exists to run them — it is what an
+  operator reaches for when an upgrade goes wrong — and nothing had ever
+  executed the chain in that direction. Measured on a fresh PostgreSQL 16,
+  rolling back from v179 one version at a time, it stopped at v29 with
+  `DROP TABLE IF NOT EXISTS posture_check_types;` →
+  **`ERROR: syntax error at or near "NOT"`**: a spelling PostgreSQL has never
+  accepted (the keyword is `IF EXISTS`), in five statements across three
+  migrations. Behind that, at v13 and v10, nine more statements matched a UUID
+  primary key with `LIKE`, which raises
+  `operator does not exist: uuid ~~ unknown`. So the rollback path was blocked
+  at v29 on every install, and the twenty-nine migrations below it had never
+  been reachable in reverse at all. All fourteen statements are fixed and the
+  chain now completes the full round trip: 179 up, 179 down to zero, 179 up
+  again. **A new test does exactly that** against a throwaway container, and
+  asserts the schema left behind after a full rollback is exactly the four
+  tables it should be — the migrator's two bookkeeping tables plus the two v51
+  re-creates on the way down, which is recorded rather than papered over.
+  `scripts/check-test-reachability.sh` was widened in the same change: it
+  matched one literal variable name, so a helper gating on a private
+  `OPENIDX_*_DATABASE_URL` of its own was invisible to it — the guard failing
+  in the way it exists to prevent.
+
+- **The OpenID Connect discovery document omitted three things this server
+  does.** `revocation_endpoint` and `introspection_endpoint` (RFC 8414 §2) were
+  absent although `POST /oauth/revoke` and `POST /oauth/introspect` are both
+  routed, so a relying party that reads discovery to find where to revoke a
+  token at sign-out found nowhere — and did not revoke. And
+  `token_endpoint_auth_methods_supported` listed only `client_secret_post` and
+  `client_secret_basic`, although dynamic client registration creates a
+  **public** client when `token_endpoint_auth_method=none` and the token
+  endpoint skips secret verification for that type (PKCE carries the proof
+  instead): every conforming SPA and native client was told it had no usable
+  authentication method here. All three are now advertised, and they move with
+  the issuer under subdomain tenancy. The drift was invisible because it was on
+  the wrong side of a dead file: `api/openapi/oauth-service.yaml` documented
+  both endpoints, `docs/docs/api/authentication.md` showed them in its sample
+  document, and `internal/oauth/discovery.go` — a **second, unmounted**
+  discovery implementation with a 415-line test suite — carried them too. Only
+  the document actually served lacked them. The dead implementation is deleted
+  and its assertions moved onto the live handler, so a discovery test now goes
+  through the route a relying party fetches.
+
+- **Six of the webhook events the console offers had never been published.**
+  The subscription form listed ten event types. `user.updated` and
+  `group.updated` were emitted only from `internal/identity/handler.go` — a
+  complete second user-and-group CRUD implementation, fourteen exported
+  handlers, that **no router has ever mounted** — so their emitters ran
+  nowhere. `user.locked`, `login.failed`, `role.updated`, `policy.violated` and
+  `review.completed` were emitted by nothing at all: the failed-login path wrote
+  an audit row and sent no webhook, an account lockout was logged and announced
+  to no one, and a completed access-certification campaign told nobody. An
+  operator wired an integration up, saw the subscription listed, saw the
+  delivery log stay empty, and had no way to tell that from a quiet week. Every
+  one now publishes from the handler that actually runs: `user.updated` and
+  `user.deleted` from the mounted user handlers, `user.locked` on the failed
+  attempt that crosses the lockout threshold (once, not on every retry after),
+  `login.failed` beside the audit row, `role.updated` from the role handler,
+  `policy.violated` when the ABAC gate denies a sign-in, `review.completed` when
+  an attestation campaign's last item is decided — and the four group events
+  that had no publisher and no constant, `group.created`, `group.deleted`,
+  `group.member_added` and `group.member_removed`, the last being the event a
+  downstream system needs in order to **revoke** the access that came with a
+  group. Publishes are now made on a context detached from the request but
+  carrying its organization (`orgctx.Detached`): webhook subscriptions are
+  RLS-scoped, so an org-less publish matches nothing and delivers nothing,
+  quietly, for every tenant. `internal/identity/handler.go` is deleted.
+
+- **Revoking a user's MFA break-glass codes has never revoked one.**
+  `DELETE /users/:id/bypass-codes` is how an administrator destroys every MFA
+  bypass code a user holds — what you do the minute a break-glass code leaks.
+  Its handler opened `requestedUserID := c.Param("user_id")`, and the route
+  declares `:id`. gin returns `""` for a name the matched route does not
+  declare, so the revoke ran against the empty user and PostgreSQL refused the
+  statement outright (`mfa_bypass_codes.user_id` is `UUID`): every call this
+  endpoint has ever received answered **400 `invalid input syntax for type
+  uuid: ""`**, worded as though the administrator had sent something wrong. The
+  handler now reads `c.Param("id")`, and a new DB-backed test drives the real
+  route: two active codes for the target are revoked, a third belonging to
+  somebody else is left alone, and the `revoked_all` entry lands in
+  `mfa_bypass_audit`. Proved red first with exactly the failure above.
+
+### Added
+
+- **`tools/sqlprepare` no longer skips `42P08`.** "Inconsistent types deduced
+  for parameter" was on the skip list beside `42P18`, described as a limit of
+  `PREPARE`. It is not one: pgx sends parameters **untyped**, so the deduction
+  the sweep performs is the deduction the runtime performs, and a statement
+  that cannot settle on one type for a parameter fails when it is executed. The
+  skip hid a live failure — an `INSERT ... SELECT` written in this same change,
+  reusing one parameter for `notifications.type` and
+  `notification_preferences.event_type`, passed the sweep and raised
+  `inconsistent types deduced for parameter $5` on its first execution against
+  a real database. Five statements were caught and cast the moment the skip was
+  removed; `42P18`, where the server genuinely has nothing to deduce from,
+  stays a skip.
+
+- **A webhook event catalogue that cannot drift from the code.**
+  `internal/webhooks.EventCatalogue` is now the single place an event type is
+  named — type, category, and the sentence an operator reads when choosing what
+  to subscribe to — and `catalogue_test.go` holds it against the tree in **both
+  directions**: an entry nothing publishes fails the build, and a `Publish`
+  naming something outside the catalogue fails it too. The census resolves
+  literals, `webhooks.EventX` constants, a variable assigned two constants, and
+  one level of forwarding (a helper that takes the event type as a parameter is
+  resolved at its call sites), and a `Publish` whose event type it cannot read
+  is itself a failure in the services that own a publisher — so nothing can hide
+  behind an expression. `GET /api/v1/webhooks/event-types` serves the catalogue
+  and the console's picker now reads it instead of a hard-coded list that had
+  drifted six entries away from reality; `POST /api/v1/webhooks` rejects a
+  subscription to an event type this deployment does not publish, with the
+  endpoint to consult, because the moment a subscription is created is the only
+  moment an operator can be told.
+
+- **`tools/routereach` — parameters with no route, handlers with no router.**
+  The census that found the defect above, and a second class beside it. It
+  holds each service's route table next to the handlers its package defines and
+  reports two disagreements: a handler that reads `c.Param("x")` when no route
+  it is mounted on declares `x`, and a `func(*gin.Context)` that no route
+  registration names and no non-test line references. Reachability is
+  propagated to a fixpoint through same-package calls, so a helper handed the
+  request context is checked against the routes of every handler that can reach
+  it, and the parameter sets of a handler's routes are unioned rather than
+  checked one at a time. The parameter check is exact here because no `.Group()`
+  prefix in this tree declares a parameter — asserted against the real sources
+  by the tool's own test, not assumed. **`_test.go` files are deliberately not
+  scanned**: a handler whose only caller is a test that mounts it on a router
+  the test built is the sharpest form of the second finding, and that is how
+  `internal/oauth`'s second OpenID Connect discovery document came to light —
+  415 lines of passing test for a document no service serves, beside the
+  different one every relying party actually fetches. 1,060 routes, 1,021
+  handler-shaped functions, **17 mounted by nothing**, each registered in
+  `tools/routereach/known.go` with its verdict; a route that declares
+  parameters and resolves to no handler is itself a finding, because a census
+  that quietly stops covering something is the failure these registers exist to
+  prevent. Wired as a required check (`Route-reachability lint`).
+
+- **`tools/tablewriters` — the tables the product reads and nothing writes.**
+  The API-usage card reads `api_usage_metrics` for total requests, average
+  latency and error rate; migration v54 created that table with exactly the
+  columns an hourly request aggregate needs, and nothing has ever inserted a
+  row into it. So the card has reported three zeros on every install that has
+  ever run, and a zero from an empty table is indistinguishable from a measured
+  zero. Nothing else in the repository can see this: the SQL is valid, so
+  `sqlprepare` passes it; the tenant predicate is present, so `orgscope` passes
+  it; the handler returns 200 with a well-formed body, so the contract test
+  passes it; and `COUNT(*)` of an empty table is 0, not an error, so nothing is
+  logged. The only thing that can see it is a census, so this one holds the set
+  of tables the migration registry creates next to the set of tables a SQL
+  literal in `./internal`, `./cmd` and `./pkg` writes, and subtracts. Both
+  halves are derived rather than listed, for the reason `orgscope` was
+  inverted. Literals come out of the AST rather than a grep, because prose
+  about SQL is not SQL — a comment quoting a query a previous fix deleted was
+  read by the first draft as a live read of a table dropped two migrations ago.
+  A table a migration seeds is not a finding: the seed is its writer. **Nine of
+  226 live tables have no writer**, each registered in
+  `tools/tablewriters/known.go` with its verdict, and the register can only
+  shrink: an unregistered finding fails the run and so does an entry that no
+  longer reproduces. Five are read — `api_usage_metrics`, `risk_factors` (the
+  continuous-auth engine computes five weighted factors and returns the empty
+  slice it started with), `ai_agent_activity` (three reads: a per-agent
+  activity list, a 24-hour ranking and a failure count, all empty because
+  nothing outside the admin API so much as reads an agent credential, so no
+  agent has ever acted), and `upstream_pools` with its members (v130 built the
+  place to express a load-balanced backend set and the reconciler that renders
+  it; nothing can create one). Four are dead schema: `health_check_history`,
+  `posture_check_types`, `scim_groups` — the unused half of v3's SCIM pair,
+  whose install-wide unique key an earlier commit in this programme carefully
+  re-scoped — and `user_mfa_policies`.
+
+- **`tools/sqlprepare` — every SQL literal in the tree, planned by a real
+  PostgreSQL.** A green CI run's database log carried `column "request_count"
+  does not exist`, and following it found a class no reviewer or compiler can
+  catch: a query naming a column that has never existed is syntactically
+  perfect Go and SQL, and the handler around it discards the error. The tool
+  hands each statement to `PREPARE` against a database with all migrations
+  applied — parse, name resolution and planning, no execution and no rows — so
+  a missing column, a missing table, an unresolvable type or an aggregate
+  outside its `GROUP BY` surfaces and nothing else does. Syntax errors are
+  skipped as fragments of runtime-assembled queries and parameter-inference
+  errors as limits of `PREPARE` itself; a file the sweep cannot parse fails the
+  run rather than quietly shrinking the count. It runs in the integration job,
+  the only place with a migrated database. The first sweep found **39
+  statements that cannot succeed against the schema this repo creates**, each
+  registered in `tools/sqlprepare/known.go` with its verdict; a finding the
+  register does not carry fails the run, and so does an entry that no longer
+  reproduces, so the list can only shrink. Among them: no security alert has
+  ever been written (`security_alerts` has none of the six columns the INSERT
+  names), the SIEM forwarder's cursor table is created by no migration,
+  scheduled-report listing fails outright, the DSAR export silently omits
+  sections, two compliance controls report zero findings because api-key
+  revocation lives in `status` and not a `revoked_at` column, and the API-usage
+  dashboard's four queries all name columns that were never created — so it
+  reports 0 requests, 0 errors and 0 ms latency as measurements.
+
+### Removed
+
+- **Four tables no code has ever touched (migration v177).** The other half of
+  what the census found: `health_check_history` (v54), `posture_check_types`
+  (v29), `scim_groups` (v3) and `user_mfa_policies` (v5) are read by nothing and
+  written by nothing, and between them carry DDL, indexes, grants, foreign keys,
+  row-level-security policies and a docker seed that maintains five rows nobody
+  consults. `scim_groups` is the unused half of its SCIM pair — `scim_users` is
+  written on every SCIM user operation, group provisioning writes the product's
+  own `groups` table — and an earlier commit in this programme carefully
+  re-scoped its install-wide unique key, which is what dead schema costs: it
+  consumes the attention the real tables need. Two of the four sat behind the
+  v37 FORCE-RLS belt, which is the argument for dropping rather than leaving:
+  a belted table with no rows looks, to every census here, like a tenant
+  boundary being maintained. The rollback recreates all four in the shape the
+  chain had produced — org_id, foreign key, index, policy and the re-scoped
+  unique key included — read off a database with the full chain applied.
+
+- **The Usage Analytics API card, and the table behind it (migration v176).**
+  `api_usage_metrics` was created by v54 with exactly the columns an hourly
+  request aggregate needs, and no handler, worker or seed has ever inserted a
+  row. The card read it for total requests, top endpoints, error rate and
+  average latency, so all four have been 0 on every install that has ever run —
+  and the read could not have worked either, naming three columns the table does
+  not have. Request volume, latency and status codes *are* measured: the
+  Prometheus middleware every service mounts exports them on `/metrics`, for the
+  Prometheus and Grafana this repo ships. A second copy aggregated into Postgres
+  was never written, and writing that aggregator is a feature rather than a fix,
+  so the endpoint, the console card, its i18n keys and the OpenAPI path go with
+  the table.
+
+### Fixed
+
+- **The SQL register is empty: every statement in the tree now plans against
+  the schema.** The last four. `oauth_clients.redirect_uris` is JSONB and the
+  BrowZer domain rewrite called `unnest()` on it, so after a domain change every
+  OAuth client kept redirecting to the old domain — the exact failure a domain
+  change exists to prevent. The bulk-access anomaly's "breakdown by resource
+  type" asked `audit_events` for a `resource_type` column (it is `target_type`)
+  and discarded the error, so every anomaly this detector raised named nothing.
+  Migration **v179** gives `saml_service_providers` the `metadata_xml` column
+  its refresh has always written to: without it the whole UPDATE failed to plan,
+  and with it the only path by which a service provider's **rotated signing
+  certificate** reaches this database — an administrator clicked refresh, got an
+  error, and assertions kept being signed against the old certificate. The
+  fourth was another false positive of the tool, now fixed there: the
+  access-review roll-up's literal is the first half of a query the code appends
+  a `GROUP BY` to, and `sqlprepare` prepared it alone and reported a grouping
+  error for a query that groups correctly at runtime. It now recognises a
+  literal the code appends to and skips only the errors a suffix can explain — a
+  missing column or table on such a fragment is still a finding.
+
+- **The console's tenant switcher has never worked, and nine other statements
+  the database refused.** `handleSwitchTenant` and `handleGetCurrentTenant`
+  selected `display_name` and `enabled` from `organizations`, which is
+  `(id, name, slug, domain, plan, status, …)` and has neither; both handlers map
+  any error from that row to 404, so switching tenant answered "Organization not
+  found" for every organization that exists — a feature that reads to whoever
+  hits it as a permissions problem. A **joiner rule that granted nothing**: the
+  lifecycle `assign_role` action inserted into `user_roles` with a `created_at`
+  column (the table records `assigned_at`), so no automated rule has ever
+  assigned a role, on any install. **Zero dormant accounts** on the security
+  posture card, because the count asked for `users.last_login` and the column is
+  `last_login_at` — zero is the answer that makes the card look best. A
+  **biometric policy targeted at a role matched nobody**, because the role
+  lookup selected a `roles` column from `users` (roles are rows in `user_roles`).
+  Plus the top-failed-users list (uuid into a varchar `COALESCE`), the push-MFA
+  enrolment label (one parameter used as both text and uuid), the API-key
+  adoption figure (`revoked_at` again), the churn-prediction input, and the risk
+  profile's average session duration (`sessions.created_at` → `started_at`).
+  Each was found by `tools/sqlprepare`; the tenant switch and the lifecycle
+  action are covered by new tests that run the real migration chain, both proved
+  red first. One register entry went the other way and is **withdrawn**: the
+  unified-audit reader's SELECT list, which the code uses as the search argument
+  of a `strings.Replace` that swaps it for `COUNT(*)`, was prepared as though it
+  were a statement and written up with a verdict that was true of nothing.
+  Measured since: the replacement fires and the count query it builds is valid.
+  `sqlprepare` now skips a "missing FROM-clause entry" on a literal that has no
+  FROM clause — a SELECT list is not a statement — while a missing *table*,
+  which always comes from a statement that has the FROM clause naming it, stays
+  a finding.
+
+- **Four compliance controls that reported compliant because their queries
+  could not run.** Six statements across the SOC 2 / ISO 27001 / GDPR reporting
+  named columns the schema does not have, and each failed silently into a zero.
+  `access_reviews.due_date` (the deadline is `end_date`) — the overdue-review
+  count read 0 on every report ever generated, so the dashboard stated that no
+  access review was overdue. `sessions.created_at` (it is `started_at`), twice —
+  average session length always 0 hours, so the "sessions run too long" control
+  never fired. `audit_events.resource_type` (it is `target_type`) — the GDPR
+  report's access-by-data-type section was empty in every report.
+  `api_keys.revoked_at` (revocation is `status`), in **both** halves of the
+  expired-key control — an install with expired keys still being accepted
+  reported zero findings and lost no points. A control that cannot fail is not a
+  control, and zero findings reads to an auditor as evidence. Migration v178
+  retires v10's seeded "Q1 2026 Access Review" fixture where it is untouched:
+  with the overdue query corrected, that pending row dated March would otherwise
+  give every install a permanent overdue finding no operator created and none
+  could close. Pinned by a new suite that runs the real migration chain rather
+  than creating its own tables — the sibling DB tests in that package define the
+  columns they then assert on, which is part of why these six survived.
+
+- **The right to erasure had never run, and the data package always omitted
+  four sections.** Both halves of the GDPR subject-rights implementation were
+  broken in the same way, and neither could be seen from outside. *Erasure
+  (Article 17):* the statement that anonymises the user row set `phone_number`
+  and `avatar_url`, neither of which exists on `users`, so it failed with
+  SQLSTATE 42703 — and being the **first** statement, its error was returned
+  before a single session, MFA enrolment or consent was wiped. No erasure
+  request has ever run to completion on any install. *Export (Article 15):* four
+  of the twelve categories named columns the schema does not have —
+  `audit_events.resource_type` (it is `target_type`), `mfa_totp.verified_at`
+  (`enrolled_at`), `mfa_webauthn.friendly_name` (`name`),
+  `mfa_push_devices.device_type` (`platform`/`device_name`/`device_model`) — and
+  each failure was logged at Debug and the section left out, while the result
+  reported `categories: 8` as though eight were all there were. The subject's
+  own activity log and all three MFA enrolment records were missing from every
+  data package this product has produced. Both are fixed against the real
+  schema, and both now say when they cannot do what they claim: a category that
+  fails is named in the bundle under `_incomplete` and counted in the response,
+  and a failed erasure statement returns an error instead of marking the request
+  completed. The erasure also now wipes the tables that actually hold a phone
+  number (`mfa_sms`, `mfa_phone_call`, `phone_call_challenges`) and the device
+  records (`known_devices`, `trusted_browsers`) — the "no leftover phone numbers
+  / device IDs" its own comment has always promised — and the export gained
+  those four as categories. Driven end to end by a new test against a migrated
+  database, proved red first on both halves.
+
+- **A risk score with nothing behind it.** The continuous-auth engine computes
+  five weighted factors — session age, source-address change, device
+  fingerprint, out-of-hours activity, action velocity — sums them into a 0-100
+  score, and returned `RiskFactors` exactly as empty as it was initialised, on
+  every response, while writing the literal `{}` into
+  `session_risks.risk_factors`, the column that exists for that detail. A score
+  of 45 that cannot say which factor produced it is not evidence for the step-up
+  it triggers. Each factor is now recorded as it is measured — type, raw points,
+  the deployment's weight, the weighted share of the scale, and a sentence
+  saying what was measured — and travels with the score, in the response and in
+  the history row under a `source` discriminator so the column's two writers can
+  be told apart. The v77 `risk_factors` table it should have been written to is
+  dropped by v176: nothing ever wrote it, its only reader had no caller, and the
+  one test that exercised that reader seeded the rows itself. The replacement
+  test drives the whole path, from a measurable condition to the factor list on
+  the score and in the stored row.
+
+- **The SQL gate added in this release could not fail the build.** ci.yml's
+  integration step opens `set -uo pipefail` — no `-e` — so a bare failing
+  command does not stop the script and the step's exit code is whatever the
+  LAST command returned. Measured: `bash -c 'set -uo pipefail; false; echo
+  reached; true'` prints `reached` and exits 0. `go run ./tools/sqlprepare
+  -fail` was added as a bare command, so it would have printed its findings into
+  a green job — the defect this branch keeps finding, written into the file
+  whose job is checking. It and `go run ./cmd/migrate up` now say `exit 1`
+  themselves, the four service builds in the same block are guarded (an
+  unbuilt service surfaced sixty seconds later as "services did not become
+  ready", naming the wrong cause), and
+  `scripts/check-run-blocks-can-fail.sh` keeps the next one honest: in a
+  block that sets shell options without `-e`, a gating command must be
+  guarded unless it is the last command, whose status *is* the step's. Eight
+  self-test cases, five of them negatives (`|| true`, a `-e` block, no `set`
+  line, the last command, non-gating commands).
+
+- **The SIEM forwarder created its own cursor table, as a role that cannot
+  create tables.** `internal/audit/siem_forwarder.go` opened with
+  `CREATE TABLE IF NOT EXISTS siem_forward_cursor` executed through the service
+  pool, which connects as `openidx_app` — the runtime role v53 created without
+  DDL rights. Measured against a fully migrated database:
+  `has_schema_privilege('openidx_app','public','CREATE')` is false. So the
+  statement always returned "permission denied for schema public" and every
+  poll after it failed on a missing relation: audit events have never reached a
+  SIEM on any install that uses the app role, which is every deployment this
+  repo ships. The least-privilege work and this forwarder were each correct
+  alone and were never read together. Migration **v175** creates the cursor and
+  grants the forwarder exactly SELECT, INSERT and UPDATE on it; the runtime DDL
+  is replaced by a read that says once which migration is missing.
+
+- **Listing scheduled reports failed outright**, and silently: `recipients` is
+  `TEXT[]` and the query COALESCEd it with the JSON literal `'[]'`, which
+  PostgreSQL rejects while planning, while the error path answers an empty slice
+  and a nil error — so the page was empty rather than broken.
+
+- **No access request had ever been auto-approved.** `access_requests.
+  resource_id` is a UUID and the lookup COALESCEd it with `''`, resolved at plan
+  time, so the query errored on every call.
+
+- **No security alert had ever been written, on any install.**
+  `internal/risk/alert.go` INSERTs twenty-one columns into `security_alerts`
+  and six of them do not exist — `tenant_id`, `ip_address`, `user_agent`,
+  `deliveries`, `acknowledged_by`, `acknowledged_at` — so the statement has
+  never executed since it was written. The single-alert read, the list and the
+  acknowledge path named the same absent columns, so the alerts page would have
+  been empty even if a row had arrived some other way, and the failure surfaced
+  only as an error the caller logged. Two of the six were a naming
+  disagreement: `tenant_id` is `org_id`, which the same statement already set
+  (the file's own comment claimed the table "carries both", which was never
+  true of the schema), and `ip_address` is `source_ip` — a caller that filled
+  only `IPAddress` would have written an empty address even once the statement
+  ran. Migration **v174** adds the other four, which are real fields with
+  nowhere to go, plus an index for the list the page issues. The second writer
+  needed no columns at all: `internal/audit/anomaly.go` INSERTed `type`,
+  `event_id`, `actor_id`, `timestamp` and `metadata` — the audit-events
+  vocabulary applied to this table — and every one maps onto a column that was
+  already there, so a detected anomaly now raises an alert instead of logging
+  that it could not. Found by `tools/sqlprepare`; the register is down from 39
+  to 34.
+
+- **The agent module was scanned for vulnerabilities against the wrong Go
+  standard library, and it was the toolchain-pin change that did it.**
+  `go-version-file` reads go.mod's `go` directive, not its `toolchain`
+  directive, so pointing every `setup-go` step at the root go.mod installed Go
+  1.26.0 rather than the pinned 1.26.8. The root scan was unaffected — the
+  `toolchain` line makes the go command re-exec 1.26.8 — but Go only ever
+  switches *up*, so the agent, pinned to 1.25, kept the installed 1.26.0 and
+  govulncheck reported the 19 advisories that release carries and 1.26.1 fixes,
+  two of them reachable from the agent's own SSO path. Before the pin change
+  the loose `'1.26'` spec happened to resolve to the runner's cached 1.26.7,
+  which is the only reason this was ever green. The agent scan now gets its own
+  `setup-go` reading `agent/go.mod`, and
+  `scripts/check-go-toolchain-pin.sh` gained two rules: a `go-version-file`
+  must name a file that exists, and a step running in another module must be
+  preceded by a `setup-go` for that module's go.mod. Eleven self-test cases,
+  and the guard was shown red against the real workflow with the new step
+  removed.
+
+- **ABAC evaluation failed on every request, which under
+  `ABAC_ENFORCE=enforce` denies everything.** `abac_policies.resource_id` is a
+  UUID column and the policy query compared it to the empty string; PostgreSQL
+  resolves that at plan time, so the statement never ran, the error became
+  `Allowed: false`, and the evaluator answered "policy evaluation error,
+  failing closed" for every call — in observe mode recording a would-deny on
+  every request, and in enforce mode denying them. Found by `tools/sqlprepare`
+  on its first sweep.
+
+- **The trusted-proxy hardening resolved every client to the proxy's own
+  address in the deployments this repo ships.** `ConfigureTrustedProxies` trusts
+  loopback only, on the stated premise that "every service sits behind the edge
+  and is reached over loopback". Neither reference deployment is: in
+  `deployments/docker` the TLS proxy forwards with
+  `proxy_pass http://oauth-service:8006` and the gateway proxies container to
+  container, and under Helm an ingress pod forwards to a service pod — and
+  `OIDX_TRUSTED_PROXIES` was set in no compose file, no chart value and no
+  `.env.example`. gin walks `X-Forwarded-For` right to left and stops at the
+  first untrusted address, so the edge's correctly written header was discarded
+  whole and `c.ClientIP()` returned the hop. Everything keyed on the client IP
+  therefore shared one value: the per-IP rate-limit bucket (including the
+  tighter auth-path budget that exists to slow a brute force, since pre-auth
+  requests have no user to key on), audit record IPs, known-IP device-trust
+  auto-approval and geo rules. The default stays loopback — widening it would
+  trust a forwarded header on installs whose services are directly reachable —
+  but the mismatch is no longer silent: a request arriving from an untrusted hop
+  with a forwarded header is logged once per hop, with the address to add, and
+  counted in `openidx_forwarded_for_from_untrusted_hop_total` (alert
+  `ForwardedClientIPDiscarded`). The detector is mounted from inside
+  `ConfigureTrustedProxies`, so there is one call site to get right rather than
+  eight. `OIDX_TRUSTED_PROXIES` is now passed through by the compose file,
+  exposed as the chart's `config.trustedProxies`, and documented in
+  `.env.example`. Existing installs behind a non-loopback edge should set it;
+  the warning names the address.
+
+- **Every CI job downloaded a Go toolchain it did not need, and one of those
+  downloads failed the build.** `go.mod` pins `toolchain go1.26.8`; `ci.yml`
+  asked `actions/setup-go` for `'1.26'`. The runner's tool cache holds 1.26.7,
+  so setup-go reported "Successfully set up Go version 1.26" and the next `go`
+  command fetched go1.26.8 from `proxy.golang.org` — roughly 70 MB, per job,
+  unretried, on every run. Twelve jobs did this. On 2026-09-06 one of those TLS
+  handshakes timed out and failed `Unit Tests (internal/notifications)` before a
+  single test body ran, which reads as a test failure and was a CDN blip on a
+  download that should not have happened. Every setup-go step now passes
+  `go-version-file: go.mod`, so the pin lives in one place and the exact
+  toolchain is installed directly. `scripts/check-go-toolchain-pin.sh`
+  (self-tested, wired into the `ci-resilience-guards` job) fails on a version
+  spec, including an exact one — two pins drift. The build matrix keeps its
+  minor-version label because that string is part of a check name branch
+  protection may require.
+
+- **The gateway — the service that faces the internet — sent no security
+  headers.** Seven of the eight HTTP service mains mount
+  `middleware.SecurityHeadersForEnv`; `cmd/gateway-service` did not, and nothing
+  in `internal/gateway` set one either. So the one host a browser actually talks
+  to answered with no HSTS, no `X-Content-Type-Options: nosniff`, no
+  `X-Frame-Options`, no `Referrer-Policy` and no CSP on everything it produces
+  itself: `/metrics`, the combined OpenAPI spec, and every 404, 429 and 502 the
+  proxy generates. Proxied responses carry the backend's headers, so the gap was
+  the gateway's own. Verified against the real binary both ways — before the fix
+  a gateway-generated 502 carried none of them, after it carries all six.
+  Duplicate CSP on proxied responses is harmless and the code says why: the
+  gateway forwards only the six `/api/v1` JSON groups, browsers enforce the
+  intersection of repeated policies, and the Guacamole path overrides do not
+  apply because those prefixes are not proxied here.
+  The omission was invisible because seven services looked like the rule, so the
+  list is now DERIVED: `TestEveryHTTPServiceMountsSecurityHeaders` finds every
+  `cmd/` main that builds a gin engine and fails unless it mounts the headers or
+  is declared exempt with a reason. `scripts/smoke-test.sh` asserts the same
+  thing against the running gateway, because "mounted in main.go" and "on the
+  wire" are two different claims.
+
+- **The gateway's request-body logger truncated the request it was observing.**
+  `internal/gateway/middleware/logging.go` read the body through an
+  `io.LimitReader` and then handed the *truncated* bytes back to the handler, so
+  turning on `LogRequestBody` would have silently cut every request over
+  `MaxBodySize` before the code that had to act on it ever saw it — a logging
+  option corrupting its own subject. It now reads the body in full, restores it
+  in full, and applies the limit to what is *logged*. The body also went into
+  the log verbatim on a path that carries passwords and authorization codes; it
+  goes through `logsafe.JSONBody` now.
+
+- **`logsafe.JSONBody` parsed an unbounded body.** Moving redaction ahead of
+  truncation (see the entry below) meant the parser saw the whole body rather
+  than the first 10 KB, and decoding into an `interface{}` tree costs several
+  times the input. Input over 64 KiB is now reported by size and not parsed.
+  Depth needed no separate bound: `encoding/json` refuses beyond 10,000 levels
+  of nesting, which bounds the recursion before it starts. Raised by a Semgrep
+  finding whose named CWE (502, unsafe deserialization) does not apply to Go's
+  `encoding/json` — but the concern underneath it did.
+
+- **The OAuth authorization code was written to the log in clear, on every
+  callback, by every service.** Three request loggers exist in this tree. The one
+  in `internal/common/middleware` has redacted query parameters for its whole
+  life and is mounted by nothing; the gateway's is mounted by nothing either. The
+  one every service actually mounts -- `internal/common/logger.GinMiddleware`,
+  used by `cmd/{identity,oauth,access,admin-api,audit,governance,provisioning,
+  gateway}-service` -- logged `c.Request.URL.RawQuery` verbatim. Five callback
+  routes read `code` from the query string (`internal/oauth/social_login.go`,
+  `social_link.go`, `service.go`; `internal/access/service.go`, `multi_idp.go`),
+  `internal/oauth/handlers_passwordless.go` reads the magic-link `token`, and two
+  routes read `session_token`; all of them went into the log unredacted. The
+  panic-recovery handler (`internal/middleware/recovery.go`) did the same, on the
+  entry most likely to be forwarded to an error tracker. A control that exists
+  only in the copy nobody runs is not a control.
+  The redaction now lives once, in `internal/common/logsafe`, and all three
+  loggers plus the recovery handler use it. A guard
+  (`TestNoLoggerWritesARawQueryString`) fails on any raw query string reaching a
+  log field, so which copy is mounted stops mattering.
+
+- **The redaction itself missed the values worth redacting, and had a
+  one-character bypass.** The list named secrets from memory: `access_token` and
+  `refresh_token` were there, `id_token_hint` was not; `token` was there,
+  `session_token` was not; `code`, `state`, `nonce`, `user_code`, `SAMLRequest`
+  and `RelayState` were absent entirely. And the parameter name was matched
+  BEFORE URL-decoding while the handler decodes, so the two disagreed about what
+  a parameter was called: `?%74oken=hunter2` was read by the handler as
+  `token=hunter2` and logged as `%74oken=hunter2`, in clear (measured). Names are
+  now matched decoded, an undecodable name is redacted rather than trusted, and
+  the exact list is only half the rule -- the other half matches by WORD, so
+  `session_token`, `backup_code` and `provisioning_key` redact without anybody
+  listing them. A census guard
+  (`internal/common/middleware/query_param_census_test.go`) derives every query
+  parameter the tree reads and requires each to be classified: redacted, or
+  declared public with a reason. Ninety-four are classified today; a
+  ninety-fifth cannot arrive unclassified.
+
+- **`sanitizeJSON` failed open in three ways at once.** Its five "pattern
+  variations" were three byte-identical duplicates plus one with a space, so
+  `"password" : "x"` was missed; it redacted only the first occurrence of each
+  pattern, so a second password survived; and it matched only a quoted string
+  value, so a numeric pin, an array of recovery codes and a nested
+  `{"credentials":{...}}` object went through whole. `LogBody` is off by default
+  and no service sets it, so this never reached a real log -- it was a trap armed
+  for whoever turned the flag on to debug something. It now parses the body and
+  redacts by field name at any depth, in any container; a body that is not JSON
+  is withheld with its size reported rather than guessed at. Related: sanitising
+  ran AFTER the 10 KB truncation, and truncated JSON does not parse, so with the
+  new implementation every large body would have been discarded whole. Redact
+  first, cut second.
+
+- **The correlation id every log line is stamped with was chosen by the
+  client.** Seven places read `X-Request-ID`, `X-Correlation-ID` or
+  `traceparent` off the request and adopted whatever arrived -- three
+  `RequestID` middlewares (`internal/middleware/requestid.go` twice,
+  `internal/common/middleware/logging.go`,
+  `internal/common/middleware/middleware.go`), the gateway's correlation
+  middleware and its `GetCorrelationID` fallback, and `TracingHeaders`, which
+  relays them to the backend. That value is echoed back in the response, kept on
+  the request context, written into every log entry for the request, and set on
+  the outbound request to each service: a caller sending five kilobytes of "A"
+  got five kilobytes back and five kilobytes per entry (measured, not
+  hypothesised), and could equally pick an id that collides with somebody else's
+  request. An inbound value is now adopted only when it is id-shaped --
+  `logsafe.PlausibleID`, which accepts a UUID, a W3C traceparent and a vendor
+  scheme, and rejects anything longer than 128 bytes or outside
+  `[A-Za-z0-9-_.:]` -- and is replaced with a fresh UUID otherwise. Replaced,
+  not cleaned: an id quietly rewritten still ties one request's entries together
+  but no longer matches what the caller kept, which is the only job it has. One
+  implementation now, and a guard (`TestCorrelationHeadersAreValidatedWhereThey
+  AreRead`) that fails on an eighth copy -- the same lesson `logsafe` itself was
+  created for, one level up.
+
+- **`logsafe`'s own comment named the wrong mechanism.** It said zap's console
+  encoder writes a newline raw where the JSON encoder escapes it, so a hostile
+  value in a FIELD could forge a log line. Measured, that is backwards: the
+  console encoder delegates fields to a JSON encoder, so a newline comes out as
+  `\n` and an ANSI escape as `\u001b` under both. The half that is raw is the
+  MESSAGE, so the forging shape is `logger.Warn(fmt.Sprintf("... %s", input))`,
+  which the comment did not mention. Naming the wrong mechanism is worse than
+  naming none -- it invites "just use the JSON encoder", which fixes nothing.
+  The comment now says what was measured, `encoder_test.go` measures it (so the
+  claim fails a build rather than ageing), and the reasons a field still needs
+  cleaning are stated as what they are: the length bound no encoder applies, the
+  sinks downstream of zap that do their own escaping or none, and the fact that
+  a percent-encoded `%0A` in a request target really does arrive in
+  `URL.Path` as a newline. A new guard forbids the interpolated-message shape
+  outright; the tree had two (`internal/server/graceful.go`), now zero.
+
+- **Request-derived values reached the log unfiltered across
+  `internal/common/middleware`.** CodeQL flagged one site -- the cross-org
+  warning added earlier on this branch (`tenant_resolver.go`) -- and the same
+  shape was in eight more: the CSRF middleware's `origin`/`referer`/`path`, the
+  request logger's `path`/`method`/`client_ip`/`user_agent`/`query_params`, the
+  OPA middleware's `path`/`method`, the rate limiter's `key` (which embeds the
+  client IP) and `path`, and `internal/common/logger`'s second request logger.
+  All now go through `logsafe.String`. `request_body` deliberately does not: it
+  is a payload rather than an identifier, `logsafe.MaxLen` would cut it to 256
+  bytes and defeat the option somebody turned on, and it is already bounded at
+  10 KB -- said in the code rather than left for a reader to wonder about.
+
+- **The mandatory cross-org audit trail had never been written by a test, and
+  could not have been where it was aimed.** `TestCrossOrgIsolation`'s
+  platform-admin subtest skipped on every run of its life -- "admin is not a
+  platform admin in this environment" -- so `audit.CrossOrgAuditor`, the row
+  that makes a platform admin crossing a tenant boundary accountable, was
+  asserted nowhere. That code is the kind that fails silently: a failed insert
+  is logged and the request succeeds anyway, so a broken trail looks exactly
+  like a working one. Chasing the skip found why it could never have passed:
+  `TenantResolver` is mounted **before** route-level auth on identity-service
+  and five other services, so at resolution time the context carries no roles,
+  `SuperAdminPredicate` is false for every caller, and steps 2 and 3 of the
+  resolver's documented precedence are unreachable there. `admin-api` mounts it
+  on `/api/v1` after auth and is the one service where the control is live. The
+  suite now proves both halves where they are true: X-Org-ID is inert on a
+  service that resolves before auth; on admin-api a `super_admin` crosses and
+  the audit row lands under the **target** org, a plain admin does not cross and
+  no row is written, and the RLS bypass the insert depends on is shown
+  load-bearing on a NOSUPERUSER connection (CI connects as a superuser, where
+  RLS is ignored and the bypass would look unnecessary). admin-api now starts in
+  the integration job alongside the other three. No migration seeds a
+  `super_admin` role -- v134 grants a permission to one and matches nothing --
+  so the fixture creates and removes it.
+
+- **Nine tests that ran no code at all.** Seven in `internal/directory` over
+  the directory authentication router, one named after a function it never
+  called, one that read fields off a zero value it had built itself. Each was
+  the shape `_ = service.AuthenticateUser` -- a method VALUE assigned to the
+  blank identifier, which is not a call: the function under test never ran, and
+  the only thing established (that the method exists) the compiler already
+  guaranteed. The directory ones carried the comment "Without a real DB, we
+  test the method signature exists" in a package that has had a testcontainers
+  harness the whole time. `scripts/check-inert-tests.sh` could not see any of
+  them -- it looks for an unconditional `t.Skip`, and these do not skip; they
+  run and report a tick. New `tools/inerttests` (go/ast, so a method value and
+  a method call are told apart exactly) fails the build on the shape, with an
+  8-case self-test whose negative cases are the legitimate look-alikes it must
+  not touch: a call assigned to `_`, a compile-time interface assertion, a real
+  test that discards one result. All nine replaced with tests that run the
+  code: the directory router's refusals (an Entra directory must not hand a
+  password to the LDAP connector; an unknown type must not fall through to it;
+  a disabled or other-tenant directory authenticates nobody), the sync-log
+  reads' tenant scoping, `ListenAndServe` actually serving and releasing its
+  port, and the org-lookup adapter narrowing a twelve-field `Organization` to
+  the two-field value it puts on every request's context.
+
+- **A second tenant could not name a role, a service account or a SCIM group
+  the way the first one had.** `roles.name`, `service_accounts.name` and
+  `scim_groups.display_name` were UNIQUE across the whole install while the rows
+  were per-tenant: all three tables already carry `org_id NOT NULL` and FORCE
+  ROW LEVEL SECURITY, and every query that reads them by name already names the
+  organization. Only the key disagreed, and what it cost is a refusal rather
+  than a leak -- the second organization to want a role called `developer` is
+  told `duplicate key value violates unique constraint "roles_name_key"` about a
+  row its own queries can never see. `developer` is not a corner case: the seed
+  creates `admin`, `manager`, `user`, `auditor` and `developer` for the default
+  organization on every install, so the five most ordinary role names are taken
+  before the second tenant arrives, and a SCIM group named `Engineering`
+  colliding across tenants is the ordinary case rather than the unlucky one --
+  there the failure lands inside directory provisioning rather than in front of
+  an operator. Migration **v173** re-keys all three to `(org_id, <name>)`, the
+  same shape v138 gave `ispm_rules`, `ispm_scores` and `ai_agents`; no column is
+  added and no belt changes, because all three tables already have both.
+  `ziti_identities.name` and `ziti_services.name` are deliberately left
+  install-wide: those names live in the Ziti controller, an install has one
+  controller, and widening the local key would move the collision out of a clean
+  database error and into a provisioning failure against the overlay.
+
+- **Searching users returned a 500 on every call.** `ListUsers`'s search branch
+  ends `ILIKE $1 ESCAPE '\\'`, written inside a Go **raw** string, so the SQL
+  text carries two backslashes where Postgres allows exactly one character:
+  `ERROR: invalid escape string ... Escape string must be empty or one
+  character` (SQLSTATE 22025), on every search, on every install. The console's
+  user-search box could never have worked. Both sites now send one backslash,
+  and the escaping the clause exists for is asserted -- a search for `a_b` must
+  not match `axb`.
+
+- **One user with no first name broke the entire user list.** `users.first_name`
+  and `last_name` are nullable and `UserDB` scans them into plain strings, so a
+  single such row failed the whole call with "cannot scan NULL into *string" --
+  not a bad row, a bad page. The product's own create path writes `""`, which is
+  why it stayed hidden; a directory-synced user, a SCIM import or a row predating
+  the column produces one. The three user SELECTs and the three WebAuthn lookups
+  (where the same scan turned a passkey login into "user not found") now
+  COALESCE both columns.
+
+- **The DB-backed benchmark suite had never run, and could not have.** Sixteen
+  benchmarks across `internal/identity` and `internal/oauth` pointed at a
+  hardcoded DSN naming a database (`openidx_test`) that neither CI nor the
+  compose stack creates, so they skipped everywhere -- and the benchmark job runs
+  `go test -bench=. ./...` with no Postgres service at all. Underneath the skip:
+  every id was a string like `bench_role_8f3a` fed to a `uuid` column, the
+  seeding Execs discarded their errors, `ON CONFLICT (name)` named indexes that
+  no longer exist, one insert named three columns `user_sessions` has never had,
+  another seeded the wrong table entirely, and every timed call ran under a bare
+  `context.Background()` so it returned "orgctx: no organization context" before
+  touching the database. They now read `DATABASE_URL`, seed through valid
+  statements under an org-scoped context, fail rather than continue when a
+  fixture does not land, and check after the timed loop that the call they timed
+  did not error on every iteration. `BenchmarkAuthenticate` reports ~80 ms/op
+  now, which is bcrypt actually running; it used to report ~1 µs. The two user
+  defects above are what running them turned up.
+
+- **A resolver that could not answer looked exactly like one that answered
+  "no".** `TenantResolver`'s documented precedence promises four steps, but
+  steps 2 (JWT `org_id` claim) and 3 (platform-admin `X-Org-ID`) read the gin
+  context, so they exist only where the middleware is mounted after the auth
+  middleware that fills it. Six services mount it globally with `router.Use`,
+  ahead of route-level auth; only `cmd/admin-api` mounts it on an authenticated
+  group. On the six, every request silently lands on the default org whether the
+  caller is a platform admin or not, and that stayed unnoticed for a release
+  because both outcomes look identical from outside. The doc comment and all
+  seven wiring sites now say which they are, and a new `Logger` field reports the
+  mismatch -- once, at the moment a caller actually sends `X-Org-ID` to a
+  resolver that cannot act on it. Deliberately narrow: a caller who simply is not
+  a platform admin has roles in context and logs nothing, because a warning on
+  ordinary refusals is one an operator filters out. Nothing about the resolution
+  changes; the fail-safe direction was already right, it was just invisible.
+
+- **The gateway's route table had no test, behind a reason that was untrue.**
+  `TestRegisterServiceRoutes` skipped with "route conflicts in the routes
+  package"; `registerServiceRoutes` registers 63 routes on a fresh engine
+  without conflict, and has since the duplicate health registration moved out.
+  It now asserts every proxied service is reachable by every method a REST
+  client uses, that each proxied group resolves to a backend URL (and vice
+  versa, so neither list can drift alone), that the docs endpoints are served,
+  and that `/health` is **not** registered here -- registering it twice panics
+  the gateway at boot, in production, which no test could previously catch.
+
+- **Authorization-code expiry and single-use were both untested.** The expiry
+  subtest was a bare skip ("requires code TTL modification or long wait"), and
+  the one named for replay protection asserted that a login helper returned a
+  token. Neither needed what it claimed: the code is available to the harness,
+  and expiry is a column. An expired code is now shown to be refused as
+  `invalid_grant` and removed from the table, and a replayed code is shown to
+  mint nothing -- both verified by mutating `ConsumeAuthorizationCode` and
+  watching them go red.
+
+- **`scripts/check-inert-tests.sh` looked only at the first line of a body.**
+  A skip preceded by comments -- which is where the reason for not writing the
+  test gets parked -- slipped past it, and two inert tests sat green behind a
+  paragraph the whole time the guard was in CI. Blank lines and comments no
+  longer clear the finding; a statement still does.
+
+- **A denied access request could be approved back to life.** `handleApproveRequest`
+  read the request only to compare `requester_id` against the caller; it never
+  looked at the request's **status**, and the pending-count that decides whether
+  to fulfil counts rows marked `pending` while being blind to rows marked
+  `denied`. On a request with two approvers where the first denied, the second's
+  row was untouched: their approval drove the count to zero and the request was
+  flipped from `denied` back to `approved` and **fulfilled** -- the role granted
+  over the top of a recorded refusal, with both decisions in the audit trail and
+  nothing to say one had overridden the other. A decided request (denied,
+  cancelled or already approved) now answers `409` and grants nothing. Found by
+  the first test ever written for the denial path.
+
+- **Five of the seven OpenAPI specs were not YAML.** `28df9119` wrote the
+  shared-responses block into a path item, on top of that operation's
+  `parameters:` key, in `audit-service`, `governance-service`,
+  `identity-service`, `oauth-service` and `provisioning-service`; a sixth,
+  `access-service`, parsed but referred to a `ServerError` response it never
+  defined. It shipped in v1.34.0. Nothing noticed because nothing in this
+  repository ever parsed them -- `docs.yml` copies `api/openapi/*` into the
+  published site verbatim, so the API reference for five services was being
+  served a file no parser accepts. All seven now parse with every local `$ref`
+  resolving, no operation lost, and `scripts/check-openapi-parses.sh` holds it.
+
+- **Twenty-eight tests could not fail.** `internal/governance/request_test.go`
+  was nine functions and fourteen subtests, every one a bare
+  `t.Skip("DB mock not available")` -- named after `SubmitRequest` /
+  `ApproveRequest` / `DenyRequest`, methods this service has never had, while
+  the package carried a container-backed `setupTestDB` the whole time.
+  `jit_test.go` skipped duration-bounds cases as needing "service init" over
+  validation that runs before `RequestElevation` touches a database.
+  `response_test.go` skipped four cases as needing "a real Redis client" in a
+  package that has used miniredis since it was written, three of them named
+  after methods that do not exist. And `TestJITRequestValidation` re-implemented
+  the validation inside the test body and asserted its own copy -- a tautology
+  that would stay green if `RequestElevation` dropped every check. All replaced
+  with tests that drive the real code; `scripts/check-inert-tests.sh` fails on
+  the shape.
+
+- **Two database-backed test suites ran nowhere.** `ci.yml`'s unit matrix gives
+  every package a live Postgres and exports it as `DATABASE_URL`; it does not
+  set `OPENIDX_TEST_DATABASE_URL`, which is the developer escape hatch for a
+  workstation with Postgres but no Docker daemon. `internal/oauth`'s SAML
+  service-provider **tenant isolation** suite and the **v172** migration test
+  (per-organization SET replay protection) read only that variable and skipped
+  when it was unset -- so they skipped on every CI run, and on any workstation
+  where nobody exported it by hand, while the job reported success. A skipped
+  test displays as a pass. Both now prefer the variable and otherwise start a
+  throwaway container, the way the other nine database-backed helpers already
+  did. `scripts/check-test-reachability.sh` fails on the shape, and its
+  self-test puts each of the two suites back into the form it was merged in and
+  requires the guard to go red on both.
+
 - **A dispatched release left the images unstamped.** `release.yml` already had
   a `workflow_dispatch` path, for environments that cannot push a tag ref at
   all -- a branch-scoped git credential answers HTTP 403 for `refs/tags/*`.
@@ -20,8 +2109,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   did not exist -- the failure `docker.yml`'s own retag job carries a comment
   against. `release.yml` now hands off to `docker.yml` on that path
   (`workflow_dispatch` being one of the two events `GITHUB_TOKEN` may still
-  start), `docker.yml` accepts the version and stamps `X.Y.Z` / `X.Y` / `X` /
-  `stable` from either trigger, and `scripts/check-release-dispatch.sh` holds
+  start), `docker.yml` accepts the version and stamps both spellings --
+  `X.Y.Z` / `X.Y` / `X` and `vX.Y.Z` / `vX.Y` / `vX`, plus `stable` -- from
+  either trigger. The un-prefixed three are not decoration: on a tag push
+  `docker/metadata-action`'s `type=semver` publishes them and that matches a
+  tag ref and nothing else, so stamping only the `v` form would have left a
+  dispatched release complete-looking while the documented
+  `docker pull ...:1.34.0` returned 404. `scripts/check-release-dispatch.sh` holds
   the two paths together in CI -- its self-test regresses `docker.yml` to the
   pushed-tags-only shape the repository actually had and requires the guard to
   go red.

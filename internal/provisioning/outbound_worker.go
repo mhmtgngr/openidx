@@ -102,9 +102,59 @@ type claimedItem struct {
 	attempts     int
 }
 
+// queueStallTimeout is how long a claimed item may sit in 'processing' before
+// the drain assumes nothing is working on it. One SCIM call is bounded by the
+// client's own timeout, so an item still 'processing' many minutes later is one
+// whose outcome was never written down.
+const queueStallTimeout = 15 * time.Minute
+
+// requeueStalledItems returns items abandoned in 'processing' to the queue.
+//
+// drainBatch claims an item by setting state='processing' and only ever selects
+// state='pending', so an item whose outcome could not be written -- the three
+// UPDATEs in processItem all discarded their errors, and the process can also
+// be killed mid-call -- was never applied, never retried, never dead-lettered
+// and never looked at again. For an outbound deprovision that is a leaver whose
+// account in the downstream application is quietly never disabled, with the
+// queue reporting nothing wrong.
+//
+// The attempt is counted on the way back, so an item that keeps stalling
+// reaches maxQueueAttempts and dead-letters rather than cycling for ever.
+func (w *outboundWorker) requeueStalledItems(ctx context.Context) {
+	//orgscope:ignore outbox drain (runs under bypass_rls) recovering its own abandoned claims; one worker serves every tenant and claims by state alone
+	tag, err := w.svc.db.Pool.Exec(ctx, `
+        UPDATE scim_provisioning_queue
+           SET state='pending', attempts=attempts+1, next_attempt_at=NOW(), updated_at=NOW(),
+               last_error='provisioning outcome was never recorded; requeued by the drain'
+         WHERE state='processing' AND updated_at < NOW() - $1::interval`,
+		fmt.Sprintf("%d seconds", int(queueStallTimeout.Seconds())))
+	if err != nil {
+		w.logger.Warn("could not requeue stalled provisioning items", zap.Error(err))
+		return
+	}
+	if n := tag.RowsAffected(); n > 0 {
+		w.logger.Warn("requeued provisioning items whose outcome was never recorded",
+			zap.Int64("rows", n))
+	}
+}
+
+// markQueueItem moves a claimed item to its terminal state. The worker already
+// owns the row, so the only thing that can fail is the write, and a write that
+// fails leaves the item claimed until requeueStalledItems takes it back -- this
+// is what makes that visible rather than silent.
+func (w *outboundWorker) markQueueItem(ctx context.Context, id int64, state, sql string, args ...any) {
+	if _, err := w.svc.db.Pool.Exec(ctx, sql, args...); err != nil {
+		w.logger.Error("could not record a provisioning outcome; the item stays claimed until the "+
+			"drain requeues it",
+			zap.Int64("id", id), zap.String("state", state), zap.Error(err))
+	}
+}
+
 // drainBatch claims up to BatchSize ready items (atomically, skipping locked
 // rows so multiple workers/replicas don't collide) and processes each.
 func (w *outboundWorker) drainBatch(ctx context.Context) (int, error) {
+	w.requeueStalledItems(ctx)
+
 	rows, err := w.svc.db.Pool.Query(ctx, `
         UPDATE scim_provisioning_queue q
            SET state = 'processing', updated_at = NOW()
@@ -145,7 +195,7 @@ func (w *outboundWorker) drainBatch(ctx context.Context) (int, error) {
 func (w *outboundWorker) processItem(ctx context.Context, it claimedItem) {
 	err := w.apply(ctx, it)
 	if err == nil {
-		_, _ = w.svc.db.Pool.Exec(ctx,
+		w.markQueueItem(ctx, it.id, "done",
 			//orgscope:ignore outbox drain (runs under bypass_rls) marking an item the worker already claimed by primary key; one worker serves every tenant, same shape as the SSF outbox, and the item's tenant travels on the claimed row
 			`UPDATE scim_provisioning_queue SET state='done', updated_at=NOW() WHERE id=$1`, it.id)
 		return
@@ -161,7 +211,7 @@ func (w *outboundWorker) processItem(ctx context.Context, it claimedItem) {
 			zap.String("target", it.targetID), zap.String("op", it.operation),
 			zap.String("resource", it.resourceType), zap.String("local_id", it.localID),
 			zap.Int("attempts", attempts), zap.Bool("terminal", terminal), zap.Error(err))
-		_, _ = w.svc.db.Pool.Exec(ctx,
+		w.markQueueItem(ctx, it.id, state,
 			//orgscope:ignore outbox drain (runs under bypass_rls) dead-lettering an item the worker already claimed by primary key
 			`UPDATE scim_provisioning_queue SET state=$2, attempts=$3, last_error=$4, updated_at=NOW() WHERE id=$1`,
 			it.id, state, attempts, err.Error())
@@ -175,7 +225,7 @@ func (w *outboundWorker) processItem(ctx context.Context, it claimedItem) {
 		backoff = time.Hour
 	}
 	//orgscope:ignore outbox drain (runs under bypass_rls) rescheduling an item the worker already claimed by primary key
-	_, _ = w.svc.db.Pool.Exec(ctx, `
+	w.markQueueItem(ctx, it.id, "pending", `
         UPDATE scim_provisioning_queue
            SET state='pending', attempts=$2, last_error=$3,
                next_attempt_at = NOW() + $4::interval, updated_at=NOW()
@@ -370,14 +420,27 @@ func (w *outboundWorker) upsertRecord(ctx context.Context, it claimedItem, remot
 	return nil
 }
 
+// markRecordError records, against the resource itself, that provisioning it
+// failed. scim_provisioning_records is what the target's status page reads, so
+// this write is the only thing that tells an administrator a user was not
+// provisioned. Its error was discarded: a dead-lettered item whose record could
+// not be marked left the page showing the resource as it was last seen -- fine,
+// or not there at all -- with the failure recorded nowhere a person looks.
 func (w *outboundWorker) markRecordError(ctx context.Context, it claimedItem, cause error) {
-	_, _ = w.svc.db.Pool.Exec(ctx, `
+	if _, err := w.svc.db.Pool.Exec(ctx, `
         INSERT INTO scim_provisioning_records
             (org_id, target_id, resource_type, local_id, status, last_error)
         VALUES ($1,$2,$3,$4,'error',$5)
         ON CONFLICT (target_id, resource_type, local_id)
         DO UPDATE SET status='error', last_error=EXCLUDED.last_error, updated_at=NOW()`,
-		nullIfEmpty(it.orgID), it.targetID, it.resourceType, it.localID, cause.Error())
+		nullIfEmpty(it.orgID), it.targetID, it.resourceType, it.localID, cause.Error(),
+	); err != nil {
+		w.logger.Error("could not record a provisioning failure against the resource; the target's "+
+			"status page will not show this one as failed",
+			zap.String("target", it.targetID), zap.String("resource", it.resourceType),
+			zap.String("local_id", it.localID), zap.NamedError("provisioning_error", cause),
+			zap.Error(err))
+	}
 }
 
 // clientFor builds a scimclient for a target, resolving its bearer token.

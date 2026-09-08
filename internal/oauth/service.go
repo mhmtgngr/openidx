@@ -41,8 +41,10 @@ import (
 	"github.com/openidx/openidx/internal/identity"
 	"github.com/openidx/openidx/internal/risk"
 	"github.com/openidx/openidx/internal/signingkeys"
+	"github.com/openidx/openidx/internal/webhooks"
 
 	"github.com/openidx/openidx/internal/common/logsafe"
+	"github.com/openidx/openidx/internal/revocation"
 )
 
 // OAuthClient represents an OAuth 2.0 client application
@@ -151,9 +153,16 @@ type OIDCDiscovery struct {
 	TokenEndpointAuthMethodsSupported []string `json:"token_endpoint_auth_methods_supported"`
 	ClaimsSupported                   []string `json:"claims_supported"`
 	CodeChallengeMethodsSupported     []string `json:"code_challenge_methods_supported"`
-	EndSessionEndpoint                string   `json:"end_session_endpoint,omitempty"`
-	BackchannelLogoutSupported        bool     `json:"backchannel_logout_supported,omitempty"`
-	BackchannelLogoutSessionSupported bool     `json:"backchannel_logout_session_supported,omitempty"`
+	// RFC 8414 §2. Both endpoints are routed (POST /oauth/revoke, POST
+	// /oauth/introspect) and neither was advertised, so a relying party that
+	// reads discovery to find where to revoke a token at sign-out found nowhere
+	// and did not revoke.
+	RevocationEndpoint    string `json:"revocation_endpoint,omitempty"`
+	IntrospectionEndpoint string `json:"introspection_endpoint,omitempty"`
+
+	EndSessionEndpoint                string `json:"end_session_endpoint,omitempty"`
+	BackchannelLogoutSupported        bool   `json:"backchannel_logout_supported,omitempty"`
+	BackchannelLogoutSessionSupported bool   `json:"backchannel_logout_session_supported,omitempty"`
 }
 
 // Service provides OAuth/OIDC operations
@@ -722,7 +731,7 @@ func (s *Service) handleRefreshTokenReuse(ctx context.Context, token *RefreshTok
 		zap.Timep("rotated_at", token.UsedAt))
 
 	if s.webhookService != nil {
-		s.webhookService.Publish(ctx, "oauth.refresh_token.reuse_detected", map[string]interface{}{
+		s.webhookService.Publish(orgctx.Detached(ctx), webhooks.EventRefreshTokenReuse, map[string]interface{}{
 			"user_id":        token.UserID,
 			"client_id":      clientID,
 			"family_id":      token.FamilyID,
@@ -789,8 +798,15 @@ func accessTokenBlacklistKey(token string) string {
 // userTokensRevokedAtKey returns the Redis key recording the most recent
 // "revoke everything for this user" timestamp. Any access token whose `iat`
 // is older than the value at this key is considered revoked.
+//
+// The format lives in internal/revocation because this service is not the only
+// writer: governance sets the same marker when an access review revokes
+// somebody's access. It used to set a DIFFERENT key -- the format came from
+// internal/auth's TokenService, which no binary reaches -- so that revocation
+// was written where nothing read it and the reviewed user's session kept
+// working.
 func userTokensRevokedAtKey(userID string) string {
-	return "oauth:user_tokens_revoked_at:" + userID
+	return revocation.UserTokensRevokedAtKey(userID)
 }
 
 // MarkAccessTokenRevoked adds an access token to the revocation blacklist.
@@ -821,7 +837,7 @@ func (s *Service) MarkUserTokensRevoked(ctx context.Context, userID string) erro
 	// 7 days is comfortably longer than the configured access-token lifetime
 	// (3600s by default) and bounds memory at one short string per user.
 	return s.redis.Client.Set(ctx, userTokensRevokedAtKey(userID),
-		strconv.FormatInt(time.Now().Unix(), 10), 7*24*time.Hour).Err()
+		revocation.MarkerValue(time.Now()), revocation.MarkerTTL).Err()
 }
 
 // IsAccessTokenRevoked returns true when either (a) the token's own
@@ -855,7 +871,7 @@ func (s *Service) IsAccessTokenRevoked(ctx context.Context, token string, userID
 				return err
 			}
 			if v != "" {
-				cutoff, perr := strconv.ParseInt(v, 10, 64)
+				cutoff, perr := revocation.ParseMarker(v)
 				// `<=` means "tokens issued in the same wall-clock second as
 				// (or before) the logout-all call are revoked." This is the
 				// right semantic for /oauth/logout-all: every outstanding
@@ -866,7 +882,7 @@ func (s *Service) IsAccessTokenRevoked(ctx context.Context, token string, userID
 				// the cutoff went away when handleLogout switched to a
 				// per-token blacklist for single-session logout (only
 				// logout-all bumps the cutoff now).
-				if perr == nil && issuedAt <= cutoff {
+				if perr == nil && revocation.IsRevoked(issuedAt, cutoff) {
 					revoked = true
 				}
 			}
@@ -1516,13 +1532,21 @@ func (s *Service) handleDiscovery(c *gin.Context) {
 		// Advertising id_token / token id_token / code id_token sent conforming
 		// clients down a flow that silently returns a code instead. Implicit is
 		// also removed outright by OAuth 2.1, so narrowing is the right direction.
-		ResponseTypesSupported:            []string{"code"},
-		GrantTypesSupported:               []string{"authorization_code", "refresh_token", "client_credentials", grantTypeTokenExchange, grantTypeDeviceCode},
-		SubjectTypesSupported:             s.discoverySubjectTypes(),
-		IDTokenSigningAlgValuesSupported:  []string{"RS256"},
-		TokenEndpointAuthMethodsSupported: []string{"client_secret_post", "client_secret_basic"},
+		ResponseTypesSupported:           []string{"code"},
+		GrantTypesSupported:              []string{"authorization_code", "refresh_token", "client_credentials", grantTypeTokenExchange, grantTypeDeviceCode},
+		SubjectTypesSupported:            s.discoverySubjectTypes(),
+		IDTokenSigningAlgValuesSupported: []string{"RS256"},
+		// "none" is how RFC 8414 spells a public client, and this server has
+		// them: dcr.go registers a client as public when
+		// token_endpoint_auth_method=none, and the token endpoint skips secret
+		// verification for that type (PKCE carries the proof instead). Omitting
+		// it told every conforming SPA and native client that it had no usable
+		// authentication method here.
+		TokenEndpointAuthMethodsSupported: []string{"client_secret_post", "client_secret_basic", "none"},
 		ClaimsSupported:                   []string{"sub", "iss", "aud", "exp", "iat", "email", "email_verified", "name", "given_name", "family_name", "sid"},
 		CodeChallengeMethodsSupported:     []string{"S256"},
+		RevocationEndpoint:                base + "/oauth/revoke",
+		IntrospectionEndpoint:             base + "/oauth/introspect",
 		EndSessionEndpoint:                base + "/oauth/logout",
 		BackchannelLogoutSupported:        true,
 		BackchannelLogoutSessionSupported: true,
@@ -1790,6 +1814,18 @@ func (s *Service) handleLogin(c *gin.Context) {
 				map[string]interface{}{"reason": err.Error(), "user_agent": userAgent})
 		}()
 
+		// login.failed has been a declared webhook event type with no publisher:
+		// the audit row above was written and nothing was ever delivered, so an
+		// operator watching for a credential-stuffing burst from their own SIEM
+		// saw an empty stream. The username is what the caller typed, so it is
+		// not a confirmed account and the payload says so.
+		if s.webhookService != nil {
+			s.webhookService.Publish(orgctx.Detached(c.Request.Context()), webhooks.EventLoginFailed, map[string]interface{}{
+				"username": req.Username, "ip": clientIP,
+				"reason": err.Error(), "user_agent": userAgent,
+			})
+		}
+
 		// Return appropriate error message
 		errorMsg := "Invalid username or password"
 		if err.Error() == "account is locked" {
@@ -1887,11 +1923,11 @@ func (s *Service) handleLogin(c *gin.Context) {
 
 		// Publish webhook event for login
 		if s.webhookService != nil {
-			eventType := "login.success"
+			eventType := webhooks.EventLoginSuccess
 			if riskScore >= 70 {
-				eventType = "login.high_risk"
+				eventType = webhooks.EventLoginHighRisk
 			}
-			s.webhookService.Publish(c.Request.Context(), eventType, map[string]interface{}{
+			s.webhookService.Publish(orgctx.Detached(c.Request.Context()), eventType, map[string]interface{}{
 				"user_id": user.ID, "ip": clientIP, "location": location,
 				"risk_score": riskScore, "device_trusted": deviceTrusted,
 			})
@@ -3135,7 +3171,7 @@ func (s *Service) handleAuthorizationCodeGrant(c *gin.Context) {
 
 	s.logger.Debug("Token request received",
 		zap.String("client_id", clientID),
-		zap.String("redirect_uri", redirectURI),
+		logsafe.String("redirect_uri", redirectURI),
 		zap.Bool("has_code", code != ""),
 		zap.Bool("has_verifier", codeVerifier != ""))
 
@@ -4396,7 +4432,7 @@ func (s *Service) abacGateAllows(c *gin.Context, userID, clientID, appID string)
 
 	allow, wouldDeny, res := abac.Gate(ctx, s.db, org.ID, mode, abac.EvaluationRequest{
 		UserAttributes: attrs,
-		ResourceType:   "application",
+		ResourceType:   abac.ResourceTypeApplication,
 		ResourceID:     appID,
 	})
 	if wouldDeny {
@@ -4408,6 +4444,16 @@ func (s *Service) abacGateAllows(c *gin.Context, userID, clientID, appID string)
 			logsafe.String("client_id", clientID),
 			logsafe.String("application_id", appID),
 			logsafe.String("policy_id", res.PolicyID))
+		// policy.violated: declared as a webhook event type and published by
+		// nothing until now. An attribute policy refusing a sign-in is the
+		// decision an operator most wants forwarded -- it is the one their
+		// helpdesk will be asked about within the minute.
+		if s.webhookService != nil {
+			s.webhookService.Publish(orgctx.Detached(ctx), webhooks.EventPolicyViolated, map[string]interface{}{
+				"user_id": userID, "client_id": clientID, "application_id": appID,
+				"policy_id": res.PolicyID, "reason": res.Reason, "ip": c.ClientIP(),
+			})
+		}
 		c.JSON(403, gin.H{"error": "access_denied", "error_description": res.Reason})
 		return false
 	}

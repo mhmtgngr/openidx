@@ -49,20 +49,8 @@ const adoption = {
   },
 }
 
-const apiUsage = {
-  api_usage: {
-    endpoints: [
-      {
-        method: 'GET', path: '/api/v1/identity/users',
-        request_count: 1000000, avg_latency_ms: 25.5, error_rate: 0.5,
-      },
-    ],
-  },
-}
-
 function routeGet(url: string) {
   if (url.includes('/feature-adoption')) return Promise.resolve(adoption)
-  if (url.includes('/api-usage')) return Promise.resolve(apiUsage)
   if (url.includes('/usage')) return Promise.resolve(usage)
   return Promise.resolve({})
 }
@@ -130,10 +118,6 @@ describe('UsageAnalyticsPage', () => {
       if (url.includes('/feature-adoption')) {
         // name/category only — the three numeric fields omitted.
         return Promise.resolve({ adoption: { features: [{ name: 'mfa', category: 'security' }] } }) as ReturnType<typeof api.get>
-      }
-      if (url.includes('/api-usage')) {
-        // method/path only — request_count/avg_latency_ms/error_rate omitted.
-        return Promise.resolve({ api_usage: { endpoints: [{ method: 'GET', path: '/x' }] } }) as ReturnType<typeof api.get>
       }
       if (url.includes('/usage')) {
         // registration row without count; top-line metrics omitted.

@@ -1,12 +1,15 @@
-package migrations
+// This file is package migrations_test, not migrations, so that it can reach
+// adminPoolOrSkip in least_privilege_owner_test.go. It uses only the exported
+// migrator API, so nothing is lost by moving out.
+package migrations_test
 
 import (
 	"context"
-	"os"
 	"testing"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/migrations"
 )
 
 // TestV172SSFReceivedTenant applies v172 over a ledger whose rows carry the
@@ -19,24 +22,26 @@ import (
 // SET id — the second INSERT would hit ON CONFLICT (jti) DO NOTHING, the event
 // would already have been applied, and that tenant would lose replay protection
 // for it from then on.
+//
+// THE SETUP IS THE POINT OF THE REWRITE. This read OPENIDX_TEST_DATABASE_URL
+// directly and skipped when it was unset, which meant the test ran NOWHERE:
+// ci.yml gives the unit matrix a live Postgres as DATABASE_URL and never sets
+// OPENIDX_TEST_DATABASE_URL, so every CI run skipped it while reporting green.
+// adminPoolOrSkip still prefers that variable and otherwise starts a throwaway
+// container, so CI executes it. A test nobody has seen run is a test nobody
+// should count; scripts/check-test-reachability.sh now fails on the shape.
 func TestV172SSFReceivedTenant(t *testing.T) {
-	url := os.Getenv("OPENIDX_TEST_DATABASE_URL")
-	if url == "" {
-		t.Skip("OPENIDX_TEST_DATABASE_URL not set")
-	}
+	db, _, cleanup := adminPoolOrSkip(t)
+	defer cleanup()
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, url)
-	if err != nil {
-		t.Skipf("connect: %v", err)
-	}
-	defer pool.Close()
+	pool := db.Pool
 
 	for _, stmt := range []string{"DROP SCHEMA public CASCADE", "CREATE SCHEMA public"} {
 		if _, err := pool.Exec(ctx, stmt); err != nil {
 			t.Fatalf("reset schema (%s): %v", stmt, err)
 		}
 	}
-	m := NewMigrator(pool, zap.NewNop())
+	m := migrations.NewMigrator(pool, zap.NewNop())
 
 	// Stop one short of v172 and seed the shape the table has had since v99:
 	// a recorded inbound event with no tenant at all.

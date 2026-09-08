@@ -11,6 +11,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -168,7 +169,7 @@ func DistributedRateLimit(redisClient *redis.Client, cfg RateLimitConfig, logger
 			rlFailOpenTotal.WithLabelValues(scope).Inc()
 			logger.Warn("Rate limit Redis error, failing open",
 				zap.Error(err),
-				zap.String("key", key))
+				logsafe.String("key", key))
 			c.Next()
 			return
 		}
@@ -206,8 +207,8 @@ func DistributedRateLimit(redisClient *redis.Client, cfg RateLimitConfig, logger
 func rateLimitFailClosed(c *gin.Context, logger *zap.Logger, key string) {
 	rlFailClosedTotal.Inc()
 	logger.Warn("Rate limit backend unavailable on auth path, failing closed",
-		zap.String("key", key),
-		zap.String("path", c.Request.URL.Path))
+		logsafe.String("key", key),
+		logsafe.String("path", c.Request.URL.Path))
 	c.Header("Retry-After", "5")
 	c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{
 		"error": "authentication temporarily unavailable, please retry",

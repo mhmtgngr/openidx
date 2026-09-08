@@ -603,16 +603,20 @@ INSERT INTO access_reviews (id, name, description, type, status, reviewer_id, st
 ('70000000-0000-0000-0000-000000000001', 'Q1 2026 Access Review', 'Quarterly access review for all users', 'user-access', 'pending', '00000000-0000-0000-0000-000000000001', '2026-01-01', '2026-03-31')
 ON CONFLICT (id) DO NOTHING;`
 
+	// id::text on every prefix match: these columns are UUID and PostgreSQL has
+	// no LIKE operator for uuid, so each of these statements raised
+	// `operator does not exist: uuid ~~ unknown` (42883) and stopped the
+	// rollback dead. Nothing had ever run them.
 	seedDataDown = `-- Rollback 010: Initial Seed Data
 DELETE FROM user_roles WHERE user_id = '00000000-0000-0000-0000-000000000001' AND role_id = '60000000-0000-0000-0000-000000000001';
 DELETE FROM access_reviews WHERE id = '70000000-0000-0000-0000-000000000001';
-DELETE FROM application_sso_settings WHERE id LIKE '50000000-0000-0000-0000-000000000%';
-DELETE FROM oauth_clients WHERE id LIKE '80000000-0000-0000-0000-000000000%';
-DELETE FROM applications WHERE id LIKE '40000000-0000-0000-0000-000000000%';
-DELETE FROM group_memberships WHERE user_id LIKE '00000000-0000-0000-0000-000000000%';
-DELETE FROM groups WHERE id LIKE '10000000-0000-0000-0000-000000000%';
-DELETE FROM roles WHERE id LIKE '60000000-0000-0000-0000-000000000%';
-DELETE FROM users WHERE id LIKE '00000000-0000-0000-0000-000000000%';`
+DELETE FROM application_sso_settings WHERE id::text LIKE '50000000-0000-0000-0000-000000000%';
+DELETE FROM oauth_clients WHERE id::text LIKE '80000000-0000-0000-0000-000000000%';
+DELETE FROM applications WHERE id::text LIKE '40000000-0000-0000-0000-000000000%';
+DELETE FROM group_memberships WHERE user_id::text LIKE '00000000-0000-0000-0000-000000000%';
+DELETE FROM groups WHERE id::text LIKE '10000000-0000-0000-0000-000000000%';
+DELETE FROM roles WHERE id::text LIKE '60000000-0000-0000-0000-000000000%';
+DELETE FROM users WHERE id::text LIKE '00000000-0000-0000-0000-000000000%';`
 
 	identityProvidersUp = `-- Migration 011: External Identity Providers
 CREATE TABLE IF NOT EXISTS identity_providers (
@@ -701,7 +705,9 @@ INSERT INTO permissions (id, name, description, resource, action) VALUES
 ('a0000000-0000-0000-0000-000000000009', 'Write Settings', 'Modify system settings', 'settings', 'write')
 ON CONFLICT (resource, action) DO NOTHING;`
 
-	permissionsDown = `DELETE FROM permissions WHERE id LIKE 'a0000000-0000-0000-0000-000000000%';
+	permissionsDown = `-- id::text, because id is UUID and LIKE has no uuid operator: this
+-- statement failed with 42883 every time a rollback reached it.
+DELETE FROM permissions WHERE id::text LIKE 'a0000000-0000-0000-0000-000000000%';
 DROP INDEX IF EXISTS idx_role_permissions_role_id;
 DROP TABLE IF EXISTS role_permissions;
 DROP TABLE IF EXISTS permissions;`
@@ -1167,8 +1173,8 @@ CREATE INDEX IF NOT EXISTS idx_credential_rotations_sa ON credential_rotations(s
 
 	passwordManagementDown = `DROP INDEX IF EXISTS idx_credential_rotations_sa;
 DROP TABLE IF EXISTS credential_rotations;
-DROP INDEX IF NOT EXISTS idx_password_history_user;
-DROP TABLE IF NOT EXISTS password_history;`
+DROP INDEX IF EXISTS idx_password_history_user;
+DROP TABLE IF EXISTS password_history;`
 
 	sessionEnhancementsUp = `-- Migration 024: Session Enhancements
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS device_name VARCHAR(255);
@@ -1375,8 +1381,8 @@ CREATE INDEX IF NOT EXISTS idx_notification_prefs_user ON notification_preferenc
 
 	notificationsDown = `DROP INDEX IF EXISTS idx_notification_prefs_user;
 DROP INDEX IF EXISTS idx_notifications_user;
-DROP TABLE IF NOT EXISTS notification_preferences;
-DROP TABLE IF NOT EXISTS notifications;`
+DROP TABLE IF EXISTS notification_preferences;
+DROP TABLE IF EXISTS notifications;`
 
 	zitiEnhancedUp = `-- Migration 029: OpenZiti Enhanced
 CREATE TABLE IF NOT EXISTS posture_check_types (
@@ -1449,7 +1455,7 @@ DROP INDEX IF EXISTS idx_posture_results_check;
 DROP INDEX IF EXISTS idx_posture_results_identity;
 DROP TABLE IF EXISTS device_posture_results;
 DROP TABLE IF EXISTS posture_checks;
-DROP TABLE IF NOT EXISTS posture_check_types;`
+DROP TABLE IF EXISTS posture_check_types;`
 
 	// Migration 030: time-bound role assignments
 	//

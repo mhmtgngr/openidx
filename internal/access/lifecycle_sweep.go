@@ -24,6 +24,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/jitgrant"
 )
 
 // StartLifecycleEnforcement starts the background sweep. Interval should match
@@ -80,15 +81,13 @@ func (s *Service) runLifecycleEnforcement(ctx context.Context) {
 		s.logger.Info("lifecycle sweep: expired vault grants of disabled users", zap.Int64("count", n))
 	}
 
-	// JIT elevations of disabled users (deleted users cascade via FK).
-	if tag, err := s.db.Pool.Exec(ctx,
-		//orgscope:ignore install-wide lifecycle reconcile sweep (disabled/deleted users -> PAM teardown)
-		`UPDATE jit_grants jg SET status = 'revoked', revoked_at = NOW(), updated_at = NOW()
-		  WHERE jg.status = 'active'
-		    AND EXISTS (SELECT 1 FROM users u WHERE u.id = jg.user_id AND u.enabled = false)`); err != nil {
-		s.logger.Warn("lifecycle sweep: jit grant revocation failed", zap.Error(err))
-	} else if n := tag.RowsAffected(); n > 0 {
-		s.logger.Info("lifecycle sweep: revoked JIT grants of disabled users", zap.Int64("count", n))
+	// Time-bound elevations of disabled users. This used to update jit_grants,
+	// which nothing in the product writes, so the sweep reconciled nothing.
+	if n, err := jitgrant.EndAllForDisabledUsers(ctx, s.db.Pool); err != nil {
+		s.logger.Warn("lifecycle sweep: ending elevations of disabled users failed",
+			zap.Int64("ended_before_failure", n), zap.Error(err))
+	} else if n > 0 {
+		s.logger.Info("lifecycle sweep: ended time-bound elevations of disabled users", zap.Int64("count", n))
 	}
 
 	// Live privileged sessions of disabled/deleted users. Rows are marked

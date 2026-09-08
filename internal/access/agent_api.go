@@ -437,10 +437,25 @@ func (h *AgentAPIHandler) ensureAgentZitiIdentity(ctx context.Context, agentID s
 			return
 		}
 	}
+	// The identity now exists on the controller carrying #openidx-agent, and
+	// this is the only thing that ties it to an agent row. Losing it leaves an
+	// overlay identity with that attribute which no agent record names -- so
+	// removing the agent does not remove its network access, and the console
+	// cannot show it.
+	//
+	// It is recoverable rather than permanent: the duplicate-value branch
+	// above finds the orphan by name on the next enrolment and replaces it.
+	// That recovery only runs when somebody enrols again, though, so the gap
+	// has to be visible in the meantime.
 	if h.db != nil && h.db.Pool != nil {
-		h.db.Pool.Exec(ctx,
+		if _, err := h.db.Pool.Exec(ctx,
 			"UPDATE enrolled_agents SET ziti_identity_id = $1 WHERE agent_id = $2",
-			zitiID, agentID)
+			zitiID, agentID); err != nil {
+			h.logger.Error("created a Ziti identity for an agent and could not link it to the agent row; "+
+				"the identity holds #openidx-agent on the overlay and nothing in the product names it "+
+				"until this agent enrols again",
+				logsafe.String("agent_id", agentID), zap.String("ziti_id", zitiID), zap.Error(err))
+		}
 	}
 	result.ZitiJWT = zitiJWT
 	result.ZitiService = remoteSupportZitiService
@@ -564,9 +579,15 @@ func (h *AgentAPIHandler) HandleEnroll(c *gin.Context) {
 		// Track the most recent enrolling agent (single-use tokens only; a
 		// reusable token enrolls many, so this field is left for the last one).
 		if !reusable {
-			_, _ = h.db.Pool.Exec(ctx,
+			// Bookkeeping, not a control -- the single-use property is enforced
+			// by used_at in validateEnrollmentToken. Still worth saying when it
+			// does not happen, so a token whose enrolling agent is unknown has
+			// a reason in the log rather than a blank column.
+			if _, err := h.db.Pool.Exec(ctx,
 				`UPDATE agent_enrollment_tokens SET used_by_agent = $1 WHERE id = $2`,
-				creds.AgentID, tokenID)
+				creds.AgentID, tokenID); err != nil {
+				h.logger.Warn("could not record which agent redeemed the enrollment token", zap.Error(err))
+			}
 		}
 
 		var enrollExtra gin.H
@@ -858,20 +879,34 @@ func (h *AgentAPIHandler) bridgeDevicePostureResult(ctx context.Context, agentID
 // HandleReport accepts a status report from an enrolled agent, persists posture
 // results, updates the agent's compliance score, and returns 202 Accepted.
 func (h *AgentAPIHandler) HandleReport(c *gin.Context) {
+	// Authenticate FIRST, before the body is read: this route is public, and
+	// everything below writes posture rows, moves the agent's compliance verdict
+	// and drives its Ziti tier.
+	agentID, ok := h.requireEnrolledAgent(c)
+	if !ok {
+		return
+	}
+
 	var report agentReport
 	if err := json.NewDecoder(c.Request.Body).Decode(&report); err != nil && err != io.EOF {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to parse body"})
 		return
 	}
 
-	// Prefer agent_id from the JSON body; fall back to the header.
-	agentID := report.AgentID
-	if agentID == "" {
-		agentID = c.GetHeader("X-Agent-ID")
+	// The authenticated id is the subject, always. It used to be read from the
+	// JSON body with the header only as a fallback, so a body field decided
+	// whose posture this was — which, once the credential is checked, would let
+	// any enrolled agent file a report against any other agent's id. Both
+	// shipped agents put the same value in both places, so a disagreement is
+	// not a client the product has; it is refused rather than silently ignored.
+	if report.AgentID != "" && report.AgentID != agentID {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "agent_id in the body does not match the authenticated agent"})
+		return
 	}
 
 	h.logger.Info("agent report received",
-		zap.String("agent_id", agentID),
+		logsafe.String("agent_id", agentID),
 		zap.Int("result_count", len(report.Results)),
 	)
 
@@ -933,7 +968,7 @@ func (h *AgentAPIHandler) HandleReport(c *gin.Context) {
 			h.bridgeDevicePostureResult(ctx, agentID, r.CheckType, r.Result.Status, detailsJSON)
 			if dbErr != nil {
 				h.logger.Warn("Failed to persist posture result",
-					zap.String("agent_id", agentID),
+					logsafe.String("agent_id", agentID),
 					zap.String("check_type", r.CheckType),
 					zap.Error(dbErr))
 			}
@@ -981,7 +1016,7 @@ func (h *AgentAPIHandler) HandleReport(c *gin.Context) {
 		`, complianceScore, complianceStatus, now, agentID)
 		if dbErr != nil {
 			h.logger.Warn("Failed to update agent compliance",
-				zap.String("agent_id", agentID),
+				logsafe.String("agent_id", agentID),
 				zap.Error(dbErr))
 		}
 	}
@@ -1448,14 +1483,19 @@ func (h *AgentAPIHandler) defaultConfigWithSupport(ctx context.Context, agentID 
 
 // Falls back to defaultAgentConfig when no agent ID is given or the DB is nil.
 func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
-	// 1. Resolve agent ID from header or query param.
-	agentID := c.GetHeader("X-Agent-ID")
-	if agentID == "" {
-		agentID = c.Query("agent_id")
+	// 1. Authenticate. The agent id used to come from a header OR an `agent_id`
+	//    query parameter, unverified, so anyone who could reach the service
+	//    could read any enrolled device's check list, report cadence, kiosk
+	//    policy and Windows-app discovery job by guessing an id.
+	agentID, ok := h.requireEnrolledAgent(c)
+	if !ok {
+		return
 	}
 
-	// 2. Fall back to defaults when no agent ID or DB unavailable.
-	if agentID == "" || h.db == nil || h.db.Pool == nil {
+	// 2. Fall back to defaults when the DB is unavailable. (An unauthenticated
+	//    caller no longer reaches this: it is answered 401 above. An agent's own
+	//    client treats any error as "use defaults", so nothing breaks for one.)
+	if h.db == nil || h.db.Pool == nil {
 		c.JSON(http.StatusOK, defaultAgentConfig())
 		return
 	}
@@ -1472,7 +1512,7 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 	if err != nil {
 		// Agent not found or DB error — return defaults.
 		h.logger.Warn("HandleConfig: could not fetch agent status",
-			zap.String("agent_id", agentID), zap.Error(err))
+			logsafe.String("agent_id", agentID), zap.Error(err))
 		c.JSON(http.StatusOK, defaultAgentConfig())
 		return
 	}
@@ -1532,7 +1572,7 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 		rows, queryErr := h.db.Pool.Query(ctx, query, args...)
 		if queryErr != nil {
 			h.logger.Warn("HandleConfig: could not query posture_checks",
-				zap.String("agent_id", agentID), zap.Error(queryErr))
+				logsafe.String("agent_id", agentID), zap.Error(queryErr))
 			c.JSON(http.StatusOK, h.defaultConfigWithSupport(ctx, agentID))
 			return
 		}
@@ -1580,7 +1620,7 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 			cfg.KioskPolicy = kp
 		} else if kpErr != nil {
 			h.logger.Warn("HandleConfig: kiosk policy resolution failed",
-				zap.String("agent_id", agentID), zap.Error(kpErr))
+				logsafe.String("agent_id", agentID), zap.Error(kpErr))
 		}
 
 		// Phase 4: embed an in-flight remote-support session pointer if one
@@ -1798,7 +1838,7 @@ func (h *AgentAPIHandler) HandleRevokeAgent(c *gin.Context) {
 		)
 		if err != nil {
 			h.logger.Error("HandleRevokeAgent: failed to update status",
-				zap.String("agent_id", agentID), zap.Error(err))
+				logsafe.String("agent_id", agentID), zap.Error(err))
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to revoke agent"})
 			return
 		}
@@ -1807,7 +1847,7 @@ func (h *AgentAPIHandler) HandleRevokeAgent(c *gin.Context) {
 		if h.zm != nil && zitiIdentityID != "" {
 			if delErr := h.zm.DeleteIdentity(ctx, zitiIdentityID); delErr != nil {
 				h.logger.Warn("HandleRevokeAgent: failed to delete Ziti identity",
-					zap.String("agent_id", agentID),
+					logsafe.String("agent_id", agentID),
 					zap.String("ziti_identity_id", zitiIdentityID),
 					zap.Error(delErr))
 			}
@@ -1816,11 +1856,11 @@ func (h *AgentAPIHandler) HandleRevokeAgent(c *gin.Context) {
 		// No DB but ZitiManager present — best-effort removal using agentID as identity name.
 		if delErr := h.zm.DeleteIdentity(context.Background(), agentID); delErr != nil {
 			h.logger.Warn("HandleRevokeAgent: failed to delete Ziti identity (no db)",
-				zap.String("agent_id", agentID), zap.Error(delErr))
+				logsafe.String("agent_id", agentID), zap.Error(delErr))
 		}
 	}
 
-	h.logger.Info("Agent revoked", zap.String("agent_id", agentID))
+	h.logger.Info("Agent revoked", logsafe.String("agent_id", agentID))
 	h.logAuditEvent("agent.revoked", agentID, "success", "admin action")
 	h.logAuditEventToDB(c.Request.Context(), "agent.revoked", agentID, "success", "admin action")
 	c.JSON(http.StatusOK, gin.H{"status": "revoked", "agent_id": agentID})
@@ -1845,7 +1885,7 @@ func (h *AgentAPIHandler) HandleApproveAgent(c *gin.Context) {
 		)
 		if err != nil {
 			h.logger.Error("HandleApproveAgent: failed to update status",
-				zap.String("agent_id", agentID), zap.Error(err))
+				logsafe.String("agent_id", agentID), zap.Error(err))
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to approve agent"})
 			return
 		}
@@ -1861,17 +1901,24 @@ func (h *AgentAPIHandler) HandleApproveAgent(c *gin.Context) {
 			zitiID, zitiJWT, zitiErr := h.zm.CreateIdentity(ctx, agentID, "Device", []string{"openidx-agent"})
 			if zitiErr != nil {
 				h.logger.Warn("HandleApproveAgent: failed to create Ziti identity",
-					zap.String("agent_id", agentID), zap.Error(zitiErr))
+					logsafe.String("agent_id", agentID), zap.Error(zitiErr))
+			} else if _, linkErr := h.db.Pool.Exec(ctx,
+				`UPDATE enrolled_agents SET ziti_identity_id = $1 WHERE agent_id = $2`,
+				zitiID, agentID); linkErr != nil {
+				// Approving is what puts this device on the network. The
+				// identity is live; the row that says which agent owns it is
+				// not, so removing the agent will not remove its access.
+				h.logger.Error("approved an agent and could not link its new Ziti identity to the agent row",
+					logsafe.String("agent_id", agentID), zap.String("ziti_id", zitiID), zap.Error(linkErr))
+				response["warning"] = "The agent was approved and its network identity created, but the two " +
+					"could not be linked. Re-run the agent's enrolment, or remove the identity by hand."
 			} else {
-				h.db.Pool.Exec(ctx,
-					`UPDATE enrolled_agents SET ziti_identity_id = $1 WHERE agent_id = $2`,
-					zitiID, agentID)
 				response["ziti_jwt"] = zitiJWT
 			}
 		}
 	}
 
-	h.logger.Info("Agent approved", zap.String("agent_id", agentID))
+	h.logger.Info("Agent approved", logsafe.String("agent_id", agentID))
 	h.logAuditEvent("agent.approved", agentID, "success", "admin action")
 	h.logAuditEventToDB(c.Request.Context(), "agent.approved", agentID, "success", "admin action")
 	c.JSON(http.StatusOK, response)
@@ -2153,13 +2200,13 @@ func (h *AgentAPIHandler) HandleRevokeToken(c *gin.Context) {
 		)
 		if err != nil {
 			h.logger.Error("HandleRevokeToken: failed to revoke token",
-				zap.String("token_id", tokenID), zap.Error(err))
+				logsafe.String("token_id", tokenID), zap.Error(err))
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to revoke token"})
 			return
 		}
 	}
 
-	h.logger.Info("Enrollment token revoked", zap.String("token_id", tokenID))
+	h.logger.Info("Enrollment token revoked", logsafe.String("token_id", tokenID))
 	h.logAuditEvent("token.revoked", tokenID, "success", "admin action")
 	h.logAuditEventToDB(c.Request.Context(), "token.revoked", tokenID, "success", "admin action")
 	c.JSON(http.StatusOK, gin.H{"status": "revoked", "id": tokenID})

@@ -9,6 +9,9 @@ import (
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
+// killRole is the role a time-bound elevation grants in these fixtures.
+const killRole = "55555555-0000-0000-0000-000000000001"
+
 func TestKillSwitch_SeversAllPillars(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	if db == nil {
@@ -31,7 +34,14 @@ func TestKillSwitch_SeversAllPillars(t *testing.T) {
 		`INSERT INTO vault_secrets (id, org_id, name, type) VALUES ('` + secretID + `','` + testOrg + `','db-root','password')`,
 		`INSERT INTO vault_checkouts (id, org_id, secret_id, principal_id, mode, status) VALUES (gen_random_uuid(),'` + testOrg + `','` + secretID + `','` + testUser + `','reveal','active')`,
 		`INSERT INTO vault_access_grants (id, org_id, secret_id, principal_type, principal_id, actions) VALUES (gen_random_uuid(),'` + testOrg + `','` + secretID + `','user','` + testUser + `','{use,reveal}')`,
-		`INSERT INTO jit_grants (id, user_id, org_id, role_name, expires_at, status) VALUES (gen_random_uuid(),'` + testUser + `','` + testOrg + `','break-glass',NOW()+'2h','active')`,
+		// A live time-bound elevation and the role it granted. This used to be
+		// a jit_grants row: a table NOTHING IN THE PRODUCT WRITES, so the test
+		// proved the kill switch could revoke a row invented for it while a
+		// real elevation survived untouched.
+		`INSERT INTO roles (id, name) VALUES ('` + killRole + `','break-glass') ON CONFLICT DO NOTHING`,
+		`INSERT INTO access_requests (id, requester_id, org_id, resource_type, resource_id, resource_name, status, expires_at)
+		   VALUES (gen_random_uuid(),'` + testUser + `','` + testOrg + `','role','` + killRole + `','break-glass','fulfilled',NOW()+'2h')`,
+		`INSERT INTO user_roles (user_id, role_id, org_id) VALUES ('` + testUser + `','` + killRole + `','` + testOrg + `')`,
 		`INSERT INTO guacamole_sessions (id, org_id, connection_id, user_id, guac_session_uuid, status) VALUES (gen_random_uuid(),'` + testOrg + `',gen_random_uuid(),'` + testUser + `','guac-1','active')`,
 		`INSERT INTO ziti_identities (id, org_id, ziti_id, name, user_id, enrolled) VALUES (gen_random_uuid(),'` + testOrg + `','zid-bob','bob','` + testUser + `',true)`,
 	}
@@ -92,7 +102,7 @@ func TestKillSwitch_SeversAllPillars(t *testing.T) {
 		t.Errorf("live vault grants remain: %d (err %v)", n, err)
 	}
 	if err := db.Pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM jit_grants WHERE user_id=$1 AND status='active'`,
+		`SELECT COUNT(*) FROM user_roles WHERE user_id=$1`,
 		testUser).Scan(&n); err != nil || n != 0 {
 		t.Errorf("active jit grants remain: %d (err %v)", n, err)
 	}
@@ -173,11 +183,15 @@ func TestLifecycleSweep_RevokesDisabledUsersPAM(t *testing.T) {
 		// Disabled user's live PAM state — all must be revoked by the sweep.
 		`INSERT INTO vault_checkouts (id, org_id, secret_id, principal_id, mode, status) VALUES (gen_random_uuid(),'` + testOrg + `','` + secretID + `','` + disabledUser + `','reveal','active')`,
 		`INSERT INTO vault_access_grants (id, org_id, secret_id, principal_type, principal_id, actions) VALUES (gen_random_uuid(),'` + testOrg + `','` + secretID + `','user','` + disabledUser + `','{use}')`,
-		`INSERT INTO jit_grants (id, user_id, org_id, role_name, expires_at, status) VALUES (gen_random_uuid(),'` + disabledUser + `','` + testOrg + `','admin',NOW()+'1h','active')`,
+		`INSERT INTO access_requests (id, requester_id, org_id, resource_type, resource_id, resource_name, status, expires_at)
+		   VALUES (gen_random_uuid(),'` + disabledUser + `','` + testOrg + `','role','` + killRole + `','admin','fulfilled',NOW()+'1h')`,
+		`INSERT INTO user_roles (user_id, role_id, org_id) VALUES ('` + disabledUser + `','` + killRole + `','` + testOrg + `')`,
 		// Active user's state — must be untouched.
 		`INSERT INTO vault_checkouts (id, org_id, secret_id, principal_id, mode, status) VALUES (gen_random_uuid(),'` + testOrg + `','` + secretID + `','` + activeUser + `','reveal','active')`,
 		`INSERT INTO vault_access_grants (id, org_id, secret_id, principal_type, principal_id, actions) VALUES (gen_random_uuid(),'` + testOrg + `','` + secretID + `','role','` + activeUser + `','{use}')`,
-		`INSERT INTO jit_grants (id, user_id, org_id, role_name, expires_at, status) VALUES (gen_random_uuid(),'` + activeUser + `','` + testOrg + `','ops',NOW()+'1h','active')`,
+		`INSERT INTO access_requests (id, requester_id, org_id, resource_type, resource_id, resource_name, status, expires_at)
+		   VALUES (gen_random_uuid(),'` + activeUser + `','` + testOrg + `','role','` + killRole + `','ops','fulfilled',NOW()+'1h')`,
+		`INSERT INTO user_roles (user_id, role_id, org_id) VALUES ('` + activeUser + `','` + killRole + `','` + testOrg + `')`,
 		// Orphaned checkout: principal's user row no longer exists.
 		`INSERT INTO vault_checkouts (id, org_id, secret_id, principal_id, mode, status) VALUES (gen_random_uuid(),'` + testOrg + `','` + secretID + `','99999999-0000-0000-0000-000000000009','reveal','active')`,
 		// Disabled user's live guacamole session: with no client configured it
@@ -216,11 +230,11 @@ func TestLifecycleSweep_RevokesDisabledUsersPAM(t *testing.T) {
 	}
 	// JIT: mallory revoked, carol active.
 	if err := db.Pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM jit_grants WHERE user_id=$1 AND status='active'`, disabledUser).Scan(&n); err != nil || n != 0 {
+		`SELECT COUNT(*) FROM user_roles WHERE user_id=$1`, disabledUser).Scan(&n); err != nil || n != 0 {
 		t.Errorf("mallory's jit grant still active: %d (err %v)", n, err)
 	}
 	if err := db.Pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM jit_grants WHERE user_id=$1 AND status='active'`, activeUser).Scan(&n); err != nil || n != 1 {
+		`SELECT COUNT(*) FROM user_roles WHERE user_id=$1`, activeUser).Scan(&n); err != nil || n != 1 {
 		t.Errorf("carol's jit grant must survive: %d (err %v)", n, err)
 	}
 	// Guacamole honesty: no client → row still active.

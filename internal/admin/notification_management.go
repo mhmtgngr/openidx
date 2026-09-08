@@ -10,6 +10,7 @@ import (
 
 	apperrors "github.com/openidx/openidx/internal/common/errors"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/notifications"
 )
 
 // NotificationRoutingRule represents a rule for routing notifications to channels
@@ -504,30 +505,43 @@ func (s *Service) handleSendBroadcast(c *gin.Context) {
 		return
 	}
 
-	// Insert notifications for each target user using INSERT...SELECT
+	// Insert notifications for each target user using INSERT...SELECT.
+	//
+	// The NOT EXISTS clause is the user's preference, applied in the same
+	// statement. Without it a broadcast reached everybody regardless of what
+	// they had switched off -- and since this path never went through
+	// CreateNotification, the preference was consulted by nothing at all.
+	// notification_preferences has no row until somebody changes a switch, so
+	// absence means enabled, exactly as isNotificationEnabled reads it.
 	var insertQuery string
 	var insertArgs []interface{}
 
 	switch b.TargetType {
 	case "all":
 		insertQuery = `INSERT INTO notifications (user_id, channel, type, title, body, metadata, org_id)
-			SELECT id, $1, 'broadcast', $2, $3, jsonb_build_object('broadcast_id', $4), $5
-			FROM users WHERE org_id = $5`
-		insertArgs = []interface{}{b.Channel, b.Title, b.Body, b.ID, org.ID}
+			SELECT id, $1::varchar, $6::varchar, $2, $3, jsonb_build_object('broadcast_id', $4), $5::uuid
+			FROM users WHERE org_id = $5::uuid
+			  AND NOT EXISTS (SELECT 1 FROM notification_preferences p
+			      WHERE p.user_id = users.id AND p.channel = $1::varchar AND p.event_type = $6::varchar AND p.enabled = false)`
+		insertArgs = []interface{}{b.Channel, b.Title, b.Body, b.ID, org.ID, notifications.TypeBroadcast}
 	case "role":
 		var roleIDs []string
 		_ = json.Unmarshal(b.TargetIDs, &roleIDs)
 		insertQuery = `INSERT INTO notifications (user_id, channel, type, title, body, metadata, org_id)
-			SELECT DISTINCT ur.user_id, $1, 'broadcast', $2, $3, jsonb_build_object('broadcast_id', $4), $6
-			FROM user_roles ur WHERE ur.role_id = ANY($5::uuid[]) AND ur.org_id = $6`
-		insertArgs = []interface{}{b.Channel, b.Title, b.Body, b.ID, roleIDs, org.ID}
+			SELECT DISTINCT ur.user_id, $1::varchar, $7::varchar, $2, $3, jsonb_build_object('broadcast_id', $4), $6::uuid
+			FROM user_roles ur WHERE ur.role_id = ANY($5::uuid[]) AND ur.org_id = $6::uuid
+			  AND NOT EXISTS (SELECT 1 FROM notification_preferences p
+			      WHERE p.user_id = ur.user_id AND p.channel = $1::varchar AND p.event_type = $7::varchar AND p.enabled = false)`
+		insertArgs = []interface{}{b.Channel, b.Title, b.Body, b.ID, roleIDs, org.ID, notifications.TypeBroadcast}
 	case "group":
 		var groupIDs []string
 		_ = json.Unmarshal(b.TargetIDs, &groupIDs)
 		insertQuery = `INSERT INTO notifications (user_id, channel, type, title, body, metadata, org_id)
-			SELECT DISTINCT gm.user_id, $1, 'broadcast', $2, $3, jsonb_build_object('broadcast_id', $4), $6
-			FROM group_memberships gm WHERE gm.group_id = ANY($5::uuid[]) AND gm.org_id = $6`
-		insertArgs = []interface{}{b.Channel, b.Title, b.Body, b.ID, groupIDs, org.ID}
+			SELECT DISTINCT gm.user_id, $1::varchar, $7::varchar, $2, $3, jsonb_build_object('broadcast_id', $4), $6::uuid
+			FROM group_memberships gm WHERE gm.group_id = ANY($5::uuid[]) AND gm.org_id = $6::uuid
+			  AND NOT EXISTS (SELECT 1 FROM notification_preferences p
+			      WHERE p.user_id = gm.user_id AND p.channel = $1::varchar AND p.event_type = $7::varchar AND p.enabled = false)`
+		insertArgs = []interface{}{b.Channel, b.Title, b.Body, b.ID, groupIDs, org.ID, notifications.TypeBroadcast}
 	}
 
 	_, err = s.db.Pool.Exec(ctx, insertQuery, insertArgs...)

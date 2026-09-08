@@ -109,7 +109,6 @@ Edit `.env.local` and update the following critical values:
 # Generate with: openssl rand -base64 64
 POSTGRES_PASSWORD=<generate_secure_password>
 REDIS_PASSWORD=<generate_secure_password>
-JWT_SECRET=<generate_64_byte_secret>
 ACCESS_SESSION_SECRET=<generate_64_byte_secret>
 SCIM_BEARER_TOKEN=<generate_48_byte_token>
 ZITI_PWD=<generate_ziti_admin_password>
@@ -143,7 +142,6 @@ cat > generate-secrets.sh << 'EOF'
 #!/bin/bash
 echo "POSTGRES_PASSWORD=$(openssl rand -base64 32)"
 echo "REDIS_PASSWORD=$(openssl rand -base64 32)"
-echo "JWT_SECRET=$(openssl rand -base64 64)"
 echo "ACCESS_SESSION_SECRET=$(openssl rand -base64 64)"
 echo "SCIM_BEARER_TOKEN=$(openssl rand -base64 48)"
 echo "ZITI_PWD=$(openssl rand -base64 24)"
@@ -512,7 +510,7 @@ docker compose exec redis redis-cli -a <password> SLOWLOG GET 10
 
 - [ ] DNS A records configured
 - [ ] Firewall allows ports 80, 443
-- [ ] All secrets generated (POSTGRES_PASSWORD, JWT_SECRET, etc.)
+- [ ] All secrets generated (POSTGRES_PASSWORD, ENCRYPTION_KEY, etc.)
 - [ ] SMTP configured for email notifications
 - [ ] SSL certificate obtained
 - [ ] Automated backups configured

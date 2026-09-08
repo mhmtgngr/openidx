@@ -40,6 +40,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -379,12 +380,20 @@ func (h *RemoteSupportHandler) HandleStartSession(c *gin.Context) {
 
 	// Reject if the agent has another active session already (broker would
 	// happily run two, but the UX of two admins sharing a screen is bad).
+	// No row is the normal answer and arrives as pgx.ErrNoRows. Anything else
+	// means the check did not run, and a discarded error left blockingID empty
+	// -- which reads as "no session in progress" and starts a second one, the
+	// exact thing this guard exists to prevent.
 	var blockingID string
-	_ = h.db.Pool.QueryRow(c.Request.Context(), `
+	if err := h.db.Pool.QueryRow(c.Request.Context(), `
         SELECT id FROM remote_support_sessions
          WHERE agent_id = $1 AND status IN ('pending','active') AND org_id = $2
          LIMIT 1
-    `, req.AgentID, sessionOrg).Scan(&blockingID)
+    `, req.AgentID, sessionOrg).Scan(&blockingID); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		h.logger.Error("could not check for an existing remote-support session", zap.Error(err))
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "could not check for an existing session"})
+		return
+	}
 	if blockingID != "" {
 		c.JSON(http.StatusConflict, gin.H{
 			"error":      "agent already has an active session",
@@ -564,22 +573,51 @@ func (h *RemoteSupportHandler) HandleAgentConsent(c *gin.Context) {
 		// as a DEVICE, with no organization on the request, so this runs
 		// bypassed on the session id. Belting it without the bypass would make
 		// a denial silently fail to end the session.
+		// This write is the denial. Its error used to be discarded, which made
+		// the comment above it false: on a failure the session was NOT ended,
+		// the audit still recorded consent_denied/success, and the agent was
+		// answered {"consent_status":"denied","status":"ended"}. Somebody
+		// refused to have their screen watched and the session stayed live,
+		// with every record saying they had been listened to.
+		//
+		// Nought rows matters as much as an error here: it means the id matched
+		// nothing, so nothing was ended either.
 		//orgscope:ignore device consent callback — agent authenticates as a device, no tenant on the request
-		_, _ = h.db.Pool.Exec(orgctx.WithBypassRLS(c.Request.Context()), `
+		tag, err := h.db.Pool.Exec(orgctx.WithBypassRLS(c.Request.Context()), `
             UPDATE remote_support_sessions
                SET consent_status='denied', consent_decided_at=NOW(),
                    status='ended', ended_at=NOW(), end_reason='consent denied by device'
              WHERE id=$1`, id)
+		if err != nil || tag.RowsAffected() == 0 {
+			h.logger.Error("a remote support session was refused and could not be ended",
+				logsafe.String("session_id", id), zap.Error(err))
+			h.audit(c.Request.Context(), "remote_support.consent_denied", id, "failure", "agent="+agentID)
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": "the refusal could not be recorded and the session may still be active; " +
+					"end it from the console"})
+			return
+		}
 		h.audit(c.Request.Context(), "remote_support.consent_denied", id, "success", "agent="+agentID)
 		c.JSON(http.StatusOK, gin.H{"consent_status": "denied", "status": "ended"})
 		return
 	}
 
+	// The grant fails closed on its own -- an unrecorded grant leaves consent
+	// pending, and the session cannot proceed -- but the agent must still be
+	// told, or it shows the person a confirmation for a decision the server
+	// does not hold.
 	//orgscope:ignore device consent callback — agent authenticates as a device, no tenant on the request
-	_, _ = h.db.Pool.Exec(orgctx.WithBypassRLS(c.Request.Context()), `
+	tag, err := h.db.Pool.Exec(orgctx.WithBypassRLS(c.Request.Context()), `
         UPDATE remote_support_sessions
            SET consent_status='granted', consent_decided_at=NOW()
          WHERE id=$1`, id)
+	if err != nil || tag.RowsAffected() == 0 {
+		h.logger.Error("a remote support consent was granted and could not be recorded",
+			logsafe.String("session_id", id), zap.Error(err))
+		h.audit(c.Request.Context(), "remote_support.consent_granted", id, "failure", "agent="+agentID)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "the consent could not be recorded; try again"})
+		return
+	}
 	h.audit(c.Request.Context(), "remote_support.consent_granted", id, "success", "agent="+agentID)
 	c.JSON(http.StatusOK, gin.H{"consent_status": "granted"})
 }
@@ -933,13 +971,25 @@ func (h *RemoteSupportHandler) markActive(ctx context.Context, sessionID string)
 	}
 	// TENANCY (v150): broker path. Called from the signalling loop, which has
 	// no HTTP request and no tenant; the session id is the key.
+	// The broker starts relaying whether or not this lands, so a lost write
+	// leaves a live remote-support session recorded as 'pending': it does not
+	// appear as active anywhere, and the janitor's aging sweep reads the
+	// activity stamp this statement sets. Auditing it as a success afterwards
+	// would repeat the mistake the consent denial made -- a record of
+	// something the database does not hold.
 	//orgscope:ignore broker signalling path — no request context, keyed on the session id
-	_, _ = h.db.Pool.Exec(orgctx.WithBypassRLS(ctx), `
+	if _, err := h.db.Pool.Exec(orgctx.WithBypassRLS(ctx), `
         UPDATE remote_support_sessions
            SET status = 'active', accepted_at = COALESCE(accepted_at, NOW()),
                last_activity_at = NOW()
          WHERE id = $1 AND status = 'pending'
-    `, sessionID)
+    `, sessionID); err != nil {
+		h.logger.Error("both peers connected but the remote-support session could not be marked active; "+
+			"it is being relayed while the record still says pending",
+			logsafe.String("session_id", sessionID), zap.Error(err))
+		h.audit(ctx, "remote_support.session_active", sessionID, "failure", "could not record the session as active")
+		return
+	}
 	h.audit(ctx, "remote_support.session_active", sessionID, "success", "")
 }
 
@@ -948,10 +998,19 @@ func (h *RemoteSupportHandler) touchSession(ctx context.Context, sessionID strin
 	if h.db == nil || h.db.Pool == nil {
 		return
 	}
-	_, _ = h.db.Pool.Exec(orgctx.WithBypassRLS(ctx),
+	// The janitor ends sessions whose last_activity_at is older than the stall
+	// window (see the sweep at the bottom of this file). A heartbeat that is
+	// not recorded therefore does not merely lose a timestamp: it makes a
+	// session somebody is actively using look abandoned, and it is torn down
+	// under them.
+	if _, err := h.db.Pool.Exec(orgctx.WithBypassRLS(ctx),
 		//orgscope:ignore broker signalling path — no request context, keyed on the session id
 		`UPDATE remote_support_sessions SET last_activity_at = NOW() WHERE id = $1`,
-		sessionID)
+		sessionID); err != nil {
+		h.logger.Warn("could not record activity on a live remote-support session; "+
+			"the janitor may age it out while it is still in use",
+			logsafe.String("session_id", sessionID), zap.Error(err))
+	}
 }
 
 // endSession persists end state and tears down any live broker entry.
@@ -1003,19 +1062,11 @@ func (h *RemoteSupportHandler) evictSession(sessionID string) {
 }
 
 // verifyAgentAuth checks the supplied auth token against the
-// enrolled_agents.auth_token_hash for the given agent_id.
+// enrolled_agents.auth_token_hash for the given agent_id. See agent_auth.go —
+// this was the second of three copies; the shared one also rejects an empty
+// agent id outright and bypasses RLS, which this copy did not.
 func (h *RemoteSupportHandler) verifyAgentAuth(ctx context.Context, agentID, token string) bool {
-	if h.db == nil || h.db.Pool == nil {
-		return token != "" // dev mode: any non-empty token
-	}
-	var stored string
-	err := h.db.Pool.QueryRow(ctx,
-		`SELECT auth_token_hash FROM enrolled_agents WHERE agent_id = $1`,
-		agentID).Scan(&stored)
-	if err != nil {
-		return false
-	}
-	return sha256Hex(token) == stored
+	return verifyEnrolledAgent(ctx, h.db, agentID, token)
 }
 
 // activeSessionInfo carries the per-agent session pointer that

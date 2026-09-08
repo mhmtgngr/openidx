@@ -287,8 +287,14 @@ func (s *Service) handleGetEnrichedDevices(c *gin.Context) {
 		return
 	}
 
+	// The device count beside the device list: a discarded error made it 0.
 	var total int
-	_ = s.db.Pool.QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM known_devices WHERE org_id = $1`, org.ID).Scan(&total)
+	if err := s.db.Pool.QueryRow(c.Request.Context(),
+		`SELECT COUNT(*) FROM known_devices WHERE org_id = $1`, org.ID).Scan(&total); err != nil {
+		s.logger.Error("failed to count known devices", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list devices"})
+		return
+	}
 
 	rows, err := s.db.Pool.Query(c.Request.Context(), `
 		SELECT d.id, d.fingerprint, COALESCE(d.name,''), COALESCE(d.ip_address,''),

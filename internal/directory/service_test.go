@@ -1253,54 +1253,6 @@ func TestService_TestConnection_InvalidAzureADConfig(t *testing.T) {
 	assert.Contains(t, err.Error(), "invalid Azure AD config")
 }
 
-// TestService_AuthenticateUser_UnsupportedType tests authentication with unsupported directory type
-func TestService_AuthenticateUser_UnsupportedType(t *testing.T) {
-	service := &Service{logger: newTestLogger()}
-
-	ctx := context.Background()
-	// Without a real DB, this will fail when trying to load the directory config
-	// The actual method checks directory type from DB, then routes to appropriate connector
-	// We test the error path by checking the method exists and has proper signature
-	_ = service.AuthenticateUser
-	_ = ctx
-}
-
-// TestService_AuthenticateUser_AzureADSSO tests Azure AD authentication redirect
-func TestService_AuthenticateUser_AzureADSSO(t *testing.T) {
-	// This test documents the behavior for Azure AD authentication
-	// Azure AD users must authenticate via SSO/OAuth flow
-	// The service method returns an error when password auth is attempted
-	service := &Service{logger: newTestLogger()}
-	ctx := context.Background()
-
-	// Without a real DB, we can't test the full flow
-	// but we verify the method signature is correct
-	_ = service.AuthenticateUser
-	_ = ctx
-}
-
-// TestService_ChangePassword_UnsupportedType tests password change with unsupported directory
-func TestService_ChangePassword_UnsupportedType(t *testing.T) {
-	service := &Service{logger: newTestLogger()}
-	ctx := context.Background()
-
-	// Without a real DB, we test the method signature exists
-	// The actual method loads directory type from DB, then routes to appropriate connector
-	_ = service.ChangePassword
-	_ = ctx
-}
-
-// TestService_ResetPassword_UnsupportedType tests password reset with unsupported directory
-func TestService_ResetPassword_UnsupportedType(t *testing.T) {
-	service := &Service{logger: newTestLogger()}
-	ctx := context.Background()
-
-	// Without a real DB, we test the method signature exists
-	// The actual method loads directory type from DB, then routes to appropriate connector
-	_ = service.ResetPassword
-	_ = ctx
-}
-
 // TestService_TriggerSync tests triggering a sync through the service
 func TestService_TriggerSync(t *testing.T) {
 	scheduler := &Scheduler{
@@ -1323,25 +1275,6 @@ func TestService_TriggerSync(t *testing.T) {
 
 	// Should not error - already running so returns immediately
 	assert.NoError(t, err)
-}
-
-// TestService_GetSyncLogs tests getting sync logs with pagination
-func TestService_GetSyncLogs(t *testing.T) {
-	service := &Service{logger: newTestLogger()}
-
-	// Test that the method exists and has proper signature
-	// Without a real DB, we can't test the full functionality
-	// But we verify the method signature is correct
-	_ = service.GetSyncLogs
-}
-
-// TestService_GetSyncState tests getting sync state
-func TestService_GetSyncState(t *testing.T) {
-	service := &Service{logger: newTestLogger()}
-
-	// Test that the method exists and has proper signature
-	// Without a real DB, we can't test the full functionality
-	_ = service.GetSyncState
 }
 
 // TestMapGraphUser tests Azure AD Graph user mapping
@@ -1707,14 +1640,6 @@ func BenchmarkEncodePasswordAD(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		_ = encodePasswordAD(password)
 	}
-}
-
-// TestRunSync_LogCreationFailure tests sync log creation failure
-func TestRunSync_LogCreationFailure(t *testing.T) {
-	// This test documents the behavior when sync log creation fails
-	// Without a real DB, we can't test the actual failure
-	engine := &SyncEngine{logger: newTestLogger()}
-	_ = engine
 }
 
 // TestRunSync_Success tests successful sync result structure

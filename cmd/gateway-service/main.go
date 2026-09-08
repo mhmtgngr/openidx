@@ -53,6 +53,13 @@ func main() {
 		log.Fatal("Failed to load configuration", zap.Error(err))
 	}
 
+	// The configured level reaches the logger built above, which had to be
+	// constructed before the config existed. Without this, `log_level:` in a
+	// configuration file is read into a field nothing consults.
+	if err := logger.SetLevel(cfg.LogLevel); err != nil {
+		log.Fatal("Invalid log level", zap.Error(err))
+	}
+
 	// Validate production security settings (blocking)
 	if err := config.ValidateProductionConfig(cfg, log); err != nil {
 		log.Fatal("Production security validation failed", zap.Error(err))
@@ -97,10 +104,49 @@ func main() {
 	// (bypasses device-trust known-IP auto-approve, geo-block, spoofs audit IPs).
 	commonmiddleware.ConfigureTrustedProxies(router, log)
 	router.Use(gin.Recovery())
+	// Security response headers, on the service that faces the internet.
+	//
+	// The other seven service mains have mounted this since it existed; the
+	// gateway did not, and nothing else in internal/gateway set a security
+	// header, so the one host a browser actually talks to was the one sending
+	// no HSTS, no nosniff and no frame-options. Every response the gateway
+	// produces itself — /metrics, the combined OpenAPI spec, and each 404, 429
+	// and 502 the proxy generates — went out bare.
+	//
+	// Proxied responses already carry the backend's headers, so this duplicates
+	// them there. That is harmless and worth stating: the gateway forwards only
+	// the six /api/v1 JSON groups, browsers enforce the intersection of repeated
+	// CSP headers, and the policy is the same one from the same function. The
+	// Guacamole path overrides do not apply here because those prefixes are not
+	// proxied by this service.
+	router.Use(commonmiddleware.SecurityHeadersForEnv(cfg.IsProduction()))
 	router.Use(otelgin.Middleware("gateway-service"))
 	router.Use(logger.GinMiddleware(log))
 	router.Use(metrics.Middleware("gateway-service"))
 	router.Use(api.StandardVersionMiddleware())
+
+	// Rate limiting, on the service that faces the internet.
+	//
+	// gateway.Config has carried EnableRateLimit (defaulting true) and a
+	// RateLimitConfig of 100/min with 20/min for auth paths since it was
+	// written, read from ENABLE_RATE_LIMIT and rate_limit.* and passed in
+	// below — and consumed by nothing. The only thing that would have read it
+	// was internal/gateway/middleware.RateLimitMiddleware, a second limiter no
+	// binary ever constructed. So the front door answered an unlimited number
+	// of requests while its own configuration said otherwise.
+	//
+	// This is the limiter the other five services mount, and it fails CLOSED on
+	// auth paths when Redis is unavailable, which is the property that matters
+	// on the host taking the traffic.
+	if cfg.EnableRateLimit {
+		router.Use(commonmiddleware.DistributedRateLimit(redisClient.Client, commonmiddleware.RateLimitConfig{
+			Requests:     cfg.RateLimitRequests,
+			Window:       time.Duration(cfg.RateLimitWindow) * time.Second,
+			AuthRequests: cfg.RateLimitAuthRequests,
+			AuthWindow:   time.Duration(cfg.RateLimitAuthWindow) * time.Second,
+			PerUser:      cfg.RateLimitPerUser,
+		}, log))
+	}
 
 	// Tenant header production (v1.7.0 #3): strip any client-supplied
 	// X-Org-Slug and, when TENANT_BASE_DOMAIN is set, derive it from

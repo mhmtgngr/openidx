@@ -21,6 +21,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -363,11 +364,13 @@ func CORS(allowedOrigins ...string) gin.HandlerFunc {
 	}
 }
 
-// RequestID adds a unique request ID to each request
+// RequestID adds a unique request ID to each request. An inbound X-Request-ID is
+// adopted only when it is id-shaped; see logsafe.PlausibleID for why a rejected
+// one is replaced rather than cleaned.
 func RequestID() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		requestID := c.GetHeader("X-Request-ID")
-		if requestID == "" {
+		if !logsafe.PlausibleID(requestID) {
 			requestID = uuid.New().String()
 		}
 		c.Set("request_id", requestID)

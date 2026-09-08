@@ -9,8 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgconn"
-
-	"github.com/openidx/openidx/internal/common/cache"
+	"github.com/redis/go-redis/v9"
 )
 
 // retryAfterSeconds is the backoff hint returned to clients when the issue path
@@ -34,8 +33,16 @@ func isDependencyUnavailable(err error) bool {
 		return false
 	}
 
-	// Redis cache layer signals unavailability explicitly.
-	if errors.Is(err, cache.ErrRedisUnavailable) {
+	// Redis signals unavailability explicitly.
+	//
+	// This used to test internal/common/cache.ErrRedisUnavailable, a sentinel
+	// whose only producer was a cache layer no service ever constructed -- so
+	// the branch could not fire in production, and the test that covered it
+	// built the error by hand. These two are what the client the services
+	// actually hold returns: ErrClosed after a shutdown or a reconnect, and
+	// ErrPoolTimeout when the pool is saturated. Both are exactly the brownout
+	// this classifier exists to turn into a 503 rather than a 500.
+	if errors.Is(err, redis.ErrClosed) || errors.Is(err, redis.ErrPoolTimeout) {
 		return true
 	}
 

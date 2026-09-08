@@ -327,61 +327,10 @@ func TestRedisChecker(t *testing.T) {
 	var _ checker = &RedisChecker{}
 }
 
-func TestStaticChecker(t *testing.T) {
-	logger := zaptest.NewLogger(t)
-	hs := NewHealthService(logger)
-
-	// Add a static checker
-	staticChecker := NewStaticChecker("test", "up", "all good", false)
-	hs.RegisterCheck(staticChecker)
-
-	result := hs.Check(context.Background())
-
-	comp, ok := result.Components["test"]
-	if !ok {
-		t.Fatal("static checker not found in components")
-	}
-
-	if comp.Status != "up" {
-		t.Errorf("expected status up, got %s", comp.Status)
-	}
-	if comp.Details != "all good" {
-		t.Errorf("expected details 'all good', got %s", comp.Details)
-	}
-}
-
-func TestFuncChecker(t *testing.T) {
-	logger := zaptest.NewLogger(t)
-	hs := NewHealthService(logger)
-
-	// Add a func checker
-	callCount := 0
-	funcChecker := NewFuncChecker("func", func(ctx context.Context) ComponentStatus {
-		callCount++
-		return ComponentStatus{
-			Status:    "up",
-			LatencyMS: 10,
-			Details:   "func check",
-			CheckedAt: time.Now().UTC().Format(time.RFC3339),
-		}
-	}, true)
-	hs.RegisterCheck(funcChecker)
-
-	result := hs.Check(context.Background())
-
-	if callCount != 1 {
-		t.Errorf("expected func checker to be called once, was called %d times", callCount)
-	}
-
-	comp, ok := result.Components["func"]
-	if !ok {
-		t.Fatal("func checker not found in components")
-	}
-
-	if comp.Status != "up" {
-		t.Errorf("expected status up, got %s", comp.Status)
-	}
-}
+// TestStaticChecker and TestFuncChecker stood here, covering a checker with a
+// fixed answer and a checker built from a closure. Both types are deleted:
+// nothing in the product ever registered one, and the coverage they gave was
+// of mockChecker's job, which mockChecker already does below.
 
 func TestHealthResponse_Structure(t *testing.T) {
 	logger := zaptest.NewLogger(t)

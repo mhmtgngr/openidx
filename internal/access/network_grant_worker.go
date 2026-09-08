@@ -35,6 +35,9 @@ func (s *Service) runNetworkGrant(ctx context.Context) {
 }
 
 func (s *Service) drainNetworkGrants(ctx context.Context) {
+	// Recover this drain's own abandoned claims before taking new work.
+	s.requeueStalledNetworkItems(ctx, "network_grant_queue")
+
 	//orgscope:ignore network hand-off queue drain (runs under bypass_rls): one worker serves the whole install, claims by state and never by tenant, and each claimed row carries its own organization onward
 	rows, err := s.db.Pool.Query(ctx, `
         UPDATE network_grant_queue q SET state='processing', updated_at=NOW()
@@ -83,9 +86,7 @@ func (s *Service) drainNetworkGrants(ctx context.Context) {
 				it.orgID, it.userID, "attribute="+it.attribute, err)
 			continue
 		}
-		_, _ = s.db.Pool.Exec(ctx,
-			//orgscope:ignore network hand-off queue drain (runs under bypass_rls) completing an item it already claimed by primary key
-			`UPDATE network_grant_queue SET state='done', updated_at=NOW() WHERE id=$1`, it.id)
+		s.completeNetworkItem(ctx, "network_grant_queue", it.id)
 	}
 }
 

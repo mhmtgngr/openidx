@@ -28,6 +28,7 @@ import (
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/leader"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/revocation"
 	"github.com/openidx/openidx/internal/vault"
 )
 
@@ -167,8 +168,22 @@ func (s *Service) openIDXAuthMiddleware() gin.HandlerFunc {
 		// Scoped to the evaluate endpoints (constant-time compare) so a leaked
 		// token can't drive user-facing governance operations. The org is
 		// resolved by the global TenantResolver (X-Org-ID / default fallback).
+		//
+		// THE SCOPE IS THE ROUTE gin MATCHED, NOT THE PATH THE CALLER WROTE.
+		// This tested the suffix of c.Request.URL.Path, and gin backtracks from a
+		// static segment to a parameter when nothing static matches: a request to
+		// DELETE /api/v1/governance/policies/evaluate ends in "/evaluate" and is
+		// served by /policies/:id -- handleDeletePolicy, with the id "evaluate".
+		// Fourteen requests reached non-evaluate handlers that way, among them
+		// delete and update on policies, ABAC policies, approval policies,
+		// campaigns and reviews: precisely the "user-facing governance
+		// operations" this bound exists to keep a leaked token away from.
+		// c.FullPath() is the registered template, so no segment a caller writes
+		// can widen it; an unmatched route yields "" and fails closed.
+		// internal/governance/internal_token_scope_test.go derives that census
+		// from the route table on every run.
 		if tok := s.config.InternalServiceToken; tok != "" &&
-			strings.HasSuffix(c.Request.URL.Path, "/evaluate") &&
+			strings.HasSuffix(c.FullPath(), "/evaluate") &&
 			subtle.ConstantTimeCompare([]byte(c.GetHeader("X-Internal-Token")), []byte(tok)) == 1 {
 			c.Set("user_id", "svc:internal")
 			c.Next()
@@ -641,15 +656,27 @@ func (s *Service) revokeReviewItemAccess(ctx context.Context, tx pgx.Tx, itemID,
 }
 
 // killUserSessions forces a user to re-authenticate by setting the user-wide
-// token-revocation marker the auth middleware checks, so a live session cannot
-// keep using access an access review just revoked. Best-effort: the revocation
-// has already committed, so a Redis hiccup must not fail the request. Guards a
-// missing Redis (e.g. in tests) rather than panicking.
+// token-revocation marker, so a live session cannot keep using access an access
+// review just revoked.
+//
+// It used to write auth:user_revoked:<uid>, a key format that came from
+// internal/auth's TokenService -- a service no binary reaches. NOTHING HAS EVER
+// READ THAT KEY. The enforcement point is internal/oauth's
+// IsAccessTokenRevoked, which reads the marker internal/revocation defines, so
+// every revocation this function performed was written where no check would
+// find it and the reviewed user's session and access tokens kept working until
+// they expired on their own. The write succeeded, the audit said the access was
+// revoked, and the access survived.
+//
+// Best-effort remains right: the revocation has already committed, so a Redis
+// hiccup must not fail the request. Guards a missing Redis (e.g. in tests)
+// rather than panicking.
 func (s *Service) killUserSessions(ctx context.Context, userID string) {
 	if s.redis == nil || s.redis.Client == nil {
 		return
 	}
-	if err := s.redis.Client.Set(ctx, auth.UserRevocationKey(userID), time.Now().Unix(), 24*time.Hour).Err(); err != nil {
+	if err := s.redis.Client.Set(ctx, revocation.UserTokensRevokedAtKey(userID),
+		revocation.MarkerValue(time.Now()), revocation.MarkerTTL).Err(); err != nil {
 		s.logger.Warn("failed to invalidate sessions after access-review revocation",
 			zap.String("user_id", userID), zap.Error(err))
 	}
@@ -944,13 +971,17 @@ func (s *Service) evaluateSoDPolicy(ctx context.Context, policy *Policy, request
 		}
 	}
 
-	// Check conflict pairs from policy rules (data-driven)
+	// Check conflict pairs from policy rules (data-driven).
+	//
+	// The lookup and the type assertion are one statement so the condition
+	// contract is stated the same way every other evaluator states it:
+	// `rule.Condition["<key>"].(<type>)`. That single line is where
+	// internal/governance/policy_condition_test.go reads what the console must
+	// send, and this read was the one it could not see -- which is how a policy
+	// editor that sent `conflicting_roles` as a comma-separated STRING went
+	// unnoticed while the assertion here has always wanted a list.
 	for _, rule := range policy.Rules {
-		conflicting, ok := rule.Condition["conflicting_roles"]
-		if !ok {
-			continue
-		}
-		conflictList, ok := conflicting.([]interface{})
+		conflictList, ok := rule.Condition["conflicting_roles"].([]interface{})
 		if !ok || len(conflictList) < 2 {
 			continue
 		}
@@ -2289,9 +2320,18 @@ func (s *Service) RunCampaign(ctx context.Context, campaignID string) (*Campaign
 			zap.String("review_id", review.ID), zap.Error(err))
 	}
 
-	// Count total items generated
+	// Count total items generated.
+	//
+	// This is written into campaign_runs.total_items and is what the campaign
+	// page reports as the size of the review. A discarded error recorded a
+	// campaign of zero items -- a certification with nothing to certify,
+	// according to its own record.
 	var totalItems int
-	_ = s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM review_items WHERE review_id = $1 AND org_id = $2", review.ID, org.ID).Scan(&totalItems)
+	if err := s.db.Pool.QueryRow(ctx,
+		"SELECT COUNT(*) FROM review_items WHERE review_id = $1 AND org_id = $2",
+		review.ID, org.ID).Scan(&totalItems); err != nil {
+		return nil, fmt.Errorf("count review items for campaign run: %w", err)
+	}
 
 	// Create campaign run
 	run := &CampaignRun{
@@ -2592,27 +2632,53 @@ func (s *Service) checkCampaignDeadlines(ctx context.Context) {
 				}
 			}
 
-			// Also mark the access review itself as expired
+			// Also mark the access review itself as expired.
+			//
+			// The items above have just been auto-revoked, which is the
+			// irreversible half. Losing this write leaves the review sitting
+			// in the reviewers' queue as still open, over items that already
+			// have a decision -- so a reviewer opens a certification that has
+			// been settled without them and cannot change any of it.
 			//orgscope:ignore cross-org background deadline sweep; keyed by globally-unique review_id
-			_, _ = s.db.Pool.Exec(ctx, `
+			if _, err := s.db.Pool.Exec(ctx, `
 				UPDATE access_reviews SET status = 'expired', completed_at = $2 WHERE id = $1
-			`, *er.reviewID, now)
+			`, *er.reviewID, now); err != nil {
+				s.logger.Error("a campaign's items were auto-revoked but the review was not closed; "+
+					"it stays open over decisions its reviewers did not make",
+					zap.String("review_id", *er.reviewID), zap.Error(err))
+			}
 		}
 
-		// Count reviewed items for the run
-		var reviewedItems int
+		// Count reviewed items for the run.
+		//
+		// This number is the permanent record of how much of a certification
+		// campaign was actually reviewed before it expired. The error was
+		// discarded, so a count that could not be taken was written as ZERO --
+		// a campaign that was fully reviewed, recorded for ever as one where
+		// nobody reviewed anything. A nil leaves the column as it stands
+		// instead, which is the only honest value for a measurement that did
+		// not happen.
+		var reviewedItems *int
 		if er.reviewID != nil {
-			_ = s.db.Pool.QueryRow(ctx,
+			var n int
+			if err := s.db.Pool.QueryRow(ctx,
 				//orgscope:ignore cross-org background deadline sweep; keyed by globally-unique review_id
 				"SELECT COUNT(*) FROM review_items WHERE review_id = $1 AND decision != 'pending'",
-				*er.reviewID).Scan(&reviewedItems)
+				*er.reviewID).Scan(&n); err != nil {
+				s.logger.Error("could not count reviewed items for an expiring campaign run; "+
+					"leaving reviewed_items as it stands rather than recording zero",
+					zap.String("run_id", er.runID), zap.Error(err))
+			} else {
+				reviewedItems = &n
+			}
 		}
 
 		// Mark the campaign run as expired
 		_, err := s.db.Pool.Exec(ctx,
 			//orgscope:ignore cross-org background deadline sweep; the run id comes from this sweep's own scan
 			`UPDATE campaign_runs
-			SET status = 'expired', completed_at = $2, reviewed_items = $3, auto_revoked_items = $4
+			SET status = 'expired', completed_at = $2,
+			    reviewed_items = COALESCE($3, reviewed_items), auto_revoked_items = $4
 			WHERE id = $1`,
 			er.runID, now, reviewedItems, autoRevokedCount)
 		if err != nil {

@@ -3,7 +3,6 @@ package governance
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -697,284 +696,30 @@ func TestPolicyEvaluation_Timebound(t *testing.T) {
 // JIT Grant Model Tests (no database required)
 // ---------------------------------------------------------------------------
 
-func TestJITGrantValidation(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name        string
-		grant       *JITGrant
-		shouldError bool
-		errorMsg    string
-	}{
-		{
-			name: "valid active grant",
-			grant: &JITGrant{
-				ID:            "grant-001",
-				UserID:        "user-001",
-				RoleID:        "role-admin",
-				RoleName:      "Administrator",
-				GrantedBy:     "admin-001",
-				Justification: "Emergency access",
-				Duration:      2 * time.Hour,
-				ExpiresAt:     time.Now().Add(2 * time.Hour),
-				CreatedAt:     time.Now(),
-				Status:        "active",
-			},
-			shouldError: false,
-		},
-		{
-			name: "expired grant",
-			grant: &JITGrant{
-				ID:            "grant-002",
-				UserID:        "user-002",
-				RoleID:        "role-viewer",
-				RoleName:      "Viewer",
-				GrantedBy:     "manager-001",
-				Justification: "Temporary elevation",
-				Duration:      30 * time.Minute,
-				ExpiresAt:     time.Now().Add(-1 * time.Hour),
-				CreatedAt:     time.Now().Add(-2 * time.Hour),
-				Status:        "expired",
-			},
-			shouldError: false,
-		},
-		{
-			name: "revoked grant",
-			grant: &JITGrant{
-				ID:            "grant-003",
-				UserID:        "user-003",
-				RoleID:        "role-poweruser",
-				RoleName:      "Power User",
-				GrantedBy:     "admin-001",
-				Justification: "Abuse detected",
-				Duration:      15 * time.Minute,
-				ExpiresAt:     time.Now().Add(15 * time.Minute),
-				CreatedAt:     time.Now().Add(-30 * time.Minute),
-				RevokedAt:     timePtr(time.Now().Add(-15 * time.Minute)),
-				RevokedBy:     strPtr("admin-001"),
-				Status:        "revoked",
-			},
-			shouldError: false,
-		},
-		{
-			name: "grant with minimum duration",
-			grant: &JITGrant{
-				ID:            "grant-004",
-				UserID:        "user-004",
-				RoleID:        "role-developer",
-				RoleName:      "Developer",
-				GrantedBy:     "user-004",
-				Justification: "Code deployment",
-				Duration:      15 * time.Minute,
-				ExpiresAt:     time.Now().Add(15 * time.Minute),
-				CreatedAt:     time.Now(),
-				Status:        "active",
-			},
-			shouldError: false,
-		},
-		{
-			name: "grant with maximum duration",
-			grant: &JITGrant{
-				ID:            "grant-005",
-				UserID:        "user-005",
-				RoleID:        "role-ops",
-				RoleName:      "Ops Engineer",
-				GrantedBy:     "manager-001",
-				Justification: "Maintenance window",
-				Duration:      8 * time.Hour,
-				ExpiresAt:     time.Now().Add(8 * time.Hour),
-				CreatedAt:     time.Now(),
-				Status:        "active",
-			},
-			shouldError: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Validate grant structure
-			assert.NotEmpty(t, tt.grant.ID)
-			assert.NotEmpty(t, tt.grant.UserID)
-			assert.NotEmpty(t, tt.grant.RoleID)
-			assert.NotEmpty(t, tt.grant.RoleName)
-			assert.NotEmpty(t, tt.grant.GrantedBy)
-			assert.NotEmpty(t, tt.grant.Justification)
-			assert.NotZero(t, tt.grant.Duration)
-
-			// Validate duration is within bounds
-			if tt.grant.Duration < MinimumJITDuration || tt.grant.Duration > MaximumJITDuration {
-				t.Error("JIT grant duration outside valid range")
-			}
-
-			// Validate expiry is after creation
-			if tt.grant.Status == "active" {
-				assert.True(t, tt.grant.ExpiresAt.After(tt.grant.CreatedAt),
-					"expiry must be after creation time")
-			}
-
-			// Validate status consistency
-			validStatuses := map[string]bool{
-				"active": true, "expired": true, "revoked": true,
-			}
-			assert.True(t, validStatuses[tt.grant.Status], "invalid grant status")
-
-			// If revoked, must have revocation info
-			if tt.grant.Status == "revoked" {
-				assert.NotNil(t, tt.grant.RevokedAt, "revoked grant must have revocation timestamp")
-				assert.NotNil(t, tt.grant.RevokedBy, "revoked grant must have revoker")
-			}
-		})
-	}
-}
-
-func TestJITRequestValidation(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name          string
-		request       JITRequest
-		shouldError   bool
-		errorContains string
-	}{
-		{
-			name: "valid request with minimum duration",
-			request: JITRequest{
-				UserID:        "user-001",
-				RoleID:        "role-developer",
-				Duration:      15 * time.Minute,
-				Justification: "Need to deploy hotfix",
-				RequestedBy:   "user-001",
-			},
-			shouldError: false,
-		},
-		{
-			name: "valid request with maximum duration",
-			request: JITRequest{
-				UserID:        "user-002",
-				RoleID:        "role-ops",
-				Duration:      8 * time.Hour,
-				Justification: "Maintenance window access",
-				RequestedBy:   "manager-001",
-			},
-			shouldError: false,
-		},
-		{
-			name: "duration too short",
-			request: JITRequest{
-				UserID:        "user-003",
-				RoleID:        "role-admin",
-				Duration:      5 * time.Minute,
-				Justification: "Quick task",
-				RequestedBy:   "user-003",
-			},
-			shouldError:   true,
-			errorContains: "at least",
-		},
-		{
-			name: "duration too long",
-			request: JITRequest{
-				UserID:        "user-004",
-				RoleID:        "role-viewer",
-				Duration:      12 * time.Hour,
-				Justification: "Long running task",
-				RequestedBy:   "user-004",
-			},
-			shouldError:   true,
-			errorContains: "not exceed",
-		},
-		{
-			name: "missing user ID",
-			request: JITRequest{
-				RoleID:        "role-admin",
-				Duration:      2 * time.Hour,
-				Justification: "Need access",
-				RequestedBy:   "admin-001",
-			},
-			shouldError:   true,
-			errorContains: "user_id",
-		},
-		{
-			name: "missing role ID",
-			request: JITRequest{
-				UserID:        "user-005",
-				Duration:      2 * time.Hour,
-				Justification: "Need access",
-				RequestedBy:   "user-005",
-			},
-			shouldError:   true,
-			errorContains: "role_id",
-		},
-		{
-			name: "missing justification",
-			request: JITRequest{
-				UserID:      "user-006",
-				RoleID:      "role-admin",
-				Duration:    2 * time.Hour,
-				RequestedBy: "user-006",
-			},
-			shouldError:   true,
-			errorContains: "justification",
-		},
-		{
-			name: "empty justification",
-			request: JITRequest{
-				UserID:        "user-007",
-				RoleID:        "role-admin",
-				Duration:      2 * time.Hour,
-				Justification: "",
-				RequestedBy:   "user-007",
-			},
-			shouldError:   true,
-			errorContains: "justification",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Validate request fields
-			hasError := false
-			errorMsg := ""
-
-			if tt.request.UserID == "" {
-				hasError = true
-				errorMsg = "user_id is required"
-			}
-
-			if tt.request.RoleID == "" && !hasError {
-				hasError = true
-				errorMsg = "role_id is required"
-			}
-
-			if tt.request.Justification == "" && !hasError {
-				hasError = true
-				errorMsg = "justification is required"
-			}
-
-			if tt.request.Duration < MinimumJITDuration && !hasError {
-				hasError = true
-				errorMsg = fmt.Sprintf("duration must be at least %v", MinimumJITDuration)
-			}
-
-			if tt.request.Duration > MaximumJITDuration && !hasError {
-				hasError = true
-				errorMsg = fmt.Sprintf("duration must not exceed %v", MaximumJITDuration)
-			}
-
-			if tt.shouldError {
-				assert.True(t, hasError, "expected validation error")
-				if tt.errorContains != "" {
-					assert.Contains(t, errorMsg, tt.errorContains)
-				}
-			} else {
-				assert.False(t, hasError, "unexpected validation error: "+errorMsg)
-			}
-		})
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Review Progress Calculation Tests
-// ---------------------------------------------------------------------------
+// TestJITGrantValidation and the note about TestJITRequestValidation stood
+// here. Both were about internal/governance/jit.go's JITGrant/JITRequest and
+// the MinimumJITDuration / MaximumJITDuration constants -- a JIT service no
+// binary could reach, deleted along with jit_grants (migration v183). The live
+// time-bound elevation is an access_requests row with expires_at, ended
+// through internal/jitgrant; its tests live with the controls that use it.
+//
+// One thing those tests implied that the product did NOT do: bound the
+// duration. That is now done, in request_duration_test.go -- and the reason
+// this note was wrong to stop where it did is worth keeping.
+//
+// It read the whole thing as one product decision ("inventing a cap here would
+// reject the 30d checkouts the handler's own comment offers as an example") and
+// so left everything alone. Only the ceiling's VALUE was a product decision.
+// The rest was a parser that did not parse: "3zd" was read as 3 days, "-5d"
+// created a request already expired, and "9999999999999d" overflowed int64
+// nanoseconds and wrapped to an expires_at in 1939. None of that needed anyone
+// to decide anything.
+//
+// The ceiling itself defaults to 90d -- the longest window the handler's own
+// documentation offers -- so it rejects nothing the product ever promised, and
+// ACCESS_REQUEST_MAX_DURATION_HOURS moves it. What remains a genuine product
+// decision, and is left as one: whether a vault credential, a role and an
+// application assignment should have DIFFERENT ceilings.
 
 func TestReviewProgressCalculation_Extended(t *testing.T) {
 	t.Parallel()
@@ -1125,43 +870,10 @@ func TestPolicyTypeConstants(t *testing.T) {
 // Duration Constant Tests
 // ---------------------------------------------------------------------------
 
-func TestJITDurationConstants(t *testing.T) {
-	t.Parallel()
+// TestJITDurationConstants and TestJITDurationBounds stood here, asserting
+// that MinimumJITDuration == 15m and MaximumJITDuration == 8h. Nothing
+// reachable read either constant; see the note above.
 
-	assert.Equal(t, 15*time.Minute, MinimumJITDuration)
-	assert.Equal(t, 8*time.Hour, MaximumJITDuration)
-	assert.Equal(t, 30*time.Second, JITExpiryCheckInterval)
-}
-
-func TestJITDurationBounds(t *testing.T) {
-	t.Parallel()
-
-	// Test minimum boundary
-	minRequest := JITRequest{Duration: MinimumJITDuration - 1}
-	assert.True(t, minRequest.Duration < MinimumJITDuration)
-
-	// Test maximum boundary
-	maxRequest := JITRequest{Duration: MaximumJITDuration + 1}
-	assert.True(t, maxRequest.Duration > MaximumJITDuration)
-
-	// Test valid durations
-	validDurations := []time.Duration{
-		MinimumJITDuration,
-		30 * time.Minute,
-		1 * time.Hour,
-		4 * time.Hour,
-		MaximumJITDuration,
-	}
-
-	for _, d := range validDurations {
-		assert.True(t, d >= MinimumJITDuration)
-		assert.True(t, d <= MaximumJITDuration)
-	}
-}
-
-// TestPolicyEvaluation_ConditionalAccess exercises the conditional_access
-// evaluator directly against loaded Rules — the path the G1 GetPolicy fix
-// unblocks (GetPolicy now populates policy.Rules from policy_rules).
 func TestPolicyEvaluation_ConditionalAccess(t *testing.T) {
 	t.Parallel()
 

@@ -97,8 +97,7 @@ func TestInputSerialization(t *testing.T) {
 				Authenticated: true,
 			},
 			Resource: ResourceContext{
-				Type:  "document",
-				Owner: "user-456",
+				Type: "document",
 			},
 			Method: "GET",
 			Path:   "/api/v1/documents/123",
@@ -117,7 +116,6 @@ func TestInputSerialization(t *testing.T) {
 		assert.Equal(t, input.User.TenantID, decoded.User.TenantID)
 		assert.Equal(t, input.User.Authenticated, decoded.User.Authenticated)
 		assert.Equal(t, input.Resource.Type, decoded.Resource.Type)
-		assert.Equal(t, input.Resource.Owner, decoded.Resource.Owner)
 		assert.Equal(t, input.Method, decoded.Method)
 		assert.Equal(t, input.Path, decoded.Path)
 	})
@@ -143,7 +141,6 @@ func TestInputSerialization(t *testing.T) {
 		assert.Empty(t, decoded.User.Groups)
 		assert.Empty(t, decoded.User.TenantID)
 		assert.Empty(t, decoded.Resource.Type)
-		assert.Empty(t, decoded.Resource.Owner)
 	})
 
 	t.Run("Serializes unauthenticated user", func(t *testing.T) {
@@ -461,8 +458,7 @@ func TestAuthorizeRequest(t *testing.T) {
 				Authenticated: true,
 			},
 			Resource: ResourceContext{
-				Type:  "document",
-				Owner: "user-456",
+				Type: "document",
 			},
 			Method: "PUT",
 			Path:   "/api/v1/documents/123",
@@ -485,7 +481,10 @@ func TestAuthorizeRequest(t *testing.T) {
 
 		resource := inputData["resource"].(map[string]interface{})
 		assert.Equal(t, "document", resource["type"])
-		assert.Equal(t, "user-456", resource["owner"])
+		// The resource carries its TYPE and nothing else: the authorizer runs
+		// before the handler and never loads the row, so anything else here
+		// would be a field no caller can fill. See ResourceContext.
+		assert.Len(t, resource, 1)
 
 		assert.Equal(t, "PUT", inputData["method"])
 		assert.Equal(t, "/api/v1/documents/123", inputData["path"])
@@ -782,8 +781,7 @@ func TestTableDrivenAuthorize(t *testing.T) {
 					Authenticated: true,
 				},
 				Resource: ResourceContext{
-					Type:  "report",
-					Owner: "tenant-abc",
+					Type: "report",
 				},
 				Method: "GET",
 				Path:   "/api/v1/reports/123",
@@ -802,8 +800,7 @@ func TestTableDrivenAuthorize(t *testing.T) {
 					Authenticated: true,
 				},
 				Resource: ResourceContext{
-					Type:  "report",
-					Owner: "tenant-xyz",
+					Type: "report",
 				},
 				Method: "GET",
 				Path:   "/api/v1/reports/456",
@@ -1048,7 +1045,14 @@ func TestUnknownValues(t *testing.T) {
 
 // TestComplexInputScenarios tests complex real-world scenarios
 func TestComplexInputScenarios(t *testing.T) {
-	t.Run("Resource owner access", func(t *testing.T) {
+	// This used to be "Resource owner access": a stub policy that allowed when
+	// user.id == resource.owner. Nothing could ever populate resource.owner --
+	// OPAAuthz runs before the handler and never loads the row -- so the scenario
+	// exercised a field the product does not send, and authz.rego's real
+	// ownership rule, written against the same field, never fired. Both are gone;
+	// what is left is the decision the product can actually ask for, keyed on the
+	// resource type derived from the matched route.
+	t.Run("Resource type access", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			var reqBody map[string]interface{}
 			json.NewDecoder(r.Body).Decode(&reqBody)
@@ -1056,16 +1060,24 @@ func TestComplexInputScenarios(t *testing.T) {
 			resource := input["resource"].(map[string]interface{})
 			user := input["user"].(map[string]interface{})
 
-			// Allow if user is resource owner
-			isOwner := user["id"] == resource["owner"]
+			// Allow a "user-admin" to write users, and nobody else.
+			hasRole := false
+			if roles, ok := user["roles"].([]interface{}); ok {
+				for _, r := range roles {
+					if r == "user-admin" {
+						hasRole = true
+					}
+				}
+			}
+			allowed := resource["type"] == "user" && hasRole
 
 			result := map[string]interface{}{
 				"result": map[string]interface{}{
-					"allow": isOwner,
+					"allow": allowed,
 				},
 			}
-			if !isOwner {
-				result["result"].(map[string]interface{})["deny"] = []string{"not_resource_owner"}
+			if !allowed {
+				result["result"].(map[string]interface{})["deny"] = []string{"resource_type_not_permitted"}
 			}
 
 			w.WriteHeader(http.StatusOK)
@@ -1078,32 +1090,30 @@ func TestComplexInputScenarios(t *testing.T) {
 
 		client := NewClient(server.URL, logger)
 
-		// Owner access
 		input := Input{
 			User: UserContext{
 				ID:            "user-123",
-				Roles:         []string{"user"},
+				Roles:         []string{"user-admin"},
 				Authenticated: true,
 			},
 			Resource: ResourceContext{
-				Type:  "document",
-				Owner: "user-123",
+				Type: "user",
 			},
 			Method: "PUT",
-			Path:   "/api/v1/documents/123",
+			Path:   "/api/v1/identity/users/11111111-1111-1111-1111-111111111111",
 		}
 
 		decision, err := client.Authorize(context.Background(), input)
 		require.NoError(t, err)
 		assert.True(t, decision.Allow)
 
-		// Non-owner access
-		input.User.ID = "user-456"
+		// The same caller against a resource type their role does not cover.
+		input.Resource.Type = "certificate"
 
 		decision, err = client.Authorize(context.Background(), input)
 		require.NoError(t, err)
 		assert.False(t, decision.Allow)
-		assert.Equal(t, []string{"not_resource_owner"}, decision.Deny)
+		assert.Equal(t, []string{"resource_type_not_permitted"}, decision.Deny)
 	})
 
 	t.Run("Group-based authorization", func(t *testing.T) {
@@ -1261,8 +1271,7 @@ func TestUserContextDefaults(t *testing.T) {
 func TestResourceContext(t *testing.T) {
 	t.Run("Serializes full resource context", func(t *testing.T) {
 		resource := ResourceContext{
-			Type:  "document",
-			Owner: "user-123",
+			Type: "document",
 		}
 
 		data, err := json.Marshal(resource)
@@ -1273,7 +1282,6 @@ func TestResourceContext(t *testing.T) {
 		require.NoError(t, err)
 
 		assert.Equal(t, "document", decoded.Type)
-		assert.Equal(t, "user-123", decoded.Owner)
 	})
 
 	t.Run("Empty resource context", func(t *testing.T) {
@@ -1287,7 +1295,6 @@ func TestResourceContext(t *testing.T) {
 		require.NoError(t, err)
 
 		assert.Empty(t, decoded.Type)
-		assert.Empty(t, decoded.Owner)
 	})
 }
 
@@ -1370,8 +1377,7 @@ func BenchmarkInputMarshal(b *testing.B) {
 			Authenticated: true,
 		},
 		Resource: ResourceContext{
-			Type:  "document",
-			Owner: "user-456",
+			Type: "document",
 		},
 		Method: "GET",
 		Path:   "/api/v1/documents/123",

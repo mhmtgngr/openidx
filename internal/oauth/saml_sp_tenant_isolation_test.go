@@ -142,51 +142,80 @@ func TestSAMLServiceProviderIsolation(t *testing.T) {
 	})
 }
 
-// setupSAMLIsolationDB connects to OPENIDX_TEST_DATABASE_URL and applies the
-// table shape, skipping when no database is configured.
+// setupSAMLIsolationDB prefers OPENIDX_TEST_DATABASE_URL and otherwise starts a
+// throwaway container, then applies the table shape.
 //
-// It deliberately does NOT use testcontainers, unlike the other database-backed
-// suites in this package. Those skip whenever no Docker daemon is reachable,
-// which means a developer (or an agent) running `go test ./internal/...` on a
-// machine without one gets a green sweep that never executed them — the exact
-// gap that let a broken assertion in assignment_audit_test.go reach CI. A test
-// that can run against a plain Postgres should.
+// It used to take only the first path, on the argument that a suite which can
+// run against a plain Postgres should not skip merely because no Docker daemon
+// is reachable — a developer running `go test ./internal/...` without one gets
+// a green sweep that never executed it.
+//
+// THAT ARGUMENT WAS RIGHT AND THE CONCLUSION WAS BACKWARDS. Dropping the
+// container fallback did not make the suite run more often, it made it run
+// NOWHERE: ci.yml's unit matrix supplies a live Postgres as DATABASE_URL and
+// never sets OPENIDX_TEST_DATABASE_URL, so the one place that always has both a
+// database and a Docker daemon skipped these tests on every run, silently,
+// while `Unit Tests (internal/oauth)` reported success. Tenant isolation is
+// exactly the property nobody notices is unproven.
+//
+// So: keep the variable as the preferred path (it is friendlier to a shared
+// database — this helper deletes only its own rows rather than dropping the
+// schema, unlike ssfSetupTestDB's env branch), and fall back to a container so
+// CI executes it. scripts/check-test-reachability.sh fails on the old shape.
 func setupSAMLIsolationDB(t *testing.T) (*database.PostgresDB, func()) {
 	t.Helper()
+	ctx := context.Background()
+
 	url := os.Getenv("OPENIDX_TEST_DATABASE_URL")
 	if url == "" {
-		t.Skip("OPENIDX_TEST_DATABASE_URL not set; skipping SAML isolation tests")
-		return nil, func() {}
+		db, containerCleanup := ssfSetupTestDB(t)
+		if _, err := db.Pool.Exec(ctx, samlSPIsolationSchema); err != nil {
+			containerCleanup()
+			t.Fatalf("apply schema: %v", err)
+		}
+		seedSAMLIsolationOrgs(t, db, containerCleanup)
+		return db, containerCleanup
 	}
+
 	db, err := database.NewPostgres(url)
 	if err != nil {
 		t.Skipf("OPENIDX_TEST_DATABASE_URL set but unreachable: %v", err)
 		return nil, func() {}
 	}
-	ctx := context.Background()
 	if _, err := db.Pool.Exec(ctx, samlSPIsolationSchema); err != nil {
 		db.Close()
 		t.Fatalf("apply schema: %v", err)
 	}
+	seedSAMLIsolationOrgs(t, db, func() { db.Close() })
+	return db, func() {
+		db.Pool.Exec(context.Background(),
+			"DELETE FROM saml_service_providers WHERE org_id IN ($1,$2)", samlOrgA, samlOrgB)
+		db.Close()
+	}
+}
+
+// seedSAMLIsolationOrgs brings either database to the same known state. Both
+// setup paths call it, so a fixture change cannot land on one and not the other
+// -- the divergence that makes a suite pass in CI and fail on a workstation.
+// cleanup releases whatever the caller acquired: the pool alone on the
+// variable path, the pool and the container on the fallback.
+func seedSAMLIsolationOrgs(t *testing.T, db *database.PostgresDB, cleanup func()) {
+	t.Helper()
+	ctx := context.Background()
 	// Start from a known state: these tests assert on counts and on a unique
 	// entity id, so a row left by an earlier run would make them lie.
 	if _, err := db.Pool.Exec(ctx,
 		"DELETE FROM saml_service_providers WHERE org_id IN ($1,$2)", samlOrgA, samlOrgB); err != nil {
-		db.Close()
+		cleanup()
 		t.Fatalf("reset: %v", err)
 	}
 	for _, org := range []string{samlOrgA, samlOrgB} {
 		if _, err := db.Pool.Exec(ctx,
 			`INSERT INTO organizations (id, name) VALUES ($1,$2) ON CONFLICT (id) DO NOTHING`,
 			org, "saml-org-"+org[len(org)-2:]); err != nil {
-			db.Close()
+			cleanup()
 			t.Fatalf("seed org %s: %v", org, err)
 		}
-	}
-	return db, func() {
-		db.Pool.Exec(context.Background(),
-			"DELETE FROM saml_service_providers WHERE org_id IN ($1,$2)", samlOrgA, samlOrgB)
-		db.Close()
 	}
 }
 

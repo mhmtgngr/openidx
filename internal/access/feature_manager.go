@@ -716,10 +716,20 @@ func (fm *FeatureManager) provisionFeature(ctx context.Context, routeID, orgID s
 			fm.logger.Warn("Failed to create service edge router policy", zap.Error(serpErr), zap.Int("status", serpStatus))
 		}
 
-		// Update proxy route with Ziti service name
-		fm.db.Pool.Exec(ctx,
+		// Update proxy route with Ziti service name.
+		//
+		// The service, its policies and its edge-router policy already exist on
+		// the controller. This row is the only thing that makes the route use
+		// them: without it the route serves over plain HTTP while a fully
+		// configured service sits on the overlay that nothing points at, and
+		// the feature reports itself provisioned.
+		if _, err := fm.db.Pool.Exec(ctx,
 			"UPDATE proxy_routes SET ziti_enabled=true, ziti_service_name=$1, updated_at=NOW() WHERE id=$2 AND org_id=$3",
-			serviceName, routeID, orgID)
+			serviceName, routeID, orgID); err != nil {
+			return nil, fmt.Errorf("the ziti service %q was created on the controller but the route "+
+				"could not be pointed at it; the route is still serving without the overlay: %w",
+				serviceName, err)
+		}
 
 		// Host the service so it has a terminator. The controller has just
 		// created the service; the access-proxy SDK may not have synced it

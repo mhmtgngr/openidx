@@ -10,6 +10,7 @@ import (
 	"go.uber.org/zap"
 
 	apperrors "github.com/openidx/openidx/internal/common/errors"
+	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -642,9 +643,20 @@ func (s *Service) handleUpdateServicePolicy(c *gin.Context) {
 	// Update DB
 	serviceRolesJSON, _ := json.Marshal(req.ServiceRoles)
 	identityRolesJSON, _ := json.Marshal(req.IdentityRoles)
-	s.db.Pool.Exec(c.Request.Context(),
+	// The controller already holds the new roles -- the call above is checked
+	// and returns on failure. This mirror used to discard its error, so a
+	// failure left the console showing the OLD service and identity roles for a
+	// policy the network is enforcing differently.
+	if _, err := s.db.Pool.Exec(c.Request.Context(),
 		`UPDATE ziti_service_policies SET name=$1, policy_type=$2, service_roles=$3, identity_roles=$4 WHERE id=$5 AND org_id=$6`,
-		req.Name, req.Type, serviceRolesJSON, identityRolesJSON, id, org.ID)
+		req.Name, req.Type, serviceRolesJSON, identityRolesJSON, id, org.ID); err != nil {
+		s.logger.Error("service policy updated on the controller; its record could not be updated",
+			logsafe.String("id", id), zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "the policy was changed on the network but the record was not updated; " +
+				"the console will show the previous roles until it is"})
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"id":             id,
@@ -683,10 +695,18 @@ func (s *Service) handleDeleteServicePolicy(c *gin.Context) {
 	}
 
 	if err := s.ziti().DeleteServicePolicy(c.Request.Context(), zitiID); err != nil {
-		s.logger.Error("failed to delete service policy from controller", zap.String("id", id), zap.Error(err))
+		s.logger.Error("failed to delete service policy from controller", logsafe.String("id", id), zap.Error(err))
 	}
 
-	s.db.Pool.Exec(c.Request.Context(), "DELETE FROM ziti_service_policies WHERE id=$1 AND org_id=$2", id, org.ID)
+	if _, err := s.db.Pool.Exec(c.Request.Context(),
+		"DELETE FROM ziti_service_policies WHERE id=$1 AND org_id=$2", id, org.ID); err != nil {
+		s.logger.Error("service policy removed from the controller; its record could not be deleted",
+			logsafe.String("id", id), zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "the policy was removed from the network but its record could not be deleted; " +
+				"it will keep appearing in the console until it is"})
+		return
+	}
 
 	c.JSON(http.StatusNoContent, nil)
 }
@@ -732,8 +752,19 @@ func (s *Service) handlePatchIdentityAttributes(c *gin.Context) {
 
 	// Update DB
 	attrsJSON, _ := json.Marshal(req.Attributes)
-	s.db.Pool.Exec(c.Request.Context(),
-		"UPDATE ziti_identities SET attributes=$1, updated_at=NOW() WHERE id=$2 AND org_id=$3", attrsJSON, id, org.ID)
+	// As above: the controller has the new attributes already. A discarded
+	// error here left the console showing the old ones, and role attributes are
+	// what the overlay's policies match on.
+	if _, err := s.db.Pool.Exec(c.Request.Context(),
+		"UPDATE ziti_identities SET attributes=$1, updated_at=NOW() WHERE id=$2 AND org_id=$3",
+		attrsJSON, id, org.ID); err != nil {
+		s.logger.Error("identity attributes patched on the controller; the record could not be updated",
+			logsafe.String("id", id), zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "the attributes were changed on the network but the record was not updated; " +
+				"the console will show the previous attributes until it is"})
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"id":         id,

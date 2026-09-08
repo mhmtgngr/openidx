@@ -273,6 +273,76 @@ input.
 So: triage a future `go/log-injection` alert by asking which argument the
 tainted value reaches. A field is safe by construction; the message is not.
 
+### Update — eleven alerts on lines that ARE sanitised
+
+Alerts **2477–2486**, raised on `5921ce10`, sit on:
+
+`internal/common/middleware/csrf.go:81, 97, 107` ·
+`opa.go:71, 88` · `ratelimit.go:172, 210, 211` ·
+`tenant_resolver.go:208`
+
+Alerts **2488–2489**, raised on `41d70b07`, are the same thing one commit later:
+`internal/gateway/middleware/logging.go:87` logs a body that went through
+`logsafe.JSONBody`, and `:261` a query string that went through
+`logsafe.QueryString`. Both lines were *added* by the commit that introduced the
+redaction, which is the tell: the count goes up when the sanitiser is applied to
+a site the query already reached.
+
+Every one of those lines reads `logsafe.String(...)` or another `logsafe` call. They are the sites that
+commit *added* the sanitiser to, and the count did not go down, because
+**CodeQL cannot see this sanitiser**. From the query's own customizations
+(`go/ql/lib/semmle/go/security/LogInjectionCustomizations.qll`) it recognises
+exactly two:
+
+- `ReplaceSanitizer` — a `strings.ReplaceAll` whose replaced string is `"\r"`
+  or `"\n"`;
+- `SafeFormatArgumentSanitizer` — an argument formatted with `%q`.
+
+`logsafe.Clean` uses `strings.Map`, which is neither, so taint flows through
+it. No config file can change that (and see the note in
+`.github/workflows/codeql.yml` about why a Go `paths-ignore` cannot either).
+
+**Do not rewrite `Clean` as a CR/LF `ReplaceAll` to make the scanner quiet.**
+That is the one change that would clear the alerts, and it would make this
+function the weaker of the two implementations the package was created to
+unify — its own comment records that four of the five copies it replaced
+"stripped only CR and LF". A tab still ends a field in a TSV-shaped line, an
+ANSI escape still reprograms the terminal reading `docker logs`, and a NUL
+still truncates in some consumers. `TestCleanIsNotReplaceAllOfCRLF`
+(`internal/common/logsafe/logsafe_test.go`) fails if somebody makes the
+scanner happy at the control's expense, and its comment says why.
+
+So the triage rule gains a second question. Ask which argument the tainted
+value reaches — and if the answer is "a field, through `logsafe`", the alert is
+closed by this entry.
+
+### Update — the numbered list is itself a list that drifts
+
+Alert **2493**, raised later on this branch, is `internal/admin/attestation.go`
+— the same shape a third time. Every `zap.String` in that file goes through
+`logsafe.Clean` or `logsafe.String`; the sanitiser is there and the query
+cannot see it.
+
+That is the third batch of numbers added to this section, which is the tell
+worth acting on: **the list of alert ids is a hand-written list, and it drifts
+from the tree exactly the way every other hand-written list on this branch
+has.** Applying the sanitiser to one more site raises one more alert, and the
+maintainer's dismissal instructions go stale the moment that happens.
+
+So the instruction below is written as a rule first and a list second. The
+numbers are a convenience for the current UI session, not the criterion:
+
+> **Rule.** A `go/log-injection` alert whose flagged line passes its value
+> through any `logsafe` call is a false positive, closed by this entry.
+> Verify by reading the line — not by looking the number up here.
+
+The class that would be a real defect is guarded in code rather than in this
+document: `TestNoTaintedLogFields`
+(`internal/common/logsafe/no_tainted_field_test.go`) fails when a handler puts
+a value it read from the request straight into a `zap.String`, and
+`TestNoInterpolatedLogMessages` fails when one reaches a log *message*. Those
+run on every CI run. This file records verdicts; those tests hold the line.
+
 ---
 
 ## What the maintainer needs to do
@@ -291,6 +361,13 @@ alert list nobody has triaged is an alert list nobody reads.
    filter cannot remove them from a Go analysis — see the entry above — so the
    UI is the only place this verdict can be recorded, and it has to be
    re-recorded whenever a vendor bump moves those lines.
+3b. Dismiss as **"false positive"**, citing this file: every `go/log-injection`
+   alert whose flagged line passes its value through a `logsafe` call. At the
+   time of writing that is 2477–2486, 2488–2489 and 2493, but **apply the rule,
+   not the list** — see "the numbered list is itself a list that drifts". Read
+   the "eleven alerts on lines that ARE sanitised" entry first: the reason
+   matters, because the change that would clear them is a change that must not
+   be made.
 4. Nothing to do for `go/insecure-hostkeycallback`: it is no longer raised.
    Read its entry anyway before concluding the unpinned path went away.
 

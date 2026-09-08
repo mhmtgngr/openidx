@@ -13,11 +13,12 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
+	commonmiddleware "github.com/openidx/openidx/internal/common/middleware"
 	"github.com/openidx/openidx/internal/gateway"
-	"github.com/openidx/openidx/internal/gateway/middleware"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
 func init() {
@@ -181,94 +182,73 @@ func TestGatewayIntegration_ServiceCreation(t *testing.T) {
 	})
 }
 
+// The gateway's rate limiting, against the limiter the gateway now mounts.
+//
+// This test used to drive internal/gateway/middleware.NewRateLimitMiddleware,
+// a second sliding-window limiter that no binary ever constructed -- so it
+// proved that an unmounted middleware worked while the gateway itself answered
+// an unbounded request rate. Both halves of that are fixed: the second limiter
+// is deleted, cmd/gateway-service mounts middleware.DistributedRateLimit like
+// the other seven services, and this exercises that one.
 func TestGatewayIntegration_RateLimiting(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	t.Run("Enforces rate limits", func(t *testing.T) {
+	limited := func(t *testing.T, requests int) (*gin.Engine, func()) {
+		t.Helper()
 		redisClient := newTestRedisClient(t)
-		defer redisClient.Close()
-
-		logger := &testLogger{}
-		gatewayCfg := gateway.Config{
-			Logger:          logger,
-			EnableRateLimit: true,
-			RateLimitConfig: gateway.RateLimitConfig{
-				RequestsPerMinute: 3,
-				WindowSeconds:     60,
-			},
-		}
-
-		rateLimiter := middleware.NewRateLimitMiddleware(redisClient.GetRedisClient(), logger, gatewayCfg.RateLimitConfig)
-
 		router := gin.New()
-		router.Use(rateLimiter.RateLimit("test-service"))
-		router.GET("/test", func(c *gin.Context) {
-			c.String(200, "OK")
-		})
+		router.Use(commonmiddleware.DistributedRateLimit(redisClient.GetRedisClient(),
+			commonmiddleware.RateLimitConfig{
+				Requests:     requests,
+				Window:       time.Minute,
+				AuthRequests: requests,
+				AuthWindow:   time.Minute,
+			}, zap.NewNop()))
+		router.GET("/test", func(c *gin.Context) { c.String(http.StatusOK, "OK") })
+		return router, func() { _ = redisClient.Close() }
+	}
 
-		// Make requests within limit
-		for i := 0; i < 3; i++ {
-			w := httptest.NewRecorder()
-			req, _ := http.NewRequest("GET", "/test", nil)
-			req.RemoteAddr = "192.168.1.1:1234"
-			router.ServeHTTP(w, req)
-			assert.Equal(t, 200, w.Code, "Request %d should succeed", i+1)
-		}
-
-		// Next request should be rate limited
+	get := func(router *gin.Engine, from string) int {
 		w := httptest.NewRecorder()
 		req, _ := http.NewRequest("GET", "/test", nil)
-		req.RemoteAddr = "192.168.1.1:1234"
+		req.RemoteAddr = from
 		router.ServeHTTP(w, req)
-		assert.Equal(t, http.StatusTooManyRequests, w.Code)
+		return w.Code
+	}
+
+	t.Run("Enforces rate limits", func(t *testing.T) {
+		router, done := limited(t, 3)
+		defer done()
+
+		for i := 0; i < 3; i++ {
+			if code := get(router, "192.168.1.1:1234"); code != http.StatusOK {
+				t.Fatalf("request %d inside the limit answered %d", i+1, code)
+			}
+		}
+		if code := get(router, "192.168.1.1:1234"); code != http.StatusTooManyRequests {
+			t.Errorf("the fourth request past a limit of three answered %d, want 429", code)
+		}
 	})
 
 	t.Run("Different IPs have separate limits", func(t *testing.T) {
-		redisClient := newTestRedisClient(t)
-		defer redisClient.Close()
+		router, done := limited(t, 2)
+		defer done()
 
-		logger := &testLogger{}
-		gatewayCfg := gateway.Config{
-			Logger:          logger,
-			EnableRateLimit: true,
-			RateLimitConfig: gateway.RateLimitConfig{
-				RequestsPerMinute: 2,
-				WindowSeconds:     60,
-			},
-		}
-
-		rateLimiter := middleware.NewRateLimitMiddleware(redisClient.GetRedisClient(), logger, gatewayCfg.RateLimitConfig)
-
-		router := gin.New()
-		router.Use(rateLimiter.RateLimit("test-service"))
-		router.GET("/test", func(c *gin.Context) {
-			c.String(200, "OK")
-		})
-
-		// IP1 uses up its limit
 		for i := 0; i < 2; i++ {
-			w := httptest.NewRecorder()
-			req, _ := http.NewRequest("GET", "/test", nil)
-			req.RemoteAddr = "10.0.0.1:9999"
-			router.ServeHTTP(w, req)
-			assert.Equal(t, 200, w.Code)
+			if code := get(router, "10.0.0.1:9999"); code != http.StatusOK {
+				t.Fatalf("request %d from the first address answered %d", i+1, code)
+			}
 		}
-
-		// IP1 should be blocked
-		w := httptest.NewRecorder()
-		req, _ := http.NewRequest("GET", "/test", nil)
-		req.RemoteAddr = "10.0.0.1:9999"
-		router.ServeHTTP(w, req)
-		assert.Equal(t, http.StatusTooManyRequests, w.Code)
-
-		// IP2 should still be able to make requests
-		w = httptest.NewRecorder()
-		req, _ = http.NewRequest("GET", "/test", nil)
-		req.RemoteAddr = "10.0.0.2:9999"
-		router.ServeHTTP(w, req)
-		assert.Equal(t, 200, w.Code)
+		if code := get(router, "10.0.0.1:9999"); code != http.StatusTooManyRequests {
+			t.Errorf("the first address was not limited: %d", code)
+		}
+		// A limiter keyed on something other than the caller would take the
+		// second address down with the first.
+		if code := get(router, "10.0.0.2:9999"); code != http.StatusOK {
+			t.Errorf("a second address was limited by the first address's traffic: %d", code)
+		}
 	})
 }
 

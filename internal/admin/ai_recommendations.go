@@ -9,6 +9,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
+	"github.com/openidx/openidx/internal/notifications"
 )
 
 // Every handler here is tenant-scoped. ai_recommendations and
@@ -167,8 +170,7 @@ func (s *Service) handleAcceptRecommendation(c *gin.Context) {
 		return
 	}
 
-	s.db.Pool.Exec(ctx, `INSERT INTO recommendation_history (org_id, recommendation_id, previous_status, new_status, changed_by)
-		VALUES ($1, $2, 'pending', 'accepted', $3)`, org.ID, id, uid)
+	s.recordRecommendationChange(ctx, org.ID, id, "pending", "accepted", uid, "")
 
 	c.JSON(http.StatusOK, gin.H{"message": "recommendation accepted"})
 }
@@ -199,8 +201,7 @@ func (s *Service) handleDismissRecommendation(c *gin.Context) {
 		return
 	}
 
-	s.db.Pool.Exec(ctx, `INSERT INTO recommendation_history (org_id, recommendation_id, previous_status, new_status, changed_by, reason)
-		VALUES ($1, $2, 'pending', 'dismissed', $3, $4)`, org.ID, id, uid, req.Reason)
+	s.recordRecommendationChange(ctx, org.ID, id, "pending", "dismissed", uid, req.Reason)
 
 	c.JSON(http.StatusOK, gin.H{"message": "recommendation dismissed"})
 }
@@ -260,8 +261,7 @@ func (s *Service) handleApplyRecommendation(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "the action was performed but could not be recorded"})
 		return
 	}
-	s.db.Pool.Exec(ctx, `INSERT INTO recommendation_history (org_id, recommendation_id, previous_status, new_status, changed_by, reason)
-		VALUES ($1, $2, 'accepted', 'applied', $3, $4)`, org.ID, id, uid, out.Message)
+	s.recordRecommendationChange(ctx, org.ID, id, "accepted", "applied", uid, out.Message)
 
 	c.JSON(http.StatusOK, gin.H{"message": out.Message, "applied": true, "result": out})
 }
@@ -281,14 +281,18 @@ func (s *Service) applyRecommendation(ctx context.Context, orgID string, r Recom
 		if len(ids) == 0 {
 			return applyOutcome{Action: "no_targets", Message: "the recommendation names no users to remind"}
 		}
+		// NOT EXISTS is the user's own preference, in the same statement -- this
+		// path never went through CreateNotification either.
 		tag, err := s.db.Pool.Exec(ctx, `
 			INSERT INTO notifications (user_id, channel, type, title, body, metadata, org_id)
-			SELECT id, 'in_app', 'security', $2, $3, jsonb_build_object('source', 'ai_recommendation'), org_id
-			FROM users WHERE id = ANY($1::uuid[]) AND org_id = $4 AND enabled = true`,
+			SELECT id, 'in_app', $5::varchar, $2, $3, jsonb_build_object('source', 'ai_recommendation'), org_id
+			FROM users WHERE id = ANY($1::uuid[]) AND org_id = $4 AND enabled = true
+			  AND NOT EXISTS (SELECT 1 FROM notification_preferences p
+			      WHERE p.user_id = users.id AND p.channel = 'in_app' AND p.event_type = $5::varchar AND p.enabled = false)`,
 			ids,
 			"Set up multi-factor authentication",
 			"Your account has no second factor. Add one from Security settings to keep access to your applications.",
-			orgID)
+			orgID, notifications.TypeSecurity)
 		if err != nil {
 			s.logger.Error("apply recommendation: MFA reminders failed", zap.Error(err))
 			return applyOutcome{Action: "failed", Message: "could not queue the MFA reminders"}
@@ -619,8 +623,12 @@ func (s *Service) handleRecommendationStats(c *gin.Context) {
 
 	// Acceptance rate
 	var totalResolved, accepted int
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM ai_recommendations WHERE org_id = $1 AND status IN ('accepted', 'applied', 'dismissed')", org.ID).Scan(&totalResolved)
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM ai_recommendations WHERE org_id = $1 AND status IN ('accepted', 'applied')", org.ID).Scan(&accepted)
+	q := s.newTileQuery(ctx)
+	q.scan("resolved recommendations", &totalResolved, "SELECT COUNT(*) FROM ai_recommendations WHERE org_id = $1 AND status IN ('accepted', 'applied', 'dismissed')", org.ID)
+	if q.failed(c) {
+		return
+	}
+	q.scan("accepted recommendations", &accepted, "SELECT COUNT(*) FROM ai_recommendations WHERE org_id = $1 AND status IN ('accepted', 'applied')", org.ID)
 	if totalResolved > 0 {
 		result["acceptance_rate"] = float64(accepted) / float64(totalResolved) * 100
 	} else {
@@ -681,4 +689,24 @@ func (s *Service) createRecommendationWithSupport(ctx context.Context, orgID, re
 		return false
 	}
 	return tag.RowsAffected() > 0
+}
+
+// recordRecommendationChange writes the accountability row for a status change
+// on a recommendation: who moved it, from what to what, and why.
+//
+// All three call sites discarded its error, so a recommendation could show
+// 'accepted' or 'dismissed' or 'applied' with nothing anywhere saying which
+// administrator did it -- the history panel on the recommendation would simply
+// be empty, and empty looks like "nobody has touched this" rather than "the
+// record was lost". The state change is already committed by the time this
+// runs, so it cannot be undone here; what it can do is say so.
+func (s *Service) recordRecommendationChange(ctx context.Context, orgID, id, from, to, by, reason string) {
+	if _, err := s.db.Pool.Exec(ctx, `
+		INSERT INTO recommendation_history (org_id, recommendation_id, previous_status, new_status, changed_by, reason)
+		VALUES ($1, $2, $3, $4, $5, $6)`, orgID, id, from, to, by, reason); err != nil {
+		s.logger.Error("recommendation status changed but the change was not recorded; "+
+			"its history will not show who did this",
+			logsafe.String("recommendation_id", id),
+			zap.String("from", from), zap.String("to", to), zap.Error(err))
+	}
 }
