@@ -195,6 +195,7 @@ class PostureCheck {
     required this.status,
     required this.score,
     required this.message,
+    this.unsupported = false,
   });
 
   final String type;
@@ -203,12 +204,18 @@ class PostureCheck {
   final double score;
   final String message;
 
+  /// The engine has no implementation of this check for this operating system,
+  /// so [status] describes the build and not the device. Seven of the ten
+  /// checks are in this position on Android and iOS.
+  final bool unsupported;
+
   factory PostureCheck.fromJson(Map<String, dynamic> json) => PostureCheck(
         type: _asString(json['type']),
         severity: _asString(json['severity']),
         status: _asString(json['status']),
         score: _asDouble(json['score']),
         message: _asString(json['message']),
+        unsupported: _asBool(json['unsupported']),
       );
 }
 
@@ -222,6 +229,7 @@ class Posture {
     required this.errored,
     required this.ranAt,
     required this.checks,
+    this.unsupported = 0,
   });
 
   final bool compliant;
@@ -231,6 +239,17 @@ class Posture {
   final int errored;
   final String ranAt;
   final List<PostureCheck> checks;
+
+  /// How many checks could not run on this device at all. Separate from
+  /// [warned] because it is not a fact about the device: it says the engine
+  /// has no implementation here, and the engine withholds [compliant] whenever
+  /// it is non-zero.
+  final int unsupported;
+
+  /// Whether this build could examine the device at all. False on a platform
+  /// where nothing ran — which is the honest answer to "is my phone healthy?"
+  /// from a client that cannot tell.
+  bool get assessable => (passed + failed + warned + errored) > 0;
 
   factory Posture.fromJson(Map<String, dynamic> json) {
     final rawChecks = json['checks'];
@@ -250,6 +269,7 @@ class Posture {
       errored: _asInt(json['errored']),
       ranAt: _asString(json['ran_at']),
       checks: checks,
+      unsupported: _asInt(json['unsupported']),
     );
   }
 
@@ -259,6 +279,7 @@ class Posture {
     failed: 0,
     warned: 0,
     errored: 0,
+    unsupported: 0,
     ranAt: '',
     checks: <PostureCheck>[],
   );

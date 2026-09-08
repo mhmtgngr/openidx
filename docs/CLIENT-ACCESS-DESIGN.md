@@ -18,7 +18,7 @@ have and which they lack.
 |---|---|---|---|---|
 | **Windows agent** (`agent/`, MSI) | SYSTEM service + per-user tray. Enrollment, posture loop, Ziti tunnel, PAM launch | yes | yes — `agent/internal/checks/` (AV, disk encryption, firewall, domain join, patch level, OS version, integrity, screen lock, agent version) | **Tier 2** |
 | **Android agent** (`agent-android/`, APK `com.openidx.agent`) | Native endpoint agent: enrollment, posture, kiosk, remote support. Work-profile / device-owner / unmanaged | yes | yes — `posture-android/` (screen lock, encryption, Play Integrity, developer options, unknown sources, enterprise-managed, patch level, OS version, agent version) | **Tier 2** |
-| **Companion app** (`client/`, Flutter, iOS + Android) | End-user app over the gomobile engine: authenticator (TOTP), push number-match, approvals, My Access, QR sign-in | yes, as a *device of the user* | no meaningful posture — the Go engine's checks are desktop checks | **Tier 1** |
+| **Companion app** (`client/`, Flutter, iOS + Android) | End-user app over the gomobile engine: authenticator (TOTP), push number-match, approvals, My Access, QR sign-in | yes, as a *device of the user* | ✅ none, and it now says so — the Go engine's checks are desktop checks and decline on mobile rather than warning | **Tier 1** |
 
 Two consequences worth saying out loud:
 
@@ -26,6 +26,21 @@ Two consequences worth saying out loud:
   cannot prove posture. Under `POSTURE_DEVICE_TRUST_GATE=enforce` an iPhone
   never earns `device-trusted`. That is correct, and the UI must say so rather
   than show a spinner. **DECISION:** confirm iOS stays Tier 1 for this release.
+- **The companion app used to call that "Compliant".** This document has said
+  from the start that the Flutter client has no meaningful posture, because the
+  Go engine's checks are desktop checks. The code did not say it. Seven of the
+  ten dispatch on `runtime.GOOS` with cases for linux, darwin and windows and
+  answer anything else with a warning — and `Engine.Posture()` computed
+  compliance as "nothing failed and nothing errored", which warnings do not
+  affect. So on the gomobile builds the summary came out compliant on the
+  strength of seven checks that never ran, and the home screen drew it green.
+  Fixed in v1.34.0: a check that has no implementation for the running OS marks
+  its result `Unsupported`, compliance is withheld whenever anything was
+  unsupported, and the card says which checks could not run and that a managed
+  device reports posture through the device agent instead. `tools/posturevocab`
+  holds each check next to the platforms it can examine, across both clients,
+  and fails the build when two clients claim one check on one platform.
+
 - **The Windows MSI ships the agent and the tray only** (`agent/packaging/wix`
   installs `openidx-agent.exe` and two DLLs). The Flutter desktop shell is a
   separate, undistributed artifact. Windows' user surface *is* the tray: Sign

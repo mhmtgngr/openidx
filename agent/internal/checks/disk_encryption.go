@@ -36,9 +36,10 @@ func (c *DiskEncryptionCheck) Run(_ context.Context, _ map[string]interface{}) *
 		return c.checkWindows()
 	default:
 		return &CheckResult{
-			Status:  StatusWarn,
-			Score:   0.5,
-			Message: fmt.Sprintf("disk encryption check not supported on %s", runtime.GOOS),
+			Status:      StatusWarn,
+			Score:       0.5,
+			Message:     fmt.Sprintf("disk encryption check not supported on %s", runtime.GOOS),
+			Unsupported: true,
 			Details: map[string]interface{}{
 				"os": runtime.GOOS,
 			},

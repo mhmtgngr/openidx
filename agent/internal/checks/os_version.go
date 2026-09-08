@@ -19,6 +19,34 @@ func (c *OSVersionCheck) Name() string { return "os_version" }
 func (c *OSVersionCheck) Run(_ context.Context, params map[string]interface{}) *CheckResult {
 	osName := runtime.GOOS
 	arch := runtime.GOARCH
+
+	// getOSVersion is uname(2) on every non-Windows target. On Linux and macOS
+	// that release string IS the OS version an administrator writes a
+	// min_version policy against. On Android it is the LINUX KERNEL release —
+	// "5.10.101" where the policy means "14" — and on iOS the same. Comparing
+	// a kernel release against an Android version number does not produce a
+	// wrong answer so much as a meaningless one, and min_version returns
+	// StatusFail on a mismatch, so the meaningless comparison would have been
+	// reported as a device failing policy.
+	//
+	// The Android agent reports this check from Build.VERSION, which is the
+	// number the policy means. Refusing to answer here is what leaves one
+	// answer per platform instead of two in different units; tools/posturevocab
+	// fails the build if both clients ever claim it again.
+	switch runtime.GOOS {
+	case "android", "ios":
+		return &CheckResult{
+			Status:      StatusWarn,
+			Score:       0.5,
+			Unsupported: true,
+			Message:     fmt.Sprintf("os version check not supported on %s (uname reports the kernel, not the OS release)", runtime.GOOS),
+			Details: map[string]interface{}{
+				"os":   osName,
+				"arch": arch,
+			},
+		}
+	}
+
 	version := getOSVersion()
 
 	details := map[string]interface{}{

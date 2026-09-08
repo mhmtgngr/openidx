@@ -75,6 +75,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The companion app told people their phone was Compliant when it had never
+  been examined.** The Go engine's posture checks dispatch on `runtime.GOOS`
+  with branches for linux, darwin and windows; anything else gets a warning
+  saying the check is not supported there. The companion app IS anything else —
+  gomobile builds it as `GOOS=android` and `GOOS=ios` — so seven of the ten
+  checks, disk encryption and screen lock among them, returned that warning
+  without looking at the device. `Engine.Posture()` computed compliance as
+  "nothing failed and nothing errored", and warnings are neither, so the
+  summary came out compliant and the home screen drew a green badge with a
+  tick. Disk encryption is configured at severity `critical`.
+
+  Nothing in the repository could see it. The code compiles for Android, the
+  tests pass on the Linux runner where those same checks take a real branch,
+  the JSON is well-formed, and "0 failures" is perfectly true of a device
+  nobody looked at.
+
+  `CheckResult.Unsupported` now separates "I could not measure this" from "I
+  measured it and it is mildly concerning". Compliance requires that nothing
+  failed, nothing errored, **nothing was skipped for want of an
+  implementation**, and that at least one check actually ran — so a build that
+  cannot examine the device says so instead of calling it healthy. The card
+  gains a third headline state, names the checks that could not run, and says
+  a managed device reports posture through the device agent instead.
+
+  Two more checks were answering where they cannot see:
+
+  - `os_version` reported `uname` on Android and iOS, which is the **Linux
+    kernel release** — "5.10.101" where a `min_version` policy means "14". The
+    comparison is not wrong so much as meaningless, and a mismatch returns
+    `StatusFail`, so it would have marked healthy phones as failing policy.
+  - `process_running` globbed `/proc`, which is the process table on Linux and
+    nowhere else this agent runs. On Windows and macOS the glob matches
+    nothing, on Android the kernel has hidden other processes from unprivileged
+    apps since API 24, and on iOS there is no `/proc` — and in every case the
+    empty list meant every configured process was reported **missing**. A red
+    mark on a healthy machine teaches an operator to ignore the red marks.
+
+  Both now decline where they cannot answer.
+
+- **`tools/posturevocab`**, a new gate: it holds each posture check next to the
+  operating systems it can actually examine, across both clients that report
+  posture to the same `check_type` column — the Go engine and the Kotlin
+  Android agent. Coverage is derived from where a check DECLINES, and an
+  unrecognised declining shape is an error rather than a guess. It fails the
+  build when two clients implement one check for one platform: two
+  implementations of one word, in two languages, reporting to one column will
+  drift, and the server cannot tell which one answered. One collision is
+  registered with its reason (`agent_version`, which describes two different
+  binaries installed side by side); the other two the first run found were
+  defects, and were fixed rather than registered.
+
+
 - **Six settings queries read rows nothing has ever written.** `system_settings`
   is a key/value table; the console reads and writes the whole settings
   document under the key `system`. Four other places read settings out of the

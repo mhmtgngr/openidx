@@ -420,16 +420,23 @@ type postureCheck struct {
 	Status   string  `json:"status"`
 	Score    float64 `json:"score"`
 	Message  string  `json:"message,omitempty"`
+	// Unsupported: this check has no implementation for the running OS, so its
+	// status describes the build, not the device.
+	Unsupported bool `json:"unsupported,omitempty"`
 }
 
 type posturePayload struct {
-	Compliant bool           `json:"compliant"`
-	Passed    int            `json:"passed"`
-	Failed    int            `json:"failed"`
-	Warned    int            `json:"warned"`
-	Errored   int            `json:"errored"`
-	RanAt     string         `json:"ran_at"`
-	Checks    []postureCheck `json:"checks"`
+	Compliant bool `json:"compliant"`
+	Passed    int  `json:"passed"`
+	Failed    int  `json:"failed"`
+	Warned    int  `json:"warned"`
+	Errored   int  `json:"errored"`
+	// Unsupported counts the checks that could not run on this operating
+	// system. It is separate from Warned because it is not a fact about the
+	// device at all.
+	Unsupported int            `json:"unsupported"`
+	RanAt       string         `json:"ran_at"`
+	Checks      []postureCheck `json:"checks"`
 }
 
 // Posture runs the device's configured compliance checks locally and returns a
@@ -457,19 +464,32 @@ func (e *Engine) Posture() (string, error) {
 	defer cancel()
 	results := eng.RunChecks(ctx, cfg.Checks)
 
-	out := posturePayload{RanAt: time.Now().UTC().Format(time.RFC3339)}
+	return toJSON(summarisePosture(results, time.Now().UTC().Format(time.RFC3339)))
+}
+
+// summarisePosture turns check results into the payload a GUI reads. It is a
+// pure function separated from Posture() so its arithmetic — which is where
+// the compliance claim is actually made — can be driven by tests with the
+// result shapes of platforms the test host is not. Posture() itself can only
+// ever exercise the platform it runs on, which is precisely why the Android
+// and iOS behaviour went unnoticed.
+func summarisePosture(results []checks.EngineResult, ranAt string) posturePayload {
+	out := posturePayload{RanAt: ranAt}
 	for _, r := range results {
 		pc := postureCheck{Type: r.CheckType, Severity: r.Severity}
 		if r.Result != nil {
 			pc.Status = string(r.Result.Status)
 			pc.Score = r.Result.Score
 			pc.Message = r.Result.Message
-			switch r.Result.Status {
-			case checks.StatusPass:
+			pc.Unsupported = r.Result.Unsupported
+			switch {
+			case r.Result.Unsupported:
+				out.Unsupported++
+			case r.Result.Status == checks.StatusPass:
 				out.Passed++
-			case checks.StatusFail:
+			case r.Result.Status == checks.StatusFail:
 				out.Failed++
-			case checks.StatusWarn:
+			case r.Result.Status == checks.StatusWarn:
 				out.Warned++
 			default:
 				out.Errored++
@@ -477,8 +497,25 @@ func (e *Engine) Posture() (string, error) {
 		}
 		out.Checks = append(out.Checks, pc)
 	}
-	out.Compliant = out.Failed == 0 && out.Errored == 0
-	return toJSON(out)
+
+	// Compliance is a claim about the device, so it may only be made when the
+	// device was actually examined.
+	//
+	// This was `Failed == 0 && Errored == 0`. Every check that has no
+	// implementation for the running OS answers StatusWarn, and warns did not
+	// count -- so on Android and iOS, where seven of the ten checks have no
+	// implementation, the engine reported COMPLIANT and the companion app drew
+	// a green badge on a phone whose disk encryption (severity: critical) and
+	// screen lock had never been looked at. A user reading that badge would
+	// reasonably conclude their device had been checked and had passed.
+	//
+	// Two conditions now, both necessary: nothing failed or errored, AND
+	// nothing was skipped for want of an implementation. A platform with no
+	// checks at all therefore cannot be called compliant either, which is the
+	// right answer to "is this device healthy?" from a build that cannot tell.
+	out.Compliant = out.Failed == 0 && out.Errored == 0 && out.Unsupported == 0 &&
+		(out.Passed+out.Warned) > 0
+	return out
 }
 
 // PamList returns the caller's launchable PAM connections as a JSON array.

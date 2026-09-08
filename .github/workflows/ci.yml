@@ -1522,6 +1522,71 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           exit $rc
 
+  # posturevocab holds each posture check next to the operating systems it can
+  # actually examine, across both clients that report posture.
+  #
+  # Seven of the Go engine's ten checks dispatched on runtime.GOOS with cases
+  # for linux, darwin and windows and answered anything else with a warning.
+  # The companion app IS anything else -- gomobile builds it as GOOS=android
+  # and GOOS=ios -- and warnings did not count against compliance, so a phone
+  # whose disk encryption (severity: critical) had never been examined was
+  # reported COMPLIANT, in green, on its owner's home screen.
+  #
+  # Nothing else here could see that. The code compiles for Android; the tests
+  # pass on the Linux runner, where those same checks take a real branch; the
+  # JSON is well-formed; and "0 failures" is perfectly true of a device nobody
+  # looked at. Only holding coverage next to platform can see it.
+  posturevocab:
+    name: Posture-coverage lint
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.go_changed == 'true'
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Self-test the tool first
+        # A guard whose own cases do not pass has no standing to fail a build.
+        run: go test ./tools/posturevocab/
+
+      - name: Run posturevocab (hard gate)
+        run: |
+          set +e
+          go run ./tools/posturevocab -fail > pv.out 2> pv.err
+          rc=$?
+          go run ./tools/posturevocab -census > pv.census 2>/dev/null
+          set -e
+          {
+            echo "## posturevocab — which client checks what, where"
+            echo
+            if [ "$rc" -ne 0 ]; then
+              echo "❌ **Gate failed.** A NEW finding is one check_type implemented by BOTH clients for the same platform: two implementations of one word, in two languages, reporting to one column. A STALE entry is a collision that has been resolved, and its line in \`tools/posturevocab/known.go\` must go."
+            else
+              echo "✅ $(tail -n1 pv.err 2>/dev/null || echo 'one implementation per check per platform')"
+            fi
+            echo
+            echo '```'
+            head -40 pv.out
+            tail -n1 pv.err
+            echo '```'
+            echo
+            echo "<details><summary>Coverage matrix</summary>"
+            echo
+            echo '```'
+            cat pv.census
+            echo '```'
+            echo
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
+
   # deadconfig holds the settings an operator can set next to the settings the
   # code reads, in both directions.
   #
@@ -2175,6 +2240,7 @@ jobs:
       - lint
       - no-internal-topology
       - orgscope
+      - posturevocab
       - routereach
       - selfheal
       - shell-prose

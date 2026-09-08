@@ -29,9 +29,10 @@ func (c *IntegrityCheck) Run(_ context.Context, _ map[string]interface{}) *Check
 		return c.checkLinux()
 	default:
 		return &CheckResult{
-			Status:  StatusWarn,
-			Score:   0.5,
-			Message: fmt.Sprintf("integrity check not fully implemented on %s", runtime.GOOS),
+			Status:      StatusWarn,
+			Score:       0.5,
+			Message:     fmt.Sprintf("integrity check not fully implemented on %s", runtime.GOOS),
+			Unsupported: true,
 			Details: map[string]interface{}{
 				"os": runtime.GOOS,
 			},
