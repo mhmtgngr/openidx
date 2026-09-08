@@ -2,6 +2,11 @@ import { describe, it, expect, afterEach } from 'vitest'
 import i18n, { ensureLanguage, setLanguage, supportedLanguages } from './index'
 import en from './locales/en'
 import { API_SPECS } from '@/lib/api-specs'
+import {
+  resourceTypes as abacResourceTypes,
+  attributeOptions as abacAttributeOptions,
+  operatorOptions as abacOperatorOptions,
+} from '@/pages/abac-policies'
 
 // The singleton is initialized by the test setup file (same module as
 // main.tsx). Restore English so other test files see the default language.
@@ -310,31 +315,16 @@ describe('i18n', () => {
       ].flatMap((k) => [`pages.policies.conditions.${k}`, `pages.policies.placeholders.${k}`]),
       'pages.policies.placeholders.conditional_max_risk_score',
       // abac-policies: resourceTypes/attributeOptions/operatorOptions are
-      // module-level value lists resolved at render
-      ...['application', 'route', 'service', 'all'].map(
-        (k) => `pages.abacPolicies.resourceTypes.${k}`,
-      ),
-      ...[
-        'department',
-        'location',
-        'device_trust_level',
-        'time_of_day',
-        'risk_score',
-        'group_membership',
-        'ip_range',
-      ].map((k) => `pages.abacPolicies.attributes.${k}`),
-      ...[
-        'eq',
-        'neq',
-        'in',
-        'not_in',
-        'gt',
-        'gte',
-        'lt',
-        'lte',
-        'between',
-        'contains',
-      ].map((k) => `pages.abacPolicies.operators.${k}`),
+      // module-level value lists resolved at render. Derived from the page's
+      // own lists, not copied — these were three hand-written copies, and when
+      // the attribute vocabulary was corrected to what abac.SubjectAttributes
+      // actually populates, the copies were what went stale. The page's lists
+      // are in turn checked against the evaluator by
+      // internal/abac/vocabulary_test.go, so the chain runs catalog → page →
+      // Go, with no list maintained by hand at any link.
+      ...abacResourceTypes.map((r) => `pages.abacPolicies.resourceTypes.${r.labelKey}`),
+      ...abacAttributeOptions.map((k) => `pages.abacPolicies.attributes.${k}`),
+      ...abacOperatorOptions.map((k) => `pages.abacPolicies.operators.${k}`),
       // zero-trust: the access-method chip keys off the route's own transport
       ...['proxy', 'ziti', 'browzer', 'guacamole'].map((k) => `pages.zeroTrust.methods.${k}`),
       ...['notConfigured', 'reachable', 'unreachable'].map(

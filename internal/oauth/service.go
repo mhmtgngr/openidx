@@ -4432,7 +4432,7 @@ func (s *Service) abacGateAllows(c *gin.Context, userID, clientID, appID string)
 
 	allow, wouldDeny, res := abac.Gate(ctx, s.db, org.ID, mode, abac.EvaluationRequest{
 		UserAttributes: attrs,
-		ResourceType:   "application",
+		ResourceType:   abac.ResourceTypeApplication,
 		ResourceID:     appID,
 	})
 	if wouldDeny {

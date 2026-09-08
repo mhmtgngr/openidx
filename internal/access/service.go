@@ -3589,7 +3589,7 @@ func (s *Service) abacGateAllows(c *gin.Context, route *ProxyRoute, userID, orgI
 
 	allow, wouldDeny, res := abac.Gate(ctx, s.db, orgID, mode, abac.EvaluationRequest{
 		UserAttributes: attrs,
-		ResourceType:   "application",
+		ResourceType:   abac.ResourceTypeApplication,
 		ResourceID:     appID,
 	})
 	if wouldDeny {

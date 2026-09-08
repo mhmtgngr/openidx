@@ -9,6 +9,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **The ABAC policy editor offered seven subject attributes; the evaluator
+  populates nine; they overlapped on one.** `abac.SubjectAttributes` builds
+  `user_id, username, email, department, job_title, employment_status, enabled,
+  roles, groups`. The dropdown offered `department, location,
+  device_trust_level, time_of_day, risk_score, group_membership, ip_range` — so
+  six of the seven choices an administrator could pick were attributes no
+  subject has ever carried. `EvaluateCondition` returns false for an attribute
+  that is absent, so a condition on any of them is false for every user and the
+  policy never matches: it saves, lists as enabled, and decides nothing.
+
+  The direction that matters is deny. `abac.Gate` composes
+  deny-wins-else-allow-else-allow, so a DENY written on one of those attributes
+  permits exactly what it was written to stop — under `ABAC_ENFORCE=enforce`,
+  the state the rollout in the readiness guide works toward. `group_membership`
+  was the sharpest: the evaluator carries `groups`, one word away, so a policy
+  gating on group membership silently did nothing while the spelling that works
+  was not offered at all.
+
+  Two of the four resource types were dead the same way. Both enforcement points
+  — `internal/oauth` at token issuance and `internal/access` at the proxy —
+  authorize an **application** and pass the application id; `Gate` selects
+  `resource_type IN ($1, '*')`, so a policy scoped to `route` or `service` is
+  never even selected. The prefilled subject in the Test dialog used
+  `risk_score`, so the example a user starts from was itself unmatched.
+
+  The vocabulary now lives in `internal/abac/vocabulary.go` next to the code that
+  honours it, both PEPs use the declared constant instead of a bare literal, and
+  `internal/abac/vocabulary_test.go` checks three things: that
+  `SubjectAttributes` really builds the declared keys and no others, that the
+  console offers nothing outside them, and that every offered resource type is
+  one an enforcement point asks about. The i18n test's three hand-copied ABAC
+  key lists are derived from the page's own lists now — they were the copies
+  that went stale when the vocabulary was corrected.
+
 - **The authorization policy was written against an input the product does not
   send.** `deployments/docker/opa/policies/authz.rego` keys its rules on
   `input.*`; a rule reading a path the client never marshals is not stricter or

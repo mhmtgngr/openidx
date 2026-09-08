@@ -254,6 +254,20 @@ product; either wire them or remove them from the UI.
 - Minor same-class: DB-backed feature flags silently fall back to memory
   (`internal/feature/flag.go:295`); gateway `logInfo`/`logError` are empty
   bodies (`internal/gateway/service.go:235`).
+- **A7 — The ABAC policy editor's vocabulary was almost disjoint from the
+  evaluator's.** *Fixed on this branch.* `abac.SubjectAttributes` populates nine
+  attributes; the dropdown offered seven; they overlapped on `department` alone.
+  A condition on `location`, `device_trust_level`, `time_of_day`, `risk_score`,
+  `group_membership` or `ip_range` is false for every user, so the policy saves,
+  lists as enabled and decides nothing — and because `abac.Gate` composes
+  deny-wins-else-allow-else-allow, a **deny** written that way permits exactly
+  what it was written to stop under `ABAC_ENFORCE=enforce`. `group_membership`
+  was one word from the working `groups`, which the page did not offer at all.
+  Two of the four resource types were dead for the same reason: both enforcement
+  points authorize an application, so a policy scoped to `route` or `service` is
+  never selected. Vocabulary moved to `internal/abac/vocabulary.go`, both PEPs
+  use the constant, and `internal/abac/vocabulary_test.go` checks the console's
+  dropdowns against what the evaluator can decide — in both directions.
 
 **B. First-contact failures** — what a new operator/evaluator hits in hour one.
 
