@@ -112,31 +112,51 @@ Two consequences worth saying out loud:
 **DECISION:** keep the companion app free of admin actions (recommended: a phone
 that approves its own device is a phone that cannot be revoked by a phone).
 
-### The finding that matters most
+### The finding that mattered most — fixed on this branch (item 2)
 
-**Revoking a device does not revoke its tokens.** `executeDeviceRevoke`
-(`internal/access/user_devices.go`) deletes the Ziti identity, terminates Ziti
-sessions and resyncs the trust attribute — and touches no OAuth session or
+**Revoking a device did not revoke its tokens.** `executeDeviceRevoke`
+(`internal/access/user_devices.go`) deleted the Ziti identity, terminated Ziti
+sessions and resynced the trust attribute — and touched no OAuth session or
 refresh token. The native clients hold a **30-day** refresh token
 (`refresh_token_lifetime = 2592000`, v84/v85; the console's is one day). After
-an admin revokes a phone, that phone cannot dial the overlay but can still act
-as the user on every HTTP surface for up to a month — including **approving
-push-MFA challenges**. `Logout()` in the client is local only; nothing calls
+an admin revoked a phone, that phone could not dial the overlay but could still
+act as the user on every HTTP surface for up to a month — including **approving
+push-MFA challenges**. `Logout()` in the client was local only; nothing called
 `/oauth/revoke`.
 
-The fix has three parts, in this order:
+All three parts have landed:
 
-1. **Bind the session to the device.** The native client sends its enrolled
-   `agent_id` at the token exchange (`agent/internal/sso/sso.go`, `Exchange`);
-   the server stores it on the refresh-token family. Sessions today record
-   `client_id`, `ip_address`, `user_agent` (`internal/identity/session_repository.go`)
-   and nothing about the device.
-2. **Revoke by device.** `executeDeviceRevoke` revokes every refresh-token
-   family and session bound to that `agent_id`. The user-wide primitives
-   (`revokeAllUserSessions`, `revokeAllUserRefreshTokens`, `internal/oauth/service.go`)
-   are the fallback for a device with no bound session.
-3. **Logout revokes.** The client's `Logout()` calls `/oauth/revoke` with the
-   refresh token before clearing local state.
+1. **The session names its device.** Migration **v185** adds
+   `oauth_refresh_tokens.agent_id`. A native client sends `agent_id` with its
+   code exchange (`agent/internal/sso/sso.go`); the server binds it only if the
+   agent is one it records as enrolled by that same user and not revoked
+   (`internal/oauth/device_binding.go`). Rotation carries the binding forward
+   like `family_id`, so a chain that has refreshed is still findable.
+   `/agent/enroll/oauth` binds the enrolling bearer's own session to the agent
+   it has just issued, which is the Android path and needs no client claim.
+2. **The revoke follows it.** `executeDeviceRevoke` revokes every bound
+   refresh-token family, marks the sessions those families ran under revoked,
+   and publishes the `revoked_session:<id>` markers the refresh grant honours.
+   The result reports both counts, and the console says so.
+3. **Logout revokes.** `Engine.Logout`, the tray's Sign out and
+   `openidx-agent logout` call `/oauth/revoke` (RFC 7009) before clearing local
+   state. The local session is cleared either way — a user who signs out must
+   not stay signed in because the network was down — and a failed revocation is
+   reported rather than swallowed.
+
+**What this does not do, deliberately.** An access token already minted to the
+device keeps working until it expires, because nothing on the request path
+consults the session marker — only the refresh grant does. That window is the
+client's `access_token_lifetime`: one hour for the native clients, against the
+thirty days it was before. Closing it means the auth middleware reading the
+marker on every request, which is a per-request cost and a change of its own.
+
+**And what the binding is not.** `agent_id` arrives as a form field, so a client
+can omit it and be handed an unbound token — the pre-v185 state. No check here
+could close that: an attacker replaying a stolen refresh token would simply not
+send it. The binding is a routing key for revocation; the device's
+authentication is the agent credential on `/agent/*` and the Ziti identity on
+the overlay.
 
 **DECISION:** native refresh-token lifetime. 30 days on a phone is long;
 recommended **14 days, sliding on use**, hard cap 90. Windows agent may keep
@@ -204,7 +224,7 @@ recommended **14 days, sliding on use**, hard cap 90. Windows agent may keep
 | # | Item | Where | Size |
 |---|---|---|---|
 | 1 | ✅ Seed `openidx-agent-android` + `agent.enroll` scope; require the scope on `/agent/enroll/oauth`; make the OAuth path use `decideAutoTrust`; derive a census of every shipped client's id/redirect/scopes against the seeds | v184, `internal/common/middleware`, `internal/access/agent_api.go`, `internal/migrations/v184_test.go` | small — done |
-| 2 | Device revoke revokes bound tokens: `agent_id` at token exchange → stored on the refresh family → `executeDeviceRevoke` revokes it; client `Logout()` calls `/oauth/revoke` | `internal/oauth`, `internal/access`, `agent/internal/sso`, migration | medium |
+| 2 | ✅ Device revoke revokes bound tokens: `agent_id` at token exchange → stored on the refresh family (v185) and carried through rotation → `executeDeviceRevoke` revokes the families, the sessions and publishes the markers; `Logout()` calls `/oauth/revoke` | v185, `internal/oauth`, `internal/access`, `agent/internal/sso`, `agent/internal/control`, `agent/internal/tray` | medium — done |
 | 3 | Push approval checks the approving device's trust state | `internal/identity/pushmfa.go` | small |
 | 4 | Windows: DPAPI for `user-tokens.json` and `control-endpoint.json`; ACL on the agent directory | `agent/internal/authstore`, `agent/internal/control/listener_windows.go` | medium |
 | 5 | `ValidateProduction`: reject `push_mfa.auto_approve`; gate the no-DB enroll fallback | `internal/common/config`, `internal/access` | small |

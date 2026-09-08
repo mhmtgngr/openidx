@@ -34,7 +34,8 @@ CREATE TABLE oauth_refresh_tokens (
     org_id      UUID NOT NULL,
     family_id   UUID,
     used_at     TIMESTAMPTZ,
-    revoked_at  TIMESTAMPTZ
+    revoked_at  TIMESTAMPTZ,
+    agent_id    VARCHAR(64)
 );`
 
 const (

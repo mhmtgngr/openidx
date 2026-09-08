@@ -37,7 +37,9 @@ import (
 // live OpenIDX server. The default implementation (realBackend) calls the
 // existing packages verbatim.
 type backend interface {
-	Login(ctx context.Context, serverURL string) (*sso.Tokens, error)
+	// Login carries the enrolled agent id (empty when not enrolled) so the
+	// session can be bound to the device and revoked with it.
+	Login(ctx context.Context, serverURL, agentID string) (*sso.Tokens, error)
 	Enroll(logger *zap.Logger, serverURL, token, configDir string) (agentID, deviceID, zitiIdentity string, err error)
 	PamList(ctx context.Context, serverURL, token string) ([]desktoppam.Entry, error)
 	PamConnect(ctx context.Context, serverURL, token, entryID string) (connectURL string, err error)
@@ -58,8 +60,8 @@ type Engine struct {
 	serverURL string
 	logger    *zap.Logger
 
-	be         backend
-	newDialer  func(identityFile string) (zitiDialer, error)
+	be           backend
+	newDialer    func(identityFile string) (zitiDialer, error)
 	loginTimeout time.Duration
 
 	mu                 sync.Mutex
@@ -165,7 +167,7 @@ func (e *Engine) Login() (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), e.loginTimeout)
 	defer cancel()
 
-	tok, err := e.be.Login(ctx, e.serverURL)
+	tok, err := e.be.Login(ctx, e.serverURL, e.enrolledAgentID())
 	if err != nil {
 		return "", fmt.Errorf("login failed: %w", err)
 	}
@@ -194,6 +196,10 @@ func (e *Engine) LoginStart() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("login failed: %w", err)
 	}
+	// Name the device, so the server binds this session's refresh family to it
+	// and revoking the phone revokes the session (v185). Persisted with the
+	// rest of the flow below, so the cold-start path sends it too.
+	m.BindDevice(e.enrolledAgentID())
 	e.mu.Lock()
 	e.pendingMobileLogin = m
 	e.mu.Unlock()
@@ -273,9 +279,42 @@ func (e *Engine) LoginFinish(callbackURL string) (string, error) {
 	return toJSON(userPayload{Sub: sub, Email: email, Exp: exp})
 }
 
-// Logout clears the cached OAuth session.
+// Logout ends the session on the server and then clears the local copy.
+//
+// It used to be authstore.Clear alone. Deleting the file makes the app look
+// signed out; the refresh token it deleted stayed valid on the server for its
+// full 30 days, so anyone who had already copied it — the case "sign out on a
+// shared or lost device" exists for — kept a working credential. RFC 7009
+// revocation is what actually ends it.
+//
+// The local clear happens whichever way the revocation goes: a user who signs
+// out must not remain signed in because the network was down. A failure is
+// logged rather than returned for the same reason.
 func (e *Engine) Logout() error {
+	if tok, err := authstore.Load(e.configDir); err == nil && tok != nil && tok.RefreshToken != "" && e.serverURL != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		// The client id is what the token endpoint authenticates the CALLER as;
+		// handleRevoke identifies the token by its own value, so this names the
+		// public client this engine uses (as AccessToken's refresh does) rather
+		// than deciding which client minted the session.
+		if rerr := sso.Revoke(ctx, e.serverURL, sso.MobileClientID, tok.RefreshToken); rerr != nil {
+			e.logger.Warn("sign-out: server-side revocation failed; the refresh token stays valid until it expires",
+				zap.Error(rerr))
+		}
+	}
 	return authstore.Clear(e.configDir)
+}
+
+// enrolledAgentID is the agent id this installation is enrolled as, or "" when
+// it is not enrolled yet. A login that names it can be revoked with the device
+// (v185); one that cannot name it is simply unbound.
+func (e *Engine) enrolledAgentID() string {
+	cfg, err := agent.LoadConfig(e.configDir)
+	if err != nil || cfg == nil {
+		return ""
+	}
+	return cfg.AgentID
 }
 
 type enrollPayload struct {
@@ -376,11 +415,11 @@ func (e *Engine) RegisterPushDevice(deviceToken, platform string) (string, error
 }
 
 type postureCheck struct {
-	Type     string `json:"type"`
-	Severity string `json:"severity"`
-	Status   string `json:"status"`
+	Type     string  `json:"type"`
+	Severity string  `json:"severity"`
+	Status   string  `json:"status"`
 	Score    float64 `json:"score"`
-	Message  string `json:"message,omitempty"`
+	Message  string  `json:"message,omitempty"`
 }
 
 type posturePayload struct {

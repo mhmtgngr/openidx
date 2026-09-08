@@ -734,6 +734,15 @@ func (h *AgentAPIHandler) HandleEnrollOAuth(c *gin.Context) {
 	// here never blocks enrollment.
 	h.linkAgentToKnownDevice(c.Request.Context(), c.ClientIP(), creds.AgentID, creds.DeviceID, userID, org.ID, enrollReq, trusted)
 
+	// Bind the session that enrolled this device to the device (v185), so
+	// revoking it revokes the tokens too. The Android agent signs in first and
+	// enrols second with the token that sign-in produced, so its refresh family
+	// already exists here and the server -- not the client -- knows both halves:
+	// the session comes from the bearer's own sid claim, the agent from the row
+	// just written. This is the enrolment path's counterpart to the agent_id a
+	// desktop client names at the token exchange.
+	h.bindSessionTokensToAgent(c.Request.Context(), c.GetString("session_id"), userID, org.ID, creds.AgentID)
+
 	writeEnrollResponse(c, creds, "oauth", nil)
 
 	detail := fmt.Sprintf("method=oauth user=%s auto_trusted=%t autotrust_mode=%s", userID, trusted, mode)
@@ -756,6 +765,39 @@ func tokenScopeAllows(c *gin.Context, want string) bool {
 		}
 	}
 	return false
+}
+
+// bindSessionTokensToAgent stamps the enrolling session's refresh-token family
+// with the agent it just enrolled, so a later device revoke can find it.
+//
+// Only the caller's OWN unbound, unrevoked chain is touched: the session id is
+// the one in the bearer's sid claim, the user id is the subject of that same
+// token, and the org is the request's. An already-bound row is left alone —
+// re-enrolling a device must not steal another device's chain.
+//
+// Best-effort by design, and loud when it fails: enrolment has already
+// succeeded and the credentials are on their way to the client, so a failure
+// here must not turn into a 500. What it costs is that this session's tokens
+// survive a revoke of this device, which is worth a warning in the log.
+func (h *AgentAPIHandler) bindSessionTokensToAgent(ctx context.Context, sessionID, userID, orgID, agentID string) {
+	if h.db == nil || h.db.Pool == nil || sessionID == "" || userID == "" || orgID == "" || agentID == "" {
+		return
+	}
+	// session_id is a UUID column and the sid claim is a string; comparing as
+	// text keeps a malformed claim a no-match rather than a query error.
+	tag, err := h.db.Pool.Exec(ctx, `
+		UPDATE oauth_refresh_tokens SET agent_id = $1
+		 WHERE session_id::text = $2 AND user_id = $3 AND org_id = $4
+		   AND agent_id IS NULL AND revoked_at IS NULL`,
+		agentID, sessionID, userID, orgID)
+	if err != nil {
+		h.logger.Warn("enroll: binding the session's refresh tokens to the agent failed; revoking this device will not revoke them",
+			zap.String("agent_id", logsafe.Clean(agentID)), zap.Error(err))
+		return
+	}
+	h.logger.Info("enroll: bound refresh tokens to the enrolled device",
+		zap.String("agent_id", logsafe.Clean(agentID)),
+		zap.Int64("tokens_bound", tag.RowsAffected()))
 }
 
 // linkAgentToKnownDevice upserts a known_devices row for a user-bound agent

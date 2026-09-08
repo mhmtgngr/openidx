@@ -21,6 +21,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Revoking a device did not revoke its tokens.** `executeDeviceRevoke` deleted
+  the Ziti identity, terminated the overlay sessions and untrusted the known
+  device — every pillar except the one a phone actually talks to. Nothing
+  recorded which device a token belonged to, and the native clients hold a
+  **30-day** refresh token (`refresh_token_lifetime = 2592000`, v84/v85), so a
+  revoked phone could not dial a service and went on acting as the user over
+  plain HTTP for up to a month, including approving push-MFA challenges.
+
+  Migration **v185** adds `oauth_refresh_tokens.agent_id` (nullable, partial
+  index, no backfill — NULL means "not bound", the pre-v185 state). A native
+  client names its device with `agent_id` at the code exchange and the server
+  binds it only if the agent is one it records as enrolled by that same user and
+  not revoked (`internal/oauth/device_binding.go`); rotation carries the binding
+  forward like `family_id`, so a chain that has refreshed is still findable.
+  `/agent/enroll/oauth` binds the enrolling bearer's own session to the agent it
+  has just issued — the Android path, where the server knows both halves and no
+  client claim is involved. `executeDeviceRevoke` then revokes every bound
+  family, marks the sessions those families ran under revoked, publishes the
+  `revoked_session:<id>` markers the refresh grant honours, and reports both
+  counts; the console's revoke toast says what happened, including when no
+  session was bound to the device.
+
+  **Signing out now reaches the server.** `Engine.Logout`, the Windows tray's
+  Sign out and `openidx-agent logout` call `/oauth/revoke` (RFC 7009) before
+  clearing local state, which used to be all they did — the deleted refresh
+  token stayed valid for its full lifetime. The local session is cleared either
+  way, and a failed revocation is reported rather than swallowed.
+
+  Bounded honestly: an access token already minted to the device keeps working
+  until it expires (one hour for the native clients), because only the refresh
+  grant consults the session marker. `agent_id` is a routing key for revocation,
+  not an authentication of the device — a client can omit it and be handed an
+  unbound token, exactly as before.
+
 - **The Android agent's first screen could not enroll a device, on any
   install.** `EnrollmentActivity` shows "Sign in with your work email to enroll
   this device" and runs a PKCE flow as `client_id=openidx-agent-android` with

@@ -16,8 +16,8 @@ import (
 // `backend` interface.
 type realBackend struct{}
 
-func (realBackend) Login(ctx context.Context, serverURL string) (*sso.Tokens, error) {
-	return sso.Login(ctx, serverURL)
+func (realBackend) Login(ctx context.Context, serverURL, agentID string) (*sso.Tokens, error) {
+	return sso.LoginWithDevice(ctx, serverURL, agentID)
 }
 
 func (realBackend) Enroll(logger *zap.Logger, serverURL, token, configDir string) (agentID, deviceID, zitiIdentity string, err error) {

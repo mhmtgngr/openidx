@@ -109,6 +109,12 @@ type RefreshToken struct {
 	// carries it forward so a whole chain can be revoked at once when a replay
 	// proves the secret leaked.
 	FamilyID string `json:"family_id,omitempty"`
+	// AgentID is the enrolled device this chain was issued to, when the client
+	// is a native one that proved which device it runs on (v185). Empty for
+	// browser clients and for any token minted before the binding existed.
+	// Revoking the device revokes every family carrying its id — without this
+	// column a revoked phone kept its 30-day refresh token.
+	AgentID string `json:"agent_id,omitempty"`
 	// UsedAt is set when this token is rotated away. A non-nil value on a
 	// presented token means someone is replaying it — see detectRefreshReuse.
 	UsedAt *time.Time `json:"used_at,omitempty"`
@@ -622,10 +628,18 @@ func (s *Service) CreateRefreshToken(ctx context.Context, token *RefreshToken) e
 		token.FamilyID = familyID
 	}
 
+	// NULL rather than '' for an unbound chain: "no device" is the honest value
+	// for a browser client, and the partial index on agent_id then holds only
+	// the device-bound rows the revoke actually looks up.
+	var agentID interface{}
+	if token.AgentID != "" {
+		agentID = token.AgentID
+	}
+
 	_, err = s.db.Pool.Exec(ctx, `
-		INSERT INTO oauth_refresh_tokens (token, client_id, user_id, scope, session_id, expires_at, created_at, org_id, family_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-	`, token.Token, token.ClientID, token.UserID, token.Scope, sessionID, token.ExpiresAt, token.CreatedAt, org.ID, familyID)
+		INSERT INTO oauth_refresh_tokens (token, client_id, user_id, scope, session_id, expires_at, created_at, org_id, family_id, agent_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+	`, token.Token, token.ClientID, token.UserID, token.Scope, sessionID, token.ExpiresAt, token.CreatedAt, org.ID, familyID, agentID)
 
 	return err
 }
@@ -643,14 +657,14 @@ func (s *Service) GetRefreshToken(ctx context.Context, token string) (*RefreshTo
 	// A rotated (used_at) token is deliberately still returned: the caller has
 	// to see it in order to recognise a replay. Only an explicitly revoked
 	// token is filtered out here, because that one carries no new information.
-	var familyID *string
+	var familyID, agentID *string
 	err = s.db.Pool.QueryRow(ctx, `
-		SELECT token, client_id, user_id, scope, session_id, expires_at, created_at, family_id, used_at
+		SELECT token, client_id, user_id, scope, session_id, expires_at, created_at, family_id, used_at, agent_id
 		FROM oauth_refresh_tokens WHERE token = $1 AND org_id = $2 AND revoked_at IS NULL
 	`, token, org.ID).Scan(
 		&refreshToken.Token, &refreshToken.ClientID, &refreshToken.UserID,
 		&refreshToken.Scope, &sessionID, &refreshToken.ExpiresAt, &refreshToken.CreatedAt,
-		&familyID, &refreshToken.UsedAt,
+		&familyID, &refreshToken.UsedAt, &agentID,
 	)
 
 	if err != nil {
@@ -662,6 +676,9 @@ func (s *Service) GetRefreshToken(ctx context.Context, token string) (*RefreshTo
 	}
 	if familyID != nil {
 		refreshToken.FamilyID = *familyID
+	}
+	if agentID != nil {
+		refreshToken.AgentID = *agentID
 	}
 
 	if time.Now().After(refreshToken.ExpiresAt) {
@@ -3283,12 +3300,18 @@ func (s *Service) handleAuthorizationCodeGrant(c *gin.Context) {
 	// Generate refresh token if allowed
 	if client.AllowRefreshToken && strings.Contains(authCode.Scope, "offline_access") {
 		refreshToken := GenerateRandomToken(32)
+		// A native client that is already enrolled names the device it runs on,
+		// so revoking that device can revoke this chain (v185). Checked against
+		// the server's own record of who enrolled it; see device_binding.go for
+		// what this does and does not prove.
+		agentID := s.agentBindingForUser(c.Request.Context(), c.PostForm("agent_id"), authCode.UserID)
 		if err := s.CreateRefreshToken(c.Request.Context(), &RefreshToken{
 			Token:     refreshToken,
 			ClientID:  clientID,
 			UserID:    authCode.UserID,
 			Scope:     authCode.Scope,
 			SessionID: sessionID,
+			AgentID:   agentID,
 			ExpiresAt: time.Now().Add(time.Duration(client.RefreshTokenLifetime) * time.Second),
 		}); err != nil {
 			// Don't hand the client a token we couldn't persist — every
@@ -3470,6 +3493,10 @@ func (s *Service) handleRefreshTokenGrant(c *gin.Context) {
 			// Successors inherit the family so a later replay revokes the
 			// whole chain, however many rotations deep it is.
 			FamilyID: token.FamilyID,
+			// And the device binding, for the same reason: a revoke that only
+			// caught the first token of a chain would be defeated by the
+			// client refreshing once, which it does every hour.
+			AgentID: token.AgentID,
 		}); err != nil {
 			s.logger.Error("failed to persist rotated refresh token",
 				zap.String("client_id", logsafe.Clean(clientID)),

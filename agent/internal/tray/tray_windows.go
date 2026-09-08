@@ -199,7 +199,7 @@ func (a *app) loop(mQuit *systray.MenuItem) {
 func (a *app) signIn() {
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 	defer cancel()
-	t, err := sso.Login(ctx, a.serverURL)
+	t, err := sso.LoginWithDevice(ctx, a.serverURL, a.enrolledAgentID())
 	if err != nil {
 		a.logger.Warn("tray: sign-in failed", zap.Error(err))
 		a.mStatus.SetTitle("Sign-in failed")
@@ -209,7 +209,32 @@ func (a *app) signIn() {
 	a.setSignedIn(t)
 }
 
+// enrolledAgentID is the agent id this machine is enrolled as, or "" when it is
+// not enrolled. Naming it at sign-in lets an admin revoking the device revoke
+// the user's session with it.
+func (a *app) enrolledAgentID() string {
+	cfg, err := agent.LoadConfig(a.configDir)
+	if err != nil || cfg == nil {
+		return ""
+	}
+	return cfg.AgentID
+}
+
 func (a *app) signOut() {
+	// End the session on the server before dropping the local copy: otherwise
+	// "Sign out" only hides a refresh token that stays valid for weeks.
+	a.mu.Lock()
+	tok := a.tokens
+	a.mu.Unlock()
+	if tok != nil && tok.RefreshToken != "" && a.serverURL != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		if err := sso.Revoke(ctx, a.serverURL, sso.DesktopClientID, tok.RefreshToken); err != nil {
+			a.logger.Warn("tray: sign-out revocation failed; the refresh token stays valid until it expires",
+				zap.Error(err))
+		}
+		cancel()
+	}
+
 	_ = authstore.Clear(a.configDir)
 	a.mu.Lock()
 	a.tokens = nil

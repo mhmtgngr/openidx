@@ -70,10 +70,17 @@ type PendingLogin struct {
 	verifier  string
 	state     string
 	serverURL string
+	agentID   string
 }
 
 // AuthURL is the OAuth authorize URL the browser must open to complete sign-in.
 func (p *PendingLogin) AuthURL() string { return p.authURL }
+
+// BindDevice names the enrolled device this session will belong to, so the
+// server can bind the refresh-token family to it and an admin revoking the
+// device revokes the session with it (migration v185). Empty on a machine that
+// is not enrolled yet, which simply leaves the session unbound.
+func (p *PendingLogin) BindDevice(agentID string) { p.agentID = agentID }
 
 // StartLogin binds the loopback listener, starts the callback handler, and
 // builds the authorize URL — but does NOT open a browser or block. The caller
@@ -168,25 +175,47 @@ func (p *PendingLogin) Wait(ctx context.Context) (*Tokens, error) {
 		if res.err != nil {
 			return nil, res.err
 		}
-		return exchange(ctx, p.serverURL, url.Values{
+		return exchange(ctx, p.serverURL, withDevice(url.Values{
 			"grant_type":    {"authorization_code"},
 			"client_id":     {DesktopClientID},
 			"code":          {res.code},
 			"redirect_uri":  {RedirectURI},
 			"code_verifier": {p.verifier},
-		})
+		}, p.agentID))
 	}
+}
+
+// withDevice adds the enrolled device id to a token request when there is one.
+// The server checks the claim against its own record of who enrolled the agent
+// before binding anything to it (internal/oauth/device_binding.go); sending it
+// is how a client asks to be revocable with its device.
+func withDevice(form url.Values, agentID string) url.Values {
+	if agentID != "" {
+		form.Set("agent_id", agentID)
+	}
+	return form
 }
 
 // Login runs the interactive PKCE-loopback flow against serverURL (e.g.
 // https://openidx.tdv.org) and returns tokens. Blocks until the browser
 // redirect is captured, the context is cancelled, or the timeout elapses.
 // It is StartLogin + open-browser + Wait; desktop behavior is unchanged.
+//
+// Prefer LoginWithDevice on an enrolled machine: a session that names its
+// device can be revoked with that device.
 func Login(ctx context.Context, serverURL string) (*Tokens, error) {
+	return LoginWithDevice(ctx, serverURL, "")
+}
+
+// LoginWithDevice is Login for an enrolled machine: agentID is the enrolled
+// agent this session belongs to, which the server binds the refresh-token
+// family to so revoking the device revokes the session (v185).
+func LoginWithDevice(ctx context.Context, serverURL, agentID string) (*Tokens, error) {
 	p, err := StartLogin(serverURL)
 	if err != nil {
 		return nil, err
 	}
+	p.BindDevice(agentID)
 	if err := openBrowser(p.AuthURL()); err != nil {
 		// Non-fatal: print the URL so the user can open it manually.
 		fmt.Printf("Open this URL to sign in:\n  %s\n", p.AuthURL())
@@ -203,11 +232,17 @@ type MobileLogin struct {
 	verifier  string
 	state     string
 	serverURL string
+	agentID   string
 }
 
 // State returns the CSRF state value bound to this flow (for callers that want
 // to validate it out-of-band; Exchange also enforces it).
 func (m *MobileLogin) State() string { return m.state }
+
+// BindDevice names the enrolled device this session will belong to. See
+// PendingLogin.BindDevice; it is persisted by Save so a cold-started process
+// still sends it (the Android case this whole flow exists for).
+func (m *MobileLogin) BindDevice(agentID string) { m.agentID = agentID }
 
 // StartMobileLogin generates PKCE + state and builds the openidx-mobile
 // authorize URL for the custom-scheme redirect flow. It does NOT bind any
@@ -248,6 +283,7 @@ type mobileLoginJSON struct {
 	Verifier  string `json:"verifier"`
 	State     string `json:"state"`
 	ServerURL string `json:"server_url"`
+	AgentID   string `json:"agent_id,omitempty"`
 }
 
 // Save persists the flow's PKCE verifier, state, and server URL to path (0600)
@@ -261,6 +297,7 @@ func (m *MobileLogin) Save(path string) error {
 		Verifier:  m.verifier,
 		State:     m.state,
 		ServerURL: m.serverURL,
+		AgentID:   m.agentID,
 	})
 	if err != nil {
 		return err
@@ -284,6 +321,7 @@ func LoadMobileLogin(path string) (*MobileLogin, error) {
 		verifier:  mj.Verifier,
 		state:     mj.State,
 		serverURL: mj.ServerURL,
+		agentID:   mj.AgentID,
 	}, nil
 }
 
@@ -296,13 +334,53 @@ func (m *MobileLogin) Exchange(ctx context.Context, code, state string) (*Tokens
 	if code == "" {
 		return nil, fmt.Errorf("no authorization code")
 	}
-	return exchange(ctx, m.serverURL, url.Values{
+	return exchange(ctx, m.serverURL, withDevice(url.Values{
 		"grant_type":    {"authorization_code"},
 		"code":          {code},
 		"client_id":     {MobileClientID},
 		"redirect_uri":  {MobileRedirectURI},
 		"code_verifier": {m.verifier},
-	})
+	}, m.agentID))
+}
+
+// Revoke asks the server to invalidate a refresh token (RFC 7009), so signing
+// out ends the session on the SERVER rather than only deleting the copy on this
+// device.
+//
+// Logout used to be authstore.Clear alone: the refresh token stayed valid for
+// its full 30 days, so "sign out" left a live credential behind for anyone who
+// had already taken a copy of it. /oauth/revoke authenticates the client but
+// needs no secret for a public/PKCE client, which is what every native client
+// here is.
+//
+// A failure is the caller's to decide about: the local session should be
+// cleared either way (a user who signs out must not stay signed in because the
+// network was down), but it should be said out loud rather than swallowed.
+func Revoke(ctx context.Context, serverURL, clientID, refreshToken string) error {
+	if refreshToken == "" {
+		return nil
+	}
+	form := url.Values{
+		"token":           {refreshToken},
+		"token_type_hint": {"refresh_token"},
+		"client_id":       {clientID},
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		strings.TrimRight(serverURL, "/")+"/oauth/revoke", strings.NewReader(form.Encode()))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("revocation request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("revocation endpoint returned %d", resp.StatusCode)
+	}
+	return nil
 }
 
 // Refresh exchanges a refresh token for a fresh access token using the desktop

@@ -251,7 +251,8 @@ var loginCmd = &cobra.Command{
 		if server == "" {
 			return fmt.Errorf("no server: pass --server or enroll first")
 		}
-		t, err := sso.Login(cmd.Context(), server)
+		// Name the enrolled device, so revoking it revokes this session too.
+		t, err := sso.LoginWithDevice(cmd.Context(), server, enrolledAgentID())
 		if err != nil {
 			return fmt.Errorf("sign-in failed: %w", err)
 		}
@@ -267,12 +268,33 @@ var logoutCmd = &cobra.Command{
 	Use:   "logout",
 	Short: "Sign out and clear the cached session",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// Revoke on the server first: deleting the local file makes this
+		// machine look signed out while the refresh token it deleted stays
+		// valid for its full lifetime. Reported, never fatal — the local
+		// session is cleared either way.
+		if tok, err := authstore.Load(configDir); err == nil && tok != nil && tok.RefreshToken != "" {
+			if server := resolveServer(cmd); server != "" {
+				if rerr := sso.Revoke(cmd.Context(), server, sso.DesktopClientID, tok.RefreshToken); rerr != nil {
+					fmt.Printf("Warning: could not revoke the session on the server (%v); it will expire on its own.\n", rerr)
+				}
+			}
+		}
 		if err := authstore.Clear(configDir); err != nil {
 			return err
 		}
 		fmt.Println("Signed out.")
 		return nil
 	},
+}
+
+// enrolledAgentID is the agent id this installation is enrolled as, or "" when
+// it is not enrolled. A session that names its device can be revoked with it.
+func enrolledAgentID() string {
+	cfg, err := agent.LoadConfig(configDir)
+	if err != nil || cfg == nil {
+		return ""
+	}
+	return cfg.AgentID
 }
 
 var trayCmd = &cobra.Command{

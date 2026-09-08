@@ -13,8 +13,12 @@ vi.mock('../lib/api', () => ({
   },
 }))
 
+// One shared spy rather than a fresh vi.fn() per render: the revoke toast is
+// the only place an admin is told what a revoke actually severed, so it has to
+// be assertable.
+const toastSpy = vi.fn()
 vi.mock('../hooks/use-toast', () => ({
-  useToast: () => ({ toast: vi.fn() }),
+  useToast: () => ({ toast: toastSpy }),
 }))
 
 import { UserAccess360Page } from './user-access-360'
@@ -187,6 +191,63 @@ describe('UserAccess360Page', () => {
       '/api/v1/access/users/u-1/devices/agent-1/revoke',
       expect.objectContaining({ reason: 'offboarding' }),
     )
+  })
+
+  // Revoking a device severs the overlay AND the sign-in sessions bound to it.
+  // Reporting only the network half is what made "Device revoked" read as more
+  // than it was for as long as the token half did not exist.
+  it('reports what the revoke did to the sign-in sessions on the device', async () => {
+    const user = userEvent.setup()
+    vi.mocked(api.post).mockResolvedValueOnce({
+      agent_id: 'agent-1',
+      agent_revoked: true,
+      ziti_identity_deleted: true,
+      ziti_edge_sessions_terminated: 1,
+      ziti_api_sessions_terminated: 0,
+      known_device_untrusted: true,
+      iam_refresh_tokens_revoked: 2,
+      iam_sessions_revoked: 2,
+    })
+    renderPage()
+    expect(await screen.findByRole('heading', { name: 'alice' })).toBeInTheDocument()
+
+    await user.click(screen.getAllByRole('button', { name: /revoke/i })[0])
+    await user.type(await screen.findByLabelText(/reason \(required\)/i), 'lost phone')
+    await user.click(
+      screen.getAllByRole('button', { name: /^revoke$/i }).find(b => !b.hasAttribute('disabled'))!,
+    )
+
+    await vi.waitFor(() => {
+      const described = toastSpy.mock.calls.map(c => String(c[0]?.description ?? '')).join(' | ')
+      expect(described).toMatch(/2 sign-in sessions on this device/i)
+    })
+  })
+
+  it('says so when no sign-in session was bound to the device', async () => {
+    const user = userEvent.setup()
+    vi.mocked(api.post).mockResolvedValueOnce({
+      agent_id: 'agent-1',
+      agent_revoked: true,
+      ziti_identity_deleted: true,
+      ziti_edge_sessions_terminated: 0,
+      ziti_api_sessions_terminated: 0,
+      known_device_untrusted: true,
+      iam_refresh_tokens_revoked: 0,
+      iam_sessions_revoked: 0,
+    })
+    renderPage()
+    expect(await screen.findByRole('heading', { name: 'alice' })).toBeInTheDocument()
+
+    await user.click(screen.getAllByRole('button', { name: /revoke/i })[0])
+    await user.type(await screen.findByLabelText(/reason \(required\)/i), 'stolen')
+    await user.click(
+      screen.getAllByRole('button', { name: /^revoke$/i }).find(b => !b.hasAttribute('disabled'))!,
+    )
+
+    await vi.waitFor(() => {
+      const described = toastSpy.mock.calls.map(c => String(c[0]?.description ?? '')).join(' | ')
+      expect(described).toMatch(/no sign-in session was bound to this device/i)
+    })
   })
 
   it('opens the kill switch dialog and posts to the kill-switch endpoint', async () => {

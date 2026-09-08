@@ -6855,8 +6855,12 @@ const tr: typeof en = {
         revokedSessions_other: '{{count}} ağ oturumu sonlandırıldı.',
         revokedIdentity: 'Ziti kimliği silindi.',
         revokedUntrusted: 'Cihazın güveni kaldırıldı.',
+        revokedTokens_one: 'Bu cihazdaki {{count}} oturum açma iptal edildi.',
+        revokedTokens_other: 'Bu cihazdaki {{count}} oturum açma iptal edildi.',
+        revokedNoTokens:
+          'Bu cihaza bağlı bir oturum açma bulunmadığı için hiçbiri iptal edilmedi. Cihaz kaydedilmeden önce ya da sunucu bu bağı tutmaya başlamadan önce açılan oturumlar cihaza bağlı değildir.',
         footnote:
-          '<1>IAM + Ziti</1> olarak işaretlenen cihazlar, her iki sütunun da gördüğü aynı fiziksel makinedir (ajan, oturum açıkken kaydedilmiştir). Geri alma, cihazın Ziti oturumlarını sonlandırır, ağ kimliğini siler ve IAM tarafındaki güvenini kaldırır.',
+          '<1>IAM + Ziti</1> olarak işaretlenen cihazlar, her iki sütunun da gördüğü aynı fiziksel makinedir (ajan, oturum açıkken kaydedilmiştir). Geri alma, cihazın Ziti oturumlarını sonlandırır, ağ kimliğini siler, IAM tarafındaki güvenini kaldırır ve cihaza bağlı oturum açmaları iptal eder. Cihaza daha önce verilmiş bir erişim jetonu süresi dolana kadar (en fazla bir saat) çalışmaya devam eder; yenilenemez.',
       },
       activity: {
         heading: 'Sütunlar Genelinde Son Etkinlik',

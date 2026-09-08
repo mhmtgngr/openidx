@@ -1315,5 +1315,12 @@ func allMigrations() []*Migration {
 			UpSQL:       androidAgentClientUp,
 			DownSQL:     androidAgentClientDown,
 		},
+		{
+			Version:     185,
+			Name:        "bind_refresh_tokens_to_agent",
+			Description: "Add oauth_refresh_tokens.agent_id (nullable, partial index) so a refresh-token family records the enrolled device it was issued to. Revoking a device (executeDeviceRevoke) deleted the Ziti identity and terminated the Ziti sessions and touched no OAuth token, because nothing recorded which device a token belonged to; the native clients hold a 30-day refresh token, so a revoked phone kept acting as the user on every HTTP surface for up to a month. The authorization-code grant now stores the agent_id an enrolled native client sends with its code exchange, /agent/enroll/oauth binds the enrolling bearer's session to the agent it just issued, rotation carries the binding forward like family_id, and the device revoke revokes every bound family and session. No backfill: NULL means not bound, the pre-migration state.",
+			UpSQL:       refreshTokenAgentBindingUp,
+			DownSQL:     refreshTokenAgentBindingDown,
+		},
 	}
 }

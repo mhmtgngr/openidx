@@ -22,13 +22,15 @@ import (
 // fakeBackend implements the backend seam so the HTTP layer can be exercised
 // without a live OpenIDX server.
 type fakeBackend struct {
-	loginTokens *sso.Tokens
-	loginErr    error
-	entries     []desktoppam.Entry
-	listErr     error
-	connectURL  string
-	connectErr  error
-	requestErr  error
+	loginTokens  *sso.Tokens
+	loginErr     error
+	loginAgentID string
+	loginCalled  bool
+	entries      []desktoppam.Entry
+	listErr      error
+	connectURL   string
+	connectErr   error
+	requestErr   error
 
 	requestedEntry  string
 	requestedReason string
@@ -40,7 +42,9 @@ type fakeBackend struct {
 	pushPlatform    string
 }
 
-func (f *fakeBackend) Login(ctx context.Context, serverURL string) (*sso.Tokens, error) {
+func (f *fakeBackend) Login(ctx context.Context, serverURL, agentID string) (*sso.Tokens, error) {
+	f.loginCalled = true
+	f.loginAgentID = agentID
 	if f.loginErr != nil {
 		return nil, f.loginErr
 	}

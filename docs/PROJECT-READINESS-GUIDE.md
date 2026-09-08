@@ -297,6 +297,20 @@ product; either wire them or remove them from the UI.
   migration's seed. The full client design — registration, MFA, tiers,
   revocation, secrets at rest — is in `docs/CLIENT-ACCESS-DESIGN.md`.
 
+- **A10 — Revoking a device left its 30-day refresh token alive.** *Fixed on
+  this branch.* `executeDeviceRevoke` severed the Ziti identity and the overlay
+  sessions and touched no OAuth token, because nothing recorded which device a
+  token belonged to; a revoked phone kept acting as the user over plain HTTP
+  for up to a month, push-MFA approvals included. v185 adds
+  `oauth_refresh_tokens.agent_id`, bound at the code exchange (checked against
+  the server's own record of who enrolled the agent) or at `/agent/enroll/oauth`
+  for the Android flow, and carried through rotation; the revoke now cuts the
+  bound families and their sessions and publishes the revocation markers. Sign
+  out calls `/oauth/revoke` instead of only deleting the local file. Still open
+  by design and stated in `docs/CLIENT-ACCESS-DESIGN.md`: an access token
+  already issued survives up to its one-hour lifetime, since only the refresh
+  grant reads the session marker.
+
 **B. First-contact failures** — what a new operator/evaluator hits in hour one.
 
 - **B1 — Default admin `admin@openidx.local` / `Admin@123` seeds every

@@ -6909,8 +6909,12 @@ const en = {
         revokedSessions_other: 'Severed {{count}} network sessions.',
         revokedIdentity: 'Deleted the Ziti identity.',
         revokedUntrusted: 'Untrusted the device.',
+        revokedTokens_one: 'Revoked {{count}} sign-in session on this device.',
+        revokedTokens_other: 'Revoked {{count}} sign-in sessions on this device.',
+        revokedNoTokens:
+          'No sign-in session was bound to this device, so none was revoked. Sessions that began before the device was enrolled, or before this server recorded the link, are not bound to it.',
         footnote:
-          "Devices marked <1>IAM + Ziti</1> are the same physical machine seen by both pillars (agent enrolled while signed in). Revoke severs the device's Ziti sessions, deletes its network identity, and untrusts it in IAM.",
+          "Devices marked <1>IAM + Ziti</1> are the same physical machine seen by both pillars (agent enrolled while signed in). Revoke severs the device's Ziti sessions, deletes its network identity, untrusts it in IAM, and revokes the sign-in sessions bound to it. An access token already issued to the device keeps working until it expires (up to an hour); it cannot be renewed.",
       },
       activity: {
         heading: 'Recent Activity Across Pillars',
