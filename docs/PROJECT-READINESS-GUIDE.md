@@ -381,6 +381,32 @@ product; either wire them or remove them from the UI.
   the agent will accept. Still open and stated rather than implied: the manifest
   is the root of trust — verifying a signature over it is a separate item.
 
+- **A16 — The agent executed plugins from a directory anyone could write.**
+  *Fixed on this branch.* `plugin.Discover` takes any file with an executable
+  bit out of `plugin_dir` and hands it to `exec.CommandContext`; both callers of
+  `LoadPlugins` are daemons, one of them the Windows service running as SYSTEM.
+  Nothing checked who else could write it. The plugin root, each plugin's
+  directory and the executable are now all checked, on the rule every tool
+  facing this shape keeps. On Windows it refuses outright and says why: the
+  check is Unix mode bits, which Windows discards, so the same code there would
+  report every path as trusted while checking nothing — and the DACL read that
+  would do it properly is not written. Nothing sets `plugin_dir`, so no shipped
+  configuration is affected.
+
+- **A17 — The local control socket was world-connectable for one syscall, and
+  its bearer was compared with `!=`.** *Fixed on this branch.* On Unix the
+  control server has no token: the socket's mode *is* the authentication, and it
+  guards `/token` (the signed-in user's access token), `/pam/connect` and
+  `/ziti/dial`. `net.Listen` creates a Unix socket at `0777 &^ umask`, so under a
+  daemon's usual `022` it sat at `0755` until the `chmod` on the next line, at a
+  predictable path — and a connection accepted in that window is not closed by
+  the chmod. The bind now runs under a narrowed umask. On Windows the bearer was
+  compared with a byte-wise `!=` that returns at the first difference, leaking
+  prefix length to a caller on the same machine with no network jitter to hide
+  in; it is `subtle.ConstantTimeCompare` now, as `internal/oauth` already was.
+  `authWrap` had no test that sent a wrong token — every case attached the
+  correct one, and on Unix it is a no-op — so twelve refusal cases were added.
+
 **B. First-contact failures** — what a new operator/evaluator hits in hour one.
 
 - **B1 — Default admin `admin@openidx.local` / `Admin@123` seeds every
